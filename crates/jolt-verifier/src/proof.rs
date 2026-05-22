@@ -10,6 +10,7 @@ use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    config::JoltProtocolConfig,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
@@ -25,6 +26,7 @@ pub struct JoltProof<
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    pub protocol: JoltProtocolConfig,
     pub commitments: JoltCommitments<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
@@ -58,7 +60,9 @@ where
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
     ) -> Self {
+        let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
         Self {
+            protocol,
             commitments,
             stages,
             joint_opening_proof,
@@ -133,6 +137,15 @@ where
 {
     Clear(ClearProofClaims<F>),
     Zk { blindfold_proof: ZkProof },
+}
+
+impl<F, ZkProof> JoltProofClaims<F, ZkProof>
+where
+    F: Field,
+{
+    pub const fn is_zk(&self) -> bool {
+        matches!(self, Self::Zk { .. })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -474,13 +474,13 @@ configured verifier flow exported by `jolt-verifier`.
 ## Assembly API
 
 ```rust
-pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>
+pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssistProof>
 where
     PcsAssistProof: PcsProofAssist<PCS>,
 {
     pub preprocessing: JoltVerifierPreprocessing<PCS, VC>,
     pub public_io: JoltDevice,
-    pub proof: JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
+    pub proof: JoltProof<PCS, VC, ZkProof, PcsAssistProof>,
     pub public_inputs: WrapperPublicInputs<F>,
     pub witness_inputs: WrapperWitnessInputs<F>,
 }
@@ -496,10 +496,9 @@ pub fn assemble_configured_verifier_r1cs<
     PCS,
     VC,
     ZkProof,
-    FieldInlineProof,
     PcsAssistProof,
 >(
-    inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
+    inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssistProof>,
 ) -> Result<WrapperR1csInstance<F>, WrapperError>
 where
     PcsAssistProof: PcsProofAssist<PCS>,

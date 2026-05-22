@@ -4,8 +4,16 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 
+use crate::config::JoltProtocolConfig;
+
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
+    #[error("proof protocol config {got:?} does not match verifier config {expected:?}")]
+    ProtocolConfigMismatch {
+        expected: JoltProtocolConfig,
+        got: JoltProtocolConfig,
+    },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

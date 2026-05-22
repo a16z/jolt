@@ -56,11 +56,16 @@ JoltProof::protocol:
   self-description that must equal JOLT_VERIFIER_CONFIG
 
 Option<T> fields:
-  payload slots that must be Some or None according to JOLT_VERIFIER_CONFIG
+  payload slots for proof axes that are genuinely separate artifacts
 
 PCS assist:
   generic proof payload implementing PcsProofAssist<PCS>
   no Dory-specific proof field or verifier stage in jolt-verifier
+
+Field inline:
+  no top-level payload slot
+  cfg-gated stage-local proof data and commitments
+  stage folders own the corresponding presence checks
 ```
 
 The verifier never does this:
@@ -150,7 +155,7 @@ pub trait PcsProofAssist<PCS: CommitmentScheme>: Sized {
         T: Transcript<Challenge = PCS::Field>;
 }
 
-pub struct JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>
+pub struct JoltProof<PCS, VC, ZkProof, PcsAssistProof>
 where
     PCS: CommitmentScheme,
     PcsAssistProof: PcsProofAssist<PCS>,
@@ -161,7 +166,6 @@ where
     pub stages: JoltStageProofs<PCS::Field, VC, ZkProof>,
     pub joint_opening_proof: PCS::Proof,
 
-    pub field_inline: Option<FieldInlineProof>,
     pub pcs_assist: Option<PcsAssistProof>,
 }
 ```
@@ -187,9 +191,9 @@ or BlindFold proof payload shape must match `JOLT_VERIFIER_CONFIG.zk`.
 `validate_proof_config` is the first verifier gate:
 
 ```rust
-pub fn validate_proof_config<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>(
+pub fn validate_proof_config<PCS, VC, ZkProof, PcsAssistProof>(
     config: &JoltProtocolConfig<PcsAssistProof::Config>,
-    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssistProof>,
 ) -> Result<(), VerifierError>
 where
     PcsAssistProof: PcsProofAssist<PCS>,
@@ -202,25 +206,18 @@ It checks:
 
 ```text
 proof.protocol == JOLT_VERIFIER_CONFIG
-field_inline payload is present iff config.field_inline.enabled
 pcs_assist payload is present iff config.pcs_assist.is_some()
 stage proof payloads match config.zk
 unsupported feature combinations are impossible or rejected
 ```
 
-It does not assemble field-inline verifier logic. After this shape check, the
-appropriate `jolt-verifier::stages/*` modules own the field-inline checks they
-batch with their stage.
+It does not assemble field-inline verifier logic. After this config check, the
+appropriate `jolt-verifier::stages/*` modules own the cfg-gated field-inline
+payload checks they batch with their stage.
 
 Shape rule:
 
 ```rust
-if config.field_inline.enabled {
-    require_some(&proof.field_inline)?;
-} else {
-    reject_some(&proof.field_inline)?;
-}
-
 match config.pcs_assist {
     None => reject_some(&proof.pcs_assist)?,
     Some(_) => require_some(&proof.pcs_assist)?,
@@ -236,10 +233,10 @@ assist and `proof.pcs_assist` is present, the verifier rejects.
 The verifier remains a linear function:
 
 ```rust
-pub fn verify<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>(
+pub fn verify<PCS, VC, ZkProof, PcsAssistProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof, FieldInlineProof, PcsAssistProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssistProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(), VerifierError>
 where
@@ -338,27 +335,93 @@ router in `jolt-verifier`.
 When enabled:
 
 ```text
-validate_proof_config requires proof.field_inline = Some(...)
+validate_proof_config requires proof.protocol.field_inline to match verifier config
 commitment absorption includes FR commitments, currently FieldRdInc
+stage 1 / Spartan outer uses the field-constraints-aware R1CS key metadata
 stage 2 extends product virtualization with a FieldProduct lane
 stage 2 batches field-register claim reduction at the product point
 stage 4 batches FR read/write checking
 stage 5 batches FR val evaluation
 stage 6 batches FieldRdInc reduction
 stage 8 includes reduced FieldRdInc in the joint opening RLC
-R1CS logic includes field_constraints
 ```
 
 When disabled:
 
 ```text
-validate_proof_config requires proof.field_inline = None
+validate_proof_config requires proof.protocol.field_inline to match verifier config
 ordinary stages run without FR additions
 FR transcript rounds are skipped entirely
 ```
 
 Field-inline arithmetic details are specified in
 [field-inline-protocol.md](field-inline-protocol.md).
+
+### Field-Inline Verifier Slices
+
+Field-inline verifier support should land one verifier-stage slice at a time.
+Each slice has a small review gate and must preserve the FR-off path.
+
+0. Proof/config gate.
+   - Add the compile-time field-inline config and require `proof.protocol` to
+     match it.
+   - No stage logic changes yet.
+   - Review gate: a proof declaring a different field-inline config is rejected.
+
+1. Commitment and preamble absorption.
+   - Absorb FR commitments only when field inline is enabled.
+   - For v1 this is expected to include `FieldRdInc`.
+   - Review gate: FR-off transcript matches ordinary Jolt through the first
+     config-dependent challenge.
+
+2. Stage 1 / Spartan outer metadata.
+   - Make the verifier's Spartan/R1CS metadata field-constraints-aware when
+     field inline is enabled.
+   - This covers the local field instruction rows and x-register <-> FR bridge
+     rows at the guest R1CS relation level.
+   - Review gate: FR-off Spartan outer claim formulas and public coefficients
+     are unchanged; FR-on exposes the additional field-constraint metadata.
+
+3. Stage 2 product virtualization.
+   - Add `FieldRegistersProduct` as an explicit product lane.
+   - Use the existing stage-2 product point `r_prod`; do not introduce a
+     separate `r_field`.
+   - Review gate: FR-off product lane ordering is unchanged; FR-on includes the
+     `FieldProduct = FieldRs1Value * FieldRs2Value` lane.
+
+4. Stage 2 field-register claim reduction.
+   - Batch `FieldRegistersClaimReduction` into the same stage-2 verifier flow.
+   - Share `r_prod` with the product virtualization output where the formulas
+     require point agreement.
+   - Review gate: required FR openings/challenges are present and consistency
+     claims are explicit.
+
+5. Stage 4 field-register read/write checking.
+   - Add the FR Twist read/write instance over `T * 16`.
+   - Batch it with the existing stage-4 read/write work.
+   - Review gate: FR-off stage 4 transcript and accumulator entries are
+     unchanged; FR-on rejects missing FR read/write payload.
+
+6. Stage 5 field-register val evaluation.
+   - Add `FieldRegistersValEvaluation` using the stage-5 batching pattern.
+   - Review gate: FR-off stage 5 is unchanged; FR-on produces the expected
+     `FieldRegistersVal` and `FieldRdInc` opening claims.
+
+7. Stage 6 `FieldRdInc` reduction.
+   - Reduce the stage-4 and stage-5 semantic openings of `FieldRdInc` to one
+     final committed claim.
+   - Review gate: the reduced claim is the only `FieldRdInc` claim handed to
+     the final opening planner.
+
+8. Stage 8 joint opening inclusion.
+   - Add the reduced `FieldRdInc` opening to the joint opening RLC with an
+     explicit polynomial-to-relation mapping.
+   - Review gate: FR-off final opening order is unchanged; FR-on order is
+     deterministic and covered by tests.
+
+9. FR-off regression checkpoint.
+   - Run the ordinary standard and ZK verifier tests with field inline disabled.
+   - No prover-side field-inline work starts before this checkpoint is green.
 
 ## PCS Assist
 
@@ -511,8 +574,8 @@ Config validation tests:
 
 ```text
 proof.protocol must equal JOLT_VERIFIER_CONFIG
-FR-off verifier rejects field_inline = Some(...)
-FR-on verifier rejects field_inline = None
+FR-off verifier rejects proof.protocol.field_inline.enabled = true
+FR-on verifier rejects proof.protocol.field_inline.enabled = false
 PCS-assist-off verifier rejects pcs_assist = Some(...)
 PCS-assist-on verifier rejects pcs_assist = None
 Transparent verifier rejects BlindFold-only payloads
@@ -551,8 +614,9 @@ Each step should be reviewed before continuing to the next.
    - Review gate: config constants match expected feature combinations.
 
 2. Linearize proof optional payloads.
-   - Add `protocol`, `field_inline: Option<_>`, and `pcs_assist: Option<_>` to
-     the linear proof artifact.
+   - Add `protocol` and `pcs_assist: Option<_>` to the linear proof artifact.
+   - Do not add a top-level field-inline proof object; field-inline data is
+     stage-local.
    - Keep `joint_opening_proof: PCS::Proof` structurally present.
    - Review gate: serialization round trips all payload shapes.
 
@@ -565,13 +629,11 @@ Each step should be reviewed before continuing to the next.
    - Absorb canonical config encoding before config-dependent challenges.
    - Review gate: changing config changes the challenge stream.
 
-5. Wire field-inline additions in the appropriate stage folders.
-   - Add stage 2 product/claim-reduction additions so field product and field
-     registers share `r_prod`.
-   - Add stage 4/5 FR memory-checking additions.
-   - Add stage 6 `FieldRdInc` reduction and stage 8 joint-opening inclusion.
-   - Review gate: FR-off remains byte-for-byte compatible with ordinary stage
-     ordering where expected; FR-on requires payloads.
+5. Wire field-inline verifier slices.
+   - Implement the stage-by-stage slices from "Field-Inline Verifier Slices".
+   - Review every stage slice before moving to the next one.
+   - Review gate: the FR-off regression checkpoint passes before prover-side
+     field-inline work begins.
 
 6. Wire PCS assist in the opening phase.
    - Build a typed opening snapshot once.

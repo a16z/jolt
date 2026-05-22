@@ -34,7 +34,7 @@ truth.
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
 | 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec |
 | 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec |
-| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol and SNARK backend spec |
+| 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec and shared wrapper R1CS infrastructure |
 
 The `jolt-core` BlindFold hardening PR carries the compatibility/security patch
 that makes core BlindFold construction match the modular stack before the
@@ -79,6 +79,11 @@ If a later feature row names a path inside a directory owned by an earlier row,
 the later row wins for changed files under that path. This keeps broad crate
 bootstrap PRs stable while letting later implementation PRs own narrower
 submodules in the same crate.
+
+PR 15 also owns a few shared wrapper R1CS files that were introduced before the
+wrapper spec row existed. Earlier crate-bootstrap rows restore those files from
+the pre-wrapper baseline, then PR 15 restores the current source version so the
+wrapper implementation diff reviews with the wrapper spec.
 
 ## Manual Materialization
 

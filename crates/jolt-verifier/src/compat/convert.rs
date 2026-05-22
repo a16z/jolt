@@ -6,6 +6,7 @@ use crate::compat::{
     ids as verifier_ids,
 };
 use crate::{
+    config::JoltProtocolConfig,
     proof::{
         JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
         TracePolynomialOrder,
@@ -272,6 +273,7 @@ where
         };
 
         Ok(Self {
+            protocol: JoltProtocolConfig::for_zk(false),
             commitments,
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
@@ -322,6 +324,7 @@ where
         };
 
         Ok(Self {
+            protocol: JoltProtocolConfig::for_zk(true),
             commitments,
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),

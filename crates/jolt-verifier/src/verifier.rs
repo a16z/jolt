@@ -8,6 +8,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
+    config::{validate_proof_config, JoltProtocolConfig},
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -34,6 +35,9 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
+    let config = JoltProtocolConfig::for_zk(zk);
+    validate_proof_config(&config, proof)?;
+
     let checked = validate_inputs(
         preprocessing,
         public_io,
@@ -463,6 +467,7 @@ mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryLayout};
+    use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::Fr;
@@ -617,6 +622,50 @@ mod tests {
     }
 
     #[test]
+    fn validate_proof_config_accepts_default_disabled_field_inline() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::disabled());
+        proof.protocol = config;
+
+        assert!(validate_proof_config(&config, &proof).is_ok());
+    }
+
+    #[test]
+    fn validate_proof_config_rejects_protocol_mismatch() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.protocol = JoltProtocolConfig::for_zk(true);
+
+        assert!(matches!(
+            validate_proof_config(&JoltProtocolConfig::for_zk(false), &proof),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_proof_config_accepts_enabled_field_inline_config() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::native_v1());
+        proof.protocol = config;
+
+        assert!(validate_proof_config(&config, &proof).is_ok());
+    }
+
+    #[test]
+    fn validate_proof_config_rejects_field_inline_config_mismatch() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::native_v1());
+        proof.protocol = config;
+
+        assert!(matches!(
+            validate_proof_config(
+                &protocol_config(false, FieldInlineConfig::disabled()),
+                &proof
+            ),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    #[test]
     fn validate_inputs_normalizes_public_output() {
         let preprocessing = test_preprocessing();
         let mut public_io = JoltDevice {
@@ -722,6 +771,13 @@ mod tests {
             },
             crate::proof::TracePolynomialOrder::CycleMajor,
         )
+    }
+
+    fn protocol_config(zk: bool, field_inline: FieldInlineConfig) -> JoltProtocolConfig {
+        JoltProtocolConfig {
+            field_inline,
+            ..JoltProtocolConfig::for_zk(zk)
+        }
     }
 
     fn clear_claims() -> TestClaims {

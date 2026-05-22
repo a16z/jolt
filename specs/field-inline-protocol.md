@@ -478,7 +478,7 @@ crates/jolt-claims/src/protocols/field_inline/
   mod.rs
   config.rs
   ids.rs
-  stage.rs
+  relation.rs
   formulas/
     mod.rs
     dimensions.rs
@@ -505,7 +505,7 @@ field registers:
 
 Inside `protocols::field_inline`, `registers` means FR registers. The formulas
 should use the same generic claim-expression machinery as `protocols::jolt`,
-but with field-inline-specific stage IDs, challenge IDs, opening IDs, and
+but with field-inline-specific relation IDs, challenge IDs, opening IDs, and
 dimension types. `jolt-verifier` owns the composition step that batches these
 field-inline claims into the appropriate verifier stages alongside ordinary
 Jolt claims.
@@ -513,7 +513,7 @@ Jolt claims.
 Initial protocol IDs:
 
 ```rust
-pub enum FieldInlineStageId {
+pub enum FieldInlineRelationId {
     FieldRegistersSpartanOuter,
     FieldRegistersProduct,
     FieldRegistersClaimReduction,
@@ -725,7 +725,7 @@ generic claim, sumcheck, transcript, and opening R1CS helpers.
 Each step should be reviewed before continuing to the next.
 
 1. Add `jolt-claims::protocols::field_inline`.
-   - Add field-register stage IDs, challenge IDs, opening IDs, dimensions, and
+   - Add field-register relation IDs, challenge IDs, opening IDs, dimensions, and
      opening helpers in a layout that mirrors `protocols::jolt`.
    - Keep the module focused on FR Twist protocol semantics. Composition with
      ordinary Jolt happens in `jolt-verifier`.
@@ -739,7 +739,7 @@ Each step should be reviewed before continuing to the next.
    - Review gate: formula tests cover small synthetic FR traces.
 
 3. Add explicit `FieldProduct` product-virtualization lane.
-   - Add `FieldRegistersProduct` stage IDs and `FieldProduct` opening metadata.
+   - Add `FieldRegistersProduct` relation IDs and `FieldProduct` opening metadata.
    - Add the native-field relation `FieldProduct = FieldRs1Value * FieldRs2Value`.
    - Compose it with the stage-2 product uniskip/remainder point so it shares
      `r_prod` with field-register claim reduction.
@@ -760,16 +760,29 @@ Each step should be reviewed before continuing to the next.
    - Review gate: bridge-row fixtures cover two-limb and four-limb field
      encodings when both field instantiations exist.
 
-6. Wire verifier support in stage folders.
-   - Add FR payload use and config checks in the `jolt-verifier::stages/*`
-     modules that batch the corresponding FR work.
-   - Stage 2 owns field product and field-register claim reduction at `r_prod`.
-   - Stage 6 owns `FieldRdInc` reduction to the final committed claim.
-   - Stage 8 includes the reduced `FieldRdInc` claim in the ordinary joint PCS
-     RLC.
-   - Follow advice-style optional transcript skipping when FR is disabled.
-   - Review gate: FR-off proofs follow ordinary Jolt transcript shape; FR-on
-     proofs require FR payloads and reject missing or extra claims.
+6. Wire verifier support one stage slice at a time.
+   - Proof/config gate: require `proof.protocol.field_inline` to match the
+     compile-time verifier config before any stage logic runs.
+   - Commitment absorption: absorb `FieldRdInc` and any future FR commitments
+     only when field inline is enabled.
+   - Stage 1 / Spartan outer metadata: make the Spartan/R1CS key metadata
+     field-constraints-aware when FR is enabled.
+   - Stage 2 product virtualization: add `FieldRegistersProduct` as an
+     explicit product lane sharing `r_prod`.
+   - Stage 2 claim reduction: add `FieldRegistersClaimReduction` at the same
+     product point and consume its consistency claims explicitly.
+   - Stage 4: batch `FieldRegistersReadWriteChecking` with the existing
+     read/write work.
+   - Stage 5: batch `FieldRegistersValEvaluation` with the existing
+     val-evaluation work.
+   - Stage 6: reduce the stage-4/stage-5 `FieldRdInc` claims to one final
+     committed claim.
+   - Stage 8: include the reduced `FieldRdInc` claim in the ordinary joint PCS
+     RLC using an explicit polynomial-to-relation mapping.
+   - Review gate for every slice: FR-off ordering, transcript pulls, and
+     opening accumulator entries remain unchanged.
+   - Final review gate before prover work: standard and ZK tests pass with
+     field inline disabled.
 
 7. Add prover/trace wiring.
    - Trace pure field ops through FR accesses.

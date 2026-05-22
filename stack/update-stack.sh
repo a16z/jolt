@@ -166,6 +166,62 @@ restore_owned_paths() {
   done
 }
 
+overlay_order="15"
+overlay_base_ref="09ed244b373f68152b09cc64fb9ed38ca19d6b61"
+overlay_paths=(
+  "crates/jolt-r1cs/src/lib.rs"
+  "crates/jolt-r1cs/src/lowering.rs"
+  "crates/jolt-blindfold/src/r1cs.rs"
+)
+
+is_overlay_path() {
+  local path="$1"
+  local overlay_path
+
+  for overlay_path in "${overlay_paths[@]}"; do
+    if [[ "$path" == "$overlay_path" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+filter_overlay_paths() {
+  local input="$1"
+  local output="$2"
+  local path
+
+  : > "$output"
+  while IFS= read -r path; do
+    if ! is_overlay_path "$path"; then
+      printf '%s\n' "$path" >> "$output"
+    fi
+  done < "$input"
+}
+
+restore_overlay_base_paths() {
+  local order="$1"
+  local owned_paths_file="$2"
+  local paths=()
+  local overlay_path
+
+  if [[ "$order" == "$overlay_order" ]]; then
+    return
+  fi
+
+  for overlay_path in "${overlay_paths[@]}"; do
+    if grep -Fxq "$overlay_path" "$owned_paths_file"; then
+      paths+=("$overlay_path")
+    fi
+  done
+
+  if ((${#paths[@]})); then
+    git rev-parse --verify "$overlay_base_ref^{commit}" >/dev/null
+    git restore --source "$overlay_base_ref" -- "${paths[@]}"
+    echo "  restored overlay base for ${#paths[@]} shared wrapper path(s)"
+  fi
+}
+
 effective_owned_paths() {
   local order="$1"
   local pathspecs="$2"
@@ -187,6 +243,7 @@ effective_owned_paths() {
   local later_paths=()
   local later_file
   local remaining_file
+  local filtered_later_file
 
   while IFS=$'\t' read -r later_order later_branch later_title later_pathspecs; do
     [[ -z "${later_order:-}" || "$later_order" == \#* ]] && continue
@@ -206,10 +263,12 @@ effective_owned_paths() {
 
     later_file="$(mktemp)"
     remaining_file="$(mktemp)"
+    filtered_later_file="$(mktemp)"
     git diff --name-only "$base_ref...$source_ref" -- "${later_paths[@]}" | sort -u > "$later_file"
-    comm -23 "$output" "$later_file" > "$remaining_file"
+    filter_overlay_paths "$later_file" "$filtered_later_file"
+    comm -23 "$output" "$filtered_later_file" > "$remaining_file"
     mv "$remaining_file" "$output"
-    rm -f "$later_file"
+    rm -f "$later_file" "$filtered_later_file"
   done < "$plan_file"
 }
 
@@ -286,6 +345,7 @@ while IFS=$'\t' read -r order branch title pathspecs; do
 
   mapfile -t owned_pathspecs < "$owned_paths_file"
   restore_owned_paths "$source_ref" "${owned_pathspecs[@]}"
+  restore_overlay_base_paths "$order" "$owned_paths_file"
   apply_manifest_rules "$order"
 
   if ((cargo_metadata)); then
