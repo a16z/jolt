@@ -45,7 +45,7 @@ pub struct BytecodeClaimReductionParams<F: JoltField> {
     pub eta_powers: [F; NUM_VAL_STAGES],
     /// Eq weights over high bytecode address bits (one per committed chunk).
     pub chunk_rbc_weights: Vec<F>,
-    pub bytecode_T: usize,
+    pub log_bytecode_chunk_size: usize,
     pub bytecode_chunk_count: usize,
     pub bytecode_col_vars: usize,
     pub bytecode_row_vars: usize,
@@ -56,18 +56,18 @@ pub struct BytecodeClaimReductionParams<F: JoltField> {
 impl<F: JoltField> BytecodeClaimReductionParams<F> {
     pub fn new(
         bytecode_read_raf_params: &BytecodeReadRafSumcheckParams<F>,
-        full_bytecode_len: usize,
+        bytecode_len: usize,
         bytecode_chunk_count: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
         assert!(
-            full_bytecode_len.is_multiple_of(bytecode_chunk_count),
-            "bytecode chunk count ({bytecode_chunk_count}) must divide bytecode_len ({full_bytecode_len})"
+            bytecode_len.is_multiple_of(bytecode_chunk_count),
+            "bytecode chunk count ({bytecode_chunk_count}) must divide bytecode_len ({bytecode_len})"
         );
-        let bytecode_t = (full_bytecode_len / bytecode_chunk_count).log_2();
-        let bytecode_t_full = full_bytecode_len.log_2();
+        let log_bytecode_chunk_size = (bytecode_len / bytecode_chunk_count).log_2();
+        let log_bytecode_len = bytecode_len.log_2();
 
         let eta: F = transcript.challenge_scalar();
         let mut eta_powers = [F::one(); NUM_VAL_STAGES];
@@ -79,8 +79,8 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
             VirtualPolynomial::BytecodeReadRafAddrClaim,
             SumcheckId::BytecodeReadRafAddressPhase,
         );
-        debug_assert_eq!(r_bc_full.r.len(), bytecode_t_full);
-        let dropped_bits = bytecode_t_full - bytecode_t;
+        debug_assert_eq!(r_bc_full.r.len(), log_bytecode_len);
+        let dropped_bits = log_bytecode_len - log_bytecode_chunk_size;
         let chunk_rbc_weights = if dropped_bits == 0 {
             vec![F::one()]
         } else {
@@ -91,9 +91,8 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
 
         let lane_weights = compute_lane_weights(bytecode_read_raf_params, accumulator, &eta_powers);
 
-        // bytecode_K is the committed lane capacity (already next-power-of-two padded).
-        let bytecode_k = committed_lanes();
-        let total_vars = bytecode_k.log_2() + bytecode_t;
+        let log_committed_lane_count = committed_lanes().log_2();
+        let total_vars = log_committed_lane_count + log_bytecode_chunk_size;
         // Bytecode uses its own balanced dimensions (independent from Main).
         // In Stage 8 it is embedded as a top-left block in Joint.
         let (bytecode_col_vars, bytecode_row_vars) = DoryGlobals::balanced_sigma_nu(total_vars);
@@ -109,7 +108,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
             eta,
             eta_powers,
             chunk_rbc_weights,
-            bytecode_T: bytecode_t,
+            log_bytecode_chunk_size,
             bytecode_chunk_count,
             bytecode_col_vars,
             bytecode_row_vars,
@@ -459,7 +458,7 @@ fn evaluate_bytecode_eq_combined<F: JoltField>(
             (lane, cycle)
         }
         DoryLayout::AddressMajor => {
-            let (cycle, lane) = opening_point.r.split_at(params.bytecode_T);
+            let (cycle, lane) = opening_point.r.split_at(params.log_bytecode_chunk_size);
             (lane, cycle)
         }
     };
@@ -484,7 +483,7 @@ fn native_index_to_lane_cycle<F: JoltField>(
     params: &BytecodeClaimReductionParams<F>,
     index: usize,
 ) -> (usize, usize) {
-    let bytecode_len = 1usize << params.bytecode_T;
+    let bytecode_len = 1usize << params.log_bytecode_chunk_size;
     match DoryGlobals::get_layout() {
         DoryLayout::CycleMajor => (index / bytecode_len, index % bytecode_len),
         DoryLayout::AddressMajor => (index % committed_lanes(), index / committed_lanes()),
