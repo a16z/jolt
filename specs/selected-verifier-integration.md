@@ -357,13 +357,14 @@ When enabled:
 
 ```text
 validate_proof_config requires proof.protocol.field_inline to match verifier config
-commitment absorption includes FieldRegisters commitments: FieldRdInc and FieldRegistersRa(i)
+commitment absorption includes the FieldRdInc field-register commitment
 jolt-r1cs selected constraints compose RV64 rows with field-inline rows
 stage 1 composes selected Spartan outer openings and public coefficients
 stage 2 extends product virtualization with field product lanes
 stage 2 batches field-register claim reduction at the product point
 stage 4 batches FR read/write checking
 stage 5 batches FR val evaluation
+stage 6 extends BytecodeReadRaf to anchor FR RA/WA and field op flags to BytecodeRa(i)
 stage 6 batches FieldRdInc reduction
 stage 8 includes reduced FieldRdInc in the joint opening RLC
 ```
@@ -393,8 +394,7 @@ Each slice has a small review gate and must preserve the FR-off path.
 1. Commitment and preamble absorption.
    - Absorb FR commitments only when field inline is enabled.
    - For v1 this includes the nested `FieldInlineCommitments {
-     field_registers: FieldRegistersCommitments { rd_inc, ra } }` payload,
-     where `ra` stores `FieldRegistersRa(i)` commitments.
+     field_registers: FieldRegistersCommitments { rd_inc } }` payload.
    - The `jolt-core` compatibility converter is unavailable for
      `field-inline` builds until the prover path can supply this nested
      payload.
@@ -464,27 +464,52 @@ Each slice has a small review gate and must preserve the FR-off path.
 6. Stage 4 field-register read/write checking.
    - Add the FR Twist read/write instance over `T * 16`.
    - Batch it with the existing stage-4 read/write work.
+   - Output `FieldRegistersVal`, `FieldRs1Ra`, `FieldRs2Ra`, `FieldRdWa`,
+     and `FieldRdInc`; the FR RA/WA outputs are later consumed by
+     `BytecodeReadRaf`.
    - Review gate: FR-off stage 4 transcript and accumulator entries are
      unchanged; FR-on rejects missing FR read/write payload.
 
 7. Stage 5 field-register val evaluation.
    - Add `FieldRegistersValEvaluation` using the stage-5 batching pattern.
    - Review gate: FR-off stage 5 is unchanged; FR-on produces the expected
-     `FieldRegistersVal` and `FieldRdInc` opening claims.
+     `FieldRdWa` and `FieldRdInc` opening claims.
 
-8. Stage 6 `FieldRdInc` reduction.
+8. Stage 6 bytecode read-RAF field-inline anchoring.
+   - Extend `BytecodeReadRaf` when field inline is enabled, rather than adding
+     a separate field-bytecode verifier route.
+   - Consume field-inline op flags from selected Spartan outer, FR RA/WA claims
+     from stage 4, and `FieldRdWa` from stage 5.
+   - Check those virtual openings against the field opcode and field operands
+     encoded in the selected bytecode row.
+   - Require verifier preprocessing to carry the field-inline bytecode side
+     table when field inline is enabled; missing metadata is a verifier error.
+   - Extend the existing Stage1/Stage4/Stage5 bytecode RLC powers by appending
+     the field op flags and field-register access terms. FR-off keeps the
+     ordinary challenge counts and transcript order.
+   - In BlindFold mode, lower the same mixed `BytecodeReadRaf` input
+     expression: Jolt openings stay `JoltOpeningId`, FR openings stay
+     `FieldInlineOpeningId`, and the shared bytecode challenges remain
+     `JoltChallengeId`.
+   - Keep the committed output as `BytecodeRa(i)@BytecodeReadRaf`, so the
+     existing hamming/final-opening path anchors the field access selectors.
+   - Review gate: there is no `FieldRegistersRa(i)` commitment or transcript
+     absorption; tampering with FR access selectors fails through
+     `BytecodeReadRaf`.
+
+9. Stage 6 `FieldRdInc` reduction.
    - Reduce the stage-4 and stage-5 semantic openings of `FieldRdInc` to one
      final committed claim.
    - Review gate: the reduced claim is the only `FieldRdInc` claim handed to
      the final opening planner.
 
-9. Stage 8 joint opening inclusion.
+10. Stage 8 joint opening inclusion.
    - Add the reduced `FieldRdInc` opening to the joint opening RLC with an
      explicit polynomial-to-relation mapping.
    - Review gate: FR-off final opening order is unchanged; FR-on order is
      deterministic and covered by tests.
 
-10. FR-off regression checkpoint.
+11. FR-off regression checkpoint.
    - Run the ordinary standard and ZK verifier tests with field inline disabled.
    - No prover-side field-inline work starts before this checkpoint is green.
 
@@ -604,7 +629,7 @@ JOLT_VERIFIER_CONFIG:
 
 verify:
   validate_proof_config requires the selected field_inline config
-  absorb nested FieldRegisters commitments
+  absorb the nested FieldRdInc commitment
   run ordinary stages with FR additions
   verify opening phase according to pcs_assist config
 ```
