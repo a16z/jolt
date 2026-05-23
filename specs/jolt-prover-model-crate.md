@@ -428,7 +428,7 @@ Jolt VM:
 
 Jolt VM + field inline:
   base trace rows, field_rows, FR register accesses, FR products, bridge rows,
-  field-register committed oracles, field-inline virtual evals
+  FieldRdInc committed oracle, field-inline virtual evals
 
 Dory assist:
   operation traces, packing witnesses, Miller-loop witness, assist public inputs
@@ -575,9 +575,12 @@ The field-inline witness provider owns:
 - `field_rows`: trace rows where native field instructions or bridge
   instructions are active;
 - FR register read/write events for `FieldRs1`, `FieldRs2`, and `FieldRd`;
-- `FieldRdInc` and `FieldRegistersRa(i)` committed polynomial material;
+- field opcode and field operand metadata needed by the bytecode read-RAF
+  extension;
+- `FieldRdInc` committed polynomial material;
 - virtual FR values: `FieldRs1Value`, `FieldRs2Value`, `FieldRdValue`,
-  `FieldRegistersVal`, and write-address helpers;
+  `FieldRegistersVal`, `FieldRs1Ra`, `FieldRs2Ra`, `FieldRdWa`, and
+  write-address helpers;
 - product witnesses for `FieldProduct = FieldRs1Value * FieldRs2Value` and
   `FieldInvProduct = FieldRs1Value * FieldRdValue`;
 - bridge encodings between ordinary x-register values and native field
@@ -643,13 +646,20 @@ stage 2:
 
 stage 4:
   prove FieldRegistersReadWriteChecking in the read/write batch
-  output FieldRegistersVal, FieldRdWa, and FieldRdInc read/write claims
+  output FieldRegistersVal, FieldRs1Ra, FieldRs2Ra, FieldRdWa, and FieldRdInc
+  read/write claims
 
 stage 5:
   prove FieldRegistersValEvaluation in the val-evaluation batch
   output FieldRdWa and FieldRdInc val-evaluation claims
 
-stage 6:
+stage 6 BytecodeReadRaf:
+  prove the field-inline extension of BytecodeReadRaf
+  bind FieldOpFlag(...), FieldRs1Ra, FieldRs2Ra, and FieldRdWa to the
+  selected bytecode row
+  output the existing BytecodeRa(i)@BytecodeReadRaf claims
+
+stage 6 FieldRegistersIncClaimReduction:
   reduce the stage-4/stage-5 FieldRdInc claims to one
   FieldRdInc@FieldRegistersIncClaimReduction claim
 
@@ -832,7 +842,8 @@ Required coverage:
 - witness provider reference checks for committed and virtual polynomial evals;
 - stage-8 opening plan, ZK opening data, and Dory-assist inputs;
 - field-inline witness provider checks for field_rows, bridge rows,
-  FieldRdInc, FieldRegistersRa(i), FR products, and virtual FR evals;
+  FieldRdInc, FR products, virtual FR evals, and bytecode RAF anchoring of
+  FieldRs1Ra/FieldRs2Ra/FieldRdWa;
 - field-inline transparent and BlindFold prover frontiers accepted by the
   matching `jolt-verifier` frontier;
 - tampering of transcript, dependencies, openings, committed claims, advice
