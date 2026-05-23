@@ -174,6 +174,7 @@ overlay_target_order() {
   case "$path" in
     crates/jolt-hyrax/*|\
     crates/jolt-dory-assist-verifier/*|\
+    crates/jolt-claims/src/protocols/mod.rs|\
     crates/jolt-claims/src/protocols/dory_assist/*|\
     crates/jolt-field/Cargo.toml|\
     crates/jolt-field/src/lib.rs|\
@@ -201,8 +202,10 @@ overlay_target_order() {
       printf '%s\n' 14
       ;;
     crates/jolt-r1cs/src/lib.rs|\
+    crates/jolt-r1cs/Cargo.toml|\
     crates/jolt-r1cs/src/lowering.rs|\
     crates/jolt-r1cs/src/builder.rs|\
+    crates/jolt-r1cs/src/nonnative.rs|\
     crates/jolt-wrapper/*|\
     crates/jolt-sumcheck/src/r1cs.rs|\
     crates/jolt-transcript/Cargo.toml|\
@@ -214,7 +217,6 @@ overlay_target_order() {
       ;;
     crates/jolt-claims/*|\
     crates/jolt-field/src/ring_core.rs|\
-    crates/jolt-r1cs/Cargo.toml|\
     crates/jolt-r1cs/src/constraints/field_constraints.rs|\
     crates/jolt-r1cs/src/constraints/jolt.rs|\
     crates/jolt-r1cs/src/constraints/mod.rs|\
@@ -339,6 +341,9 @@ apply_manifest_rules() {
       ensure_after Cargo.toml '  "crates/jolt-openings",' '  "crates/jolt-verifier",'
       ensure_after Cargo.toml '  "examples/advice-demo/guest",' '  "examples/advice-consumer/guest",'
       ensure_after Cargo.toml 'jolt-openings = { path = "./crates/jolt-openings" }' 'jolt-verifier = { path = "./crates/jolt-verifier" }'
+      ;;
+    13)
+      ensure_after crates/jolt-r1cs/Cargo.toml 'default = ["parallel"]' 'field-inline = ["jolt-claims/field-inline"]'
       ;;
     14)
       if pathspec_matches_ref "$source_ref" "crates/jolt-hyrax/Cargo.toml"; then
