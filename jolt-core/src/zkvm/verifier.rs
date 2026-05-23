@@ -1689,18 +1689,30 @@ impl<
             }
         }
         if let Some(bytecode_reduction_verifier) = self.bytecode_reduction_verifier.as_mut() {
-            let mut params = bytecode_reduction_verifier.params.borrow_mut();
-            if params.precommitted.num_address_phase_rounds() > 0 {
-                params.precommitted.transition_to_address_phase();
+            if bytecode_reduction_verifier
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                bytecode_reduction_verifier
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(bytecode_reduction_verifier);
             }
         }
         if let Some(program_image_reduction_verifier) =
             self.program_image_reduction_verifier.as_mut()
         {
-            let mut params = program_image_reduction_verifier.params.borrow_mut();
-            if params.precommitted.num_address_phase_rounds() > 0 {
-                params.precommitted.transition_to_address_phase();
+            if program_image_reduction_verifier
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                program_image_reduction_verifier
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(program_image_reduction_verifier);
             }
         }

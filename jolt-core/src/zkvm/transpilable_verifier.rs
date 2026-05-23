@@ -49,9 +49,9 @@ use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
-    BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier,
-    PrecommittedClaimReduction, PrecommittedParams, ProgramImageClaimReductionParams,
-    ProgramImageClaimReductionVerifier, RegistersClaimReductionSumcheckVerifier,
+    BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier, PrecommittedParams,
+    ProgramImageClaimReductionParams, ProgramImageClaimReductionVerifier,
+    RegistersClaimReductionSumcheckVerifier,
 };
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
