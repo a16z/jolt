@@ -142,11 +142,16 @@ pub fn validate_bytecode_rows(
             got: bytecode.len(),
         });
     }
-    let field_register_count = 1usize
-        .checked_shl(field_register_log_k as u32)
-        .ok_or(FieldInlineBytecodeValidationError::InvalidFieldRegisterLogK {
+    let shift = u32::try_from(field_register_log_k).map_err(|_| {
+        FieldInlineBytecodeValidationError::InvalidFieldRegisterLogK {
             log_k: field_register_log_k,
-        })?;
+        }
+    })?;
+    let field_register_count = 1usize.checked_shl(shift).ok_or(
+        FieldInlineBytecodeValidationError::InvalidFieldRegisterLogK {
+            log_k: field_register_log_k,
+        },
+    )?;
 
     for (row, entry) in bytecode.iter().enumerate() {
         validate_bytecode_row(row, entry, field_register_count)?;
@@ -222,8 +227,8 @@ where
     if inputs.bytecode.len() != expected_domain {
         return Err(FieldInlineBytecodeReadRafError::Point(
             JoltFormulaPointError::EvaluationDomainLengthMismatch {
-            expected: expected_domain,
-            got: inputs.bytecode.len(),
+                expected: expected_domain,
+                got: inputs.bytecode.len(),
             },
         ));
     }
@@ -348,7 +353,9 @@ fn validate_bytecode_row(
 ) -> Result<(), FieldInlineBytecodeValidationError> {
     let active_count = entry.flags.active_count();
     if active_count == 0 {
-        if entry.operands.rd.is_some() || entry.operands.rs1.is_some() || entry.operands.rs2.is_some()
+        if entry.operands.rd.is_some()
+            || entry.operands.rs1.is_some()
+            || entry.operands.rs2.is_some()
         {
             return Err(FieldInlineBytecodeValidationError::InactiveRowHasOperands { row });
         }
@@ -433,15 +440,12 @@ fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
         .unwrap_or_else(F::zero)
 }
 
-fn require_len<F>(
-    values: &[F],
-    expected: usize,
-) -> Result<(), FieldInlineBytecodeReadRafError> {
+fn require_len<F>(values: &[F], expected: usize) -> Result<(), FieldInlineBytecodeReadRafError> {
     if values.len() < expected {
         return Err(FieldInlineBytecodeReadRafError::Point(
             JoltFormulaPointError::ChallengeLengthMismatch {
-            expected,
-            got: values.len(),
+                expected,
+                got: values.len(),
             },
         ));
     }
@@ -449,15 +453,12 @@ fn require_len<F>(
 }
 
 fn encode_operand(register: Option<u8>, bytes: &mut Vec<u8>) {
-    match register {
-        Some(register) => {
-            bytes.push(1);
-            bytes.push(register);
-        }
-        None => {
-            bytes.push(0);
-            bytes.push(0);
-        }
+    if let Some(register) = register {
+        bytes.push(1);
+        bytes.push(register);
+    } else {
+        bytes.push(0);
+        bytes.push(0);
     }
 }
 
