@@ -293,6 +293,14 @@ impl BatchedSumcheckVerifier {
         }
     }
 
+    /// Checks batched committed-proof consistency through the transcript.
+    ///
+    /// This path is used when BlindFold verifies the hidden claim relations. It
+    /// takes only public statements, not [`SumcheckClaim`] values, so it never
+    /// absorbs `claim.claimed_sum` into the transcript. The caller must absorb
+    /// commitments to those claim scalars before calling this method; batching
+    /// coefficients are squeezed first here, and without that prior binding the
+    /// prover could choose claim openings after seeing the batching challenge.
     pub fn verify_committed_consistency<F, C, T>(
         statements: &[SumcheckStatement],
         proof: &SumcheckProof<F, C>,
