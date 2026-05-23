@@ -1,4 +1,7 @@
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    sync::Arc,
+};
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -19,14 +22,14 @@ use tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct FullProgramPreprocessing {
-    pub bytecode: BytecodePreprocessing,
+    pub bytecode: Arc<BytecodePreprocessing>,
     pub ram: RAMPreprocessing,
 }
 
 impl Default for FullProgramPreprocessing {
     fn default() -> Self {
         Self {
-            bytecode: BytecodePreprocessing::default(),
+            bytecode: Arc::new(BytecodePreprocessing::default()),
             ram: RAMPreprocessing {
                 min_bytecode_address: 0,
                 bytecode_words: Vec::new(),
@@ -43,11 +46,11 @@ impl FullProgramPreprocessing {
         entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
         Ok(Self {
-            bytecode: BytecodePreprocessing::preprocess(
+            bytecode: Arc::new(BytecodePreprocessing::preprocess(
                 instructions,
                 entry_address,
                 RV64IMAC_JOLT,
-            )?,
+            )?),
             ram: RAMPreprocessing::preprocess(memory_init),
         })
     }
@@ -72,6 +75,7 @@ impl FullProgramPreprocessing {
         ProgramMetadata {
             entry_address: self.bytecode.entry_address,
             min_bytecode_address: self.ram.min_bytecode_address,
+            entry_bytecode_index: self.entry_bytecode_index(),
             program_image_len_words: self.program_image_len_words(),
             bytecode_len: self.bytecode_len(),
         }
@@ -386,9 +390,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 
     #[inline(always)]
     pub fn entry_bytecode_index(&self) -> usize {
-        self.as_full()
-            .expect("full program preprocessing required to compute entry bytecode index")
-            .entry_bytecode_index()
+        self.meta().entry_bytecode_index()
     }
 
     pub fn to_verifier_program(&self) -> Self {
@@ -409,11 +411,16 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 pub struct ProgramMetadata {
     pub entry_address: u64,
     pub min_bytecode_address: u64,
+    pub entry_bytecode_index: usize,
     pub program_image_len_words: usize,
     pub bytecode_len: usize,
 }
 
 impl ProgramMetadata {
+    pub fn entry_bytecode_index(&self) -> usize {
+        self.entry_bytecode_index
+    }
+
     pub fn program_image_len_words_padded(&self) -> usize {
         self.program_image_len_words.next_power_of_two().max(2)
     }

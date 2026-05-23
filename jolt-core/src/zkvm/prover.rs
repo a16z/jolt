@@ -1222,7 +1222,7 @@ impl<
         let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
-            Arc::new(self.preprocessing.materialized_program().bytecode.clone()),
+            self.preprocessing.bytecode(),
         );
         let mut booleanity = BooleanityAddressSumcheckProver::initialize(
             booleanity_params,
@@ -1354,7 +1354,7 @@ impl<
         if self.preprocessing.is_committed_mode() {
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
-                &bytecode_read_raf_params,
+                bytecode_read_raf_params.stage_gammas(),
                 self.preprocessing.shared.bytecode_size(),
                 bytecode_chunk_count,
                 precommitted_scheduling_reference,
@@ -1397,7 +1397,7 @@ impl<
         let mut bytecode_read_raf = BytecodeReadRafCycleSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
-            Arc::new(self.preprocessing.materialized_program().bytecode.clone()),
+            self.preprocessing.bytecode(),
             &self.opening_accumulator,
         );
         let mut booleanity = BooleanityCycleSumcheckProver::initialize(
@@ -2253,7 +2253,7 @@ impl<
         };
 
         let streaming_data = Arc::new(RLCStreamingData {
-            bytecode: Arc::new(self.preprocessing.materialized_program().bytecode.clone()),
+            bytecode: self.preprocessing.bytecode(),
             memory_layout: self.preprocessing.shared.memory_layout.clone(),
         });
 
@@ -2400,13 +2400,12 @@ where
         compress: ark_serialize::Compress,
         validate: ark_serialize::Validate,
     ) -> Result<Self, ark_serialize::SerializationError> {
+        let generators = PCS::ProverSetup::deserialize_with_mode(&mut reader, compress, validate)?;
+        let shared =
+            JoltSharedPreprocessing::deserialize_with_mode(&mut reader, compress, validate)?;
         Ok(Self {
-            generators: PCS::ProverSetup::deserialize_with_mode(&mut reader, compress, validate)?,
-            shared: JoltSharedPreprocessing::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
+            generators,
+            shared,
             _curve: std::marker::PhantomData,
         })
     }
@@ -2471,6 +2470,10 @@ where
             .program
             .as_full()
             .expect("prover requires materialized program preprocessing")
+    }
+
+    pub fn bytecode(&self) -> Arc<crate::zkvm::bytecode::BytecodePreprocessing> {
+        Arc::clone(&self.materialized_program().bytecode)
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -3699,7 +3702,7 @@ mod tests {
         let mut tampered_shared = shared.clone();
         match &mut tampered_shared.program {
             ProgramPreprocessing::Full(full) => {
-                full.bytecode.entry_address = e_entry.wrapping_add(4);
+                Arc::make_mut(&mut full.bytecode).entry_address = e_entry.wrapping_add(4);
             }
             ProgramPreprocessing::Committed(_) => {
                 panic!("test uses full program preprocessing");

@@ -93,7 +93,6 @@ use crate::{
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::CommittedPolynomial,
 };
-use common::constants::BYTES_PER_INSTRUCTION;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -1115,11 +1114,7 @@ impl<
             .preprocessing
             .shared
             .program_meta
-            .entry_address
-            .saturating_sub(self.preprocessing.shared.program_meta.min_bytecode_address)
-            as usize
-            / BYTES_PER_INSTRUCTION
-            + 1;
+            .entry_bytecode_index();
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             program_preprocessing,
             n_cycle_vars,
@@ -1203,11 +1198,6 @@ impl<
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
         booleanity_params: BooleanitySumcheckParams<F>,
     ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
-        let bytecode_reduction_seed_params = bytecode_read_raf_params.clone();
-        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(
-            bytecode_read_raf_params,
-            &self.opening_accumulator,
-        );
         let ram_hamming_booleanity =
             HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
         let booleanity =
@@ -1261,7 +1251,7 @@ impl<
         if self.preprocessing.shared.program.is_committed() {
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
-                &bytecode_reduction_seed_params,
+                bytecode_read_raf_params.stage_gammas(),
                 self.preprocessing.shared.bytecode_size(),
                 bytecode_chunk_count,
                 precommitted_scheduling_reference,
@@ -1289,6 +1279,11 @@ impl<
                 program_image_reduction_params,
             ));
         }
+
+        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(
+            bytecode_read_raf_params,
+            &self.opening_accumulator,
+        );
 
         let mut instances: Vec<
             &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
