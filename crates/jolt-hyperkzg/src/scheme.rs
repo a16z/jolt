@@ -26,7 +26,8 @@ use crate::types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, Hyper
 ///
 /// Generic over `P: PairingGroup`. Implements [`CommitmentScheme`] and
 /// [`AdditivelyHomomorphic`] from `jolt-openings`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(bound = "")]
 pub struct HyperKZGScheme<P: PairingGroup> {
     _phantom: PhantomData<P>,
 }

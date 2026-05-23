@@ -317,6 +317,10 @@ where
     )
 }
 
+pub fn cycle_phase_input_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [ram_val_check_advice_opening(kind)]
+}
+
 pub fn cycle_phase_output_openings(
     kind: JoltAdviceKind,
     dimensions: AdviceClaimReductionDimensions,
@@ -326,6 +330,14 @@ pub fn cycle_phase_output_openings(
     } else {
         vec![final_advice_opening(kind)]
     }
+}
+
+pub fn address_phase_input_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [cycle_phase_advice_opening(kind)]
+}
+
+pub fn address_phase_output_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [final_advice_opening(kind)]
 }
 
 pub fn ram_val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
@@ -368,7 +380,7 @@ mod tests {
         assert_eq!(claims.sumcheck, with_address_phase().cycle_sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![ram_val_check_advice_opening(JoltAdviceKind::Trusted)]
+            cycle_phase_input_openings(JoltAdviceKind::Trusted).to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
@@ -381,7 +393,7 @@ mod tests {
     #[test]
     fn cycle_phase_without_address_phase_exposes_final_scale() {
         let claims = cycle_phase::<Fr>(JoltAdviceKind::Untrusted, without_address_phase());
-        let mut expected_openings = vec![ram_val_check_advice_opening(JoltAdviceKind::Untrusted)];
+        let mut expected_openings = cycle_phase_input_openings(JoltAdviceKind::Untrusted).to_vec();
         expected_openings.extend(cycle_phase_output_openings(
             JoltAdviceKind::Untrusted,
             without_address_phase(),
@@ -405,11 +417,11 @@ mod tests {
         assert_eq!(claims.sumcheck, with_address_phase().address_sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
+            address_phase_input_openings(JoltAdviceKind::Trusted).to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![final_advice_opening(JoltAdviceKind::Trusted)]
+            address_phase_output_openings(JoltAdviceKind::Trusted).to_vec()
         );
         assert_eq!(
             claims.required_publics(),

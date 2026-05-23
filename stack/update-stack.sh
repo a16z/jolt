@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: stack/update-stack.sh [--apply] [--rebuild] [--commit] [--push] [--cargo-metadata] [--check-coverage] [--from REF] [--base REF] [--only NN]
+Usage: stack/update-stack.sh [--apply] [--rebuild] [--commit] [--push] [--cargo-metadata] [--check-coverage] [--from REF] [--base REF] [--start-at NN] [--only NN]
 
 Materializes the draft PR stack described by stack/branches.tsv.
 
@@ -22,13 +22,14 @@ Options:
                 fail if a source-ref diff path is not assigned to a stack slice
   --from REF    source ref to slice from (default: refactor/audit-prep)
   --base REF    base ref for the first stack branch (default: origin/main)
+  --start-at NN first stack item to sync (default: 07, or STACK_START_AT)
   --only NN     update only one stack item, e.g. 08
   -h, --help    show this help
 
 Examples:
   stack/update-stack.sh
   stack/update-stack.sh --apply --only 08
-  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
+  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
 EOF
 }
 
@@ -40,6 +41,7 @@ cargo_metadata=0
 check_coverage=0
 source_ref="refactor/audit-prep"
 base_ref="origin/main"
+start_at="${STACK_START_AT:-07}"
 only=""
 
 while (($#)); do
@@ -68,6 +70,10 @@ while (($#)); do
       ;;
     --base)
       base_ref="${2:?--base requires a ref}"
+      shift
+      ;;
+    --start-at)
+      start_at="${2:?--start-at requires an order number}"
       shift
       ;;
     --only)
@@ -147,23 +153,29 @@ restore_owned_paths() {
 
   local existing_pathspecs=()
   local missing_pathspecs=()
+  local existing_pathspec_count=0
+  local missing_pathspec_count=0
   local pathspec
 
   for pathspec in "$@"; do
     if pathspec_matches_ref "$ref" "$pathspec" || pathspec_matches_index "$pathspec"; then
       existing_pathspecs+=("$pathspec")
+      existing_pathspec_count=$((existing_pathspec_count + 1))
     else
       missing_pathspecs+=("$pathspec")
+      missing_pathspec_count=$((missing_pathspec_count + 1))
     fi
   done
 
-  if ((${#existing_pathspecs[@]})); then
+  if ((existing_pathspec_count)); then
     git restore --source "$ref" -- "${existing_pathspecs[@]}"
   fi
 
-  for pathspec in "${missing_pathspecs[@]}"; do
-    echo "  skipped missing optional path: $pathspec"
-  done
+  if ((missing_pathspec_count)); then
+    for pathspec in "${missing_pathspecs[@]}"; do
+      echo "  skipped missing optional path: $pathspec"
+    done
+  fi
 }
 
 effective_owned_paths() {
@@ -173,7 +185,7 @@ effective_owned_paths() {
   local current_paths=()
   read -r -a current_paths <<< "$pathspecs"
 
-  if ((${#current_paths[@]})); then
+  if [[ -n "$pathspecs" ]]; then
     git diff --name-only "$base_ref...$source_ref" -- "${current_paths[@]}" | sort -u > "$output"
   else
     : > "$output"
@@ -200,7 +212,7 @@ effective_owned_paths() {
     fi
 
     read -r -a later_paths <<< "$later_pathspecs"
-    if ((${#later_paths[@]} == 0)); then
+    if [[ -z "$later_pathspecs" ]]; then
       continue
     fi
 
@@ -238,7 +250,9 @@ apply_manifest_rules() {
 
 previous_branch="$base_ref"
 matched=0
+start_seen=0
 updated_branches=()
+updated_branch_count=0
 coverage_file=""
 if ((check_coverage)); then
   coverage_file="$(mktemp)"
@@ -247,6 +261,19 @@ fi
 
 while IFS=$'\t' read -r order branch title pathspecs; do
   [[ -z "${order:-}" || "$order" == \#* ]] && continue
+
+  if [[ -n "$start_at" && "$start_seen" -eq 0 ]]; then
+    if [[ "$order" != "$start_at" ]]; then
+      if ((check_coverage)); then
+        skipped_paths_file="$(mktemp)"
+        effective_owned_paths "$order" "$pathspecs" "$skipped_paths_file"
+        cat "$skipped_paths_file" >> "$coverage_file"
+        rm -f "$skipped_paths_file"
+      fi
+      continue
+    fi
+    start_seen=1
+  fi
 
   if [[ -n "$only" && "$order" != "$only" ]]; then
     previous_branch="$branch"
@@ -284,8 +311,15 @@ while IFS=$'\t' read -r order branch title pathspecs; do
     git switch -c "$branch" "$previous_branch"
   fi
 
-  mapfile -t owned_pathspecs < "$owned_paths_file"
-  restore_owned_paths "$source_ref" "${owned_pathspecs[@]}"
+  owned_pathspecs=()
+  owned_pathspec_count=0
+  while IFS= read -r owned_pathspec; do
+    owned_pathspecs+=("$owned_pathspec")
+    owned_pathspec_count=$((owned_pathspec_count + 1))
+  done < "$owned_paths_file"
+  if ((owned_pathspec_count)); then
+    restore_owned_paths "$source_ref" "${owned_pathspecs[@]}"
+  fi
   apply_manifest_rules "$order"
 
   if ((cargo_metadata)); then
@@ -308,9 +342,15 @@ while IFS=$'\t' read -r order branch title pathspecs; do
   fi
 
   updated_branches+=("$branch")
+  updated_branch_count=$((updated_branch_count + 1))
 
   previous_branch="$branch"
 done < "$plan_file"
+
+if [[ -n "$start_at" && "$start_seen" -eq 0 ]]; then
+  echo "no stack item with start order $start_at" >&2
+  exit 1
+fi
 
 if [[ -n "$only" && "$matched" -eq 0 ]]; then
   echo "no stack item with order $only" >&2
@@ -341,13 +381,15 @@ fi
 
 if ((push_changes)); then
   echo
-  echo "pushing ${#updated_branches[@]} stack branches"
-  for branch in "${updated_branches[@]}"; do
-    remote_sha="$(git ls-remote --heads origin "$branch" | awk '{print $1}')"
-    if [[ -n "$remote_sha" ]]; then
-      git push --force-with-lease="refs/heads/$branch:$remote_sha" origin "$branch:refs/heads/$branch"
-    else
-      git push origin "$branch:refs/heads/$branch"
-    fi
-  done
+  echo "pushing $updated_branch_count stack branches"
+  if ((updated_branch_count)); then
+    for branch in "${updated_branches[@]}"; do
+      remote_sha="$(git ls-remote --heads origin "$branch" | awk '{print $1}')"
+      if [[ -n "$remote_sha" ]]; then
+        git push --force-with-lease="refs/heads/$branch:$remote_sha" origin "$branch:refs/heads/$branch"
+      else
+        git push origin "$branch:refs/heads/$branch"
+      fi
+    done
+  fi
 fi
