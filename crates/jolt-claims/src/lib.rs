@@ -7,5 +7,5 @@ mod util;
 
 pub use claims::{
     challenge, constant, opening, public, ClaimExpression, ConsistencyClaim, Expr,
-    InputClaimExpression, OutputClaimExpression, SameEvaluation, SameEvaluationAs, Source, Term,
+    InputClaimExpression, OutputClaimExpression, Source, Term,
 };
