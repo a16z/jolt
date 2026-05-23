@@ -30,8 +30,8 @@ truth.
 | 06 | `stack/06-jolt-r1cs-builder-lowering` | `stack/05-jolt-claims-crate` | `jolt-r1cs` builder/lowering/expression integration |
 | 07 | `stack/07-committed-sumcheck-r1cs` | `stack/06-jolt-r1cs-builder-lowering` | committed sumcheck messages, domains, verifier changes, R1CS feature |
 | 08 | `stack/08-jolt-blindfold-crate` | `stack/07-committed-sumcheck-r1cs` | new generic `jolt-blindfold` crate |
-| 08a | `stack/08a-jolt-core-blindfold-hardening` | `stack/08-jolt-blindfold-crate` | `jolt-core` BlindFold construction hardening and ZK fixture config |
-| 09 | `stack/09-jolt-verifier-crate` | `stack/08a-jolt-core-blindfold-hardening` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures |
+| 08a | `stack/08a-jolt-core-blindfold-hardening` | `stack/08-jolt-blindfold-crate` | `jolt-core` BlindFold construction hardening |
+| 09 | `stack/09-jolt-verifier-crate` | `stack/08a-jolt-core-blindfold-hardening` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures, and verifier test config |
 | 10 | `stack/10-jolt-prover-spec` | `stack/09-jolt-verifier-crate` | `specs/jolt-prover-model-crate.md` |
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
@@ -121,9 +121,10 @@ crate first appears:
 - PR 08: add `crates/jolt-blindfold` to workspace members and add
   `jolt-blindfold = { path = "./crates/jolt-blindfold" }`.
 - PR 08a: no root manifest changes; this slice patches existing `jolt-core`
-  BlindFold construction and test fixture config before `jolt-verifier`.
+  BlindFold construction before `jolt-verifier`.
 - PR 09: add `crates/jolt-verifier` and `examples/advice-consumer/guest` to
-  workspace members and add `jolt-verifier = { path = "./crates/jolt-verifier" }`.
+  workspace members, add `jolt-verifier = { path = "./crates/jolt-verifier" }`,
+  and add verifier-specific test fixture config.
 
 With `--cargo-metadata`, the script refreshes `Cargo.lock` after those manifest
 changes.
