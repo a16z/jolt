@@ -206,6 +206,8 @@ overlay_target_order() {
     crates/jolt-r1cs/src/lowering.rs|\
     crates/jolt-r1cs/src/builder.rs|\
     crates/jolt-r1cs/src/nonnative.rs|\
+    crates/jolt-r1cs/tests|\
+    crates/jolt-r1cs/tests/*|\
     crates/jolt-wrapper/*|\
     crates/jolt-sumcheck/src/r1cs.rs|\
     crates/jolt-transcript/Cargo.toml|\
