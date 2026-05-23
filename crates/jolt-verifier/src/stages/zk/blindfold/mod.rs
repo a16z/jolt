@@ -953,6 +953,7 @@ where
         let field_values = field_bytecode::read_raf_public_values(
             field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
                 bytecode: field_inline_bytecode,
+                field_register_log_k: field_log_k,
                 r_address: &bytecode_opening.r_address,
                 r_cycle: &bytecode_opening.r_cycle,
                 stage1_cycle_point: &stage1_cycle,
