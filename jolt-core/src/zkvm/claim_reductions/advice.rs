@@ -1,7 +1,5 @@
 //! Two-phase advice claim reduction (Stage 6 cycle -> Stage 7 address).
 
-use std::cell::RefCell;
-
 use crate::field::JoltField;
 use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::eq_poly::EqPolynomial;
@@ -233,6 +231,18 @@ impl<F: JoltField> PrecommittedParams<F> for AdviceClaimReductionParams<F> {
     fn precommitted_mut(&mut self) -> &mut PrecommittedClaimReduction<F> {
         &mut self.precommitted
     }
+
+    fn get_cycle_challenges<A: AbstractVerifierOpeningAccumulator<F>>(
+        &self,
+        accumulator: &A,
+    ) -> Vec<F::Challenge> {
+        let (cycle_opening_point, _) = accumulator
+            .get_advice_opening(self.kind, SumcheckId::AdviceClaimReductionCyclePhase)
+            .expect("Cycle phase intermediate claim not found");
+        let opening_point_le: OpeningPoint<LITTLE_ENDIAN, F> =
+            cycle_opening_point.match_endianness();
+        opening_point_le.r
+    }
 }
 
 #[derive(Allocative)]
@@ -324,18 +334,17 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
     ) {
         let params = self.core.params();
         let opening_point = params.normalize_opening_point(sumcheck_challenges);
-        if params.is_cycle_phase() {
+        if params.is_cycle_phase() && params.precommitted.num_address_phase_rounds() > 0 {
             let c_mid = self.core.cycle_intermediate_claim();
-
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point.clone(),
                     c_mid,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point.clone(),
                     c_mid,
                 ),
             }
@@ -364,7 +373,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
 }
 
 pub struct AdviceClaimReductionVerifier<F: JoltField> {
-    pub params: RefCell<AdviceClaimReductionParams<F>>,
+    pub params: AdviceClaimReductionParams<F>,
 }
 
 impl<F: JoltField> AdviceClaimReductionVerifier<F> {
@@ -381,9 +390,7 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
             accumulator,
         );
 
-        Self {
-            params: RefCell::new(params),
-        }
+        Self { params }
     }
 }
 
@@ -391,11 +398,11 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     SumcheckInstanceVerifier<F, T, A> for AdviceClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        unsafe { &*self.params.as_ptr() }
+        &self.params
     }
 
     fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
-        let params = self.params.borrow();
+        let params = &self.params;
         match params.precommitted.phase {
             PrecommittedPhase::CycleVariables
                 if params.precommitted.num_address_phase_rounds() > 0 =>
@@ -418,23 +425,19 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 
     fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
-        let mut params = self.params.borrow_mut();
-        if params.is_cycle_phase() {
+        let params = &self.params;
+        if params.is_cycle_phase() && params.precommitted.num_address_phase_rounds() > 0 {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point.clone(),
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point,
                 ),
             }
-            let opening_point_le: OpeningPoint<LITTLE_ENDIAN, F> = opening_point.match_endianness();
-            params
-                .precommitted
-                .set_cycle_var_challenges(opening_point_le.r);
         }
 
         if params.precommitted.num_address_phase_rounds() == 0 || !params.is_cycle_phase() {

@@ -47,7 +47,7 @@ use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
-    PrecommittedClaimReduction, RegistersClaimReductionSumcheckVerifier,
+    PrecommittedClaimReduction, PrecommittedParams, RegistersClaimReductionSumcheckVerifier,
 };
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
@@ -283,9 +283,9 @@ impl<
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
         // Construct full params from the validated config
-        let bytecode_K = preprocessing.shared.bytecode.code_size;
+        let bytecode_len = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_len, proof.ram_K);
 
         Ok(TranspilableVerifier {
             trusted_advice_commitment,
@@ -314,9 +314,9 @@ impl<
         opening_accumulator: A,
     ) -> Self {
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let bytecode_K = preprocessing.shared.bytecode.code_size;
+        let bytecode_len = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_len, proof.ram_K);
 
         Self {
             trusted_advice_commitment,
@@ -738,18 +738,30 @@ impl<
         if let Some(advice_reduction_verifier_trusted) =
             self.advice_reduction_verifier_trusted.as_mut()
         {
-            let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
-            if params.precommitted.num_address_phase_rounds() > 0 {
-                params.precommitted.transition_to_address_phase();
+            if advice_reduction_verifier_trusted
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                advice_reduction_verifier_trusted
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
         if let Some(advice_reduction_verifier_untrusted) =
             self.advice_reduction_verifier_untrusted.as_mut()
         {
-            let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
-            if params.precommitted.num_address_phase_rounds() > 0 {
-                params.precommitted.transition_to_address_phase();
+            if advice_reduction_verifier_untrusted
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                advice_reduction_verifier_untrusted
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(advice_reduction_verifier_untrusted);
             }
         }

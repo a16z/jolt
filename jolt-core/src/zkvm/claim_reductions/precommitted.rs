@@ -5,7 +5,9 @@ use crate::field::JoltField;
 use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
-use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN, LITTLE_ENDIAN};
+use crate::poly::opening_proof::{
+    AbstractVerifierOpeningAccumulator, OpeningPoint, BIG_ENDIAN, LITTLE_ENDIAN,
+};
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 use crate::utils::math::Math;
@@ -190,11 +192,6 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
     }
 
     #[inline]
-    pub fn transition_to_address_phase(&mut self) {
-        self.phase = PrecommittedPhase::AddressVariables;
-    }
-
-    #[inline]
     pub fn num_address_phase_rounds(&self) -> usize {
         self.address_phase_rounds.len()
     }
@@ -337,11 +334,6 @@ impl<F: JoltField> PrecommittedClaimReduction<F> {
     #[inline]
     pub fn record_cycle_challenge(&mut self, challenge: F::Challenge) {
         self.cycle_var_challenges.push(challenge);
-    }
-
-    #[inline]
-    pub fn set_cycle_var_challenges(&mut self, challenges: Vec<F::Challenge>) {
-        self.cycle_var_challenges = challenges;
     }
 }
 
@@ -508,6 +500,27 @@ pub trait PrecommittedParams<F: JoltField>: SumcheckInstanceParams<F> {
     fn is_cycle_phase(&self) -> bool {
         self.precommitted().is_cycle_phase()
     }
+
+    fn get_cycle_challenges<A: AbstractVerifierOpeningAccumulator<F>>(
+        &self,
+        accumulator: &A,
+    ) -> Vec<F::Challenge>;
+
+    fn transition_to_address_phase<A: AbstractVerifierOpeningAccumulator<F>>(
+        &mut self,
+        accumulator: &A,
+    ) {
+        let cycle_challenges = if self.precommitted().num_address_phase_rounds() > 0 {
+            Some(self.get_cycle_challenges(accumulator))
+        } else {
+            None
+        };
+        let precommitted = self.precommitted_mut();
+        if let Some(cycle_challenges) = cycle_challenges {
+            precommitted.cycle_var_challenges = cycle_challenges;
+        }
+        precommitted.phase = PrecommittedPhase::AddressVariables;
+    }
 }
 
 #[derive(Allocative)]
@@ -540,7 +553,7 @@ impl<F: JoltField, P: PrecommittedParams<F>> PrecommittedProver<F, P> {
     }
 
     pub fn transition_to_address_phase(&mut self) {
-        self.params.precommitted_mut().transition_to_address_phase();
+        self.params.precommitted_mut().phase = PrecommittedPhase::AddressVariables;
     }
 
     pub fn set_scale(&mut self, scale: F) {
