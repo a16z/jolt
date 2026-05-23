@@ -58,6 +58,7 @@ use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
     formulas::{
+        bytecode as field_bytecode,
         claim_reductions::{
             increments as field_increments, registers as field_registers_claim_reduction,
         },
@@ -434,6 +435,30 @@ fn map_field_inline_expr<F: Field>(
                         Source::Challenge(id) => {
                             Source::Challenge(VerifierChallengeId::FieldInline(id))
                         }
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn map_field_inline_bytecode_expr<F: Field>(
+    expr: field_bytecode::FieldInlineBytecodeExpr<F>,
+) -> VerifierExpr<F> {
+    Expr {
+        terms: expr
+            .terms
+            .into_iter()
+            .map(|term| Term {
+                coefficient: term.coefficient,
+                factors: term
+                    .factors
+                    .into_iter()
+                    .map(|source| match source {
+                        Source::Opening(id) => Source::Opening(VerifierOpeningId::FieldInline(id)),
+                        Source::Public(()) => unreachable!("field bytecode has no public sources"),
+                        Source::Challenge(id) => Source::Challenge(VerifierChallengeId::Jolt(id)),
                     })
                     .collect(),
             })
@@ -860,7 +885,7 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let bytecode_public_values =
+    let mut bytecode_public_values =
         bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
             bytecode: &input.preprocessing.program.bytecode.bytecode,
             r_address: &bytecode_opening.r_address,
@@ -884,6 +909,71 @@ where
             stage5_gammas: &input.stage6.public.stage5_gammas,
         })
         .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
+    #[cfg(feature = "field-inline")]
+    {
+        let field_inline_bytecode = input
+            .preprocessing
+            .field_inline_bytecode
+            .as_deref()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline bytecode metadata is missing".to_string(),
+            })?;
+        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
+        let field_read_write_opening = &input.stage4.field_registers_read_write_opening_point;
+        let field_val_evaluation_opening = &input
+            .stage5
+            .field_inline
+            .field_registers_val_evaluation
+            .opening_point;
+        if field_read_write_opening.len() != field_log_k + log_t {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: format!(
+                    "field-register read-write opening point length mismatch: expected {}, got {}",
+                    field_log_k + log_t,
+                    field_read_write_opening.len()
+                ),
+            });
+        }
+        if field_val_evaluation_opening.len() != field_log_k + log_t {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: format!(
+                    "field-register val-evaluation opening point length mismatch: expected {}, got {}",
+                    field_log_k + log_t,
+                    field_val_evaluation_opening.len()
+                ),
+            });
+        }
+        let (field_read_write_address, field_read_write_cycle) =
+            field_read_write_opening.split_at(field_log_k);
+        let (field_val_evaluation_address, field_val_evaluation_cycle) =
+            field_val_evaluation_opening.split_at(field_log_k);
+        let field_values = field_bytecode::read_raf_public_values(
+            field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
+                bytecode: field_inline_bytecode,
+                r_address: &bytecode_opening.r_address,
+                r_cycle: &bytecode_opening.r_cycle,
+                stage1_cycle_point: &stage1_cycle,
+                field_register_read_write_point: field_read_write_address,
+                field_register_read_write_cycle_point: field_read_write_cycle,
+                field_register_val_evaluation_point: field_val_evaluation_address,
+                field_register_val_evaluation_cycle_point: field_val_evaluation_cycle,
+                stage1_gammas: &input.stage6.public.stage1_gammas,
+                stage4_gammas: &input.stage6.public.stage4_gammas,
+                stage5_gammas: &input.stage6.public.stage5_gammas,
+            },
+        )
+        .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
+        for (stage_value, field_value) in bytecode_public_values
+            .stage_values
+            .iter_mut()
+            .zip(field_values.stage_values)
+        {
+            *stage_value += field_value;
+        }
+    }
     for index in 0..5 {
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::StageValue(index)),
