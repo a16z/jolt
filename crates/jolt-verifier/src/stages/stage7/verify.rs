@@ -447,7 +447,7 @@ where
         output_claims: claims.clone(),
         batch: VerifiedStage7Batch {
             batching_coefficients: batch.batching_coefficients.clone(),
-            sumcheck_point: batch.reduction.point.clone(),
+            sumcheck_point: batch.reduction.point.as_slice().to_vec(),
             sumcheck_final_claim: batch.reduction.value,
             expected_final_claim,
             hamming_weight_claim_reduction: VerifiedHammingWeightClaimReductionSumcheck {
@@ -778,7 +778,7 @@ fn advice_address_phase_input<F: Field>(
     stage6: &Stage6ClearOutput<F>,
     kind: JoltAdviceKind,
 ) -> Result<F, VerifierError> {
-    let [advice_input] = advice::address_phase_input_openings(kind);
+    let advice_input = advice::cycle_phase_advice_opening(kind);
     claim.input.expression().try_evaluate(
         |id| match *id {
             id if id == advice_input => stage6_advice_cycle_phase_claim(stage6, kind),
@@ -819,7 +819,7 @@ fn verify_advice_address_phase<F: Field>(
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: advice::ram_val_check_advice_opening(kind),
         })?;
-    let [final_advice_opening] = advice::address_phase_output_openings(kind);
+    let final_advice_opening = advice::final_advice_opening(kind);
     let expected_output_claim = claim.output.expression().try_evaluate(
         |id| match *id {
             id if id == final_advice_opening => Ok(opening_claim.opening_claim),

@@ -106,7 +106,7 @@ where
         }
         let uniskip = VerifiedSpartanOuterSumcheck {
             input_claim: uniskip_input_claim,
-            sumcheck_point: uniskip_reduction.point,
+            sumcheck_point: uniskip_reduction.point.into_vec(),
             sumcheck_final_claim: uniskip_reduction.value,
             expected_output_claim: claims.uniskip_output_claim,
         };
@@ -234,7 +234,7 @@ where
         }
         let remainder = VerifiedSpartanOuterSumcheck {
             input_claim: batched_remainder_input_claim,
-            sumcheck_point: remainder_reduction.point,
+            sumcheck_point: remainder_reduction.point.into_vec(),
             sumcheck_final_claim: remainder_reduction.value,
             expected_output_claim: expected_remainder_output_claim,
         };

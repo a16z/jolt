@@ -43,7 +43,7 @@ pub enum Stage4Output<F: Field, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedStage4Batch<F: Field> {
     pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Vec<F>,
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub registers_read_write: VerifiedStage4Sumcheck<F>,

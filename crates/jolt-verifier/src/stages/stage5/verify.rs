@@ -718,7 +718,7 @@ where
         output_claims: claims.clone(),
         batch: VerifiedStage5Batch {
             batching_coefficients: batch.batching_coefficients.clone(),
-            sumcheck_point: batch.reduction.point.clone(),
+            sumcheck_point: batch.reduction.point.as_slice().to_vec(),
             sumcheck_final_claim: batch.reduction.value,
             expected_final_claim,
             instruction_read_raf: VerifiedInstructionReadRafSumcheck {

@@ -61,7 +61,7 @@ pub struct VerifiedProductUniSkip<F: Field> {
     pub tau_low: Vec<F>,
     pub tau_high: F,
     pub input_claim: F,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Vec<F>,
     pub sumcheck_final_claim: F,
     pub expected_output_claim: F,
 }
@@ -69,7 +69,7 @@ pub struct VerifiedProductUniSkip<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedStage2Batch<F: Field> {
     pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Vec<F>,
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub ram_read_write_gamma: F,

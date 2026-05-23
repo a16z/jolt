@@ -41,7 +41,7 @@ pub enum Stage1Output<F: Field, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedSpartanOuterSumcheck<F: Field> {
     pub input_claim: F,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Vec<F>,
     pub sumcheck_final_claim: F,
     pub expected_output_claim: F,
 }
