@@ -54,6 +54,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          git switch refactor/audit-prep
           bash stack/open-prs.sh \
             --apply \
             --base main \
