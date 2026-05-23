@@ -717,7 +717,7 @@ where
         increments::claim_reduction_input_openings();
     let input_claims = Stage6BatchInputClaims {
         bytecode_read_raf: {
-            let mut input_claim = bytecode_claims.input.expression().try_evaluate(
+            let input_claim = bytecode_claims.input.expression().try_evaluate(
                 |id| {
                     if *id == bytecode_input_openings.spartan_outer.unexpanded_pc {
                         return Ok(stage1.outer.unexpanded_pc);
@@ -872,7 +872,8 @@ where
             )?;
 
             #[cfg(feature = "field-inline")]
-            {
+            let input_claim = {
+                let mut input_claim = input_claim;
                 let field_openings = field_bytecode::read_raf_input_openings();
                 input_claim += field_bytecode::read_raf_input_extension::<PCS::Field>()
                     .try_evaluate(
@@ -937,7 +938,8 @@ where
                         },
                         |()| Ok(PCS::Field::zero()),
                     )?;
-            }
+                input_claim
+            };
 
             input_claim
         },
@@ -1163,7 +1165,7 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let mut bytecode_public_values =
+    let bytecode_public_values =
         bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
             bytecode: &preprocessing.program.bytecode.bytecode,
             r_address: &bytecode_opening_point.r_address,
@@ -1189,20 +1191,24 @@ where
             reason: error.to_string(),
         })?;
     #[cfg(feature = "field-inline")]
-    add_field_inline_bytecode_public_values(
-        &mut bytecode_public_values,
-        field_inline_bytecode_rows(preprocessing)?,
-        &bytecode_opening_point.r_address,
-        &bytecode_opening_point.r_cycle,
-        &stage1_cycle,
-        &stage4.batch.field_registers_read_write.opening_point,
-        &stage5.batch.field_registers_val_evaluation.opening_point,
-        proof.protocol.field_inline.field_register_log_k,
-        log_t,
-        &stage1_gammas,
-        &stage4_gammas,
-        &stage5_gammas,
-    )?;
+    let bytecode_public_values = {
+        let mut bytecode_public_values = bytecode_public_values;
+        add_field_inline_bytecode_public_values(
+            &mut bytecode_public_values,
+            field_inline_bytecode_rows(preprocessing)?,
+            &bytecode_opening_point.r_address,
+            &bytecode_opening_point.r_cycle,
+            &stage1_cycle,
+            &stage4.batch.field_registers_read_write.opening_point,
+            &stage5.batch.field_registers_val_evaluation.opening_point,
+            proof.protocol.field_inline.field_register_log_k,
+            log_t,
+            &stage1_gammas,
+            &stage4_gammas,
+            &stage5_gammas,
+        )?;
+        bytecode_public_values
+    };
     let bytecode_output = bytecode_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in bytecode_output_openings.bytecode_ra.iter().enumerate() {

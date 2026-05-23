@@ -885,7 +885,7 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let mut bytecode_public_values =
+    let bytecode_public_values =
         bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
             bytecode: &input.preprocessing.program.bytecode.bytecode,
             r_address: &bytecode_opening.r_address,
@@ -910,7 +910,8 @@ where
         })
         .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
     #[cfg(feature = "field-inline")]
-    {
+    let bytecode_public_values = {
+        let mut bytecode_public_values = bytecode_public_values;
         let field_inline_bytecode = input
             .preprocessing
             .field_inline_bytecode
@@ -974,7 +975,8 @@ where
         {
             *stage_value += field_value;
         }
-    }
+        bytecode_public_values
+    };
     for index in 0..5 {
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::StageValue(index)),
