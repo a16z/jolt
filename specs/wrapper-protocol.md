@@ -139,6 +139,9 @@ For the primary v1 wrapper target, the in-circuit transcript is the algebraic
 Poseidon Jolt transcript. The wrapped inner proof must use the same transcript
 backend, so the wrapper constrains Poseidon absorbs and challenges directly
 over field elements rather than proving a Blake2b/Keccak byte hash circuit.
+This remains true when the configured verifier includes Dory assist: the
+wrapper transcript is Poseidon over BN254 `Fr`, while Dory-assist sumcheck
+checks are `Fq` arithmetic represented non-natively inside the `Fr` R1CS.
 
 In Dory-assist mode, step 4 does not encode the ordinary Dory stage-8 verifier.
 It encodes the selected `PcsProofAssist` verifier for the same opening snapshot:
@@ -648,6 +651,15 @@ Any `Fq` scalar arithmetic, range constraints, operation-family semantics, and
 copy/wiring checks remain Dory-assist constraints. The Hyrax R1CS module only
 binds the already-packed dense trace to the assist verifier's claimed dense
 opening.
+
+Dory-assist `Fq` sumcheck challenges must be derived from the wrapper's
+Poseidon-over-`Fr` transcript by an explicit, domain-separated
+`Fr`-to-`Fq` challenge map. The simplest implementation is to represent the
+resulting `Fq` challenge with the same non-native `Fq` variable type used by
+Dory-assist verifier arithmetic. We should avoid a hidden Fq-Poseidon transcript:
+if stronger challenge uniformity is needed than direct `Fr` injection, derive
+two or more Poseidon-`Fr` words and reduce the combined integer modulo `Fq` with
+an explicit conversion gadget.
 
 The Dory-assist spec says final exponentiation and public pairing equality are
 native verifier work in v1. For wrapper purposes, that means "outside the

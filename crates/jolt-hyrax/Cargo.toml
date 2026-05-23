@@ -18,6 +18,7 @@ serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+jolt-crypto = { workspace = true, features = ["grumpkin"] }
 jolt-dory = { path = "../jolt-dory" }
 jolt-field = { workspace = true, features = ["bn254"] }
 rand_chacha = { workspace = true }

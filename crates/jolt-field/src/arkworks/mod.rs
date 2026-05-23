@@ -7,6 +7,7 @@ use crate::Limbs;
 use ark_ff::BigInt;
 
 pub mod bn254;
+pub mod bn254_fq;
 pub(crate) mod bn254_ops;
 pub mod montgomery_impl;
 pub mod wide_accumulator;

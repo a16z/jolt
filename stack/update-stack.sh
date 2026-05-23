@@ -175,6 +175,23 @@ overlay_target_order() {
     crates/jolt-hyrax/*|\
     crates/jolt-dory-assist-verifier/*|\
     crates/jolt-claims/src/protocols/dory_assist/*|\
+    crates/jolt-field/Cargo.toml|\
+    crates/jolt-field/src/lib.rs|\
+    crates/jolt-field/src/arkworks/mod.rs|\
+    crates/jolt-field/src/arkworks/bn254_fq.rs|\
+    crates/jolt-crypto/Cargo.toml|\
+    crates/jolt-crypto/src/lib.rs|\
+    crates/jolt-crypto/src/commitment.rs|\
+    crates/jolt-crypto/src/ec/mod.rs|\
+    crates/jolt-crypto/src/ec/group.rs|\
+    crates/jolt-crypto/src/ec/pairing.rs|\
+    crates/jolt-crypto/src/ec/pedersen.rs|\
+    crates/jolt-crypto/src/ec/bn254/mod.rs|\
+    crates/jolt-crypto/src/ec/bn254/gt.rs|\
+    crates/jolt-crypto/src/ec/grumpkin|\
+    crates/jolt-crypto/src/ec/grumpkin/*|\
+    crates/jolt-dory/src/types.rs|\
+    crates/jolt-hyperkzg/src/types.rs|\
     crates/jolt-verifier/src/pcs_assist.rs|\
     crates/jolt-verifier/src/assist|\
     crates/jolt-verifier/src/assist/*|\

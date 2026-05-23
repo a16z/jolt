@@ -377,14 +377,14 @@ where
         })
 }
 
-impl<G: crate::JoltGroup, F: Field> HomomorphicCommitment<F> for G {
+impl<G: crate::JoltGroup> HomomorphicCommitment<G::ScalarField> for G {
     #[inline]
     fn add(c1: &G, c2: &G) -> G {
         *c1 + c2
     }
 
     #[inline]
-    fn linear_combine(c1: &G, c2: &G, scalar: &F) -> G {
+    fn linear_combine(c1: &G, c2: &G, scalar: &G::ScalarField) -> G {
         *c1 + c2.scalar_mul(scalar)
     }
 }

@@ -31,6 +31,17 @@ bn254 = [
   "dep:num-traits",
   "parallel",
 ]
+grumpkin = [
+  "dep:ark-grumpkin",
+  "dep:ark-ec",
+  "dep:ark-ff",
+  "dep:ark-serialize",
+  "dep:ark-std",
+  "dep:num-bigint",
+  "dep:num-traits",
+  "jolt-field/bn254",
+  "parallel",
+]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
 
 [dependencies]
@@ -42,6 +53,7 @@ rand_core = { workspace = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
+ark-grumpkin = { workspace = true, optional = true }
 ark-ec = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }

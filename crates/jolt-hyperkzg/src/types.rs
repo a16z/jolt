@@ -43,16 +43,16 @@ impl<P: PairingGroup> PartialEq for HyperKZGCommitment<P> {
 
 impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
 
-impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
+impl<P: PairingGroup> HomomorphicCommitment<P::ScalarField> for HyperKZGCommitment<P> {
     #[inline]
     fn add(c1: &Self, c2: &Self) -> Self {
         Self {
-            point: <P::G1 as HomomorphicCommitment<F>>::add(&c1.point, &c2.point),
+            point: <P::G1 as HomomorphicCommitment<P::ScalarField>>::add(&c1.point, &c2.point),
         }
     }
 
     #[inline]
-    fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
+    fn linear_combine(c1: &Self, c2: &Self, scalar: &P::ScalarField) -> Self {
         Self {
             point: HomomorphicCommitment::linear_combine(&c1.point, &c2.point, scalar),
         }

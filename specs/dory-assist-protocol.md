@@ -584,10 +584,15 @@ Dory assist's production instantiation uses Grumpkin for those Pedersen row
 commitments:
 
 ```text
-DoryAssistHyrax = Hyrax<Pedersen<Grumpkin>>
+DoryAssistHyrax = Hyrax<Pedersen<GrumpkinPoint>>
 ```
 
 Verifier APIs should still be generic over the vector commitment abstraction.
+Pedersen is generic over `JoltGroup`, and the vector-commitment scalar field is
+the group's associated `ScalarField`; for Grumpkin this is BN254 `Fq`. Arkworks
+types must stay behind `jolt-field` and `jolt-crypto` backend modules. Public
+assist, Hyrax, and verifier APIs should use Jolt wrapper types such as
+`jolt_field::Fq` and `jolt_crypto::GrumpkinPoint`, not arkworks types.
 
 Hyrax setup should compose with existing `jolt_crypto::DeriveSetup` impls. For
 Dory assist, the intended path is:

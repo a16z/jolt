@@ -3,8 +3,8 @@
     reason = "integration tests may panic on setup failures"
 )]
 
-use jolt_crypto::{Bn254, Bn254G1, Pedersen, PedersenSetup};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_crypto::{Bn254, Bn254G1, Grumpkin, GrumpkinPoint, JoltGroup, Pedersen, PedersenSetup};
+use jolt_field::{Fq, Fr, FromPrimitiveInt};
 use jolt_hyrax::{
     HyraxCommitment, HyraxDimensions, HyraxOpeningProof, HyraxProverSetup, HyraxScheme,
     HyraxSetupParams, HyraxVerifierSetup,
@@ -17,6 +17,7 @@ use rand_core::SeedableRng;
 
 type TestVc = Pedersen<Bn254G1>;
 type TestHyrax = HyraxScheme<TestVc>;
+type GrumpkinHyrax = HyraxScheme<Pedersen<GrumpkinPoint>>;
 
 struct OpeningCase {
     verifier_setup: HyraxVerifierSetup<TestVc>,
@@ -42,6 +43,28 @@ fn setup(
     })
 }
 
+fn grumpkin_setup(
+    row_vars: usize,
+    col_vars: usize,
+) -> (
+    HyraxProverSetup<Pedersen<GrumpkinPoint>>,
+    HyraxVerifierSetup<Pedersen<GrumpkinPoint>>,
+) {
+    let generator = Grumpkin::generator();
+    let row_len = 1usize << col_vars;
+    let generators = (1..=row_len)
+        .map(|index| generator.scalar_mul(&Fq::from_u64(index as u64)))
+        .collect();
+    let opening_generator = generator.scalar_mul(&Fq::from_u64(99));
+    let vc_setup = PedersenSetup::new(generators, opening_generator);
+    let dimensions =
+        HyraxDimensions::new(row_vars + col_vars, row_vars, col_vars).expect("valid dimensions");
+    GrumpkinHyrax::setup(HyraxSetupParams {
+        dimensions,
+        vc_setup,
+    })
+}
+
 fn polynomial(num_vars: usize, salt: u64) -> Polynomial<Fr> {
     let evals: Vec<Fr> = (0..(1usize << num_vars))
         .map(|index| {
@@ -55,6 +78,22 @@ fn polynomial(num_vars: usize, salt: u64) -> Polynomial<Fr> {
 fn point(num_vars: usize, salt: u64) -> Vec<Fr> {
     (0..num_vars)
         .map(|index| Fr::from_u64((index as u64 + 3) * (salt + 11)))
+        .collect()
+}
+
+fn fq_polynomial(num_vars: usize, salt: u64) -> Polynomial<Fq> {
+    let evals: Vec<Fq> = (0..(1usize << num_vars))
+        .map(|index| {
+            let x = index as u64 + 1;
+            Fq::from_u64((x * x * 23) + (x * (salt + 31)) + salt * 43 + 7)
+        })
+        .collect();
+    Polynomial::from(evals)
+}
+
+fn fq_point(num_vars: usize, salt: u64) -> Vec<Fq> {
+    (0..num_vars)
+        .map(|index| Fq::from_u64((index as u64 + 5) * (salt + 13)))
         .collect()
 }
 
@@ -347,4 +386,47 @@ fn additive_homomorphic_combination_verifies_against_combined_polynomial() {
         &proof,
     )
     .expect("opening verifies against homomorphically combined commitment");
+}
+
+#[test]
+fn grumpkin_backed_hyrax_verifies_and_rejects_tampering() {
+    let (prover_setup, verifier_setup) = grumpkin_setup(2, 3);
+    let poly = fq_polynomial(5, 110);
+    let point = fq_point(5, 110);
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) = GrumpkinHyrax::commit(&poly, &prover_setup);
+    let mut prover_transcript = Blake2bTranscript::new(b"hyrax-grumpkin-open");
+    let proof = GrumpkinHyrax::open(
+        &poly,
+        &point,
+        eval,
+        &prover_setup,
+        Some(hint),
+        &mut prover_transcript,
+    );
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"hyrax-grumpkin-open");
+    GrumpkinHyrax::verify(
+        &commitment,
+        &point,
+        eval,
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+    )
+    .expect("Grumpkin-backed Hyrax verifies");
+
+    let mut tampered_proof = proof;
+    tampered_proof.combined_row[0] += Fq::from_u64(1);
+    let mut verifier_transcript = Blake2bTranscript::new(b"hyrax-grumpkin-open");
+    let err = GrumpkinHyrax::verify(
+        &commitment,
+        &point,
+        eval,
+        &tampered_proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+    )
+    .expect_err("tampered Grumpkin-backed opening rejects");
+    assert!(matches!(err, OpeningsError::VerificationFailed));
 }

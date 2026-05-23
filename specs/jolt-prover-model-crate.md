@@ -60,7 +60,7 @@ ready.
 | `jolt-prover` | Prover orchestration, transcript order, proof assembly, scoped prover state |
 | `jolt-witness` | Generic witness traits plus protocol-specific witness providers |
 | `jolt-kernels` | Optimized prover compute and map-reduce kernels |
-| `jolt-program` | Program image, bytecode expansion, profile/extension legality, backend-neutral trace contract |
+| `jolt-program` | Program image, bytecode expansion, profile/extension legality, Jolt trace contract |
 | `tracer` / execution backend | Concrete guest execution, advice I/O, normalized trace production |
 | `jolt-claims` | Protocol IDs, formulas, opening/public/challenge metadata |
 | `jolt-sumcheck` | Clear/committed sumcheck proofs, transcript replay, R1CS lowering |
@@ -87,10 +87,10 @@ inputs
 ```
 
 `jolt-prover` owns the proving order after program execution has produced a
-trace. `jolt-program` owns program shape and trace contracts; the execution
-backend owns concrete execution; witness providers and kernels answer
-proof-facing queries. None of those lower layers decide stage order or
-transcript semantics.
+Jolt trace. `jolt-program` owns program shape and the normalized Jolt trace
+contract; the execution backend owns concrete execution; witness providers and
+kernels answer proof-facing queries. None of those lower layers decide stage
+order or transcript semantics.
 
 ## Public API
 
@@ -446,13 +446,13 @@ or claim formulas.
 ## Program And Trace Inputs
 
 `jolt-prover` should consume program and execution artifacts through the modular
-program/trace boundary, not through tracer internals:
+program/Jolt-trace boundary, not through tracer internals:
 
 ```text
 guest Rust / SDK
   -> jolt-program image, expansion, profile checks, preprocessing
   -> execution backend
-  -> TraceOutput<TraceSource>
+  -> Jolt trace: TraceOutput<TraceSource>
   -> jolt-witness
   -> jolt-prover stages
 ```
@@ -464,11 +464,11 @@ source rows before tracing begins.
 
 The execution backend, typically `tracer`, owns concrete CPU/memory/device
 execution and advice I/O. It adapts its local cycle representation into the
-normalized trace contract. `jolt-prover` and `jolt-witness` should not consume
-`tracer::Cycle`, `Cpu`, or lazy trace internals directly.
+normalized Jolt trace contract. `jolt-prover` and `jolt-witness` should not
+consume `tracer::Cycle`, `Cpu`, or lazy trace internals directly.
 
-The proof-facing trace row must carry enough data for both ordinary Jolt and
-field inline:
+The Jolt trace row is the proof-facing trace row. It must carry enough data for
+both ordinary Jolt and field inline:
 
 ```text
 ordinary row data:

@@ -18,9 +18,9 @@ pub trait PairingGroup:
 {
     /// Scalar field for G1 and G2 (e.g., BN254 Fr).
     type ScalarField: Field;
-    type G1: JoltGroup;
-    type G2: JoltGroup;
-    type GT: JoltGroup;
+    type G1: JoltGroup<ScalarField = Self::ScalarField>;
+    type G2: JoltGroup<ScalarField = Self::ScalarField>;
+    type GT: JoltGroup<ScalarField = Self::ScalarField>;
 
     /// Computes the bilinear pairing `e(g1, g2)`.
     #[must_use]

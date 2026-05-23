@@ -33,7 +33,7 @@ truth.
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
 | 13 | `stack/13-field-inline-protocol-spec` | `stack/12-selected-verifier-integration-spec` | field inline protocol spec, verifier-spec updates, formulas, R1CS hooks, RISC-V flags, and verifier protocol config |
-| 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec, `jolt-hyrax`, Dory-assist claim semantics, and Dory-specific PCS-assist hooks |
+| 14 | `stack/14-dory-assist-protocol-spec` | `stack/13-field-inline-protocol-spec` | Dory assist protocol spec, `jolt-hyrax`, Grumpkin/Fq crypto support, Dory-assist claim semantics, and Dory-specific PCS-assist hooks |
 | 15 | `stack/15-wrapper-protocol-spec` | `stack/14-dory-assist-protocol-spec` | wrapper protocol spec, `jolt-wrapper`, variable-challenge sumcheck R1CS, transcript R1CS, and shared wrapper R1CS infrastructure |
 
 The `jolt-core` BlindFold hardening PR carries the compatibility/security patch
@@ -71,9 +71,9 @@ to the same row as the relevant spec:
 - PR 13: field-inline claims, R1CS rows, selected verifier hooks, trace/prover
   wiring, and field-inline fixtures.
 - PR 14: Dory-assist claims under
-  `jolt-claims::protocols::dory_assist`, `jolt-hyrax`, the
-  Dory-assist verifier crate, Dory-specific PCS-assist verifier hooks, and
-  Dory-assist fixtures.
+  `jolt-claims::protocols::dory_assist`, `jolt-hyrax`, Grumpkin/Fq crypto
+  support for Hyrax row commitments, the Dory-assist verifier crate,
+  Dory-specific PCS-assist verifier hooks, and Dory-assist fixtures.
 - PR 15: `jolt-wrapper`, wrapper assembly, verifier R1CS lowering,
   variable-challenge `jolt-sumcheck::r1cs`, transcript R1CS, and SNARK
   backend integration.

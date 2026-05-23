@@ -1,9 +1,9 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use ark_bn254::{Fq12, Fr};
+use ark_bn254::{Fq12, Fr as ArkFr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
-use jolt_field::Field;
+use jolt_field::Fr;
 
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -147,6 +147,8 @@ impl AppendToTranscript for Bn254GT {
 }
 
 impl JoltGroup for Bn254GT {
+    type ScalarField = Fr;
+
     #[inline(always)]
     fn identity() -> Self {
         Self(Fq12::ONE)
@@ -163,14 +165,14 @@ impl JoltGroup for Bn254GT {
     }
 
     #[inline]
-    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self {
+    fn scalar_mul(&self, scalar: &Self::ScalarField) -> Self {
         // GT exponentiation: self^scalar (written additively as scalar * self).
         let fr = field_to_fr(scalar);
         Self(self.0.pow(fr.into_bigint()))
     }
 
     #[inline]
-    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self {
+    fn msm(bases: &[Self], scalars: &[Self::ScalarField]) -> Self {
         debug_assert_eq!(bases.len(), scalars.len());
         // GT "MSM" is Π bases[i]^scalars[i] (written additively as Σ scalars[i] * bases[i]).
         let mut acc = Fq12::ONE;
@@ -206,7 +208,7 @@ impl<'de> serde::Deserialize<'de> for Bn254GT {
             ));
         }
         // Subgroup membership: GT is the r-torsion subgroup, so x^r == 1.
-        if inner.pow(Fr::MODULUS) != Fq12::ONE {
+        if inner.pow(ArkFr::MODULUS) != Fq12::ONE {
             return Err(serde::de::Error::custom(
                 "GT element is not in the r-torsion subgroup",
             ));
