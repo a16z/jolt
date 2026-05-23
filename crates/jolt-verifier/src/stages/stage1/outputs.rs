@@ -1,6 +1,7 @@
 //! Typed outputs produced by stage 1 verification.
 
 use jolt_field::Field;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -41,7 +42,7 @@ pub enum Stage1Output<F: Field, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedSpartanOuterSumcheck<F: Field> {
     pub input_claim: F,
-    pub sumcheck_point: Vec<F>,
+    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
     pub sumcheck_final_claim: F,
     pub expected_output_claim: F,
 }

@@ -2,6 +2,7 @@
 
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -56,7 +57,7 @@ pub enum Stage6Output<F: Field, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedStage6Batch<F: Field> {
     pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: Vec<F>,
+    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub bytecode_read_raf: VerifiedBytecodeReadRafSumcheck<F>,

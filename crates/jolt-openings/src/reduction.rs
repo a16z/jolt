@@ -1,7 +1,7 @@
 //! Opening claim reduction via random linear combination (RLC).
 
 use jolt_field::Field;
-use jolt_poly::Point;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
@@ -133,8 +133,8 @@ fn rho_powers<F: Field>(rho: F, n: usize) -> Vec<F> {
         .collect()
 }
 
-type PointGroup<F, P> = Vec<(Point<F>, Vec<ProverOpeningClaim<F, P>>)>;
-type VerifierPointGroup<F, C> = Vec<(Point<F>, Vec<VerifierOpeningClaim<F, C>>)>;
+type PointGroup<F, P> = Vec<(Point<HIGH_TO_LOW, F>, Vec<ProverOpeningClaim<F, P>>)>;
+type VerifierPointGroup<F, C> = Vec<(Point<HIGH_TO_LOW, F>, Vec<VerifierOpeningClaim<F, C>>)>;
 
 fn group_prover_claims_by_point<F: Field, P>(
     claims: Vec<ProverOpeningClaim<F, P>>,

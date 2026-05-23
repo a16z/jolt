@@ -310,7 +310,7 @@ where
                 tau_low,
                 tau_high,
                 input_claim: uniskip_input_claim,
-                sumcheck_point: uniskip_reduction.point.into_vec(),
+                sumcheck_point: uniskip_reduction.point,
                 sumcheck_final_claim: uniskip_reduction.value,
                 expected_output_claim: uniskip_claim,
             }))
@@ -968,7 +968,7 @@ where
             Ok(Stage2Batch::Clear {
                 verified: VerifiedStage2Batch {
                     batching_coefficients: batch.batching_coefficients.clone(),
-                    sumcheck_point: batch.reduction.point.as_slice().to_vec(),
+                    sumcheck_point: batch.reduction.point.clone(),
                     sumcheck_final_claim: batch.reduction.value,
                     expected_final_claim,
                     ram_read_write_gamma,

@@ -275,8 +275,8 @@ where
         return Ok(Stage8Output::Zk(Stage8ZkOutput {
             opening_ids,
             constraint_coefficients,
-            opening_point: common_point.into_vec(),
-            pcs_opening_point: pcs_opening_point.into_vec(),
+            opening_point: common_point,
+            pcs_opening_point,
             joint_commitment,
             hiding_evaluation_commitment,
         }));
@@ -481,8 +481,8 @@ where
         opening_claims,
         opening_ids,
         constraint_coefficients,
-        opening_point: common_point.into_vec(),
-        pcs_opening_point: pcs_opening_point.into_vec(),
+        opening_point: common_point,
+        pcs_opening_point,
         joint_claim,
         joint_commitment,
     }))

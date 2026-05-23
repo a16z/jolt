@@ -452,7 +452,7 @@ where
         ram_val_check_init,
         batch: VerifiedStage4Batch {
             batching_coefficients: batch.batching_coefficients.clone(),
-            sumcheck_point: batch.reduction.point.as_slice().to_vec(),
+            sumcheck_point: batch.reduction.point.clone(),
             sumcheck_final_claim: batch.reduction.value,
             expected_final_claim,
             registers_read_write: VerifiedStage4Sumcheck {
