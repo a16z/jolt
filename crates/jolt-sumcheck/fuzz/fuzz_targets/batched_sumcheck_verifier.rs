@@ -10,7 +10,7 @@
 
 use jolt_field::{Fr, ReducingBytes};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim};
+use jolt_sumcheck::{BatchedSumcheckVerifier, BooleanHypercube, SumcheckClaim};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
@@ -76,9 +76,10 @@ fuzz_target!(|data: &[u8]| {
     // The verifier must terminate without panicking on any input — including
     // `n_claims = 0`, which must surface as `SumcheckError::EmptyClaims`.
     let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-batched-fuzz");
-    let _ = BatchedSumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>>(
+    let _ = BatchedSumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claims,
         &round_proofs,
+        BooleanHypercube,
         &mut transcript,
     );
 });
