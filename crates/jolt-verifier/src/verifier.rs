@@ -347,9 +347,6 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     #[cfg(feature = "field-inline")]
     {
         absorb_commitment(&proof.commitments.field_inline.field_registers.rd_inc);
-        for commitment in &proof.commitments.field_inline.field_registers.ra {
-            absorb_commitment(commitment);
-        }
     }
     if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
         append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
@@ -803,7 +800,7 @@ mod tests {
 
         let mut expected = vec![1, 2, 3, 4, 5, 6];
         #[cfg(feature = "field-inline")]
-        expected.extend([7, 8, 9]);
+        expected.push(7);
         expected.extend([10, 11]);
         assert_eq!(commitment_payload_values(&transcript), expected);
     }
@@ -875,10 +872,7 @@ mod tests {
             rd_inc,
             ram_inc,
             ra,
-            FieldInlineCommitments::new(FieldRegistersCommitments::new(
-                TestCommitment(7),
-                vec![TestCommitment(8), TestCommitment(9)],
-            )),
+            FieldInlineCommitments::new(FieldRegistersCommitments::new(TestCommitment(7))),
         )
     }
 

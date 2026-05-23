@@ -134,13 +134,12 @@ impl<C> FieldInlineCommitments<C> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldRegistersCommitments<C> {
     pub rd_inc: C,
-    pub ra: Vec<C>,
 }
 
 #[cfg(feature = "field-inline")]
 impl<C> FieldRegistersCommitments<C> {
-    pub fn new(rd_inc: C, ra: Vec<C>) -> Self {
-        Self { rd_inc, ra }
+    pub fn new(rd_inc: C) -> Self {
+        Self { rd_inc }
     }
 }
 
