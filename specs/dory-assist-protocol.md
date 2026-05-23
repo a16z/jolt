@@ -330,6 +330,32 @@ For step bits `s`, coefficient bits `x`, accumulator `rho`, shifted accumulator
 rho_shift(s, x) = rho(s, x)^4 * digit(s, x) + q(s, x) * Modulus(x)
 ```
 
+The `digit` term is the generalized selector for the concrete base-4 digit
+decomposition used by the reference implementation. Let `d0,d1` be the low and
+high digit bits and let `B`, `B2`, `B3` encode `g`, `g^2`, and `g^3`. The
+concrete base-4 selector relation is:
+
+```text
+digit = (1-d0)*(1-d1)
+      + d0*(1-d1)*B
+      + (1-d0)*d1*B2
+      + d0*d1*B3
+```
+
+The base-power rows are checked with the same GT multiplication quotient
+identity:
+
+```text
+B  * B = B2 + Q2 * Modulus
+B2 * B = B3 + Q3 * Modulus
+```
+
+Those two checks are batched by a transcript challenge in the
+`GtExponentiationBasePower` relation. Thus `GtExponentiation` can stay generic
+over a selected `digit` value while the base-4 instantiation separately proves
+that the selector is exactly Quang's `digit_lo/digit_hi/base/base2/base3`
+construction.
+
 `rho_shift` is not an independent committed object; it is connected to `rho`
 by the GT shift sum-check. If the exponentiation zero-check emits the claim
 `rho_shift(r_s, r_u, r_c)`, the shift relation proves:

@@ -1,6 +1,6 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening, public};
+use crate::{challenge, constant, opening, public};
 
 use super::super::{
     DoryAssistChallengeId, DoryAssistOpeningId, DoryAssistPublicId, DoryAssistRelationClaims,
@@ -10,6 +10,18 @@ use super::dimensions::{DoryAssistSumcheckSpec, GtDimensions, GT_EXP_BASE};
 
 pub const fn exponentiation_sumcheck(dimensions: GtDimensions) -> DoryAssistSumcheckSpec {
     dimensions.exp_sumcheck(GT_EXP_BASE + 4)
+}
+
+pub const fn exponentiation_digit_selector_sumcheck(
+    dimensions: GtDimensions,
+) -> DoryAssistSumcheckSpec {
+    dimensions.exp_digit_selector_sumcheck()
+}
+
+pub const fn exponentiation_base_power_sumcheck(
+    dimensions: GtDimensions,
+) -> DoryAssistSumcheckSpec {
+    dimensions.exp_base_power_sumcheck()
 }
 
 pub const fn exponentiation_shift_sumcheck(dimensions: GtDimensions) -> DoryAssistSumcheckSpec {
@@ -35,6 +47,42 @@ where
         output,
     )
     .with_input_challenges([DoryAssistChallengeId::from(GtChallenge::InstanceBatch)])
+}
+
+pub fn exponentiation_digit_selector<F>(dimensions: GtDimensions) -> DoryAssistRelationClaims<F>
+where
+    F: RingCore,
+{
+    DoryAssistRelationClaims::new(
+        DoryAssistRelationId::GtExponentiationDigitSelector,
+        exponentiation_digit_selector_sumcheck(dimensions),
+        opening(exp_digit_selector_base_4_opening()),
+        base_4_digit_selector_expression(),
+    )
+}
+
+pub fn exponentiation_base_power<F>(dimensions: GtDimensions) -> DoryAssistRelationClaims<F>
+where
+    F: RingCore,
+{
+    let beta = gt_challenge(GtChallenge::ConstraintBatch);
+    let base = opening(exp_base_power_checked_opening(1));
+    let base_squared = opening(exp_base_power_checked_opening(2));
+    let base_cubed = opening(exp_base_power_checked_opening(3));
+    let quotient_squared = opening(exp_base_power_quotient_opening(2));
+    let quotient_cubed = opening(exp_base_power_quotient_opening(3));
+    let modulus = opening(exp_base_power_modulus_opening());
+
+    let square_check =
+        base.clone() * base.clone() - base_squared.clone() - quotient_squared * modulus.clone();
+    let cube_check = base_squared * base - base_cubed - quotient_cubed * modulus;
+
+    DoryAssistRelationClaims::new(
+        DoryAssistRelationId::GtExponentiationBasePower,
+        exponentiation_base_power_sumcheck(dimensions),
+        constant(F::zero()),
+        square_check + beta * cube_check,
+    )
 }
 
 pub fn exponentiation_shift<F>(dimensions: GtDimensions) -> DoryAssistRelationClaims<F>
@@ -76,6 +124,31 @@ pub fn exponentiation_output_openings() -> [DoryAssistOpeningId; 4] {
         exp_digit_selector_opening(),
         exp_quotient_opening(),
         exp_modulus_opening(),
+    ]
+}
+
+pub fn exponentiation_digit_selector_input_openings() -> [DoryAssistOpeningId; 1] {
+    [exp_digit_selector_base_4_opening()]
+}
+
+pub fn exponentiation_digit_selector_output_openings() -> [DoryAssistOpeningId; 5] {
+    [
+        exp_digit_bit_opening(1),
+        exp_digit_bit_opening(0),
+        exp_base_power_selector_opening(1),
+        exp_base_power_selector_opening(2),
+        exp_base_power_selector_opening(3),
+    ]
+}
+
+pub fn exponentiation_base_power_output_openings() -> [DoryAssistOpeningId; 6] {
+    [
+        exp_base_power_checked_opening(1),
+        exp_base_power_checked_opening(2),
+        exp_base_power_quotient_opening(2),
+        exp_base_power_modulus_opening(),
+        exp_base_power_checked_opening(3),
+        exp_base_power_quotient_opening(3),
     ]
 }
 
@@ -134,6 +207,48 @@ pub fn exp_digit_selector_opening() -> DoryAssistOpeningId {
     )
 }
 
+pub fn exp_digit_selector_base_4_opening() -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpDigitSelector,
+        DoryAssistRelationId::GtExponentiationDigitSelector,
+    )
+}
+
+pub fn exp_digit_bit_opening(bit_index: usize) -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpDigitBit(bit_index),
+        DoryAssistRelationId::GtExponentiationDigitSelector,
+    )
+}
+
+pub fn exp_base_power_selector_opening(power: usize) -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpBasePower(power),
+        DoryAssistRelationId::GtExponentiationDigitSelector,
+    )
+}
+
+pub fn exp_base_power_checked_opening(power: usize) -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpBasePower(power),
+        DoryAssistRelationId::GtExponentiationBasePower,
+    )
+}
+
+pub fn exp_base_power_quotient_opening(power: usize) -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpBasePowerQuotient(power),
+        DoryAssistRelationId::GtExponentiationBasePower,
+    )
+}
+
+pub fn exp_base_power_modulus_opening() -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::Modulus,
+        DoryAssistRelationId::GtExponentiationBasePower,
+    )
+}
+
 pub fn exp_modulus_opening() -> DoryAssistOpeningId {
     gt_opening(
         GtPolynomial::Modulus,
@@ -178,6 +293,23 @@ pub fn mul_quotient_opening() -> DoryAssistOpeningId {
 
 fn gt_opening(polynomial: GtPolynomial, relation: DoryAssistRelationId) -> DoryAssistOpeningId {
     DoryAssistOpeningId::virtual_polynomial(DoryAssistVirtualPolynomial::Gt(polynomial), relation)
+}
+
+pub fn base_4_digit_selector_expression<F>() -> super::super::DoryAssistExpr<F>
+where
+    F: RingCore,
+{
+    let digit_lo = opening(exp_digit_bit_opening(0));
+    let digit_hi = opening(exp_digit_bit_opening(1));
+    let base = opening(exp_base_power_selector_opening(1));
+    let base_squared = opening(exp_base_power_selector_opening(2));
+    let base_cubed = opening(exp_base_power_selector_opening(3));
+    let one = constant(F::one());
+
+    (one.clone() - digit_lo.clone()) * (one.clone() - digit_hi.clone())
+        + digit_lo.clone() * (one.clone() - digit_hi.clone()) * base
+        + (one - digit_lo.clone()) * digit_hi.clone() * base_squared
+        + digit_lo * digit_hi * base_cubed
 }
 
 pub fn gt_challenge<F>(id: GtChallenge) -> super::super::DoryAssistExpr<F>
@@ -243,6 +375,172 @@ mod tests {
 
         assert_eq!(input, Fr::from_u64(42));
         assert_eq!(output, Fr::from_u64(42));
+    }
+
+    #[test]
+    fn base_power_claims_expose_square_and_cube_quotient_checks() {
+        let dimensions = GtDimensions::new(7, 2, 0);
+        let claims = exponentiation_base_power::<Fr>(dimensions);
+
+        assert_eq!(claims.id, DoryAssistRelationId::GtExponentiationBasePower);
+        assert_eq!(
+            claims.sumcheck,
+            exponentiation_base_power_sumcheck(dimensions)
+        );
+        assert!(claims.input.required_openings.is_empty());
+        assert_eq!(
+            claims.output.required_openings,
+            exponentiation_base_power_output_openings().to_vec()
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![DoryAssistChallengeId::from(GtChallenge::ConstraintBatch)]
+        );
+    }
+
+    #[test]
+    fn base_power_evaluates_quang_square_and_cube_checks() {
+        let claims = exponentiation_base_power::<Fr>(GtDimensions::new(7, 0, 0));
+        let zero = Fr::from_u64(0);
+
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_base_power_checked_opening(1) => Fr::from_u64(3),
+                id if id == exp_base_power_checked_opening(2) => Fr::from_u64(4),
+                id if id == exp_base_power_checked_opening(3) => Fr::from_u64(2),
+                id if id == exp_base_power_quotient_opening(2) => Fr::from_u64(1),
+                id if id == exp_base_power_quotient_opening(3) => Fr::from_u64(2),
+                id if id == exp_base_power_modulus_opening() => Fr::from_u64(5),
+                _ => zero,
+            },
+            |_| Fr::from_u64(17),
+            |_| zero,
+        );
+
+        assert_eq!(output, zero);
+    }
+
+    #[test]
+    fn base_power_rejects_bad_cube_quotient() {
+        let claims = exponentiation_base_power::<Fr>(GtDimensions::new(7, 0, 0));
+        let zero = Fr::from_u64(0);
+
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_base_power_checked_opening(1) => Fr::from_u64(3),
+                id if id == exp_base_power_checked_opening(2) => Fr::from_u64(4),
+                id if id == exp_base_power_checked_opening(3) => Fr::from_u64(2),
+                id if id == exp_base_power_quotient_opening(2) => Fr::from_u64(1),
+                id if id == exp_base_power_quotient_opening(3) => Fr::from_u64(1),
+                id if id == exp_base_power_modulus_opening() => Fr::from_u64(5),
+                _ => zero,
+            },
+            |_| Fr::from_u64(17),
+            |_| zero,
+        );
+
+        assert_ne!(output, zero);
+    }
+
+    #[test]
+    fn base_four_digit_selector_matches_quang_mux_shape() {
+        let cases = [
+            (Fr::from_u64(0), Fr::from_u64(0), Fr::from_u64(1)),
+            (Fr::from_u64(1), Fr::from_u64(0), Fr::from_u64(3)),
+            (Fr::from_u64(0), Fr::from_u64(1), Fr::from_u64(4)),
+            (Fr::from_u64(1), Fr::from_u64(1), Fr::from_u64(2)),
+        ];
+        let expr = base_4_digit_selector_expression::<Fr>();
+
+        for (digit_lo, digit_hi, expected) in cases {
+            let value = expr.evaluate(
+                |opening| match *opening {
+                    id if id == exp_digit_bit_opening(0) => digit_lo,
+                    id if id == exp_digit_bit_opening(1) => digit_hi,
+                    id if id == exp_base_power_selector_opening(1) => Fr::from_u64(3),
+                    id if id == exp_base_power_selector_opening(2) => Fr::from_u64(4),
+                    id if id == exp_base_power_selector_opening(3) => Fr::from_u64(2),
+                    _ => Fr::from_u64(0),
+                },
+                |_| Fr::from_u64(0),
+                |_| Fr::from_u64(0),
+            );
+
+            assert_eq!(value, expected);
+        }
+    }
+
+    #[test]
+    fn digit_selector_relation_binds_general_selector_to_base_four_mux() {
+        let claims = exponentiation_digit_selector::<Fr>(GtDimensions::new(7, 2, 0));
+
+        assert_eq!(
+            claims.id,
+            DoryAssistRelationId::GtExponentiationDigitSelector
+        );
+        assert_eq!(
+            claims.sumcheck,
+            exponentiation_digit_selector_sumcheck(GtDimensions::new(7, 2, 0))
+        );
+        assert_eq!(
+            claims.input.required_openings,
+            exponentiation_digit_selector_input_openings().to_vec()
+        );
+        assert_eq!(
+            claims.output.required_openings,
+            exponentiation_digit_selector_output_openings().to_vec()
+        );
+
+        let input = claims.input.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_digit_selector_base_4_opening() => Fr::from_u64(4),
+                _ => Fr::from_u64(0),
+            },
+            |_| Fr::from_u64(0),
+            |_| Fr::from_u64(0),
+        );
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_digit_bit_opening(0) => Fr::from_u64(0),
+                id if id == exp_digit_bit_opening(1) => Fr::from_u64(1),
+                id if id == exp_base_power_selector_opening(1) => Fr::from_u64(3),
+                id if id == exp_base_power_selector_opening(2) => Fr::from_u64(4),
+                id if id == exp_base_power_selector_opening(3) => Fr::from_u64(2),
+                _ => Fr::from_u64(0),
+            },
+            |_| Fr::from_u64(0),
+            |_| Fr::from_u64(0),
+        );
+
+        assert_eq!(input, output);
+    }
+
+    #[test]
+    fn exponentiation_general_selector_accepts_concrete_base_four_value() {
+        let claims = exponentiation::<Fr>(GtDimensions::new(7, 0, 0));
+        let zero = Fr::from_u64(0);
+
+        let input = claims.input.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_shifted_accumulator_opening() => Fr::from_u64(127),
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_accumulator_opening() => Fr::from_u64(2),
+                id if id == exp_digit_selector_opening() => Fr::from_u64(7),
+                id if id == exp_quotient_opening() => Fr::from_u64(3),
+                id if id == exp_modulus_opening() => Fr::from_u64(5),
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+
+        assert_eq!(input, output);
     }
 
     #[test]
