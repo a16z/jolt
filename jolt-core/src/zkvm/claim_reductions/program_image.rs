@@ -5,7 +5,6 @@
 //! This sumcheck binds those scalars to a trusted commitment to the program-image words polynomial.
 
 use allocative::Allocative;
-use std::cell::RefCell;
 
 use crate::field::JoltField;
 use crate::poly::commitment::dory::DoryGlobals;
@@ -149,41 +148,66 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProgramImageClaimReductionParam
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         match self.precommitted.phase {
             PrecommittedPhase::CycleVariables => {
-                Some(OutputClaimConstraint::direct(OpeningId::committed(
-                    CommittedPolynomial::ProgramImageInit,
-                    SumcheckId::ProgramImageClaimReductionCyclePhase,
-                )))
+                if self.precommitted.num_address_phase_rounds() > 0 {
+                    return Some(OutputClaimConstraint::direct(OpeningId::committed(
+                        CommittedPolynomial::ProgramImageInit,
+                        SumcheckId::ProgramImageClaimReductionCyclePhase,
+                    )));
+                }
+                self.final_program_image_output_claim_constraint()
             }
-            PrecommittedPhase::AddressVariables => Some(OutputClaimConstraint::linear(vec![(
-                ValueSource::Challenge(0),
-                ValueSource::Opening(OpeningId::committed(
-                    CommittedPolynomial::ProgramImageInit,
-                    SumcheckId::ProgramImageClaimReduction,
-                )),
-            )])),
+            PrecommittedPhase::AddressVariables => {
+                self.final_program_image_output_claim_constraint()
+            }
         }
     }
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
         match self.precommitted.phase {
-            PrecommittedPhase::CycleVariables => vec![],
-            PrecommittedPhase::AddressVariables => {
-                let opening_point = self.normalize_opening_point(sumcheck_challenges);
-                let eq_combined = eval_shifted_eq_poly_at_opening_point::<F>(
-                    &self.r_addr_rw,
-                    self.start_index,
-                    &opening_point.r,
-                );
-                debug_assert_eq!(
-                    eq_combined,
-                    evaluate_shifted_eq_poly::<F, _>(&self.shifted_eq_coeffs, &opening_point.r),
-                    "program_image eq_slice optimized evaluation mismatch"
-                );
-                let scale: F = precommitted_skip_round_scale(&self.precommitted);
-                vec![eq_combined * scale]
+            PrecommittedPhase::CycleVariables
+                if self.precommitted.num_address_phase_rounds() > 0 =>
+            {
+                vec![]
+            }
+            PrecommittedPhase::CycleVariables | PrecommittedPhase::AddressVariables => {
+                vec![self.final_program_image_output_scale(sumcheck_challenges)]
             }
         }
+    }
+}
+
+impl<F: JoltField> ProgramImageClaimReductionParams<F> {
+    #[cfg(feature = "zk")]
+    fn final_program_image_output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::linear(vec![(
+            ValueSource::Challenge(0),
+            ValueSource::Opening(OpeningId::committed(
+                CommittedPolynomial::ProgramImageInit,
+                SumcheckId::ProgramImageClaimReduction,
+            )),
+        )]))
+    }
+
+    fn final_program_image_output_scale(&self, sumcheck_challenges: &[F::Challenge]) -> F {
+        let opening_point = self.normalize_opening_point(sumcheck_challenges);
+        let eq_combined = eval_shifted_eq_poly_at_opening_point::<F>(
+            &self.r_addr_rw,
+            self.start_index,
+            &opening_point.r,
+        );
+        debug_assert_eq!(
+            eq_combined,
+            evaluate_shifted_eq_poly::<F, _>(&self.shifted_eq_coeffs, &opening_point.r),
+            "program_image eq_slice optimized evaluation mismatch"
+        );
+        let scale = match self.precommitted.phase {
+            PrecommittedPhase::CycleVariables => self.precommitted.cycle_phase_skip_scale(),
+            PrecommittedPhase::AddressVariables => {
+                precommitted_skip_round_scale(&self.precommitted)
+            }
+        };
+        eq_combined * scale
     }
 }
 
@@ -194,6 +218,19 @@ impl<F: JoltField> PrecommittedParams<F> for ProgramImageClaimReductionParams<F>
 
     fn precommitted_mut(&mut self) -> &mut PrecommittedClaimReduction<F> {
         &mut self.precommitted
+    }
+
+    fn get_cycle_challenges<A: AbstractVerifierOpeningAccumulator<F>>(
+        &self,
+        accumulator: &A,
+    ) -> Vec<F::Challenge> {
+        let (cycle_opening_point, _) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::ProgramImageInit,
+            SumcheckId::ProgramImageClaimReductionCyclePhase,
+        );
+        let opening_point_le: OpeningPoint<LITTLE_ENDIAN, F> =
+            cycle_opening_point.match_endianness();
+        opening_point_le.r
     }
 }
 
@@ -327,13 +364,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     ) {
         let params = self.core.params();
         let opening_point = params.normalize_opening_point(sumcheck_challenges);
-        if params.is_cycle_phase() {
+        if params.is_cycle_phase() && params.precommitted.num_address_phase_rounds() > 0 {
             accumulator.append_dense(
                 CommittedPolynomial::ProgramImageInit,
                 SumcheckId::ProgramImageClaimReductionCyclePhase,
-                // This is a phase-boundary intermediate claim, not a real program-image opening.
-                // Keep a sentinel point so it cannot alias with the final opening claim.
-                vec![],
+                opening_point.r.clone(),
                 self.core.cycle_intermediate_claim(),
             );
         }
@@ -355,14 +390,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 }
 
 pub struct ProgramImageClaimReductionVerifier<F: JoltField> {
-    pub params: RefCell<ProgramImageClaimReductionParams<F>>,
+    pub params: ProgramImageClaimReductionParams<F>,
 }
 
 impl<F: JoltField> ProgramImageClaimReductionVerifier<F> {
     pub fn new(params: ProgramImageClaimReductionParams<F>) -> Self {
-        Self {
-            params: RefCell::new(params),
-        }
+        Self { params }
     }
 }
 
@@ -370,7 +403,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     SumcheckInstanceVerifier<F, T, A> for ProgramImageClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        unsafe { &*self.params.as_ptr() }
+        &self.params
     }
 
     fn round_offset(&self, _max_num_rounds: usize) -> usize {
@@ -378,9 +411,11 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 
     fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
-        let params = self.params.borrow();
+        let params = &self.params;
         match params.precommitted.phase {
-            PrecommittedPhase::CycleVariables => {
+            PrecommittedPhase::CycleVariables
+                if params.precommitted.num_address_phase_rounds() > 0 =>
+            {
                 accumulator
                     .get_committed_polynomial_opening(
                         CommittedPolynomial::ProgramImageInit,
@@ -388,48 +423,31 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
                     )
                     .1
             }
-            PrecommittedPhase::AddressVariables => {
-                let opening_point = params.normalize_opening_point(sumcheck_challenges);
-                debug_assert_eq!(opening_point.len(), params.m);
+            PrecommittedPhase::CycleVariables | PrecommittedPhase::AddressVariables => {
                 let pw_eval = accumulator
                     .get_committed_polynomial_opening(
                         CommittedPolynomial::ProgramImageInit,
                         SumcheckId::ProgramImageClaimReduction,
                     )
                     .1;
-                let eq_combined = eval_shifted_eq_poly_at_opening_point::<F>(
-                    &params.r_addr_rw,
-                    params.start_index,
-                    &opening_point.r,
-                );
-                debug_assert_eq!(
-                    eq_combined,
-                    evaluate_shifted_eq_poly::<F, _>(&params.shifted_eq_coeffs, &opening_point.r),
-                    "program_image eq_slice optimized evaluation mismatch"
-                );
-                let scale: F = precommitted_skip_round_scale(&params.precommitted);
-                pw_eval * eq_combined * scale
+                pw_eval * params.final_program_image_output_scale(sumcheck_challenges)
             }
         }
     }
 
     fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
-        let mut params = self.params.borrow_mut();
-        let opening_point = params.normalize_opening_point(sumcheck_challenges);
-        if params.is_cycle_phase() {
+        let params = &self.params;
+        if params.is_cycle_phase() && params.precommitted.num_address_phase_rounds() > 0 {
+            let opening_point = params.normalize_opening_point(sumcheck_challenges);
             accumulator.append_dense(
                 CommittedPolynomial::ProgramImageInit,
                 SumcheckId::ProgramImageClaimReductionCyclePhase,
-                // Match prover behavior: the cycle-phase intermediate claim is not a real opening.
-                vec![],
+                opening_point.r,
             );
-            let opening_point_le: OpeningPoint<LITTLE_ENDIAN, F> = opening_point.match_endianness();
-            params
-                .precommitted
-                .set_cycle_var_challenges(opening_point_le.r);
         }
 
         if !params.is_cycle_phase() || params.precommitted.num_address_phase_rounds() == 0 {
+            let opening_point = params.normalize_opening_point(sumcheck_challenges);
             accumulator.append_dense(
                 CommittedPolynomial::ProgramImageInit,
                 SumcheckId::ProgramImageClaimReduction,
