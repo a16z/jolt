@@ -34,8 +34,37 @@ pub fn field_product_output_openings() -> [FieldInlineOpeningId; 2] {
     [field_rs1_value_product(), field_rs2_value_product()]
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldRegistersProductLane {
+    Product,
+    InverseProduct,
+}
+
+impl FieldRegistersProductLane {
+    pub fn input_opening(self) -> FieldInlineOpeningId {
+        match self {
+            Self::Product => field_product_opening(),
+            Self::InverseProduct => field_inv_product_opening(),
+        }
+    }
+
+    pub fn factor_openings(self) -> [FieldInlineOpeningId; 2] {
+        match self {
+            Self::Product => [field_rs1_value_product(), field_rs2_value_product()],
+            Self::InverseProduct => [field_rs1_value_product(), field_rd_value_product()],
+        }
+    }
+}
+
+pub const fn selected_product_lanes() -> [FieldRegistersProductLane; 2] {
+    [
+        FieldRegistersProductLane::Product,
+        FieldRegistersProductLane::InverseProduct,
+    ]
+}
+
 pub fn selected_product_uniskip_input_openings() -> [FieldInlineOpeningId; 2] {
-    [field_product_opening(), field_inv_product_opening()]
+    selected_product_lanes().map(FieldRegistersProductLane::input_opening)
 }
 
 pub fn selected_product_remainder_output_openings() -> [FieldInlineOpeningId; 3] {
@@ -110,6 +139,13 @@ mod tests {
         assert_eq!(
             selected_product_uniskip_input_openings(),
             [field_product_opening(), field_inv_product_opening()]
+        );
+        assert_eq!(
+            selected_product_lanes().map(FieldRegistersProductLane::factor_openings),
+            [
+                [field_rs1_value_product(), field_rs2_value_product()],
+                [field_rs1_value_product(), field_rd_value_product()],
+            ]
         );
         assert_eq!(
             selected_product_remainder_output_openings(),
