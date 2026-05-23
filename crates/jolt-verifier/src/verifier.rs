@@ -7,6 +7,11 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::{
+    field_inline::formulas::bytecode as field_bytecode, jolt::JoltRelationId,
+};
+
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
     preprocessing::JoltVerifierPreprocessing,
@@ -155,6 +160,8 @@ pub struct CheckedInputs {
     pub preprocessing_digest: [u8; 32],
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline_bytecode_transcript: Vec<u8>,
 }
 
 pub fn validate_inputs<PCS, VC, ZkProof>(
@@ -209,6 +216,31 @@ where
         None
     };
 
+    #[cfg(feature = "field-inline")]
+    let field_inline_bytecode_transcript = {
+        let field_inline_bytecode =
+            preprocessing
+                .field_inline_bytecode
+                .as_deref()
+                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: "field-inline bytecode metadata is missing".to_string(),
+                })?;
+        field_bytecode::validate_bytecode_rows(
+            field_inline_bytecode,
+            preprocessing.program.bytecode.code_size,
+            proof.protocol.field_inline.field_register_log_k,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
+        field_bytecode::bytecode_transcript_bytes(
+            field_inline_bytecode,
+            proof.protocol.field_inline.field_register_log_k,
+        )
+    };
+
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(
         normalized_public_io
@@ -227,6 +259,8 @@ where
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
         vc_capacity,
+        #[cfg(feature = "field-inline")]
+        field_inline_bytecode_transcript,
     })
 }
 
@@ -264,6 +298,12 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
         transcript,
         b"preprocessing_digest",
         &checked.preprocessing_digest,
+    );
+    #[cfg(feature = "field-inline")]
+    absorb_labeled_bytes(
+        transcript,
+        b"field_inline_bytecode",
+        &checked.field_inline_bytecode_transcript,
     );
     absorb_labeled_u64(
         transcript,
@@ -746,6 +786,53 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn validate_inputs_rejects_missing_field_inline_bytecode() {
+        let mut preprocessing = test_preprocessing();
+        preprocessing.field_inline_bytecode = None;
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                ..
+            })
+        ));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn validate_inputs_rejects_malformed_field_inline_bytecode() {
+        let mut preprocessing = test_preprocessing();
+        preprocessing.program.bytecode.code_size = 1;
+        preprocessing.field_inline_bytecode = Some(vec![field_bytecode::FieldInlineBytecodeRow {
+            flags: field_bytecode::FieldInlineBytecodeFlags {
+                mul: true,
+                ..field_bytecode::FieldInlineBytecodeFlags::default()
+            },
+            ..field_bytecode::FieldInlineBytecodeRow::default()
+        }]);
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let preprocessing = test_preprocessing();
@@ -1174,7 +1261,7 @@ mod tests {
             heap_size: 8,
             ..MemoryLayout::default()
         };
-        JoltVerifierPreprocessing::new(
+        let preprocessing = JoltVerifierPreprocessing::new(
             JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),
                 ram: RAMPreprocessing::default(),
@@ -1184,6 +1271,9 @@ mod tests {
             [7; 32],
             (),
             None,
-        )
+        );
+        #[cfg(feature = "field-inline")]
+        let preprocessing = preprocessing.with_field_inline_bytecode(Vec::new());
+        preprocessing
     }
 }
