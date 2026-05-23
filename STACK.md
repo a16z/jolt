@@ -9,7 +9,10 @@ truth.
 
 - `refactor/audit-prep` is the source branch.
 - Stack branches are disposable materializations of slices from that source.
-- Each PR branch is based on the previous PR branch.
+- Open stack PR branches are disposable materializations of slices from that
+  source. Merged stack rows stay in `main` and are not rebuilt.
+- Each open PR branch is based on the previous open PR branch, with the first
+  open row based on `origin/main`.
 - Root `Cargo.toml` and `Cargo.lock` are generated incrementally per PR. Do not
   restore the whole root manifest from `refactor/audit-prep` into early branches.
 - Open every PR as draft until the verifier frontier is complete.
@@ -45,10 +48,13 @@ verifier frontier from `refactor/audit-prep`.
 
 Pushing to `origin/refactor/audit-prep` runs
 [`.github/workflows/refactor-audit-stack.yml`](.github/workflows/refactor-audit-stack.yml).
+The workflow starts at the first open stack row (`07` at the moment). Rows
+`00` through `06` have merged to `main` and are intentionally not rebuilt.
+
 The workflow:
 
 1. checks out the pushed `refactor/audit-prep` commit;
-2. rebuilds each `stack/*` branch from the previous stack branch;
+2. rebuilds each open `stack/*` branch from the previous open stack branch;
 3. restores the owned paths from `origin/refactor/audit-prep`;
 4. applies the incremental root manifest changes for that stack point;
 5. runs `cargo metadata` to refresh `Cargo.lock`;
@@ -97,7 +103,7 @@ Create or update one branch:
 Rebuild all stack branches from the source branch:
 
 ```bash
-./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
+./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
 ```
 
 The CI workflow runs the same command. Without `--commit`, the script leaves
@@ -171,7 +177,7 @@ extension's submit command from the final stack branch.
    locally:
 
    ```bash
-   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
+   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
    ```
 
 4. Compare the stack tip to the source branch:
