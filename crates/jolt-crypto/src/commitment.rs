@@ -18,9 +18,7 @@ const PAR_THRESHOLD: usize = 1024;
 /// polynomial commitment schemes (`jolt_openings::CommitmentScheme`).
 /// The `Output` associated type is the single piece of connective tissue
 /// between these different levels of abstraction.
-pub trait Commitment:
-    Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned
-{
+pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
     /// The commitment value (e.g., a group element, a Merkle root, a lattice vector).
     type Output: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
 }

@@ -202,7 +202,7 @@ use jolt_field::Field;
 use crate::PairingGroup;
 
 /// BN254 pairing-friendly curve.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bn254;
 
 impl Bn254 {

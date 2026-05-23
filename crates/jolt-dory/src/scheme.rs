@@ -78,7 +78,7 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     unsafe { std::mem::transmute(ark) }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoryScheme;
 
 impl DoryScheme {
