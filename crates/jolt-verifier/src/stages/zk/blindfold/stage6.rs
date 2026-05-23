@@ -112,14 +112,10 @@ where
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted, public)?;
     }
 
-    let mut bytecode_input_expr = map_jolt_expr(bytecode_claims.input.expression().clone());
+    let bytecode_input_expr = map_jolt_expr(bytecode_claims.input.expression().clone());
     #[cfg(feature = "field-inline")]
-    {
-        bytecode_input_expr = bytecode_input_expr
-            + map_field_inline_bytecode_expr(
-                field_bytecode::read_raf_input_extension::<PCS::Field>(),
-            );
-    }
+    let bytecode_input_expr = bytecode_input_expr
+        + map_field_inline_bytecode_expr(field_bytecode::read_raf_input_extension::<PCS::Field>());
 
     let mut batch_claims = vec![
         (
