@@ -16,6 +16,7 @@ pub mod constraint;
 pub mod constraints;
 pub mod key;
 pub mod lowering;
+pub mod nonnative;
 pub mod provider;
 
 pub use builder::{AssignedScalar, LinearCombination, R1csBuilder, R1csBuilderError, Variable};
@@ -29,4 +30,5 @@ pub use lowering::{
     assert_claim_expr_eq, lower_claim_expr, ClaimLoweringError, ClaimSourceTable, ClaimSources,
     SourceValue,
 };
+pub use nonnative::FqVar;
 pub use provider::{R1csSource, SpartanChallenges};

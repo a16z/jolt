@@ -150,7 +150,7 @@ It encodes the selected `PcsProofAssist` verifier for the same opening snapshot:
 opening snapshot
   -> Dory-assist stage 1/2/3 verifier checks
   -> prefix-packing checks
-  -> Hyrax dense-trace opening check
+  -> Hyrax dense-witness opening check
   -> Dory-assist final public pairing check / bound acceptance condition
 ```
 
@@ -158,6 +158,50 @@ This statement is intentionally about configured verifier acceptance. The VM
 execution semantics enter through the soundness of the configured Jolt verifier
 and the selected PCS-assist verifier, not through a separate execution circuit
 inside the wrapper.
+
+## Field Semantics Contract
+
+The primary wrapper target is the BN254 recursion path. Field boundaries must be
+explicit protocol objects, not implicit casts between witness representations:
+
+```text
+Fr-native:
+  wrapper R1CS field
+  Spartan + HyperKZG backend field
+  algebraic Poseidon wrapper transcript
+  ordinary transparent Jolt verifier checks
+
+Fq-nonnative inside Fr R1CS:
+  Dory-assist verifier trace arithmetic
+  Dory-assist sumcheck claims and challenges
+  Dory-assist operation-family values, copy edges, and wiring values
+
+Grumpkin native-coordinate constraints:
+  Hyrax/Pedersen row commitments
+  Grumpkin point addition and scalar multiplication coordinates over Fr
+  scalar semantics remain Fq and must use the same non-native Fq representation
+```
+
+The wrapper backend receives only `ConstraintMatrices<Fr>`, `witness Vec<Fr>`,
+and `public_inputs Vec<Fr>`. It must not know which entries encode native `Fr`
+values, non-native `Fq` limbs, Grumpkin coordinates, transcript state, or Jolt
+proof data.
+
+The configured verifier R1CS assembly must make every field crossing explicit:
+
+```text
+Poseidon-Fr challenge
+  -> domain-separated Fr-to-Fq challenge map
+  -> canonical Fq variable
+  -> Dory-assist sumcheck / operation constraints
+```
+
+There should be no hidden `Fq` transcript, no unconstrained `Fr` witness standing
+in for an `Fq` value, and no component-local conversion rule that is not visible
+at the wrapper assembly boundary. If stronger challenge uniformity is needed
+than direct `Fr` injection, the conversion gadget should derive multiple
+Poseidon-`Fr` words and reduce the combined integer modulo `Fq` with explicit
+canonicality constraints.
 
 ## Relationship To BlindFold
 
@@ -563,6 +607,9 @@ protocol machinery:
 R1CS builder/matrices:
   jolt-r1cs::builder, jolt-r1cs::assembly, jolt-r1cs matrices
 
+non-native field and range helpers:
+  jolt-r1cs::nonnative, including canonical Fq-in-Fr variables
+
 transcript hashing:
   jolt-transcript::r1cs
 
@@ -581,15 +628,24 @@ field-inline field_constraints:
 Future BlindFold verifier checks:
   jolt-blindfold, using the same constant-source claim/sumcheck R1CS helpers
 
+curve and group constraints:
+  jolt-crypto::r1cs, including Grumpkin point and Pedersen constraints
+
 Hyrax verifier checks:
   jolt-hyrax::r1cs
 
-Dory-assist prefix packing:
-  jolt-claims::protocols::dory_assist::packing R1CS helper
+Dory-assist verifier staging:
+  dory-assist-verifier crate, mirroring jolt-verifier for Dory-assist semantics
+
+Dory-assist protocol facts and packing:
+  jolt-claims::protocols::dory_assist
 ```
 
 `jolt-wrapper::r1cs::assembly` sequences these helpers according to the
-configured verifier flow exported by `jolt-verifier`.
+configured verifier flow exported by `jolt-verifier`. It should not implement
+component math directly. It allocates the proof and public-input witness,
+threads transcript state, records aliases and claim sources, and calls the R1CS
+hooks owned by the component crates.
 
 ## Dory Assist In Wrapper
 
@@ -602,7 +658,7 @@ base Jolt stages
   -> opening snapshot
   -> selected DoryAssistProof::verify(...)
   -> Dory-assist stage 1/2/3 checks
-  -> Hyrax opening check for the packed dense trace
+  -> Hyrax opening check for the packed dense witness
   -> Dory-assist final public pairing check
   -> wrapper R1CS proves this configured verifier accepts
 ```
@@ -610,6 +666,9 @@ base Jolt stages
 The wrapper-facing R1CS hooks follow the Dory-assist ownership split:
 
 ```text
+Dory-assist staged verifier flow:
+  dory-assist-verifier crate
+
 Dory-assist stage sumchecks:
   jolt-sumcheck::r1cs
 
@@ -619,12 +678,21 @@ Dory-assist operation-family and wiring formulas:
 Dory-assist prefix packing:
   jolt-claims::protocols::dory_assist::packing
 
-Dory-assist dense-trace opening:
+Dory-assist dense-witness opening:
   jolt-hyrax::r1cs
 
 Dory-assist final public pairing check:
-  dory-assist verifier crate hook
+  dory-assist-verifier crate hook
 ```
+
+The `dory-assist-verifier` crate mirrors `jolt-verifier` in scope, but for the
+Dory-assist protocol only. It owns the stage ordering, proof payload structure,
+transcript order, native verification, wrapper-facing R1CS hook, and final
+acceptance condition for the selected assist proof. `jolt-wrapper` should not
+match on Dory-assist operation families or copy-edge internals. It receives a
+typed opening snapshot from the base Jolt stage-8 assembly, passes it to the
+selected Dory-assist verifier hook, and constrains the returned acceptance
+condition as part of the configured verifier relation.
 
 `jolt-hyrax::r1cs` should only lower the Hyrax opening verifier used by the
 assist proof:
@@ -649,7 +717,7 @@ constraints rather than BN254-G1-over-`Fq` non-native group arithmetic.
 
 Any `Fq` scalar arithmetic, range constraints, operation-family semantics, and
 copy/wiring checks remain Dory-assist constraints. The Hyrax R1CS module only
-binds the already-packed dense trace to the assist verifier's claimed dense
+binds the already-packed dense witness to the assist verifier's claimed dense
 opening.
 
 Dory-assist `Fq` sumcheck challenges must be derived from the wrapper's
@@ -665,7 +733,7 @@ The Dory-assist spec says final exponentiation and public pairing equality are
 native verifier work in v1. For wrapper purposes, that means "outside the
 Dory-assist auxiliary proof," not "outside the configured verifier." A
 self-contained wrapper must still account for that selected assist-verifier
-acceptance condition: either the Dory-assist verifier crate supplies the R1CS
+acceptance condition: either the `dory-assist-verifier` crate supplies the R1CS
 hook for the final public check, or the wrapper verifier must recheck and bind
 that public condition outside the wrapper proof. The primary self-contained
 wrapper target should not rely on an unchecked native side condition.
@@ -847,43 +915,62 @@ Each step should be reviewed before continuing to the next.
    - Review gate: R1CS challenge outputs match native transcript outputs for
      fixed absorption sequences.
 
-4. Add wrapper protocol builder skeleton.
+4. Add explicit field-semantics helpers for wrapper assembly.
+   - Add the canonical non-native `Fq`-inside-`Fr` representation in
+     `jolt-r1cs::nonnative`.
+   - Add boolean, range, equality, add/sub/mul/inv/select helpers needed by
+     Dory-assist verifier constraints.
+   - Add the domain-separated `Poseidon-Fr -> Fq` challenge map used by
+     Dory-assist sumchecks.
+   - Review gate: bad canonicality, bad reduction, and bad challenge-conversion
+     witnesses are rejected.
+
+5. Add wrapper protocol builder skeleton.
    - Implement `WrapperProtocolBuilder`, `WrapperClaimSources`, and configured
      stage hook traits over `R1csBuilder`.
    - Review gate: fixture stage lowers to satisfied R1CS without becoming part
      of the public wrapper API.
 
-5. Add wrapper instance export.
+6. Add wrapper instance export.
    - Track stable public-input ordering.
    - Export matrices, witness, and publics for the backend.
    - Review gate: deterministic public-input order tests.
 
-6. Assemble base configured verifier R1CS.
+7. Assemble base configured verifier R1CS.
    - Start with a narrow configured verifier computation before full Jolt.
    - Review gate: native verifier and wrapper R1CS agree on accept/reject for
      the same fixture.
 
-7. Add Dory-assist and Hyrax hooks.
+8. Add Dory-assist verifier hook integration.
    - Compile the selected Dory-assist `PcsProofAssist` verifier path rather
      than the ordinary Dory stage-8 verifier path.
-   - Call Dory-assist claim, packing, final-check, and `jolt-hyrax::r1cs`
-     helpers when the configured verifier includes Dory assist.
+   - Treat the `dory-assist-verifier` crate as the owner of Dory-assist stage
+     ordering, native verification, R1CS hook, and final acceptance condition.
+   - Pass the typed opening snapshot from wrapper stage-8 assembly into the
+     selected Dory-assist verifier hook.
    - Review gate: Dory-assist configured computation produces satisfied
      R1CS.
 
-8. Add field-inline wrapper hooks.
+9. Add Hyrax and Grumpkin R1CS component hooks.
+   - Use `jolt-hyrax::r1cs` for dense-witness opening verification.
+   - Use `jolt-crypto::r1cs` for Grumpkin/Pedersen group constraints.
+   - Keep Hyrax unaware of Dory-assist stages and copy-edge semantics.
+   - Review gate: tampering the dense-witness opening, Grumpkin commitment, or
+     packed evaluation rejects.
+
+10. Add field-inline wrapper hooks.
    - Include FR stages when the configured verifier includes field inline.
    - Review gate: FR-off and FR-on configs produce distinct deterministic
      R1CS shapes.
 
-9. Implement ZK `snark_backends/spartan_hyperkzg`.
+11. Implement ZK `snark_backends/spartan_hyperkzg`.
    - Consume arbitrary `WrapperR1csInstance`.
    - Keep the backend independent from Jolt protocol types.
    - Hide the R1CS witness, including transparent inner proof data.
    - Review gate: arbitrary R1CS proof verifies and witness
      randomization changes proof bytes for the same public statement.
 
-10. Add configured-verifier wrapper fixture.
+12. Add configured-verifier wrapper fixture.
    - Prove a small transparent configured verifier computation end to end with
      the transparent proof held as private wrapper witness.
    - Review gate: mutating transcript challenges, public inputs, sumcheck
