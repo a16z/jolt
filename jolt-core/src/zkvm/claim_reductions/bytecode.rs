@@ -21,7 +21,6 @@ use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckIns
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::bytecode::chunks::{committed_lanes, total_lanes, BYTECODE_LANE_LAYOUT};
-use crate::zkvm::bytecode::read_raf_checking::BytecodeReadRafSumcheckParams;
 use crate::zkvm::claim_reductions::{
     permute_precommitted_polys, precommitted_skip_round_scale, PrecommittedClaimReduction,
     PrecommittedPhase, PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
@@ -53,7 +52,7 @@ pub struct BytecodeClaimReductionParams<F: JoltField> {
 
 impl<F: JoltField> BytecodeClaimReductionParams<F> {
     pub fn new(
-        bytecode_read_raf_params: &BytecodeReadRafSumcheckParams<F>,
+        bytecode_read_raf_gammas: [&[F]; NUM_VAL_STAGES],
         full_bytecode_len: usize,
         bytecode_chunk_count: usize,
         scheduling_reference: PrecommittedSchedulingReference,
@@ -87,7 +86,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         debug_assert_eq!(chunk_rbc_weights.len(), bytecode_chunk_count);
         let r_bc = OpeningPoint::new(r_bc_full.r[dropped_bits..].to_vec());
 
-        let lane_weights = compute_lane_weights(bytecode_read_raf_params, accumulator, &eta_powers);
+        let lane_weights = compute_lane_weights(bytecode_read_raf_gammas, accumulator, &eta_powers);
 
         // bytecode_K is the committed lane capacity (already next-power-of-two padded).
         let bytecode_k = committed_lanes();
@@ -524,7 +523,7 @@ fn native_index_to_lane_cycle<F: JoltField>(
 }
 
 fn compute_lane_weights<F: JoltField>(
-    bytecode_read_raf_params: &BytecodeReadRafSumcheckParams<F>,
+    bytecode_read_raf_gammas: [&[F]; NUM_VAL_STAGES],
     accumulator: &dyn OpeningAccumulator<F>,
     eta_powers: &[F; NUM_VAL_STAGES],
 ) -> Vec<F> {
@@ -552,7 +551,7 @@ fn compute_lane_weights<F: JoltField>(
 
     {
         let coeff = eta_powers[0];
-        let g = &bytecode_read_raf_params.stage1_gammas;
+        let g = bytecode_read_raf_gammas[0];
         weights[layout.unexp_pc_idx] += coeff * g[0];
         weights[layout.imm_idx] += coeff * g[1];
         for i in 0..NUM_CIRCUIT_FLAGS {
@@ -561,7 +560,7 @@ fn compute_lane_weights<F: JoltField>(
     }
     {
         let coeff = eta_powers[1];
-        let g = &bytecode_read_raf_params.stage2_gammas;
+        let g = bytecode_read_raf_gammas[1];
         weights[layout.circuit_start + (CircuitFlags::Jump as usize)] += coeff * g[0];
         weights[layout.instr_start + (InstructionFlags::Branch as usize)] += coeff * g[1];
         weights[layout.circuit_start + (CircuitFlags::WriteLookupOutputToRD as usize)] +=
@@ -570,7 +569,7 @@ fn compute_lane_weights<F: JoltField>(
     }
     {
         let coeff = eta_powers[2];
-        let g = &bytecode_read_raf_params.stage3_gammas;
+        let g = bytecode_read_raf_gammas[2];
         weights[layout.imm_idx] += coeff * g[0];
         weights[layout.unexp_pc_idx] += coeff * g[1];
         weights[layout.instr_start + (InstructionFlags::LeftOperandIsRs1Value as usize)] +=
@@ -586,7 +585,7 @@ fn compute_lane_weights<F: JoltField>(
     }
     {
         let coeff = eta_powers[3];
-        let g = &bytecode_read_raf_params.stage4_gammas;
+        let g = bytecode_read_raf_gammas[3];
         for r in 0..reg_count {
             weights[layout.rd_start + r] += coeff * g[0] * eq_r_register_4[r];
             weights[layout.rs1_start + r] += coeff * g[1] * eq_r_register_4[r];
@@ -595,7 +594,7 @@ fn compute_lane_weights<F: JoltField>(
     }
     {
         let coeff = eta_powers[4];
-        let g = &bytecode_read_raf_params.stage5_gammas;
+        let g = bytecode_read_raf_gammas[4];
         for r in 0..reg_count {
             weights[layout.rd_start + r] += coeff * g[0] * eq_r_register_5[r];
         }

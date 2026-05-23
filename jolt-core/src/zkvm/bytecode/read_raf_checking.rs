@@ -1645,6 +1645,16 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
+    pub fn stage_gammas(&self) -> [&[F]; N_STAGES] {
+        [
+            &self.stage1_gammas,
+            &self.stage2_gammas,
+            &self.stage3_gammas,
+            &self.stage4_gammas,
+            &self.stage5_gammas,
+        ]
+    }
+
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen<PCS: CommitmentScheme>(
         program: Option<&ProgramPreprocessing<PCS>>,
