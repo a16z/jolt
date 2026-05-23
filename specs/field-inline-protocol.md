@@ -338,14 +338,20 @@ The downstream memory path is:
 stage 4:
   consumes FieldRd/Rs1/Rs2 values at r_prod
   proves FR read/write consistency at r_rw
-  outputs FieldRegistersVal(r_rw), FieldRdWa(r_rw), FieldRdInc(rw_cycle)
+  outputs FieldRegistersVal(r_rw), FieldRs1Ra(r_rw), FieldRs2Ra(r_rw),
+  FieldRdWa(r_rw), FieldRdInc(rw_cycle)
 
 stage 5:
   consumes FieldRegistersVal(r_rw)
   proves FR val evaluation at r_val
   outputs FieldRdWa(r_val), FieldRdInc(val_cycle)
 
-stage 6:
+stage 6 BytecodeReadRaf:
+  extends BytecodeReadRaf with field-inline instruction/access terms
+  proves FieldRs1Ra, FieldRs2Ra, FieldRdWa, FieldOpFlag(...)
+  match the field operands/opcode selected by BytecodeRa(i)
+
+stage 6 FieldRegistersIncClaimReduction:
   reduces FieldRdInc(rw_cycle) and FieldRdInc(val_cycle)
   to one FieldRdInc(r_inc) claim
 
@@ -355,12 +361,29 @@ stage 8:
 ```
 
 For v1, the new committed field-inline surface is nested under
-`FieldInlineCommitments::field_registers` and includes `FieldRdInc` plus
-`FieldRegistersRa(i)` commitments. `FieldRdInc` enters the stage-6 reduction
-and then the final PCS RLC. `FieldRegistersRa(i)` commitments mirror the
-ordinary register Twist commitment surface. Their opening/reduction path should
-follow the same explicit polynomial-to-relation mapping discipline before any
-FR RA claim enters stage 8.
+`FieldInlineCommitments::field_registers` and includes `FieldRdInc`.
+`FieldRdInc` enters the stage-6 reduction and then the final PCS RLC.
+`FieldRs1Ra`, `FieldRs2Ra`, and `FieldRdWa` mirror ordinary register-Twist RA/WA
+columns: they are virtual openings inside the FR read/write relation, not
+committed PCS polynomials.
+
+Those virtual FR access columns are still anchored to committed data. The
+anchor is the existing bytecode RA commitment path:
+
+```text
+FieldRs1Ra / FieldRs2Ra / FieldRdWa
+  -> consumed by the field-inline extension of BytecodeReadRaf
+  -> checked against field operands in the selected bytecode row
+  -> reduced to BytecodeRa(i)@BytecodeReadRaf
+  -> reduced by HammingWeightClaimReduction
+  -> opened in the ordinary stage-8 PCS batch
+```
+
+Field op flags follow the same rule. They are virtual Spartan/R1CS inputs, but
+BytecodeReadRaf must check them against the decoded field opcode carried by the
+selected bytecode row. A field-inline verifier must not accept FR RA/WA claims
+that are only self-consistent under `FieldRegistersReadWriteChecking`; they must
+also be linked to `BytecodeRa(i)`.
 
 ### Stage 2 Composition
 
@@ -531,8 +554,9 @@ to the identical Stage 5 equations.
 
 ### Stage 6 Composition
 
-Stage 6 batches field-register increment reduction beside the ordinary
-bytecode, Booleanity, RA virtualization, and increment-reduction work:
+Stage 6 extends ordinary bytecode read-RAF and batches field-register increment
+reduction beside the ordinary Booleanity, RA virtualization, and
+increment-reduction work:
 
 ```text
 FR off:
@@ -545,7 +569,7 @@ FR off:
   7+. optional advice cycle-phase reductions
 
 FR on:
-  1. BytecodeReadRaf
+  1. BytecodeReadRaf, with field-inline opcode/access terms enabled
   2. Booleanity
   3. RamHammingBooleanity
   4. RamRaVirtualization
@@ -554,6 +578,71 @@ FR on:
   7. FieldRegistersIncClaimReduction
   8+. optional advice cycle-phase reductions
 ```
+
+With field inline enabled, `BytecodeReadRaf` also consumes field-inline virtual
+openings produced by earlier stages:
+
+```text
+from stage 1 / selected Spartan outer:
+  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadFromX/StoreToX/LoadImm)
+
+from stage 4 / FieldRegistersReadWriteChecking:
+  FieldRdWa
+  FieldRs1Ra
+  FieldRs2Ra
+
+from stage 5 / FieldRegistersValEvaluation:
+  FieldRdWa
+```
+
+The bytecode public-row evaluation computes the matching values from the field
+opcode and field operand columns in the selected bytecode row. The output
+remains the existing committed bytecode RA product:
+
+```text
+BytecodeRa(i)@BytecodeReadRaf
+```
+
+There is no `FieldRegistersRa(i)` commitment. FR register access selectors are
+valid only because `BytecodeReadRaf` links them to the committed `BytecodeRa(i)`
+path and the public/preprocessed bytecode table.
+
+The v1 modular verifier represents the field-inline bytecode facts as a
+preprocessed side table parallel to ordinary bytecode rows:
+
+```text
+FieldInlineBytecodeRow:
+  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadFromX/StoreToX/LoadImm
+  field operands: rd, rs1, rs2 as FR register slots, each optional
+```
+
+When field inline is enabled, verifier preprocessing must supply this table.
+Stage 6 rejects a field-inline proof if the table is missing. This keeps the
+FR RA/WA openings soundly tied to the program being verified while the prover
+and tracer work is still landing in the modular crates.
+
+The field-inline `BytecodeReadRaf` extension appends terms to existing bytecode
+RLCs instead of creating another bytecode relation:
+
+```text
+Stage1Gamma powers:
+  ordinary powers 0..(1 + NUM_CIRCUIT_FLAGS)
+  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadFromX/StoreToX/LoadImm)
+
+Stage4Gamma powers:
+  ordinary powers: RdWa, Rs1Ra, Rs2Ra
+  then FieldRdWa, FieldRs1Ra, FieldRs2Ra
+
+Stage5Gamma powers:
+  ordinary powers: RdWa, InstructionRafFlag, lookup-table flags
+  then FieldRdWa@FieldRegistersValEvaluation
+```
+
+The input claim is the ordinary `BytecodeReadRaf` input claim plus those
+field-inline terms under the existing outer bytecode gamma. The output claim
+uses the same `BytecodeRa(i)@BytecodeReadRaf` product, with public stage values
+augmented by evaluating the field-inline side table at the bytecode point and
+the relevant stage cycle points.
 
 `FieldRegistersIncClaimReduction` consumes the two semantic openings of the
 committed `FieldRdInc` polynomial produced by Stage 4 and Stage 5:
@@ -921,7 +1010,6 @@ pub enum FieldInlineVirtualPolynomial {
 
 pub enum FieldInlineCommittedPolynomial {
     FieldRdInc,
-    FieldRegistersRa(usize),
 }
 ```
 
@@ -934,14 +1022,18 @@ ordinary:
   RegistersVal/Rs1Ra/Rs2Ra/RdWa virtual
 
 field:
-  FieldRdInc committed or otherwise opened from the FR increment witness
-  FieldRegistersRa(i) committed for FR RA chunks carried in the proof payload
+  FieldRdInc committed and opened through the stage-6/stage-8 path
   FieldRegistersVal/FieldRs1Ra/FieldRs2Ra/FieldRdWa virtual
+  FieldRs1Ra/FieldRs2Ra/FieldRdWa anchored by BytecodeReadRaf -> BytecodeRa(i)
 ```
 
 ### Field-Register Formulas
 
 The formulas mirror ordinary register Twist memory checking.
+The register read/write and val-evaluation formulas prove FR memory consistency;
+they do not by themselves prove that a given field instruction selected those
+FR registers. BytecodeReadRaf supplies that instruction-access binding by
+checking the same virtual FR RA/WA openings against committed bytecode rows.
 
 Claim reduction:
 
@@ -1124,9 +1216,8 @@ Each step should be reviewed before continuing to the next.
 6. Wire verifier support one stage slice at a time.
    - Proof/config gate: require `proof.protocol.field_inline` to match the
      compile-time verifier config before any stage logic runs.
-   - Commitment absorption: absorb the nested FieldRegisters commitments,
-     currently `FieldRdInc` and `FieldRegistersRa(i)`, only when field inline
-     is enabled.
+   - Commitment absorption: absorb the nested FieldRegisters commitment,
+     currently `FieldRdInc`, only when field inline is enabled.
    - Selected R1CS composition: add `jolt-r1cs::constraints::jolt` so the
      compile-time selected R1CS is RV64 alone when FR is off and RV64 plus
      field-inline rows when FR is on. The composition keeps protocol semantics
@@ -1149,6 +1240,11 @@ Each step should be reviewed before continuing to the next.
      read/write work.
    - Stage 5: batch `FieldRegistersValEvaluation` with the existing
      val-evaluation work.
+   - Stage 6 bytecode read-RAF: extend `BytecodeReadRaf` to consume the
+     field-inline op flags plus `FieldRs1Ra`, `FieldRs2Ra`, and `FieldRdWa`
+     openings, and to check them against the field opcode/operands in the
+     selected bytecode row. The output remains `BytecodeRa(i)@BytecodeReadRaf`;
+     no `FieldRegistersRa(i)` commitment is introduced.
    - Stage 6: reduce the stage-4/stage-5 `FieldRdInc` claims to one final
      committed claim.
    - Stage 8: include the reduced `FieldRdInc` claim in the ordinary joint PCS
