@@ -2,7 +2,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::Field;
+use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -33,6 +33,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let checked = validate_inputs(
         preprocessing,
