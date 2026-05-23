@@ -21,6 +21,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-sumcheck = { workspace = true, features = ["r1cs"] }
+jolt-transcript = { workspace = true, features = ["poseidon-r1cs"] }
+jolt-wrapper.workspace = true
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
 
