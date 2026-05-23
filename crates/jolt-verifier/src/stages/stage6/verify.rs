@@ -1,6 +1,7 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
-    formulas::claim_reductions::increments as field_increments, FieldRegistersTraceDimensions,
+    formulas::{bytecode as field_bytecode, claim_reductions::increments as field_increments},
+    FieldInlineVirtualPolynomial, FieldRegistersTraceDimensions,
 };
 use jolt_claims::protocols::jolt::{
     formulas::{
@@ -21,6 +22,7 @@ use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::try_eq_mle;
+#[cfg(not(feature = "field-inline"))]
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
@@ -83,6 +85,131 @@ const fn field_inline_stage6_output_claim_count() -> usize {
 #[cfg(not(feature = "field-inline"))]
 const fn field_inline_stage6_output_claim_count() -> usize {
     0
+}
+
+#[cfg(feature = "field-inline")]
+const fn stage1_gamma_count() -> usize {
+    field_bytecode::FIELD_INLINE_BYTECODE_STAGE1_GAMMA_COUNT
+}
+
+#[cfg(not(feature = "field-inline"))]
+const fn stage1_gamma_count() -> usize {
+    2 + NUM_CIRCUIT_FLAGS
+}
+
+#[cfg(feature = "field-inline")]
+const fn stage4_gamma_count() -> usize {
+    field_bytecode::FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT
+}
+
+#[cfg(not(feature = "field-inline"))]
+const fn stage4_gamma_count() -> usize {
+    3
+}
+
+#[cfg(feature = "field-inline")]
+const fn stage5_gamma_count() -> usize {
+    2 + LookupTableKind::<RISCV_XLEN>::COUNT
+        + field_bytecode::FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS
+}
+
+#[cfg(not(feature = "field-inline"))]
+const fn stage5_gamma_count() -> usize {
+    2 + LookupTableKind::<RISCV_XLEN>::COUNT
+}
+
+#[cfg(feature = "field-inline")]
+fn field_inline_bytecode_rows<PCS, VC>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+) -> Result<&[field_bytecode::FieldInlineBytecodeRow], VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    preprocessing
+        .field_inline_bytecode
+        .as_deref()
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: "field-inline bytecode metadata is missing".to_string(),
+        })
+}
+
+#[cfg(feature = "field-inline")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Field-inline bytecode evaluation depends on several stage points."
+)]
+fn add_field_inline_bytecode_public_values<F>(
+    bytecode_public_values: &mut bytecode::BytecodeReadRafPublicValues<F>,
+    field_inline_bytecode: &[field_bytecode::FieldInlineBytecodeRow],
+    r_address: &[F],
+    r_cycle: &[F],
+    stage1_cycle: &[F],
+    field_registers_read_write_opening_point: &[F],
+    field_registers_val_evaluation_opening_point: &[F],
+    field_log_k: usize,
+    log_t: usize,
+    stage1_gammas: &[F],
+    stage4_gammas: &[F],
+    stage5_gammas: &[F],
+) -> Result<(), VerifierError>
+where
+    F: Field,
+{
+    if field_registers_read_write_opening_point.len() != field_log_k + log_t {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: format!(
+                "field-register read-write opening point length mismatch: expected {}, got {}",
+                field_log_k + log_t,
+                field_registers_read_write_opening_point.len()
+            ),
+        });
+    }
+    if field_registers_val_evaluation_opening_point.len() != field_log_k + log_t {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: format!(
+                "field-register val-evaluation opening point length mismatch: expected {}, got {}",
+                field_log_k + log_t,
+                field_registers_val_evaluation_opening_point.len()
+            ),
+        });
+    }
+
+    let (field_read_write_address, field_read_write_cycle) =
+        field_registers_read_write_opening_point.split_at(field_log_k);
+    let (field_val_evaluation_address, field_val_evaluation_cycle) =
+        field_registers_val_evaluation_opening_point.split_at(field_log_k);
+    let field_values = field_bytecode::read_raf_public_values(
+        field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
+            bytecode: field_inline_bytecode,
+            r_address,
+            r_cycle,
+            stage1_cycle_point: stage1_cycle,
+            field_register_read_write_point: field_read_write_address,
+            field_register_read_write_cycle_point: field_read_write_cycle,
+            field_register_val_evaluation_point: field_val_evaluation_address,
+            field_register_val_evaluation_cycle_point: field_val_evaluation_cycle,
+            stage1_gammas,
+            stage4_gammas,
+            stage5_gammas,
+        },
+    )
+    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::BytecodeReadRaf,
+        reason: error.to_string(),
+    })?;
+
+    for (stage_value, field_value) in bytecode_public_values
+        .stage_values
+        .iter_mut()
+        .zip(field_values.stage_values)
+    {
+        *stage_value += field_value;
+    }
+    Ok(())
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -191,12 +318,11 @@ where
 
     let bytecode_gamma_powers = transcript.challenge_scalar_powers(8);
     let bytecode_gamma = bytecode_gamma_powers[1];
-    let stage1_gammas = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
+    let stage1_gammas = transcript.challenge_scalar_powers(stage1_gamma_count());
     let stage2_gammas = transcript.challenge_scalar_powers(4);
     let stage3_gammas = transcript.challenge_scalar_powers(9);
-    let stage4_gammas = transcript.challenge_scalar_powers(3);
-    let stage5_gammas =
-        transcript.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT);
+    let stage4_gammas = transcript.challenge_scalar_powers(stage4_gamma_count());
+    let stage5_gammas = transcript.challenge_scalar_powers(stage5_gamma_count());
 
     let (stage5_instruction_address, stage5_instruction_cycle) = match deps {
         Deps::Clear { stage5, .. } => (
@@ -589,159 +715,231 @@ where
     let [ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation] =
         increments::claim_reduction_input_openings();
     let input_claims = Stage6BatchInputClaims {
-        bytecode_read_raf: bytecode_claims.input.expression().try_evaluate(
-            |id| {
-                if *id == bytecode_input_openings.spartan_outer.unexpanded_pc {
-                    return Ok(stage1.outer.unexpanded_pc);
-                }
-                if *id == bytecode_input_openings.spartan_outer.imm {
-                    return Ok(stage1.outer.imm);
-                }
-                for (flag, opening) in &bytecode_input_openings.spartan_outer.op_flags {
-                    if *id == *opening {
-                        return stage1
-                            .outer
-                            .claim(JoltVirtualPolynomial::OpFlags(*flag))
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+        bytecode_read_raf: {
+            let mut input_claim = bytecode_claims.input.expression().try_evaluate(
+                |id| {
+                    if *id == bytecode_input_openings.spartan_outer.unexpanded_pc {
+                        return Ok(stage1.outer.unexpanded_pc);
                     }
-                }
-                if *id == bytecode_input_openings.spartan_product.jump {
-                    return Ok(stage2.output_claims.product_remainder.jump_flag);
-                }
-                if *id == bytecode_input_openings.spartan_product.branch {
-                    return Ok(stage2.output_claims.product_remainder.branch_flag);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .spartan_product
-                        .write_lookup_output_to_rd
-                {
-                    return Ok(stage2
-                        .output_claims
-                        .product_remainder
-                        .write_lookup_output_to_rd);
-                }
-                if *id == bytecode_input_openings.spartan_product.virtual_instruction {
-                    return Ok(stage2.output_claims.product_remainder.virtual_instruction);
-                }
-                if *id == bytecode_input_openings.instruction_input.imm {
-                    return Ok(stage3.output_claims.instruction_input.imm);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .unexpanded_pc_from_shift
-                {
-                    return Ok(stage3.output_claims.shift.unexpanded_pc);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .left_operand_is_rs1_value
-                {
-                    return Ok(stage3.output_claims.instruction_input.left_operand_is_rs1);
-                }
-                if *id == bytecode_input_openings.instruction_input.left_operand_is_pc {
-                    return Ok(stage3.output_claims.instruction_input.left_operand_is_pc);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .right_operand_is_rs2_value
-                {
-                    return Ok(stage3.output_claims.instruction_input.right_operand_is_rs2);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .right_operand_is_imm
-                {
-                    return Ok(stage3.output_claims.instruction_input.right_operand_is_imm);
-                }
-                if *id == bytecode_input_openings.instruction_input.is_noop_from_shift {
-                    return Ok(stage3.output_claims.shift.is_noop);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .virtual_instruction_from_shift
-                {
-                    return Ok(stage3.output_claims.shift.is_virtual);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .is_first_in_sequence_from_shift
-                {
-                    return Ok(stage3.output_claims.shift.is_first_in_sequence);
-                }
-                if *id == bytecode_input_openings.registers_read_write.rd_wa {
-                    return Ok(stage4.output_claims.registers_read_write.rd_wa);
-                }
-                if *id == bytecode_input_openings.registers_read_write.rs1_ra {
-                    return Ok(stage4.output_claims.registers_read_write.rs1_ra);
-                }
-                if *id == bytecode_input_openings.registers_read_write.rs2_ra {
-                    return Ok(stage4.output_claims.registers_read_write.rs2_ra);
-                }
-                if *id == bytecode_input_openings.registers_val_evaluation.rd_wa {
-                    return Ok(stage5.output_claims.registers_val_evaluation.rd_wa);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .registers_val_evaluation
-                        .instruction_raf_flag
-                {
-                    return Ok(stage5
-                        .output_claims
-                        .instruction_read_raf
-                        .instruction_raf_flag);
-                }
-                for (table, opening) in &bytecode_input_openings
-                    .registers_val_evaluation
-                    .lookup_table_flags
-                {
-                    if *id == *opening {
-                        return stage5
+                    if *id == bytecode_input_openings.spartan_outer.imm {
+                        return Ok(stage1.outer.imm);
+                    }
+                    for (flag, opening) in &bytecode_input_openings.spartan_outer.op_flags {
+                        if *id == *opening {
+                            return stage1
+                                .outer
+                                .claim(JoltVirtualPolynomial::OpFlags(*flag))
+                                .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+                        }
+                    }
+                    if *id == bytecode_input_openings.spartan_product.jump {
+                        return Ok(stage2.output_claims.product_remainder.jump_flag);
+                    }
+                    if *id == bytecode_input_openings.spartan_product.branch {
+                        return Ok(stage2.output_claims.product_remainder.branch_flag);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .spartan_product
+                            .write_lookup_output_to_rd
+                    {
+                        return Ok(stage2
+                            .output_claims
+                            .product_remainder
+                            .write_lookup_output_to_rd);
+                    }
+                    if *id == bytecode_input_openings.spartan_product.virtual_instruction {
+                        return Ok(stage2.output_claims.product_remainder.virtual_instruction);
+                    }
+                    if *id == bytecode_input_openings.instruction_input.imm {
+                        return Ok(stage3.output_claims.instruction_input.imm);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .instruction_input
+                            .unexpanded_pc_from_shift
+                    {
+                        return Ok(stage3.output_claims.shift.unexpanded_pc);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .instruction_input
+                            .left_operand_is_rs1_value
+                    {
+                        return Ok(stage3.output_claims.instruction_input.left_operand_is_rs1);
+                    }
+                    if *id == bytecode_input_openings.instruction_input.left_operand_is_pc {
+                        return Ok(stage3.output_claims.instruction_input.left_operand_is_pc);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .instruction_input
+                            .right_operand_is_rs2_value
+                    {
+                        return Ok(stage3.output_claims.instruction_input.right_operand_is_rs2);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .instruction_input
+                            .right_operand_is_imm
+                    {
+                        return Ok(stage3.output_claims.instruction_input.right_operand_is_imm);
+                    }
+                    if *id == bytecode_input_openings.instruction_input.is_noop_from_shift {
+                        return Ok(stage3.output_claims.shift.is_noop);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .instruction_input
+                            .virtual_instruction_from_shift
+                    {
+                        return Ok(stage3.output_claims.shift.is_virtual);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .instruction_input
+                            .is_first_in_sequence_from_shift
+                    {
+                        return Ok(stage3.output_claims.shift.is_first_in_sequence);
+                    }
+                    if *id == bytecode_input_openings.registers_read_write.rd_wa {
+                        return Ok(stage4.output_claims.registers_read_write.rd_wa);
+                    }
+                    if *id == bytecode_input_openings.registers_read_write.rs1_ra {
+                        return Ok(stage4.output_claims.registers_read_write.rs1_ra);
+                    }
+                    if *id == bytecode_input_openings.registers_read_write.rs2_ra {
+                        return Ok(stage4.output_claims.registers_read_write.rs2_ra);
+                    }
+                    if *id == bytecode_input_openings.registers_val_evaluation.rd_wa {
+                        return Ok(stage5.output_claims.registers_val_evaluation.rd_wa);
+                    }
+                    if *id
+                        == bytecode_input_openings
+                            .registers_val_evaluation
+                            .instruction_raf_flag
+                    {
+                        return Ok(stage5
                             .output_claims
                             .instruction_read_raf
-                            .lookup_table_flags
-                            .get(table.index())
-                            .copied()
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+                            .instruction_raf_flag);
                     }
-                }
-                if *id == bytecode_input_openings.spartan_outer_pc {
-                    return Ok(stage1.outer.pc);
-                }
-                if *id == bytecode_input_openings.spartan_shift_pc {
-                    return Ok(stage3.output_claims.shift.pc);
-                }
-                Err(VerifierError::MissingOpeningClaim { id: *id })
-            },
-            |id| match id {
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
-                    Ok(bytecode_gamma)
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage1Gamma) => {
-                    Ok(stage1_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage2Gamma) => {
-                    Ok(stage2_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage3Gamma) => {
-                    Ok(stage3_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage4Gamma) => {
-                    Ok(stage4_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage5Gamma) => {
-                    Ok(stage5_gammas[1])
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
+                    for (table, opening) in &bytecode_input_openings
+                        .registers_val_evaluation
+                        .lookup_table_flags
+                    {
+                        if *id == *opening {
+                            return stage5
+                                .output_claims
+                                .instruction_read_raf
+                                .lookup_table_flags
+                                .get(table.index())
+                                .copied()
+                                .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+                        }
+                    }
+                    if *id == bytecode_input_openings.spartan_outer_pc {
+                        return Ok(stage1.outer.pc);
+                    }
+                    if *id == bytecode_input_openings.spartan_shift_pc {
+                        return Ok(stage3.output_claims.shift.pc);
+                    }
+                    Err(VerifierError::MissingOpeningClaim { id: *id })
+                },
+                |id| match id {
+                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
+                        Ok(bytecode_gamma)
+                    }
+                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage1Gamma) => {
+                        Ok(stage1_gammas[1])
+                    }
+                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage2Gamma) => {
+                        Ok(stage2_gammas[1])
+                    }
+                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage3Gamma) => {
+                        Ok(stage3_gammas[1])
+                    }
+                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage4Gamma) => {
+                        Ok(stage4_gammas[1])
+                    }
+                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage5Gamma) => {
+                        Ok(stage5_gammas[1])
+                    }
+                    _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                },
+                |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            )?;
+
+            #[cfg(feature = "field-inline")]
+            {
+                let field_openings = field_bytecode::read_raf_input_openings();
+                input_claim += field_bytecode::read_raf_input_extension::<PCS::Field>()
+                    .try_evaluate(
+                        |id| {
+                            for (index, flag) in field_bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS
+                                .into_iter()
+                                .enumerate()
+                            {
+                                if *id == field_openings[index] {
+                                    return stage1
+                                        .field_inline
+                                        .claim(FieldInlineVirtualPolynomial::FieldOpFlag(flag))
+                                        .ok_or(VerifierError::MissingFieldInlineOpeningClaim {
+                                            id: *id,
+                                        });
+                                }
+                            }
+                            if *id == field_openings[8] {
+                                return Ok(stage4
+                                    .output_claims
+                                    .field_inline
+                                    .field_registers_read_write
+                                    .field_rd_wa);
+                            }
+                            if *id == field_openings[9] {
+                                return Ok(stage4
+                                    .output_claims
+                                    .field_inline
+                                    .field_registers_read_write
+                                    .field_rs1_ra);
+                            }
+                            if *id == field_openings[10] {
+                                return Ok(stage4
+                                    .output_claims
+                                    .field_inline
+                                    .field_registers_read_write
+                                    .field_rs2_ra);
+                            }
+                            if *id == field_openings[11] {
+                                return Ok(stage5
+                                    .output_claims
+                                    .field_inline
+                                    .field_registers_val_evaluation
+                                    .field_rd_wa);
+                            }
+                            Err(VerifierError::MissingFieldInlineOpeningClaim { id: *id })
+                        },
+                        |id| match id {
+                            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
+                                Ok(bytecode_gamma)
+                            }
+                            JoltChallengeId::BytecodeReadRaf(
+                                BytecodeReadRafChallenge::Stage1Gamma,
+                            ) => Ok(stage1_gammas[1]),
+                            JoltChallengeId::BytecodeReadRaf(
+                                BytecodeReadRafChallenge::Stage4Gamma,
+                            ) => Ok(stage4_gammas[1]),
+                            JoltChallengeId::BytecodeReadRaf(
+                                BytecodeReadRafChallenge::Stage5Gamma,
+                            ) => Ok(stage5_gammas[1]),
+                            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                        },
+                        |()| Ok(PCS::Field::zero()),
+                    )?;
+            }
+
+            input_claim
+        },
         booleanity: PCS::Field::zero(),
         ram_hamming_booleanity: PCS::Field::zero(),
         ram_ra_virtualization: ram_ra_claims.input.expression().try_evaluate(
@@ -964,7 +1162,7 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let bytecode_public_values =
+    let mut bytecode_public_values =
         bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
             bytecode: &preprocessing.program.bytecode.bytecode,
             r_address: &bytecode_opening_point.r_address,
@@ -989,6 +1187,21 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: error.to_string(),
         })?;
+    #[cfg(feature = "field-inline")]
+    add_field_inline_bytecode_public_values(
+        &mut bytecode_public_values,
+        field_inline_bytecode_rows(preprocessing)?,
+        &bytecode_opening_point.r_address,
+        &bytecode_opening_point.r_cycle,
+        &stage1_cycle,
+        &stage4.batch.field_registers_read_write.opening_point,
+        &stage5.batch.field_registers_val_evaluation.opening_point,
+        proof.protocol.field_inline.field_register_log_k,
+        log_t,
+        &stage1_gammas,
+        &stage4_gammas,
+        &stage5_gammas,
+    )?;
     let bytecode_output = bytecode_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in bytecode_output_openings.bytecode_ra.iter().enumerate() {
