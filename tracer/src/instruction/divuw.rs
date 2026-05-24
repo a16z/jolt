@@ -39,11 +39,7 @@ impl RISCVTrace for DIVUW {
         let x = cpu.x[self.operands.rs1 as usize] as u32;
         let y = cpu.x[self.operands.rs2 as usize] as u32;
 
-        let quotient = if y == 0 {
-            u32::MAX as u64
-        } else {
-            (x / y) as u64
-        };
+        let quotient = x.checked_div(y).map_or(u32::MAX as u64, u64::from);
 
         let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         fill_virtual_advice(&mut inline_sequence, &[quotient]);

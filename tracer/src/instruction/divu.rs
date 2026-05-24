@@ -36,7 +36,7 @@ impl RISCVTrace for DIVU {
         let x = cpu.x[self.operands.rs1 as usize] as u64;
         let y = cpu.x[self.operands.rs2 as usize] as u64;
 
-        let quotient = if y == 0 { u64::MAX } else { x / y };
+        let quotient = x.checked_div(y).unwrap_or(u64::MAX);
 
         let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         fill_virtual_advice(&mut inline_sequence, &[quotient]);

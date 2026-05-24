@@ -1,0 +1,59 @@
+name: Refactor Audit Stack
+
+on:
+  push:
+    branches:
+      - refactor/audit-prep
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: refactor-audit-stack
+  cancel-in-progress: true
+
+jobs:
+  update-stack:
+    name: Update draft stack branches
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: refactor/audit-prep
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch stack bases
+        run: |
+          git fetch origin main refactor/audit-prep
+          git fetch origin '+refs/heads/stack/*:refs/remotes/origin/stack/*' || true
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Rebuild and push stack
+        run: |
+          bash stack/update-stack.sh \
+            --apply \
+            --rebuild \
+            --commit \
+            --push \
+            --cargo-metadata \
+            --check-coverage \
+            --from origin/refactor/audit-prep \
+            --base origin/main
+
+      - name: Create or update draft PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash stack/open-prs.sh \
+            --apply \
+            --base main \
+            --source refactor/audit-prep

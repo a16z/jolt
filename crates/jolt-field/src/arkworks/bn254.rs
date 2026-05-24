@@ -358,7 +358,27 @@ impl ReducingBytes for Fr {
 impl TranscriptChallenge for Fr {
     #[inline]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        Fr::from_le_bytes_mod_order(bytes)
+        let mut buf = [0u8; 16];
+        let len = bytes.len().min(buf.len());
+        buf[..len].copy_from_slice(&bytes[..len]);
+        let value = u128::from_le_bytes(buf);
+        let low = value as u64;
+        // Top 3 bits of high limb are zeroed to ensure value < BN254 modulus.
+        let high = ((value >> 64) as u64) & (u64::MAX >> 3);
+        let Some(inner) = InnerFr::from_bigint_unchecked(ark_ff::BigInt::new([0, 0, low, high]))
+        else {
+            unreachable!("masked 125-bit shifted challenge fits in BN254 Fr")
+        };
+        Fr(inner)
+    }
+
+    #[inline]
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        let mut buf = bytes.to_vec();
+        // Scalar challenges match the legacy transcript convention: digest bytes
+        // are interpreted as a big-endian integer before reduction.
+        buf.reverse();
+        Fr::from_le_bytes_mod_order(&buf)
     }
 }
 
