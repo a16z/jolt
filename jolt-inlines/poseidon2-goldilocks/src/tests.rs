@@ -141,27 +141,27 @@ mod plonky3_parity {
         };
 
         let mut idx = 0;
-        for round in 0..4 {
-            for elem in 0..8 {
+        for round_constants in &GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL {
+            for constant in round_constants {
                 assert_eq!(
                     super::POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8[idx],
-                    GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL[round][elem].as_canonical_u64()
+                    constant.as_canonical_u64()
                 );
                 idx += 1;
             }
         }
-        for round in 0..22 {
+        for constant in &GOLDILOCKS_POSEIDON2_RC_8_INTERNAL {
             assert_eq!(
                 super::POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8[idx],
-                GOLDILOCKS_POSEIDON2_RC_8_INTERNAL[round].as_canonical_u64()
+                constant.as_canonical_u64()
             );
             idx += 1;
         }
-        for round in 0..4 {
-            for elem in 0..8 {
+        for round_constants in &GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL {
+            for constant in round_constants {
                 assert_eq!(
                     super::POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8[idx],
-                    GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL[round][elem].as_canonical_u64()
+                    constant.as_canonical_u64()
                 );
                 idx += 1;
             }
@@ -308,11 +308,11 @@ mod emulator {
             let vr: [VirtualRegisterGuard; 8] =
                 array::from_fn(|_| asm.allocator.allocate_for_inline());
             let mut asm = asm;
-            for i in 0..8 {
-                asm.emit_ld::<LD>(*vr[i], operands.rs1, (i * 8) as i64);
+            for (i, reg) in vr.iter().enumerate() {
+                asm.emit_ld::<LD>(**reg, operands.rs1, (i * 8) as i64);
             }
-            for i in 0..8 {
-                asm.emit_s::<SD>(operands.rs1, *vr[i], (i * 8) as i64);
+            for (i, reg) in vr.iter().enumerate() {
+                asm.emit_s::<SD>(operands.rs1, **reg, (i * 8) as i64);
             }
             drop(vr);
             asm.finalize_inline()

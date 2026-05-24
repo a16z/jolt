@@ -30,8 +30,8 @@ use crate::STATE_WIDTH;
 /// - `vr[0..8]`   — state `S[0..7]` (live across all rounds)
 /// - `vr[8..16]`  — temp state `T[0..7]` for MDS reorganization
 /// - `vr[16]`     — P (Goldilocks modulus) loaded once
-/// - `vr[17..24]` — mul_mod scratch (7 regs: lo, hi, hi_lo, hi_hi,
-///                   shifted, add_term, sub_term)
+/// - `vr[17..24]` — mul_mod scratch: lo, hi, hi_lo, hi_hi,
+///   shifted, add_term, sub_term
 /// - `vr[24..28]` — add_mod / final-reduction scratch (4 regs)
 /// - `vr[28..32]` — generic scratch (round constants, diff sums, etc.)
 /// - `vr[32]`     — internal-diffusion row-sum accumulator
