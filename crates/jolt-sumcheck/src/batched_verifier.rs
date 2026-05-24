@@ -200,12 +200,14 @@ impl BatchedSumcheckVerifier {
         }
 
         let alpha: F = transcript.challenge();
+        let padding_scale = domain.padding_scale()?;
 
         // Running power of alpha: alpha^j for j = 0, 1, 2, …
         let mut alpha_pow = F::one();
         let mut combined_sum = F::zero();
         for claim in claims {
-            let scaled = claim.claimed_sum.mul_pow_2(max_num_vars - claim.num_vars);
+            let scaled =
+                claim.claimed_sum * pow_usize(padding_scale, max_num_vars - claim.num_vars);
             combined_sum += alpha_pow * scaled;
             alpha_pow *= alpha;
         }
@@ -383,4 +385,21 @@ impl BatchedSumcheckVerifier {
             .map(|_| transcript.challenge_scalar())
             .collect::<Vec<_>>()
     }
+}
+
+fn pow_usize<F>(mut base: F, mut exponent: usize) -> F
+where
+    F: SumcheckScalar,
+{
+    let mut result = F::one();
+    while exponent > 0 {
+        if exponent % 2 == 1 {
+            result *= base;
+        }
+        exponent /= 2;
+        if exponent > 0 {
+            base = base.square();
+        }
+    }
+    result
 }

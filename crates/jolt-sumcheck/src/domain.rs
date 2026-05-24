@@ -8,6 +8,17 @@ use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIn
 pub trait SumcheckDomain<F: SumcheckScalar> {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>>;
 
+    fn padding_scale(&self) -> Result<F, SumcheckError<F>> {
+        let coefficients = self.round_sum_coefficients(0)?;
+        match coefficients.as_slice() {
+            [scale] => Ok(*scale),
+            _ => Err(SumcheckError::PaddingScaleCoefficientCountMismatch {
+                expected: 1,
+                got: coefficients.len(),
+            }),
+        }
+    }
+
     fn check_round_sum<R>(
         &self,
         round_index: usize,

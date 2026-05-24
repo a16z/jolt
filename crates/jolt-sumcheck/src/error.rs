@@ -110,4 +110,14 @@ pub enum SumcheckError<F: FieldCore> {
         /// Total number of available batched challenges.
         total: usize,
     },
+
+    /// The domain did not provide exactly one coefficient for summing a
+    /// constant padding round.
+    #[error("expected {expected} padding-scale coefficients, got {got}")]
+    PaddingScaleCoefficientCountMismatch {
+        /// Expected number of coefficients for a degree-0 round sum.
+        expected: usize,
+        /// Actual number of coefficients supplied by the domain.
+        got: usize,
+    },
 }
