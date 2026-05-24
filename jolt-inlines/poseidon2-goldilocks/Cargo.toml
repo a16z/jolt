@@ -1,0 +1,22 @@
+[package]
+name = "jolt-inlines-poseidon2-goldilocks"
+version = "0.1.0"
+edition = "2021"
+description = "Poseidon2-Goldilocks inline implementation for Jolt VM"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+
+[features]
+default = []
+host = ["jolt-inlines-sdk/host"]
+
+[dependencies]
+jolt-inlines-sdk = { workspace = true, optional = true }
+
+[dev-dependencies]
+p3-field.workspace = true
+p3-goldilocks.workspace = true
+p3-poseidon2.workspace = true
+p3-symmetric.workspace = true
+tracer = { workspace = true, features = ["std", "test-utils"] }
