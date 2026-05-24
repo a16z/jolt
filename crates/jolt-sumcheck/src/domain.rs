@@ -13,7 +13,8 @@ pub trait SumcheckDomain<F: SumcheckScalar> {
         let coefficients = self.round_sum_coefficients(0)?;
         match coefficients.as_slice() {
             [scale] => Ok(*scale),
-            _ => Err(SumcheckError::PaddingScaleCoefficientCountMismatch {
+            _ => Err(SumcheckError::RoundSumCoefficientCountMismatch {
+                round: 0,
                 expected: 1,
                 got: coefficients.len(),
             }),
