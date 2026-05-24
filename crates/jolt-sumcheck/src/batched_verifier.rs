@@ -205,7 +205,7 @@ impl BatchedSumcheckVerifier {
         let mut alpha_pow = F::one();
         let mut combined_sum = F::zero();
         for claim in claims {
-            let scaled = claim.claimed_sum.mul_pow_2(max_num_vars - claim.num_vars);
+            let scaled = domain.scale_padding(claim.claimed_sum, max_num_vars - claim.num_vars)?;
             combined_sum += alpha_pow * scaled;
             alpha_pow *= alpha;
         }

@@ -814,6 +814,45 @@ fn batched_verify_different_sizes() {
 }
 
 #[test]
+fn batched_verify_uses_domain_padding_scale() {
+    let sum_a = F::from_u64(0);
+    let sum_b = F::from_u64(1);
+    let claims = vec![
+        SumcheckClaim {
+            num_vars: 1,
+            degree: 1,
+            claimed_sum: sum_a,
+        },
+        SumcheckClaim {
+            num_vars: 0,
+            degree: 1,
+            claimed_sum: sum_b,
+        },
+    ];
+
+    let mut pt = Blake2bTranscript::new(b"sumcheck-test");
+    sum_a.append_to_transcript(&mut pt);
+    sum_b.append_to_transcript(&mut pt);
+    let alpha: F = pt.challenge();
+
+    let proof = ClearSumcheckProof {
+        round_polynomials: vec![UnivariatePoly::new(vec![alpha])],
+    };
+
+    let mut vt = Blake2bTranscript::new(b"sumcheck-test");
+    let result = BatchedSumcheckVerifier::verify(
+        &claims,
+        &proof.round_polynomials,
+        CenteredIntegerDomain::new(3),
+        &mut vt,
+    )
+    .unwrap();
+
+    assert_eq!(result.value, alpha);
+    assert_eq!(result.point.len(), 1);
+}
+
+#[test]
 fn batched_single_claim_matches_single_verify() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
