@@ -185,7 +185,7 @@ effective_owned_paths() {
   local current_paths=()
   read -r -a current_paths <<< "$pathspecs"
 
-  if [[ -n "$pathspecs" ]]; then
+  if ((${#current_paths[@]})); then
     git diff --name-only "$base_ref...$source_ref" -- "${current_paths[@]}" | sort -u > "$output"
   else
     : > "$output"
@@ -212,7 +212,7 @@ effective_owned_paths() {
     fi
 
     read -r -a later_paths <<< "$later_pathspecs"
-    if [[ -z "$later_pathspecs" ]]; then
+    if ((${#later_paths[@]} == 0)); then
       continue
     fi
 
