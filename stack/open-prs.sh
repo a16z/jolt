@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: stack/open-prs.sh [--apply] [--base BRANCH] [--source REF]
+Usage: stack/open-prs.sh [--apply] [--base BRANCH] [--source REF] [--start-at NN]
 
 Creates or updates draft PRs for branches in stack/branches.tsv. Default mode is
 a dry run.
@@ -12,6 +12,7 @@ Options:
   --apply       create/edit PRs; without this, print planned gh commands
   --base NAME   base branch for the first PR (default: main)
   --source REF  source branch named in PR bodies (default: refactor/audit-prep)
+  --start-at NN first stack item to create/update (default: 07, or STACK_START_AT)
   -h, --help    show this help
 EOF
 }
@@ -19,6 +20,7 @@ EOF
 apply=0
 first_base="main"
 source_ref="refactor/audit-prep"
+start_at="${STACK_START_AT:-07}"
 
 while (($#)); do
   case "$1" in
@@ -31,6 +33,10 @@ while (($#)); do
       ;;
     --source)
       source_ref="${2:?--source requires a ref}"
+      shift
+      ;;
+    --start-at)
+      start_at="${2:?--start-at requires an order number}"
       shift
       ;;
     -h|--help)
@@ -51,9 +57,17 @@ cd "$repo_root"
 
 plan_file="stack/branches.tsv"
 base_branch="$first_base"
+start_seen=0
 
 while IFS=$'\t' read -r order branch title pathspecs; do
   [[ -z "${order:-}" || "$order" == \#* ]] && continue
+
+  if [[ -n "$start_at" && "$start_seen" -eq 0 ]]; then
+    if [[ "$order" != "$start_at" ]]; then
+      continue
+    fi
+    start_seen=1
+  fi
 
   body_file="$(mktemp)"
   cat > "$body_file" <<EOF
@@ -94,6 +108,11 @@ EOF
 
   base_branch="$branch"
 done < "$plan_file"
+
+if [[ -n "$start_at" && "$start_seen" -eq 0 ]]; then
+  echo "no stack item with start order $start_at" >&2
+  exit 1
+fi
 
 if ((!apply)); then
   echo

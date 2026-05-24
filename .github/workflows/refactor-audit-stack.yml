@@ -47,13 +47,16 @@ jobs:
             --cargo-metadata \
             --check-coverage \
             --from origin/refactor/audit-prep \
-            --base origin/main
+            --base origin/main \
+            --start-at 07
 
       - name: Create or update draft PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          git switch refactor/audit-prep
           bash stack/open-prs.sh \
             --apply \
             --base main \
-            --source refactor/audit-prep
+            --source refactor/audit-prep \
+            --start-at 07
