@@ -15,10 +15,9 @@ pub use advice::{
 pub use bytecode::{
     BytecodeClaimReductionParams, BytecodeClaimReductionProver, BytecodeClaimReductionVerifier,
 };
-pub use hamming_weight::{
-    HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
-    HammingWeightClaimReductionVerifier,
-};
+#[cfg(feature = "prover")]
+pub use hamming_weight::HammingWeightClaimReductionProver;
+pub use hamming_weight::{HammingWeightClaimReductionParams, HammingWeightClaimReductionVerifier};
 pub use increments::{
     IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
     IncClaimReductionSumcheckVerifier,

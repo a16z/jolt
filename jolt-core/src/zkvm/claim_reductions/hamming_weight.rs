@@ -78,36 +78,43 @@
 //! All three claim types collapse to a single committed polynomial opening per ra_i
 
 use allocative::Allocative;
+#[cfg(feature = "prover")]
 use rayon::prelude::*;
+#[cfg(feature = "prover")]
 use tracer::instruction::Cycle;
 
+#[cfg(feature = "prover")]
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
+#[cfg(feature = "prover")]
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(feature = "prover")]
+use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "prover")]
+use crate::poly::opening_proof::ProverOpeningAccumulator;
 use crate::poly::{
     eq_poly::EqPolynomial,
-    multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     opening_proof::{
-        AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
-        ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN,
+        AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, SumcheckId,
+        BIG_ENDIAN, LITTLE_ENDIAN,
     },
-    shared_ra_polys::compute_all_G,
-    unipoly::UniPoly,
 };
+#[cfg(feature = "prover")]
+use crate::poly::{shared_ra_polys::compute_all_G, unipoly::UniPoly};
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
 };
-use crate::subprotocols::{
-    sumcheck_prover::SumcheckInstanceProver,
-    sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
-};
+#[cfg(feature = "prover")]
+use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
+use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
+#[cfg(feature = "prover")]
+use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::{
     config::OneHotParams,
-    prover::JoltProverPreprocessing,
     witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -409,6 +416,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
 ///
 /// Memory optimization: eq_bool is shared across all families (1 polynomial, thanks
 /// to Booleanity), while eq_virt requires one per ra_i (N polynomials).
+#[cfg(feature = "prover")]
 #[derive(Allocative)]
 pub struct HammingWeightClaimReductionProver<F: JoltField> {
     /// G_i polynomials (pushforward of ra_i over r_cycle)
@@ -422,6 +430,7 @@ pub struct HammingWeightClaimReductionProver<F: JoltField> {
     pub params: HammingWeightClaimReductionParams<F>,
 }
 
+#[cfg(feature = "prover")]
 impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     /// Initialize the prover by computing all G_i polynomials.
     /// Returns (prover, ram_hw_claims) where ram_hw_claims contains the computed H_i for RAM polynomials.
@@ -473,6 +482,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     }
 }
 
+#[cfg(feature = "prover")]
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     for HammingWeightClaimReductionProver<F>
 {

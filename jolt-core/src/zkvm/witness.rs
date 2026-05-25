@@ -6,10 +6,13 @@ use common::jolt_device::MemoryLayout;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
 
+#[cfg(feature = "prover")]
 use crate::curve::JoltCurve;
+#[cfg(feature = "prover")]
 use crate::poly::commitment::commitment_scheme::StreamingCommitmentScheme;
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::instruction::InstructionFlags;
+#[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::{
     field::JoltField,
@@ -64,6 +67,7 @@ pub fn all_committed_polynomials(one_hot_params: &OneHotParams) -> Vec<Committed
 
 impl CommittedPolynomial {
     /// Generate witness data and compute tier 1 commitment for a single row
+    #[cfg(feature = "prover")]
     pub fn stream_witness_and_commit_rows<F, C, PCS>(
         &self,
         preprocessing: &JoltProverPreprocessing<F, C, PCS>,
