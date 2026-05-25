@@ -7,12 +7,11 @@ use crate::{
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     poly::commitment::dory::{DoryCommitmentScheme, DoryLayout},
-    poly::opening_proof::{OpeningId, ProverOpeningAccumulator, SumcheckId},
+    poly::opening_proof::{
+        OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+        BIG_ENDIAN,
+    },
     transcripts::Transcript,
-};
-#[cfg(feature = "prover")]
-use crate::{
-    poly::opening_proof::{OpeningAccumulator, OpeningPoint, BIG_ENDIAN},
     utils::errors::ProofVerifyError,
     zkvm::claim_reductions::AdviceKind,
 };
@@ -113,7 +112,6 @@ pub(crate) fn stage8_opening_ids(
     opening_ids
 }
 
-#[cfg(feature = "prover")]
 pub(crate) fn compute_final_opening_point<F: JoltField>(
     opening_accumulator: &impl OpeningAccumulator<F>,
     native_main_vars: usize,

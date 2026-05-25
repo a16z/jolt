@@ -310,17 +310,6 @@ impl<
         candidates
     }
 
-    fn stage8_opening_point(&self) -> OpeningPoint<BIG_ENDIAN, F> {
-        let native_main_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
-        compute_final_opening_point(
-            &self.opening_accumulator,
-            native_main_vars,
-            self.one_hot_params.log_k_chunk,
-            DoryGlobals::get_layout(),
-        )
-        .expect("invalid prover Stage-8 opening point")
-    }
-
     pub fn gen_from_trace(
         preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         lazy_trace: LazyTraceIterator,
@@ -1961,7 +1950,14 @@ impl<
     ) -> PCS::Proof {
         tracing::info!("Stage 8 proving (Dory batch opening)");
 
-        let opening_point = self.stage8_opening_point();
+        let native_main_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
+        let opening_point = compute_final_opening_point(
+            &self.opening_accumulator,
+            native_main_vars,
+            self.one_hot_params.log_k_chunk,
+            DoryGlobals::get_layout(),
+        )
+        .expect("invalid prover Stage-8 opening point");
 
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();

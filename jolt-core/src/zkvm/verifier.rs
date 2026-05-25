@@ -8,7 +8,7 @@ use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::{CommitmentScheme, ZkEvalCommitment};
 #[cfg(feature = "zk")]
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
-use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals, DoryLayout};
+use crate::poly::commitment::dory::{bind_opening_inputs, DoryContext, DoryGlobals};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use crate::poly::lagrange_poly::LagrangeHelper;
@@ -50,7 +50,7 @@ use crate::zkvm::{
         IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
         PrecommittedClaimReduction, PrecommittedParams, RamRaClaimReductionSumcheckVerifier,
     },
-    fiat_shamir_preamble,
+    compute_final_opening_point, fiat_shamir_preamble,
     instruction_lookups::{
         ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
         read_raf_checking::InstructionReadRafSumcheckVerifier,
@@ -79,8 +79,8 @@ use crate::zkvm::{
 use crate::{
     field::JoltField,
     poly::opening_proof::{
-        compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId, OpeningPoint,
-        SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+        compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId, SumcheckId,
+        VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
@@ -287,87 +287,6 @@ impl<
             candidates.push(sigma + nu);
         }
         candidates
-    }
-
-    fn stage8_opening_point(&self) -> Result<OpeningPoint<BIG_ENDIAN, F>, ProofVerifyError> {
-        let native_main_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
-        let mut opening_candidates: Vec<(&str, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
-        if let Some((point, _)) = self
-            .opening_accumulator
-            .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
-        {
-            opening_candidates.push(("trusted_advice", point));
-        }
-        if let Some((point, _)) = self
-            .opening_accumulator
-            .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
-        {
-            opening_candidates.push(("untrusted_advice", point));
-        }
-
-        let max_len = opening_candidates
-            .iter()
-            .map(|(_, p)| p.r.len())
-            .max()
-            .unwrap_or(0);
-        if max_len > native_main_vars {
-            let dominant = opening_candidates
-                .iter()
-                .find(|(_, p)| p.r.len() == max_len)
-                .expect("at least one dominant precommitted candidate expected");
-            for (name, point) in opening_candidates
-                .iter()
-                .filter(|(_, p)| p.r.len() == max_len)
-            {
-                if point.r != dominant.1.r {
-                    return Err(ProofVerifyError::DoryError(format!(
-                        "incompatible dominant precommitted anchors: {} and {} have equal dimensionality {} but different opening points",
-                        dominant.0, name, max_len
-                    )));
-                }
-            }
-            Ok(OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone()))
-        } else {
-            let (hamming_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::InstructionRa(0),
-                SumcheckId::HammingWeightClaimReduction,
-            );
-            let r_address_stage7 = hamming_point.r[..self.one_hot_params.log_k_chunk].to_vec();
-            let r_cycle_stage6 = self
-                .opening_accumulator
-                .get_committed_polynomial_opening(
-                    CommittedPolynomial::RamInc,
-                    SumcheckId::IncClaimReduction,
-                )
-                .0
-                .r;
-
-            match self.proof.dory_layout {
-                DoryLayout::AddressMajor => Ok(OpeningPoint::<BIG_ENDIAN, F>::new(
-                    [r_cycle_stage6.as_slice(), r_address_stage7.as_slice()].concat(),
-                )),
-                DoryLayout::CycleMajor => {
-                    let native_cycle = &hamming_point.r[self.one_hot_params.log_k_chunk..];
-                    if r_cycle_stage6.len() < native_cycle.len() {
-                        return Err(ProofVerifyError::DoryError(
-                            "stage6 cycle challenges shorter than native cycle vars".to_string(),
-                        ));
-                    }
-                    if r_cycle_stage6[..native_cycle.len()] != *native_cycle {
-                        return Err(ProofVerifyError::DoryError(format!(
-                            "cycle-major Stage-8 expects stage6 cycle prefix to equal native cycle vars \
-                             (cycle_full_len={}, native_len={})",
-                            r_cycle_stage6.len(),
-                            native_cycle.len()
-                        )));
-                    }
-                    let cycle_extra = &r_cycle_stage6[native_cycle.len()..];
-                    let cycle_extra_and_anchor =
-                        [cycle_extra, r_address_stage7.as_slice(), native_cycle].concat();
-                    Ok(OpeningPoint::<BIG_ENDIAN, F>::new(cycle_extra_and_anchor))
-                }
-            }
-        }
     }
 
     pub fn new(
@@ -1736,7 +1655,13 @@ impl<
 
     /// Stage 8: Dory batch opening verification.
     fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
-        let opening_point = self.stage8_opening_point()?;
+        let native_main_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
+        let opening_point = compute_final_opening_point(
+            &self.opening_accumulator,
+            native_main_vars,
+            self.one_hot_params.log_k_chunk,
+            self.proof.dory_layout,
+        )?;
 
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
