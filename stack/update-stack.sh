@@ -192,6 +192,7 @@ overlay_target_order() {
     crates/jolt-field/src/lib.rs|\
     crates/jolt-field/src/arkworks/mod.rs|\
     crates/jolt-field/src/arkworks/bn254_fq.rs|\
+    crates/jolt-poly/Cargo.toml|\
     crates/jolt-crypto/Cargo.toml|\
     crates/jolt-crypto/src/lib.rs|\
     crates/jolt-crypto/src/commitment.rs|\
@@ -222,6 +223,13 @@ overlay_target_order() {
     crates/jolt-r1cs/tests|\
     crates/jolt-r1cs/tests/*|\
     crates/jolt-wrapper/*|\
+    crates/jolt-poly/src/lib.rs|\
+    crates/jolt-poly/src/r1cs.rs|\
+    crates/jolt-openings/Cargo.toml|\
+    crates/jolt-openings/src/lib.rs|\
+    crates/jolt-openings/src/r1cs.rs|\
+    crates/jolt-crypto/src/r1cs.rs|\
+    crates/jolt-sumcheck/src/lib.rs|\
     crates/jolt-sumcheck/src/r1cs.rs|\
     crates/jolt-transcript/Cargo.toml|\
     crates/jolt-transcript/src/lib.rs|\

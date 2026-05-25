@@ -83,9 +83,10 @@ to the same row as the relevant spec:
   Dory-specific PCS-assist verifier hooks, Dory-assist fixtures, and local
   handoff artifact ignores.
 - PR 15: `jolt-wrapper`, wrapper assembly, verifier R1CS lowering,
-  variable-challenge `jolt-sumcheck::r1cs`, transcript R1CS, scalar and
-  non-native `jolt-r1cs` helpers, wrapper/R1CS composition tests, and SNARK
-  backend integration.
+  variable-challenge `jolt-sumcheck::r1cs`, transcript R1CS, generic
+  `jolt-poly`/`jolt-openings`/`jolt-crypto` R1CS helpers, scalar and non-native
+  `jolt-r1cs` helpers, wrapper/R1CS composition tests, and SNARK backend
+  integration.
 
 If a later feature row names a path inside a directory owned by an earlier row,
 the later row wins for changed files under that path. This keeps broad crate
