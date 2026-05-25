@@ -127,11 +127,14 @@ use super::{
     inputs::BlindFoldInputs,
     outputs::{BlindFoldOutput, CommittedOutputClaimOutput},
 };
-use crate::stages::{
-    stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
-    stage8::outputs::Stage8OpeningId,
-};
 use crate::VerifierError;
+use crate::{
+    pcs_assist::PcsProofAssist,
+    stages::{
+        stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
+        stage8::outputs::Stage8OpeningId,
+    },
+};
 
 mod stage1;
 mod stage2;
@@ -205,12 +208,13 @@ struct SourceValues<F: Field> {
     challenges: Vec<(VerifierChallengeId, F)>,
 }
 
-pub(crate) fn build<PCS, VC, ZkProof>(
-    input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(crate) fn build<PCS, VC, ZkProof, PcsAssist>(
+    input: BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
 ) -> Result<BlindFoldOutput<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     VC::Output: Clone,
 {
     let mut values = SourceValues::default();
@@ -521,12 +525,13 @@ fn domain_spec(spec: JoltSumcheckSpec) -> SumcheckDomainSpec {
     }
 }
 
-fn formula_dimensions<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn formula_dimensions<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
 ) -> Result<JoltFormulaDimensions, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     JoltFormulaDimensions::try_from(input.proof.one_hot_config.dimensions(
@@ -541,14 +546,15 @@ where
     })
 }
 
-fn ram_output_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_output_publics<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     output_address_challenges: &[PCS::Field],
     ram_output_address: &[PCS::Field],
 ) -> Result<(PCS::Field, PCS::Field), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let public_memory = PublicIoMemory::new(&input.checked.public_io).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
@@ -592,12 +598,13 @@ where
     Ok((eq_io_mask, -eq_io_mask * val_io))
 }
 
-fn ram_val_check_init<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_init<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
 ) -> Result<ram::RamValCheckInit<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let r_address = ram_val_check_address(input)?;
     let mut advice_contributions = Vec::new();
@@ -615,12 +622,13 @@ where
     ))
 }
 
-fn ram_val_check_address<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_address<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_k = input.checked.ram_K.ilog2() as usize;
     input
@@ -635,14 +643,15 @@ where
         })
 }
 
-fn advice_selector<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_selector<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     kind: JoltAdviceKind,
     r_address: &[PCS::Field],
 ) -> Result<(PCS::Field, Vec<PCS::Field>), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let layout = &input.checked.public_io.memory_layout;
     let (start_address, max_size) = match kind {
@@ -677,20 +686,21 @@ where
     Ok((selector, opening_point))
 }
 
-fn advice_source_point<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_source_point<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     kind: JoltAdviceKind,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let r_address = ram_val_check_address(input)?;
     advice_selector(input, kind, &r_address).map(|(_, point)| point)
 }
 
-fn advice_cycle_claim<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_cycle_claim<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
@@ -699,6 +709,7 @@ fn advice_cycle_claim<PCS, VC, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let layout = advice_layout(input, kind);
     let claim = layout
@@ -707,8 +718,8 @@ where
     (layout, claim)
 }
 
-fn advice_address_claim<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_address_claim<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
@@ -717,6 +728,7 @@ fn advice_address_claim<PCS, VC, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let layout = advice_layout(input, kind);
     let claim = layout.as_ref().and_then(|layout| {
@@ -728,13 +740,14 @@ where
     (layout, claim)
 }
 
-fn advice_layout<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_layout<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     kind: JoltAdviceKind,
 ) -> Option<AdviceClaimReductionLayout>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let present = match kind {
         JoltAdviceKind::Trusted => input.checked.trusted_advice_commitment_present,
@@ -771,8 +784,8 @@ where
     clippy::too_many_arguments,
     reason = "Stage 6 has several protocol components."
 )]
-fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_stage6_publics_and_challenges<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     values: &mut SourceValues<PCS::Field>,
     bytecode_claims: &JoltRelationClaims<PCS::Field>,
     booleanity_claims: &JoltRelationClaims<PCS::Field>,
@@ -784,6 +797,7 @@ fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     let log_k = input.checked.ram_K.ilog2() as usize;
@@ -1109,8 +1123,8 @@ where
     Ok(())
 }
 
-fn add_advice_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_cycle_publics<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1119,6 +1133,7 @@ fn add_advice_cycle_publics<PCS, VC, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
@@ -1130,8 +1145,8 @@ where
     )
 }
 
-fn add_advice_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_address_publics<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1140,6 +1155,7 @@ fn add_advice_address_publics<PCS, VC, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let source_point = advice_source_point(input, kind)?;
     let cycle_phase = match kind {
@@ -1162,13 +1178,14 @@ where
     )
 }
 
-fn stage6_virtualization_points<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn stage6_virtualization_points<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
 ) -> Result<Vec<Vec<PCS::Field>>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let mut points = Vec::with_capacity(dimensions.layout.total());
     for point in &input

@@ -277,6 +277,7 @@ where
             commitments,
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
+            pcs_assist: None,
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),
@@ -328,6 +329,7 @@ where
             commitments,
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
+            pcs_assist: None,
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),

@@ -2,7 +2,11 @@ use super::{
     inputs::Deps,
     outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput},
 };
+#[cfg(feature = "pcs-assist")]
+use crate::pcs_assist::{PcsAssistClearInput, PcsAssistZkInput};
 use crate::{
+    config::JoltProtocolConfig,
+    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
@@ -50,10 +54,11 @@ const fn field_inline_final_opening_count() -> usize {
     0
 }
 
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify<F, PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
+    config: &JoltProtocolConfig<PcsAssist::Config>,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
     deps: Deps<'_, F, VC::Output>,
@@ -65,8 +70,12 @@ where
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
     PCS::Output: Clone + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = F>,
 {
+    #[cfg(not(feature = "pcs-assist"))]
+    let _ = config;
+
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {
             return Err(VerifierError::ExpectedCommittedProof { field: "stage8" });
@@ -280,16 +289,45 @@ where
             .map(|(gamma, scale)| *gamma * scale)
             .collect::<Vec<_>>();
 
-        let hiding_evaluation_commitment = PCS::verify_zk(
-            &joint_commitment,
-            &opening_point,
-            &proof.joint_opening_proof,
-            &preprocessing.pcs_setup,
-            transcript,
-        )
-        .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-            reason: error.to_string(),
-        })?;
+        #[cfg(not(feature = "pcs-assist"))]
+        let hiding_evaluation_commitment = {
+            PCS::verify_zk(
+                &joint_commitment,
+                &opening_point,
+                &proof.joint_opening_proof,
+                &preprocessing.pcs_setup,
+                transcript,
+            )
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?
+        };
+
+        #[cfg(feature = "pcs-assist")]
+        let hiding_evaluation_commitment = {
+            let assist_config = config
+                .pcs_assist
+                .as_ref()
+                .ok_or(VerifierError::MissingPcsAssistConfig)?;
+            let assist_proof = proof
+                .pcs_assist
+                .as_ref()
+                .ok_or(VerifierError::MissingPcsAssistProof)?;
+            PcsAssist::verify_zk(
+                assist_config,
+                PcsAssistZkInput {
+                    setup: &preprocessing.pcs_setup,
+                    pcs_proof: &proof.joint_opening_proof,
+                    commitment: &joint_commitment,
+                    point: opening_point.as_slice(),
+                },
+                assist_proof,
+                transcript,
+            )
+            .map_err(|error| VerifierError::PcsAssistVerificationFailed {
+                reason: error.to_string(),
+            })?
+        };
         PCS::bind_zk_opening_inputs(
             transcript,
             common_point.as_slice(),
@@ -504,17 +542,47 @@ where
             .map(|(gamma, scale)| *gamma * scale),
     );
 
-    PCS::verify(
-        &joint_commitment,
-        pcs_opening_point.as_slice(),
-        joint_claim,
-        &proof.joint_opening_proof,
-        &preprocessing.pcs_setup,
-        transcript,
-    )
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })?;
+    #[cfg(not(feature = "pcs-assist"))]
+    {
+        PCS::verify(
+            &joint_commitment,
+            pcs_opening_point.as_slice(),
+            joint_claim,
+            &proof.joint_opening_proof,
+            &preprocessing.pcs_setup,
+            transcript,
+        )
+        .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        })?;
+    }
+
+    #[cfg(feature = "pcs-assist")]
+    {
+        let assist_config = config
+            .pcs_assist
+            .as_ref()
+            .ok_or(VerifierError::MissingPcsAssistConfig)?;
+        let assist_proof = proof
+            .pcs_assist
+            .as_ref()
+            .ok_or(VerifierError::MissingPcsAssistProof)?;
+        PcsAssist::verify_clear(
+            assist_config,
+            PcsAssistClearInput {
+                setup: &preprocessing.pcs_setup,
+                pcs_proof: &proof.joint_opening_proof,
+                commitment: &joint_commitment,
+                point: pcs_opening_point.as_slice(),
+                eval: joint_claim,
+            },
+            assist_proof,
+            transcript,
+        )
+        .map_err(|error| VerifierError::PcsAssistVerificationFailed {
+            reason: error.to_string(),
+        })?;
+    }
     PCS::bind_opening_inputs(transcript, common_point.as_slice(), &joint_claim);
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
@@ -559,16 +627,17 @@ fn require_commitment_layout<C>(
     Ok(())
 }
 
-fn final_advice_opening<PCS, VC, ZkProof>(
+fn final_advice_opening<PCS, VC, ZkProof, PcsAssist>(
     kind: JoltAdviceKind,
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     stage6: &Stage6ClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
 ) -> Result<AdviceFinalOpening<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let max_advice_size = match kind {
@@ -655,16 +724,17 @@ where
     }
 }
 
-fn final_advice_opening_point<PCS, VC, ZkProof>(
+fn final_advice_opening_point<PCS, VC, ZkProof, PcsAssist>(
     kind: JoltAdviceKind,
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     stage6: &Stage6ZkOutput<PCS::Field, VC::Output>,
     stage7: &Stage7ZkOutput<PCS::Field, VC::Output>,
 ) -> Result<AdviceFinalOpeningPoint<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let max_advice_size = match kind {

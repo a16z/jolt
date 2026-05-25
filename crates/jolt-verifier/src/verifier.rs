@@ -14,6 +14,7 @@ use jolt_claims::protocols::{
 
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
+    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -23,10 +24,15 @@ use crate::{
     VerifierError,
 };
 
-pub fn verify<F, PCS, VC, T>(
+pub fn verify<F, PCS, VC, T, PcsAssist>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC>,
+    proof: &JoltProof<
+        PCS,
+        VC,
+        jolt_blindfold::BlindFoldProof<F, <VC as jolt_crypto::Commitment>::Output>,
+        PcsAssist,
+    >,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
 ) -> Result<(), VerifierError>
@@ -38,10 +44,11 @@ where
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
-    let config = JoltProtocolConfig::for_zk(zk);
+    let config = JoltProtocolConfig::selected_for_zk::<PCS, PcsAssist>(zk);
     validate_proof_config(&config, proof)?;
 
     let checked = validate_inputs(
@@ -102,6 +109,7 @@ where
     )?;
     let stage8 = stage8::verify(
         &checked,
+        &config,
         preprocessing,
         proof,
         trusted_advice_commitment,
@@ -165,16 +173,17 @@ pub struct CheckedInputs {
     pub field_inline_bytecode_transcript: Vec<u8>,
 }
 
-pub fn validate_inputs<PCS, VC, ZkProof>(
+pub fn validate_inputs<PCS, VC, ZkProof, PcsAssist>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     trusted_advice_commitment_present: bool,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     if public_io.memory_layout != preprocessing.program.memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
@@ -285,13 +294,14 @@ where
     Ok(got)
 }
 
-pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
+pub(crate) fn absorb_preamble<PCS, VC, ZkProof, PcsAssist, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
 ) where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     let public_io = &checked.public_io;
@@ -360,14 +370,15 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     );
 }
 
-pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub(crate) fn absorb_commitments<PCS, VC, ZkProof, PcsAssist, T>(
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
 ) where
     PCS: CommitmentScheme,
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     let mut absorb_commitment = |commitment: &PCS::Output| {
@@ -421,13 +432,14 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     transcript.append(&U64Word(value));
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn validate_proof_consistency<PCS, VC, ZkProof, PcsAssist>(
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     zk: bool,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     validate_sumcheck_representation(
         &proof.stages.stage1_uni_skip_first_round_proof,
@@ -510,6 +522,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pcs_assist::{NoPcsAssist, NoPcsAssistProof};
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     #[cfg(feature = "field-inline")]
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
@@ -704,7 +717,8 @@ mod tests {
     fn validate_proof_config_accepts_default_disabled_field_inline() {
         let mut proof = proof_with_zk(false, clear_claims());
         let config = protocol_config(false, FieldInlineConfig::disabled());
-        proof.protocol = config;
+        proof.protocol = config.clone();
+        set_selected_pcs_assist_payload(&mut proof);
 
         assert!(validate_proof_config(&config, &proof).is_ok());
     }
@@ -724,7 +738,8 @@ mod tests {
     fn validate_proof_config_accepts_enabled_field_inline_config() {
         let mut proof = proof_with_zk(false, clear_claims());
         let config = protocol_config(false, FieldInlineConfig::native_v1());
-        proof.protocol = config;
+        proof.protocol = config.clone();
+        set_selected_pcs_assist_payload(&mut proof);
 
         assert!(validate_proof_config(&config, &proof).is_ok());
     }
@@ -734,6 +749,7 @@ mod tests {
         let mut proof = proof_with_zk(false, clear_claims());
         let config = protocol_config(false, FieldInlineConfig::native_v1());
         proof.protocol = config;
+        set_selected_pcs_assist_payload(&mut proof);
 
         assert!(matches!(
             validate_proof_config(
@@ -741,6 +757,33 @@ mod tests {
                 &proof
             ),
             Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    #[cfg(not(feature = "pcs-assist"))]
+    #[test]
+    fn validate_proof_config_rejects_unexpected_pcs_assist_payload() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::disabled());
+        proof.protocol = config.clone();
+        proof.pcs_assist = Some(NoPcsAssistProof);
+
+        assert!(matches!(
+            validate_proof_config(&config, &proof),
+            Err(VerifierError::UnexpectedPcsAssistProof)
+        ));
+    }
+
+    #[cfg(feature = "pcs-assist")]
+    #[test]
+    fn validate_proof_config_rejects_missing_required_pcs_assist_payload() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::disabled());
+        proof.protocol = config.clone();
+
+        assert!(matches!(
+            validate_proof_config(&config, &proof),
+            Err(VerifierError::MissingPcsAssistProof)
         ));
     }
 
@@ -965,11 +1008,18 @@ mod tests {
     }
 
     fn protocol_config(zk: bool, field_inline: FieldInlineConfig) -> JoltProtocolConfig {
-        JoltProtocolConfig {
-            field_inline,
-            ..JoltProtocolConfig::for_zk(zk)
-        }
+        let mut config = JoltProtocolConfig::selected_for_zk::<TestPcs, NoPcsAssist>(zk);
+        config.field_inline = field_inline;
+        config
     }
+
+    #[cfg(feature = "pcs-assist")]
+    fn set_selected_pcs_assist_payload(proof: &mut TestProof) {
+        proof.pcs_assist = Some(NoPcsAssistProof);
+    }
+
+    #[cfg(not(feature = "pcs-assist"))]
+    fn set_selected_pcs_assist_payload(_proof: &mut TestProof) {}
 
     fn clear_claims() -> TestClaims {
         let zero = Fr::zero();

@@ -28,8 +28,8 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
+    pcs_assist::PcsProofAssist, preprocessing::JoltVerifierPreprocessing, proof::JoltProof,
+    stages::zk::committed, verifier::CheckedInputs, VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,16 +54,17 @@ const STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS: usize = 5;
 #[cfg(not(feature = "field-inline"))]
 const STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS: usize = 0;
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
@@ -602,9 +603,9 @@ where
     }))
 }
 
-fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
+fn ram_val_check_initial_evaluation<PCS, VC, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     claims: &Stage4Claims<PCS::Field>,
     r_address: &[PCS::Field],
     public_eval: PCS::Field,
@@ -612,6 +613,7 @@ fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let mut full_eval = public_eval;
     let mut advice_contributions = Vec::new();
@@ -678,13 +680,14 @@ where
     ))
 }
 
-fn stage4_committed_output_claims<PCS, VC, ZkProof>(
+fn stage4_committed_output_claims<PCS, VC, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
 ) -> usize
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     STAGE4_BATCH_BASE_OUTPUT_CLAIMS
         + STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS

@@ -42,6 +42,7 @@ use super::{
     },
 };
 use crate::{
+    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{stage4::Stage4ClearOutput, zk::committed},
@@ -213,16 +214,17 @@ where
     Ok(())
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage6Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     match (checked.zk, deps) {

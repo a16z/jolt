@@ -43,6 +43,7 @@ use super::{
     },
 };
 use crate::{
+    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{stage1::Stage1ClearOutput, zk::committed},
@@ -155,16 +156,17 @@ fn selected_product_uniskip_input_claim<F: Field>(
     }
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage2Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     match (checked.zk, deps) {
@@ -178,8 +180,8 @@ where
     }
 
     let product_uniskip =
-        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, deps)?;
-    let batch = verify_regular_batch::<PCS, VC, T, ZkProof>(
+        verify_product_uniskip::<PCS, VC, T, ZkProof, PcsAssist>(checked, proof, transcript, deps)?;
+    let batch = verify_regular_batch::<PCS, VC, T, ZkProof, PcsAssist>(
         checked,
         proof,
         transcript,
@@ -260,15 +262,16 @@ where
     }
 }
 
-fn verify_product_uniskip<PCS, VC, T, ZkProof>(
+fn verify_product_uniskip<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage2ProductUniSkip<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     let stage = JoltRelationId::SpartanProductVirtualization;
@@ -404,9 +407,9 @@ where
     }
 }
 
-fn verify_regular_batch<PCS, VC, T, ZkProof>(
+fn verify_regular_batch<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     product_uniskip: &Stage2ProductUniSkip<PCS::Field, VC::Output>,
     deps: Deps<'_, PCS::Field, VC::Output>,
@@ -414,6 +417,7 @@ fn verify_regular_batch<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     let log_t = checked.trace_length.ilog2() as usize;

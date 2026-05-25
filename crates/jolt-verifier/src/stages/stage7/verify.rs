@@ -26,6 +26,7 @@ use super::{
     },
 };
 use crate::{
+    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -54,16 +55,17 @@ struct Stage7BatchExpectedOutputClaims<F: Field> {
     untrusted_advice_address_phase: Option<F>,
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage7Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     match (checked.zk, deps) {

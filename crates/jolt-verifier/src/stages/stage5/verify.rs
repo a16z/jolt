@@ -31,8 +31,8 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
+    pcs_assist::PcsProofAssist, preprocessing::JoltVerifierPreprocessing, proof::JoltProof,
+    stages::zk::committed, verifier::CheckedInputs, VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,16 +63,17 @@ const fn field_inline_stage5_output_claim_count() -> usize {
     0
 }
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage5Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     match (checked.zk, deps) {
