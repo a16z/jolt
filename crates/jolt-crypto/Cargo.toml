@@ -43,13 +43,16 @@ grumpkin = [
   "parallel",
 ]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
+r1cs = ["grumpkin", "dep:jolt-r1cs", "dep:thiserror", "jolt-poly/r1cs"]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-poly = { path = "../jolt-poly", default-features = false }
+jolt-r1cs = { workspace = true, optional = true }
 jolt-transcript = { path = "../jolt-transcript" }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
+thiserror = { workspace = true, optional = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }

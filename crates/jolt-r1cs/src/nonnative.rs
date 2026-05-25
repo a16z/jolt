@@ -105,6 +105,19 @@ impl FqVar {
         &self.limbs
     }
 
+    pub fn witness_value(&self) -> Fq {
+        self.value()
+    }
+
+    /// Returns a constrained little-endian bit decomposition of this `Fq`
+    /// variable's canonical integer representation.
+    pub fn bits_le(&self, builder: &mut R1csBuilder<Fr>) -> Vec<AssignedScalar<Fr>> {
+        self.limbs
+            .iter()
+            .flat_map(|limb| assert_unsigned_bits(builder, limb, LIMB_BITS))
+            .collect()
+    }
+
     pub fn assert_equal(&self, builder: &mut R1csBuilder<Fr>, rhs: &Self) {
         for (lhs_limb, rhs_limb) in self.limbs.iter().zip(&rhs.limbs) {
             builder.assert_equal(lhs_limb.lc.clone(), rhs_limb.lc.clone());
@@ -179,10 +192,14 @@ impl FqVar {
 }
 
 fn assert_u64(builder: &mut R1csBuilder<Fr>, value: &AssignedScalar<Fr>) {
-    assert_unsigned_bits(builder, value, LIMB_BITS);
+    let _ = assert_unsigned_bits(builder, value, LIMB_BITS);
 }
 
-fn assert_unsigned_bits(builder: &mut R1csBuilder<Fr>, value: &AssignedScalar<Fr>, bit_len: usize) {
+fn assert_unsigned_bits(
+    builder: &mut R1csBuilder<Fr>,
+    value: &AssignedScalar<Fr>,
+    bit_len: usize,
+) -> Vec<AssignedScalar<Fr>> {
     let bits = scalar_low_u128(value.value);
     let bit_vars = (0..bit_len)
         .map(|index| {
@@ -194,6 +211,7 @@ fn assert_unsigned_bits(builder: &mut R1csBuilder<Fr>, value: &AssignedScalar<Fr
         .collect::<Vec<_>>();
 
     builder.assert_equal(value.lc.clone(), compose_bits(&bit_vars));
+    bit_vars
 }
 
 fn assert_add_relation(builder: &mut R1csBuilder<Fr>, lhs: &FqVar, rhs: &FqVar, output: &FqVar) {
@@ -336,7 +354,7 @@ fn assert_terms_normalize_to<const N: usize>(
             BigUint::zero()
         };
         let next_carry = AssignedScalar::alloc(builder, fr_from_biguint(&next_carry_value));
-        assert_unsigned_bits(builder, &next_carry, CARRY_BITS);
+        let _ = assert_unsigned_bits(builder, &next_carry, CARRY_BITS);
 
         let lhs = term + carry.lc;
         let rhs = normalized_limb.lc.clone() + next_carry.lc.clone().scale(radix_fr());
@@ -579,6 +597,35 @@ mod tests {
         assert_fr_injection_satisfies(fr(0));
         assert_fr_injection_satisfies(Fr::from_u64(17));
         assert_fr_injection_satisfies(fr_from_limbs(FR_MODULUS_MINUS_ONE_LIMBS));
+    }
+
+    #[test]
+    fn fq_bits_le_match_canonical_integer_bits() {
+        let mut builder = R1csBuilder::new();
+        let value = Fq::from_u64(0xdead_beef);
+        let fq = FqVar::alloc(&mut builder, value);
+
+        let bits = fq.bits_le(&mut builder);
+
+        assert_eq!(bits.len(), FqVar::NUM_LIMBS * FqVar::LIMB_BITS);
+        for (index, bit) in bits.iter().enumerate().take(32) {
+            let expected = Fr::from_bool(((0xdead_beefu64 >> index) & 1) == 1);
+            assert_eq!(bit.value, expected);
+        }
+        assert!(bits[32..].iter().all(|bit| bit.value.is_zero()));
+        assert!(builder_accepts(builder));
+    }
+
+    #[test]
+    fn fq_bits_le_rejects_tampered_bit() {
+        let mut builder = R1csBuilder::new();
+        let fq = FqVar::alloc(&mut builder, Fq::from_u64(0xdead_beef));
+        let bits = fq.bits_le(&mut builder);
+        let bit = variable(&bits[0]);
+        let mut witness = builder.witness().expect("witness is assigned");
+        witness[bit.index()] += fr(1);
+
+        assert!(builder.into_matrices().check_witness(&witness).is_err());
     }
 
     #[test]
