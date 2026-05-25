@@ -7,6 +7,12 @@ pub const GT_ELEMENT_VARS: usize = 4;
 pub const GT_EXP_BASE: usize = 4;
 pub const GT_EXP_STEP_VARS: usize = 7;
 pub const EC_SCALAR_MUL_STEP_VARS: usize = 8;
+pub const BN254_MILLER_LOOP_LINE_EVENTS: usize = 87;
+pub const BN254_MILLER_LOOP_SQUARE_OPS: usize = 63;
+pub const BN254_MILLER_LOOP_ACCUMULATOR_OPS: usize =
+    BN254_MILLER_LOOP_LINE_EVENTS + BN254_MILLER_LOOP_SQUARE_OPS;
+pub const BN254_MILLER_LOOP_LINE_EVENT_VARS: usize = 7;
+pub const BN254_MILLER_LOOP_ACCUMULATOR_OP_VARS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DoryAssistSumcheckDomain {
@@ -35,7 +41,7 @@ pub struct DoryAssistDimensions {
     pub gt: GtDimensions,
     pub g1: G1Dimensions,
     pub g2: G2Dimensions,
-    pub pairing: MultiMillerLoopDimensions,
+    pub miller_loop: MillerLoopDimensions,
     pub wiring: WiringDimensions,
     pub packing: PrefixPackingDimensions,
 }
@@ -45,7 +51,7 @@ impl DoryAssistDimensions {
         gt: GtDimensions,
         g1: G1Dimensions,
         g2: G2Dimensions,
-        pairing: MultiMillerLoopDimensions,
+        miller_loop: MillerLoopDimensions,
         wiring: WiringDimensions,
         packing: PrefixPackingDimensions,
     ) -> Self {
@@ -53,7 +59,7 @@ impl DoryAssistDimensions {
             gt,
             g1,
             g2,
-            pairing,
+            miller_loop,
             wiring,
             packing,
         }
@@ -120,11 +126,19 @@ impl GtDimensions {
         DoryAssistSumcheckSpec::boolean(self.exp_batched_rounds(), 3)
     }
 
+    pub const fn exp_digit_bitness_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.exp_batched_rounds(), 2)
+    }
+
     pub const fn exp_base_power_sumcheck(self) -> DoryAssistSumcheckSpec {
         DoryAssistSumcheckSpec::boolean(self.exp_base_power_rounds(), 2)
     }
 
     pub const fn exp_shift_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.exp_batched_rounds(), 2)
+    }
+
+    pub const fn exp_boundary_sumcheck(self) -> DoryAssistSumcheckSpec {
         DoryAssistSumcheckSpec::boolean(self.exp_batched_rounds(), 2)
     }
 
@@ -187,6 +201,10 @@ impl G1Dimensions {
         DoryAssistSumcheckSpec::boolean(self.scalar_mul_steps, 2)
     }
 
+    pub const fn scalar_mul_boundary_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.scalar_mul_rounds(), 2)
+    }
+
     pub const fn add_sumcheck(self) -> DoryAssistSumcheckSpec {
         DoryAssistSumcheckSpec::boolean(self.add_rounds(), 5)
     }
@@ -246,6 +264,10 @@ impl G2Dimensions {
         DoryAssistSumcheckSpec::boolean(self.scalar_mul_steps, 2)
     }
 
+    pub const fn scalar_mul_boundary_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.scalar_mul_rounds(), 2)
+    }
+
     pub const fn add_sumcheck(self) -> DoryAssistSumcheckSpec {
         DoryAssistSumcheckSpec::boolean(self.add_rounds(), 5)
     }
@@ -258,33 +280,81 @@ impl Default for G2Dimensions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MultiMillerLoopDimensions {
-    loop_steps: usize,
+pub struct MillerLoopDimensions {
+    line_events: usize,
     pairs: usize,
+    accumulator_ops: usize,
 }
 
-impl MultiMillerLoopDimensions {
-    pub const fn new(loop_step_vars: usize, pair_vars: usize) -> Self {
+impl MillerLoopDimensions {
+    pub const fn new(line_event_vars: usize, pair_vars: usize, accumulator_op_vars: usize) -> Self {
         Self {
-            loop_steps: loop_step_vars,
+            line_events: line_event_vars,
             pairs: pair_vars,
+            accumulator_ops: accumulator_op_vars,
         }
     }
 
-    pub const fn loop_step_vars(self) -> usize {
-        self.loop_steps
+    pub const fn line_event_vars(self) -> usize {
+        self.line_events
     }
 
     pub const fn pair_vars(self) -> usize {
         self.pairs
     }
 
-    pub const fn rounds(self) -> usize {
-        self.loop_steps + self.pairs
+    pub const fn accumulator_op_vars(self) -> usize {
+        self.accumulator_ops
     }
 
-    pub const fn sumcheck(self, degree: usize) -> DoryAssistSumcheckSpec {
-        DoryAssistSumcheckSpec::boolean(self.rounds(), degree)
+    pub const fn line_step_rounds(self) -> usize {
+        self.line_events + self.pairs
+    }
+
+    pub const fn line_evaluation_rounds(self) -> usize {
+        self.line_events + self.pairs
+    }
+
+    pub const fn pair_product_rounds(self) -> usize {
+        self.line_events + self.pairs
+    }
+
+    pub const fn accumulator_rounds(self) -> usize {
+        self.accumulator_ops
+    }
+
+    pub const fn boundary_rounds(self) -> usize {
+        self.accumulator_ops
+    }
+
+    pub const fn line_step_sumcheck(self, degree: usize) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.line_step_rounds(), degree)
+    }
+
+    pub const fn line_evaluation_sumcheck(self, degree: usize) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.line_evaluation_rounds(), degree)
+    }
+
+    pub const fn pair_product_sumcheck(self, degree: usize) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.pair_product_rounds(), degree)
+    }
+
+    pub const fn accumulator_sumcheck(self, degree: usize) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.accumulator_rounds(), degree)
+    }
+
+    pub const fn boundary_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.boundary_rounds(), 2)
+    }
+}
+
+impl Default for MillerLoopDimensions {
+    fn default() -> Self {
+        Self::new(
+            BN254_MILLER_LOOP_LINE_EVENT_VARS,
+            0,
+            BN254_MILLER_LOOP_ACCUMULATOR_OP_VARS,
+        )
     }
 }
 
@@ -415,12 +485,57 @@ mod tests {
             DoryAssistSumcheckSpec::boolean(14, 3)
         );
         assert_eq!(
+            dimensions.exp_digit_bitness_sumcheck(),
+            DoryAssistSumcheckSpec::boolean(14, 2)
+        );
+        assert_eq!(
             dimensions.exp_base_power_sumcheck(),
             DoryAssistSumcheckSpec::boolean(7, 2)
         );
         assert_eq!(
             dimensions.exp_shift_sumcheck(),
             DoryAssistSumcheckSpec::boolean(14, 2)
+        );
+        assert_eq!(
+            dimensions.exp_boundary_sumcheck(),
+            DoryAssistSumcheckSpec::boolean(14, 2)
+        );
+    }
+
+    #[test]
+    fn miller_loop_dimensions_separate_line_and_accumulator_domains() {
+        let dimensions = MillerLoopDimensions::new(7, 2, 8);
+
+        assert_eq!(BN254_MILLER_LOOP_LINE_EVENTS, 87);
+        assert_eq!(BN254_MILLER_LOOP_SQUARE_OPS, 63);
+        assert_eq!(BN254_MILLER_LOOP_ACCUMULATOR_OPS, 150);
+        assert_eq!(dimensions.line_event_vars(), 7);
+        assert_eq!(dimensions.pair_vars(), 2);
+        assert_eq!(dimensions.accumulator_op_vars(), 8);
+        assert_eq!(dimensions.line_step_rounds(), 9);
+        assert_eq!(dimensions.line_evaluation_rounds(), 9);
+        assert_eq!(dimensions.pair_product_rounds(), 9);
+        assert_eq!(dimensions.accumulator_rounds(), 8);
+        assert_eq!(dimensions.boundary_rounds(), 8);
+        assert_eq!(
+            dimensions.line_step_sumcheck(6),
+            DoryAssistSumcheckSpec::boolean(9, 6)
+        );
+        assert_eq!(
+            dimensions.line_evaluation_sumcheck(3),
+            DoryAssistSumcheckSpec::boolean(9, 3)
+        );
+        assert_eq!(
+            dimensions.pair_product_sumcheck(2),
+            DoryAssistSumcheckSpec::boolean(9, 2)
+        );
+        assert_eq!(
+            dimensions.accumulator_sumcheck(2),
+            DoryAssistSumcheckSpec::boolean(8, 2)
+        );
+        assert_eq!(
+            dimensions.boundary_sumcheck(),
+            DoryAssistSumcheckSpec::boolean(8, 2)
         );
     }
 

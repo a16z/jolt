@@ -6,15 +6,23 @@ pub enum DoryAssistRelationId {
     GtExponentiation,
     GtExponentiationDigitSelector,
     GtExponentiationBasePower,
+    GtExponentiationDigitBitness,
     GtExponentiationShift,
+    GtExponentiationBoundary,
     GtMultiplication,
     G1ScalarMultiplication,
     G1ScalarMultiplicationShift,
+    G1ScalarMultiplicationBoundary,
     G1Addition,
     G2ScalarMultiplication,
     G2ScalarMultiplicationShift,
+    G2ScalarMultiplicationBoundary,
     G2Addition,
-    MultiMillerLoop,
+    MillerLoopLineStep,
+    MillerLoopLineEvaluation,
+    MillerLoopPairProduct,
+    MillerLoopAccumulator,
+    MillerLoopBoundary,
     WiringGt,
     WiringG1,
     WiringG2,
@@ -44,8 +52,12 @@ pub enum G2Challenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum PairingChallenge {
-    MillerLoopBatch,
+pub enum MillerLoopChallenge {
+    LineStepBatch,
+    LineEvaluationBatch,
+    PairProductBatch,
+    AccumulatorBatch,
+    BoundaryPoint,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -67,7 +79,7 @@ pub enum DoryAssistChallengeId {
     Gt(GtChallenge),
     G1(G1Challenge),
     G2(G2Challenge),
-    Pairing(PairingChallenge),
+    MillerLoop(MillerLoopChallenge),
     Wiring(WiringChallenge),
     Packing(PackingChallenge),
 }
@@ -165,21 +177,37 @@ pub enum G2Polynomial {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum PairingPolynomial {
-    MillerAccumulator,
-    MillerLineEvaluation,
-    MillerPointX,
-    MillerPointY,
-    MillerQuotient,
-    PreFinalExponentiationOutput,
+pub enum MillerLoopPolynomial {
+    G1PointX,
+    G1PointY,
+    G2LineStateX0,
+    G2LineStateX1,
+    G2LineStateY0,
+    G2LineStateY1,
+    G2LineStateZ0,
+    G2LineStateZ1,
+    G2LineShiftedStateX0,
+    G2LineShiftedStateX1,
+    G2LineShiftedStateY0,
+    G2LineShiftedStateY1,
+    G2LineShiftedStateZ0,
+    G2LineShiftedStateZ1,
+    LineCoefficient {
+        coefficient: usize,
+        component: usize,
+    },
+    LineEvaluationCoeff(usize),
+    PairLineProductCoeff(usize),
+    AccumulatorCoeff(usize),
+    ShiftedAccumulatorCoeff(usize),
+    AccumulatorQuotientCoeff(usize),
+    OutputCoeff(usize),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WiringPolynomial {
     Source,
     Destination,
-    Enabled,
-    Difference,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -195,7 +223,7 @@ pub enum DoryAssistVirtualPolynomial {
     Gt(GtPolynomial),
     G1(G1Polynomial),
     G2(G2Polynomial),
-    Pairing(PairingPolynomial),
+    MillerLoop(MillerLoopPolynomial),
     Wiring(WiringPolynomial),
     Packing(PackingPolynomial),
 }
@@ -253,10 +281,26 @@ pub enum DoryAssistPublicId {
     JoltEvaluationClaim(usize),
     JoltCommitment(usize),
     TranscriptScalar(usize),
+    BoundarySelector {
+        relation: DoryAssistRelationId,
+        endpoint: DoryAssistBoundaryEndpoint,
+    },
+    BoundaryValue {
+        relation: DoryAssistRelationId,
+        endpoint: DoryAssistBoundaryEndpoint,
+        component: usize,
+    },
     GtShiftEqKernel,
+    WiringEnabledMask(DoryAssistRelationId),
     PrefixPackingWeight(usize),
-    PreFinalExponentiationGt(usize),
-    PairingFinalCheckInput(usize),
+    MillerLoopOutputGt(usize),
+    NativeFinalCheckInput(usize),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistBoundaryEndpoint {
+    Initial,
+    Final,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

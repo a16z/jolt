@@ -18,6 +18,7 @@ pub mod key;
 pub mod lowering;
 pub mod nonnative;
 pub mod provider;
+pub mod scalar;
 
 pub use builder::{AssignedScalar, LinearCombination, R1csBuilder, R1csBuilderError, Variable};
 pub use column::R1csColumn;
@@ -32,3 +33,4 @@ pub use lowering::{
 };
 pub use nonnative::FqVar;
 pub use provider::{R1csSource, SpartanChallenges};
+pub use scalar::{scalar_affine_combination, scalar_dot_product, ScalarGadget};

@@ -94,7 +94,7 @@ fn append_nonnative_relation(
     challenge: &jolt_r1cs::AssignedScalar<Fr>,
     tamper_targets: &mut Vec<(&'static str, usize)>,
 ) {
-    let fq_challenge = FqVar::from_fr(builder, challenge);
+    let fq_challenge = FqVar::inject_fr_challenge(builder, challenge);
     let seed = FqVar::alloc(builder, Fq::from_u64(17));
     let scale = FqVar::alloc(builder, Fq::from_u64(23));
     let offset = FqVar::alloc(builder, Fq::from_u64(11));

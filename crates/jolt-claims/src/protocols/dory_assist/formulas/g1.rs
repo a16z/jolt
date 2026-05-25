@@ -1,10 +1,11 @@
 use jolt_field::{FromPrimitiveInt, RingCore};
 
-use crate::{challenge, constant, opening};
+use crate::{challenge, constant, opening, public};
 
 use super::super::{
-    DoryAssistChallengeId, DoryAssistExpr, DoryAssistOpeningId, DoryAssistRelationClaims,
-    DoryAssistRelationId, DoryAssistVirtualPolynomial, G1Challenge, G1Polynomial,
+    DoryAssistBoundaryEndpoint, DoryAssistChallengeId, DoryAssistExpr, DoryAssistOpeningId,
+    DoryAssistPublicId, DoryAssistRelationClaims, DoryAssistRelationId,
+    DoryAssistVirtualPolynomial, G1Challenge, G1Polynomial,
 };
 use super::dimensions::{DoryAssistSumcheckSpec, G1Dimensions};
 
@@ -16,6 +17,12 @@ pub const fn scalar_multiplication_shift_sumcheck(
     dimensions: G1Dimensions,
 ) -> DoryAssistSumcheckSpec {
     dimensions.scalar_mul_shift_sumcheck()
+}
+
+pub const fn scalar_multiplication_boundary_sumcheck(
+    dimensions: G1Dimensions,
+) -> DoryAssistSumcheckSpec {
+    dimensions.scalar_mul_boundary_sumcheck()
 }
 
 pub const fn addition_sumcheck(dimensions: G1Dimensions) -> DoryAssistSumcheckSpec {
@@ -49,6 +56,36 @@ where
         scalar_multiplication_shift_sumcheck(dimensions),
         input,
         output,
+    )
+}
+
+pub fn scalar_multiplication_boundary<F>(dimensions: G1Dimensions) -> DoryAssistRelationClaims<F>
+where
+    F: RingCore,
+{
+    let relation = DoryAssistRelationId::G1ScalarMultiplicationBoundary;
+    let gamma = g1_challenge(G1Challenge::BoundaryPoint);
+    let initial = boundary_selector(relation, DoryAssistBoundaryEndpoint::Initial)
+        * (opening(scalar_mul_boundary_accumulator_x_opening())
+            - boundary_value(relation, DoryAssistBoundaryEndpoint::Initial, 0)
+            + gamma.clone()
+                * (opening(scalar_mul_boundary_accumulator_y_opening())
+                    - boundary_value(relation, DoryAssistBoundaryEndpoint::Initial, 1))
+            + gamma.clone().pow(2)
+                * (opening(scalar_mul_boundary_accumulator_infinity_opening())
+                    - boundary_value(relation, DoryAssistBoundaryEndpoint::Initial, 2)));
+    let final_value = boundary_selector(relation, DoryAssistBoundaryEndpoint::Final)
+        * (opening(scalar_mul_boundary_shifted_accumulator_x_opening())
+            - boundary_value(relation, DoryAssistBoundaryEndpoint::Final, 0)
+            + gamma.clone()
+                * (opening(scalar_mul_boundary_shifted_accumulator_y_opening())
+                    - boundary_value(relation, DoryAssistBoundaryEndpoint::Final, 1)));
+
+    DoryAssistRelationClaims::new(
+        relation,
+        scalar_multiplication_boundary_sumcheck(dimensions),
+        constant(F::zero()),
+        initial + gamma.pow(3) * final_value,
     )
 }
 
@@ -92,6 +129,16 @@ pub fn scalar_multiplication_shift_output_openings() -> [DoryAssistOpeningId; 2]
     [
         scalar_mul_accumulator_x_opening(),
         scalar_mul_accumulator_y_opening(),
+    ]
+}
+
+pub fn scalar_multiplication_boundary_output_openings() -> [DoryAssistOpeningId; 5] {
+    [
+        scalar_mul_boundary_accumulator_x_opening(),
+        scalar_mul_boundary_accumulator_y_opening(),
+        scalar_mul_boundary_accumulator_infinity_opening(),
+        scalar_mul_boundary_shifted_accumulator_x_opening(),
+        scalar_mul_boundary_shifted_accumulator_y_opening(),
     ]
 }
 
@@ -142,6 +189,41 @@ pub fn scalar_mul_shifted_accumulator_y_opening() -> DoryAssistOpeningId {
     )
 }
 
+pub fn scalar_mul_boundary_accumulator_x_opening() -> DoryAssistOpeningId {
+    g1_opening(
+        G1Polynomial::ScalarMulAccumulatorX,
+        DoryAssistRelationId::G1ScalarMultiplicationBoundary,
+    )
+}
+
+pub fn scalar_mul_boundary_accumulator_y_opening() -> DoryAssistOpeningId {
+    g1_opening(
+        G1Polynomial::ScalarMulAccumulatorY,
+        DoryAssistRelationId::G1ScalarMultiplicationBoundary,
+    )
+}
+
+pub fn scalar_mul_boundary_accumulator_infinity_opening() -> DoryAssistOpeningId {
+    g1_opening(
+        G1Polynomial::ScalarMulAccumulatorInfinity,
+        DoryAssistRelationId::G1ScalarMultiplicationBoundary,
+    )
+}
+
+pub fn scalar_mul_boundary_shifted_accumulator_x_opening() -> DoryAssistOpeningId {
+    g1_opening(
+        G1Polynomial::ScalarMulShiftedAccumulatorX,
+        DoryAssistRelationId::G1ScalarMultiplicationBoundary,
+    )
+}
+
+pub fn scalar_mul_boundary_shifted_accumulator_y_opening() -> DoryAssistOpeningId {
+    g1_opening(
+        G1Polynomial::ScalarMulShiftedAccumulatorY,
+        DoryAssistRelationId::G1ScalarMultiplicationBoundary,
+    )
+}
+
 pub fn scalar_multiplication_constraint_expression<F>() -> DoryAssistExpr<F>
 where
     F: RingCore + FromPrimitiveInt,
@@ -161,6 +243,7 @@ where
 
     let dx = x_p.clone() - x_t.clone();
     let dy = y_p.clone() - y_t.clone();
+    let bit_boolean = bit.clone() * (one::<F>() - bit.clone());
 
     let c1 =
         4 * square(y_a.clone()) * (x_t.clone() + 2 * x_a.clone()) - 9 * square(square(x_a.clone()));
@@ -182,7 +265,7 @@ where
 
     batch_constraints(
         g1_challenge(G1Challenge::ConstraintBatch),
-        [c1, c2, c3, c4, c5, c6, c7],
+        [bit_boolean, c1, c2, c3, c4, c5, c6, c7],
     )
 }
 
@@ -229,6 +312,7 @@ where
         iota_q.clone() * (one::<F>() - iota_p.clone()) * (iota_r.clone() - iota_p),
         phi.clone() * sigma_1.clone() * (one::<F>() - sigma_1.clone()),
         phi.clone() * sigma_2.clone() * (one::<F>() - sigma_2.clone()),
+        phi.clone() * sigma_1.clone() * sigma_2.clone(),
         phi.clone() * add_branch.clone() * (one::<F>() - mu * dx.clone()),
         phi.clone() * sigma_1.clone() * dx.clone(),
         phi.clone() * sigma_1.clone() * dy.clone(),
@@ -293,6 +377,31 @@ where
     F: RingCore,
 {
     challenge(DoryAssistChallengeId::from(id))
+}
+
+pub fn boundary_selector<F>(
+    relation: DoryAssistRelationId,
+    endpoint: DoryAssistBoundaryEndpoint,
+) -> DoryAssistExpr<F>
+where
+    F: RingCore,
+{
+    public(DoryAssistPublicId::BoundarySelector { relation, endpoint })
+}
+
+pub fn boundary_value<F>(
+    relation: DoryAssistRelationId,
+    endpoint: DoryAssistBoundaryEndpoint,
+    component: usize,
+) -> DoryAssistExpr<F>
+where
+    F: RingCore,
+{
+    public(DoryAssistPublicId::BoundaryValue {
+        relation,
+        endpoint,
+        component,
+    })
 }
 
 #[cfg(test)]
@@ -407,6 +516,89 @@ mod tests {
         );
 
         assert_ne!(output, Fr::from_u64(0));
+    }
+
+    #[test]
+    fn scalar_mul_constraints_reject_non_boolean_bit() {
+        let claims = scalar_multiplication::<Fr>(G1Dimensions::new(8, 0, 0));
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                DoryAssistOpeningId::Polynomial {
+                    polynomial:
+                        super::super::super::DoryAssistPolynomialId::Virtual(
+                            DoryAssistVirtualPolynomial::G1(G1Polynomial::ScalarMulBit),
+                        ),
+                    ..
+                } => Fr::from_u64(2),
+                DoryAssistOpeningId::Polynomial { .. } => Fr::from_u64(0),
+            },
+            |_| Fr::from_u64(2),
+            |_| Fr::from_u64(0),
+        );
+
+        assert_ne!(output, Fr::from_u64(0));
+    }
+
+    #[test]
+    fn scalar_mul_boundary_checks_initial_and_final_points() {
+        let dimensions = G1Dimensions::new(8, 2, 0);
+        let relation = DoryAssistRelationId::G1ScalarMultiplicationBoundary;
+        let claims = scalar_multiplication_boundary::<Fr>(dimensions);
+        let zero = Fr::from_u64(0);
+
+        assert_eq!(claims.id, relation);
+        assert_eq!(
+            claims.sumcheck,
+            scalar_multiplication_boundary_sumcheck(dimensions)
+        );
+        assert_eq!(
+            claims.output.required_openings,
+            scalar_multiplication_boundary_output_openings().to_vec()
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![DoryAssistChallengeId::from(G1Challenge::BoundaryPoint)]
+        );
+
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == scalar_mul_boundary_accumulator_x_opening() => Fr::from_u64(0),
+                id if id == scalar_mul_boundary_accumulator_y_opening() => Fr::from_u64(0),
+                id if id == scalar_mul_boundary_accumulator_infinity_opening() => Fr::from_u64(1),
+                id if id == scalar_mul_boundary_shifted_accumulator_x_opening() => Fr::from_u64(13),
+                id if id == scalar_mul_boundary_shifted_accumulator_y_opening() => Fr::from_u64(17),
+                _ => zero,
+            },
+            |_| Fr::from_u64(5),
+            |public| match *public {
+                DoryAssistPublicId::BoundarySelector {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Initial,
+                } if id == relation => Fr::from_u64(1),
+                DoryAssistPublicId::BoundarySelector {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Final,
+                } if id == relation => Fr::from_u64(1),
+                DoryAssistPublicId::BoundaryValue {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Initial,
+                    component: 2,
+                } if id == relation => Fr::from_u64(1),
+                DoryAssistPublicId::BoundaryValue {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Final,
+                    component: 0,
+                } if id == relation => Fr::from_u64(13),
+                DoryAssistPublicId::BoundaryValue {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Final,
+                    component: 1,
+                } if id == relation => Fr::from_u64(17),
+                _ => zero,
+            },
+        );
+
+        assert_eq!(output, zero);
     }
 
     #[test]

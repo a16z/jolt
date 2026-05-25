@@ -70,9 +70,13 @@ impl FqVar {
         Self { limbs }
     }
 
-    /// Injects a native `Fr` scalar into `Fq` by constraining its canonical
-    /// integer decomposition and reusing those limbs as an `Fq` value.
-    pub fn from_fr(builder: &mut R1csBuilder<Fr>, value: &AssignedScalar<Fr>) -> Self {
+    /// Injects a native `Fr` scalar into `Fq` as an integer.
+    ///
+    /// This is the canonical integer injection `Fr -> Fq`: constrain the
+    /// `Fr` value's little-endian integer limbs to be canonical modulo `q_Fr`,
+    /// then reuse those same limbs as an `Fq` value. This is valid because
+    /// BN254 has `q_Fr < q_Fq`; it is not a residue reinterpretation.
+    pub fn inject_fr(builder: &mut R1csBuilder<Fr>, value: &AssignedScalar<Fr>) -> Self {
         let limbs =
             fr_to_u64_limbs(value.value).map(|limb| AssignedScalar::alloc(builder, fr(limb)));
         for limb in &limbs {
@@ -82,6 +86,19 @@ impl FqVar {
         builder.assert_equal(value.lc.clone(), compose_limbs(&limbs));
 
         Self { limbs }
+    }
+
+    /// Converts a Poseidon-over-`Fr` challenge into an `Fq` challenge by the
+    /// canonical integer injection `Fr -> Fq`.
+    ///
+    /// The transcript remains an `Fr` transcript. Callers should domain-separate
+    /// in the transcript before squeezing `challenge`, then call this at the
+    /// protocol boundary where `Fq` arithmetic begins.
+    pub fn inject_fr_challenge(
+        builder: &mut R1csBuilder<Fr>,
+        challenge: &AssignedScalar<Fr>,
+    ) -> Self {
+        Self::inject_fr(builder, challenge)
     }
 
     pub fn limbs(&self) -> &[AssignedScalar<Fr>; NUM_LIMBS] {
@@ -568,7 +585,38 @@ mod tests {
     fn rejects_tampered_fr_injection_limb() {
         let mut builder = R1csBuilder::new();
         let value = AssignedScalar::alloc(&mut builder, Fr::from_u64(17));
-        let fq = FqVar::from_fr(&mut builder, &value);
+        let fq = FqVar::inject_fr(&mut builder, &value);
+        let first_limb = variable(&fq.limbs()[0]);
+        let mut witness = builder.witness().expect("witness is assigned");
+        witness[first_limb.index()] += fr(1);
+
+        assert!(builder.into_matrices().check_witness(&witness).is_err());
+    }
+
+    #[test]
+    fn fr_challenge_injection_uses_canonical_integer_embedding() {
+        assert_fr_challenge_injection_satisfies(fr(0));
+        assert_fr_challenge_injection_satisfies(Fr::from_u64(99));
+        assert_fr_challenge_injection_satisfies(fr_from_limbs(FR_MODULUS_MINUS_ONE_LIMBS));
+    }
+
+    #[test]
+    fn fr_challenge_injection_rejects_tampered_source_challenge() {
+        let mut builder = R1csBuilder::new();
+        let challenge = AssignedScalar::alloc(&mut builder, Fr::from_u64(99));
+        let _ = FqVar::inject_fr_challenge(&mut builder, &challenge);
+        let challenge_variable = variable(&challenge);
+        let mut witness = builder.witness().expect("witness is assigned");
+        witness[challenge_variable.index()] += fr(1);
+
+        assert!(builder.into_matrices().check_witness(&witness).is_err());
+    }
+
+    #[test]
+    fn fr_challenge_injection_rejects_tampered_fq_limb() {
+        let mut builder = R1csBuilder::new();
+        let challenge = AssignedScalar::alloc(&mut builder, Fr::from_u64(99));
+        let fq = FqVar::inject_fr_challenge(&mut builder, &challenge);
         let first_limb = variable(&fq.limbs()[0]);
         let mut witness = builder.witness().expect("witness is assigned");
         witness[first_limb.index()] += fr(1);
@@ -724,7 +772,22 @@ mod tests {
     fn assert_fr_injection_satisfies(value: Fr) {
         let mut builder = R1csBuilder::new();
         let scalar = AssignedScalar::alloc(&mut builder, value);
-        let fq = FqVar::from_fr(&mut builder, &scalar);
+        let fq = FqVar::inject_fr(&mut builder, &scalar);
+
+        assert_eq!(
+            fq.limbs()
+                .iter()
+                .map(|limb| scalar_low_u64(limb.value))
+                .collect::<Vec<_>>(),
+            fr_to_u64_limbs(value)
+        );
+        assert!(builder_accepts(builder));
+    }
+
+    fn assert_fr_challenge_injection_satisfies(value: Fr) {
+        let mut builder = R1csBuilder::new();
+        let challenge = AssignedScalar::alloc(&mut builder, value);
+        let fq = FqVar::inject_fr_challenge(&mut builder, &challenge);
 
         assert_eq!(
             fq.limbs()

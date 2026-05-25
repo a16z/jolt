@@ -71,7 +71,7 @@ Dory-assist protocol facts in jolt-claims
 `dory-assist-verifier` crate implementing PcsProofAssist for the Dory PCS
 generic PCS-assist payload consumed by jolt-verifier
 Hyrax dense-witness opening over Grumpkin-backed Pedersen row commitments
-multi-Miller-loop work proven inside the assist proof
+Miller-loop work proven inside the assist proof
 final exponentiation checked natively by the Dory-assist verifier
 wrapper-compatible R1CS hooks for sumcheck, claims, packing, and Hyrax
 ```
@@ -143,7 +143,7 @@ private witness:
   operation-family polynomial assignments:
     GT exponentiation and multiplication witnesses
     G1/G2 scalar multiplication and addition witnesses
-    multi-Miller-loop witnesses
+    Miller-loop witnesses
     operation outputs and wiring values
 
 commitment:
@@ -201,7 +201,7 @@ Jolt opening snapshot:
 Dory-assist transcript challenges
 Grumpkin/Pedersen-backed Hyrax dense-witness commitment
 Hyrax opening claim
-final pairing-check input/output values
+Miller-loop output GT value and native final-check inputs
 ```
 
 Private witness:
@@ -214,7 +214,7 @@ operation-family witness polynomials:
   G1 addition rows
   G2 scalar-mul rows
   G2 addition rows
-  multi-Miller-loop rows
+  Miller-loop rows
   intermediate values
   wiring values
 prefix-packed dense witness evaluations
@@ -251,8 +251,8 @@ final public check:
 ```
 
 The SNARK portion proves the expensive Dory verifier computation through the
-multi-Miller-loop / pre-final-exponentiation value. Final exponentiation and
-pairing equality remain native verifier work in v1.
+Miller-loop output. Final exponentiation and pairing equality remain native
+Dory-assist verifier work in v1.
 
 ## Techniques
 
@@ -293,8 +293,9 @@ G1 arithmetic:
 G2 arithmetic:
   the same strategy as G1, with Fq2 coordinates split into Fq components
 
-pairing boundary:
-  multi-Miller-loop constraints in the assist proof
+Miller-loop boundary:
+  BN254 multi-Miller line schedule, line evaluation, pair-line products, and
+  accumulator recurrence in the assist proof
   final exponentiation and pairing equality checked natively by the
   Dory-assist verifier in v1
 ```
@@ -342,6 +343,14 @@ digit = (1-d0)*(1-d1)
       + d0*d1*B3
 ```
 
+The digit bits are not trusted by construction. A separate bitness relation
+checks:
+
+```text
+d0*(1-d0) = 0
+d1*(1-d1) = 0
+```
+
 The base-power rows are checked with the same GT multiplication quotient
 identity:
 
@@ -367,10 +376,11 @@ rho_shift(r_s, r_u, r_c)
 
 The final shift-round claim is therefore a public shift-kernel value times a
 fresh opening of `rho` under the `GtExponentiationShift` relation. Boundary
-checks assert `rho(0) = 1_GT` and `rho(n) = h`, where `h` is the public
-exponentiation output used by the Dory verifier operation DAG. Base powers for
-the digit selector are part of the GT operation-family witness/public-input
-interface and are checked with the same polynomial-division semantics.
+checks use fixed public boundary selector evaluations to assert that the first
+accumulator row is `1_GT` and the final shifted-accumulator row is the public
+output `h` used by the Dory verifier operation DAG. Base powers for the digit
+selector are part of the GT operation-family witness/public-input interface and
+are checked with the same polynomial-division semantics.
 
 ### G1 Semantics
 
@@ -385,7 +395,8 @@ dy  = y_Q - y_P
 phi = (1 - iota_P) * (1 - iota_Q)
 ```
 
-the relation is the random linear combination of the 27 appendix constraints:
+the relation is the random linear combination of the 27 appendix constraints
+plus an explicit branch-exclusivity check:
 
 ```text
 booleanity:
@@ -401,6 +412,7 @@ identity cases:
 branch checks:
   phi*sigma_1(1-sigma_1)
   phi*sigma_2(1-sigma_2)
+  phi*sigma_1*sigma_2
   phi*(1-sigma_1-sigma_2)*(1-mu*dx)
   phi*sigma_1*dx, phi*sigma_1*dy
   phi*sigma_2*dx, phi*sigma_2*(y_Q+y_P)
@@ -418,9 +430,10 @@ Scalar multiplication uses the double-and-add recurrence
 `A_{i+1} = [2]A_i + b_i P`. The local recurrence witnesses are accumulator
 `A`, doubled point `T`, shifted accumulator `A'`, bit `b`, base `P`, and
 infinity indicators `iota_A`, `iota_T`. With `dx = x_P - x_T` and
-`dy = y_P - y_T`, the seven local constraints are:
+`dy = y_P - y_T`, the local constraints are:
 
 ```text
+b*(1-b)
 4*y_A^2*(x_T + 2*x_A) - 9*x_A^4
 3*x_A^2*(x_T - x_A) + 2*y_A*(y_T + y_A)
 (1-b)*(x_A' - x_T)
@@ -435,7 +448,11 @@ iota_T*y_T
 ```
 
 The scalar-mul shift relation separately enforces that `A'` is the one-step
-shift of `A`.
+shift of `A`. The scalar bit is explicitly constrained by `b*(1-b)=0`.
+Boundary checks use fixed public boundary selector evaluations: the initial
+accumulator row is constrained as `(0,0,1)`, and the final shifted accumulator
+coordinates are constrained to the public affine scalar-mul output consumed by
+the operation DAG.
 
 ### G2 Semantics
 
@@ -452,13 +469,13 @@ a = a0 + a1*u
 
 G2 addition uses the same branch, identity, slope, and output semantics as G1,
 but each `Fq2` coordinate equation is split into its `c0` and `c1`
-components. This yields 47 constraints: three scalar infinity booleanity
+components. This yields 48 constraints: three scalar infinity booleanity
 constraints, twelve infinity-encoding constraints, five `P = O` identity
 constraints, five `Q = O` identity constraints, two branch booleanity
-constraints, two branch-selection constraints for `mu*dx = 1`, four doubling
-enforcement constraints, four inverse enforcement constraints, four split
-slope constraints, two output-indicator constraints, and four output-coordinate
-constraints.
+constraints, one branch-exclusivity constraint, two branch-selection
+constraints for `mu*dx = 1`, four doubling enforcement constraints, four
+inverse enforcement constraints, four split slope constraints, two
+output-indicator constraints, and four output-coordinate constraints.
 
 G2 scalar multiplication is the split-coordinate version of the G1 recurrence.
 The two denominator-free doubling equations and two conditional-add equations
@@ -466,6 +483,7 @@ each produce `c0` and `c1` constraints, followed by the scalar infinity
 constraints:
 
 ```text
+b*(1-b)
 iota_A*(1-iota_T)
 iota_T*x_T0
 iota_T*x_T1
@@ -475,10 +493,61 @@ iota_T*y_T1
 
 The scalar-mul shift relation separately batches the four shifted accumulator
 components `(x_A0', x_A1', y_A0', y_A1')` against `(x_A0, x_A1, y_A0, y_A1)`.
+As in G1, the scalar bit is explicitly boolean-constrained, and fixed public
+boundary selectors constrain the initial accumulator `(0,0,1)` and final
+shifted affine coordinates.
 
 The formulas should expose local constraints, virtual-polynomial dependencies,
 opening IDs, public IDs, challenge IDs, and relation claim expressions. They
 should not expose runtime tracing mechanics.
+
+### Miller-Loop Semantics
+
+The assist proof proves the BN254 multi-Miller loop, not the full pairing. The
+ordinary final exponentiation and final equality check stay native in the
+Dory-assist verifier.
+
+For a configured pair list `(P_j, Q_j)`, the canonical BN254 schedule follows
+the arkworks-style ate loop:
+
+```text
+prepared lines per nonzero pair:
+  64 double lines
+  21 signed-add lines from the non-leading loop digits
+  2 Frobenius correction lines
+  total = 87 line events
+
+Miller accumulator ops:
+  63 squares
+  87 multiplications by pair-line products
+  total = 150 accumulator ops
+```
+
+The PIOP should factor the work into four algebraic layers:
+
+```text
+line step:
+  prove the G2 homogeneous projective double/add/Frobenius-correction schedule
+  and produce the prepared line coefficients
+
+line evaluation:
+  evaluate each prepared line at the matching G1 point as the sparse Fq12
+  element used by the BN254 D-twist `mul_by_034` path
+
+pair product:
+  for each line event, multiply the line evaluations across all pairs to
+  obtain one GT line product for that event
+
+accumulator:
+  run the Miller accumulator recurrence over the canonical 150-op schedule and
+  expose the final pre-final-exponentiation GT value
+```
+
+GT multiplications in pair-product and accumulator rows should be ordinary
+`GtMultiplication` instances connected by direct copy constraints. Miller-loop
+relations own schedule, shift, line formulas, sparse embedding, product order,
+and boundaries; they do not reimplement the generic Fq12 multiplication
+identity.
 
 ### Copy Constraints Via Sum-Check
 
@@ -507,13 +576,58 @@ packed_eval = sum_i w_i(r_pack) * v_i
 ```
 
 where `w_i` is the multilinear subcube selector for the prefix assigned to the
-`i`th polynomial. This is the stage-3 claim-reduction step; it is not another
-sum-check.
+`i`th polynomial. This is the stage-3 claim-reduction step. It can be expressed
+as a degree-1 sum-check over the prefix variables, with the dense-witness
+opening as input and the weighted reduced virtual claims as output.
 
 Family packing should be used before prefix packing where the paper does:
 witness polynomials of the same type across operation instances share a single
 family-packed polynomial whose domain is extended by a family-local
 constraint-index suffix.
+
+### Staging Point Reduction
+
+Dory assist should end with one Hyrax opening of one dense witness. To make that
+true, relation outputs must enter prefix packing at a common suffix point.
+
+Let the dense opening point be:
+
+```text
+r_dense = (r_prefix, r_suffix)
+|r_suffix| = max_poly_vars
+```
+
+Each virtual witness polynomial `V_i` has native width `w_i <= max_poly_vars`.
+The packing layout embeds it as a subcube:
+
+```text
+DenseWitness(prefix_i, z, pad) = V_i(z)
+```
+
+for `|z| = w_i`; the remaining padding variables are ignored by that embedded
+polynomial. Therefore the claim entering prefix packing for `V_i` must be:
+
+```text
+V_i(r_suffix[..w_i])
+```
+
+not an independently sampled point. V1 should stage all component sum-checks so
+their verifier challenges are deterministic projections of the common packing
+suffix. If a later optimization genuinely needs a non-packing point, that
+component must add an explicit same-polynomial claim reduction before stage 3;
+such claims must not be passed directly into prefix packing.
+
+This is the main invariant for preserving a single packed Hyrax opening:
+
+```text
+Every reduced virtual claim consumed by PrefixPacking is evaluated at the
+canonical packing suffix projection for that virtual polynomial.
+```
+
+The prefix weights are public evaluations of the prefix selectors at
+`r_prefix`. Padding slots for coefficient-indexed encodings, such as the four
+unused slots in a 16-slot `GT` element layout, are constrained to zero or are
+left unreachable by the component's canonical coefficient range.
 
 ## Stage Shape
 
@@ -530,7 +644,7 @@ stage 2:
     GT multiplication
     G1/G2 scalar multiplication
     G1/G2 addition
-    multi-Miller-loop constraints
+    Miller-loop line-step, line-evaluation, pair-product, accumulator, boundary
     declared wiring and public-input constraints
 
 stage 3:
@@ -541,9 +655,9 @@ PCS opening:
   commitments
 ```
 
-Dory assist proves the multi-Miller-loop work. The Dory-assist verifier receives
-the resulting public GT value, computes final exponentiation directly, and
-checks the public pairing equality. Final exponentiation is cheap deterministic
+Dory assist proves the Miller-loop work. The Dory-assist verifier receives the
+resulting public GT value, computes final exponentiation directly, and checks
+the public pairing equality. Final exponentiation is cheap deterministic
 verifier work and stays native in v1, but it is still Dory-specific verifier
 logic owned by the Dory-assist verifier implementation rather than by
 `jolt-verifier`.
@@ -585,7 +699,7 @@ over copy-index variables:
 ```text
 Src(i)        = compressed value read from source endpoint of copy edge i
 Dst(i)        = compressed value read from target endpoint of copy edge i
-Enabled(i)    = 1 for real copy edges, 0 for padding
+Enabled(i)    = fixed public mask, 1 for real copy edges and 0 for padding
 EdgeWeight(i) = edge-batching challenge weight for edge i
 ```
 
@@ -610,8 +724,10 @@ check to:
 sum_i eq(r_copy, i) * EdgeWeight(i) * Enabled(i) * (Src(i) - Dst(i)) = 0
 ```
 
-`Src` and `Dst` are virtual polynomials. They must be derived from typed
-`ValueRef`s into public inputs, transcript challenges, constants, or
+`Src` and `Dst` are virtual polynomials. `Enabled` is not prover-controlled: the
+verifier evaluates the canonical edge-table mask at `r_copy` and exposes that
+value as a public input to the wiring relation. `Src` and `Dst` must be derived
+from typed `ValueRef`s into public inputs, transcript challenges, constants, or
 operation-family witness columns. Stage 2 owns the copy zero-check claim; stage
 3 and prefix packing bind the resulting witness-column claims to the single
 dense Hyrax opening.
@@ -627,8 +743,8 @@ sum_x sum_c eq(r_x, x) *
   ) = 0
 ```
 
-The `jolt-claims` v1 semantics expose the same equality-edge meaning with
-typed virtual `Src`, `Dst`, `Enabled`, tuple-compression, copy-point, and
+The `jolt-claims` v1 semantics expose the same equality-edge meaning with typed
+virtual `Src`/`Dst`, a public `Enabled` mask, tuple-compression, copy-point, and
 edge-batch challenges. The later tracer/witness layer is responsible for
 deriving the canonical edge table and any family-local selector/normalization
 data from the Dory verifier operation DAG.
@@ -657,8 +773,8 @@ g1:
 g2:
   G2 addition, G2 scalar multiplication, scalar-mul shift, G2 wiring
 
-pairing:
-  multi-Miller-loop claims and public final-exponentiation check inputs
+miller_loop:
+  line-step, line-evaluation, pair-product, accumulator, boundary, output GT
 
 packing:
   prefix-packing layout and dense-opening claim
@@ -669,6 +785,308 @@ sense that base Jolt has multiple protocol components. The implementation
 should mirror the base Jolt claim organization: small top-level modules define
 IDs and relation claim types, while `formulas/*` owns dimensions, semantic
 claim formulas, openings, and wiring. Stage shape is verifier organization.
+
+## Dimension And Reduction Catalog
+
+The dimensions below are the semantic domains exposed by
+`jolt-claims::protocols::dory_assist::formulas::dimensions`. They describe
+where each relation lives before the final prefix-packing reduction.
+
+Global constants:
+
+```text
+GT_ELEMENT_VARS = 4
+  16 coefficient-index slots for Fq12 values; 12 are real coefficients and
+  four are padding.
+
+GT_EXP_BASE = 4
+  base-4 exponentiation digits.
+
+GT_EXP_STEP_VARS = 7
+  enough for the base-4 exponentiation schedule used by the Dory verifier.
+
+EC_SCALAR_MUL_STEP_VARS = 8
+  enough for the fixed scalar-mul windows used by the operation DAG.
+
+BN254_MILLER_LOOP_LINE_EVENTS = 87
+  64 double line events, 21 signed-add line events from the non-leading
+  BN254 ate-loop digits, plus 2 Frobenius correction line events.
+
+BN254_MILLER_LOOP_SQUARE_OPS = 63
+  one Miller accumulator square before every loop iteration except the first.
+
+BN254_MILLER_LOOP_ACCUMULATOR_OPS = 150
+  87 line-product multiplications plus 63 squares.
+
+BN254_MILLER_LOOP_LINE_EVENT_VARS = 7
+  padding 87 line events to 128.
+
+BN254_MILLER_LOOP_ACCUMULATOR_OP_VARS = 8
+  padding 150 accumulator ops to 256.
+```
+
+### GT Dimensions
+
+`GtDimensions { exp_step_vars, exp_instance_vars, mul_instance_vars }` defines:
+
+```text
+GT exponentiation native domain:
+  (exp_step, gt_coeff)
+  rounds = exp_step_vars + GT_ELEMENT_VARS
+
+GT exponentiation batched domain:
+  (exp_step, exp_instance, gt_coeff)
+  rounds = exp_step_vars + exp_instance_vars + GT_ELEMENT_VARS
+
+GT base-power domain:
+  (exp_instance, gt_coeff)
+  rounds = exp_instance_vars + GT_ELEMENT_VARS
+
+GT multiplication domain:
+  (mul_instance, gt_coeff)
+  rounds = mul_instance_vars + GT_ELEMENT_VARS
+```
+
+Reductions:
+
+```text
+GtExponentiation:
+  proves the base-4 recurrence and emits claims on accumulator, shifted
+  accumulator, digit selector, quotient, and modulus at the packing suffix
+  projection for the exponentiation domain.
+
+GtExponentiationDigitSelector:
+  reduces digit bits and base powers to the selected digit value. This is the
+  concrete base-4 Quang-style selector generalized in the formula layer.
+
+GtExponentiationDigitBitness:
+  proves each exponent digit bit is Boolean.
+
+GtExponentiationBasePower:
+  proves B^2 = B2 and B2*B = B3 using the GT multiplication quotient identity.
+
+GtExponentiationShift:
+  reduces shifted-accumulator claims to accumulator claims with the public
+  one-step shift kernel.
+
+GtExponentiationBoundary:
+  reduces boundary claims to public initial/final selector values.
+
+GtMultiplication:
+  is the shared Fq12 multiplication relation. Miller-loop pair-product and
+  accumulator multiplications should be staged as ordinary GT multiplication
+  rows and connected back to the Miller-loop virtual columns with copy edges.
+```
+
+The GT component's output to prefix packing is a list of reduced scalar
+coefficient claims, each already evaluated at the canonical suffix projection
+for its GT virtual polynomial.
+
+### G1 Dimensions
+
+`G1Dimensions { scalar_mul_step_vars, scalar_mul_instance_vars,
+add_instance_vars }` defines:
+
+```text
+G1 scalar-mul domain:
+  (scalar_step, scalar_mul_instance)
+  rounds = scalar_mul_step_vars + scalar_mul_instance_vars
+
+G1 scalar-mul shift domain:
+  (scalar_step)
+  rounds = scalar_mul_step_vars
+
+G1 addition domain:
+  (add_instance)
+  rounds = add_instance_vars
+```
+
+Reductions:
+
+```text
+G1ScalarMultiplication:
+  proves the double-and-add row relation for x, y, infinity, doubled point,
+  shifted accumulator, scalar bit, and base point.
+
+G1ScalarMultiplicationShift:
+  reduces shifted-accumulator claims to the next accumulator row.
+
+G1ScalarMultiplicationBoundary:
+  reduces initial accumulator and final output checks to public boundary
+  selectors and boundary values.
+
+G1Addition:
+  proves affine addition with identity, doubling, inverse-point, slope, inverse
+  witness, and branch-selector constraints.
+```
+
+The G1 component emits scalar-coordinate reduced claims for every G1 virtual
+column consumed by later wiring or prefix packing.
+
+### G2 Dimensions
+
+`G2Dimensions` has the same domain shape as `G1Dimensions`, but each affine
+coordinate is split into two Fq components:
+
+```text
+G2 scalar-mul domain:
+  (scalar_step, scalar_mul_instance)
+
+G2 scalar-mul shift domain:
+  (scalar_step)
+
+G2 addition domain:
+  (add_instance)
+```
+
+Reductions mirror G1, except every Fq2 equation is split into `c0` and `c1`
+base-field equations. G2 scalar-mul and addition outputs feed both ordinary
+Dory verifier operations and the Miller-loop line-step schedule through direct
+copy constraints.
+
+### Miller-Loop Dimensions
+
+`MillerLoopDimensions { line_event_vars, pair_vars, accumulator_op_vars }`
+uses separate domains for line work and accumulator work:
+
+```text
+line-step domain:
+  (line_event, pair)
+  rounds = line_event_vars + pair_vars
+
+line-evaluation domain:
+  (line_event, pair)
+  rounds = line_event_vars + pair_vars
+
+pair-product domain:
+  (line_event, pair)
+  rounds = line_event_vars + pair_vars
+
+accumulator domain:
+  (accumulator_op)
+  rounds = accumulator_op_vars
+
+boundary domain:
+  (accumulator_op)
+  rounds = accumulator_op_vars
+```
+
+For BN254, `line_event_vars = 7` and `accumulator_op_vars = 8`. `pair_vars` is
+configured from the Dory opening verifier's pair list and pads the number of
+pairs to a power of two.
+
+The Miller-loop subrelations are:
+
+```text
+MillerLoopLineStep:
+  proves the canonical BN254 G2 prepared-line schedule over homogeneous
+  projective coordinates. Each row is one of: double, signed add by Q, signed
+  add by -Q, Frobenius correction add by pi(Q), or Frobenius correction add by
+  -pi^2(Q). Schedule selectors are public/fixed by line_event.
+
+MillerLoopLineEvaluation:
+  evaluates each prepared line at the corresponding G1 point. For BN254's D
+  twist this is the sparse Fq12 line used by arkworks' `mul_by_034` path:
+  coefficient 0 is scaled by P.y, coefficient 1 by P.x, and coefficient 2 is
+  copied directly, with the remaining sparse slots fixed to zero.
+
+MillerLoopPairProduct:
+  for each line_event, scans over pair and proves the product of all pair line
+  evaluations. The actual Fq12 products are GT multiplication rows; this
+  relation owns the scan order, shift/boundary selectors, and copies into and
+  out of `GtMultiplication`.
+
+MillerLoopAccumulator:
+  scans the flattened BN254 Miller accumulator schedule. The 150 real ops are
+  63 squares and 87 multiplications by pair-line products. Squares and
+  multiplications are GT multiplication rows; this relation owns the canonical
+  op ordering and copy links.
+
+MillerLoopBoundary:
+  enforces accumulator[0] = 1_GT and accumulator[last] =
+  MillerLoopOutputGt. The output GT value is public and is the value consumed by
+  native final exponentiation and equality checking.
+```
+
+Miller-loop reductions:
+
+```text
+line-step claims:
+  reduce G2 state, shifted state, line coefficients, input Q, -Q, pi(Q), and
+  -pi^2(Q) to suffix-projected scalar/Fq2 component claims.
+
+line-evaluation claims:
+  reduce G1 coordinates, line coefficients, sparse line-evaluation components,
+  and zero sparse slots to suffix-projected claims.
+
+pair-product claims:
+  reduce pair-product scan state, line-evaluation inputs, GT multiplication
+  row inputs/outputs, and final per-event line products to suffix-projected
+  claims.
+
+accumulator claims:
+  reduce accumulator state, shifted accumulator state, pair-line-product
+  inputs, GT multiplication row inputs/outputs, and op selectors to
+  suffix-projected claims.
+
+boundary claims:
+  reduce initial/final accumulator checks to public selectors and the public
+  `MillerLoopOutputGt(k)` coefficients.
+```
+
+The Miller-loop component must not duplicate generic GT multiplication
+semantics. It composes G2 line semantics, G1 evaluation-point semantics, GT
+multiplication semantics, and direct copy constraints. Final exponentiation and
+the final equality check are outside the SNARK portion and remain native
+Dory-assist verifier work.
+
+### Wiring Dimensions
+
+`WiringDimensions { log_edges }` defines the copy-edge domain:
+
+```text
+copy domain:
+  (edge)
+  rounds = log_edges
+```
+
+Reductions:
+
+```text
+WiringGt / WiringG1 / WiringG2:
+  compress typed vector values with the tuple-compression challenge, apply the
+  public enabled mask and edge-batch weight, and zero-check Src - Dst.
+```
+
+The output claims are only `Source` and `Destination` virtual claims at the
+copy-point projection. Endpoint expansion from typed `ValueRef`s to concrete
+witness columns/publics/challenges is a verifier/witness-generation concern,
+but the equality semantics are owned here.
+
+### Prefix-Packing Dimensions
+
+`PrefixPackingDimensions { packed_vars, max_poly_vars, num_claims }` defines:
+
+```text
+prefix_vars = packed_vars - max_poly_vars
+r_dense = (r_prefix, r_suffix)
+```
+
+Reductions:
+
+```text
+PrefixPacking:
+  input claim:
+    DenseWitness(r_dense)
+
+  output claim:
+    sum_i PrefixPackingWeight(i) * ReducedClaim_i
+```
+
+`num_claims` is the number of reduced virtual claims emitted by GT, G1, G2,
+Miller-loop, and wiring components. `max_poly_vars` is the maximum native width
+among those reduced claims. Every claim entering this reduction must satisfy the
+canonical suffix-projection invariant described above.
 
 ## `jolt-claims` Layout
 
@@ -686,7 +1104,7 @@ crates/jolt-claims/src/protocols/dory_assist/
     gt.rs
     g1.rs
     g2.rs
-    pairing.rs
+    miller_loop.rs
     wiring.rs
     packing.rs
     committed_openings.rs
@@ -695,7 +1113,7 @@ crates/jolt-claims/src/protocols/dory_assist/
       gt.rs
       g1.rs
       g2.rs
-      pairing.rs
+      miller_loop.rs
 ```
 
 This intentionally mirrors `protocols::jolt`, not a verifier crate. In
@@ -746,7 +1164,7 @@ pub use ids::{
     DoryAssistChallengeId, DoryAssistCommittedPolynomial, DoryAssistOpeningId,
     DoryAssistPolynomialId, DoryAssistPublicId, DoryAssistRelationId,
     DoryAssistVirtualPolynomial, G1Challenge, G2Challenge, GtChallenge,
-    PairingChallenge, PackingChallenge, WiringChallenge,
+    MillerLoopChallenge, PackingChallenge, WiringChallenge,
 };
 pub use relation::{
     DoryAssistConsistencyClaim, DoryAssistExpr, DoryAssistInputClaimExpression,
@@ -785,15 +1203,25 @@ Representative relation IDs:
 ```rust
 pub enum DoryAssistRelationId {
     GtExponentiation,
+    GtExponentiationDigitSelector,
+    GtExponentiationBasePower,
+    GtExponentiationDigitBitness,
     GtExponentiationShift,
+    GtExponentiationBoundary,
     GtMultiplication,
     G1ScalarMultiplication,
     G1ScalarMultiplicationShift,
+    G1ScalarMultiplicationBoundary,
     G1Addition,
     G2ScalarMultiplication,
     G2ScalarMultiplicationShift,
+    G2ScalarMultiplicationBoundary,
     G2Addition,
-    MultiMillerLoop,
+    MillerLoopLineStep,
+    MillerLoopLineEvaluation,
+    MillerLoopPairProduct,
+    MillerLoopAccumulator,
+    MillerLoopBoundary,
     WiringGt,
     WiringG1,
     WiringG2,
@@ -1098,7 +1526,7 @@ Each step should be reviewed before continuing to the next.
      set needed by the three-stage reference pipeline.
 
 4. Add operation-family formulas.
-   - Add GT, G1, G2, pairing, wiring, and claim-reduction formulas.
+   - Add GT, G1, G2, Miller-loop, wiring, and claim-reduction formulas.
    - Encode local constraints, output claims, virtual-polynomial dependencies,
      and wiring formulas.
    - Review gate: formula tests cover each operation family independently.
@@ -1123,8 +1551,8 @@ Each step should be reviewed before continuing to the next.
    - Review gate: `jolt-verifier` can dispatch to Dory-assist
      fixtures without Dory-specific stage modules.
 
-8. Add multi-Miller-loop verification path.
-   - Prove multi-Miller-loop witness constraints in Dory assist.
+8. Add Miller-loop verification path.
+   - Prove Miller-loop witness constraints in Dory assist.
    - Keep final exponentiation as native Dory-assist verifier work.
    - Review gate: fixtures match the Quang reference branch for equivalent
      inputs.

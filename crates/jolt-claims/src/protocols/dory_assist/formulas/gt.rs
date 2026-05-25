@@ -3,8 +3,9 @@ use jolt_field::RingCore;
 use crate::{challenge, constant, opening, public};
 
 use super::super::{
-    DoryAssistChallengeId, DoryAssistOpeningId, DoryAssistPublicId, DoryAssistRelationClaims,
-    DoryAssistRelationId, DoryAssistVirtualPolynomial, GtChallenge, GtPolynomial,
+    DoryAssistBoundaryEndpoint, DoryAssistChallengeId, DoryAssistOpeningId, DoryAssistPublicId,
+    DoryAssistRelationClaims, DoryAssistRelationId, DoryAssistVirtualPolynomial, GtChallenge,
+    GtPolynomial,
 };
 use super::dimensions::{DoryAssistSumcheckSpec, GtDimensions, GT_EXP_BASE};
 
@@ -24,8 +25,18 @@ pub const fn exponentiation_base_power_sumcheck(
     dimensions.exp_base_power_sumcheck()
 }
 
+pub const fn exponentiation_digit_bitness_sumcheck(
+    dimensions: GtDimensions,
+) -> DoryAssistSumcheckSpec {
+    dimensions.exp_digit_bitness_sumcheck()
+}
+
 pub const fn exponentiation_shift_sumcheck(dimensions: GtDimensions) -> DoryAssistSumcheckSpec {
     dimensions.exp_shift_sumcheck()
+}
+
+pub const fn exponentiation_boundary_sumcheck(dimensions: GtDimensions) -> DoryAssistSumcheckSpec {
+    dimensions.exp_boundary_sumcheck()
 }
 
 pub const fn multiplication_sumcheck(dimensions: GtDimensions) -> DoryAssistSumcheckSpec {
@@ -85,6 +96,24 @@ where
     )
 }
 
+pub fn exponentiation_digit_bitness<F>(dimensions: GtDimensions) -> DoryAssistRelationClaims<F>
+where
+    F: RingCore,
+{
+    let beta = gt_challenge(GtChallenge::ConstraintBatch);
+    let bit_lo = opening(exp_digit_bit_bitness_opening(0));
+    let bit_hi = opening(exp_digit_bit_bitness_opening(1));
+    let bit_lo_check = bit_lo.clone() * (constant(F::one()) - bit_lo);
+    let bit_hi_check = bit_hi.clone() * (constant(F::one()) - bit_hi);
+
+    DoryAssistRelationClaims::new(
+        DoryAssistRelationId::GtExponentiationDigitBitness,
+        exponentiation_digit_bitness_sumcheck(dimensions),
+        constant(F::zero()),
+        bit_lo_check + beta * bit_hi_check,
+    )
+}
+
 pub fn exponentiation_shift<F>(dimensions: GtDimensions) -> DoryAssistRelationClaims<F>
 where
     F: RingCore,
@@ -96,6 +125,27 @@ where
         exponentiation_shift_sumcheck(dimensions),
         opening(exp_shifted_accumulator_opening()),
         output,
+    )
+}
+
+pub fn exponentiation_boundary<F>(dimensions: GtDimensions) -> DoryAssistRelationClaims<F>
+where
+    F: RingCore,
+{
+    let relation = DoryAssistRelationId::GtExponentiationBoundary;
+    let gamma = gt_challenge(GtChallenge::BoundaryPoint);
+    let initial = boundary_selector(relation, DoryAssistBoundaryEndpoint::Initial)
+        * (opening(exp_boundary_accumulator_opening())
+            - boundary_value(relation, DoryAssistBoundaryEndpoint::Initial, 0));
+    let final_value = boundary_selector(relation, DoryAssistBoundaryEndpoint::Final)
+        * (opening(exp_boundary_shifted_accumulator_opening())
+            - boundary_value(relation, DoryAssistBoundaryEndpoint::Final, 0));
+
+    DoryAssistRelationClaims::new(
+        relation,
+        exponentiation_boundary_sumcheck(dimensions),
+        constant(F::zero()),
+        initial + gamma * final_value,
     )
 }
 
@@ -152,12 +202,26 @@ pub fn exponentiation_base_power_output_openings() -> [DoryAssistOpeningId; 6] {
     ]
 }
 
+pub fn exponentiation_digit_bitness_output_openings() -> [DoryAssistOpeningId; 2] {
+    [
+        exp_digit_bit_bitness_opening(0),
+        exp_digit_bit_bitness_opening(1),
+    ]
+}
+
 pub fn exponentiation_shift_input_openings() -> [DoryAssistOpeningId; 1] {
     [exp_shifted_accumulator_opening()]
 }
 
 pub fn exponentiation_shift_output_openings() -> [DoryAssistOpeningId; 1] {
     [exp_accumulator_shift_opening()]
+}
+
+pub fn exponentiation_boundary_output_openings() -> [DoryAssistOpeningId; 2] {
+    [
+        exp_boundary_accumulator_opening(),
+        exp_boundary_shifted_accumulator_opening(),
+    ]
 }
 
 pub fn multiplication_input_openings() -> [DoryAssistOpeningId; 2] {
@@ -221,6 +285,13 @@ pub fn exp_digit_bit_opening(bit_index: usize) -> DoryAssistOpeningId {
     )
 }
 
+pub fn exp_digit_bit_bitness_opening(bit_index: usize) -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpDigitBit(bit_index),
+        DoryAssistRelationId::GtExponentiationDigitBitness,
+    )
+}
+
 pub fn exp_base_power_selector_opening(power: usize) -> DoryAssistOpeningId {
     gt_opening(
         GtPolynomial::ExpBasePower(power),
@@ -253,6 +324,20 @@ pub fn exp_modulus_opening() -> DoryAssistOpeningId {
     gt_opening(
         GtPolynomial::Modulus,
         DoryAssistRelationId::GtExponentiation,
+    )
+}
+
+pub fn exp_boundary_accumulator_opening() -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpAccumulator,
+        DoryAssistRelationId::GtExponentiationBoundary,
+    )
+}
+
+pub fn exp_boundary_shifted_accumulator_opening() -> DoryAssistOpeningId {
+    gt_opening(
+        GtPolynomial::ExpShiftedAccumulator,
+        DoryAssistRelationId::GtExponentiationBoundary,
     )
 }
 
@@ -324,6 +409,31 @@ where
     F: RingCore,
 {
     public(DoryAssistPublicId::GtShiftEqKernel)
+}
+
+pub fn boundary_selector<F>(
+    relation: DoryAssistRelationId,
+    endpoint: DoryAssistBoundaryEndpoint,
+) -> super::super::DoryAssistExpr<F>
+where
+    F: RingCore,
+{
+    public(DoryAssistPublicId::BoundarySelector { relation, endpoint })
+}
+
+pub fn boundary_value<F>(
+    relation: DoryAssistRelationId,
+    endpoint: DoryAssistBoundaryEndpoint,
+    component: usize,
+) -> super::super::DoryAssistExpr<F>
+where
+    F: RingCore,
+{
+    public(DoryAssistPublicId::BoundaryValue {
+        relation,
+        endpoint,
+        component,
+    })
 }
 
 #[cfg(test)]
@@ -440,6 +550,96 @@ mod tests {
         );
 
         assert_ne!(output, zero);
+    }
+
+    #[test]
+    fn digit_bitness_rejects_non_boolean_digit_bits() {
+        let dimensions = GtDimensions::new(7, 2, 0);
+        let claims = exponentiation_digit_bitness::<Fr>(dimensions);
+        let zero = Fr::from_u64(0);
+
+        assert_eq!(
+            claims.id,
+            DoryAssistRelationId::GtExponentiationDigitBitness
+        );
+        assert_eq!(
+            claims.sumcheck,
+            exponentiation_digit_bitness_sumcheck(dimensions)
+        );
+        assert_eq!(
+            claims.output.required_openings,
+            exponentiation_digit_bitness_output_openings().to_vec()
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![DoryAssistChallengeId::from(GtChallenge::ConstraintBatch)]
+        );
+
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_digit_bit_bitness_opening(0) => Fr::from_u64(2),
+                id if id == exp_digit_bit_bitness_opening(1) => Fr::from_u64(1),
+                _ => zero,
+            },
+            |_| Fr::from_u64(7),
+            |_| zero,
+        );
+
+        assert_ne!(output, zero);
+    }
+
+    #[test]
+    fn exponentiation_boundary_checks_initial_and_final_accumulators() {
+        let dimensions = GtDimensions::new(7, 2, 0);
+        let relation = DoryAssistRelationId::GtExponentiationBoundary;
+        let claims = exponentiation_boundary::<Fr>(dimensions);
+        let zero = Fr::from_u64(0);
+
+        assert_eq!(claims.id, relation);
+        assert_eq!(
+            claims.sumcheck,
+            exponentiation_boundary_sumcheck(dimensions)
+        );
+        assert_eq!(
+            claims.output.required_openings,
+            exponentiation_boundary_output_openings().to_vec()
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![DoryAssistChallengeId::from(GtChallenge::BoundaryPoint)]
+        );
+
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == exp_boundary_accumulator_opening() => Fr::from_u64(3),
+                id if id == exp_boundary_shifted_accumulator_opening() => Fr::from_u64(11),
+                _ => zero,
+            },
+            |_| Fr::from_u64(7),
+            |public| match *public {
+                DoryAssistPublicId::BoundarySelector {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Initial,
+                } if id == relation => Fr::from_u64(1),
+                DoryAssistPublicId::BoundarySelector {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Final,
+                } if id == relation => Fr::from_u64(1),
+                DoryAssistPublicId::BoundaryValue {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Initial,
+                    component: 0,
+                } if id == relation => Fr::from_u64(3),
+                DoryAssistPublicId::BoundaryValue {
+                    relation: id,
+                    endpoint: DoryAssistBoundaryEndpoint::Final,
+                    component: 0,
+                } if id == relation => Fr::from_u64(11),
+                _ => zero,
+            },
+        );
+
+        assert_eq!(output, zero);
     }
 
     #[test]

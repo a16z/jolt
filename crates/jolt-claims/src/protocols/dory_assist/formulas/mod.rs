@@ -5,6 +5,6 @@ pub mod error;
 pub mod g1;
 pub mod g2;
 pub mod gt;
+pub mod miller_loop;
 pub mod packing;
-pub mod pairing;
 pub mod wiring;

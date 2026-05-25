@@ -191,7 +191,8 @@ The configured verifier R1CS assembly must make every field crossing explicit:
 
 ```text
 Poseidon-Fr challenge
-  -> domain-separated Fr-to-Fq challenge map
+  -> domain-separated transcript label absorbed by the caller
+  -> constrained Fr-to-Fq integer injection
   -> canonical Fq variable
   -> Dory-assist sumcheck / operation constraints
 ```
@@ -202,6 +203,14 @@ at the wrapper assembly boundary. If stronger challenge uniformity is needed
 than direct `Fr` injection, the conversion gadget should derive multiple
 Poseidon-`Fr` words and reduce the combined integer modulo `Fq` with explicit
 canonicality constraints.
+
+The v1 challenge map is the canonical integer injection `Fr -> Fq`. The
+transcript remains a Poseidon transcript over `Fr`; the caller domain-separates
+before squeezing the `Fr` challenge, then calls the non-native helper that
+constrains the `Fr` canonical limbs and reuses those limbs as the `Fq`
+challenge. This is valid because BN254 has `q_Fr < q_Fq`. The API and callsites
+should use injection terminology so the code does not look like an unchecked
+cast or a second `Fq` transcript.
 
 ## Relationship To BlindFold
 
@@ -610,6 +619,9 @@ R1CS builder/matrices:
 non-native field and range helpers:
   jolt-r1cs::nonnative, including canonical Fq-in-Fr variables
 
+scalar gadget abstraction:
+  jolt-r1cs helpers/traits over native Fr and non-native Fq variables
+
 transcript hashing:
   jolt-transcript::r1cs
 
@@ -641,11 +653,123 @@ Dory-assist protocol facts and packing:
   jolt-claims::protocols::dory_assist
 ```
 
+Wrapper implementation should be foundation-first. Before adding bespoke
+Dory-assist verifier R1CS wiring, each reusable component should expose a
+generic, crate-owned R1CS interface with local tests and at least one
+cross-crate composition test. The final configured-verifier assembly should be
+mostly sequencing typed component hooks, not reimplementing component math in
+`jolt-wrapper`.
+
+The safe implementation rule is: when a wrapper check feels Dory-assist-specific
+but is really a generic algebraic, transcript, sumcheck, opening, or group
+constraint, stop and upstream that piece to the crate that owns the abstraction.
+Only after the generic component has local soundness tests and a composed R1CS
+test should the configured verifier call it.
+
 `jolt-wrapper::r1cs::assembly` sequences these helpers according to the
 configured verifier flow exported by `jolt-verifier`. It should not implement
 component math directly. It allocates the proof and public-input witness,
 threads transcript state, records aliases and claim sources, and calls the R1CS
 hooks owned by the component crates.
+
+## Generic R1CS Building Blocks
+
+The wrapper should be assembled from reusable R1CS components before any
+full Dory-assist verifier circuit is attempted. The main foundation blocks are:
+
+```text
+field arithmetic:
+  native Fr constraints from jolt-r1cs::builder
+  non-native Fq constraints from jolt-r1cs::nonnative
+
+transcript:
+  Poseidon over Fr from jolt-transcript::r1cs
+  no hidden Fq transcript
+
+challenge crossing:
+  caller absorbs protocol label in Poseidon-Fr transcript
+  transcript squeezes AssignedScalar<Fr>
+  jolt-r1cs::nonnative injects the Fr challenge into Fq
+
+sumcheck:
+  jolt-sumcheck::r1cs owns verifier equations
+  native-Fr path uses LinearCombination<Fr> / AssignedScalar<Fr>
+  non-native-Fq path uses FqVar inside R1csBuilder<Fr>
+  same semantic path for baked and in-circuit challenges
+
+claims/formulas:
+  jolt-claims describes expressions
+  jolt-r1cs::lowering turns those expressions into constraints
+
+openings:
+  jolt-openings owns opening semantics
+  R1CS helpers only constrain the algebra needed by the selected verifier
+
+groups/commitments:
+  jolt-crypto::r1cs owns Grumpkin/Pedersen constraints
+  jolt-hyrax::r1cs owns Hyrax opening checks
+```
+
+Each block needs two classes of tests:
+
+```text
+local tests:
+  valid witness satisfies constraints
+  malformed witness violates constraints
+  representative single-variable tampering rejects
+
+composition tests:
+  at least two crates interact in one R1CS
+  the composed witness verifies
+  tampering across every boundary rejects
+```
+
+The current composition-test pattern lives under `crates/jolt-r1cs/tests/` and
+should remain the place for broad R1CS interoperability checks. A useful
+composition test should cross module boundaries, for example:
+
+```text
+Poseidon transcript -> Fr challenge -> Fq injection -> Fq arithmetic
+Poseidon transcript -> variable challenge -> sumcheck R1CS
+Fq arithmetic -> claim lowering -> sumcheck/output relation
+Grumpkin commitment -> Hyrax opening equation -> Fq scalar claim
+```
+
+### Scalar Gadget Interface
+
+Several verifier equations are field-generic mathematically but not
+representation-generic in R1CS. For the BN254 wrapper target we need both:
+
+```text
+native Fr variables:
+  AssignedScalar<Fr> / LinearCombination<Fr>
+  cheap native multiplication constraints
+
+non-native Fq variables:
+  FqVar inside R1csBuilder<Fr>
+  canonical limbs and explicit reduction constraints
+```
+
+The reusable equation crates should therefore target a small scalar-gadget API
+rather than hard-coding either `LinearCombination<Fr>` or Dory-assist-specific
+types. The API should expose only the operations verifier equations need:
+
+```text
+constant
+allocated witness/public value
+assert_equal
+add/sub/neg
+mul
+select by native boolean when needed
+affine combination / dot product when useful
+```
+
+`jolt-r1cs` should own this trait or helper layer because it owns the builder
+and both native and non-native scalar representations. `jolt-sumcheck::r1cs`
+can then express round-sum and polynomial-evaluation constraints once, with a
+native implementation for `Fr` and a non-native implementation for `FqVar`.
+Dory-assist verifier code should consume that generic sumcheck helper instead
+of containing its own Horner/evaluation/reduction logic.
 
 ## Dory Assist In Wrapper
 
@@ -722,12 +846,13 @@ opening.
 
 Dory-assist `Fq` sumcheck challenges must be derived from the wrapper's
 Poseidon-over-`Fr` transcript by an explicit, domain-separated
-`Fr`-to-`Fq` challenge map. The simplest implementation is to represent the
-resulting `Fq` challenge with the same non-native `Fq` variable type used by
-Dory-assist verifier arithmetic. We should avoid a hidden Fq-Poseidon transcript:
-if stronger challenge uniformity is needed than direct `Fr` injection, derive
-two or more Poseidon-`Fr` words and reduce the combined integer modulo `Fq` with
-an explicit conversion gadget.
+`Fr`-to-`Fq` injection. The transcript module only produces `Fr` challenges. The
+non-native field module constrains the injection into `Fq`. Dory-assist verifier
+code owns the protocol decision about which labels to absorb before each
+challenge. We should avoid a hidden Fq-Poseidon transcript: if stronger
+challenge uniformity is needed than direct `Fr` injection, derive two or more
+Poseidon-`Fr` words and reduce the combined integer modulo `Fq` with an explicit
+conversion gadget.
 
 The Dory-assist spec says final exponentiation and public pairing equality are
 native verifier work in v1. For wrapper purposes, that means "outside the
@@ -901,7 +1026,7 @@ Each step should be reviewed before continuing to the next.
    - Review gate: mixed constant/variable claim tests cover products and
      aliases.
 
-2. Add variable-challenge `jolt-sumcheck::r1cs`.
+2. Add variable-challenge native `jolt-sumcheck::r1cs`.
    - Use `round.challenge() -> LinearCombination<F>`.
    - Keep constant challenges as the baked fast path for BlindFold.
    - Add Horner evaluation constraints for non-constant challenges.
@@ -920,57 +1045,116 @@ Each step should be reviewed before continuing to the next.
      `jolt-r1cs::nonnative`.
    - Add boolean, range, equality, add/sub/mul/inv/select helpers needed by
      Dory-assist verifier constraints.
-   - Add the domain-separated `Poseidon-Fr -> Fq` challenge map used by
-     Dory-assist sumchecks.
+   - Add the constrained `Poseidon-Fr -> Fq` integer injection used by
+     Dory-assist sumchecks. Domain separation remains caller-owned transcript
+     logic; the injection helper only constrains canonicality and equality.
    - Review gate: bad canonicality, bad reduction, and bad challenge-conversion
      witnesses are rejected.
 
-5. Add wrapper protocol builder skeleton.
+5. Add cross-crate R1CS composition tests.
+   - Create integration tests under `crates/jolt-r1cs/tests/` that pull in
+     R1CS-facing modules across crates.
+   - Compose Poseidon transcript, native challenges, non-native Fq injection,
+     non-native arithmetic, wrapper public inputs, and sumcheck constraints in
+     one circuit.
+   - Review gate: composed witness verifies and representative tampering across
+     every module boundary rejects.
+
+6. Add wrapper protocol builder skeleton.
    - Implement `WrapperProtocolBuilder`, `WrapperClaimSources`, and configured
      stage hook traits over `R1csBuilder`.
    - Review gate: fixture stage lowers to satisfied R1CS without becoming part
      of the public wrapper API.
 
-6. Add wrapper instance export.
+7. Add wrapper instance export.
    - Track stable public-input ordering.
    - Export matrices, witness, and publics for the backend.
    - Review gate: deterministic public-input order tests.
 
-7. Assemble base configured verifier R1CS.
+8. Add scalar-gadget foundation helpers.
+   - Define the minimal native/non-native scalar helper surface needed by
+     verifier equations: constants, witnesses, equality, arithmetic, select,
+     affine combinations, and dot products.
+   - Implement native `Fr` helpers over `AssignedScalar<Fr>` /
+     `LinearCombination<Fr>`.
+   - Implement non-native `Fq` helpers over `FqVar`.
+   - Review gate: the same toy algebraic relation runs over native `Fr` and
+     non-native `FqVar`, and tampering either representation rejects.
+   - Status: implemented in `jolt-r1cs::scalar`; covered by shared native and
+     non-native relation tests plus boundary tampering checks.
+
+9. Generalize sumcheck R1CS over scalar gadgets.
+   - Keep the existing native path for BlindFold and ordinary wrapper checks.
+   - Add a non-native `FqVar` path for Dory-assist sumcheck semantics.
+   - Reuse the same round-sum and polynomial-evaluation logic for both paths
+     instead of duplicating Horner/evaluation logic in Dory-assist code.
+   - Review gate: a toy sumcheck relation verifies over native `Fr` and
+     non-native `Fq`, with bad challenge, bad coefficient, bad round sum, and
+     bad output claim witnesses rejected.
+
+10. Add claim/formula lowering for scalar gadgets.
+   - Keep `jolt-claims` as the formula owner.
+   - Lower formulas into native scalar helpers or non-native `FqVar` helpers
+     depending on the configured verifier field semantics.
+   - Do not make `jolt-claims` aware of R1CS builders or witness allocation.
+   - Review gate: a formula involving constants, transcript challenges,
+     openings, and public values lowers to equivalent native and non-native
+     test relations.
+
+11. Add generic opening/evaluation helper tests.
+   - Identify opening consistency algebra that is independent of Dory-assist.
+   - Put generic helper APIs in `jolt-openings`/`jolt-r1cs` as appropriate.
+   - Review gate: opening/evaluation toy relations compose with transcript and
+     scalar-gadget helpers; tampered point, claim, or commitment rejects.
+
+12. Add Grumpkin/Pedersen R1CS primitives.
+   - Use `jolt-crypto::r1cs` for native-coordinate Grumpkin point constraints
+     over `Fr`.
+   - Add point equality, on-curve checks, addition/doubling, scalar
+     multiplication, and Pedersen commitment helpers with explicit scalar
+     semantics.
+   - Review gate: invalid point, invalid scalar link, and tampered commitment
+     witnesses reject.
+
+13. Add Hyrax R1CS component hooks.
+   - Use `jolt-hyrax::r1cs` for dense-witness opening verification.
+   - Consume generic Grumpkin/Pedersen helpers rather than owning group logic.
+   - Keep Hyrax unaware of Dory-assist stages and copy-edge semantics.
+   - Review gate: tampering the dense-witness opening, Grumpkin commitment, or
+     packed evaluation rejects.
+
+14. Assemble base configured verifier R1CS.
    - Start with a narrow configured verifier computation before full Jolt.
    - Review gate: native verifier and wrapper R1CS agree on accept/reject for
      the same fixture.
 
-8. Add Dory-assist verifier hook integration.
+15. Add Dory-assist verifier hook integration.
    - Compile the selected Dory-assist `PcsProofAssist` verifier path rather
      than the ordinary Dory stage-8 verifier path.
    - Treat the `dory-assist-verifier` crate as the owner of Dory-assist stage
      ordering, native verification, R1CS hook, and final acceptance condition.
    - Pass the typed opening snapshot from wrapper stage-8 assembly into the
      selected Dory-assist verifier hook.
+   - Use only the generic R1CS building blocks above for transcript, Fq
+     arithmetic, sumcheck, claim lowering, openings, Hyrax, and Grumpkin
+     commitments.
    - Review gate: Dory-assist configured computation produces satisfied
-     R1CS.
+     R1CS; tampering each Dory-assist stage payload rejects without adding
+     protocol math to `jolt-wrapper`.
 
-9. Add Hyrax and Grumpkin R1CS component hooks.
-   - Use `jolt-hyrax::r1cs` for dense-witness opening verification.
-   - Use `jolt-crypto::r1cs` for Grumpkin/Pedersen group constraints.
-   - Keep Hyrax unaware of Dory-assist stages and copy-edge semantics.
-   - Review gate: tampering the dense-witness opening, Grumpkin commitment, or
-     packed evaluation rejects.
-
-10. Add field-inline wrapper hooks.
+16. Add field-inline wrapper hooks.
    - Include FR stages when the configured verifier includes field inline.
    - Review gate: FR-off and FR-on configs produce distinct deterministic
      R1CS shapes.
 
-11. Implement ZK `snark_backends/spartan_hyperkzg`.
+17. Implement ZK `snark_backends/spartan_hyperkzg`.
    - Consume arbitrary `WrapperR1csInstance`.
    - Keep the backend independent from Jolt protocol types.
    - Hide the R1CS witness, including transparent inner proof data.
    - Review gate: arbitrary R1CS proof verifies and witness
      randomization changes proof bytes for the same public statement.
 
-12. Add configured-verifier wrapper fixture.
+18. Add configured-verifier wrapper fixture.
    - Prove a small transparent configured verifier computation end to end with
      the transparent proof held as private wrapper witness.
    - Review gate: mutating transcript challenges, public inputs, sumcheck

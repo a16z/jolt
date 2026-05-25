@@ -1,10 +1,10 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, constant, opening};
+use crate::{challenge, constant, opening, public};
 
 use super::super::{
-    DoryAssistChallengeId, DoryAssistOpeningId, DoryAssistRelationClaims, DoryAssistRelationId,
-    DoryAssistVirtualPolynomial, WiringChallenge, WiringPolynomial,
+    DoryAssistChallengeId, DoryAssistOpeningId, DoryAssistPublicId, DoryAssistRelationClaims,
+    DoryAssistRelationId, DoryAssistVirtualPolynomial, WiringChallenge, WiringPolynomial,
 };
 use super::dimensions::{DoryAssistSumcheckSpec, WiringDimensions};
 
@@ -41,8 +41,9 @@ where
     F: RingCore,
 {
     let edge_batch = challenge(DoryAssistChallengeId::from(WiringChallenge::EdgeBatch));
+    let enabled = public(enabled_mask_public(relation));
     let output = edge_batch
-        * opening(enabled_opening(relation))
+        * enabled
         * (opening(source_opening(relation)) - opening(destination_opening(relation)));
 
     DoryAssistRelationClaims::new(
@@ -57,12 +58,12 @@ where
     ])
 }
 
-pub fn copy_zero_check_output_openings(relation: DoryAssistRelationId) -> [DoryAssistOpeningId; 3] {
-    [
-        enabled_opening(relation),
-        source_opening(relation),
-        destination_opening(relation),
-    ]
+pub fn copy_zero_check_output_openings(relation: DoryAssistRelationId) -> [DoryAssistOpeningId; 2] {
+    [source_opening(relation), destination_opening(relation)]
+}
+
+pub fn enabled_mask_public(relation: DoryAssistRelationId) -> DoryAssistPublicId {
+    DoryAssistPublicId::WiringEnabledMask(relation)
 }
 
 pub fn source_opening(relation: DoryAssistRelationId) -> DoryAssistOpeningId {
@@ -71,14 +72,6 @@ pub fn source_opening(relation: DoryAssistRelationId) -> DoryAssistOpeningId {
 
 pub fn destination_opening(relation: DoryAssistRelationId) -> DoryAssistOpeningId {
     wiring_opening(WiringPolynomial::Destination, relation)
-}
-
-pub fn enabled_opening(relation: DoryAssistRelationId) -> DoryAssistOpeningId {
-    wiring_opening(WiringPolynomial::Enabled, relation)
-}
-
-pub fn difference_opening(relation: DoryAssistRelationId) -> DoryAssistOpeningId {
-    wiring_opening(WiringPolynomial::Difference, relation)
 }
 
 fn wiring_opening(
@@ -116,7 +109,10 @@ mod tests {
                 DoryAssistChallengeId::from(WiringChallenge::EdgeBatch),
             ]
         );
-        assert!(claims.required_publics().is_empty());
+        assert_eq!(
+            claims.required_publics(),
+            vec![enabled_mask_public(DoryAssistRelationId::WiringGt)]
+        );
     }
 
     #[test]
@@ -126,15 +122,38 @@ mod tests {
 
         let output = claims.output.expression().evaluate(
             |opening| match *opening {
-                id if id == enabled_opening(DoryAssistRelationId::WiringG1) => Fr::from_u64(1),
                 id if id == source_opening(DoryAssistRelationId::WiringG1) => Fr::from_u64(13),
                 id if id == destination_opening(DoryAssistRelationId::WiringG1) => Fr::from_u64(5),
                 _ => zero,
             },
             |_| Fr::from_u64(3),
-            |_| zero,
+            |public| match *public {
+                id if id == enabled_mask_public(DoryAssistRelationId::WiringG1) => Fr::from_u64(1),
+                _ => zero,
+            },
         );
 
         assert_eq!(output, Fr::from_u64(24));
+    }
+
+    #[test]
+    fn copy_zero_check_uses_public_enabled_mask() {
+        let claims = g2_wiring::<Fr>(WiringDimensions::new(3));
+        let zero = Fr::from_u64(0);
+
+        let output = claims.output.expression().evaluate(
+            |opening| match *opening {
+                id if id == source_opening(DoryAssistRelationId::WiringG2) => Fr::from_u64(13),
+                id if id == destination_opening(DoryAssistRelationId::WiringG2) => Fr::from_u64(5),
+                _ => zero,
+            },
+            |_| Fr::from_u64(3),
+            |public| match *public {
+                id if id == enabled_mask_public(DoryAssistRelationId::WiringG2) => zero,
+                _ => Fr::from_u64(1),
+            },
+        );
+
+        assert_eq!(output, zero);
     }
 }
