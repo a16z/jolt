@@ -48,6 +48,7 @@ fields are payload slots only; they do not choose verifier behavior.
 ```text
 compile-time features:
   determine JOLT_VERIFIER_CONFIG
+  include zk, field-inline, and pcs-assist axes
 
 JOLT_VERIFIER_CONFIG:
   authoritative verifier behavior
@@ -59,8 +60,9 @@ Option<T> fields:
   payload slots for proof axes that are genuinely separate artifacts
 
 PCS assist:
-  generic proof payload implementing PcsProofAssist<PCS>
+  generic PcsAssist implementation with an associated proof payload
   no Dory-specific proof field or verifier stage in jolt-verifier
+  `pcs-assist` feature determines whether the verifier requires the payload
 
 Field inline:
   no top-level payload slot
@@ -131,6 +133,12 @@ not selected by proof contents. A Dory-assisted build selects the Dory PCS,
 `SelectedPcsAssistConfig`, and the matching Dory-assist proof payload type.
 `jolt-verifier` does not need a Dory-specific PCS-assist enum variant.
 
+The `pcs-assist` Cargo feature is the compile-time switch for this axis. With
+the feature disabled, the selected config has `pcs_assist = None` and proofs
+with assist payloads reject. With the feature enabled, the selected config uses
+`Some(PcsAssist::selected_config())` and proofs without the associated assist
+payload reject.
+
 ## Linear Proof Shape
 
 The proof should remain a single linear artifact. Do not nest a separate
@@ -140,47 +148,76 @@ optional extension payloads.
 Sketch:
 
 ```rust
-pub trait PcsProofAssist<PCS: CommitmentScheme>: Sized {
+pub trait PcsProofAssist<PCS: CommitmentScheme> {
+    type Proof;
     type Config;
     type Error;
 
-    fn verify<T>(
-        &self,
+    fn verify_clear<T>(
         config: &Self::Config,
-        joint_opening_proof: &PCS::Proof,
-        opening_snapshot: &PcsOpeningSnapshot<PCS>,
+        input: PcsAssistClearInput<'_, PCS>,
+        proof: &Self::Proof,
         transcript: &mut T,
     ) -> Result<(), Self::Error>
     where
         T: Transcript<Challenge = PCS::Field>;
+
+    fn verify_zk<T>(
+        config: &Self::Config,
+        input: PcsAssistZkInput<'_, PCS>,
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<<PCS as ZkOpeningScheme>::HidingCommitment, Self::Error>
+    where
+        PCS: ZkOpeningScheme,
+        T: Transcript<Challenge = PCS::Field>;
 }
 
-pub struct JoltProof<PCS, VC, ZkProof, PcsAssistProof>
+pub struct PcsAssistClearInput<'a, PCS: CommitmentScheme> {
+    pub setup: &'a PCS::VerifierSetup,
+    pub pcs_proof: &'a PCS::Proof,
+    pub commitment: &'a PCS::Output,
+    pub point: &'a [PCS::Field],
+    pub eval: PCS::Field,
+}
+
+pub struct PcsAssistZkInput<'a, PCS: CommitmentScheme> {
+    pub setup: &'a PCS::VerifierSetup,
+    pub pcs_proof: &'a PCS::Proof,
+    pub commitment: &'a PCS::Output,
+    pub point: &'a [PCS::Field],
+}
+
+pub struct JoltProof<PCS, VC, ZkProof, PcsAssist>
 where
     PCS: CommitmentScheme,
-    PcsAssistProof: PcsProofAssist<PCS>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
-    pub protocol: JoltProtocolConfig<PcsAssistProof::Config>,
+    pub protocol: JoltProtocolConfig<PcsAssist::Config>,
 
     pub commitments: JoltCommitments<PCS>,
     pub stages: JoltStageProofs<PCS::Field, VC, ZkProof>,
     pub joint_opening_proof: PCS::Proof,
 
-    pub pcs_assist: Option<PcsAssistProof>,
+    pub pcs_assist: Option<PcsAssist::Proof>,
 }
 ```
 
 `joint_opening_proof` stays structurally present. When PCS assist is disabled,
 the verifier checks it with the ordinary PCS verifier. When PCS assist is
 enabled, the assist proof certifies the relevant PCS verifier work over this
-same `joint_opening_proof` and the same opening snapshot.
+same `joint_opening_proof` and the same reduced opening statement.
 
-The exact Rust spelling can use an implementation type with an associated
-`Proof` instead of making the proof payload implement the trait directly. The
-API boundary should still be generic over PCS assist, with Dory supplied by the
-Dory-assist verifier crate rather than hard-coded into `jolt-verifier`. A
-no-assist build can use a `NoPcsAssistProof` marker type whose payload slot is
-validated to be `None`.
+The assist implementation type, config type, and proof payload type are selected
+by the verifier build. For Dory assist those types come from
+`jolt-dory-assist-verifier`; `jolt-verifier` only sees the generic
+`PcsProofAssist<PCS>` boundary. A no-assist build can use a `NoPcsAssist`
+marker implementation whose payload slot is validated to be `None`.
+
+The assist input is deliberately the reduced PCS opening statement plus the
+entire `PCS::Proof`. `jolt-verifier` must not parse Dory proof internals. For
+Dory, `jolt-dory-assist-verifier` consumes the full Dory PCS proof and uses the
+fields it needs internally.
 
 If ZK/BlindFold data is already nested in `JoltStageProofs`, it does not need a
 separate top-level field. The same validation principle applies: the transparent
@@ -191,12 +228,12 @@ or BlindFold proof payload shape must match `JOLT_VERIFIER_CONFIG.zk`.
 `validate_proof_config` is the first verifier gate:
 
 ```rust
-pub fn validate_proof_config<PCS, VC, ZkProof, PcsAssistProof>(
-    config: &JoltProtocolConfig<PcsAssistProof::Config>,
-    proof: &JoltProof<PCS, VC, ZkProof, PcsAssistProof>,
+pub fn validate_proof_config<PCS, VC, ZkProof, PcsAssist>(
+    config: &JoltProtocolConfig<PcsAssist::Config>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
 ) -> Result<(), VerifierError>
 where
-    PcsAssistProof: PcsProofAssist<PCS>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     /* shape checks only */
 }
@@ -233,14 +270,14 @@ assist and `proof.pcs_assist` is present, the verifier rejects.
 The verifier remains a linear function:
 
 ```rust
-pub fn verify<PCS, VC, ZkProof, PcsAssistProof>(
+pub fn verify<PCS, VC, ZkProof, PcsAssist>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof, PcsAssistProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(), VerifierError>
 where
-    PcsAssistProof: PcsProofAssist<PCS>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let config = JOLT_VERIFIER_CONFIG;
     validate_proof_config(&config, proof)?;
@@ -258,8 +295,8 @@ where
     let stage6 = verify_stage6(&config, ...)?;
     let stage7 = verify_stage7(&config, ...)?;
 
-    let openings = build_opening_snapshot(&config, ...)?;
-    verify_opening_phase(&config, proof, openings, &mut transcript)
+    let opening_statement = build_reduced_opening_statement(&config, ...)?;
+    verify_opening_phase(&config, proof, opening_statement, &mut transcript)
 }
 ```
 
@@ -516,8 +553,9 @@ Each slice has a small review gate and must preserve the FR-off path.
 ## PCS Assist
 
 PCS assist is the opening-phase extension. The `jolt-verifier` boundary is
-generic over a proof payload implementing `PcsProofAssist<PCS>`. V1 concrete
-assist is Dory assist, supplied by the Dory-assist verifier crate.
+generic over a `PcsAssist` implementation of `PcsProofAssist<PCS>`, whose
+associated `Proof` type is the optional payload. V1 concrete assist is Dory
+assist, supplied by the `jolt-dory-assist-verifier` crate.
 
 `joint_opening_proof` is always present:
 
@@ -527,8 +565,8 @@ config.pcs_assist = None:
   verifier checks joint_opening_proof through the ordinary PCS verifier
 
 config.pcs_assist = Some(...):
-  proof.pcs_assist must be Some(T: PcsProofAssist<PCS>)
-  verifier calls T::verify / proof.pcs_assist.verify
+  proof.pcs_assist must be Some(PcsAssist::Proof)
+  verifier calls PcsAssist::verify_clear / verify_zk
   joint_opening_proof is public input to the assist verification
   verifier does not also run the expensive native PCS verifier path
 ```
@@ -548,32 +586,47 @@ preprocessing/public IO values used by opening verification
 The safe implementation pattern is:
 
 ```rust
-let opening_snapshot = build_opening_snapshot(&config, stage_outputs)?;
+let opening_statement = build_reduced_opening_statement(&config, stage_outputs)?;
 
 match config.pcs_assist {
     None => {
         verify_joint_opening_proof_natively(
             &proof.joint_opening_proof,
-            &opening_snapshot,
+            &opening_statement,
             &mut transcript,
-        )
+        )?;
+        bind_joint_opening_inputs(&opening_statement, &mut transcript)
     }
     Some(ref assist_config) => {
-        let assist = proof.pcs_assist.as_ref().ok_or(MissingPayload)?;
-        assist.verify(
+        let assist_proof = proof.pcs_assist.as_ref().ok_or(MissingPayload)?;
+        PcsAssist::verify_clear(
             assist_config,
-            &proof.joint_opening_proof,
-            &opening_snapshot,
+            PcsAssistClearInput {
+                setup: &preprocessing.pcs_setup,
+                pcs_proof: &proof.joint_opening_proof,
+                commitment: &opening_statement.joint_commitment,
+                point: opening_statement.pcs_opening_point.as_slice(),
+                eval: opening_statement.joint_claim,
+            },
+            assist_proof,
             &mut transcript,
-        )
+        )?;
+        bind_joint_opening_inputs(&opening_statement, &mut transcript)
     }
 }
 ```
 
+The ZK path follows the same shape but calls `PcsAssist::verify_zk`, receives the
+PCS hiding/evaluation commitment, and then performs the same
+`bind_zk_opening_inputs` step as the ordinary `PCS::verify_zk` path. The binding
+step remains owned by `jolt-verifier`; the assist implementation replaces only
+the expensive PCS verifier computation in that slot.
+
 For a Dory-assisted build, `PCS = DoryCommitmentScheme` and the selected assist
-payload is `jolt_dory_assist_verifier::DoryAssistProof`, whose implementation
-owns the three Dory-assist stages, Hyrax opening, and native final pairing
-check. Dory-assist details are specified in
+implementation is `jolt_dory_assist_verifier::DoryAssist`. Its proof payload is
+`jolt_dory_assist_verifier::DoryAssistProof`, and its implementation owns the
+three Dory-assist stages, Hyrax opening, Fr-to-Fq challenge injection, and
+native final pairing check. Dory-assist details are specified in
 [dory-assist-protocol.md](dory-assist-protocol.md).
 
 ## Wrapper
@@ -640,12 +693,14 @@ Dory-assisted Jolt:
 JOLT_VERIFIER_CONFIG:
   PCS = DoryCommitmentScheme
   pcs_assist = Some(DoryAssistConfig)
-  PcsAssistProof = jolt_dory_assist_verifier::DoryAssistProof
+  PcsAssist = jolt_dory_assist_verifier::DoryAssist
+  PcsAssist::Proof = jolt_dory_assist_verifier::DoryAssistProof
 
 verify:
   validate_proof_config requires pcs_assist payload
-  run ordinary stages through opening snapshot
-  call PcsProofAssist::verify with joint_opening_proof as public input
+  run ordinary stages through reduced opening statement construction
+  call PcsProofAssist::verify_clear / verify_zk with joint_opening_proof and
+  the reduced opening statement as public input
 ```
 
 Wrapped Jolt:
@@ -680,7 +735,10 @@ config is absorbed before config-dependent challenges
 FR-off transcript matches ordinary Jolt transcript
 FR-on transcript inserts FR messages in fixed order
 advice absent follows existing skip behavior
-PCS-assist-on binds the same opening snapshot as native PCS verification
+PCS-assist-on binds the same reduced opening statement as native PCS verification
+PCS-assist-on passes the whole PCS::Proof without jolt-verifier parsing it
+Dory-assist challenges are squeezed from the continued Fr transcript and then
+injected into Fq on both prover and verifier sides
 ```
 
 Flow tests:
@@ -700,7 +758,9 @@ Each step should be reviewed before continuing to the next.
 1. Add `JoltProtocolConfig` and the PCS-assist boundary.
    - Define ZK, field-inline, and generic PCS-assist config types.
    - Define the verifier-facing `PcsProofAssist<PCS>` trait or equivalent
-     abstraction.
+     abstraction with associated `Proof` and `Config` types.
+   - Define clear and ZK assist input structs that carry the whole
+     `PCS::Proof` plus the reduced opening statement.
    - Derive `JOLT_VERIFIER_CONFIG` from feature flags.
    - Review gate: config constants match expected feature combinations.
 
@@ -727,12 +787,14 @@ Each step should be reviewed before continuing to the next.
      field-inline work begins.
 
 6. Wire PCS assist in the opening phase.
-   - Build a typed opening snapshot once.
+   - Build a typed reduced opening statement once.
    - Dispatch to ordinary PCS verify or the selected `PcsProofAssist`
      implementation based on config.
+   - Preserve common transcript binding after either native or assist
+     verification.
    - Keep Dory-specific stage organization outside `jolt-verifier`.
    - Review gate: assist proof is bound to the exact `joint_opening_proof` and
-     opening snapshot.
+     reduced opening statement.
 
 7. Keep ZK/BlindFold linear.
    - Preserve the current cfg-gated ZK flow.

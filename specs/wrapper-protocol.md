@@ -113,7 +113,7 @@ The private wrapper witness includes:
 transparent Jolt proof payload
 clear opening claims and proof commitments
 stage-local verifier intermediate values
-opening snapshot data
+reduced opening statement data
 optional selected PCS-assist proof payload
 auxiliary variables needed by transcript, sumcheck, claim, opening, and assist
 constraints
@@ -128,7 +128,7 @@ The R1CS acceptance relation is the configured linear verifier:
      sumcheck verifier equations
      stage input/output claim equations
      public-input and consistency equations
-     final opening snapshot construction
+     final reduced opening statement construction
 4. Verify the configured opening phase:
      ordinary mode: ordinary PCS opening verifier path
      Dory-assist mode: selected DoryAssistProof verifier path
@@ -144,10 +144,11 @@ wrapper transcript is Poseidon over BN254 `Fr`, while Dory-assist sumcheck
 checks are `Fq` arithmetic represented non-natively inside the `Fr` R1CS.
 
 In Dory-assist mode, step 4 does not encode the ordinary Dory stage-8 verifier.
-It encodes the selected `PcsProofAssist` verifier for the same opening snapshot:
+It encodes the selected `PcsProofAssist` verifier for the same reduced opening
+statement:
 
 ```text
-opening snapshot
+reduced opening statement
   -> Dory-assist stage 1/2/3 verifier checks
   -> prefix-packing checks
   -> Hyrax dense-witness opening check
@@ -647,7 +648,7 @@ Hyrax verifier checks:
   jolt-hyrax::r1cs
 
 Dory-assist verifier staging:
-  dory-assist-verifier crate, mirroring jolt-verifier for Dory-assist semantics
+  jolt-dory-assist-verifier crate, mirroring jolt-verifier for Dory-assist semantics
 
 Dory-assist protocol facts and packing:
   jolt-claims::protocols::dory_assist
@@ -690,6 +691,7 @@ challenge crossing:
   caller absorbs protocol label in Poseidon-Fr transcript
   transcript squeezes AssignedScalar<Fr>
   jolt-r1cs::nonnative injects the Fr challenge into Fq
+  jolt-r1cs::nonnative exposes constrained little-endian Fq bits for scalar gadgets
 
 sumcheck:
   jolt-sumcheck::r1cs owns verifier equations
@@ -701,13 +703,23 @@ claims/formulas:
   jolt-claims describes expressions
   jolt-r1cs::lowering turns those expressions into constraints
 
+polynomial evaluation:
+  jolt-poly::r1cs owns equality-polynomial and multilinear-evaluation gadgets
+  these gadgets are generic over jolt-poly::r1cs::PolynomialScalarGadget
+  jolt-r1cs implements that trait for AssignedScalar and FqVar
+
 openings:
   jolt-openings owns opening semantics
   R1CS helpers only constrain the algebra needed by the selected verifier
 
 groups/commitments:
-  jolt-crypto::r1cs owns Grumpkin/Pedersen constraints
+  jolt-crypto::r1cs owns group gadgets and vector-commitment verifier gadgets
+  concrete Grumpkin/Pedersen is one implementation
+  the generic R1CS surface is defined before concrete Pedersen verification
+
+Hyrax:
   jolt-hyrax::r1cs owns Hyrax opening checks
+  it is generic over jolt-crypto::r1cs vector-commitment gadgets
 ```
 
 Each block needs two classes of tests:
@@ -734,6 +746,40 @@ Poseidon transcript -> variable challenge -> sumcheck R1CS
 Fq arithmetic -> claim lowering -> sumcheck/output relation
 Grumpkin commitment -> Hyrax opening equation -> Fq scalar claim
 ```
+
+`jolt-hyrax::r1cs` should mirror the native Hyrax crate's generic shape. It
+should be generic over a vector-commitment R1CS interface rather than hard-code
+Grumpkin or Pedersen into Hyrax. The concrete wrapper target instantiates that
+interface with Grumpkin-backed Pedersen commitments, but the Hyrax verifier
+lowering should only see:
+
+```text
+scalar variables:
+  S: jolt-poly::r1cs::PolynomialScalarGadget
+
+row commitments:
+  VC::OutputVar
+
+vector commitment verifier:
+  VC::verify_opening_r1cs(...)
+  VC::linear_combine_commitments_r1cs(...)
+```
+
+The intended Hyrax R1CS flow is:
+
+```text
+row_point, col_point = split(opening_point)
+row_weights = jolt-poly::r1cs::eq_evals(row_point)
+combined_commitment = VC::linear_combine_commitments_r1cs(row_commitments, row_weights)
+VC::verify_opening_r1cs(combined_commitment, combined_row, combined_blinding)
+col_weights = jolt-poly::r1cs::eq_evals(col_point)
+opened_eval = jolt-poly::r1cs::inner_product(combined_row, col_weights)
+opened_eval == claimed_eval
+```
+
+This keeps field arithmetic and polynomial evaluation out of `jolt-hyrax`,
+keeps group laws and Pedersen/MSM logic out of `jolt-hyrax`, and leaves
+Dory-assist stage/copy/packing semantics out of `jolt-hyrax`.
 
 ### Scalar Gadget Interface
 
@@ -779,8 +825,8 @@ implementation has replaced that ordinary PCS opening check. Concretely:
 
 ```text
 base Jolt stages
-  -> opening snapshot
-  -> selected DoryAssistProof::verify(...)
+  -> reduced opening statement
+  -> selected DoryAssist::verify_clear / verify_zk(...)
   -> Dory-assist stage 1/2/3 checks
   -> Hyrax opening check for the packed dense witness
   -> Dory-assist final public pairing check
@@ -791,7 +837,7 @@ The wrapper-facing R1CS hooks follow the Dory-assist ownership split:
 
 ```text
 Dory-assist staged verifier flow:
-  dory-assist-verifier crate
+  jolt-dory-assist-verifier crate
 
 Dory-assist stage sumchecks:
   jolt-sumcheck::r1cs
@@ -806,30 +852,38 @@ Dory-assist dense-witness opening:
   jolt-hyrax::r1cs
 
 Dory-assist final public pairing check:
-  dory-assist-verifier crate hook
+  jolt-dory-assist-verifier crate hook
 ```
 
-The `dory-assist-verifier` crate mirrors `jolt-verifier` in scope, but for the
-Dory-assist protocol only. It owns the stage ordering, proof payload structure,
-transcript order, native verification, wrapper-facing R1CS hook, and final
-acceptance condition for the selected assist proof. `jolt-wrapper` should not
-match on Dory-assist operation families or copy-edge internals. It receives a
-typed opening snapshot from the base Jolt stage-8 assembly, passes it to the
-selected Dory-assist verifier hook, and constrains the returned acceptance
-condition as part of the configured verifier relation.
+The `jolt-dory-assist-verifier` crate mirrors `jolt-verifier` in scope, but for
+the Dory-assist protocol only. It owns the stage ordering, proof payload
+structure, transcript order, native verification, wrapper-facing R1CS hook, and
+final acceptance condition for the selected assist proof. `jolt-wrapper` should
+not match on Dory-assist operation families or copy-edge internals. It receives
+a typed reduced opening statement from the base Jolt stage-8 assembly, passes it
+to the selected Dory-assist verifier hook, and constrains the returned
+acceptance condition as part of the configured verifier relation.
 
 `jolt-hyrax::r1cs` should only lower the Hyrax opening verifier used by the
-assist proof:
+assist proof and should mirror the native Hyrax genericity over vector
+commitments:
 
 ```text
 row_point, col_point = split(opening_point)
-combined_commitment = Σ_i eq(row_point, i) * row_commitment_i
-combined_commitment == Pedersen(combined_row, row_combination_randomness)
-claimed_eval == Σ_j eq(col_point, j) * combined_row[j]
+row_weights = jolt-poly::r1cs::eq_evals(row_point)
+combined_commitment = VC::linear_combine_commitments_r1cs(row_commitments, row_weights)
+VC::verify_opening_r1cs(combined_commitment, combined_row, row_combination_randomness)
+col_weights = jolt-poly::r1cs::eq_evals(col_point)
+claimed_eval == jolt-poly::r1cs::inner_product(combined_row, col_weights)
 ```
 
 It should not know Dory-assist stage IDs, operation families, prefix codes, or
-copy constraints. Those are Dory-assist protocol semantics.
+copy constraints. It also should not implement Grumpkin group laws, Pedersen
+MSMs, equality-polynomial evaluation, or scalar field arithmetic directly.
+Those are owned by `jolt-crypto::r1cs`, `jolt-poly::r1cs`, and `jolt-r1cs`
+respectively. The concrete BN254/Grumpkin wrapper path instantiates the generic
+Hyrax vector-commitment interface with Grumpkin-backed Pedersen, but Hyrax
+itself should not be specialized to that backend.
 
 For the BN254/Grumpkin recursion target, Dory assist uses Grumpkin-backed
 Pedersen row commitments. This is not only a wrapper convenience: Grumpkin's
@@ -858,21 +912,30 @@ The Dory-assist spec says final exponentiation and public pairing equality are
 native verifier work in v1. For wrapper purposes, that means "outside the
 Dory-assist auxiliary proof," not "outside the configured verifier." A
 self-contained wrapper must still account for that selected assist-verifier
-acceptance condition: either the `dory-assist-verifier` crate supplies the R1CS
-hook for the final public check, or the wrapper verifier must recheck and bind
-that public condition outside the wrapper proof. The primary self-contained
-wrapper target should not rely on an unchecked native side condition.
+acceptance condition: either the `jolt-dory-assist-verifier` crate supplies the
+R1CS hook for the final public check, or the wrapper verifier must recheck and
+bind that public condition outside the wrapper proof. The primary
+self-contained wrapper target should not rely on an unchecked native side
+condition.
+
+Implementation preference for v1: keep final exponentiation out of the
+Dory-assist PIOP and implement the self-contained wrapper path as an R1CS
+final-check hook owned by `jolt-dory-assist-verifier`. This avoids adding
+final-exp witness columns, copy edges, prefix-packing entries, and Hyrax-bound
+claims before we know the wrapper cost is a bottleneck. If it later becomes too
+expensive as non-native R1CS arithmetic, the same acceptance condition can be
+moved behind a dedicated Dory-assist final-exp PIOP component.
 
 ## Assembly API
 
 ```rust
-pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssistProof>
+pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssist>
 where
-    PcsAssistProof: PcsProofAssist<PCS>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     pub preprocessing: JoltVerifierPreprocessing<PCS, VC>,
     pub public_io: JoltDevice,
-    pub proof: JoltProof<PCS, VC, ZkProof, PcsAssistProof>,
+    pub proof: JoltProof<PCS, VC, ZkProof, PcsAssist>,
     pub public_inputs: WrapperPublicInputs<F>,
     pub witness_inputs: WrapperWitnessInputs<F>,
 }
@@ -888,12 +951,12 @@ pub fn assemble_configured_verifier_r1cs<
     PCS,
     VC,
     ZkProof,
-    PcsAssistProof,
+    PcsAssist,
 >(
-    inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssistProof>,
+    inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssist>,
 ) -> Result<WrapperR1csInstance<F>, WrapperError>
 where
-    PcsAssistProof: PcsProofAssist<PCS>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     /* assemble configured verifier R1CS */
 }
@@ -1091,6 +1154,10 @@ Each step should be reviewed before continuing to the next.
    - Review gate: a toy sumcheck relation verifies over native `Fr` and
      non-native `Fq`, with bad challenge, bad coefficient, bad round sum, and
      bad output claim witnesses rejected.
+   - Status: implemented as an additive `jolt-sumcheck::r1cs` gadget-round API.
+     Existing native layout APIs remain intact for BlindFold. Tests cover native
+     and non-native valid witnesses plus bad round sum, bad challenge, bad output
+     claim, and representative tampering.
 
 10. Add claim/formula lowering for scalar gadgets.
    - Keep `jolt-claims` as the formula owner.
@@ -1100,28 +1167,116 @@ Each step should be reviewed before continuing to the next.
    - Review gate: a formula involving constants, transcript challenges,
      openings, and public values lowers to equivalent native and non-native
      test relations.
+   - Status: implemented in `jolt-r1cs::lowering` as an additive
+     scalar-gadget source table and lowering path. Existing native
+     `LinearCombination` lowering remains intact for BlindFold. Tests cover
+     native and non-native formula lowering, missing sources, bad expected
+     output, and representative tampering.
 
 11. Add generic opening/evaluation helper tests.
    - Identify opening consistency algebra that is independent of Dory-assist.
    - Put generic helper APIs in `jolt-openings`/`jolt-r1cs` as appropriate.
    - Review gate: opening/evaluation toy relations compose with transcript and
-     scalar-gadget helpers; tampered point, claim, or commitment rejects.
+     scalar-gadget helpers; tampered point or claim rejects. Commitment
+     tampering belongs to the selected PCS/commitment R1CS component.
+   - Status: implemented the first `jolt-openings/r1cs` slice behind the
+     `r1cs` feature. It constrains same-point opening claims and scalar RLC of
+     opening claims over both native `AssignedScalar<Fr>` and non-native
+     `FqVar`. Tests now check equivalence with native
+     `rlc_combine_scalars`, Poseidon-R1CS transcript challenge composition,
+     independent same-point groups, typed error cases, and tampering of point,
+     claim, challenge, and expected reduced claim witnesses. It intentionally
+     does not constrain commitment equations; those remain owned by
+     `jolt-crypto::r1cs`, `jolt-hyrax::r1cs`, or the selected PCS-assist
+     verifier.
 
 12. Add Grumpkin/Pedersen R1CS primitives.
    - Use `jolt-crypto::r1cs` for native-coordinate Grumpkin point constraints
      over `Fr`.
+   - Define generic group/vector-commitment R1CS traits that Hyrax can consume
+     without naming Grumpkin or Pedersen.
    - Add point equality, on-curve checks, addition/doubling, scalar
-     multiplication, and Pedersen commitment helpers with explicit scalar
+     multiplication, MSM, and Pedersen commitment helpers with explicit scalar
      semantics.
    - Review gate: invalid point, invalid scalar link, and tampered commitment
      witnesses reject.
+   - Status: implemented the first `jolt-crypto/r1cs` slice behind the `r1cs`
+     feature. It adds affine `GrumpkinPointVar`, coordinate allocation from
+     native `GrumpkinPoint`, equality, on-curve constraints for
+     `y^2 = x^3 - 17`, and non-exceptional affine addition with an explicitly
+     constrained denominator inverse. The helper rejects identity points and
+     `x_1 == x_2` exceptional additions instead of silently applying an
+     incomplete formula. Tests cover valid points, invalid points, coordinate
+     tampering, valid addition, output tampering, and exceptional-addition
+     rejection. Doubling, scalar multiplication, MSM, and Pedersen commitment
+     helpers remain future sub-slices.
+   - Status update: added the generic R1CS trait surface:
+     `GroupElementVar`, `NonExceptionalAddGroupVar`,
+     `VectorCommitmentOpeningVar`, and `VectorCommitmentR1cs`.
+     `GrumpkinPointVar` implements the group-element and non-exceptional-add
+     traits. This intentionally does not claim full Pedersen verification yet:
+     the current Grumpkin point gadget is affine and non-identity, so a full
+     vector-commitment verifier still needs a complete group representation,
+     variable scalar multiplication, MSM, and Pedersen opening constraints.
+   - Status update: added `FqVar::bits_le()` in `jolt-r1cs` for constrained
+     canonical little-endian scalar bits, plus `DoubleGroupVar` and affine
+     Grumpkin doubling constraints in `jolt-crypto::r1cs`. Tests cover valid
+     bit decompositions, bit tampering, valid doubling, output tampering, and
+     zero-y exceptional doubling rejection. This is the immediate substrate for
+     variable scalar multiplication; it is not yet scalar multiplication or
+     Pedersen verification.
+   - Status update: added an identity-aware Grumpkin point gadget and
+     fixed-base Grumpkin scalar multiplication over constrained `FqVar` bits.
+     The identity-aware gadget carries an explicit boolean identity flag,
+     enforces on-curve constraints for non-identity points, enforces zero
+     coordinates for identity witnesses, and handles identity cases in addition
+     without witness-branching. The fixed-base scalar-mul helper walks the
+     canonical little-endian `Fq` bit decomposition, conditionally selects each
+     fixed base power, and constrains the accumulator with the identity-aware
+     addition gadget. Tests cover zero scalar, nonzero scalar, the generic
+     fixed-base trait surface, malformed identity witnesses, identity addition
+     cases, ordinary addition, output tampering, and exceptional non-identity
+     additions. MSM and Pedersen commitment verification remain future
+     sub-slices.
+   - Status update: added a fixed-base Grumpkin MSM helper and a
+     Grumpkin-backed Pedersen opening helper over `FqVar` values/blinding. This
+     constrains the Pedersen equation
+     `C = sum_i values[i] * G_i + blinding * H` using the fixed-base scalar
+     multiplication substrate. Tests cover valid openings, typed capacity
+     errors, fixed-base MSM length errors, and tampering of committed values,
+     blinding, and commitment coordinates.
+   - Status update: added complete identity-aware Grumpkin addition, variable-
+     base Grumpkin scalar multiplication, Grumpkin commitment linear
+     combination, and the concrete `VectorCommitmentR1cs` implementation for
+     `Pedersen<GrumpkinPoint>`. Complete addition covers identity, ordinary
+     addition, doubling, and inverse-pair addition to identity with constrained
+     zero-test flags and gated equations. Variable-base scalar multiplication
+     uses constrained canonical `FqVar` bits and complete addition throughout.
+     Tests cover complete-add identity/ordinary/doubling/inverse cases,
+     generic trait surfaces, variable-base scalar multiplication, commitment
+     linear combination, Pedersen opening verification through the generic VC
+     trait, typed length errors, and tampering of base, coefficient, output,
+     values, blinding, and commitment coordinates. This gives Hyrax the generic
+     row-commitment linear-combination primitive it needs without owning
+     Grumpkin or Pedersen logic.
 
 13. Add Hyrax R1CS component hooks.
    - Use `jolt-hyrax::r1cs` for dense-witness opening verification.
-   - Consume generic Grumpkin/Pedersen helpers rather than owning group logic.
+   - Consume generic `jolt-crypto::r1cs` vector-commitment helpers rather than
+     owning group logic or specializing to Grumpkin/Pedersen.
+   - Use `jolt-poly::r1cs` for equality-polynomial evaluation and inner
+     products.
    - Keep Hyrax unaware of Dory-assist stages and copy-edge semantics.
    - Review gate: tampering the dense-witness opening, Grumpkin commitment, or
      packed evaluation rejects.
+   - Status: implemented the `jolt-poly/r1cs` foundation behind the `r1cs`
+     feature. `jolt-poly` defines `PolynomialScalarGadget` so it can own
+     polynomial equations without depending on `jolt-r1cs` and creating a
+     dependency cycle. `jolt-r1cs` implements the trait for `AssignedScalar`
+     and `FqVar`. The first helpers cover `eq_eval`, `eq_evals`,
+     `scaled_eq_evals`, `inner_product`, and `multilinear_eval`. Tests cover
+     plain polynomial equivalence in `jolt-poly` and real native/non-native
+     constraint composition plus tampering in `crates/jolt-r1cs/tests`.
 
 14. Assemble base configured verifier R1CS.
    - Start with a narrow configured verifier computation before full Jolt.
@@ -1131,10 +1286,11 @@ Each step should be reviewed before continuing to the next.
 15. Add Dory-assist verifier hook integration.
    - Compile the selected Dory-assist `PcsProofAssist` verifier path rather
      than the ordinary Dory stage-8 verifier path.
-   - Treat the `dory-assist-verifier` crate as the owner of Dory-assist stage
-     ordering, native verification, R1CS hook, and final acceptance condition.
-   - Pass the typed opening snapshot from wrapper stage-8 assembly into the
-     selected Dory-assist verifier hook.
+   - Treat the `jolt-dory-assist-verifier` crate as the owner of Dory-assist
+     stage ordering, native verification, R1CS hook, and final acceptance
+     condition.
+   - Pass the typed reduced opening statement from wrapper stage-8 assembly
+     into the selected Dory-assist verifier hook.
    - Use only the generic R1CS building blocks above for transcript, Fq
      arithmetic, sumcheck, claim lowering, openings, Hyrax, and Grumpkin
      commitments.

@@ -15,16 +15,17 @@ implementation of the generic PCS proof-assist boundary exposed by
 `jolt-verifier`.
 
 From the `jolt-verifier` point of view, the Jolt proof carries a generic
-optional PCS-assist payload, e.g. `Option<T>` where `T: PcsProofAssist<PCS>`.
-The verifier config decides whether such a payload is required and which assist
-implementation is selected. Dory-specific staging does not live in
-`jolt-verifier`; it lives in a `dory-assist-verifier` crate that implements the
-generic PCS-assist interface for the Dory PCS.
+optional PCS-assist payload, e.g. `Option<PcsAssist::Proof>` where
+`PcsAssist: PcsProofAssist<PCS>`. The verifier config decides whether such a
+payload is required and which assist implementation is selected. Dory-specific
+staging does not live in `jolt-verifier`; it lives in the
+`jolt-dory-assist-verifier` crate that implements the generic PCS-assist
+interface for the Dory PCS.
 
 This spec owns the Dory-assist protocol semantics in `jolt-claims`, the
-`dory-assist-verifier` crate, and the Hyrax commitment layer used by that proof.
-Composition with field inline, wrapper proving, ZK, and proof configuration is
-specified in
+`jolt-dory-assist-verifier` crate, and the Hyrax commitment layer used by that
+proof. Composition with field inline, wrapper proving, ZK, and proof
+configuration is specified in
 [selected-verifier-integration.md](selected-verifier-integration.md). The
 wrapper R1CS compiler is specified in [wrapper-protocol.md](wrapper-protocol.md).
 
@@ -68,7 +69,7 @@ V1 scope:
 
 ```text
 Dory-assist protocol facts in jolt-claims
-`dory-assist-verifier` crate implementing PcsProofAssist for the Dory PCS
+`jolt-dory-assist-verifier` crate implementing PcsProofAssist for the Dory PCS
 generic PCS-assist payload consumed by jolt-verifier
 Hyrax dense-witness opening over Grumpkin-backed Pedersen row commitments
 Miller-loop work proven inside the assist proof
@@ -94,9 +95,9 @@ The ownership split is:
 jolt-verifier:
   generic configured verifier flow
   PcsProofAssist trait or equivalent verifier-facing abstraction
-  Option<T: PcsProofAssist<PCS>> proof payload slot
+  Option<PcsAssist::Proof> proof payload slot
   proof/config shape validation
-  opening snapshot construction
+  reduced opening statement construction
   dispatch to the selected assist implementation
 
 jolt-claims:
@@ -104,11 +105,11 @@ jolt-claims:
   relation IDs, public IDs, opening IDs, dimensions, and claim formulas
   operation-family, wiring, and packing constraints
 
-dory-assist-verifier:
+jolt-dory-assist-verifier:
   Dory-specific staged verifier organization
   native verifier API mirroring jolt-verifier for Dory-assist semantics
   wrapper-facing R1CS hook for the selected Dory-assist verifier path
-  proof payload type implementing PcsProofAssist for the Dory PCS
+  DoryAssist implementation type and proof payload for the Dory PCS
   transcript ordering for the Dory-assist stages
   Hyrax dense-witness opening verification
   native final-exponentiation/public pairing equality check
@@ -193,7 +194,7 @@ Public inputs:
 ```text
 joint Dory opening proof artifact
 Dory verifier setup inputs / verifier setup digest
-Jolt opening snapshot:
+Jolt reduced opening statement:
   commitments
   opening points
   claimed evaluations
@@ -253,6 +254,15 @@ final public check:
 The SNARK portion proves the expensive Dory verifier computation through the
 Miller-loop output. Final exponentiation and pairing equality remain native
 Dory-assist verifier work in v1.
+
+Wrapper caveat: "native verifier work" means outside the Dory-assist auxiliary
+PIOP, not outside the configured verifier. If a wrapper proves the Dory-assisted
+configured verifier, it must still account for the final exponentiation and
+pairing-equality acceptance condition. The primary self-contained wrapper path
+should do this with a `jolt_dory_assist_verifier::r1cs` final-check hook. An
+external native side check is possible only as an explicit deployment choice and
+must be bound to the wrapper statement; it is not the default self-contained
+wrapper semantics.
 
 ## Techniques
 
@@ -528,19 +538,25 @@ The PIOP should factor the work into four algebraic layers:
 ```text
 line step:
   prove the G2 homogeneous projective double/add/Frobenius-correction schedule
-  and produce the prepared line coefficients
+  and produce the prepared line coefficients; the public line selector chooses
+  the double formula or the generic add formula, while copy constraints bind
+  the addend to Q, -Q, pi(Q), or -pi^2(Q)
 
 line evaluation:
   evaluate each prepared line at the matching G1 point as the sparse Fq12
-  element used by the BN254 D-twist `mul_by_034` path
+  element used by the BN254 D-twist `mul_by_034` path; the six nonzero Fq
+  components are constrained and the remaining coefficient slots are zero
 
 pair product:
   for each line event, multiply the line evaluations across all pairs to
-  obtain one GT line product for that event
+  obtain one GT line product for that event; this relation owns the scan
+  shift/boundary checks and uses GT multiplication rows for arithmetic
 
 accumulator:
   run the Miller accumulator recurrence over the canonical 150-op schedule and
-  expose the final pre-final-exponentiation GT value
+  expose the final pre-final-exponentiation GT value; this relation owns the
+  accumulator shift checks and uses GT multiplication rows for square/multiply
+  arithmetic
 ```
 
 GT multiplications in pair-product and accumulator rows should be ordinary
@@ -548,6 +564,19 @@ GT multiplications in pair-product and accumulator rows should be ordinary
 relations own schedule, shift, line formulas, sparse embedding, product order,
 and boundaries; they do not reimplement the generic Fq12 multiplication
 identity.
+
+The `jolt-claims` semantics now exposes this decomposition directly:
+
+```text
+MillerLoopSelector:
+  public line-step selector: LineDouble | LineAdd
+
+MillerLoopConstant:
+  public BN254 line-formula constants: TwoInverse, TwistB0, TwistB1
+
+MillerLoopShiftEqKernel:
+  public shift-kernel evaluations for pair-product and accumulator scans
+```
 
 ### Copy Constraints Via Sum-Check
 
@@ -662,6 +691,13 @@ verifier work and stays native in v1, but it is still Dory-specific verifier
 logic owned by the Dory-assist verifier implementation rather than by
 `jolt-verifier`.
 
+This split is an implementation choice, not a soundness omission. Native
+verification checks final exponentiation natively after the Dory-assist PIOP.
+Wrapped verification must prove or bind that same selected-verifier final check.
+The simplest first implementation is an R1CS final-check gadget in
+`jolt_dory_assist_verifier::r1cs`; a future final-exp PIOP can move that work
+into the packed assist witness if wrapper cost warrants it.
+
 ## Copy Constraints
 
 Dory-assist copy constraints, also referred to as wiring, are directed typed
@@ -683,7 +719,7 @@ CopyConstraint:
   target: ValueRef
 
 ValueRef:
-  WitnessValue { family, row, column, component }
+  WitnessValue { relation, family, row, column, component }
   PublicValue { id, component }
   ChallengeValue { id }
   Constant
@@ -732,6 +768,11 @@ operation-family witness columns. Stage 2 owns the copy zero-check claim; stage
 3 and prefix packing bind the resulting witness-column claims to the single
 dense Hyrax opening.
 
+The `relation` field in `WitnessValue` is part of the semantic identity. The
+same virtual polynomial family may appear under multiple relations, so copy
+edges must distinguish, for example, `MillerLoopAccumulator.AccumulatorCoeff`
+from `MillerLoopBoundary.AccumulatorCoeff`.
+
 The paper's full wiring view indexes both a port domain `x` and a padded
 family-local constraint domain `c`:
 
@@ -776,8 +817,17 @@ g2:
 miller_loop:
   line-step, line-evaluation, pair-product, accumulator, boundary, output GT
 
+composition:
+  prefix-packing claim catalog, native-width catalog, and declarative direct
+  copy-edge stencils that compose Miller-loop rows with GT multiplication and
+  boundary/public-output rows
+
 packing:
   prefix-packing layout and dense-opening claim
+
+protocol:
+  canonical semantic relation bundle and relation order used by later verifier
+  staging
 ```
 
 The Dory assist proof is a multi-stage virtualization protocol in the same
@@ -982,25 +1032,33 @@ MillerLoopLineStep:
   proves the canonical BN254 G2 prepared-line schedule over homogeneous
   projective coordinates. Each row is one of: double, signed add by Q, signed
   add by -Q, Frobenius correction add by pi(Q), or Frobenius correction add by
-  -pi^2(Q). Schedule selectors are public/fixed by line_event.
+  -pi^2(Q). The local formula has public `LineDouble` and `LineAdd` selectors.
+  Signed-add and Frobenius-correction rows share the same add formula; direct
+  copy constraints bind the addend columns to the canonical Q, -Q, pi(Q), or
+  -pi^2(Q) value. The double formula uses public BN254 constants
+  `TwoInverse`, `TwistB0`, and `TwistB1`.
 
 MillerLoopLineEvaluation:
   evaluates each prepared line at the corresponding G1 point. For BN254's D
   twist this is the sparse Fq12 line used by arkworks' `mul_by_034` path:
   coefficient 0 is scaled by P.y, coefficient 1 by P.x, and coefficient 2 is
-  copied directly, with the remaining sparse slots fixed to zero.
+  copied directly. In scalar-column form this gives six nonzero Fq components;
+  the remaining GT coefficient slots are fixed to zero.
 
 MillerLoopPairProduct:
   for each line_event, scans over pair and proves the product of all pair line
   evaluations. The actual Fq12 products are GT multiplication rows; this
-  relation owns the scan order, shift/boundary selectors, and copies into and
-  out of `GtMultiplication`.
+  relation owns the scan order, shift-kernel claim reduction, initial
+  accumulator boundary, and final line-product boundary. Direct copy
+  constraints connect scan inputs/outputs to `GtMultiplication`.
 
 MillerLoopAccumulator:
   scans the flattened BN254 Miller accumulator schedule. The 150 real ops are
   63 squares and 87 multiplications by pair-line products. Squares and
   multiplications are GT multiplication rows; this relation owns the canonical
-  op ordering and copy links.
+  op ordering and accumulator shift-kernel claim reduction. Direct copy
+  constraints connect accumulator rows, selected right operands, quotients, and
+  outputs to `GtMultiplication`.
 
 MillerLoopBoundary:
   enforces accumulator[0] = 1_GT and accumulator[last] =
@@ -1012,22 +1070,24 @@ Miller-loop reductions:
 
 ```text
 line-step claims:
-  reduce G2 state, shifted state, line coefficients, input Q, -Q, pi(Q), and
-  -pi^2(Q) to suffix-projected scalar/Fq2 component claims.
+  reduce G2 state, addend, shifted state, line coefficients, public
+  double/add selectors, and public BN254 line constants to suffix-projected
+  scalar/Fq2 component claims.
 
 line-evaluation claims:
   reduce G1 coordinates, line coefficients, sparse line-evaluation components,
   and zero sparse slots to suffix-projected claims.
 
 pair-product claims:
-  reduce pair-product scan state, line-evaluation inputs, GT multiplication
-  row inputs/outputs, and final per-event line products to suffix-projected
-  claims.
+  reduce pair-product scan state, shifted scan state, shift-kernel claim, pair
+  boundaries, and final per-event line products to suffix-projected claims.
+  GT multiplication row inputs/outputs are connected by copy constraints.
 
 accumulator claims:
-  reduce accumulator state, shifted accumulator state, pair-line-product
-  inputs, GT multiplication row inputs/outputs, and op selectors to
-  suffix-projected claims.
+  reduce accumulator state, shifted accumulator state, and shift-kernel claim
+  to suffix-projected claims. Pair-line-product inputs, square/multiply
+  operands, GT multiplication outputs, and quotient columns are connected by
+  copy constraints.
 
 boundary claims:
   reduce initial/final accumulator checks to public selectors and the public
@@ -1088,6 +1148,108 @@ Miller-loop, and wiring components. `max_poly_vars` is the maximum native width
 among those reduced claims. Every claim entering this reduction must satisfy the
 canonical suffix-projection invariant described above.
 
+The formula layer also exposes a composition catalog that derives the prefix
+packing inputs from `DoryAssistDimensions`. It records, for each reduced opening:
+
+```text
+PackingEntry:
+  opening
+  native_vars
+```
+
+The catalog includes GT, G1, G2, Miller-loop, wiring outputs, and every witness
+endpoint referenced by the Miller-loop direct copy-edge stencil. Its minimal
+packing shape is:
+
+```text
+max_poly_vars = max_i native_vars_i
+prefix_vars  = ceil_log2(num_claims)
+packed_vars  = max_poly_vars + prefix_vars
+```
+
+The resulting `PrefixPacking` claim uses the catalog order exactly:
+
+```text
+DenseWitness(r_prefix, r_suffix)
+  = sum_i PrefixPackingWeight(i) * ReducedClaim_i(r_suffix[..native_vars_i])
+```
+
+The Miller-loop copy-edge stencil is not the runtime trace. It is the semantic
+template that the later tracing/witness-generation layer expands into concrete
+copy rows. It includes:
+
+```text
+line-step shifted G2 state -> next line-step G2 state
+line-step line coefficients -> line-evaluation line coefficients
+line-evaluation sparse GT coefficients -> GT multiplication right operand
+pair-product scan/current/output/quotient columns <-> GT multiplication rows
+pair-line products -> accumulator GT multiplication right operand
+accumulator square/multiply operands/outputs/quotients <-> GT multiplication rows
+accumulator columns -> Miller-loop boundary columns
+Miller-loop boundary final GT -> public MillerLoopOutputGt
+```
+
+Tests in `jolt-claims` assert that the catalog has no duplicate openings, spans
+the intended component families, produces a fitting minimal prefix-packing
+shape, uses the catalog order in the prefix-packing claim, and that all witness
+endpoints used by the Miller-loop copy-edge stencil are present in the packing
+catalog.
+
+### Canonical Protocol Bundle
+
+`jolt-claims` exposes a semantic bundle constructor:
+
+```rust
+dory_assist::formulas::protocol_claims(dimensions)
+```
+
+This is not transcript replay and not verifier staging. It is the canonical
+ordered list of semantic relation claims:
+
+```text
+GT:
+  GtExponentiation
+  GtExponentiationDigitSelector
+  GtExponentiationBasePower
+  GtExponentiationDigitBitness
+  GtExponentiationShift
+  GtExponentiationBoundary
+  GtMultiplication
+
+G1:
+  G1ScalarMultiplication
+  G1ScalarMultiplicationShift
+  G1ScalarMultiplicationBoundary
+  G1Addition
+
+G2:
+  G2ScalarMultiplication
+  G2ScalarMultiplicationShift
+  G2ScalarMultiplicationBoundary
+  G2Addition
+
+Miller loop:
+  MillerLoopLineStep
+  MillerLoopLineEvaluation
+  MillerLoopPairProduct
+  MillerLoopAccumulator
+  MillerLoopBoundary
+
+Wiring:
+  WiringGt
+  WiringG1
+  WiringG2
+
+Packing:
+  PrefixPacking
+```
+
+The prefix-packing relation in the bundle is built from the composition catalog
+so its reduced openings and `PrefixPackingWeight(i)` publics use the same
+catalog order. Tests assert canonical relation order, no duplicate relation IDs,
+protocol-level dependency aggregation, catalog-backed prefix packing, copy-edge
+endpoint packability, and the single dense-witness opening invariant.
+
 ## `jolt-claims` Layout
 
 Target layout:
@@ -1105,8 +1267,10 @@ crates/jolt-claims/src/protocols/dory_assist/
     g1.rs
     g2.rs
     miller_loop.rs
+    composition.rs
     wiring.rs
     packing.rs
+    protocol.rs
     committed_openings.rs
     claim_reductions/
       mod.rs
@@ -1362,18 +1526,28 @@ requires the Dory-assist payload.
 Verifier-facing API sketch:
 
 ```rust
-pub trait PcsProofAssist<PCS: CommitmentScheme>: Sized {
+pub trait PcsProofAssist<PCS: CommitmentScheme> {
+    type Proof;
     type Config;
     type Error;
 
-    fn verify<T>(
-        &self,
+    fn verify_clear<T>(
         config: &Self::Config,
-        joint_opening_proof: &PCS::Proof,
-        opening_snapshot: &PcsOpeningSnapshot<PCS>,
+        input: PcsAssistClearInput<'_, PCS>,
+        proof: &Self::Proof,
         transcript: &mut T,
     ) -> Result<(), Self::Error>
     where
+        T: Transcript<Challenge = PCS::Field>;
+
+    fn verify_zk<T>(
+        config: &Self::Config,
+        input: PcsAssistZkInput<'_, PCS>,
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<<PCS as ZkOpeningScheme>::HidingCommitment, Self::Error>
+    where
+        PCS: ZkOpeningScheme,
         T: Transcript<Challenge = PCS::Field>;
 }
 ```
@@ -1384,25 +1558,38 @@ should preserve these semantics:
 ```text
 ordinary configured Jolt:
   stages 1-7
-  -> build opening snapshot
+  -> build the reduced opening statement
   -> proof.pcs_assist must be None
   -> verify joint_opening_proof through the ordinary PCS verifier
 
 Dory-assisted configured Jolt:
   stages 1-7
-  -> build the same opening snapshot
+  -> build the same reduced opening statement
   -> proof.pcs_assist must be Some(DoryAssistProof)
-  -> call DoryAssistProof::verify through the PcsProofAssist boundary
+  -> call DoryAssist::verify_clear / verify_zk through the PcsProofAssist boundary
+  -> pass the whole Dory PCS proof as `input.pcs_proof`
   -> do not also run the expensive ordinary Dory verifier path
 ```
+
+The Dory-assist implementation consumes the entire Dory PCS proof. Generic
+`jolt-verifier` must not parse or project Dory proof internals. Its job is to
+construct the same reduced opening statement that ordinary PCS verification
+would use and pass that statement, the `PCS::Proof`, the selected assist proof,
+and the continued transcript to the selected assist implementation.
+
+Because this assist proof is conceptually over Grumpkin, its scalar challenges
+are BN254 `Fq`. The surrounding Jolt verifier transcript remains over BN254
+`Fr`. Dory assist therefore continues the ordinary Jolt transcript, squeezes
+`Fr` challenges from it, and injects those canonical `Fr` values into `Fq` on
+both prover and verifier sides. There is no hidden independent `Fq` transcript.
 
 The configured verifier flow and proof-shape rules live in
 [selected-verifier-integration.md](selected-verifier-integration.md).
 
-## `dory-assist-verifier` Layout
+## `jolt-dory-assist-verifier` Layout
 
-The `dory-assist-verifier` crate owns the concrete organization of the semantics
-defined in `jolt-claims::protocols::dory_assist`.
+The `jolt-dory-assist-verifier` crate owns the concrete organization of the
+semantics defined in `jolt-claims::protocols::dory_assist`.
 
 Target layout:
 
@@ -1414,8 +1601,9 @@ crates/jolt-dory-assist-verifier/
     config.rs
     proof.rs
     public_inputs.rs
+    public_outputs.rs
     transcript.rs
-    opening_snapshot.rs
+    opening_statement.rs
     stages/
       mod.rs
       stage1/
@@ -1452,13 +1640,34 @@ pub struct DoryAssistProof<F, T, HyraxOpeningProof> {
     pub opening_proof: HyraxOpeningProof,
     pub opening_claims: DoryAssistOpeningClaims<F>,
     pub dense_commitment: HyraxCommitment,
+    pub public_outputs: DoryAssistPublicOutputs<F>,
 }
 
-impl PcsProofAssist<DoryCommitmentScheme> for DoryAssistProof<...> {
+pub struct DoryAssist;
+
+impl PcsProofAssist<DoryCommitmentScheme> for DoryAssist {
+    type Proof = DoryAssistProof<...>;
     type Config = DoryAssistConfig;
     type Error = DoryAssistVerifierError;
 
-    fn verify<T>(...) -> Result<(), Self::Error>
+    fn verify_clear<T>(
+        config: &Self::Config,
+        input: PcsAssistClearInput<'_, DoryCommitmentScheme>,
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<(), Self::Error>
+    where
+        T: Transcript<Challenge = <DoryCommitmentScheme as CommitmentScheme>::Field>,
+    {
+        // stage 1, stage 2, stage 3, Hyrax opening, native final check
+    }
+
+    fn verify_zk<T>(
+        config: &Self::Config,
+        input: PcsAssistZkInput<'_, DoryCommitmentScheme>,
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<<DoryCommitmentScheme as ZkOpeningScheme>::HidingCommitment, Self::Error>
     where
         T: Transcript<Challenge = <DoryCommitmentScheme as CommitmentScheme>::Field>,
     {
@@ -1536,7 +1745,7 @@ Each step should be reviewed before continuing to the next.
    - Review gate: packing tests catch incorrect prefix layout and opening-point
      normalization.
 
-6. Add the `dory-assist-verifier` crate and proof shape.
+6. Add the `jolt-dory-assist-verifier` crate and proof shape.
    - Add typed proof payloads for stage 1, stage 2, stage 3, and Hyrax opening.
    - Organize verification stages around the semantic claims from
      `jolt-claims::protocols::dory_assist`.
@@ -1544,10 +1753,10 @@ Each step should be reviewed before continuing to the next.
      stage payloads.
 
 7. Implement the generic PCS-assist boundary for Dory.
-   - Implement `PcsProofAssist<DoryCommitmentScheme>` for the Dory-assist proof
-     payload.
-   - Build Dory-assist public inputs from the generic opening snapshot and the
-     ordinary joint opening proof.
+   - Implement `PcsProofAssist<DoryCommitmentScheme>` for the
+     `jolt_dory_assist_verifier::DoryAssist` implementation type.
+   - Build Dory-assist public inputs from the generic reduced opening statement
+     and the ordinary joint opening proof.
    - Review gate: `jolt-verifier` can dispatch to Dory-assist
      fixtures without Dory-specific stage modules.
 
