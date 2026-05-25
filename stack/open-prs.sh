@@ -12,7 +12,7 @@ Options:
   --apply       create/edit PRs; without this, print planned gh commands
   --base NAME   base branch for the first PR (default: main)
   --source REF  source branch named in PR bodies (default: refactor/audit-prep)
-  --start-at NN first stack item to create/update (default: 07, or STACK_START_AT)
+  --start-at NN first stack item to create/update (default: 08, or STACK_START_AT)
   -h, --help    show this help
 EOF
 }
@@ -20,7 +20,7 @@ EOF
 apply=0
 first_base="main"
 source_ref="refactor/audit-prep"
-start_at="${STACK_START_AT:-07}"
+start_at="${STACK_START_AT:-08}"
 
 while (($#)); do
   case "$1" in

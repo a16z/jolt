@@ -22,14 +22,14 @@ Options:
                 fail if a source-ref diff path is not assigned to a stack slice
   --from REF    source ref to slice from (default: refactor/audit-prep)
   --base REF    base ref for the first stack branch (default: origin/main)
-  --start-at NN first stack item to sync (default: 07, or STACK_START_AT)
+  --start-at NN first stack item to sync (default: 08, or STACK_START_AT)
   --only NN     update only one stack item, e.g. 08
   -h, --help    show this help
 
 Examples:
   stack/update-stack.sh
   stack/update-stack.sh --apply --only 08
-  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
+  stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 08
 EOF
 }
 
@@ -41,7 +41,7 @@ cargo_metadata=0
 check_coverage=0
 source_ref="refactor/audit-prep"
 base_ref="origin/main"
-start_at="${STACK_START_AT:-07}"
+start_at="${STACK_START_AT:-08}"
 only=""
 
 while (($#)); do

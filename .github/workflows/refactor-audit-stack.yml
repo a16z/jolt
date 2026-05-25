@@ -48,7 +48,7 @@ jobs:
             --check-coverage \
             --from origin/refactor/audit-prep \
             --base origin/main \
-            --start-at 07
+            --start-at 08
 
       - name: Create or update draft PRs
         env:
@@ -59,4 +59,4 @@ jobs:
             --apply \
             --base main \
             --source refactor/audit-prep \
-            --start-at 07
+            --start-at 08

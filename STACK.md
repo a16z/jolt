@@ -48,8 +48,8 @@ verifier frontier from `refactor/audit-prep`.
 
 Pushing to `origin/refactor/audit-prep` runs
 [`.github/workflows/refactor-audit-stack.yml`](.github/workflows/refactor-audit-stack.yml).
-The workflow starts at the first open stack row (`07` at the moment). Rows
-`00` through `06` have merged to `main` and are intentionally not rebuilt.
+The workflow starts at the first open stack row (`08` at the moment). Rows
+`00` through `07` have merged to `main` and are intentionally not rebuilt.
 
 The workflow:
 
@@ -115,7 +115,7 @@ Create or update one branch:
 Rebuild all stack branches from the source branch:
 
 ```bash
-./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
+./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 08
 ```
 
 The CI workflow runs the same command. Without `--commit`, the script leaves
@@ -197,7 +197,7 @@ extension's submit command from the final stack branch.
    locally:
 
    ```bash
-   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
+   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 08
    ```
 
 4. Compare the stack tip to the source branch:
