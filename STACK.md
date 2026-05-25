@@ -75,16 +75,17 @@ to the same row as the relevant spec:
 - PR 12: selected verifier integration, proof-shape validation, selected stage
   schedule, and selected computation export.
 - PR 13: field-inline claims, R1CS rows, selected verifier hooks, trace/prover
-  wiring, field-inline fixtures, and the `jolt-r1cs/field-inline` feature flag.
+  wiring, RV64 R1CS verifier helpers, field-inline fixtures, and the
+  `jolt-r1cs/field-inline` feature flag.
 - PR 14: Dory-assist claims under
   `jolt-claims::protocols::dory_assist`, `jolt-hyrax`, Grumpkin/Fq crypto
   support for Hyrax row commitments, the Dory-assist verifier crate,
   Dory-specific PCS-assist verifier hooks, Dory-assist fixtures, and local
   handoff artifact ignores.
 - PR 15: `jolt-wrapper`, wrapper assembly, verifier R1CS lowering,
-  variable-challenge `jolt-sumcheck::r1cs`, transcript R1CS, non-native
-  `jolt-r1cs` helpers, wrapper/R1CS composition tests, and SNARK backend
-  integration.
+  variable-challenge `jolt-sumcheck::r1cs`, transcript R1CS, scalar and
+  non-native `jolt-r1cs` helpers, wrapper/R1CS composition tests, and SNARK
+  backend integration.
 
 If a later feature row names a path inside a directory owned by an earlier row,
 the later row wins for changed files under that path. This keeps broad crate

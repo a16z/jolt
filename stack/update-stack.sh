@@ -218,6 +218,7 @@ overlay_target_order() {
     crates/jolt-r1cs/src/lowering.rs|\
     crates/jolt-r1cs/src/builder.rs|\
     crates/jolt-r1cs/src/nonnative.rs|\
+    crates/jolt-r1cs/src/scalar.rs|\
     crates/jolt-r1cs/tests|\
     crates/jolt-r1cs/tests/*|\
     crates/jolt-wrapper/*|\
@@ -234,6 +235,7 @@ overlay_target_order() {
     crates/jolt-r1cs/src/constraints/field_constraints.rs|\
     crates/jolt-r1cs/src/constraints/jolt.rs|\
     crates/jolt-r1cs/src/constraints/mod.rs|\
+    crates/jolt-r1cs/src/constraints/rv64.rs|\
     crates/jolt-riscv/src/flags.rs|\
     crates/jolt-riscv/src/lib.rs|\
     crates/jolt-verifier/*|\
