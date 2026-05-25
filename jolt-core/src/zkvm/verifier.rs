@@ -1759,21 +1759,18 @@ impl<
     }
 
     fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
-        self.verify_omitted_program_openings()?;
-
         let native_main_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
         let opening_point = compute_final_opening_point(
             &self.opening_accumulator,
             native_main_vars,
             self.one_hot_params.log_k_chunk,
             self.proof.dory_layout,
-            if self.preprocessing.program.is_committed() {
+            if self.preprocessing.shared.program.is_committed() {
                 ProgramMode::Committed
             } else {
                 ProgramMode::Full
             },
             self.preprocessing.shared.bytecode_chunk_count,
-            stage8_program_openings_from_env(),
         )?;
 
         // 1. Collect all (polynomial, claim) pairs
