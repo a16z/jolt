@@ -61,6 +61,19 @@ pub enum MillerLoopChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MillerLoopSelector {
+    LineDouble,
+    LineAdd,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MillerLoopConstant {
+    TwoInverse,
+    TwistB0,
+    TwistB1,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WiringChallenge {
     CopyPoint,
     EdgeBatch,
@@ -186,6 +199,10 @@ pub enum MillerLoopPolynomial {
     G2LineStateY1,
     G2LineStateZ0,
     G2LineStateZ1,
+    G2LineAddendX0,
+    G2LineAddendX1,
+    G2LineAddendY0,
+    G2LineAddendY1,
     G2LineShiftedStateX0,
     G2LineShiftedStateX1,
     G2LineShiftedStateY0,
@@ -197,6 +214,9 @@ pub enum MillerLoopPolynomial {
         component: usize,
     },
     LineEvaluationCoeff(usize),
+    PairProductAccumulatorCoeff(usize),
+    PairProductShiftedAccumulatorCoeff(usize),
+    PairProductQuotientCoeff(usize),
     PairLineProductCoeff(usize),
     AccumulatorCoeff(usize),
     ShiftedAccumulatorCoeff(usize),
@@ -291,6 +311,12 @@ pub enum DoryAssistPublicId {
         component: usize,
     },
     GtShiftEqKernel,
+    MillerLoopSelector {
+        relation: DoryAssistRelationId,
+        selector: MillerLoopSelector,
+    },
+    MillerLoopConstant(MillerLoopConstant),
+    MillerLoopShiftEqKernel(DoryAssistRelationId),
     WiringEnabledMask(DoryAssistRelationId),
     PrefixPackingWeight(usize),
     MillerLoopOutputGt(usize),
@@ -315,6 +341,7 @@ pub enum DoryAssistValueType {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DoryAssistValueRef {
     Witness {
+        relation: DoryAssistRelationId,
         polynomial: DoryAssistVirtualPolynomial,
         row: usize,
         component: usize,
@@ -325,4 +352,58 @@ pub enum DoryAssistValueRef {
     },
     Challenge(DoryAssistChallengeId),
     Constant(usize),
+}
+
+impl DoryAssistValueRef {
+    pub const fn witness(
+        relation: DoryAssistRelationId,
+        polynomial: DoryAssistVirtualPolynomial,
+        row: usize,
+        component: usize,
+    ) -> Self {
+        Self::Witness {
+            relation,
+            polynomial,
+            row,
+            component,
+        }
+    }
+
+    pub const fn public(id: DoryAssistPublicId, component: usize) -> Self {
+        Self::Public { id, component }
+    }
+
+    pub fn witness_opening(self) -> Option<DoryAssistOpeningId> {
+        match self {
+            Self::Witness {
+                relation,
+                polynomial,
+                ..
+            } => Some(DoryAssistOpeningId::virtual_polynomial(
+                polynomial, relation,
+            )),
+            Self::Public { .. } | Self::Challenge(_) | Self::Constant(_) => None,
+        }
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DoryAssistCopyConstraint {
+    pub value_type: DoryAssistValueType,
+    pub source: DoryAssistValueRef,
+    pub target: DoryAssistValueRef,
+}
+
+impl DoryAssistCopyConstraint {
+    pub const fn new(
+        value_type: DoryAssistValueType,
+        source: DoryAssistValueRef,
+        target: DoryAssistValueRef,
+    ) -> Self {
+        Self {
+            value_type,
+            source,
+            target,
+        }
+    }
 }
