@@ -4,18 +4,18 @@ use thiserror::Error;
 
 use crate::{BooleanHypercube, SumcheckDomain, SumcheckStatement, VerifiedCommittedRound};
 
-pub trait SumcheckR1csRound<F> {
+pub trait SumcheckR1csRound<F: Field> {
     fn degree(&self) -> usize;
-    fn challenge(&self) -> F;
+    fn challenge(&self) -> LinearCombination<F>;
 }
 
-impl<F: Copy, C> SumcheckR1csRound<F> for VerifiedCommittedRound<F, C> {
+impl<F: Field, C> SumcheckR1csRound<F> for VerifiedCommittedRound<F, C> {
     fn degree(&self) -> usize {
         self.degree
     }
 
-    fn challenge(&self) -> F {
-        self.challenge
+    fn challenge(&self) -> LinearCombination<F> {
+        LinearCombination::constant(self.challenge)
     }
 }
 
@@ -250,6 +250,7 @@ fn validate_rounds_statement<F, R>(
     rounds: &[R],
 ) -> Result<(), SumcheckR1csError>
 where
+    F: Field,
     R: SumcheckR1csRound<F>,
 {
     if statement.num_vars != rounds.len() {
@@ -284,15 +285,13 @@ fn append_round_constraints<F: Field>(
     builder: &mut R1csBuilder<F>,
     round_index: usize,
     round: &SumcheckR1csRoundLayout,
-    challenge: F,
+    challenge: LinearCombination<F>,
     round_sum_coefficients: &[F],
 ) -> Result<(), SumcheckR1csError> {
     let round_sum = round_sum_lc(round_index, round, round_sum_coefficients)?;
     builder.assert_equal(round_sum, round.claim_in);
-    builder.assert_equal(
-        polynomial_eval_lc(&round.coefficients, challenge),
-        round.claim_out,
-    );
+    let round_eval = polynomial_eval_at_challenge(builder, &round.coefficients, challenge);
+    builder.assert_equal(round_eval, round.claim_out);
     Ok(())
 }
 
@@ -329,6 +328,27 @@ fn polynomial_eval_lc<F: Field>(coefficients: &[Variable], point: F) -> LinearCo
     result
 }
 
+fn polynomial_eval_at_challenge<F: Field>(
+    builder: &mut R1csBuilder<F>,
+    coefficients: &[Variable],
+    point: LinearCombination<F>,
+) -> LinearCombination<F> {
+    if let Some(point) = point.as_constant() {
+        return polynomial_eval_lc(coefficients, point);
+    }
+
+    let Some((&last, rest)) = coefficients.split_last() else {
+        return LinearCombination::zero();
+    };
+
+    let mut evaluation = LinearCombination::variable(last);
+    for &coefficient in rest.iter().rev() {
+        evaluation =
+            builder.multiply(evaluation, point.clone()) + LinearCombination::variable(coefficient);
+    }
+    evaluation
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
@@ -346,8 +366,24 @@ mod tests {
             self.degree
         }
 
-        fn challenge(&self) -> Fr {
-            self.challenge
+        fn challenge(&self) -> LinearCombination<Fr> {
+            LinearCombination::constant(self.challenge)
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct LinearChallengeRound {
+        degree: usize,
+        challenge: LinearCombination<Fr>,
+    }
+
+    impl SumcheckR1csRound<Fr> for LinearChallengeRound {
+        fn degree(&self) -> usize {
+            self.degree
+        }
+
+        fn challenge(&self) -> LinearCombination<Fr> {
+            self.challenge.clone()
         }
     }
 
@@ -393,6 +429,48 @@ mod tests {
 
         let witness = builder.witness().expect("witness is assigned");
         assert!(builder.into_matrices().check_witness(&witness).is_ok());
+    }
+
+    #[test]
+    fn supports_variable_challenge_transition() {
+        let statement = SumcheckStatement::new(1, 2);
+        let mut builder = R1csBuilder::<Fr>::new();
+        let challenge = builder.alloc(Fr::from_u64(2));
+        let rounds = [LinearChallengeRound {
+            degree: 2,
+            challenge: LinearCombination::variable(challenge),
+        }];
+
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
+            .expect("layout should allocate");
+        assign(&mut builder, layout.input_claim, 15);
+        assign_round(&mut builder, &layout.rounds[0], &[3, 4, 5], 31);
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
+            .expect("constraints should build");
+
+        let witness = builder.witness().expect("witness is assigned");
+        assert!(builder.into_matrices().check_witness(&witness).is_ok());
+    }
+
+    #[test]
+    fn rejects_bad_variable_challenge_transition() {
+        let statement = SumcheckStatement::new(1, 2);
+        let mut builder = R1csBuilder::<Fr>::new();
+        let challenge = builder.alloc(Fr::from_u64(3));
+        let rounds = [LinearChallengeRound {
+            degree: 2,
+            challenge: LinearCombination::variable(challenge),
+        }];
+
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
+            .expect("layout should allocate");
+        assign(&mut builder, layout.input_claim, 15);
+        assign_round(&mut builder, &layout.rounds[0], &[3, 4, 5], 31);
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
+            .expect("constraints should build");
+
+        let witness = builder.witness().expect("witness is assigned");
+        assert!(builder.into_matrices().check_witness(&witness).is_err());
     }
 
     #[test]

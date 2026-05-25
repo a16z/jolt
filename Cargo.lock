@@ -3187,6 +3187,10 @@ dependencies = [
  "jolt-claims",
  "jolt-field",
  "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-wrapper",
+ "num-bigint",
  "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
@@ -3263,6 +3267,7 @@ dependencies = [
  "criterion",
  "digest 0.11.3",
  "jolt-field",
+ "jolt-r1cs",
  "light-poseidon",
  "num-traits",
  "sha3 0.11.0",
@@ -3293,6 +3298,17 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-wrapper"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-r1cs",
+ "jolt-transcript",
+ "serde",
  "thiserror 2.0.18",
 ]
 
