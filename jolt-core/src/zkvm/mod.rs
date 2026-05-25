@@ -136,7 +136,6 @@ pub(crate) fn compute_final_opening_point<F: JoltField>(
     layout: DoryLayout,
     program_mode: ProgramMode,
     bytecode_chunk_count: usize,
-    stage8_program_openings: Stage8ProgramOpenings,
 ) -> Result<OpeningPoint<BIG_ENDIAN, F>, ProofVerifyError> {
     let mut opening_candidates: Vec<(String, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
     if let Some((point, _)) = opening_accumulator
@@ -149,7 +148,7 @@ pub(crate) fn compute_final_opening_point<F: JoltField>(
     {
         opening_candidates.push(("untrusted_advice".to_string(), point));
     }
-    if program_mode == ProgramMode::Committed && stage8_program_openings.includes_bytecode() {
+    if program_mode == ProgramMode::Committed {
         for chunk_idx in 0..bytecode_chunk_count {
             let (point, _) = opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::BytecodeChunk(chunk_idx),
@@ -158,7 +157,7 @@ pub(crate) fn compute_final_opening_point<F: JoltField>(
             opening_candidates.push((format!("bytecode_chunk[{chunk_idx}]"), point));
         }
     }
-    if program_mode == ProgramMode::Committed && stage8_program_openings.includes_program_image() {
+    if program_mode == ProgramMode::Committed {
         let (program_image_point, _) = opening_accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::ProgramImageInit,
             SumcheckId::ProgramImageClaimReduction,

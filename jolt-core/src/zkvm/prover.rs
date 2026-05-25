@@ -20,10 +20,7 @@ use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use crate::zkvm::config::{ProgramMode, ReadWriteConfig};
-use crate::zkvm::program::{
-    build_program_image_words_padded, FullProgramPreprocessing, ProgramPreprocessing,
-    TrustedProgramCommitments, TrustedProgramHints,
-};
+use crate::zkvm::program::{build_program_image_words_padded, FullProgramPreprocessing};
 use crate::zkvm::ram::remap_address;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::Serializable;
@@ -2048,7 +2045,6 @@ impl<
                 ProgramMode::Full
             },
             self.preprocessing.shared.bytecode_chunk_count,
-            stage8_program_openings_from_env(),
         )
         .expect("invalid prover Stage-8 opening point");
 
