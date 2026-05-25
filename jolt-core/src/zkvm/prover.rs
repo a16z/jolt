@@ -38,8 +38,8 @@ use crate::{
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningPoint,
-            ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
+            compute_lagrange_factor, DoryOpeningState, OpeningAccumulator,
+            ProverOpeningAccumulator, SumcheckId,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
     },
