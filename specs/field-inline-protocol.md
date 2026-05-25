@@ -19,7 +19,9 @@ This spec owns the field-inline protocol axis. Composition with Dory assist,
 wrapping, ZK, and proof-shape validation is specified in
 [selected-verifier-integration.md](selected-verifier-integration.md). Prover
 execution and witness construction concerns are tracked by
-[jolt-prover-model-crate.md](jolt-prover-model-crate.md).
+[jolt-prover-model-crate.md](jolt-prover-model-crate.md). The canonical
+non-witness `jolt-program` / `tracer` work for field-register memory is tracked
+by [field-inline-program-tracer.md](field-inline-program-tracer.md).
 
 Reference implementation context:
 
@@ -338,7 +340,8 @@ The downstream memory path is:
 stage 4:
   consumes FieldRd/Rs1/Rs2 values at r_prod
   proves FR read/write consistency at r_rw
-  outputs FieldRegistersVal(r_rw), FieldRdWa(r_rw), FieldRdInc(rw_cycle)
+  outputs FieldRegistersVal(r_rw), FieldRs1Ra(r_rw), FieldRs2Ra(r_rw),
+  FieldRdWa(r_rw), FieldRdInc(rw_cycle)
 
 stage 5:
   consumes FieldRegistersVal(r_rw)
@@ -354,13 +357,10 @@ stage 8:
   RLCs it with the ordinary final committed openings
 ```
 
-For v1, the new committed field-inline surface is nested under
-`FieldInlineCommitments::field_registers` and includes `FieldRdInc` plus
-`FieldRegistersRa(i)` commitments. `FieldRdInc` enters the stage-6 reduction
-and then the final PCS RLC. `FieldRegistersRa(i)` commitments mirror the
-ordinary register Twist commitment surface. Their opening/reduction path should
-follow the same explicit polynomial-to-relation mapping discipline before any
-FR RA claim enters stage 8.
+For v1, the committed field-inline surface is `FieldRdInc`. `FieldRdInc`
+enters the stage-6 reduction and then the final PCS RLC. Field register RA/WA
+values are virtual openings anchored by field-inline bytecode metadata through
+the ordinary committed `BytecodeRa(i)` path.
 
 ### Stage 2 Composition
 
@@ -550,10 +550,24 @@ FR on:
   3. RamHammingBooleanity
   4. RamRaVirtualization
   5. InstructionRaVirtualization
-  6. IncClaimReduction
-  7. FieldRegistersIncClaimReduction
-  8+. optional advice cycle-phase reductions
+  6. FieldBytecodeReadRafAnchoring
+  7. IncClaimReduction
+  8. FieldRegistersIncClaimReduction
+  9+. optional advice cycle-phase reductions
 ```
+
+The field-inline bytecode anchoring checks `FieldRs1Ra`, `FieldRs2Ra`, and
+`FieldRdWa` as virtual openings selected by field-inline bytecode metadata. It
+anchors them through the ordinary committed `BytecodeRa(i)` path rather than
+introducing a separate committed field-register RA surface.
+
+Field-inline bytecode metadata is present only when field inline is enabled.
+Builds without the Cargo `field-inline` feature should not compile this
+protocol branch. Builds with the feature validate metadata for length, active
+flag count, operand shape, inactive-row cleanliness, and field-register bounds,
+and bind it into the preamble under the field-inline bytecode label. FR-off
+profiles skip this metadata and all field-inline challenges, claims, sumchecks,
+transcript absorbs, and BlindFold rows.
 
 `FieldRegistersIncClaimReduction` consumes the two semantic openings of the
 committed `FieldRdInc` polynomial produced by Stage 4 and Stage 5:
@@ -921,7 +935,6 @@ pub enum FieldInlineVirtualPolynomial {
 
 pub enum FieldInlineCommittedPolynomial {
     FieldRdInc,
-    FieldRegistersRa(usize),
 }
 ```
 
@@ -935,8 +948,9 @@ ordinary:
 
 field:
   FieldRdInc committed or otherwise opened from the FR increment witness
-  FieldRegistersRa(i) committed for FR RA chunks carried in the proof payload
   FieldRegistersVal/FieldRs1Ra/FieldRs2Ra/FieldRdWa virtual
+  FieldRs1Ra/FieldRs2Ra/FieldRdWa anchored through field-inline bytecode
+  metadata and the ordinary committed BytecodeRa(i) path
 ```
 
 ### Field-Register Formulas
@@ -1124,9 +1138,10 @@ Each step should be reviewed before continuing to the next.
 6. Wire verifier support one stage slice at a time.
    - Proof/config gate: require `proof.protocol.field_inline` to match the
      compile-time verifier config before any stage logic runs.
-   - Commitment absorption: absorb the nested FieldRegisters commitments,
-     currently `FieldRdInc` and `FieldRegistersRa(i)`, only when field inline
-     is enabled.
+   - Preamble metadata: require, validate, and transcript-bind field-inline
+     bytecode metadata only when field inline is enabled.
+   - Commitment absorption: absorb field-inline commitments, currently
+     `FieldRdInc`, only when field inline is enabled.
    - Selected R1CS composition: add `jolt-r1cs::constraints::jolt` so the
      compile-time selected R1CS is RV64 alone when FR is off and RV64 plus
      field-inline rows when FR is on. The composition keeps protocol semantics
@@ -1149,6 +1164,9 @@ Each step should be reviewed before continuing to the next.
      read/write work.
    - Stage 5: batch `FieldRegistersValEvaluation` with the existing
      val-evaluation work.
+   - Stage 6: anchor `FieldRs1Ra`, `FieldRs2Ra`, and `FieldRdWa` as virtual
+     openings through field-inline bytecode metadata and the ordinary committed
+     `BytecodeRa(i)` path.
    - Stage 6: reduce the stage-4/stage-5 `FieldRdInc` claims to one final
      committed claim.
    - Stage 8: include the reduced `FieldRdInc` claim in the ordinary joint PCS
