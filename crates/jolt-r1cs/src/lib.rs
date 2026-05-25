@@ -28,8 +28,9 @@ pub use constraint::{
 };
 pub use key::R1csKey;
 pub use lowering::{
-    assert_claim_expr_eq, lower_claim_expr, ClaimLoweringError, ClaimSourceTable, ClaimSources,
-    SourceValue,
+    assert_claim_expr_eq, assert_claim_expr_gadget_eq, lower_claim_expr, lower_claim_expr_gadget,
+    ClaimLoweringError, ClaimSourceTable, ClaimSources, ScalarClaimSourceTable, ScalarClaimSources,
+    ScalarSourceValue, SourceValue,
 };
 pub use nonnative::FqVar;
 pub use provider::{R1csSource, SpartanChallenges};
