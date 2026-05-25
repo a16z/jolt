@@ -4,6 +4,7 @@
 //! builder-field scalars or non-native scalars represented inside the builder.
 
 use jolt_field::{Field, Fq, Fr};
+use jolt_poly::r1cs::PolynomialScalarGadget;
 use num_traits::{One, Zero};
 
 use crate::{AssignedScalar, FqVar, LinearCombination, R1csBuilder};
@@ -172,6 +173,51 @@ impl ScalarGadget for FqVar {
         when_false: &Self,
     ) -> Self {
         FqVar::select(builder, selector, when_true, when_false)
+    }
+}
+
+impl<F> PolynomialScalarGadget for AssignedScalar<F>
+where
+    F: Field,
+{
+    type ConstraintBuilder = R1csBuilder<F>;
+    type Scalar = F;
+
+    fn constant(scalar: Self::Scalar) -> Self {
+        <Self as ScalarGadget>::constant(scalar)
+    }
+
+    fn add(&self, builder: &mut Self::ConstraintBuilder, rhs: &Self) -> Self {
+        <Self as ScalarGadget>::add(self, builder, rhs)
+    }
+
+    fn sub(&self, builder: &mut Self::ConstraintBuilder, rhs: &Self) -> Self {
+        <Self as ScalarGadget>::sub(self, builder, rhs)
+    }
+
+    fn mul(&self, builder: &mut Self::ConstraintBuilder, rhs: &Self) -> Self {
+        <Self as ScalarGadget>::mul(self, builder, rhs)
+    }
+}
+
+impl PolynomialScalarGadget for FqVar {
+    type ConstraintBuilder = R1csBuilder<Fr>;
+    type Scalar = Fq;
+
+    fn constant(scalar: Self::Scalar) -> Self {
+        <Self as ScalarGadget>::constant(scalar)
+    }
+
+    fn add(&self, builder: &mut Self::ConstraintBuilder, rhs: &Self) -> Self {
+        <Self as ScalarGadget>::add(self, builder, rhs)
+    }
+
+    fn sub(&self, builder: &mut Self::ConstraintBuilder, rhs: &Self) -> Self {
+        <Self as ScalarGadget>::sub(self, builder, rhs)
+    }
+
+    fn mul(&self, builder: &mut Self::ConstraintBuilder, rhs: &Self) -> Self {
+        <Self as ScalarGadget>::mul(self, builder, rhs)
     }
 }
 

@@ -33,6 +33,8 @@ mod claims;
 mod error;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
 mod reduction;
 mod schemes;
 

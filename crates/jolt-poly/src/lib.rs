@@ -56,6 +56,8 @@ mod mle;
 mod multilinear;
 mod one_hot;
 mod point;
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
 pub mod thread;
 mod univariate;
 
