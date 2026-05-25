@@ -2,6 +2,7 @@
 
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -13,6 +14,8 @@ pub struct Stage4PublicOutput<F: Field> {
     pub challenges: Vec<F>,
     pub batching_coefficients: Vec<F>,
     pub registers_gamma: F,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_gamma: F,
     pub ram_val_check_gamma: F,
 }
 
@@ -31,6 +34,8 @@ pub struct Stage4ZkOutput<F: Field, C> {
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub ram_val_check_public_eval: F,
     pub registers_read_write_opening_point: Vec<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write_opening_point: Vec<F>,
     pub ram_val_check_opening_point: Vec<F>,
 }
 
@@ -43,10 +48,12 @@ pub enum Stage4Output<F: Field, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedStage4Batch<F: Field> {
     pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub registers_read_write: VerifiedStage4Sumcheck<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write: VerifiedStage4Sumcheck<F>,
     pub ram_val_check: VerifiedStage4Sumcheck<F>,
 }
 

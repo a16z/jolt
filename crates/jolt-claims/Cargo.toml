@@ -8,6 +8,10 @@ description = "Shared claim and expression types for Jolt protocols"
 [lints]
 workspace = true
 
+[features]
+default = []
+field-inline = []
+
 [dependencies]
 derive_more.workspace = true
 jolt-field.workspace = true

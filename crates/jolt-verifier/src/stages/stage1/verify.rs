@@ -1,11 +1,12 @@
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::SpartanOuterDimensions, JoltStageId, JoltSumcheckDomain,
+    formulas::spartan::SpartanOuterDimensions, JoltRelationId, JoltSumcheckDomain, JoltSumcheckSpec,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::FromPrimitiveInt;
 use jolt_openings::CommitmentScheme;
-use jolt_r1cs::constraints::rv64::{
-    Rv64SpartanOuterRemainder, Rv64SpartanOuterRemainderChallenges,
+use jolt_r1cs::constraints::jolt::{
+    JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges, SPARTAN_OUTER_REMAINDER_DEGREE,
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
@@ -13,6 +14,7 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::Transcript;
 
+use super::inputs::spartan_outer_opening_order;
 use super::outputs::{
     Stage1ClearOutput, Stage1Output, Stage1PublicOutput, Stage1ZkOutput,
     VerifiedSpartanOuterSumcheck,
@@ -33,13 +35,17 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let stage = JoltStageId::SpartanOuter;
+    let stage = JoltRelationId::SpartanOuter;
 
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = transcript.challenge_vector(log_t + 2);
 
-    let uniskip_spec = dimensions.uniskip_sumcheck();
+    let uniskip_spec = JoltSumcheckSpec::centered_integer(
+        SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+        1,
+        SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+    );
     if uniskip_spec.degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
@@ -124,7 +130,7 @@ where
         (*uniskip_challenge, Some(uniskip), None)
     };
 
-    let remainder_spec = dimensions.remainder_sumcheck();
+    let remainder_spec = JoltSumcheckSpec::boolean(1 + log_t, SPARTAN_OUTER_REMAINDER_DEGREE);
     if remainder_spec.degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
@@ -158,7 +164,7 @@ where
                 checked,
                 proof: &proof.stages.stage1_sumcheck_proof,
                 proof_label: "stage1_sumcheck_proof",
-                output_claim_count: dimensions.variables().len(),
+                output_claim_count: spartan_outer_opening_order(&dimensions).len(),
                 stage,
             })?;
         let [remainder_batching_coefficient] = consistency.batching_coefficients.as_slice() else {
@@ -208,20 +214,18 @@ where
         };
         let batched_remainder_input_claim = remainder_input_claim * *remainder_batching_coefficient;
         let remainder_reduction = remainder_batch.reduction;
-        let r1cs_input_claims = claims.outer.r1cs_input_claims(&dimensions)?;
+        let r1cs_input_claims = claims.spartan_outer_claims(&dimensions)?;
         let remainder_challenges = remainder_reduction.point.as_slice();
-        let remainder_formula = Rv64SpartanOuterRemainder::new(
-            &dimensions,
-            Rv64SpartanOuterRemainderChallenges {
+        let remainder_formula =
+            JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
                 tau: &tau,
                 uniskip: uniskip_challenge,
                 remainder: remainder_challenges,
-            },
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: error.to_string(),
-        })?;
+            })
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage,
+                reason: error.to_string(),
+            })?;
         let expected_remainder_output_claim = remainder_formula
             .expected_output_claim(&r1cs_input_claims)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -294,5 +298,7 @@ where
         uniskip,
         remainder,
         outer: claims.outer.clone(),
+        #[cfg(feature = "field-inline")]
+        field_inline: claims.field_inline.clone(),
     }))
 }

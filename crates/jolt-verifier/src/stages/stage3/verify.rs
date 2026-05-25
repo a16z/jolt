@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::{
         instruction,
         spartan::{self, shift_input_openings, shift_output_openings},
     },
-    InstructionInputChallenge, JoltChallengeId, JoltPublicId, JoltStageId, JoltSumcheckDomain,
+    InstructionInputChallenge, JoltChallengeId, JoltPublicId, JoltRelationId, JoltSumcheckDomain,
     RegistersClaimReductionChallenge, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
 };
 use jolt_crypto::VectorCommitment;
@@ -116,7 +116,7 @@ where
             transcript,
         )
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::SpartanShift,
+            stage: JoltRelationId::SpartanShift,
             reason: error.to_string(),
         })?;
         let batch_output_claims =
@@ -125,7 +125,7 @@ where
                 proof: &proof.stages.stage3_sumcheck_proof,
                 proof_label: "stage3_sumcheck_proof",
                 output_claim_count: STAGE3_BATCH_OUTPUT_CLAIMS,
-                stage: JoltStageId::SpartanShift,
+                stage: JoltRelationId::SpartanShift,
             })?;
 
         return Ok(Stage3Output::Zk(Stage3ZkOutput {
@@ -149,7 +149,7 @@ where
         != stage2.batch.instruction_claim_reduction.opening_point
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::InstructionInputVirtualization,
+            stage: JoltRelationId::InstructionInputVirtualization,
             left: left_reduced,
             right: left_product,
         });
@@ -174,14 +174,14 @@ where
         .unwrap_or(product_right);
     if reduced_left != product_left {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::InstructionInputVirtualization,
+            stage: JoltRelationId::InstructionInputVirtualization,
             left: left_reduced,
             right: left_product,
         });
     }
     if reduced_right != product_right {
         return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltStageId::InstructionInputVirtualization,
+            stage: JoltRelationId::InstructionInputVirtualization,
             left: right_reduced,
             right: right_product,
         });
@@ -264,14 +264,14 @@ where
         transcript,
     )
     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: JoltStageId::SpartanShift,
+        stage: JoltRelationId::SpartanShift,
         reason: error.to_string(),
     })?;
 
     let shift_point = batch
         .try_instance_point(shift_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::SpartanShift,
+            stage: JoltRelationId::SpartanShift,
             reason: error.to_string(),
         })?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
@@ -307,7 +307,7 @@ where
     let instruction_point = batch
         .try_instance_point(instruction_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::InstructionInputVirtualization,
+            stage: JoltRelationId::InstructionInputVirtualization,
             reason: error.to_string(),
         })?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
@@ -316,7 +316,7 @@ where
         &stage2.batch.product_remainder.opening_point,
     )
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltStageId::InstructionInputVirtualization,
+        stage: JoltRelationId::InstructionInputVirtualization,
         reason: error.to_string(),
     })?;
     let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
@@ -348,13 +348,13 @@ where
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::RegistersClaimReduction,
+            stage: JoltRelationId::RegistersClaimReduction,
             reason: error.to_string(),
         })?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_spartan = try_eq_mle(&registers_opening_point, &stage2.product_uniskip.tau_low)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RegistersClaimReduction,
+            stage: JoltRelationId::RegistersClaimReduction,
             reason: error.to_string(),
         })?;
     let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
@@ -389,7 +389,7 @@ where
         batch.batching_coefficients.as_slice()
     else {
         return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltStageId::SpartanShift,
+            stage: JoltRelationId::SpartanShift,
             reason: "Stage 3 batch verifier returned the wrong number of coefficients".to_string(),
         });
     };
@@ -398,7 +398,7 @@ where
         + *registers_coefficient * expected_outputs.registers_claim_reduction;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltStageId::SpartanShift,
+            stage: JoltRelationId::SpartanShift,
         });
     }
 

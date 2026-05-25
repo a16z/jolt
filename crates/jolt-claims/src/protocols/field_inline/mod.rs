@@ -6,11 +6,12 @@ mod relation;
 
 pub use config::{FieldInlineConfig, FieldInlineRepresentation, FIELD_REGISTERS_LOG_K};
 pub use formulas::dimensions::{
-    FieldInlineSumcheckSpec, FieldRegistersReadWriteDimensions, FieldRegistersTraceDimensions,
+    FieldInlineSumcheckSpec, FieldRegistersReadWriteDimensions,
+    FieldRegistersReadWriteOpeningPoint, FieldRegistersTraceDimensions,
 };
 pub use ids::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineOpeningId,
-    FieldInlinePolynomialId, FieldInlinePublicId, FieldInlineRelationId,
+    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineOpFlag,
+    FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlinePublicId, FieldInlineRelationId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
     FieldRegistersIncClaimReductionChallenge, FieldRegistersIncClaimReductionPublic,
     FieldRegistersReadWriteChallenge, FieldRegistersValEvaluationChallenge,

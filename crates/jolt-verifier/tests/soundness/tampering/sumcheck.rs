@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{
             advice, hamming_weight, increments, instruction as instruction_claim_reduction,
             registers as registers_claim_reduction,
         },
-        dimensions::{AdviceClaimReductionLayout, JoltFormulaDimensions},
+        dimensions::JoltFormulaDimensions,
         instruction, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_outer_opening,
@@ -29,7 +29,8 @@ use jolt_claims::protocols::jolt::{
             SpartanOuterDimensions,
         },
     },
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltStageId, JoltVirtualPolynomial,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltRelationId, JoltVirtualPolynomial,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -1294,7 +1295,7 @@ fn stage6_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
             "stage6.claims.booleanity.instruction_ra",
             JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             ),
         ));
     }
@@ -1303,7 +1304,7 @@ fn stage6_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
             "stage6.claims.booleanity.bytecode_ra",
             JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             ),
         ));
     }
@@ -1312,7 +1313,7 @@ fn stage6_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
             "stage6.claims.booleanity.ram_ra",
             JoltOpeningId::committed(
                 JoltCommittedPolynomial::RamRa(index),
-                JoltStageId::Booleanity,
+                JoltRelationId::Booleanity,
             ),
         ));
     }
@@ -1395,10 +1396,10 @@ fn stage6_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, 
 fn stage7_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
     let dimensions = stage6_dimensions(base);
     let output_openings = hamming_weight::claim_reduction_output_openings(
-        hamming_weight::HammingWeightClaimReductionDimensions::from((
+        hamming_weight::HammingWeightClaimReductionDimensions::new(
             dimensions.ra_layout,
             base.proof.one_hot_config.committed_chunk_bits(),
-        )),
+        ),
     );
     let mut openings = Vec::new();
     openings.extend(output_openings.instruction_ra.into_iter().map(|id| {
@@ -1478,7 +1479,7 @@ fn manifest_target(name: &str) -> tamper_manifest::TamperTarget {
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn outer_virtual(polynomial: JoltVirtualPolynomial) -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(polynomial, JoltStageId::SpartanOuter)
+    JoltOpeningId::virtual_polynomial(polynomial, JoltRelationId::SpartanOuter)
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]

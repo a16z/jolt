@@ -1,11 +1,21 @@
 //! Verifier error types.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineOpeningId;
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltStageId,
+    JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
+
+use crate::config::JoltProtocolConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
+    #[error("proof protocol config {got:?} does not match verifier config {expected:?}")]
+    ProtocolConfigMismatch {
+        expected: JoltProtocolConfig,
+        got: JoltProtocolConfig,
+    },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 
@@ -26,6 +36,10 @@ pub enum VerifierError {
 
     #[error("missing opening claim scalar {id:?}")]
     MissingOpeningClaim { id: JoltOpeningId },
+
+    #[cfg(feature = "field-inline")]
+    #[error("missing field-inline opening claim scalar {id:?}")]
+    MissingFieldInlineOpeningClaim { id: FieldInlineOpeningId },
 
     #[error("unexpected opening claim scalar {id:?}")]
     UnexpectedOpeningClaim { id: JoltOpeningId },
@@ -62,28 +76,37 @@ pub enum VerifierError {
 
     #[error("stage {stage:?} opening inputs {left:?} and {right:?} must have the same evaluation")]
     StageClaimOpeningMismatch {
-        stage: JoltStageId,
+        stage: JoltRelationId,
         left: JoltOpeningId,
         right: JoltOpeningId,
     },
 
     #[error("stage {stage:?} claim expressions must evaluate to the same value")]
-    StageClaimExpressionMismatch { stage: JoltStageId },
+    StageClaimExpressionMismatch { stage: JoltRelationId },
 
     #[error("stage {stage:?} sumcheck degree {degree} is invalid")]
-    InvalidStageSumcheckDegree { stage: JoltStageId, degree: usize },
+    InvalidStageSumcheckDegree {
+        stage: JoltRelationId,
+        degree: usize,
+    },
 
     #[error("stage {stage:?} compressed sumcheck proof requires a Boolean domain")]
-    CompressedStageClaimRequiresBooleanDomain { stage: JoltStageId },
+    CompressedStageClaimRequiresBooleanDomain { stage: JoltRelationId },
 
     #[error("stage {stage:?} sumcheck verification failed: {reason}")]
-    StageClaimSumcheckFailed { stage: JoltStageId, reason: String },
+    StageClaimSumcheckFailed {
+        stage: JoltRelationId,
+        reason: String,
+    },
 
     #[error("stage {stage:?} public claim construction failed: {reason}")]
-    StageClaimPublicInputFailed { stage: JoltStageId, reason: String },
+    StageClaimPublicInputFailed {
+        stage: JoltRelationId,
+        reason: String,
+    },
 
     #[error("stage {stage:?} sumcheck output does not match evaluated output claim")]
-    StageClaimOutputMismatch { stage: JoltStageId },
+    StageClaimOutputMismatch { stage: JoltRelationId },
 
     #[error("invalid final opening commitment count {got}; expected {expected}")]
     InvalidCommitmentCount { expected: usize, got: usize },

@@ -4,13 +4,13 @@ use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::InstructionFlags;
 
-use crate::{challenge, opening};
+use crate::{challenge, opening, SameEvaluationAs};
 
 use super::super::InstructionRaVirtualizationChallenge;
 use super::super::{
     InstructionInputChallenge, InstructionReadRafChallenge, JoltChallengeId,
-    JoltCommittedPolynomial, JoltConsistencyClaim, JoltExpr, JoltOpeningId, JoltRelationClaims,
-    JoltRelationId, JoltVirtualPolynomial,
+    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationClaims, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use super::dimensions::{
     JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec, TraceDimensions,
@@ -214,14 +214,8 @@ where
         output,
     )
     .with_consistency([
-        JoltConsistencyClaim::same_evaluation(
-            left_instruction_input_reduced(),
-            left_instruction_input_product(),
-        ),
-        JoltConsistencyClaim::same_evaluation(
-            right_instruction_input_reduced(),
-            right_instruction_input_product(),
-        ),
+        left_instruction_input_reduced().same_evaluation_as(left_instruction_input_product()),
+        right_instruction_input_reduced().same_evaluation_as(right_instruction_input_product()),
     ])
 }
 
@@ -289,10 +283,7 @@ where
         input,
         output,
     )
-    .with_consistency([JoltConsistencyClaim::same_evaluation(
-        lookup_output_reduced(),
-        lookup_output_product(),
-    )])
+    .with_consistency([lookup_output_reduced().same_evaluation_as(lookup_output_product())])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -5,7 +5,7 @@ mod audit;
 pub mod claims;
 mod codec;
 pub mod config;
-#[cfg(feature = "jolt-core-compat")]
+#[cfg(all(feature = "jolt-core-compat", not(feature = "field-inline")))]
 pub mod convert;
 pub mod ids;
 

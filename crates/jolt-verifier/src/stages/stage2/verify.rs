@@ -1,30 +1,33 @@
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::formulas::{
+    claim_reductions::registers as field_registers_claim_reduction,
+    dimensions::FieldRegistersTraceDimensions,
+};
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::instruction as instruction_claim_reduction,
-        dimensions::{TraceDimensions, PRODUCT_UNISKIP_DOMAIN_SIZE},
+        dimensions::TraceDimensions,
         ram::{
             self, RamOutputCheckPublicValues, RamRafEvaluationDimensions,
             RamRafEvaluationPublicValues,
         },
-        spartan::{
-            product_outer_opening, product_remainder, product_remainder_output_openings,
-            product_should_branch_outer_opening, product_should_jump_outer_opening,
-            product_uniskip, product_uniskip_opening, SpartanProductDimensions,
-            SpartanProductPublicValues,
-        },
+        spartan::{product_remainder, product_uniskip_opening, SpartanProductDimensions},
     },
-    InstructionClaimReductionChallenge, JoltChallengeId, JoltPublicId, JoltStageId,
-    JoltSumcheckDomain, RamReadWriteChallenge, SpartanProductVirtualizationPublic,
+    InstructionClaimReductionChallenge, JoltChallengeId, JoltPublicId, JoltRelationId,
+    JoltSumcheckDomain, RamReadWriteChallenge,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, FromPrimitiveInt};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
-    lagrange::{centered_lagrange_evals_array, centered_lagrange_kernel},
+    lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle, IdentityPolynomial,
     MultilinearEvaluation,
 };
 use jolt_program::preprocess::PublicIoMemory;
+use jolt_r1cs::constraints::jolt::{
+    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
     UNISKIP_ROUND_TRANSCRIPT_LABEL,
@@ -40,8 +43,11 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::{stage1::Stage1ClearOutput, zk::committed},
+    verifier::CheckedInputs,
+    VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +55,8 @@ struct Stage2BatchSumcheckInputClaims<F: Field> {
     ram_read_write: F,
     product_remainder: F,
     instruction_claim_reduction: F,
+    #[cfg(feature = "field-inline")]
+    field_registers_claim_reduction: F,
     ram_raf_evaluation: F,
     ram_output_check: F,
 }
@@ -58,6 +66,8 @@ struct Stage2BatchExpectedOutputClaims<F: Field> {
     ram_read_write: F,
     product_remainder: F,
     instruction_claim_reduction: F,
+    #[cfg(feature = "field-inline")]
+    field_registers_claim_reduction: F,
     ram_raf_evaluation: F,
     ram_output_check: F,
 }
@@ -80,11 +90,15 @@ struct Stage2ZkBatch<F: Field, C> {
     batching_coefficients: Vec<F>,
     ram_read_write_gamma: F,
     instruction_gamma: F,
+    #[cfg(feature = "field-inline")]
+    field_registers_claim_reduction_gamma: F,
     output_address_challenges: Vec<F>,
     consistency: jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: committed::CommittedOutputClaimOutput<C>,
     ram_val_check_inputs: Stage2RamValCheckInputs<F>,
     ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
+    #[cfg(feature = "field-inline")]
+    field_inline: super::outputs::FieldInlineStage2ZkOutput<F>,
 }
 
 enum Stage2Batch<F: Field, C> {
@@ -96,7 +110,50 @@ enum Stage2Batch<F: Field, C> {
 }
 
 const PRODUCT_UNISKIP_OUTPUT_CLAIMS: usize = 1;
+#[cfg(not(feature = "field-inline"))]
 const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 15;
+#[cfg(feature = "field-inline")]
+const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 18;
+
+fn selected_product_uniskip_sumcheck() -> jolt_claims::protocols::jolt::JoltSumcheckSpec {
+    jolt_claims::protocols::jolt::JoltSumcheckSpec::centered_integer(
+        SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+        1,
+        SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+    )
+}
+
+fn selected_product_uniskip_input_claim<F: Field>(
+    stage1: &Stage1ClearOutput<F>,
+    weights: &[F],
+) -> Option<F> {
+    let [product, should_branch, should_jump, rest @ ..] = weights else {
+        return None;
+    };
+    let claim = *product * stage1.outer.product
+        + *should_branch * stage1.outer.should_branch
+        + *should_jump * stage1.outer.should_jump;
+
+    #[cfg(feature = "field-inline")]
+    {
+        let [field_product_weight, field_inv_product_weight] = rest else {
+            return None;
+        };
+        Some(
+            claim
+                + *field_product_weight * stage1.field_inline.field_product
+                + *field_inv_product_weight * stage1.field_inline.field_inv_product,
+        )
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    {
+        if !rest.is_empty() {
+            return None;
+        }
+        Some(claim)
+    }
+}
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
@@ -140,7 +197,7 @@ where
         ) => {
             let [product_uniskip_challenge] = product_uniskip.sumcheck_point.as_slice() else {
                 return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: "product uni-skip proof did not reduce to one challenge".to_string(),
                 });
             };
@@ -152,6 +209,8 @@ where
                 product_tau_high: product_uniskip.tau_high,
                 ram_read_write_gamma: batch.ram_read_write_gamma,
                 instruction_gamma: batch.instruction_gamma,
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction_gamma: batch.field_registers_claim_reduction_gamma,
                 output_address_challenges: batch.output_address_challenges.clone(),
             };
 
@@ -171,6 +230,8 @@ where
                 product_tau_high: product_uniskip.tau_high,
                 ram_read_write_gamma: batch.ram_read_write_gamma,
                 instruction_gamma: batch.instruction_gamma,
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction_gamma: batch.field_registers_claim_reduction_gamma,
                 output_address_challenges: batch.output_address_challenges,
             };
 
@@ -182,6 +243,8 @@ where
                 batch_output_claims: batch.output_claims,
                 ram_val_check_inputs: batch.ram_val_check_inputs,
                 ram_ra_claim_reduction_inputs: batch.ram_ra_claim_reduction_inputs,
+                #[cfg(feature = "field-inline")]
+                field_inline: batch.field_inline,
             }))
         }
         (Stage2ProductUniSkip::Clear(_), Stage2Batch::Zk(_)) => {
@@ -208,9 +271,9 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let stage = JoltStageId::SpartanProductVirtualization;
+    let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
-    let dimensions = SpartanProductDimensions::from(log_t);
+    let _dimensions = SpartanProductDimensions::new(log_t);
     let stage1_public = match deps {
         Deps::Clear { stage1 } => &stage1.public,
         Deps::Zk { stage1 } => &stage1.public,
@@ -235,7 +298,7 @@ where
     tau_low.reverse();
 
     let tau_high = transcript.challenge();
-    let uniskip_spec = dimensions.uniskip_sumcheck();
+    let uniskip_spec = selected_product_uniskip_sumcheck();
     if uniskip_spec.degree == 0 {
         return Err(VerifierError::InvalidStageSumcheckDegree {
             stage,
@@ -252,36 +315,22 @@ where
     match deps {
         Deps::Clear { stage1 } => {
             let claims = &proof.clear_claims()?.stage2;
-            let weights =
-                centered_lagrange_evals_array::<PCS::Field, PRODUCT_UNISKIP_DOMAIN_SIZE>(tau_high)
-                    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                        stage,
-                        reason: error.to_string(),
-                    })?;
+            let weights = centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage,
+                    reason: error.to_string(),
+                })?;
 
             let uniskip_claim = claims.product_uniskip_output_claim;
-            let product_claims = product_uniskip::<PCS::Field>(dimensions);
-            let product_outer = product_outer_opening();
-            let product_should_branch = product_should_branch_outer_opening();
-            let product_should_jump = product_should_jump_outer_opening();
-            let uniskip_input_claim = product_claims.input.expression().try_evaluate(
-                |id| match *id {
-                    id if id == product_outer => Ok(stage1.outer.product),
-                    id if id == product_should_branch => Ok(stage1.outer.should_branch),
-                    id if id == product_should_jump => Ok(stage1.outer.should_jump),
-                    id => Err(VerifierError::MissingOpeningClaim { id }),
-                },
-                |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-                |id| match id {
-                    JoltPublicId::SpartanProductVirtualization(
-                        SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index),
-                    ) => weights
-                        .get(*index)
-                        .copied()
-                        .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-                    _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-                },
-            )?;
+            let uniskip_input_claim = selected_product_uniskip_input_claim(stage1, &weights)
+                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                    stage,
+                    reason: format!(
+                        "Stage 2 product uni-skip expected {} weights, got {}",
+                        SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+                        weights.len()
+                    ),
+                })?;
 
             let uniskip_reduction = proof
                 .stages
@@ -371,11 +420,11 @@ where
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);
     let read_write_dimensions = proof.rw_config.ram_dimensions(log_t, log_k);
-    let product_dimensions = SpartanProductDimensions::from(log_t);
+    let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
         RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamRafEvaluation,
+                stage: JoltRelationId::RamRafEvaluation,
                 reason: error.to_string(),
             }
         })?;
@@ -384,12 +433,18 @@ where
     let product_remainder_claims = product_remainder::<PCS::Field>(product_dimensions);
     let instruction_claim_reduction_claims =
         instruction_claim_reduction::claim_reduction::<PCS::Field>(trace_dimensions);
+    #[cfg(feature = "field-inline")]
+    let field_registers_claim_reduction_claims = field_registers_claim_reduction::claim_reduction::<
+        PCS::Field,
+    >(FieldRegistersTraceDimensions::new(log_t));
     let ram_raf_evaluation_claims = ram::raf_evaluation::<PCS::Field>(raf_dimensions);
     let ram_output_check_claims = ram::output_check::<PCS::Field>(read_write_dimensions);
-    // Stage 2 batches these five sumchecks after the product uni-skip:
-    // RAM read-write, Spartan product, instruction reduction, RAM RAF, RAM output.
+    // Stage 2 batches the regular post-product-uniskip sumchecks. Field-inline
+    // inserts its claim reduction at the same product point when enabled.
     let ram_read_write_gamma = transcript.challenge_scalar();
     let instruction_gamma = transcript.challenge_scalar();
+    #[cfg(feature = "field-inline")]
+    let field_registers_claim_reduction_gamma = transcript.challenge_scalar();
     let output_address_challenges = (0..log_k)
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
@@ -413,13 +468,22 @@ where
             });
         }
     }
+    #[cfg(feature = "field-inline")]
+    {
+        if field_registers_claim_reduction_claims.sumcheck.degree == 0 {
+            return Err(VerifierError::InvalidStageSumcheckDegree {
+                stage: JoltRelationId::SpartanProductVirtualization,
+                degree: field_registers_claim_reduction_claims.sumcheck.degree,
+            });
+        }
+    }
 
     match (deps, product_uniskip) {
         (Deps::Clear { stage1 }, Stage2ProductUniSkip::Clear(product_uniskip)) => {
             let claims = &proof.clear_claims()?.stage2;
             let [product_uniskip_challenge] = product_uniskip.sumcheck_point.as_slice() else {
                 return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: "product uni-skip proof did not reduce to one challenge".to_string(),
                 });
             };
@@ -486,6 +550,12 @@ where
                         },
                         |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
                     )?,
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction: stage1.field_inline.field_rd_value
+                    + field_registers_claim_reduction_gamma * stage1.field_inline.field_rs1_value
+                    + field_registers_claim_reduction_gamma
+                        * field_registers_claim_reduction_gamma
+                        * stage1.field_inline.field_rs2_value,
                 ram_raf_evaluation: ram_raf_evaluation_claims.input.expression().try_evaluate(
                     |id| match *id {
                         id if id == ram_address_spartan => Ok(stage1.outer.ram_address),
@@ -503,7 +573,7 @@ where
 
             // The claim order here must match the output-claim reconstruction below and
             // the transcript appends at the end of the stage.
-            let sumcheck_claims = [
+            let mut sumcheck_claims = vec![
                 SumcheckClaim::new(
                     ram_read_write_claims.sumcheck.rounds,
                     ram_read_write_claims.sumcheck.degree,
@@ -519,6 +589,14 @@ where
                     instruction_claim_reduction_claims.sumcheck.degree,
                     input_claims.instruction_claim_reduction,
                 ),
+            ];
+            #[cfg(feature = "field-inline")]
+            sumcheck_claims.push(SumcheckClaim::new(
+                field_registers_claim_reduction_claims.sumcheck.rounds,
+                field_registers_claim_reduction_claims.sumcheck.degree,
+                input_claims.field_registers_claim_reduction,
+            ));
+            sumcheck_claims.extend([
                 SumcheckClaim::new(
                     ram_raf_evaluation_claims.sumcheck.rounds,
                     ram_raf_evaluation_claims.sumcheck.degree,
@@ -529,27 +607,27 @@ where
                     ram_output_check_claims.sumcheck.degree,
                     input_claims.ram_output_check,
                 ),
-            ];
+            ]);
             let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
                 &sumcheck_claims,
                 &proof.stages.stage2_sumcheck_proof,
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RamReadWriteChecking,
+                stage: JoltRelationId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
 
             let ram_read_write_point = batch
                 .try_instance_point(ram_read_write_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let ram_read_write_opening_point = read_write_dimensions
                 .read_write_opening_point(ram_read_write_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let eq_cycle = try_eq_mle(
@@ -557,7 +635,7 @@ where
                 &ram_read_write_opening_point.r_cycle,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamReadWriteChecking,
+                stage: JoltRelationId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
             let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
@@ -581,92 +659,141 @@ where
             let product_point = batch
                 .try_instance_point(product_remainder_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: error.to_string(),
                 })?;
             let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
-            let product_lagrange_weights = centered_lagrange_evals_array::<
-                PCS::Field,
-                PRODUCT_UNISKIP_DOMAIN_SIZE,
-            >(product_uniskip_challenge)
+            let product_lagrange_weights = centered_lagrange_evals(
+                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+                product_uniskip_challenge,
+            )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::SpartanProductVirtualization,
+                stage: JoltRelationId::SpartanProductVirtualization,
                 reason: error.to_string(),
             })?;
             let product_tau_high_bound = centered_lagrange_kernel(
-                PRODUCT_UNISKIP_DOMAIN_SIZE,
+                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
                 product_uniskip.tau_high,
                 product_uniskip_challenge,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::SpartanProductVirtualization,
+                stage: JoltRelationId::SpartanProductVirtualization,
                 reason: error.to_string(),
             })?;
             let product_tau_low_eq = try_eq_mle(&product_uniskip.tau_low, &product_opening_point)
                 .map_err(|error| {
                 VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::SpartanProductVirtualization,
+                    stage: JoltRelationId::SpartanProductVirtualization,
                     reason: error.to_string(),
                 }
             })?;
-            let product_publics = SpartanProductPublicValues {
-                lagrange_weights: product_lagrange_weights,
-                tau_kernel: product_tau_high_bound * product_tau_low_eq,
+            let product_tau_kernel = product_tau_high_bound * product_tau_low_eq;
+            let [instruction_product_weight, should_branch_weight, should_jump_weight, rest @ ..] =
+                product_lagrange_weights.as_slice()
+            else {
+                return Err(VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::SpartanProductVirtualization,
+                    reason: format!(
+                        "Stage 2 product remainder expected {} weights, got {}",
+                        SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+                        product_lagrange_weights.len()
+                    ),
+                });
             };
-            let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
-                product_remainder_output_openings();
-            let product_remainder_output =
-                product_remainder_claims.output.expression().try_evaluate(
-                    |id| match *id {
-                        id if id == product_left_instruction_input => Ok(claims
-                            .batch_outputs
-                            .product_remainder
-                            .left_instruction_input),
-                        id if id == product_right_instruction_input => Ok(claims
-                            .batch_outputs
-                            .product_remainder
-                            .right_instruction_input),
-                        id if id == product_jump_flag => {
-                            Ok(claims.batch_outputs.product_remainder.jump_flag)
+            let product_left_base = *instruction_product_weight
+                * claims
+                    .batch_outputs
+                    .product_remainder
+                    .left_instruction_input
+                + *should_branch_weight * claims.batch_outputs.product_remainder.lookup_output
+                + *should_jump_weight * claims.batch_outputs.product_remainder.jump_flag;
+            let product_right_base = *instruction_product_weight
+                * claims
+                    .batch_outputs
+                    .product_remainder
+                    .right_instruction_input
+                + *should_branch_weight * claims.batch_outputs.product_remainder.branch_flag
+                + *should_jump_weight
+                    * (PCS::Field::from_u64(1)
+                        - claims.batch_outputs.product_remainder.next_is_noop);
+            #[cfg(feature = "field-inline")]
+            let (product_left, product_right) = {
+                let [field_product_weight, field_inv_product_weight] = rest else {
+                    return Err(VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::SpartanProductVirtualization,
+                        reason: format!(
+                            "Stage 2 field product remainder expected two field weights, got {}",
+                            rest.len()
+                        ),
+                    });
+                };
+                (
+                    product_left_base
+                        + (*field_product_weight + *field_inv_product_weight)
+                            * claims.batch_outputs.field_inline.product.field_rs1_value,
+                    product_right_base
+                        + *field_product_weight
+                            * claims.batch_outputs.field_inline.product.field_rs2_value
+                        + *field_inv_product_weight
+                            * claims.batch_outputs.field_inline.product.field_rd_value,
+                )
+            };
+            #[cfg(not(feature = "field-inline"))]
+            let (product_left, product_right) = {
+                if !rest.is_empty() {
+                    return Err(VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::SpartanProductVirtualization,
+                        reason: format!(
+                            "Stage 2 product remainder expected no field weights, got {}",
+                            rest.len()
+                        ),
+                    });
+                }
+                (product_left_base, product_right_base)
+            };
+            let product_remainder_output = product_tau_kernel * product_left * product_right;
+
+            #[cfg(feature = "field-inline")]
+            let (
+                field_registers_claim_reduction_point,
+                field_registers_claim_reduction_opening_point,
+                field_registers_claim_reduction_output,
+            ) = {
+                let point = batch
+                    .try_instance_point(field_registers_claim_reduction_claims.sumcheck.rounds)
+                    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                        stage: JoltRelationId::SpartanProductVirtualization,
+                        reason: error.to_string(),
+                    })?;
+                let opening_point = point.iter().rev().copied().collect::<Vec<_>>();
+                let eq_spartan =
+                    try_eq_mle(&opening_point, &product_uniskip.tau_low).map_err(|error| {
+                        VerifierError::StageClaimPublicInputFailed {
+                            stage: JoltRelationId::SpartanProductVirtualization,
+                            reason: error.to_string(),
                         }
-                        id if id == product_write_lookup_output_to_rd => Ok(claims
-                            .batch_outputs
-                            .product_remainder
-                            .write_lookup_output_to_rd),
-                        id if id == product_lookup_output => {
-                            Ok(claims.batch_outputs.product_remainder.lookup_output)
-                        }
-                        id if id == product_branch_flag => {
-                            Ok(claims.batch_outputs.product_remainder.branch_flag)
-                        }
-                        id if id == product_next_is_noop => {
-                            Ok(claims.batch_outputs.product_remainder.next_is_noop)
-                        }
-                        id if id == product_virtual_instruction => {
-                            Ok(claims.batch_outputs.product_remainder.virtual_instruction)
-                        }
-                        _ => Ok(PCS::Field::from_u64(0)),
-                    },
-                    |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-                    |id| match id {
-                        JoltPublicId::SpartanProductVirtualization(public_id) => product_publics
-                            .value(*public_id)
-                            .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-                        _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-                    },
-                )?;
+                    })?;
+                let output = eq_spartan
+                    * (claims.batch_outputs.field_inline.product.field_rd_value
+                        + field_registers_claim_reduction_gamma
+                            * claims.batch_outputs.field_inline.product.field_rs1_value
+                        + field_registers_claim_reduction_gamma
+                            * field_registers_claim_reduction_gamma
+                            * claims.batch_outputs.field_inline.product.field_rs2_value);
+                (point.to_vec(), opening_point, output)
+            };
 
             let instruction_point = batch
                 .try_instance_point(instruction_claim_reduction_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::InstructionClaimReduction,
+                    stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
                 })?;
             let instruction_opening_point =
                 instruction_point.iter().rev().copied().collect::<Vec<_>>();
             let eq_spartan = try_eq_mle(&instruction_opening_point, &product_uniskip.tau_low)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::InstructionClaimReduction,
+                    stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
                 })?;
             let product_and_instruction_points_match =
@@ -743,20 +870,20 @@ where
             let phase1_offset = batch
                 .try_round_offset(active_stage2_rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?
                 + read_write_dimensions.phase1_num_rounds();
             let ram_raf_evaluation_point = batch
                 .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_raf_address_point = read_write_dimensions
                 .address_opening_point(ram_raf_evaluation_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_raf_opening_point = [
@@ -766,7 +893,7 @@ where
             .concat();
             if ram_raf_address_point.len() != log_k {
                 return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: format!(
                         "RAM RAF address point length mismatch: expected {log_k}, got {}",
                         ram_raf_address_point.len()
@@ -801,24 +928,24 @@ where
             let ram_output_check_point = batch
                 .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let ram_output_address_point = read_write_dimensions
                 .address_opening_point(ram_output_check_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let public_memory = PublicIoMemory::new(&checked.public_io).map_err(|error| {
                 VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 }
             })?;
             let output_eq = try_eq_mle(&output_address_challenges, &ram_output_address_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let output_mask = range_mask_mle_msb(
@@ -827,13 +954,13 @@ where
                 &ram_output_address_point,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltStageId::RamOutputCheck,
+                stage: JoltRelationId::RamOutputCheck,
                 reason: error.to_string(),
             })?;
             let io_num_vars = public_memory.io_num_vars();
             if ram_output_address_point.len() < io_num_vars {
                 return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltStageId::RamOutputCheck,
+            stage: JoltRelationId::RamOutputCheck,
             reason: format!(
                 "RAM output address point is too short for public IO: address has {} variables, IO needs {io_num_vars}",
                 ram_output_address_point.len()
@@ -877,30 +1004,54 @@ where
                 ram_read_write: ram_read_write_output,
                 product_remainder: product_remainder_output,
                 instruction_claim_reduction: instruction_claim_reduction_output,
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction: field_registers_claim_reduction_output,
                 ram_raf_evaluation: ram_raf_evaluation_output,
                 ram_output_check: ram_output_check_output,
             };
 
             // Reconstruct the final batched evaluation claim in the same order used
             // when the five input claims were batched.
-            let [ram_read_write_coefficient, product_coefficient, instruction_coefficient, ram_raf_coefficient, ram_output_coefficient] =
-                batch.batching_coefficients.as_slice()
-            else {
-                return Err(VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
-                    reason: "Stage 2 batch verifier returned the wrong number of coefficients"
-                        .to_string(),
-                });
+            let coefficients = batch.batching_coefficients.as_slice();
+            #[cfg(not(feature = "field-inline"))]
+            let expected_final_claim = {
+                let [ram_read_write_coefficient, product_coefficient, instruction_coefficient, ram_raf_coefficient, ram_output_coefficient] =
+                    coefficients
+                else {
+                    return Err(VerifierError::StageClaimSumcheckFailed {
+                        stage: JoltRelationId::RamReadWriteChecking,
+                        reason: "Stage 2 batch verifier returned the wrong number of coefficients"
+                            .to_string(),
+                    });
+                };
+                *ram_read_write_coefficient * expected_outputs.ram_read_write
+                    + *product_coefficient * expected_outputs.product_remainder
+                    + *instruction_coefficient * expected_outputs.instruction_claim_reduction
+                    + *ram_raf_coefficient * expected_outputs.ram_raf_evaluation
+                    + *ram_output_coefficient * expected_outputs.ram_output_check
             };
-            let expected_final_claim = *ram_read_write_coefficient
-                * expected_outputs.ram_read_write
-                + *product_coefficient * expected_outputs.product_remainder
-                + *instruction_coefficient * expected_outputs.instruction_claim_reduction
-                + *ram_raf_coefficient * expected_outputs.ram_raf_evaluation
-                + *ram_output_coefficient * expected_outputs.ram_output_check;
+            #[cfg(feature = "field-inline")]
+            let expected_final_claim = {
+                let [ram_read_write_coefficient, product_coefficient, instruction_coefficient, field_registers_coefficient, ram_raf_coefficient, ram_output_coefficient] =
+                    coefficients
+                else {
+                    return Err(VerifierError::StageClaimSumcheckFailed {
+                        stage: JoltRelationId::RamReadWriteChecking,
+                        reason: "Stage 2 batch verifier returned the wrong number of coefficients"
+                            .to_string(),
+                    });
+                };
+                *ram_read_write_coefficient * expected_outputs.ram_read_write
+                    + *product_coefficient * expected_outputs.product_remainder
+                    + *instruction_coefficient * expected_outputs.instruction_claim_reduction
+                    + *field_registers_coefficient
+                        * expected_outputs.field_registers_claim_reduction
+                    + *ram_raf_coefficient * expected_outputs.ram_raf_evaluation
+                    + *ram_output_coefficient * expected_outputs.ram_output_check
+            };
             if batch.reduction.value != expected_final_claim {
                 return Err(VerifierError::StageClaimOutputMismatch {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                 });
             }
 
@@ -948,6 +1099,21 @@ where
                 b"opening_claim",
                 &claims.batch_outputs.product_remainder.virtual_instruction,
             );
+            #[cfg(feature = "field-inline")]
+            {
+                transcript.append_labeled(
+                    b"opening_claim",
+                    &claims.batch_outputs.field_inline.product.field_rs1_value,
+                );
+                transcript.append_labeled(
+                    b"opening_claim",
+                    &claims.batch_outputs.field_inline.product.field_rs2_value,
+                );
+                transcript.append_labeled(
+                    b"opening_claim",
+                    &claims.batch_outputs.field_inline.product.field_rd_value,
+                );
+            }
             transcript.append_labeled(
                 b"opening_claim",
                 &claims
@@ -973,6 +1139,8 @@ where
                     expected_final_claim,
                     ram_read_write_gamma,
                     instruction_gamma,
+                    #[cfg(feature = "field-inline")]
+                    field_registers_claim_reduction_gamma,
                     output_address_challenges,
                     ram_read_write: VerifiedStage2Sumcheck {
                         input_claim: input_claims.ram_read_write,
@@ -992,6 +1160,13 @@ where
                         opening_point: instruction_opening_point,
                         expected_output_claim: expected_outputs.instruction_claim_reduction,
                     },
+                    #[cfg(feature = "field-inline")]
+                    field_registers_claim_reduction: VerifiedStage2Sumcheck {
+                        input_claim: input_claims.field_registers_claim_reduction,
+                        sumcheck_point: field_registers_claim_reduction_point,
+                        opening_point: field_registers_claim_reduction_opening_point,
+                        expected_output_claim: expected_outputs.field_registers_claim_reduction,
+                    },
                     ram_raf_evaluation: VerifiedStage2Sumcheck {
                         input_claim: input_claims.ram_raf_evaluation,
                         sumcheck_point: ram_raf_evaluation_point.to_vec(),
@@ -1009,7 +1184,7 @@ where
             })
         }
         (Deps::Zk { .. }, Stage2ProductUniSkip::Zk(product_uniskip)) => {
-            let statements = [
+            let mut statements = vec![
                 SumcheckStatement::new(
                     ram_read_write_claims.sumcheck.rounds,
                     ram_read_write_claims.sumcheck.degree,
@@ -1022,6 +1197,13 @@ where
                     instruction_claim_reduction_claims.sumcheck.rounds,
                     instruction_claim_reduction_claims.sumcheck.degree,
                 ),
+            ];
+            #[cfg(feature = "field-inline")]
+            statements.push(SumcheckStatement::new(
+                field_registers_claim_reduction_claims.sumcheck.rounds,
+                field_registers_claim_reduction_claims.sumcheck.degree,
+            ));
+            statements.extend([
                 SumcheckStatement::new(
                     ram_raf_evaluation_claims.sumcheck.rounds,
                     ram_raf_evaluation_claims.sumcheck.degree,
@@ -1030,14 +1212,14 @@ where
                     ram_output_check_claims.sumcheck.rounds,
                     ram_output_check_claims.sumcheck.degree,
                 ),
-            ];
+            ]);
             let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
                 &statements,
                 &proof.stages.stage2_sumcheck_proof,
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltStageId::RamReadWriteChecking,
+                stage: JoltRelationId::RamReadWriteChecking,
                 reason: error.to_string(),
             })?;
             let output_claims = committed::verify_output_claim_commitments(
@@ -1046,45 +1228,56 @@ where
                     proof: &proof.stages.stage2_sumcheck_proof,
                     proof_label: "stage2_sumcheck_proof",
                     output_claim_count: STAGE2_BATCH_OUTPUT_CLAIMS,
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                 },
             )?;
             let ram_read_write_point = consistency
                 .try_instance_point(ram_read_write_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
             let ram_read_write_opening_point = read_write_dimensions
                 .read_write_opening_point(&ram_read_write_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamReadWriteChecking,
+                    stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
+            #[cfg(feature = "field-inline")]
+            let field_registers_claim_reduction_opening_point = consistency
+                .try_instance_point(field_registers_claim_reduction_claims.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltRelationId::SpartanProductVirtualization,
+                    reason: error.to_string(),
+                })?
+                .iter()
+                .rev()
+                .copied()
+                .collect::<Vec<_>>();
             let active_stage2_rounds = log_t + log_k;
             let phase1_offset =
                 consistency
                     .try_round_offset(active_stage2_rounds)
                     .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                        stage: JoltStageId::RamOutputCheck,
+                        stage: JoltRelationId::RamOutputCheck,
                         reason: error.to_string(),
                     })?
                     + read_write_dimensions.phase1_num_rounds();
             let ram_raf_evaluation_point = consistency
                 .try_instance_point_at(phase1_offset, ram_raf_evaluation_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             let ram_raf_address_point = read_write_dimensions
                 .address_opening_point(&ram_raf_evaluation_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
             if ram_raf_address_point.len() != log_k {
                 return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamRafEvaluation,
+                    stage: JoltRelationId::RamRafEvaluation,
                     reason: format!(
                         "RAM RAF address point length mismatch: expected {log_k}, got {}",
                         ram_raf_address_point.len()
@@ -1099,13 +1292,13 @@ where
             let ram_output_check_point = consistency
                 .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
             let ram_output_check_opening_point = read_write_dimensions
                 .address_opening_point(&ram_output_check_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltStageId::RamOutputCheck,
+                    stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
 
@@ -1114,6 +1307,8 @@ where
                 batching_coefficients: consistency.batching_coefficients.clone(),
                 ram_read_write_gamma,
                 instruction_gamma,
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction_gamma,
                 output_address_challenges,
                 ram_val_check_inputs: Stage2RamValCheckInputs {
                     ram_read_write_opening_point: ram_read_write_opening_point
@@ -1124,6 +1319,10 @@ where
                 ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs {
                     ram_raf_evaluation_opening_point: ram_raf_opening_point,
                     ram_read_write_opening_point: ram_read_write_opening_point.opening_point,
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: super::outputs::FieldInlineStage2ZkOutput {
+                    field_registers_claim_reduction_opening_point,
                 },
                 consistency,
                 output_claims,

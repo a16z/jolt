@@ -1,6 +1,7 @@
 //! Typed outputs produced by stage 5 verification.
 
 use jolt_field::Field;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -30,6 +31,8 @@ pub struct Stage5ZkOutput<F: Field, C> {
     pub instruction_read_raf: InstructionReadRafPublicOutput<F>,
     pub ram_ra_claim_reduction: Stage5SumcheckPublicOutput<F>,
     pub registers_val_evaluation: Stage5SumcheckPublicOutput<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage5ZkOutput<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,12 +44,14 @@ pub enum Stage5Output<F: Field, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedStage5Batch<F: Field> {
     pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub instruction_read_raf: VerifiedInstructionReadRafSumcheck<F>,
     pub ram_ra_claim_reduction: VerifiedStage5Sumcheck<F>,
     pub registers_val_evaluation: VerifiedStage5Sumcheck<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_val_evaluation: VerifiedStage5Sumcheck<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,4 +90,10 @@ pub struct VerifiedStage5Sumcheck<F: Field> {
 pub struct Stage5SumcheckPublicOutput<F: Field> {
     pub sumcheck_point: Vec<F>,
     pub opening_point: Vec<F>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldInlineStage5ZkOutput<F: Field> {
+    pub field_registers_val_evaluation: Stage5SumcheckPublicOutput<F>,
 }

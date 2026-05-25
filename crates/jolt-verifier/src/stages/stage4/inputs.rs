@@ -43,6 +43,8 @@ pub fn deps<'a, F: Field, C>(
 pub struct Stage4Claims<F: Field> {
     pub advice: RamValCheckAdviceOpeningClaims<F>,
     pub registers_read_write: RegistersReadWriteOutputOpeningClaims<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage4Claims<F>,
     pub ram_val_check: RamValCheckOutputOpeningClaims<F>,
 }
 
@@ -61,6 +63,24 @@ pub struct RegistersReadWriteOutputOpeningClaims<F: Field> {
     pub rs2_ra: F,
     pub rd_wa: F,
     pub rd_inc: F,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldInlineStage4Claims<F: Field> {
+    pub field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims<F>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldRegistersReadWriteOutputOpeningClaims<F: Field> {
+    pub field_registers_val: F,
+    pub field_rs1_ra: F,
+    pub field_rs2_ra: F,
+    pub field_rd_wa: F,
+    pub field_rd_inc: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

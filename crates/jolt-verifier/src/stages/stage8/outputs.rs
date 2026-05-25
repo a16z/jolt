@@ -1,25 +1,47 @@
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineOpeningId;
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
 use jolt_openings::VerifierOpeningClaim;
-use jolt_poly::Point;
+use jolt_poly::{Point, HIGH_TO_LOW};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage8OpeningId {
+    Jolt(JoltOpeningId),
+    #[cfg(feature = "field-inline")]
+    FieldInline(FieldInlineOpeningId),
+}
+
+impl From<JoltOpeningId> for Stage8OpeningId {
+    fn from(id: JoltOpeningId) -> Self {
+        Self::Jolt(id)
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl From<FieldInlineOpeningId> for Stage8OpeningId {
+    fn from(id: FieldInlineOpeningId) -> Self {
+        Self::FieldInline(id)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Stage8ClearOutput<F: Field, C> {
     pub opening_claims: Vec<VerifierOpeningClaim<F, C>>,
-    pub opening_ids: Vec<JoltOpeningId>,
+    pub opening_ids: Vec<Stage8OpeningId>,
     pub constraint_coefficients: Vec<F>,
-    pub opening_point: Point<F>,
-    pub pcs_opening_point: Point<F>,
+    pub opening_point: Point<HIGH_TO_LOW, F>,
+    pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
     pub joint_claim: F,
     pub joint_commitment: C,
 }
 
 #[derive(Clone, Debug)]
 pub struct Stage8ZkOutput<F: Field, C, H> {
-    pub opening_ids: Vec<JoltOpeningId>,
+    pub opening_ids: Vec<Stage8OpeningId>,
     pub constraint_coefficients: Vec<F>,
-    pub opening_point: Point<F>,
-    pub pcs_opening_point: Point<F>,
+    pub opening_point: Point<HIGH_TO_LOW, F>,
+    pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
     pub joint_commitment: C,
     pub hiding_evaluation_commitment: H,
 }

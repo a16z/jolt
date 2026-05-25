@@ -164,6 +164,8 @@ pub struct JoltCommitments<C> {
     pub rd_inc: C,
     pub ram_inc: C,
     pub ra: JoltRaCommitments<C>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineCommitments<C>,
 }
 
 pub struct JoltRaCommitments<C> {
@@ -171,7 +173,30 @@ pub struct JoltRaCommitments<C> {
     pub ram: Vec<C>,
     pub bytecode: Vec<C>,
 }
+
+#[cfg(feature = "field-inline")]
+pub struct FieldInlineCommitments<C> {
+    pub field_registers: FieldRegistersCommitments<C>,
+}
+
+#[cfg(feature = "field-inline")]
+pub struct FieldRegistersCommitments<C> {
+    pub rd_inc: C,
+}
 ```
+
+Field-inline register access selectors are not a commitment payload. The
+`FieldRs1Ra`, `FieldRs2Ra`, and `FieldRdWa` openings are virtual field-inline
+claims. When field inline is enabled, Stage 6 extends `BytecodeReadRaf` so those
+virtual openings are checked against the field operands in the selected
+bytecode row and are anchored through the existing committed
+`BytecodeRa(i)@BytecodeReadRaf -> HammingWeightClaimReduction -> Stage 8` path.
+There is no `FieldRegistersRa(i)` commitment.
+
+Verifier preprocessing carries the field-inline bytecode side table when field
+inline is enabled. The side table is parallel to ordinary bytecode rows and
+contains the field op flags plus optional FR `rd`/`rs1`/`rs2` operand slots.
+Stage 6 treats missing field-inline bytecode metadata as a verifier error.
 
 `proof.rs` should not own commitment ordering helpers. The proof payload model
 only stores the native shape. `compat/` owns legacy vector decoding, the

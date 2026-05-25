@@ -6,12 +6,12 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
-use crate::{challenge, opening, public};
+use crate::{challenge, opening, public, SameEvaluationAs};
 
 use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltChallengeId, JoltCommittedPolynomial,
-    JoltConsistencyClaim, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, JoltVirtualPolynomial,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 
@@ -118,10 +118,9 @@ where
         JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
         JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
     ])
-    .with_consistency([JoltConsistencyClaim::same_evaluation(
-        unexpanded_pc_spartan_shift(),
-        unexpanded_pc_instruction_input(),
-    )])
+    .with_consistency([
+        unexpanded_pc_spartan_shift().same_evaluation_as(unexpanded_pc_instruction_input())
+    ])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -268,7 +267,10 @@ where
         }
     }
 
-    for (stage_value, stage_cycle_point) in stage_values.iter_mut().zip(inputs.stage_cycle_points) {
+    for (stage_value, stage_cycle_point) in stage_values
+        .iter_mut()
+        .zip(inputs.stage_cycle_points.into_iter())
+    {
         *stage_value *= EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle);
     }
 

@@ -1,10 +1,13 @@
 //! Typed outputs produced by stage 1 verification.
 
 use jolt_field::Field;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
+#[cfg(feature = "field-inline")]
+use super::inputs::FieldInlineStage1Claims;
 use super::inputs::SpartanOuterClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +24,8 @@ pub struct Stage1ClearOutput<F: Field> {
     pub uniskip: VerifiedSpartanOuterSumcheck<F>,
     pub remainder: VerifiedSpartanOuterSumcheck<F>,
     pub outer: SpartanOuterClaims<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage1Claims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,7 +46,7 @@ pub enum Stage1Output<F: Field, C> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedSpartanOuterSumcheck<F: Field> {
     pub input_claim: F,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
     pub sumcheck_final_claim: F,
     pub expected_output_claim: F,
 }
