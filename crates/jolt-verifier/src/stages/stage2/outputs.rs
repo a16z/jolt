@@ -1,6 +1,7 @@
 //! Typed outputs produced by stage 2 verification.
 
 use jolt_field::Field;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -71,7 +72,7 @@ pub struct VerifiedProductUniSkip<F: Field> {
     pub tau_low: Vec<F>,
     pub tau_high: F,
     pub input_claim: F,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
     pub sumcheck_final_claim: F,
     pub expected_output_claim: F,
 }
@@ -79,7 +80,7 @@ pub struct VerifiedProductUniSkip<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedStage2Batch<F: Field> {
     pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: jolt_poly::Point<F>,
+    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub ram_read_write_gamma: F,

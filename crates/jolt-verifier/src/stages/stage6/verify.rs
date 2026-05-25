@@ -1835,7 +1835,7 @@ fn advice_cycle_phase_input<F: Field>(
     stage4: &Stage4ClearOutput<F>,
     kind: JoltAdviceKind,
 ) -> Result<F, VerifierError> {
-    let [advice_input] = advice::cycle_phase_input_openings(kind);
+    let advice_input = advice::ram_val_check_advice_opening(kind);
     claim.input.expression().try_evaluate(
         |id| match *id {
             id if id == advice_input => stage4

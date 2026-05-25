@@ -9,7 +9,10 @@ truth.
 
 - `refactor/audit-prep` is the source branch.
 - Stack branches are disposable materializations of slices from that source.
-- Each PR branch is based on the previous PR branch.
+- Open stack PR branches are disposable materializations of slices from that
+  source. Merged stack rows stay in `main` and are not rebuilt.
+- Each open PR branch is based on the previous open PR branch, with the first
+  open row based on `origin/main`.
 - Root `Cargo.toml` and `Cargo.lock` are generated incrementally per PR. Do not
   restore the whole root manifest from `refactor/audit-prep` into early branches.
 - Open every PR as draft until the verifier frontier is complete.
@@ -27,8 +30,8 @@ truth.
 | 06 | `stack/06-jolt-r1cs-builder-lowering` | `stack/05-jolt-claims-crate` | `jolt-r1cs` builder/lowering/expression integration |
 | 07 | `stack/07-committed-sumcheck-r1cs` | `stack/06-jolt-r1cs-builder-lowering` | committed sumcheck messages, domains, verifier changes, R1CS feature |
 | 08 | `stack/08-jolt-blindfold-crate` | `stack/07-committed-sumcheck-r1cs` | new generic `jolt-blindfold` crate |
-| 08a | `stack/08a-jolt-core-blindfold-hardening` | `stack/08-jolt-blindfold-crate` | `jolt-core` BlindFold construction hardening and ZK fixture config |
-| 09 | `stack/09-jolt-verifier-crate` | `stack/08a-jolt-core-blindfold-hardening` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures |
+| 08a | `stack/08a-jolt-core-blindfold-hardening` | `stack/08-jolt-blindfold-crate` | `jolt-core` BlindFold construction hardening |
+| 09 | `stack/09-jolt-verifier-crate` | `stack/08a-jolt-core-blindfold-hardening` | new `jolt-verifier` crate, verifier spec, boundary checks, fixtures, and verifier test config |
 | 10 | `stack/10-jolt-prover-spec` | `stack/09-jolt-verifier-crate` | `specs/jolt-prover-model-crate.md` |
 | 11 | `stack/11-extended-jolt-field-inline-wrapper-spec` | `stack/10-jolt-prover-spec` | extended Jolt / field inline / wrapper spec plus supporting recursion reference doc |
 | 12 | `stack/12-selected-verifier-integration-spec` | `stack/11-extended-jolt-field-inline-wrapper-spec` | selected verifier integration spec |
@@ -45,10 +48,13 @@ verifier frontier from `refactor/audit-prep`.
 
 Pushing to `origin/refactor/audit-prep` runs
 [`.github/workflows/refactor-audit-stack.yml`](.github/workflows/refactor-audit-stack.yml).
+The workflow starts at the first open stack row (`07` at the moment). Rows
+`00` through `06` have merged to `main` and are intentionally not rebuilt.
+
 The workflow:
 
 1. checks out the pushed `refactor/audit-prep` commit;
-2. rebuilds each `stack/*` branch from the previous stack branch;
+2. rebuilds each open `stack/*` branch from the previous open stack branch;
 3. restores the owned paths from `origin/refactor/audit-prep`;
 4. applies the incremental root manifest changes for that stack point;
 5. runs `cargo metadata` to refresh `Cargo.lock`;
@@ -73,7 +79,8 @@ to the same row as the relevant spec:
 - PR 14: Dory-assist claims under
   `jolt-claims::protocols::dory_assist`, `jolt-hyrax`, Grumpkin/Fq crypto
   support for Hyrax row commitments, the Dory-assist verifier crate,
-  Dory-specific PCS-assist verifier hooks, and Dory-assist fixtures.
+  Dory-specific PCS-assist verifier hooks, Dory-assist fixtures, and local
+  handoff artifact ignores.
 - PR 15: `jolt-wrapper`, wrapper assembly, verifier R1CS lowering,
   variable-challenge `jolt-sumcheck::r1cs`, transcript R1CS, non-native
   `jolt-r1cs` helpers, wrapper/R1CS composition tests, and SNARK backend
@@ -108,7 +115,7 @@ Create or update one branch:
 Rebuild all stack branches from the source branch:
 
 ```bash
-./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
+./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
 ```
 
 The CI workflow runs the same command. Without `--commit`, the script leaves
@@ -126,9 +133,10 @@ crate first appears:
 - PR 08: add `crates/jolt-blindfold` to workspace members and add
   `jolt-blindfold = { path = "./crates/jolt-blindfold" }`.
 - PR 08a: no root manifest changes; this slice patches existing `jolt-core`
-  BlindFold construction and test fixture config before `jolt-verifier`.
+  BlindFold construction before `jolt-verifier`.
 - PR 09: add `crates/jolt-verifier` and `examples/advice-consumer/guest` to
-  workspace members and add `jolt-verifier = { path = "./crates/jolt-verifier" }`.
+  workspace members, add `jolt-verifier = { path = "./crates/jolt-verifier" }`,
+  and add verifier-specific test fixture config.
 - PR 13: add the `jolt-r1cs/field-inline` feature flag.
 - PR 14: when present in the source ref, add `crates/jolt-hyrax` and
   `crates/jolt-dory-assist-verifier` to workspace members and add their
@@ -189,7 +197,7 @@ extension's submit command from the final stack branch.
    locally:
 
    ```bash
-   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep
+   ./stack/update-stack.sh --apply --rebuild --commit --push --cargo-metadata --check-coverage --from origin/refactor/audit-prep --start-at 07
    ```
 
 4. Compare the stack tip to the source branch:

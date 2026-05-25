@@ -1,6 +1,6 @@
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
-use jolt_field::{Field, FieldCore};
-use jolt_poly::{EqPolynomial, Point};
+use jolt_field::{Field, FieldCore, RingAccumulator, WithAccumulator};
+use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -25,6 +25,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let folded = folded_instance_from_proof(protocol, proof, transcript)?;
     ensure_len(
@@ -141,6 +142,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let row_vars = log2_power_of_two::<F>("error row count", protocol.dimensions.error.row_count)?;
     let entry_vars = log2_power_of_two::<F>("error row length", protocol.dimensions.error.row_len)?;
@@ -200,7 +202,9 @@ where
         &proof.error_opening,
     );
 
-    Ok(OuterCheck { point: outer.point })
+    Ok(OuterCheck {
+        point: outer.point.into_vec(),
+    })
 }
 
 fn verify_folded_eval_commitments<F, VC>(
@@ -240,6 +244,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let coordinates = protocol.final_opening_witness_coordinates()?;
     ensure_len(
@@ -344,6 +349,7 @@ where
     F: Field,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let row_vars =
         log2_power_of_two::<F>("witness row count", folded.witness_row_commitments.len())?;
@@ -372,6 +378,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let ra = transcript.challenge();
     let rb = transcript.challenge();
@@ -438,7 +445,7 @@ where
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OuterCheck<F> {
-    point: Point<F>,
+    point: Vec<F>,
 }
 
 fn append_vector_opening<F, T>(

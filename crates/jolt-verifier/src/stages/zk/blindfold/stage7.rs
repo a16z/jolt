@@ -72,16 +72,12 @@ where
     let mut output_ids = output_openings.all();
     if let Some(layout) = trusted_layout {
         if layout.dimensions().has_address_phase() {
-            output_ids.extend(advice::address_phase_output_openings(
-                JoltAdviceKind::Trusted,
-            ));
+            output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted));
         }
     }
     if let Some(layout) = untrusted_layout {
         if layout.dimensions().has_address_phase() {
-            output_ids.extend(advice::address_phase_output_openings(
-                JoltAdviceKind::Untrusted,
-            ));
+            output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted));
         }
     }
     add_batched_stage(
