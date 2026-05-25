@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
-ark-bn254 = { workspace = true, features = ["scalar_field"], optional = true }
+ark-bn254 = { workspace = true, features = ["curve"], optional = true }
 num-traits = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 allocative = { workspace = true, optional = true }

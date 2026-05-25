@@ -2842,6 +2842,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
+ "ark-grumpkin",
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "bincode 2.0.1",
@@ -2955,6 +2956,23 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "jolt-hyrax"
+version = "0.1.0"
+dependencies = [
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

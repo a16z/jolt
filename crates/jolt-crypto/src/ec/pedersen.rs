@@ -1,4 +1,3 @@
-use jolt_field::Fr;
 use serde::{Deserialize, Serialize};
 
 use super::group::JoltGroup;
@@ -67,7 +66,7 @@ impl<G: JoltGroup> Commitment for Pedersen<G> {
 }
 
 impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
-    type Field = Fr;
+    type Field = G::ScalarField;
     type Setup = PedersenSetup<G>;
 
     #[inline]
@@ -87,7 +86,7 @@ impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
     /// # Panics
     ///
     /// Panics if `values.len() > Self::capacity(setup)`.
-    fn commit(setup: &Self::Setup, values: &[Fr], blinding: &Fr) -> G {
+    fn commit(setup: &Self::Setup, values: &[Self::Field], blinding: &Self::Field) -> G {
         assert!(
             values.len() <= setup.message_generators.len(),
             "values length ({}) exceeds generator count ({})",
@@ -99,7 +98,12 @@ impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
         msg + blind
     }
 
-    fn verify(setup: &Self::Setup, commitment: &G, values: &[Fr], blinding: &Fr) -> bool {
+    fn verify(
+        setup: &Self::Setup,
+        commitment: &G,
+        values: &[Self::Field],
+        blinding: &Self::Field,
+    ) -> bool {
         *commitment == Self::commit(setup, values, blinding)
     }
 }

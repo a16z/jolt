@@ -22,6 +22,7 @@
 //! # BN254 types (feature `bn254`)
 //!
 //! - [`Fr`] — BN254 scalar field element
+//! - [`Fq`] — BN254 base field element
 //! - [`WideAccumulator`] — 9-limb deferred Montgomery reduction
 //!
 //! # Multi-precision arithmetic
@@ -78,5 +79,7 @@ pub mod signed;
 pub mod arkworks;
 #[cfg(feature = "bn254")]
 pub use arkworks::bn254::Fr;
+#[cfg(feature = "bn254")]
+pub use arkworks::bn254_fq::Fq;
 #[cfg(feature = "bn254")]
 pub use arkworks::wide_accumulator::WideAccumulator;

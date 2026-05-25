@@ -141,6 +141,8 @@ macro_rules! impl_jolt_group_wrapper {
         }
 
         impl $crate::JoltGroup for $wrapper {
+            type ScalarField = ::jolt_field::Fr;
+
             #[inline(always)]
             fn identity() -> Self {
                 Self(<$projective as ::ark_ff::Zero>::zero())
@@ -157,12 +159,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
 
             #[inline]
-            fn scalar_mul<F: ::jolt_field::Field>(&self, scalar: &F) -> Self {
+            fn scalar_mul(&self, scalar: &Self::ScalarField) -> Self {
                 Self(self.0 * super::field_to_fr(scalar))
             }
 
             #[inline]
-            fn msm<F: ::jolt_field::Field>(bases: &[Self], scalars: &[F]) -> Self {
+            fn msm(bases: &[Self], scalars: &[Self::ScalarField]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
                 debug_assert_eq!(bases.len(), scalars.len());
@@ -197,12 +199,12 @@ use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
-use jolt_field::Field;
+use jolt_field::{CanonicalBytes, FixedByteSize, Fr};
 
 use crate::PairingGroup;
 
 /// BN254 pairing-friendly curve.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Bn254;
 
 impl Bn254 {
@@ -257,8 +259,8 @@ impl PairingGroup for Bn254 {
 /// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.
 #[inline]
-pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
-    let mut bytes = vec![0u8; F::NUM_BYTES];
+pub(crate) fn field_to_fr(f: &Fr) -> ark_bn254::Fr {
+    let mut bytes = vec![0u8; Fr::NUM_BYTES];
     f.to_bytes_le(&mut bytes);
     #[cfg(debug_assertions)]
     {
