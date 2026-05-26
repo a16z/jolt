@@ -630,10 +630,6 @@ where
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
         std::mem::take(&mut self.pending_claim_ids)
     }
-
-    pub fn pending_claim_ids_debug(&self) -> &[OpeningId] {
-        &self.pending_claim_ids
-    }
 }
 
 impl<F> Default for VerifierOpeningAccumulator<F>
@@ -863,10 +859,6 @@ where
 
     pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
         std::mem::take(&mut self.pending_claim_ids)
-    }
-
-    pub fn pending_claim_ids_debug(&self) -> &[OpeningId] {
-        &self.pending_claim_ids
     }
 }
 
