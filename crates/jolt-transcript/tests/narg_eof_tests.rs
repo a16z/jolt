@@ -8,10 +8,7 @@
 #![cfg(feature = "transcript-blake2b")]
 #![expect(clippy::expect_used, reason = "tests")]
 
-use jolt_transcript::{
-    prover_transcript, verifier_transcript, BytesMsg, ProverTranscript, VerifierTranscript,
-    PROTOCOL_ID,
-};
+use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PROTOCOL_ID};
 use spongefish::instantiations::Blake2b512;
 
 const SESSION: &[u8] = b"narg-eof-test";
@@ -20,9 +17,9 @@ const INSTANCE: [u8; 32] = [0x42; 32];
 fn build_valid_narg(messages: &[&[u8]]) -> Vec<u8> {
     let mut prover = prover_transcript(SESSION, INSTANCE, Blake2b512::default());
     for m in messages {
-        ProverTranscript::<Blake2b512>::prover_message(&mut prover, &BytesMsg(m.to_vec()));
+        prover.prover_message(&BytesMsg(m.to_vec()));
     }
-    ProverTranscript::<Blake2b512>::narg_string(&prover).to_vec()
+    prover.narg_string().to_vec()
 }
 
 fn build_verifier(narg: &[u8]) -> spongefish::VerifierState<'_, Blake2b512> {
@@ -36,11 +33,12 @@ fn check_eof_accepts_exact_narg() {
 
     let mut verifier = build_verifier(&narg);
     for expected in msgs {
-        let got: BytesMsg = VerifierTranscript::<Blake2b512>::prover_message(&mut verifier)
+        let got: BytesMsg = verifier
+            .prover_message()
             .expect("valid prover message must deserialize");
         assert_eq!(got.as_slice(), *expected);
     }
-    VerifierTranscript::<Blake2b512>::check_eof(verifier).expect("exact narg must pass check_eof");
+    verifier.check_eof().expect("exact narg must pass check_eof");
 }
 
 #[test]
@@ -52,11 +50,12 @@ fn check_eof_rejects_trailing_garbage() {
 
     let mut verifier = build_verifier(&narg);
     for expected in msgs {
-        let got: BytesMsg = VerifierTranscript::<Blake2b512>::prover_message(&mut verifier)
+        let got: BytesMsg = verifier
+            .prover_message()
             .expect("valid prefix must deserialize");
         assert_eq!(got.as_slice(), *expected);
     }
-    let result = VerifierTranscript::<Blake2b512>::check_eof(verifier);
+    let result = verifier.check_eof();
     assert!(
         result.is_err(),
         "narg with {} trailing bytes (original_len={}) must fail check_eof",
@@ -73,10 +72,11 @@ fn check_eof_rejects_single_trailing_byte() {
         n
     };
     let mut verifier = build_verifier(&narg);
-    let _: BytesMsg = VerifierTranscript::<Blake2b512>::prover_message(&mut verifier)
+    let _: BytesMsg = verifier
+        .prover_message()
         .expect("valid prefix must deserialize");
     assert!(
-        VerifierTranscript::<Blake2b512>::check_eof(verifier).is_err(),
+        verifier.check_eof().is_err(),
         "even a single trailing byte must fail check_eof",
     );
 }
@@ -87,10 +87,11 @@ fn check_eof_rejects_unread_messages() {
     let narg = build_valid_narg(msgs);
 
     let mut verifier = build_verifier(&narg);
-    let _: BytesMsg = VerifierTranscript::<Blake2b512>::prover_message(&mut verifier)
+    let _: BytesMsg = verifier
+        .prover_message()
         .expect("first message must deserialize");
     assert!(
-        VerifierTranscript::<Blake2b512>::check_eof(verifier).is_err(),
+        verifier.check_eof().is_err(),
         "leaving prover messages unread must fail check_eof",
     );
 }
