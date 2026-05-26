@@ -5,16 +5,16 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "C: Serialize", deserialize = "C: DeserializeOwned"))]
-pub struct BlindFoldProof<F: Field, C> {
-    pub auxiliary_row_commitments: Vec<C>,
-    pub random_round_commitments: Vec<C>,
-    pub random_output_claim_row_commitments: Vec<C>,
-    pub random_auxiliary_row_commitments: Vec<C>,
-    pub random_error_row_commitments: Vec<C>,
-    pub random_eval_commitments: Vec<C>,
+#[serde(bound(serialize = "Com: Serialize", deserialize = "Com: DeserializeOwned"))]
+pub struct BlindFoldProof<F: Field, Com> {
+    pub auxiliary_row_commitments: Vec<Com>,
+    pub random_round_commitments: Vec<Com>,
+    pub random_output_claim_row_commitments: Vec<Com>,
+    pub random_auxiliary_row_commitments: Vec<Com>,
+    pub random_error_row_commitments: Vec<Com>,
+    pub random_eval_commitments: Vec<Com>,
     pub random_u: F,
-    pub cross_term_error_row_commitments: Vec<C>,
+    pub cross_term_error_row_commitments: Vec<Com>,
     pub outer_sumcheck: CompressedSumcheckProof<F>,
     pub az_rx: F,
     pub bz_rx: F,

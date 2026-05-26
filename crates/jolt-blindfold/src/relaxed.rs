@@ -4,19 +4,19 @@ use jolt_field::Field;
 use crate::RelaxedError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RelaxedInstance<F, C> {
+pub struct RelaxedInstance<F, Com> {
     pub u: F,
-    pub witness_row_commitments: Vec<C>,
-    pub error_row_commitments: Vec<C>,
-    pub eval_commitments: Vec<C>,
+    pub witness_row_commitments: Vec<Com>,
+    pub error_row_commitments: Vec<Com>,
+    pub eval_commitments: Vec<Com>,
 }
 
-impl<F, C> RelaxedInstance<F, C> {
+impl<F, Com> RelaxedInstance<F, Com> {
     pub fn new(
         u: F,
-        witness_row_commitments: Vec<C>,
-        error_row_commitments: Vec<C>,
-        eval_commitments: Vec<C>,
+        witness_row_commitments: Vec<Com>,
+        error_row_commitments: Vec<Com>,
+        eval_commitments: Vec<Com>,
     ) -> Self {
         Self {
             u,
@@ -27,15 +27,15 @@ impl<F, C> RelaxedInstance<F, C> {
     }
 }
 
-impl<F, C> RelaxedInstance<F, C>
+impl<F, Com> RelaxedInstance<F, Com>
 where
     F: Field,
-    C: HomomorphicCommitment<F>,
+    Com: HomomorphicCommitment<F>,
 {
     pub fn fold(
         &self,
         random: &Self,
-        cross_term_error_row_commitments: &[C],
+        cross_term_error_row_commitments: &[Com],
         folding_challenge: F,
     ) -> Result<Self, RelaxedError> {
         ensure_len(
@@ -66,7 +66,7 @@ where
             .witness_row_commitments
             .iter()
             .zip(&random.witness_row_commitments)
-            .map(|(real, random)| C::linear_combine(real, random, &folding_challenge))
+            .map(|(real, random)| Com::linear_combine(real, random, &folding_challenge))
             .collect();
         let error_row_commitments = self
             .error_row_commitments
@@ -74,15 +74,15 @@ where
             .zip(cross_term_error_row_commitments)
             .zip(&random.error_row_commitments)
             .map(|((real, cross_term), random)| {
-                let with_cross = C::linear_combine(real, cross_term, &folding_challenge);
-                C::linear_combine(&with_cross, random, &r_squared)
+                let with_cross = Com::linear_combine(real, cross_term, &folding_challenge);
+                Com::linear_combine(&with_cross, random, &r_squared)
             })
             .collect();
         let eval_commitments = self
             .eval_commitments
             .iter()
             .zip(&random.eval_commitments)
-            .map(|(real, random)| C::linear_combine(real, random, &folding_challenge))
+            .map(|(real, random)| Com::linear_combine(real, random, &folding_challenge))
             .collect();
 
         Ok(Self {

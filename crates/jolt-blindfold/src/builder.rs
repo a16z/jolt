@@ -10,14 +10,14 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct BlindFoldProtocolBuilder<F, O, C, P = (), Ch = usize> {
-    stages: Vec<BlindFoldStage<F, O, C, P, Ch>>,
-    final_openings: Vec<FinalOpeningBinding<F, O, C>>,
+pub struct BlindFoldProtocolBuilder<F, O, Com, P = (), Ch = usize> {
+    stages: Vec<BlindFoldStage<F, O, Com, P, Ch>>,
+    final_openings: Vec<FinalOpeningBinding<F, O, Com>>,
     publics: Vec<(P, F)>,
     challenges: Vec<(Ch, F)>,
 }
 
-impl<F, O, C, P, Ch> BlindFoldProtocolBuilder<F, O, C, P, Ch> {
+impl<F, O, Com, P, Ch> BlindFoldProtocolBuilder<F, O, Com, P, Ch> {
     pub fn new() -> Self {
         Self {
             stages: Vec::new(),
@@ -37,7 +37,7 @@ impl<F, O, C, P, Ch> BlindFoldProtocolBuilder<F, O, C, P, Ch> {
         self
     }
 
-    pub fn stage(self, name: impl Into<String>) -> BlindFoldStageBuilder<F, O, C, P, Ch> {
+    pub fn stage(self, name: impl Into<String>) -> BlindFoldStageBuilder<F, O, Com, P, Ch> {
         BlindFoldStageBuilder::new(self, name.into())
     }
 
@@ -45,7 +45,7 @@ impl<F, O, C, P, Ch> BlindFoldProtocolBuilder<F, O, C, P, Ch> {
         mut self,
         opening_ids: Vec<O>,
         coefficients: Vec<F>,
-        evaluation_commitment: C,
+        evaluation_commitment: Com,
     ) -> Self {
         self.final_openings.push(FinalOpeningBinding::new(
             opening_ids,
@@ -56,40 +56,40 @@ impl<F, O, C, P, Ch> BlindFoldProtocolBuilder<F, O, C, P, Ch> {
     }
 }
 
-impl<F, O, C, P, Ch> Default for BlindFoldProtocolBuilder<F, O, C, P, Ch> {
+impl<F, O, Com, P, Ch> Default for BlindFoldProtocolBuilder<F, O, Com, P, Ch> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F, O, C, P, Ch> BlindFoldProtocolBuilder<F, O, C, P, Ch>
+impl<F, O, Com, P, Ch> BlindFoldProtocolBuilder<F, O, Com, P, Ch>
 where
     F: Field + Clone,
     O: Clone + PartialEq,
-    C: Clone,
+    Com: Clone,
     P: Clone + PartialEq,
     Ch: Clone + PartialEq,
 {
-    pub fn build(self) -> Result<BlindFoldProtocol<F, C>, VerificationError<F>> {
+    pub fn build(self) -> Result<BlindFoldProtocol<F, Com>, VerificationError<F>> {
         let statement = BlindFoldStatement::new(self.stages, self.final_openings);
         BlindFoldProtocol::from_parts(&statement, &self.publics, &self.challenges)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct BlindFoldStageBuilder<F, O, C, P = (), Ch = usize> {
-    parent: BlindFoldProtocolBuilder<F, O, C, P, Ch>,
+pub struct BlindFoldStageBuilder<F, O, Com, P = (), Ch = usize> {
+    parent: BlindFoldProtocolBuilder<F, O, Com, P, Ch>,
     name: String,
     statement: Option<SumcheckStatement>,
     domain: Option<SumcheckDomainSpec>,
-    consistency: Option<CommittedSumcheckConsistency<F, C>>,
-    output_claim_rows: Option<CommittedClaimRows<O, C>>,
+    consistency: Option<CommittedSumcheckConsistency<F, Com>>,
+    output_claim_rows: Option<CommittedClaimRows<O, Com>>,
     input_claim: Option<Expr<F, O, P, Ch>>,
     output_claim: Option<Expr<F, O, P, Ch>>,
 }
 
-impl<F, O, C, P, Ch> BlindFoldStageBuilder<F, O, C, P, Ch> {
-    fn new(parent: BlindFoldProtocolBuilder<F, O, C, P, Ch>, name: String) -> Self {
+impl<F, O, Com, P, Ch> BlindFoldStageBuilder<F, O, Com, P, Ch> {
+    fn new(parent: BlindFoldProtocolBuilder<F, O, Com, P, Ch>, name: String) -> Self {
         Self {
             parent,
             name,
@@ -112,7 +112,7 @@ impl<F, O, C, P, Ch> BlindFoldStageBuilder<F, O, C, P, Ch> {
         self
     }
 
-    pub fn consistency(mut self, consistency: CommittedSumcheckConsistency<F, C>) -> Self {
+    pub fn consistency(mut self, consistency: CommittedSumcheckConsistency<F, Com>) -> Self {
         self.consistency = Some(consistency);
         self
     }
@@ -121,7 +121,7 @@ impl<F, O, C, P, Ch> BlindFoldStageBuilder<F, O, C, P, Ch> {
         mut self,
         opening_ids: Vec<O>,
         row_len: usize,
-        commitments: CommittedOutputClaims<C>,
+        commitments: CommittedOutputClaims<Com>,
     ) -> Self {
         self.output_claim_rows = Some(CommittedClaimRows::new(opening_ids, row_len, commitments));
         self
@@ -150,7 +150,7 @@ impl<F, O, C, P, Ch> BlindFoldStageBuilder<F, O, C, P, Ch> {
         self
     }
 
-    pub fn finish_stage(mut self) -> Result<BlindFoldProtocolBuilder<F, O, C, P, Ch>, Error> {
+    pub fn finish_stage(mut self) -> Result<BlindFoldProtocolBuilder<F, O, Com, P, Ch>, Error> {
         let stage = BlindFoldStage::new(
             self.name.clone(),
             self.statement

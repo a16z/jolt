@@ -4,15 +4,15 @@ use jolt_sumcheck::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlindFoldStatement<F, O, C, P = (), Ch = usize> {
-    pub stages: Vec<BlindFoldStage<F, O, C, P, Ch>>,
-    pub final_openings: Vec<FinalOpeningBinding<F, O, C>>,
+pub struct BlindFoldStatement<F, O, Com, P = (), Ch = usize> {
+    pub stages: Vec<BlindFoldStage<F, O, Com, P, Ch>>,
+    pub final_openings: Vec<FinalOpeningBinding<F, O, Com>>,
 }
 
-impl<F, O, C, P, Ch> BlindFoldStatement<F, O, C, P, Ch> {
+impl<F, O, Com, P, Ch> BlindFoldStatement<F, O, Com, P, Ch> {
     pub fn new(
-        stages: Vec<BlindFoldStage<F, O, C, P, Ch>>,
-        final_openings: Vec<FinalOpeningBinding<F, O, C>>,
+        stages: Vec<BlindFoldStage<F, O, Com, P, Ch>>,
+        final_openings: Vec<FinalOpeningBinding<F, O, Com>>,
     ) -> Self {
         Self {
             stages,
@@ -25,8 +25,8 @@ impl<F, O, C, P, Ch> BlindFoldStatement<F, O, C, P, Ch> {
     }
 }
 
-impl<F, O, C: Clone, P, Ch> BlindFoldStatement<F, O, C, P, Ch> {
-    pub fn final_opening_commitments(&self) -> Vec<C> {
+impl<F, O, Com: Clone, P, Ch> BlindFoldStatement<F, O, Com, P, Ch> {
+    pub fn final_opening_commitments(&self) -> Vec<Com> {
         self.final_openings
             .iter()
             .map(|binding| binding.evaluation_commitment.clone())
@@ -35,23 +35,23 @@ impl<F, O, C: Clone, P, Ch> BlindFoldStatement<F, O, C, P, Ch> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BlindFoldStage<F, O, C, P = (), Ch = usize> {
+pub struct BlindFoldStage<F, O, Com, P = (), Ch = usize> {
     pub name: String,
     pub statement: SumcheckStatement,
     pub domain: SumcheckDomainSpec,
-    pub consistency: CommittedSumcheckConsistency<F, C>,
-    pub output_claim_rows: CommittedClaimRows<O, C>,
+    pub consistency: CommittedSumcheckConsistency<F, Com>,
+    pub output_claim_rows: CommittedClaimRows<O, Com>,
     pub input_claim: Expr<F, O, P, Ch>,
     pub output_claim: Expr<F, O, P, Ch>,
 }
 
-impl<F, O, C, P, Ch> BlindFoldStage<F, O, C, P, Ch> {
+impl<F, O, Com, P, Ch> BlindFoldStage<F, O, Com, P, Ch> {
     pub fn new(
         name: impl Into<String>,
         statement: SumcheckStatement,
         domain: SumcheckDomainSpec,
-        consistency: CommittedSumcheckConsistency<F, C>,
-        output_claim_rows: CommittedClaimRows<O, C>,
+        consistency: CommittedSumcheckConsistency<F, Com>,
+        output_claim_rows: CommittedClaimRows<O, Com>,
         input_claim: Expr<F, O, P, Ch>,
         output_claim: Expr<F, O, P, Ch>,
     ) -> Self {
@@ -68,11 +68,11 @@ impl<F, O, C, P, Ch> BlindFoldStage<F, O, C, P, Ch> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CommittedClaimRows<O, C> {
+pub struct CommittedClaimRows<O, Com> {
     pub opening_ids: Vec<O>,
     pub opening_aliases: Vec<OpeningAlias<O>>,
     pub row_len: usize,
-    pub commitments: CommittedOutputClaims<C>,
+    pub commitments: CommittedOutputClaims<Com>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,8 +87,12 @@ impl<O> OpeningAlias<O> {
     }
 }
 
-impl<O, C> CommittedClaimRows<O, C> {
-    pub fn new(opening_ids: Vec<O>, row_len: usize, commitments: CommittedOutputClaims<C>) -> Self {
+impl<O, Com> CommittedClaimRows<O, Com> {
+    pub fn new(
+        opening_ids: Vec<O>,
+        row_len: usize,
+        commitments: CommittedOutputClaims<Com>,
+    ) -> Self {
         Self {
             opening_ids,
             opening_aliases: Vec::new(),
@@ -115,14 +119,14 @@ impl<O, C> CommittedClaimRows<O, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FinalOpeningBinding<F, O, C> {
+pub struct FinalOpeningBinding<F, O, Com> {
     pub opening_ids: Vec<O>,
     pub coefficients: Vec<F>,
-    pub evaluation_commitment: C,
+    pub evaluation_commitment: Com,
 }
 
-impl<F, O, C> FinalOpeningBinding<F, O, C> {
-    pub fn new(opening_ids: Vec<O>, coefficients: Vec<F>, evaluation_commitment: C) -> Self {
+impl<F, O, Com> FinalOpeningBinding<F, O, Com> {
+    pub fn new(opening_ids: Vec<O>, coefficients: Vec<F>, evaluation_commitment: Com) -> Self {
         Self {
             opening_ids,
             coefficients,
