@@ -48,8 +48,8 @@ use crate::{
     pprof_scope,
     subprotocols::{
         booleanity::{
-            BooleanityAddressSumcheckProver, BooleanityCyclePhaseParams,
-            BooleanityCycleSumcheckProver, BooleanitySumcheckParams,
+            BooleanityAddressSumcheckProver, BooleanityCycleInput, BooleanityCycleSumcheckProver,
+            BooleanitySumcheckParams,
         },
         streaming_schedule::LinearOnlySchedule,
         sumcheck::{BatchedSumcheck, SumcheckInstanceProof},
@@ -537,10 +537,10 @@ impl<
         let (stage3_sumcheck_proof, r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, r_stage4) = self.prove_stage4();
         let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5();
-        let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_params) =
+        let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
             self.prove_stage6a();
         let (stage6b_sumcheck_proof, r_stage6) =
-            self.prove_stage6b(bytecode_read_raf_params, booleanity_params);
+            self.prove_stage6b(bytecode_read_raf_params, booleanity_cycle_input);
         let (stage7_sumcheck_proof, r_stage7) = self.prove_stage7();
 
         let _sumcheck_challenges = [
@@ -1232,7 +1232,7 @@ impl<
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         BytecodeReadRafSumcheckParams<F>,
-        BooleanitySumcheckParams<F>,
+        BooleanityCycleInput<F>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6a baseline");
@@ -1287,10 +1287,12 @@ impl<
         write_instance_flamegraph_svg(&instances, "stage6a_end_flamechart.svg");
         drop(instances);
 
+        let booleanity_cycle_input = booleanity.into_cycle_input();
+
         (
             sumcheck_proof,
             bytecode_read_raf.into_params(),
-            booleanity.into_params(),
+            booleanity_cycle_input,
         )
     }
 
@@ -1298,7 +1300,7 @@ impl<
     fn prove_stage6b(
         &mut self,
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
-        booleanity_params: BooleanitySumcheckParams<F>,
+        booleanity_cycle_input: BooleanityCycleInput<F>,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
@@ -1376,13 +1378,9 @@ impl<
             Arc::clone(&self.preprocessing.shared.bytecode),
             &self.opening_accumulator,
         );
-        let booleanity_cycle_params =
-            BooleanityCyclePhaseParams::new(booleanity_params, &self.opening_accumulator);
         let mut booleanity = BooleanityCycleSumcheckProver::initialize(
-            booleanity_cycle_params,
-            &self.trace,
-            &self.preprocessing.shared.bytecode,
-            &self.program_io.memory_layout,
+            booleanity_cycle_input,
+            &self.opening_accumulator,
         );
         let mut ram_hamming_booleanity =
             HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);

@@ -41,7 +41,7 @@ use crate::{
             AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint,
             ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN,
         },
-        shared_ra_polys::{compute_all_G, compute_ra_indices, SharedRaPolynomials},
+        shared_ra_polys::{compute_all_G_and_ra_indices, RaIndices, SharedRaPolynomials},
         split_eq_poly::GruenSplitEqPolynomial,
         unipoly::UniPoly,
     },
@@ -198,6 +198,12 @@ fn compute_gamma_powers<F: JoltField>(gamma: F::Challenge, count: usize) -> (Vec
     (powers, powers_inv)
 }
 
+#[derive(Allocative)]
+pub struct BooleanityCycleInput<F: JoltField> {
+    params: BooleanitySumcheckParams<F>,
+    ra_indices: Vec<RaIndices>,
+}
+
 /// Booleanity address-phase prover.
 #[derive(Allocative)]
 pub struct BooleanityAddressSumcheckProver<F: JoltField> {
@@ -205,6 +211,8 @@ pub struct BooleanityAddressSumcheckProver<F: JoltField> {
     B: GruenSplitEqPolynomial<F>,
     /// G[i][k] = Σ_j eq(r_cycle, j) · ra_i(k, j) for all RA polynomials.
     G: Vec<Vec<F>>,
+    /// RA indices computed alongside `G`, reused by the cycle phase.
+    ra_indices: Vec<RaIndices>,
     /// F: Expanding table over address bits for phase 1.
     F: ExpandingTable<F>,
     /// Most recent round polynomial, used to cache the address-phase output claim.
@@ -228,7 +236,7 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
-        let G = compute_all_G::<F>(
+        let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
             trace,
             bytecode,
             memory_layout,
@@ -243,6 +251,7 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         Self {
             B,
             G,
+            ra_indices,
             F: F_table,
             last_round_poly: None,
             address_claim: None,
@@ -250,8 +259,11 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         }
     }
 
-    pub fn into_params(self) -> BooleanitySumcheckParams<F> {
-        self.params.into_inner()
+    pub fn into_cycle_input(self) -> BooleanityCycleInput<F> {
+        BooleanityCycleInput {
+            params: self.params.into_inner(),
+            ra_indices: self.ra_indices,
+        }
     }
 }
 
@@ -375,19 +387,11 @@ pub struct BooleanityCycleSumcheckProver<F: JoltField> {
 impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
     /// Initialize cycle-phase state from the cached address-phase opening.
     pub fn initialize(
-        params: BooleanityCyclePhaseParams<F>,
-        trace: &[Cycle],
-        bytecode: &BytecodePreprocessing,
-        memory_layout: &MemoryLayout,
+        input: BooleanityCycleInput<F>,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
+        let params = BooleanityCyclePhaseParams::new(input.params, opening_accumulator);
         let (eq_r_r, base_eq) = Self::compute_bound_address_eq_and_table(&params);
-
-        let ra_indices = compute_ra_indices(
-            trace,
-            bytecode,
-            memory_layout,
-            &params.common.one_hot_params,
-        );
         let num_polys = params.common.polynomial_types.len();
         let (gamma_powers, gamma_powers_inv) = compute_gamma_powers(params.common.gamma, num_polys);
         let tables: Vec<Vec<F>> = (0..num_polys)
@@ -400,7 +404,11 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
 
         Self {
             D: GruenSplitEqPolynomial::new(&params.common.r_cycle, BindingOrder::LowToHigh),
-            H: SharedRaPolynomials::new(tables, ra_indices, params.common.one_hot_params.clone()),
+            H: SharedRaPolynomials::new(
+                tables,
+                input.ra_indices,
+                params.common.one_hot_params.clone(),
+            ),
             eq_r_r,
             gamma_powers,
             gamma_powers_inv,
