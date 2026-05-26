@@ -14,4 +14,7 @@ pub enum PreprocessingError {
         expected_sequence: u16,
         new_sequence: u16,
     },
+    #[cfg(feature = "field-inline")]
+    #[error("invalid field-inline bytecode metadata: {0}")]
+    InvalidFieldInlineMetadata(#[from] crate::field_inline::FieldInlineMetadataError),
 }

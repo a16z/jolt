@@ -62,6 +62,11 @@ use divw::DIVW;
 use ebreak::EBREAK;
 use ecall::ECALL;
 use fence::FENCE;
+#[cfg(feature = "field-inline")]
+use field_inline::{
+    FIELD_ADD, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_FROM_X, FIELD_LOAD_IMM, FIELD_MUL,
+    FIELD_STORE_TO_X, FIELD_SUB,
+};
 use jal::JAL;
 use jalr::JALR;
 use lb::LB;
@@ -225,6 +230,8 @@ pub mod divw;
 pub mod ebreak;
 pub mod ecall;
 pub mod fence;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 pub mod inline;
 pub mod jal;
 pub mod jalr;
@@ -407,7 +414,7 @@ where
 
 macro_rules! define_rv64imac_enums {
     (
-        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Serialize, Deserialize, EnumIter)]
         pub enum Instruction {
@@ -415,6 +422,7 @@ macro_rules! define_rv64imac_enums {
             NoOp,
             UNIMPL,
             $(
+                $(#[$meta])*
                 $instr($instr),
             )*
             /// Inline instruction from external crates
@@ -428,6 +436,7 @@ macro_rules! define_rv64imac_enums {
             /// No-operation cycle (address)
             NoOp,
             $(
+                $(#[$meta])*
                 $instr(RISCVCycle<$instr>),
             )*
             INLINE(RISCVCycle<INLINE>),
@@ -438,6 +447,7 @@ macro_rules! define_rv64imac_enums {
                 match self {
                     Cycle::NoOp => RAMAccess::NoOp,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => cycle.ram_access.into(),
                     )*
                     Cycle::INLINE(cycle) => cycle.ram_access.into(),
@@ -448,6 +458,7 @@ macro_rules! define_rv64imac_enums {
                 match self {
                     Cycle::NoOp => None,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => {
                             if let Some(rs1_val) = cycle.register_state.rs1_value() {
                                 Some((
@@ -476,6 +487,7 @@ macro_rules! define_rv64imac_enums {
                 match self {
                     Cycle::NoOp => None,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => {
                             if let Some(rs2_val) = cycle.register_state.rs2_value() {
                                 Some((
@@ -504,6 +516,7 @@ macro_rules! define_rv64imac_enums {
                 match self {
                     Cycle::NoOp => None,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => {
                             if let Some((rd_pre_val, rd_post_val)) = cycle.register_state.rd_values() {
                                 Some((
@@ -534,9 +547,25 @@ macro_rules! define_rv64imac_enums {
                 match self {
                     Cycle::NoOp => Instruction::NoOp,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => cycle.instruction.into(),
                     )*
                     Cycle::INLINE(cycle) => cycle.instruction.into(),
+                }
+            }
+
+            #[cfg(feature = "field-inline")]
+            pub fn field_inline_trace(&self) -> Option<jolt_program::field_inline::FieldInlineTraceData> {
+                match self {
+                    Cycle::FIELD_ADD(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_SUB(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_MUL(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_INV(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_ASSERT_EQ(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_FROM_X(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_STORE_TO_X(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
+                    _ => None,
                 }
             }
 
@@ -548,6 +577,7 @@ macro_rules! define_rv64imac_enums {
                 match self {
                     Cycle::NoOp => Cycle::NoOp,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => Cycle::$instr(cycle.random(rng)),
                     )*
                     Cycle::INLINE(cycle) => Cycle::INLINE(cycle.random(rng)),
@@ -569,6 +599,7 @@ macro_rules! define_rv64imac_enums {
                             | Instruction::LRD(_)
                             | Instruction::INLINE(_)
                     )
+                    && !self.is_field_inline()
                 {
                     let inline_sequence = self.inline_sequence(&cpu.vr_allocator);
                     let mut trace = trace;
@@ -581,6 +612,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
                     Instruction::INLINE(instr) => instr.trace(cpu, trace),
@@ -592,6 +624,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => instr.trace(cpu, trace),
                     )*
                     Instruction::INLINE(instr) => instr.trace(cpu, trace),
@@ -603,6 +636,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => panic!("Unsupported instruction: {:?}", self),
                     Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => {
                             let mut cycle: RISCVCycle<$instr> = RISCVCycle {
                                 instruction: *instr,
@@ -628,6 +662,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => Ok(Default::default()),
                     Instruction::UNIMPL => Err(SourceInstructionKind::Unimpl),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => {
                             let source_kind =
                                 jolt_riscv::SourceInstruction::$marker(
@@ -676,6 +711,7 @@ macro_rules! define_rv64imac_enums {
                         SourceInstructionRow::default(),
                     ),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => SourceInstruction::new(
                             jolt_riscv::SourceInstruction::$marker(
                                 jolt_riscv::instructions::$marker(())
@@ -697,10 +733,15 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => false,
                     Instruction::UNIMPL => false,
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => instr.has_side_effects(),
                     )*
                     Instruction::INLINE(instr) => instr.has_side_effects(),
                 }
+            }
+
+            fn is_field_inline(&self) -> bool {
+                is_field_inline_instruction(self)
             }
 
             pub fn inline_sequence(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
@@ -750,6 +791,7 @@ macro_rules! define_rv64imac_enums {
                     jolt_riscv::SourceInstruction::Noop(_) => Ok(Instruction::NoOp),
                     jolt_riscv::SourceInstruction::Unimplemented(_) => Ok(Instruction::UNIMPL),
                     $(
+                        $(#[$meta])*
                         jolt_riscv::SourceInstruction::$marker(_) => Ok(
                             <$instr as From<SourceInstructionRow>>::from(row).into()
                         ),
@@ -765,6 +807,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => (),
                     Instruction::UNIMPL => (),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => {instr.virtual_sequence_remaining = remaining;}
                     )*
                     Instruction::INLINE(instr) => {instr.virtual_sequence_remaining = remaining;}
@@ -776,6 +819,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => (),
                     Instruction::UNIMPL => (),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => {instr.is_first_in_sequence = is_first;}
                     )*
                     Instruction::INLINE(instr) => {instr.is_first_in_sequence = is_first;}
@@ -787,6 +831,7 @@ macro_rules! define_rv64imac_enums {
                     Instruction::NoOp => (),
                     Instruction::UNIMPL => (),
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => {instr.is_compressed = is_compressed;}
                     )*
                     Instruction::INLINE(instr) => {instr.is_compressed = is_compressed;}
@@ -797,6 +842,7 @@ macro_rules! define_rv64imac_enums {
                 match self {
                     Instruction::NoOp | Instruction::UNIMPL => None,
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(instr) => instr.virtual_sequence_remaining,
                     )*
                     Instruction::INLINE(instr) => instr.virtual_sequence_remaining,
@@ -809,9 +855,29 @@ macro_rules! define_rv64imac_enums {
 
 jolt_riscv::for_each_instruction_kind!(define_rv64imac_enums);
 
+#[cfg(feature = "field-inline")]
+fn is_field_inline_instruction(instruction: &Instruction) -> bool {
+    matches!(
+        instruction,
+        Instruction::FIELD_ADD(_)
+            | Instruction::FIELD_SUB(_)
+            | Instruction::FIELD_MUL(_)
+            | Instruction::FIELD_INV(_)
+            | Instruction::FIELD_ASSERT_EQ(_)
+            | Instruction::FIELD_LOAD_FROM_X(_)
+            | Instruction::FIELD_STORE_TO_X(_)
+            | Instruction::FIELD_LOAD_IMM(_)
+    )
+}
+
+#[cfg(not(feature = "field-inline"))]
+fn is_field_inline_instruction(_instruction: &Instruction) -> bool {
+    false
+}
+
 macro_rules! define_final_jolt_row_conversion {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         fn instruction_from_final_jolt_row(
             instruction: JoltInstructionRow,
@@ -819,6 +885,7 @@ macro_rules! define_final_jolt_row_conversion {
             match instruction.instruction_kind {
                 JoltInstructionKind::NoOp => Ok(Instruction::NoOp),
                 $(
+                    $(#[$meta])*
                     jolt_riscv::JoltInstruction::$marker(_) => {
                         Ok(<$instr as From<JoltInstructionRow>>::from(instruction).into())
                     }
@@ -832,13 +899,16 @@ jolt_riscv::for_each_jolt_instruction_kind!(define_final_jolt_row_conversion);
 
 macro_rules! impl_final_jolt_row_data {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         $(
+            $(#[$meta])*
             impl jolt_riscv::JoltInstructionRowData for $instr {}
 
+            $(#[$meta])*
             impl_final_jolt_row_data!(@from_row $instr);
 
+            $(#[$meta])*
             impl From<$instr> for JoltInstructionRow {
                 fn from(instr: $instr) -> JoltInstructionRow {
                     JoltInstructionRow {
@@ -1215,6 +1285,36 @@ impl Instruction {
                         Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
                     }
                     _ => Err("Invalid custom/virtual instruction"),
+                }
+            }
+            #[cfg(feature = "field-inline")]
+            opcode if opcode == u32::from(jolt_riscv::FIELD_INLINE_OPCODE) => {
+                match jolt_riscv::FieldInlineOp::from_funct3(((instr >> 12) & 0x7) as u8) {
+                    Some(jolt_riscv::FieldInlineOp::Add) => {
+                        Ok(FIELD_ADD::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::Sub) => {
+                        Ok(FIELD_SUB::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::Mul) => {
+                        Ok(FIELD_MUL::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::Inv) => {
+                        Ok(FIELD_INV::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::AssertEq) => {
+                        Ok(FIELD_ASSERT_EQ::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::LoadFromX) => {
+                        Ok(FIELD_LOAD_FROM_X::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::StoreToX) => {
+                        Ok(FIELD_STORE_TO_X::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::LoadImm) => {
+                        Ok(FIELD_LOAD_IMM::new(instr, address, true, compressed).into())
+                    }
+                    None => Err("Invalid field-inline instruction"),
                 }
             }
             _ => Err("Unknown opcode"),
@@ -1791,8 +1891,111 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "field-inline")]
+    use crate::emulator::default_terminal::DefaultTerminal;
+    #[cfg(feature = "field-inline")]
+    use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
+
+    #[cfg(feature = "field-inline")]
+    fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
+        u32::from(FIELD_INLINE_OPCODE)
+            | (u32::from(rd) << 7)
+            | (u32::from(op.funct3()) << 12)
+            | (u32::from(rs1) << 15)
+            | (u32::from(rs2_or_imm) << 20)
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn trace_one(cpu: &mut Cpu, word: u32) -> Cycle {
+        let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
+        let mut trace = Vec::new();
+        instruction.trace(cpu, Some(&mut trace));
+        assert_eq!(trace.len(), 1);
+        trace.remove(0)
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn field_inline_opcode_is_unknown_without_feature() {
+        let word = 0x7b | (2 << 12) | (1 << 7) | (2 << 15) | (3 << 20);
+        assert!(Instruction::decode(word, 0x8000_0000, false).is_err());
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_trace_separates_fr_rows_from_x_register_bridges() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.write_register(5, 7);
+
+        let load_cycle = trace_one(
+            &mut cpu,
+            field_inline_word(FieldInlineOp::LoadFromX, 1, 5, 0),
+        );
+        assert_eq!(load_cycle.rs1_read(), Some((5, 7)));
+        assert_eq!(load_cycle.rd_write(), None);
+        let load_trace = load_cycle.field_inline_trace().unwrap();
+        assert_eq!(load_trace.op, Some(FieldInlineOp::LoadFromX));
+        assert_eq!(
+            load_trace.bridge,
+            Some(FieldInlineBridge::LoadFromX {
+                x_register: 5,
+                x_value: 7,
+                field_value: FieldEncodedValue::from_u64(7),
+            })
+        );
+
+        let imm_cycle = trace_one(&mut cpu, field_inline_word(FieldInlineOp::LoadImm, 2, 0, 3));
+        assert_eq!(imm_cycle.rs1_read(), None);
+        assert_eq!(imm_cycle.rs2_read(), None);
+        assert_eq!(imm_cycle.rd_write(), None);
+        assert_eq!(
+            imm_cycle
+                .field_inline_trace()
+                .unwrap()
+                .rd
+                .unwrap()
+                .post_value,
+            FieldEncodedValue::from_u64(3)
+        );
+
+        let mul_cycle = trace_one(&mut cpu, field_inline_word(FieldInlineOp::Mul, 3, 1, 2));
+        assert_eq!(mul_cycle.rs1_read(), None);
+        assert_eq!(mul_cycle.rs2_read(), None);
+        assert_eq!(mul_cycle.rd_write(), None);
+        let mul_trace = mul_cycle.field_inline_trace().unwrap();
+        assert_eq!(mul_trace.op, Some(FieldInlineOp::Mul));
+        assert_eq!(mul_trace.rs1.unwrap().value, FieldEncodedValue::from_u64(7));
+        assert_eq!(mul_trace.rs2.unwrap().value, FieldEncodedValue::from_u64(3));
+        assert_eq!(
+            mul_trace.rd.unwrap().post_value,
+            FieldEncodedValue::from_u64(21)
+        );
+        assert_eq!(mul_trace.product, Some(FieldEncodedValue::from_u64(21)));
+
+        let store_cycle = trace_one(
+            &mut cpu,
+            field_inline_word(FieldInlineOp::StoreToX, 10, 3, 0),
+        );
+        assert_eq!(store_cycle.rs1_read(), None);
+        assert_eq!(store_cycle.rd_write(), Some((10, 0, 21)));
+        let store_trace = store_cycle.field_inline_trace().unwrap();
+        assert_eq!(
+            store_trace.bridge,
+            Some(FieldInlineBridge::StoreToX {
+                field_register: 3,
+                field_value: FieldEncodedValue::from_u64(21),
+                x_register: 10,
+                x_value: 21,
+            })
+        );
+        assert_eq!(cpu.read_register(10), 21);
+    }
 
     #[test]
     fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
@@ -1826,7 +2029,10 @@ mod tests {
     // Check that the size of Cycle is as expected.
     fn rv64imac_cycle_size() {
         let size = size_of::<Cycle>();
+        #[cfg(not(feature = "field-inline"))]
         let expected = 96;
+        #[cfg(feature = "field-inline")]
+        let expected = 368;
         assert_eq!(
             size, expected,
             "Cycle size should be {expected} bytes, but is {size} bytes"

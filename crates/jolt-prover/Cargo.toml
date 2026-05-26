@@ -1,0 +1,36 @@
+[package]
+name = "jolt-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Protocol orchestration for modular Jolt proving"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "prover"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+field-inline = [
+  "jolt-backends/field-inline",
+  "jolt-claims/field-inline",
+  "jolt-verifier/field-inline",
+  "jolt-witness/field-inline",
+]
+zk = ["jolt-backends/zk", "jolt-verifier/zk"]
+
+[dependencies]
+jolt-backends.workspace = true
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
+jolt-openings.workspace = true
+jolt-verifier.workspace = true
+jolt-witness.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+jolt-field.workspace = true
+jolt-openings = { workspace = true, features = ["test-utils"] }
+jolt-poly.workspace = true

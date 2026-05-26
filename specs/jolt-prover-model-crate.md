@@ -18,12 +18,93 @@ The split is intentional:
 jolt-verifier  defines verifier-visible protocol semantics
 jolt-prover    coordinates proving and assembles verifier-owned proofs
 jolt-witness   exposes private data through reusable witness APIs
-jolt-backends  implements backend-specific prover compute over prover plans
+jolt-backends  owns backend interfaces and implements backend-specific compute
 ```
 
 Bolt remains a separate track. This crate should unblock modular proving,
 ZK/BlindFold, advice, recursion, Dory assist, and wrapper work before Bolt is
 ready.
+
+## Goal Mode Objective
+
+Complete the modular prover migration from `jolt-core` into
+`jolt-prover`, `jolt-witness`, and `jolt-backends::cpu`.
+
+The successful end state is:
+
+- `jolt-prover` proves Jolt through `jolt-verifier`, in transparent and
+  BlindFold modes, with advice and field-inline support;
+- `jolt-witness` provides reusable polynomial-oracle witness infrastructure
+  that serves Jolt VM first and can later serve wrapper, Dory assist, and other
+  SNARK witness flows;
+- `jolt-backends::cpu` is the canonical CPU backend and preserves the current
+  `jolt-core` prover's performance, memory, streaming, Dory PCS, advice, and
+  BlindFold fast paths;
+- Dory-assist and wrapper prover-side handoff surfaces are typed and ready, but
+  full prover implementations for those compositions wait for their
+  protocol/verifier details to stabilize.
+
+This goal should be executed as a lead-agent migration. The lead owns this
+spec, integration order, review, and final validation. Focused Codex agents may
+work in forked workspaces or git worktrees on bounded slices with disjoint write
+sets. Worker agents should use GPT-5.5/xhigh when available and return changed
+files, tests run, unresolved questions, and any spec mismatches. The lead
+integrates by review, not blind merge.
+
+## Completion Gates
+
+The migration is not complete until these gates pass:
+
+- crate gate: `jolt-prover`, `jolt-witness`, and `jolt-backends::cpu` are wired
+  into the workspace with stable internal APIs for the first prover frontier;
+- verifier gate: every implemented frontier is accepted by the matching
+  `jolt-verifier` path, including transparent and BlindFold;
+- witness gate: Jolt VM witness generation consumes `jolt-program` execution
+  artifacts rather than tracer internals, and exposes committed, virtual,
+  public, opening, advice, streaming, and field-inline data through typed
+  namespaces;
+- backend gate: protocol orchestration is outside compute, while the CPU
+  backend keeps every applicable optimization recorded in
+  [`Jolt Core Prover Optimization Inventory`](./jolt-core-prover-optimization-inventory.md)
+  or records a measured reviewed replacement;
+- field-inline gate: no-feature builds compile out field-inline logic, FR-off
+  profiles are structurally ordinary Jolt, and FR-on proofs verify in
+  transparent and BlindFold mode;
+- handoff gate: wrapper and Dory-assist outputs are typed auxiliary data, not
+  opaque proof parsing or backend-private caches;
+- validation gate: formatting, clippy, nextest, prover/verifier E2E, field-inline
+  E2E, BlindFold E2E, advice E2E, and CPU parity checks pass for the relevant
+  feature combinations.
+- lookup gate: any prover, witness, program, or backend code that needs
+  instruction lookup operands, lookup indices, lookup outputs, table routing,
+  or table MLEs obtains them from `jolt-lookup-tables` directly or through a
+  documented thin adapter such as `jolt-program::lookup`; no second lookup
+  formula implementation is accepted.
+- commitment-order gate: proof/transcript commitment order and final PCS opening
+  order are named separately, tested separately, and assembled by logical
+  committed-polynomial IDs rather than by backend output vector position.
+- frontier-harness gate: every implemented prover frontier has a manifest entry,
+  verifier acceptance mode, parity target, and perf gate as defined in
+  [`jolt-prover` Frontier Harness](./jolt-prover-frontier-harness.md).
+
+Baseline validation commands:
+
+```bash
+cargo fmt -q
+cargo clippy -p jolt-lookup-tables -p jolt-program -p jolt-witness -p jolt-prover -p jolt-backends -p jolt-prover-harness -q --all-targets -- -D warnings
+cargo clippy -p jolt-witness -p jolt-prover -q --all-targets --features field-inline -- -D warnings
+cargo clippy --all --features host -q --all-targets -- -D warnings
+cargo clippy --all --features host,zk -q --all-targets -- -D warnings
+cargo nextest run -p jolt-lookup-tables -p jolt-program -p jolt-witness -p jolt-prover -p jolt-backends -p jolt-prover-harness --cargo-quiet
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+```
+
+During early scaffold-only slices, `cargo nextest run -p jolt-witness -p
+jolt-prover -p jolt-backends -p jolt-prover-harness --cargo-quiet --no-tests
+pass` is acceptable until real tests exist. Once a prover frontier is
+implemented, it must add a frontier-specific prover/verifier acceptance test
+through the frontier harness instead of relying on compile-only validation.
 
 ## High-Level Vision
 
@@ -49,6 +130,9 @@ The desired end state is a prover where:
   shape;
 - `jolt-program` and execution backends are the only path from guest execution
   into witness data;
+- `jolt-lookup-tables` is the only owner of lookup table semantics, lookup
+  query operand packing, lookup index derivation, lookup output computation,
+  and lookup-table MLE evaluation;
 - `jolt-claims` and `jolt-verifier` remain the source of protocol semantics and
   verifier acceptance;
 - field inline is a configured Jolt VM extension flowing through
@@ -76,17 +160,24 @@ optimizations.
   first concrete provider, not the whole purpose of the crate.
 - `jolt-prover` should be as generic as practical over `jolt-witness`
   namespaces, polynomial encodings, and materialized/streaming witness views.
-- `jolt-prover` defines backend traits plus protocol-resolved plan/result
-  types. Concrete compute implementations live in `jolt-backends`.
-- `jolt-prover` must not production-depend on concrete backends. SDKs, tests,
-  CLIs, or host integration code wire a selected backend into `jolt-prover`.
+- `jolt-lookup-tables` owns instruction lookup semantics. Prover, witness,
+  program, and backend code may adapt normalized cycle data into
+  `LookupQuery`, but must not duplicate lookup operand packing, lookup index
+  arithmetic, or lookup output logic.
+- `jolt-backends` defines backend traits plus request/result types. Concrete
+  compute implementations live behind those traits, starting with
+  `jolt_backends::cpu`.
+- `jolt-prover` may depend on `jolt-backends` interfaces, but stage
+  orchestration must stay generic over backend traits and must not depend on
+  concrete CPU internals. SDKs, tests, CLIs, or host integration code wire a
+  selected backend into `jolt-prover`.
 - PCS implementation crates, such as `jolt-dory` over `dory-pcs`, are valid
   compute dependencies behind `jolt-openings`.
 - Heavy compute belongs behind witness/backend APIs, not in stage
   orchestration.
 - The canonical CPU backend lives in `jolt_backends::cpu`. It may remain
   Jolt-specific and highly optimized internally, but it must execute
-  protocol-resolved plans rather than owning protocol decisions; see
+  protocol-resolved requests rather than owning protocol decisions; see
   [`jolt-prover` CPU Backend Port](./jolt-prover-cpu-backend-port.md).
 - The canonical CPU backend must preserve the relevant prover-time, peak-memory,
   proof-shape, and streaming characteristics of the current `jolt-core` prover.
@@ -101,15 +192,21 @@ These invariants should be treated as review blockers:
 
 - `jolt-prover` owns stage order, batching order, transcript labels, challenge
   derivation, proof visibility, opening order, and verifier-owned proof
-  assembly.
-- `jolt-backends` computes requested algebra and may cache or fuse work, but it
-  does not choose claims, transcript events, verifier equations, or public proof
-  shape.
+  construction.
+- `jolt-backends` owns backend traits, request/result types, concrete compute,
+  backend state, and backend memory policy. It computes requested algebra and
+  may cache or fuse work, but it does not choose claims, transcript events,
+  verifier equations, or public proof shape.
 - `jolt-witness` exposes data through oracle/view APIs; it does not own backend
   allocation policy, transcript order, PCS proofs, or protocol formulas.
 - `jolt-program` owns program shape, bytecode expansion, preprocessing, and the
   normalized execution contract; `tracer` owns concrete execution and adapts to
   that contract.
+- `jolt-lookup-tables` owns lookup semantics. `jolt-program` may implement
+  `jolt-riscv::JoltCycle` for normalized trace rows and expose small adapter
+  helpers, but it must not carry independent lookup index or lookup output
+  formulas. `jolt-witness` and `jolt-backends` must consume those canonical
+  lookup APIs.
 - `tracer::Cycle`, CPU internals, lazy trace internals, and advice-tape
   internals must not become prover or witness dependencies.
 - `jolt-claims` owns protocol IDs, formulas, opening/public/challenge metadata,
@@ -159,15 +256,16 @@ These invariants should be treated as review blockers:
 | Crate | Owns |
 |-------|------|
 | `jolt-verifier` | Proof model, verifier stage outputs, selected verifier schedule |
-| `jolt-prover` | Prover orchestration, transcript order, proof assembly, backend traits/plans, scoped prover state |
+| `jolt-prover` | Prover orchestration, transcript order, proof construction, backend request construction, scoped prover state |
 | `jolt-witness` | Generic witness-oracle infrastructure, polynomial encodings, public/opening witness APIs, and protocol-specific providers |
-| `jolt-backends` | Canonical CPU backend plus future CUDA/Metal/hybrid backends; backend-specific compute and caches over `jolt-prover` plans |
+| `jolt-backends` | Backend traits, request/result types, canonical CPU backend plus future CUDA/Metal/hybrid backends, backend-specific compute and caches |
 | `jolt-program` | Program image, bytecode expansion, profile/extension legality, Jolt trace contract |
 | `tracer` / execution backend | Concrete guest execution, advice I/O, normalized trace production |
 | `jolt-claims` | Protocol IDs, formulas, opening/public/challenge metadata |
+| `jolt-lookup-tables` | Instruction lookup table definitions, lookup query packing, index/output derivation, table routing, and table MLE evaluation |
 | `jolt-sumcheck` | Clear/committed sumcheck proofs, transcript replay, R1CS lowering |
 | `jolt-crypto` | Vector commitments, Pedersen, homomorphic ops, setup derivation |
-| `jolt-openings` | Opening plans, evaluation claims, RLC, PCS traits |
+| `jolt-openings` | Opening request helpers, evaluation claims, RLC, PCS traits |
 | `jolt-dory` / PCS crates | Concrete PCS implementations and optimized commit/open/eval kernels |
 | `jolt-blindfold` | Generic BlindFold protocol from committed proofs |
 | `jolt-wrapper` | Selected-verifier R1CS and wrapper SNARKs |
@@ -214,28 +312,33 @@ where
     VC: jolt_crypto::VectorCommitment<Field = F>,
     T: jolt_transcript::Transcript<Challenge = F>,
     W: WitnessBuilder<F>,
-    B: ProverBackend<F, PCS, VC, Namespace = W::Namespace>,
+    B: jolt_backends::Backend + jolt_backends::CommitmentBackend<F, W::Namespace, PCS>,
     R: rand_core::CryptoRngCore;
 ```
 
-`ProverBackend` is a `jolt-prover` trait. `jolt-backends` implements it for
-`CpuBackend` first, and later for `CudaBackend`, `MetalBackend`, or hybrid
-backends. This keeps the protocol dependency direction one-way:
+Backend traits and request/result types live in `jolt-backends`.
+`jolt-prover` constructs protocol-resolved backend requests and stays generic
+over those traits. `jolt-backends` implements them for `CpuBackend` first, and
+later for `CudaBackend`, `MetalBackend`, or hybrid backends:
 
 ```text
 host/SDK/test harness
   -> jolt-prover
   -> jolt-witness
+  -> jolt-backends::cpu
+
+jolt-prover
+  -> jolt-backends      // backend interfaces and request/result types
+  -> jolt-witness
 
 jolt-backends
-  -> jolt-prover
-  -> jolt-witness
+  -> jolt-witness       // witness oracles/views/streams
+  -> jolt-openings / jolt-dory / jolt-crypto / jolt-sumcheck
 ```
 
-The caller selects and passes the backend. `jolt-prover` does not import
-`jolt-backends` in production code. A separate `jolt-prover-api` crate should
-only be introduced if the real Cargo graph forces a cycle; it is not the first
-design target.
+The caller selects and passes the backend. `jolt-prover` can import
+`jolt-backends` traits, but it must not import concrete CPU modules in
+production code.
 
 The primary API returns the verifier-owned proof. Flows that need auxiliary
 private data use explicit entry points with typed outputs:
@@ -265,7 +368,7 @@ where
     VC: jolt_crypto::VectorCommitment<Field = F>,
     T: jolt_transcript::Transcript<Challenge = F>,
     W: WitnessBuilder<F>,
-    B: ProverBackend<F, PCS, VC, Namespace = W::Namespace>,
+    B: jolt_backends::Backend + jolt_backends::CommitmentBackend<F, W::Namespace, PCS>,
     R: rand_core::CryptoRngCore;
 ```
 
@@ -287,6 +390,42 @@ BlindFold:
 
 `rng` is explicit because committed rounds, output-claim commitments, ZK
 openings, and BlindFold folding need auditable entropy.
+
+## Lookup Ownership
+
+Lookup logic is not a prover-side implementation detail. The allowed ownership
+model is:
+
+```text
+jolt-lookup-tables:
+  owns lookup table definitions, per-instruction query packing, lookup index
+  derivation, lookup output derivation, table routing, and table MLE evaluation
+
+jolt-riscv:
+  owns the tracer-free `JoltCycle` view and final Jolt instruction vocabulary
+  used by lookup query impls
+
+jolt-program:
+  may expose thin adapters from normalized `TraceRow` to canonical
+  `jolt-lookup-tables` queries
+
+jolt-witness / jolt-backends / jolt-prover:
+  consume canonical lookup data or adapters; they may chunk, cache, stream,
+  commit, or evaluate it, but must not recompute lookup formulas locally
+```
+
+This is a review blocker for the prover migration. In particular,
+`InstructionRa(d)` witness generation, lookup virtuals, instruction lookup
+sumcheck inputs, backend one-hot fast paths, and future CUDA/Metal backends
+must not contain independent operand-packing, interleaving, combined-operand,
+advice-output, or table-routing formulas. If a backend needs a faster path, it
+may cache canonical lookup query results or ask `jolt-lookup-tables` for a
+batch-oriented API; it must not fork the semantics.
+
+When the prover side needs a lookup capability that is not already ergonomic
+enough, the fix is to extend `jolt-lookup-tables` or add a documented thin
+adapter over it. Do not add local "temporary" lookup packing helpers in witness
+or backend code; those will drift as soon as the lookup crate grows.
 
 ## Proof Selection
 
@@ -456,7 +595,7 @@ jolt-program::execution artifacts
   -> committed polynomial oracles/views
   -> virtual polynomial evaluators
   -> public/opening witness APIs
-  -> jolt-prover plans and jolt-backends compute
+  -> jolt-prover backend requests and jolt-backends compute
 ```
 
 The important prover-side constraints are:
@@ -472,7 +611,7 @@ The important prover-side constraints are:
   and direct witness evaluation;
 - witness oracles/views preserve materialized, compact, sparse/event-log, one-hot/RA,
   lazy, and streaming encodings;
-- `jolt-prover` plans should reference witness data through standard
+- `jolt-prover` backend requests should reference witness data through standard
   `OracleRef`, `ViewRequirement`, and `RetentionHint`-style contracts from
   `jolt-witness`, so backends can choose allocation and access strategies
   without guessing protocol intent;
@@ -540,18 +679,18 @@ jolt-prover
   -> jolt-witness
   -> jolt-program
   -> jolt-verifier
+  -> jolt-backends      // backend interfaces and request/result types
   -> jolt-claims / jolt-sumcheck / jolt-openings / jolt-crypto
 
 jolt-backends
-  -> jolt-prover        // backend traits and protocol-resolved plans
   -> jolt-witness       // witness oracles, views, stream producers, metadata
   -> jolt-openings / jolt-dory / jolt-crypto / jolt-sumcheck
 ```
 
 `tracer` may be used by `jolt-witness` and `jolt-prover` dev tests as a fixture
 backend, but not as a production dependency. `jolt-prover` may use
-`jolt-backends` in dev tests or examples; it should not rely on it as a
-production dependency.
+`jolt-backends` trait interfaces in production code; concrete backend modules
+such as `jolt_backends::cpu` are selected by host/SDK/test harness code.
 
 The Jolt trace row is the proof-facing trace row. It must carry enough data for
 both ordinary Jolt and field inline:
@@ -574,6 +713,58 @@ Pure field operations should not create incidental ordinary x-register effects.
 If an implementation keeps inert ordinary accesses for engineering reasons, it
 must expose them explicitly as inert so the ordinary register witness and the
 field-register witness stay consistent.
+
+### Host And SDK Ingestion
+
+Real proving data should enter the modular stack through a small host/SDK
+ingestion surface, not through special prover constructors:
+
+```text
+SDK macro / CLI / host API
+  -> compile or select guest program
+  -> build jolt_program::execution::JoltProgram + TraceInputs
+  -> run selected ExecutionBackend
+  -> receive TraceOutput<TraceSource>
+  -> construct jolt_witness::protocols::jolt_vm::JoltVmWitness
+  -> call jolt_prover with selected backend, verifier params, and explicit RNG
+```
+
+The ergonomic public API can live in `jolt-sdk`, CLI, or a host integration
+crate, but it should be a wrapper over this normalized path. It should not give
+`jolt-prover` direct access to guest build state, tracer CPU state, advice tape
+internals, or legacy `jolt-core` proof objects.
+
+The expected high-level call shape is:
+
+```text
+prove_guest(program, inputs, prover_options)
+  -> ProgramExecutionArtifact
+  -> JoltVmWitnessProvider
+  -> jolt_prover::prove_with_backend(provider, backend, params, rng)
+  -> jolt_verifier::proof::JoltProof
+```
+
+For local migration, `jolt-prover-harness` owns compatibility ingestion from
+`jolt-core` fixtures into the same normalized `jolt-program` artifact shape.
+This lets stage/frontier tests, SDK wiring, and eventual production proving
+exercise the same witness-provider construction path. If the harness needs a
+temporary direct tracer fixture, it must adapt the data into
+`jolt_program::execution::TraceOutput` before it reaches `jolt-witness` or
+`jolt-prover`.
+
+The only SDK-level wiring needed up front is therefore:
+
+- a host-facing builder that produces `JoltProgram`, `TraceInputs`, and selected
+  profile/options;
+- an execution call that returns the normalized `TraceOutput`;
+- a conversion into `JoltVmWitnessProvider`;
+- backend selection, initially `jolt_backends::cpu::CpuBackend`;
+- explicit prover options for PCS, transparent/ZK mode, field-inline gate,
+  advice policy, and RNG.
+
+Everything below that boundary remains crate-owned: `jolt-program` owns
+execution/preprocessing artifacts, `jolt-witness` owns witness providers,
+`jolt-prover` owns protocol orchestration, and `jolt-backends` owns compute.
 
 ## Backends
 
@@ -610,22 +801,191 @@ preserve it or record a measured, reviewed replacement in
 [`Jolt Core Prover Optimization Inventory`](./jolt-core-prover-optimization-inventory.md).
 
 Future CUDA, Metal, and hybrid backends should implement the same
-`jolt-prover` plan/result traits. They can choose different internal
+`jolt-backends` request/result traits. They can choose different internal
 granularity: a GPU backend might accelerate only commitments and a few relation
-messages at first, while a hybrid backend can delegate unsupported plans back
-to CPU. The protocol layer should not need to know which internal kernels were
-used.
+messages at first, while a hybrid backend can delegate unsupported requests
+back to CPU. The protocol layer should not need to know which internal kernels
+were used.
 
 `jolt-kernels` is a possible later extraction of reusable fine-grained compute
 building blocks. It is not the first architectural boundary. The first
 boundary is:
 
 ```text
-jolt-prover protocol plans -> jolt-backends compute -> slot-keyed results
+jolt-prover backend requests -> jolt-backends compute -> slot-keyed results
 ```
+
+The initial scaffold should already enforce this shape: backend requests are
+slot-keyed, backend trait methods receive a witness provider explicitly, and
+backend results include resolved witness descriptors by slot before any
+commitment or sumcheck payloads are added. A backend that cannot resolve a
+requested oracle or encoding must fail before doing protocol work.
+
+The first concrete frontier is committed-witness commitment scheduling.
+`jolt-prover`
+should own the function that asks a `jolt-witness` provider for its committed
+oracle order, converts each committed oracle into a slot-keyed streaming
+`ViewRequirement`, and passes the resulting `CommitmentRequest` to the selected
+backend. The backend may stream, cache, materialize, or commit those oracles,
+but it does not choose committed-oracle order or invent protocol IDs.
+
+The next boundary is typed PCS commitment output. `jolt-backends` exposes a
+`CommitmentBackend` trait that returns, by request slot, the PCS commitment and
+opening hint for each committed oracle:
+
+```text
+CommittedPolynomialOutput:
+  slot
+  oracle
+  protocol-visible row count
+  PCS::Output
+  PCS::OpeningHint
+```
+
+This keeps verifier-visible commitment objects typed as the selected PCS while
+keeping backend-private commitment construction and hint generation outside
+protocol orchestration.
+
+`jolt-prover` then owns a typed output-construction step that maps backend
+outputs into `jolt-verifier::proof::JoltCommitments` by logical
+committed-polynomial ID:
+
+```text
+proof/transcript payload:
+  RdInc, RamInc, InstructionRa(*), RamRa(*), BytecodeRa(*),
+  then optional advice commitments in their dedicated proof/API fields
+
+final PCS opening batch:
+  RamInc, RdInc, optional field-inline FieldRdInc,
+  InstructionRa(*), BytecodeRa(*), RamRa(*),
+  then optional trusted/untrusted advice openings
+```
+
+These orders are intentionally different. Backend output order, witness stream
+order, proof payload order, and final-opening order must not be conflated.
+Backend results are slot-keyed for scheduling and diagnostics; stage output
+construction is ID-keyed and must reject missing, duplicate, or unplanned
+commitments. This is also the point where Dory opening hints are retained under
+their logical polynomial IDs for Stage 8.
+
+The PCS streaming trait should expose a finish operation that returns the
+opening hint together with the commitment. A streaming commitment path that
+drops the hint is not sufficient for Jolt, because Stage 8 relies on Dory row
+commitments to build the joint opening without recomputing committed witness
+rows.
 
 Backends must not own claims, stage order, transcript labels, verifier
 equations, or public proof shape.
+
+### Backend File Pattern
+
+`jolt-backends` should keep contract types separate from concrete compute:
+
+```text
+crates/jolt-backends/src/
+  lib.rs
+  traits.rs
+  ids.rs
+  commitments/
+    mod.rs
+    request.rs     // slot-keyed request contract
+    result.rs      // slot-keyed result contract
+  sumcheck/
+    mod.rs
+    request.rs
+    result.rs
+  openings/
+    mod.rs
+    request.rs
+    result.rs
+  blindfold/       // cfg(feature = "zk")
+    mod.rs
+    request.rs
+    result.rs
+  cpu/
+    mod.rs
+    backend.rs
+    config.rs
+    commitments/
+      mod.rs       // request orchestration and witness boundary checks
+      stream.rs    // CPU streaming hot path helpers
+    sumcheck/
+    openings/
+    blindfold/     // cfg(feature = "zk")
+    field_inline/  // cfg(feature = "field-inline")
+```
+
+Each new backend family should follow the same split: request/result contracts
+first, then concrete CPU execution. CPU submodules may use opaque optimized
+state internally, but request orchestration should remain readable enough to
+verify that the backend is executing a prover request rather than inventing a
+protocol schedule.
+
+Each request/result family must include a `CONTRACT.md` next to its request and
+result modules. The contract records request ownership, slot meaning, witness
+views, cache scope, result visibility, optimization IDs, and feature-gated
+behavior. Treat a missing contract as a review blocker.
+
+Root request/result contracts should be hardware-agnostic. They should also be
+protocol-agnostic where that does not endanger parity with `jolt-core`: use
+backend-local relation IDs, witness `OracleRef`/`ViewRequirement` values,
+value slots, challenge slots, and caller-supplied labels instead of embedding
+CPU-specific or stage-specific assumptions. When the CPU backend needs Jolt-specific
+optimization, put it below `cpu/<family>/...` behind the relevant request
+family rather than widening the protocol contract.
+
+Within `cpu/`, it is acceptable and expected to split by protocol primitive
+when optimization demands it:
+
+```text
+cpu/sumcheck/spartan.rs
+cpu/sumcheck/instruction_lookups.rs
+cpu/sumcheck/registers.rs
+cpu/sumcheck/ram.rs
+cpu/sumcheck/claim_reductions.rs
+cpu/openings/dory_joint.rs
+cpu/blindfold/private_witness.rs
+cpu/field_inline/registers.rs
+```
+
+Those modules are implementation detail. They may keep caches, unsafe
+preallocation, fused loops, and layout-specific code, but they do not create
+new prover-visible APIs.
+
+Commitment execution should expose one backend path even when representations
+use different algorithms internally. For example, dense/compact streams can feed
+PCS row buffers directly while one-hot streams must retain sparse indices to
+avoid dense materialization. Those are representation strategies behind one CPU
+commitment accumulator, not separate prover-visible commitment APIs.
+
+### Feature Gates
+
+Feature gates should be aligned across prover and backend crates:
+
+```text
+jolt-prover/field-inline -> jolt-backends/field-inline
+jolt-prover/zk           -> jolt-backends/zk
+```
+
+The feature set is a compile-time capability contract. It should not become a
+runtime `zk_mode` or `field_inline_mode` switch hidden in compute code.
+Transparent and BlindFold proof paths remain compile-time selected where proof
+types differ. Field-inline data and APIs are compiled out of disabled builds
+except for neutral generic infrastructure that has no field-inline semantics.
+
+`prove.rs` should stay structurally the same across features:
+
+```text
+input -> request -> backend result -> output
+```
+
+Feature-specific additions belong in typed `input.rs`, `request.rs`, or
+`output.rs` surfaces, or in clearly named backend capability modules such as
+`cpu/field_inline/` or `cpu/blindfold/`. Prover feature accounting belongs with
+`ProverConfig`; backend capability flags live in Cargo features and named
+backend modules, not a separate feature/config abstraction layer. They should
+not add ad hoc control flow to backend hot loops unless the request explicitly
+asks for that work.
 
 ## Advice
 
@@ -795,7 +1155,7 @@ stage 6:
   FieldRdInc@FieldRegistersIncClaimReduction claim
 
 stage 8:
-  include the reduced FieldRdInc opening in the final joint PCS opening plan
+  include the reduced FieldRdInc opening in the final joint PCS opening request
   after ordinary RamInc/RdInc and before RA/advice openings
 ```
 
@@ -815,16 +1175,16 @@ proof shape.
 
 The prover should not recover field-inline order from ad hoc accumulators.
 Stage code should use the canonical helpers in `jolt-claims` and the selected
-stage order in `jolt-verifier`, then build a typed opening plan with explicit
+stage order in `jolt-verifier`, then build a typed opening request with explicit
 Jolt and field-inline IDs.
 
 ## Stage 8
 
-Stage 8 is typed opening assembly:
+Stage 8 is typed opening output construction:
 
 ```text
 stage outputs
-  -> OpeningPlan
+  -> OpeningRequest
   -> RLC reduction
   -> joint polynomial / hint
   -> PCS opening proof
@@ -836,14 +1196,14 @@ Transparent mode binds the clear joint claim. BlindFold mode uses
 `ZkOpeningScheme::open_zk` and retains the hidden evaluation output/blinding for
 BlindFold.
 
-When field inline is selected, the opening plan includes
+When field inline is selected, the opening request includes
 `FieldRdInc@FieldRegistersIncClaimReduction` in the configured Stage 8 order.
 This is ordinary final-opening work: the PCS backend sees another committed
-polynomial/evaluation pair, while the typed opening plan preserves the protocol
+polynomial/evaluation pair, while the typed opening request preserves the protocol
 identity needed by BlindFold, Dory assist, wrapper handoff, and diagnostics.
 
 When Dory assist is selected, stage 8 also returns typed `DoryAssistInputs`:
-opening plan, evaluation claims, commitments, structured Dory proof data, setup
+opening request, evaluation claims, commitments, structured Dory proof data, setup
 inputs, transcript checkpoints, and claim-to-polynomial mapping. Recursion and
 Dory assist should not recover this by parsing opaque proof bytes.
 
@@ -864,7 +1224,7 @@ correctness bug.
 
 Field-inline relations follow the same rule: if a field-inline relation changes
 its input/output claim formula or opening order, the prover's committed rows,
-BlindFold witness construction, and final-opening plan must change with it.
+BlindFold witness construction, and final-opening request must change with it.
 
 ## Dory Assist And Recursion
 
@@ -913,7 +1273,7 @@ inputs, and Hyrax witness data.
 ```text
 crates/jolt-prover/src/
   lib.rs
-  inputs.rs
+  input.rs
   preprocessing.rs
   state.rs
   prover.rs
@@ -936,20 +1296,30 @@ crates/jolt-prover/src/
 
 crates/jolt-backends/src/
   lib.rs
+  traits.rs
+  ids.rs
+  commitments/
+    request.rs
+    result.rs
+  sumcheck/
+    request.rs
+    result.rs
+  openings/
+    request.rs
+    result.rs
+  blindfold/
+    request.rs
+    result.rs
   cpu/
     mod.rs
+    backend.rs
+    config.rs
     state.rs
-    commitments.rs
-    advice.rs
-    stage1.rs
-    stage2.rs
-    stage3.rs
-    stage4.rs
-    stage5.rs
-    stage6.rs
-    stage7.rs
-    stage8.rs
-    blindfold.rs
+    commitments/
+    sumcheck/
+    openings/
+    blindfold/
+    field_inline/
     core_fast_path/
   cuda/        // future/optional
     mod.rs
@@ -1015,7 +1385,7 @@ Required coverage:
 - real advice-consuming guests;
 - committed sumcheck and BlindFold output shape;
 - witness provider reference checks for committed and virtual polynomial evals;
-- stage-8 opening plan, ZK opening data, and Dory-assist inputs;
+- stage-8 opening request, ZK opening data, and Dory-assist inputs;
 - field-inline witness provider checks for field_rows, bytecode metadata,
   bridge rows, FieldRdInc, FR products, virtual FR evals, and virtual
   FieldRs1Ra/FieldRs2Ra/FieldRdWa anchoring through BytecodeRa(i);
@@ -1032,6 +1402,12 @@ component, assemble the partial verifier-visible proof/checkpoint object, and
 require the corresponding verifier stage/frontier to accept it. `jolt-core`
 remains useful for fixture generation and parity checks, but it is not the
 primary oracle for the modular prover.
+
+The concrete frontier acceptance, graft/checkpoint modes, fixture matrix, and
+performance gates are specified in
+[`jolt-prover` Frontier Harness](./jolt-prover-frontier-harness.md). Each
+frontier should land with a harness manifest entry before substantial stage or
+backend code is accepted.
 
 ## Agent-Directed Implementation Plan
 
@@ -1060,6 +1436,12 @@ environment already provides isolated sub-agent workspaces. The lead is
 responsible for creating, naming, reviewing, merging, and cleaning up those
 workspaces.
 
+The sibling `/Users/markos/jolt` checkout may be used as a read-only reference
+for ongoing verifier/protocol/field-inline/Dory-assist/wrapper work. Treat that
+tree as external state: inspect its branch and dirty status before relying on
+it, and cherry-pick only reviewed changes that are needed for prover-side
+progress. Do not overwrite or clean that tree from the prover-side workflow.
+
 Recommended agent roles:
 
 ```text
@@ -1081,11 +1463,12 @@ Useful parallel slices:
 | Slice | Primary Spec | Typical Write Ownership |
 |-------|--------------|-------------------------|
 | `jolt-riscv` field-inline vocabulary and gates | [field-inline-program-tracer.md](./field-inline-program-tracer.md) | `crates/jolt-riscv/`, profile tests |
+| `jolt-lookup-tables` field-inline no-lookup dispatch | [field-inline-program-tracer.md](./field-inline-program-tracer.md) | `crates/jolt-lookup-tables/`, lookup dispatch tests |
 | `jolt-program` field metadata and trace contract | [field-inline-program-tracer.md](./field-inline-program-tracer.md) | `crates/jolt-program/`, program/preprocess tests |
 | `tracer` FR execution adapter | [field-inline-program-tracer.md](./field-inline-program-tracer.md) | `tracer/`, execution fixtures |
 | witness core APIs | [jolt-witness-crate.md](./jolt-witness-crate.md) | `crates/jolt-witness/` core modules |
 | Jolt VM witness provider | [jolt-witness-crate.md](./jolt-witness-crate.md) | `crates/jolt-witness/src/protocols/jolt_vm/` |
-| prover scaffold and plans | this spec | `crates/jolt-prover/` protocol scaffolding |
+| prover scaffold and stage requests | this spec | `crates/jolt-prover/` protocol scaffolding |
 | CPU backend scaffold | [jolt-prover CPU backend port](./jolt-prover-cpu-backend-port.md) | `crates/jolt-backends/src/cpu/` |
 | optimization audit / parity tests | [optimization inventory](./jolt-core-prover-optimization-inventory.md) | tests, benches, inventory updates |
 | field-inline prover stages | [field-inline protocol spec](./field-inline-protocol.md) | `jolt-prover` field-inline stage slices |
@@ -1124,7 +1507,7 @@ Recommended worktree naming:
 ../jolt-agent-tracer-field-inline
 ../jolt-agent-witness-core
 ../jolt-agent-witness-jolt-vm
-../jolt-agent-prover-plans
+../jolt-agent-prover-stages
 ../jolt-agent-cpu-backend
 ../jolt-agent-parity
 ```
@@ -1135,7 +1518,7 @@ Each worktree should use a slice branch, for example:
 agent/riscv-field-inline
 agent/program-trace
 agent/witness-core
-agent/prover-plans
+agent/prover-stages
 agent/cpu-backend
 ```
 
@@ -1201,7 +1584,7 @@ window 2 witness:
   witness core APIs and Jolt VM provider
 
 window 3 prover-backend:
-  prover plans, backend traits, CPU scaffold
+  prover stages, backend requests, CPU scaffold
 
 window 4 parity:
   optimization inventory, differential fixtures, benchmarks
@@ -1220,12 +1603,13 @@ invariants and passes the relevant verifier/parity frontier.
 2. Add a trace-backed Jolt VM witness provider under
    `jolt_witness::protocols::jolt_vm`, including committed/virtual/advice
    witness checks against fixtures.
-3. Scaffold `jolt-prover`: selection, explicit RNG, `JoltProof` assembly, and
-   specialized proving outputs over the `jolt-witness` core traits, plus
-   backend traits and protocol-resolved plan/result types.
-4. Scaffold `jolt-backends` with `jolt_backends::cpu` implementing the initial
-   `jolt-prover` backend traits; add slow/reference paths only where they help
-   prove equivalence without disrupting the CPU fast path.
+3. Scaffold `jolt-prover`: config, explicit RNG, typed `JoltProof`
+   construction, stage modules, and specialized proving outputs over the
+   `jolt-witness` core traits and `jolt-backends` request/trait interfaces.
+4. Scaffold `jolt-backends` with backend traits, request/result types, and
+   `jolt_backends::cpu` implementing the initial commitment/request frontier;
+   add slow/reference paths only where they help prove equivalence without
+   disrupting the CPU fast path.
 5. Implement commitments in the CPU backend, including trusted/untrusted
    advice state.
 6. Implement stages 1-2 in transparent and BlindFold mode.
@@ -1270,8 +1654,9 @@ invariants and passes the relevant verifier/parity frontier.
   materialized, compact, derived, and streaming polynomial encodings.
 - ZK and advice are first class.
 - Committed sumchecks reuse `jolt-sumcheck` / `jolt-crypto`.
-- `jolt-prover` defines backend traits/plans and does not production-depend on
-  concrete backends.
+- `jolt-backends` defines backend traits and request/result types.
+- `jolt-prover` constructs backend requests and does not production-depend on
+  concrete backend modules such as `jolt_backends::cpu`.
 - Concrete compute lives in `jolt-backends`, with CPU first and GPU/hybrid
   backends possible without changing protocol orchestration.
 - The canonical CPU backend preserves current `jolt-core` optimization and
@@ -1295,6 +1680,7 @@ invariants and passes the relevant verifier/parity frontier.
 - [`jolt-verifier` model crate spec](./jolt-verifier-model-crate.md)
 - [`jolt-witness` crate spec](./jolt-witness-crate.md)
 - [`jolt-prover` CPU backend port spec](./jolt-prover-cpu-backend-port.md)
+- [`jolt-prover` frontier harness spec](./jolt-prover-frontier-harness.md)
 - [`Jolt Core Prover Optimization Inventory`](./jolt-core-prover-optimization-inventory.md)
 - [Field inline protocol spec](./field-inline-protocol.md)
 - [Field inline `jolt-program` / `tracer` integration spec](./field-inline-program-tracer.md)

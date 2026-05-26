@@ -54,6 +54,7 @@ benchmark-runs/
 *.pb
 *benchmark_results.json
 .omc/
+.semgrep-home/
 optimize-history
 redteam-history
 

@@ -1,0 +1,41 @@
+[package]
+name = "jolt-prover-harness"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Temporary migration harness for the modular Jolt prover"
+repository = "https://github.com/a16z/jolt"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+core-fixtures = ["dep:jolt-core", "jolt-core/host", "jolt-verifier/core-fixtures"]
+field-inline = [
+  "jolt-core?/field-inline",
+  "jolt-prover/field-inline",
+  "jolt-verifier/field-inline",
+  "jolt-witness/field-inline",
+]
+perf = ["dep:memory-stats"]
+zk = ["jolt-core?/zk", "jolt-prover/zk", "jolt-verifier/zk"]
+
+[dependencies]
+jolt-backends.workspace = true
+jolt-core = { workspace = true, features = ["minimal"], optional = true }
+jolt-prover.workspace = true
+jolt-verifier.workspace = true
+jolt-witness.workspace = true
+memory-stats = { workspace = true, optional = true }
+serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+toml_edit.workspace = true
+
+[[bench]]
+name = "frontier_perf"
+harness = false

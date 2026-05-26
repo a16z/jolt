@@ -348,14 +348,17 @@ cycle-phase output stays as `Vec`.
 ### Committed opening order
 
 Comments:
-`proof_commitment_order` can call `final_opening_polynomial_order(layout, false,
-false)`, and `final_opening_ids` should derive from the polynomial order plus
-an explicit polynomial-to-relation mapping.
+Keep proof/transcript commitment order distinct from final opening order, and
+derive final opening IDs from the final polynomial order plus an explicit
+polynomial-to-relation mapping.
 
 Action:
 Add a helper mapping `JoltCommittedPolynomial -> JoltRelationId` for final
 openings, then have `final_opening_ids` map over
-`final_opening_polynomial_order(...)`. This removes order drift risk.
+`final_opening_polynomial_order(...)`. `proof_commitment_order(...)` remains the
+proof payload order (`RdInc`, `RamInc`, `InstructionRa`, `RamRa`, `BytecodeRa`);
+it must not call the Stage 8 final-opening order helper. This removes order
+drift risk without hiding the fact that the two orders intentionally differ.
 
 Field-register impact:
 When `FieldRdInc` enters the final opening/RLC path, use the same explicit

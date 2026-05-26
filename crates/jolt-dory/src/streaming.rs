@@ -68,12 +68,23 @@ impl StreamingCommitment for crate::DoryScheme {
     /// produces).
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish")]
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output {
+        Self::finish_with_hint(partial, setup).0
+    }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish_with_hint")]
+    fn finish_with_hint(
+        partial: Self::PartialCommitment,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
         let num_rows = partial.row_commitments.len();
         validate_row_count(num_rows, setup);
 
         let ark_rows = jolt_g1_vec_to_ark(partial.row_commitments);
-        let (tier_2, _) = commit_rows_tier_2::<dory::Transparent>(&ark_rows, setup);
-        DoryCommitment(ark_to_jolt_gt(&tier_2))
+        let (tier_2, commit_blind) = commit_rows_tier_2::<dory::Transparent>(&ark_rows, setup);
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint::new(ark_to_jolt_g1_vec(ark_rows), ark_to_jolt_fr(&commit_blind)),
+        )
     }
 }
 
@@ -94,6 +105,7 @@ fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
 mod tests {
     use jolt_field::RandomSampling;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
+    use jolt_transcript::Transcript;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -121,11 +133,36 @@ mod tests {
         for row in evals.chunks(num_cols) {
             DoryScheme::feed(&mut partial, row, &prover_setup);
         }
-        let streamed = DoryScheme::finish(partial, &prover_setup);
+        let (streamed, hint) = DoryScheme::finish_with_hint(partial, &prover_setup);
 
         assert_eq!(
             direct, streamed,
             "streaming and direct commitments must match"
         );
+
+        let point: Vec<Fr> = (0..num_vars)
+            .map(|_| <Fr as RandomSampling>::random(&mut rng))
+            .collect();
+        let eval = poly.evaluate(&point);
+        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"stream-open");
+        let proof = DoryScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut prove_transcript,
+        );
+        let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
+        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"stream-open");
+        let result = DoryScheme::verify(
+            &streamed,
+            &point,
+            eval,
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+        );
+        assert!(result.is_ok(), "streaming hint should open: {result:?}");
     }
 }

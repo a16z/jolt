@@ -91,6 +91,13 @@ pub trait StreamingCommitment: CommitmentScheme {
     );
 
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output;
+
+    fn finish_with_hint(
+        partial: Self::PartialCommitment,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        (Self::finish(partial, setup), Self::OpeningHint::default())
+    }
 }
 
 /// Opening proofs that hide the evaluation behind a commitment.

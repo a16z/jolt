@@ -67,6 +67,8 @@ fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
         instruction: jolt_instruction_row(&cycle)?,
         registers: register_state(&cycle),
         ram_access: cycle.ram_access().into(),
+        #[cfg(feature = "field-inline")]
+        field_inline: cycle.field_inline_trace(),
     })
 }
 
@@ -109,5 +111,60 @@ impl From<RAMAccess> for ProgramRamAccess {
             }),
             RAMAccess::NoOp => Self::NoOp,
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
+mod tests {
+    #[cfg(feature = "field-inline")]
+    use crate::{
+        emulator::{cpu::Cpu, default_terminal::DefaultTerminal},
+        instruction::Instruction,
+    };
+    #[cfg(feature = "field-inline")]
+    use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
+
+    #[cfg(feature = "field-inline")]
+    fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
+        u32::from(FIELD_INLINE_OPCODE)
+            | (u32::from(rd) << 7)
+            | (u32::from(op.funct3()) << 12)
+            | (u32::from(rs1) << 15)
+            | (u32::from(rs2_or_imm) << 20)
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn trace_row_from_cycle_carries_field_inline_payload() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.write_register(5, 11);
+        let instruction = Instruction::decode(
+            field_inline_word(FieldInlineOp::LoadFromX, 2, 5, 0),
+            0x8000_0000,
+            false,
+        )
+        .unwrap();
+        let mut trace = Vec::new();
+        instruction.trace(&mut cpu, Some(&mut trace));
+        assert_eq!(trace.len(), 1);
+
+        let row = super::trace_row_from_cycle(trace.remove(0)).unwrap();
+        assert_eq!(row.registers.rs1.unwrap().register, 5);
+        assert_eq!(row.registers.rs1.unwrap().value, 11);
+        assert!(row.registers.rs2.is_none());
+        assert!(row.registers.rd.is_none());
+        let field_trace = row.field_inline.unwrap();
+        assert_eq!(field_trace.op, Some(FieldInlineOp::LoadFromX));
+        assert_eq!(
+            field_trace.bridge,
+            Some(FieldInlineBridge::LoadFromX {
+                x_register: 5,
+                x_value: 11,
+                field_value: FieldEncodedValue::from_u64(11),
+            })
+        );
     }
 }

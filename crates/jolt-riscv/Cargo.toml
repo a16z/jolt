@@ -15,6 +15,7 @@ workspace = true
 default = ["serialization"]
 serialization = ["dep:ark-serialize", "dep:serde"]
 test-utils = ["dep:rand"]
+field-inline = []
 
 [dependencies]
 ark-serialize = { workspace = true, optional = true }

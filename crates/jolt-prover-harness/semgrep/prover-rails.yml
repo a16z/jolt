@@ -1,0 +1,80 @@
+rules:
+  - id: jolt-prover-no-concrete-cpu-backend
+    message: jolt-prover must stay generic over backend traits; do not import jolt_backends::cpu.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /crates/jolt-prover/src/**/*.rs
+    pattern-regex: '\b(jolt_backends::cpu|CpuBackend)\b'
+
+  - id: jolt-backends-no-transcript
+    message: jolt-backends must not own transcript operations.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /crates/jolt-backends/src/**/*.rs
+    pattern-regex: '\b(jolt_transcript|Transcript|transcript)\b'
+
+  - id: jolt-backends-no-protocol-core-imports
+    message: jolt-backends must not depend on verifier/core/claims protocol crates.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /crates/jolt-backends/src/**/*.rs
+    pattern-regex: '\b(jolt_verifier|jolt_core|jolt_claims)\b'
+
+  - id: prover-witness-no-tracer-internals
+    message: prover/witness production code must consume normalized jolt-program artifacts, not tracer internals.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /crates/jolt-prover/src/**/*.rs
+        - /crates/jolt-witness/src/**/*.rs
+    pattern-regex: '\b(tracer::|use\s+tracer::|tracer::Cycle)\b'
+
+  - id: prover-backend-no-local-lookup-semantics
+    message: lookup semantics belong in jolt-lookup-tables or documented thin adapters.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /crates/jolt-prover/src/**/*.rs
+        - /crates/jolt-backends/src/**/*.rs
+    pattern-regex: '\b(lookup_index|combine_lookup|JoltLookup|LookupTable|jolt_lookup_tables)\b'
+
+  - id: prover-stage-no-assembly-module
+    message: prover stages use input/request/prove/output; do not add assembly.rs.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include:
+        - /crates/jolt-prover/src/stages/**/assembly.rs
+    pattern-regex: '.+'
+
+  - id: backend-no-flat-cpu-family-modules
+    message: CPU backend family code should live under cpu/<family>/, not flat cpu/*.rs files.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include:
+        - /crates/jolt-backends/src/cpu/*.rs
+      exclude:
+        - /crates/jolt-backends/src/cpu/mod.rs
+        - /crates/jolt-backends/src/cpu/backend.rs
+        - /crates/jolt-backends/src/cpu/config.rs
+        - /crates/jolt-backends/src/cpu/state.rs
+        - /crates/jolt-backends/src/cpu/tests.rs
+    pattern-regex: '.+'
+
+  - id: backend-cargo-no-protocol-deps
+    message: jolt-backends Cargo production deps must not include jolt-core, jolt-verifier, or jolt-claims.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include:
+        - /crates/jolt-backends/Cargo.toml
+    pattern-regex: '^\s*jolt-(core|verifier|claims)\s*='

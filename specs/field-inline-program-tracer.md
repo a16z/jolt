@@ -105,13 +105,14 @@ commitments, no field-inline claims, and no dummy zero relations.
 | Crate | Cargo/build gate | Program/profile gate |
 |-------|------------------|----------------------|
 | `jolt-riscv` | Add `field-inline` for field-inline source/final row identities, profile extensions, static operand-shape metadata, and serialization of those rows. Ordinary row tags/names remain available and unchanged without it. | `JoltInstructionProfile` decides whether field-inline source/final rows are legal. FR-off profiles reject them and exclude them from supported dense indexes. |
-| `jolt-program` | `field-inline = ["jolt-riscv/field-inline"]` gates accepting field-inline rows, emitting field-inline bytecode metadata, and exposing field-inline metadata/trace payload types. Without it, FR-on programs are rejected. | Selected profile/config decides whether field-inline rows are accepted, metadata is required, and metadata digest/fingerprint is present. |
+| `jolt-program` | `field-inline = ["jolt-riscv/field-inline", "jolt-lookup-tables/field-inline"]` gates accepting field-inline rows, emitting field-inline bytecode metadata, and exposing field-inline metadata/trace payload types. Without it, FR-on programs are rejected. | Selected profile/config decides whether field-inline rows are accepted, metadata is required, and metadata digest/fingerprint is present. |
+| `jolt-lookup-tables` | `field-inline` depends on `jolt-riscv/field-inline` and teaches the shared lookup dispatch that field-inline rows have no ordinary lookup table/query. Its legacy `jolt-core` ABI comparison is behind `core-abi-tests` so field-inline tests do not accidentally drag the old core through mismatched feature sets. | Field-inline rows dispatch to `None` for ordinary lookup tables; Jolt field arithmetic is proven by field-inline protocol relations, not Twist/Shout lookup rows. |
 | `tracer` | `field-inline = ["jolt-riscv/field-inline", "jolt-program/field-inline"]` gates concrete FR execution code, field-register state, field-inline instruction dispatch, and `FieldInlineTraceData` emission. | FR-on profile allocates/updates FR memory and emits `FieldInlineTraceData`; FR-off execution emits none. FR-on program on a tracer without support is an early unsupported-feature error. |
 | `jolt-witness` | `field-inline` gates the Jolt VM field-inline provider extension and depends on `jolt-program/field-inline` and `jolt-claims/field-inline`. Generic witness infrastructure stays available. | FR-on artifacts expose field-inline oracle views; FR-off exposes no field-inline namespace data. FR-on artifacts without compiled support are rejected early. |
 | `jolt-claims` | Existing `field-inline` Cargo feature gates field-inline protocol IDs, formulas, relation metadata, and opening/public/challenge definitions. Without it, prover/verifier code cannot name field-inline claims. | Selected Jolt protocol config decides whether the field-inline namespace is active in this proof. |
 | `jolt-r1cs` / `jolt-verifier` | Existing `field-inline` Cargo feature gates verifier/R1CS field-inline checks. Without it, verifier code has no field-inline stage composition. | Proof/preprocessing profile and metadata decide whether field-inline checks are run. Unsupported FR-on proofs are rejected. |
 | `jolt-prover` | `field-inline` Cargo feature should depend on `jolt-claims/field-inline`, `jolt-witness/field-inline`, and any field-inline R1CS/prover stage support. | FR-on proof configs request field-inline witness views and stages; FR-off skips the whole field-inline path. |
-| `jolt-backends` | Generic polynomial/oracle storage should not need a field-inline gate. Optional optimized field-inline kernels may be gated. | Backends allocate only the oracle descriptors requested by the active witness/prover plan. |
+| `jolt-backends` | Generic polynomial/oracle storage should not need a field-inline gate. Optional optimized field-inline kernels may be gated. | Backends allocate only the oracle descriptors requested by the active witness/prover request. |
 | SDK / guest-facing crates | Guest intrinsics and host profile selection may be gated by a `field-inline` feature. | Generated program metadata selects an FR-on profile when field-inline guest ops are used. |
 
 Recommended feature propagation:
@@ -119,9 +120,10 @@ Recommended feature propagation:
 ```text
 jolt-riscv/field-inline
   -> jolt-program/field-inline
+  -> jolt-lookup-tables/field-inline
 
-jolt-program/field-inline
-  -> tracer/field-inline
+tracer/field-inline
+  -> jolt-program/field-inline
 
 jolt-program/field-inline
   -> jolt-witness/field-inline
@@ -680,6 +682,7 @@ bytecode anchoring views for FieldRs1Ra / FieldRs2Ra / FieldRdWa
 `jolt-riscv` tests:
 
 - no-feature builds do not expose field-inline row helpers or FR-on profiles;
+- feature-enabled FR-off profiles still reject field-inline source/final rows;
 - ordinary row tags, canonical names, dense indexes, and FR-off profile
   fingerprints are identical with and without `field-inline`;
 - field-inline source rows are accepted only by FR-on profiles;
@@ -695,6 +698,9 @@ bytecode anchoring views for FieldRs1Ra / FieldRs2Ra / FieldRdWa
 
 Program/preprocess tests:
 
+- no-feature image decoding rejects the field-inline opcode;
+- feature-enabled image decoding accepts field-inline source rows only under an
+  FR-on profile;
 - FR-off programs have no field-inline metadata.
 - FR-on metadata length and active rows match expanded bytecode.
 - Metadata validates active flag count, operand shape, inactive-row
@@ -704,7 +710,7 @@ Program/preprocess tests:
 
 Tracer execution tests:
 
-- tracer builds without `field-inline` reject FR-on programs before execution;
+- tracer builds without `field-inline` reject the field-inline opcode;
 - pure field op rows have field payload and no ordinary x-register activity;
 - bridge rows have both RV64 and FR payloads;
 - field register reads/writes produce correct pre/post values;

@@ -71,8 +71,9 @@ For every ported frontier, reviewers should verify:
 
 - no hot path was accidentally forced through dense `Vec<F>`;
 - protocol order and transcript labels remain outside compute kernels;
-- `jolt-prover` owns backend traits/plans and does not production-depend on
-  `jolt-backends`;
+- `jolt-backends` owns backend traits and request/result types;
+- `jolt-prover` constructs backend requests and does not production-depend on
+  concrete backend modules such as `jolt_backends::cpu`;
 - optimized and reference paths agree on verifier-visible values;
 - prove-time and peak-memory deltas are reported against `jolt-core`.
 

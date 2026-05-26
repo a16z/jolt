@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use jolt_crypto::HomomorphicCommitment;
 
 use crate::error::OpeningsError;
-use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use crate::schemes::{
+    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -159,6 +161,28 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
 
         MockCommitment {
             evaluations: result,
+        }
+    }
+}
+
+impl<F: Field> StreamingCommitment for MockCommitmentScheme<F> {
+    type PartialCommitment = Vec<F>;
+
+    fn begin(_setup: &Self::ProverSetup) -> Self::PartialCommitment {
+        Vec::new()
+    }
+
+    fn feed(
+        partial: &mut Self::PartialCommitment,
+        chunk: &[Self::Field],
+        _setup: &Self::ProverSetup,
+    ) {
+        partial.extend_from_slice(chunk);
+    }
+
+    fn finish(partial: Self::PartialCommitment, _setup: &Self::ProverSetup) -> Self::Output {
+        MockCommitment {
+            evaluations: partial,
         }
     }
 }

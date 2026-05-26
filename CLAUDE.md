@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that efficiently proves and verifies program execution. It uses sumcheck-based protocols, multilinear polynomial commitments (Dory), and the Twist/Shout lookup argument.
 
+## Repository Role
+
+This worktree owns the prover-side modular migration: `jolt-prover`, `jolt-witness`, and `jolt-backends`, including CPU performance parity with `jolt-core`.
+
+The sibling checkout `/Users/markos/jolt` may be used as a read-only reference for in-progress protocol, verifier, and field-inline work, typically on `refactor/crates`. Cherry-pick from it only when the change is reviewed and needed for prover-side integration. These worktrees will be consolidated later, so avoid clobbering verifier-side or protocol-side work from the sibling tree.
+
 ## Essential Commands
 
 ### Linting and Formatting

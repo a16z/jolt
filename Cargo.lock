@@ -2706,6 +2706,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-backends"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-witness",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
@@ -3125,12 +3136,44 @@ dependencies = [
  "ark-serialize 0.5.0",
  "common",
  "hex",
+ "jolt-lookup-tables",
  "jolt-riscv",
  "object 0.39.1",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-prover"
+version = "0.1.0"
+dependencies = [
+ "jolt-backends",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-verifier",
+ "jolt-witness",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-prover-harness"
+version = "0.1.0"
+dependencies = [
+ "jolt-backends",
+ "jolt-core",
+ "jolt-prover",
+ "jolt-verifier",
+ "jolt-witness",
+ "memory-stats",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml_edit",
 ]
 
 [[package]]
@@ -3247,6 +3290,21 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-witness"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "criterion",
+ "jolt-claims",
+ "jolt-field",
+ "jolt-program",
+ "jolt-riscv",
+ "rayon",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -5868,6 +5926,7 @@ dependencies = [
  "fnv",
  "inventory",
  "itertools 0.14.0",
+ "jolt-field",
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",

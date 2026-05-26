@@ -5,9 +5,35 @@ use std::any::TypeId;
 use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltInstructionRowData};
 use rand::prelude::*;
 use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
+use tracer::instruction::format::{InstructionFormat, InstructionRegisterState};
 use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
+
+pub trait RandomLookupCycle: JoltCycle {
+    fn random(rng: &mut StdRng) -> Self;
+}
+
+impl<T> RandomLookupCycle for RISCVCycle<T>
+where
+    T: tracer::instruction::RISCVInstruction + JoltInstructionRowData,
+{
+    fn random(rng: &mut StdRng) -> Self {
+        let instruction = T::random(rng);
+        let concrete: tracer::instruction::Instruction = instruction.into();
+        let source_instruction = concrete.source_instruction();
+        let register_state =
+            <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
+                rng,
+                &source_instruction.row().operands,
+            );
+        Self {
+            instruction,
+            register_state,
+            ram_access: T::RAMAccess::default(),
+        }
+    }
+}
 
 /// Internal helper for [`materialize_entry_test!`]. The macro picks up the
 /// verbose `Foo<RISCVCycle<TracerType>>` / `RISCVCycle<TracerType>` type pair
@@ -20,12 +46,12 @@ pub fn materialize_entry_test_fn<T, C, I>(
     instr_wrapper: impl Fn(C::Instruction) -> I,
 ) where
     T: LookupQuery<XLEN> + core::fmt::Debug,
-    C: JoltCycle,
+    C: RandomLookupCycle,
     I: InstructionLookupTable<XLEN>,
 {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10_000 {
-        let raw = C::random(&mut rng);
+        let raw: C = RandomLookupCycle::random(&mut rng);
         let table = instr_wrapper(raw.instruction()).lookup_table().unwrap();
         let cycle: T = cycle_wrapper(raw);
         assert_eq!(
@@ -56,13 +82,13 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
     cycle_wrapper: impl Fn(C) -> T,
     instr_wrapper: impl Fn(C::Instruction) -> I,
 ) where
-    C: JoltCycle,
+    C: RandomLookupCycle,
     T: LookupQuery<XLEN> + core::fmt::Debug,
     I: JoltInstructionRowData + Flags,
 {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10_000 {
-        let raw: C = C::random(&mut rng);
+        let raw: C = RandomLookupCycle::random(&mut rng);
         let instr = raw.instruction();
         let normalized = instr.jolt_instruction_row();
         let unexpanded_pc = normalized.address as u64;
@@ -116,14 +142,14 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
 )]
 pub fn lookup_output_matches_trace_test_fn<C, T>(cycle_wrapper: impl Fn(C) -> T)
 where
-    C: JoltCycle + Copy + core::fmt::Debug,
+    C: RandomLookupCycle + Copy + core::fmt::Debug,
     C::Instruction: RISCVTrace + 'static,
     RISCVCycle<C::Instruction>: Into<Cycle>,
     T: LookupQuery<XLEN>,
 {
     let mut rng = StdRng::seed_from_u64(12345);
     for _ in 0..10_000 {
-        let raw: C = C::random(&mut rng);
+        let raw: C = RandomLookupCycle::random(&mut rng);
         let instr = raw.instruction();
         let normalized = instr.jolt_instruction_row();
         let rs1_idx = normalized.operands.rs1;

@@ -58,6 +58,10 @@ SNARK protocols that consume polynomial-oracle witness data.
 - Make public values explicit, including values derived from execution,
   preprocessing, wrapper assignment, Dory-assist inputs, or BlindFold metadata.
 - Make transcript-derived challenges explicit inputs to virtual evaluation.
+- Reuse `jolt-lookup-tables` for instruction lookup operand packing, lookup
+  index derivation, lookup output computation, table routing, and table MLE
+  evaluation. Witness code may store or stream lookup-derived data, but it must
+  not duplicate lookup formulas.
 
 ## Non-Goals
 
@@ -83,8 +87,9 @@ SNARK protocols that consume polynomial-oracle witness data.
 | `jolt_witness::protocols::wrapper` | Configured-verifier assignment witness providers for wrapper proving |
 | `jolt_witness::protocols::blindfold` | Committed round, output-claim row, and auxiliary BlindFold witness providers |
 | `jolt-claims` | Protocol semantics: namespace IDs, formulas, protocol-visible dimensions, opening/public/challenge metadata |
-| `jolt-prover` | Protocol order, transcript, challenge sampling, selected plans, opening plans, proof assembly |
-| `jolt-backends` | Backend-specific allocation, materialization, caching, and compute over witness views and `jolt-prover` plans |
+| `jolt-lookup-tables` | Lookup semantics: table definitions, instruction lookup query packing, lookup index/output derivation, and lookup table MLE evaluation |
+| `jolt-prover` | Protocol order, transcript, challenge sampling, backend request construction, opening request construction, proof construction |
+| `jolt-backends` | Backend traits, request/result types, backend-specific allocation, materialization, caching, and compute over witness views |
 | `jolt-program` | Program image, preprocessing, profile legality, execution contract, normalized trace rows |
 
 ## Dependency Shape
@@ -100,6 +105,10 @@ jolt-witness core
 jolt_witness::protocols::jolt_vm
   -> jolt-witness core
   -> jolt-program       // execution API and preprocessing artifacts
+  -> jolt-program::lookup
+                       // TraceRow adapters over canonical lookup semantics
+  -> jolt-lookup-tables // only for canonical lookup batch/table APIs not
+                       // already exposed by jolt-program adapters
   -> jolt-riscv         // normalized instruction/flag types where needed
   -> jolt-claims        // Jolt VM committed/virtual/opening/public IDs
 
@@ -107,11 +116,16 @@ jolt-prover
   -> jolt-witness
   -> jolt-program
   -> jolt-verifier / jolt-claims / jolt-sumcheck / jolt-openings
+  -> jolt-backends      // backend traits and request/result types
 
 jolt-backends
-  -> jolt-prover        // backend traits and protocol-resolved plans
   -> jolt-witness       // oracles, views, stream producers, metadata
+  -> jolt-openings / jolt-poly / jolt-field
 ```
+
+Backend request/result types use backend-local IDs and slots. `jolt-prover`
+maps `jolt-claims` protocol IDs into those backend request IDs; `jolt-backends`
+does not production-depend on `jolt-claims`.
 
 If the optional provider modules create an awkward Cargo graph, split them
 later into provider crates, for example `jolt-witness-jolt`,
@@ -152,6 +166,177 @@ canonical field-register trace payloads described in
 [field-inline-program-tracer.md](./field-inline-program-tracer.md). `jolt-witness`
 then consumes those normalized artifacts; it does not infer field-register
 semantics from tracer-private state.
+
+## Relationship To `jolt-lookup-tables`
+
+`jolt-lookup-tables` is the canonical owner of lookup table semantics. This
+includes:
+
+```text
+instruction -> lookup table routing
+cycle -> lookup instruction inputs
+instruction inputs -> lookup operands
+lookup operands -> lookup index
+cycle -> lookup output
+lookup table materialization and MLE evaluation
+```
+
+The Jolt VM witness provider must not reimplement any of that logic. The
+intended boundary is:
+
+```text
+jolt_program::execution::TraceRow
+  implements jolt_riscv::JoltCycle
+  -> jolt_lookup_tables::JoltLookupQuery<TraceRow>
+  -> jolt_lookup_tables::LookupQuery<XLEN>
+  -> instruction lookup RA chunks / virtual lookup views
+```
+
+`jolt-program` may expose narrow helper functions such as
+`instruction_lookup_index::<XLEN>(&TraceRow)` for callers that only need a
+stable adapter. Those helpers should be thin wrappers over `jolt-lookup-tables`,
+not independent formulas. If lookup packing or table routing changes, the
+change happens in `jolt-lookup-tables` and downstream witness/prover code gets
+the new behavior through the adapter.
+
+Witness-provider code may cache or stream lookup-derived values, but the cache
+key and chunking are storage concerns. They are not a second source of lookup
+truth. Any new witness code that computes `InstructionRa(d)`, lookup virtuals,
+lookup outputs, or lookup table evaluations must call `jolt-program::lookup`
+or `jolt-lookup-tables`; formulas such as interleaving, combined ADD/MUL
+operands, advice written-value selection, and table routing belong only in
+`jolt-lookup-tables`.
+
+Regression tests for the Jolt VM provider should include:
+
+```text
+jolt-program lookup adapter tests:
+  TraceRow -> JoltLookupQuery -> LookupQuery<64>
+
+jolt-witness committed-stream tests:
+  InstructionRa(d) chunks for normalized rows are emitted as one-hot chunks
+  whose lookup indices came from the canonical adapter
+
+jolt-backends CPU shell tests:
+  a commitment request streams a real Jolt VM InstructionRa(d) oracle by slot
+  without materializing dense field vectors or reimplementing lookup logic
+```
+
+## Pre-Prover Witness Quality Gate
+
+Do not start the full `jolt-prover` migration until the witness layer has a
+real semantic-equivalence test gate. The goal is to prove that the flexible
+data pipeline still exposes the same Jolt VM witness facts that `jolt-core`
+relies on, and that field-inline feature boundaries are hard.
+
+Required coverage before moving on:
+
+- Build and test `jolt-witness` with field-inline disabled and enabled.
+- In FR-off builds, field-inline modules and payload types must not be part of
+  the ordinary witness path.
+- In FR-on builds, an FR-disabled program must expose no field-inline provider,
+  and an FR-disabled trace carrying field-inline rows or payloads must be
+  rejected.
+- FR-on provider tests must cover committed `FieldRdInc` streaming, padding,
+  trace-domain virtuals, register-domain virtuals, field op flags, product
+  lanes, bridge rows, and malformed witness payloads.
+- Register-domain field-inline virtuals are address-major over
+  `field_register * padded_trace_rows + cycle`; `FieldRegistersVal` stores the
+  value before the cycle and carries final state through padding.
+- Bridge rows must keep ordinary x-register witness data and field-register
+  witness data disjoint: `FieldLoadFromX` affects FR increments but not ordinary
+  `RdInc`; `FieldStoreToX` affects ordinary `RdInc` but not `FieldRdInc`.
+- View requirements for field-inline committed and virtual data must retain
+  enough data through BlindFold so the ZK prover path cannot accidentally drop
+  hidden claim inputs.
+- Add integration tests that consume only the public `jolt-witness` API, not
+  private provider helpers, because this is the surface `jolt-prover` and
+  `jolt-backends` will use.
+
+The current local gate is:
+
+```sh
+cargo nextest run -p jolt-witness --cargo-quiet
+cargo nextest run -p jolt-witness --cargo-quiet --features field-inline
+cargo clippy -p jolt-witness -q --all-targets -- -D warnings
+cargo clippy -p jolt-witness -q --all-targets --features field-inline -- -D warnings
+```
+
+As the CPU backend port begins, add comparison fixtures against `jolt-core`
+where possible. Those fixtures should compare committed streams, virtual-view
+evaluations, and opening inputs for ordinary Jolt VM rows first, then
+field-inline rows once the core/prover bridge can generate real FR proof
+payloads.
+
+## Witness Throughput Benchmarks
+
+`jolt-witness` must carry microbenchmarks for witness-generation throughput so
+the modular pipeline does not drift away from the CPU fast path. The first
+benchmark target is `witness_throughput`.
+
+Run both configurations:
+
+```sh
+cargo bench -p jolt-witness --bench witness_throughput
+cargo bench -p jolt-witness --bench witness_throughput --features field-inline
+```
+
+The default benchmark group measures RV64/Jolt VM committed stream throughput
+over synthetic trace fixtures:
+
+```text
+jolt_witness/rv64_streams/rd_inc
+jolt_witness/rv64_streams/ram_inc
+jolt_witness/rv64_streams/instruction_ra_chunk
+jolt_witness/rv64_streams/bytecode_ra_chunk
+jolt_witness/rv64_streams/committed_batch_all
+```
+
+The field-inline benchmark group measures both committed FR streams and
+materialized views that are expected to matter for prover and BlindFold
+retention pressure:
+
+```text
+jolt_witness/field_inline/field_rd_inc
+jolt_witness/field_inline/field_product_view
+jolt_witness/field_inline/field_mul_flag_view
+jolt_witness/field_inline/field_registers_val_view
+```
+
+Criterion reports these as element-throughput benchmarks over padded trace rows
+or, for `FieldRegistersVal`, over `field_register_count * padded_trace_rows`
+field-register cells. Treat the first numbers as local baselines, then tighten
+them into regression thresholds once the canonical CPU backend starts consuming
+the same streams and views.
+
+Field-inline witness generation has an extra bottleneck surface because the
+normalized `TraceRow` is wider under `feature = "field-inline"` and because FR
+register-domain views are naturally `field_register_count * T`. The local
+provider implementation must therefore follow these constraints:
+
+- Collect and validate normalized field-inline trace rows once when constructing
+  the field-inline provider, then reuse that checked row slice for all streams
+  and materialized views.
+- Keep committed streams slice-backed where possible; do not clone or rescan the
+  `TraceSource` for every committed oracle once the provider has been built.
+- Decode `FieldEncodedValue` through a narrow fast path for small canonical
+  values and fall back to full modular byte reduction only when the upper bytes
+  are nonzero.
+- Materialize large dense FR views with explicit parallelism, especially
+  address-major register-domain views retained for BlindFold.
+- Treat the remaining by-value `TraceSource::next_row() -> TraceRow` cost as a
+  known future optimization target. A borrowed-row or sidecar FR trace API may
+  be needed if FR-enabled ordinary RV64 streams remain much slower than the
+  FR-off path.
+
+BlindFold currently has only namespace scaffolding in `jolt-witness`, so there
+is not yet a dedicated BlindFold witness-construction benchmark. Until that
+provider exists, the field-inline materialized-view benchmarks are the
+BlindFold-relevant proxy because they exercise the retained virtual witness
+data that hidden claim constraints will consume. When
+`jolt_witness::protocols::blindfold` grows real committed-round,
+output-claim-row, auxiliary-row, and opening-witness providers, add a separate
+`jolt_witness/blindfold` benchmark group for those constructors.
 
 ## Relationship To `jolt-claims`
 
@@ -324,10 +509,10 @@ pub trait PublicWitness<F, N: WitnessNamespace>: WitnessProvider<F, N> {
     fn public_value(&self, id: N::PublicId) -> Result<PublicValue<F>, WitnessError>;
 }
 
-pub trait CommittedPolynomialWitness<F, N: WitnessNamespace>:
+pub trait CommittedWitnessProvider<F, N: WitnessNamespace>:
     WitnessProvider<F, N>
 {
-    fn committed_ids(&self) -> &[N::CommittedId];
+    fn committed_oracle_order(&self) -> Result<Vec<N::CommittedId>, WitnessError>;
 
     fn committed_oracle(
         &self,
@@ -407,7 +592,7 @@ The witness/prover/backend boundary should be standardized enough that:
 
 ```text
 jolt-prover:
-  names logical witness oracles and required access patterns in protocol plans
+  names logical witness oracles and required access patterns in backend requests
 
 jolt-witness:
   describes available oracles, dimensions, encodings, views, stream semantics,
@@ -420,7 +605,7 @@ jolt-backends:
 
 The shared contract should live in `jolt-witness` because it must not depend on
 any particular prover or backend. `jolt-prover` may embed these generic request
-types inside protocol-resolved plans, and `jolt-backends` may use them to ask
+types inside stage-specific backend requests, and `jolt-backends` may use them to ask
 providers for source views or stream producers.
 
 Representative shared types:
@@ -523,7 +708,7 @@ event_log:
 
 The provider may reject unsupported access with `WitnessError::Unsupported`.
 The backend can then choose a different view, request explicit materialization,
-or report that the selected backend cannot execute the plan.
+or report that the selected backend cannot execute the request.
 
 ### Materialization Policy
 
@@ -584,7 +769,7 @@ protocol-visible values and satisfy the retention hint.
 The intended flow is:
 
 ```text
-1. jolt-prover builds a protocol plan with OracleRef + ViewRequirement slots.
+1. jolt-prover builds stage-specific backend requests with OracleRef + ViewRequirement slots.
 2. backend inspects witness OracleDescriptor values.
 3. backend requests OracleView values or stream producers from jolt-witness.
 4. backend allocates/materializes only what it needs in BackendWorkspace.
@@ -747,10 +932,62 @@ Streaming views should support at least:
 
 ```text
 committed witness row chunks for CycleMajor Dory commitment
+batched committed witness row chunks that emit all requested committed
+  polynomials from one trace pass
 advice chunk producers
 Stage 8 RLC streaming over trace and advice data
 future GPU-friendly chunk upload paths
 ```
+
+Chunks must preserve the representation needed by the backend fast path. A
+stream is not always `Vec<F>`: committed Jolt data may stream as dense field
+elements, compact small-scalar chunks, or one-hot row chunks carrying
+`Option<usize>` indices. The first API surface should make this explicit with a
+representation-tagged chunk enum so the CPU backend does not have to
+materialize compact or one-hot streams as dense field vectors before Dory
+commitment or Stage 8 RLC work.
+
+The base Jolt VM provider must also expose a row-batched committed stream for
+the CPU backend fast path. `jolt-core` does not commit by draining one full
+trace stream per committed polynomial; it chunks the trace once, then computes
+the per-row commitment input for every committed polynomial in that row chunk.
+The modular provider/backend split must preserve that shape:
+
+```text
+TraceRow chunk
+  -> [(RdInc, compact chunk),
+      (RamInc, compact chunk),
+      (InstructionRa(i), one-hot chunk),
+      (BytecodeRa(i), one-hot chunk),
+      (RamRa(i), one-hot chunk)]
+  -> backend PCS row processing
+```
+
+Single-polynomial streams are still useful for tests, debugging, and narrow
+requests, but the canonical CPU backend should use the batched stream for witness
+commitment so it does not rescan or re-run lookup/PC/RAM derivation once per
+committed oracle.
+
+Materialized trace sources used by the modular witness path must have
+shared/backing clone semantics. Cloning a stream cursor may reset iteration, but
+it must not deep-copy the full trace. This matches the `jolt-core` prover's
+`Arc<Vec<Cycle>>` materialized trace model and prevents per-polynomial stream
+construction from becoming an accidental `O(num_polys * T)` memory copy.
+
+For one-hot committed oracles, the stream's logical row count is the trace-row
+count, while the descriptor row count is the full `T * K` polynomial size. The
+backend derives `K` from those two facts and constructs a sparse one-hot
+polynomial representation for PCS commitment. This distinction is part of the
+witness/backend contract, not an implementation accident.
+
+Committed-oracle order reported by a witness provider is a deterministic
+scheduling order for stream production. A provider may choose a familiar order,
+such as the Jolt proof payload order, but consumers must not treat that vector
+position as proof layout. It is not necessarily the final PCS opening order.
+`jolt-prover` must assemble commitments by logical committed-polynomial ID and
+reject missing or duplicate IDs. This keeps witness storage layout, backend
+execution order, proof transcript order, and Stage 8 opening order from
+drifting into one implicit vector contract.
 
 AddressMajor or unsupported layouts may start with materialized fallback views,
 but the fallback must be explicit in the view capabilities and benchmarked in
@@ -777,7 +1014,7 @@ jolt_witness::protocols::jolt_vm
     registers
     RAM
     bytecode
-    instruction lookups
+    instruction lookups via `jolt-lookup-tables`
     advice
 
   field_inline/
@@ -830,7 +1067,8 @@ instruction flags
 operand and output values
 register read/write values
 RAM read/write address and value views
-lookup operands and lookup outputs
+lookup operands, lookup indices, and lookup outputs derived through
+`jolt-lookup-tables`
 read/write helper polynomials
 Hamming/booleanity helper views
 advice-derived virtuals

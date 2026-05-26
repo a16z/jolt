@@ -12,4 +12,4 @@ pub use interleave::{interleave_bits, uninterleave_bits};
 pub use lookup_bits::LookupBits;
 pub use tables::prefixes::ALL_PREFIXES;
 pub use tables::{LookupTableKind, PrefixSuffixDecomposition};
-pub use traits::{InstructionLookupTable, LookupQuery, LookupTable};
+pub use traits::{InstructionLookupTable, JoltLookupQuery, LookupQuery, LookupTable};

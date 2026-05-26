@@ -86,6 +86,13 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] `NormalizedInstruction` includes an `instruction_kind: JoltInstructionKind` field plus normalized operands, address, virtual sequence metadata, and compressed-instruction metadata.
 - [x] `jolt-riscv` documents that `JoltInstructionKind` is the canonical flat row identity in this PR, while `SourceInstructionKind` is only a decoder-facing mirror and the true source/final split remains follow-up work.
 - [x] `jolt-program::preprocess` owns materialized bytecode/RAM/program preprocessing artifacts consumed by both prover and verifier setup.
+- [x] `jolt-program::lookup` is only a normalized `TraceRow` adapter over
+  `jolt-lookup-tables` lookup query APIs. It must not contain independent
+  operand packing, lookup-index arithmetic, lookup-output formulas, table
+  routing, or table MLE logic. If witness/prover/backend code needs a lookup
+  shape that `jolt-program::lookup` does not expose, extend
+  `jolt-lookup-tables` or add a thin adapter here; do not duplicate formulas in
+  the consumer crate.
 - [x] `JoltInstruction` is a marker/conversion trait equivalent to `Into<NormalizedInstruction> + TryFrom<NormalizedInstruction>`, not a second accessor abstraction over the same fields.
 - [x] Any `JoltInstruction` impls for tracer's concrete instruction structs live in `tracer` as adapter impls, generated from the shared instruction-kind list where practical.
 - [x] `jolt-riscv` does not retain a blanket `impl<T: tracer::instruction::RISCVInstruction> JoltInstruction for T`.
@@ -124,6 +131,10 @@ Add parity tests that compare the current implementation and the new crate durin
 - tests that assert exact `virtual_sequence_remaining` and `is_first_in_sequence` values,
 - tests that build `BytecodePCMapper` from expanded output and verify stable PC indices,
 - tests that `jolt-program::image` rejects ELF32/RV32 inputs with the expected unsupported-architecture error.
+- tests that `jolt-program::lookup` adapters dispatch through
+  `jolt-lookup-tables::JoltLookupQuery` for default interleaved operands,
+  combined/immediate operands, advice written-value outputs, and unsupported
+  XLEN rejection.
 
 The parity process should be:
 
@@ -210,8 +221,15 @@ jolt-program
     -> ExecutionBackend and TraceSource traits
     -> backend-neutral trace rows, trace inputs, trace outputs, and trace errors
 
+  lookup
+    -> thin adapters from TraceRow to jolt-lookup-tables LookupQuery APIs
+
 jolt-riscv::trace
   -> owns JoltCycle and any tracer-free instruction/cycle-facing helper APIs
+
+jolt-lookup-tables
+  -> owns lookup table definitions, instruction lookup query packing,
+     lookup index/output derivation, and table MLE evaluation
 
 tracer
   -> executes instructions and produces traces
@@ -526,6 +544,19 @@ This module is the answer to the "changing tracer should not touch lower crates"
 - does not depend on `tracer` and does not choose a concrete execution backend;
 - keeps runtime cycle traits next to the canonical static instruction vocabulary used by lookup-table code.
 
+`jolt-program::lookup` is only an adapter layer:
+
+- `TraceRow` implements `jolt-riscv::JoltCycle`;
+- lookup index/output semantics are delegated to `jolt-lookup-tables`;
+- `jolt-program` must not duplicate lookup operand packing, lookup index
+  arithmetic, lookup output formulas, or table-routing logic.
+
+If a caller needs a lookup helper that is not exposed by `jolt-program::lookup`,
+the default action is to add the semantic operation to `jolt-lookup-tables`
+first and then add a thin normalized-row adapter here. Do not add a local
+formula in `jolt-program`, `jolt-witness`, `jolt-prover`, or a backend to avoid
+touching the lookup crate.
+
 `jolt-sdk` remains the macro and user-facing SDK layer:
 
 - generated prove/analyze/preprocess code should build or receive a `JoltProgram` through `jolt-program`;
@@ -539,7 +570,7 @@ Target dependency edges:
 | Crate | May depend on | Must not depend on |
 |-------|---------------|--------------------|
 | `jolt-riscv` | `common`, `jolt-platform`, `serde`, `ark-serialize`, `strum`, `paste`, `derive_more`, optional test utilities | `tracer`, `jolt-core`, `jolt-program`, `object` |
-| `jolt-program` | `jolt-riscv`, `common`, `ark-serialize`, `blake2`, `thiserror`, `serde`, optional `object` and `tracing` behind image/host features | `tracer`, `jolt-core`, PCS implementations, Dory setup, prover-only modules |
+| `jolt-program` | `jolt-riscv`, `jolt-lookup-tables`, `common`, `ark-serialize`, `blake2`, `thiserror`, `serde`, optional `object` and `tracing` behind image/host features | `tracer`, `jolt-core`, PCS implementations, Dory setup, prover-only modules |
 | `tracer` | `jolt-riscv`, `jolt-program`, `common`, `jolt-platform` | `jolt-core` |
 | `jolt-core` | `jolt-riscv`, `jolt-program`, proof-system crates, `common` | `tracer` for program preprocessing types |
 | `jolt-sdk` | `jolt-program`, `jolt-core`, `tracer` for default host backend wiring | making `jolt-riscv`, `jolt-program`, or verifier-facing generated types depend on tracer concrete internals |
@@ -794,6 +825,8 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `crates/jolt-riscv/src/normalized.rs`: define `NormalizedInstruction` with an `instruction_kind` field.
 - `crates/jolt-riscv/src/jolt_instruction.rs`: remove the blanket impl over `tracer::instruction::RISCVInstruction`; define only the marker/conversion trait without depending on tracer.
 - `crates/jolt-riscv/src/trace.rs`: own `JoltCycle` and any tracer-free cycle-view helpers used by lookup-table code.
+- `crates/jolt-program/src/lookup.rs`: expose only thin TraceRow-to-`jolt-lookup-tables`
+  adapters for lookup indices and related helper queries.
 - `jolt-core/Cargo.toml`: add `jolt-riscv` and `jolt-program`.
 - `jolt-core/src/zkvm/bytecode/mod.rs`: move or reexport materialized bytecode preprocessing from `jolt-program::preprocess`.
 - `jolt-core/src/zkvm/ram/mod.rs`: move or reexport pure RAM preprocessing from `jolt-program::preprocess`; leave prover/verifier sumcheck modules in `jolt-core`.
