@@ -2,7 +2,7 @@
 
 mod support;
 
-use jolt_blindfold::{r1cs, BlindFoldStage, BlindFoldStatement, CommittedClaimRows};
+use jolt_blindfold::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows};
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{booleanity, BooleanityDimensions},
@@ -11,8 +11,8 @@ use jolt_claims::protocols::jolt::{
         ram::{self, RamValCheckAdviceContribution, RamValCheckInit},
         registers,
     },
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltStageClaims, ReadWriteDimensions,
-    TraceDimensions,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
+    ReadWriteDimensions, TraceDimensions,
 };
 use jolt_r1cs::{ClaimSourceTable, R1csBuilder};
 use jolt_sumcheck::{SumcheckDomainSpec, SumcheckStatement};
@@ -28,7 +28,7 @@ struct JoltSourceValues {
 }
 
 impl JoltSourceValues {
-    fn seeded(stage: &JoltStageClaims<F>, seed: u64) -> Self {
+    fn seeded(stage: &JoltRelationClaims<F>, seed: u64) -> Self {
         let openings = stage
             .required_openings()
             .into_iter()
@@ -94,7 +94,7 @@ impl JoltSourceValues {
 }
 
 fn solve_linear_output_opening(
-    stage: &JoltStageClaims<F>,
+    stage: &JoltRelationClaims<F>,
     values: &mut JoltSourceValues,
     target: F,
 ) -> JoltOpeningId {
@@ -125,7 +125,7 @@ fn solve_linear_output_opening(
 }
 
 fn build_jolt_stage_relation(
-    stage: &JoltStageClaims<F>,
+    stage: &JoltRelationClaims<F>,
     generated: &GeneratedStage,
     values: &JoltSourceValues,
 ) -> Result<(), usize> {
@@ -159,8 +159,12 @@ fn build_jolt_stage_relation(
         sources.insert_public(id, value);
     }
 
-    let layout = r1cs::allocate_layout(&mut builder, &statement).expect("layout allocates");
-    r1cs::append(&mut builder, &statement, &layout, &mut sources).expect("constraints append");
+    let layout = statement
+        .allocate_layout(&mut builder)
+        .expect("layout allocates");
+    statement
+        .append(&mut builder, &layout, &mut sources)
+        .expect("constraints append");
     assign_generated_stage(&mut builder, &layout.stages[0].sumcheck, generated);
 
     let witness = builder.witness().expect("all witnesses assigned");
@@ -168,7 +172,7 @@ fn build_jolt_stage_relation(
 }
 
 fn generated_jolt_stage(
-    stage: &JoltStageClaims<F>,
+    stage: &JoltRelationClaims<F>,
     seed: u64,
 ) -> (GeneratedStage, JoltSourceValues, JoltOpeningId) {
     let setup = pedersen_setup(stage.sumcheck.degree + 1);
@@ -279,8 +283,12 @@ fn jolt_claims_pipeline_lowers_booleanity_relation() {
         sources.insert_public(public_id, f(11));
     }
 
-    let r1cs_layout = r1cs::allocate_layout(&mut builder, &statement).expect("layout allocates");
-    r1cs::append(&mut builder, &statement, &r1cs_layout, &mut sources).expect("constraints append");
+    let r1cs_layout = statement
+        .allocate_layout(&mut builder)
+        .expect("layout allocates");
+    statement
+        .append(&mut builder, &r1cs_layout, &mut sources)
+        .expect("constraints append");
     assign_generated_stage(&mut builder, &r1cs_layout.stages[0].sumcheck, &generated);
 
     let witness = builder.witness().expect("all witnesses assigned");

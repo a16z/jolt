@@ -5,8 +5,8 @@
 )]
 
 use jolt_blindfold::{
-    r1cs, BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement,
-    CommittedClaimRows, FinalOpeningBinding, WitnessCoordinate,
+    BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
+    FinalOpeningBinding, WitnessCoordinate,
 };
 use jolt_claims::{challenge, constant, opening, public, Expr};
 use jolt_crypto::{
@@ -20,7 +20,7 @@ use jolt_sumcheck::{
     CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage, SumcheckDomainSpec,
     SumcheckR1csLayout, SumcheckStatement, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, Transcript};
 use rand_core::RngCore;
 
 pub type F = Fr;
@@ -160,7 +160,7 @@ pub fn transcript_projection<A: AppendToTranscript>(label: &'static [u8], value:
 
 pub fn field_slice_projection(label: &'static [u8], values: &[F]) -> u64 {
     let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-statistical-projection");
-    append_values(&mut transcript, label, values);
+    transcript.append_values(label, values);
     field_low_u64(transcript.challenge())
 }
 
@@ -692,8 +692,12 @@ pub fn build_deep_relation(
     sources.insert_public(Public::Offset, values.offset);
     sources.insert_public(Public::Multiplier, values.multiplier);
 
-    let layout = r1cs::allocate_layout(&mut builder, &statement).expect("layout allocates");
-    r1cs::append(&mut builder, &statement, &layout, &mut sources).expect("constraints append");
+    let layout = statement
+        .allocate_layout(&mut builder)
+        .expect("layout allocates");
+    statement
+        .append(&mut builder, &layout, &mut sources)
+        .expect("constraints append");
     assign_generated_stage(&mut builder, &layout.stages[0].sumcheck, stage1);
     assign_generated_stage(&mut builder, &layout.stages[1].sumcheck, stage2);
     assign_generated_stage(&mut builder, &layout.stages[2].sumcheck, stage3);
@@ -930,7 +934,9 @@ fn protocol_backed_witness<R: RngCore>(
 ) -> (Vec<Vec<F>>, Vec<F>) {
     let mut builder = R1csBuilder::<F>::new();
     let mut sources = ClaimSourceTable::<F, usize, (), usize>::new();
-    let layout = r1cs::allocate_layout(&mut builder, statement).expect("layout allocates");
+    let layout = statement
+        .allocate_layout(&mut builder)
+        .expect("layout allocates");
     for (stage, stage_layout) in statement.stages.iter().zip(&layout.stages) {
         let variables = stage_layout
             .output_claim_rows
@@ -940,7 +946,9 @@ fn protocol_backed_witness<R: RngCore>(
             sources.insert_opening(*opening_id, variable);
         }
     }
-    r1cs::append(&mut builder, statement, &layout, &mut sources).expect("constraints append");
+    statement
+        .append(&mut builder, &layout, &mut sources)
+        .expect("constraints append");
     for (stage, (stage_layout, generated)) in statement
         .stages
         .iter()
@@ -1208,7 +1216,7 @@ fn prove_from_protocol_witness<R: RngCore>(
         &random_instance.error_row_commitments,
         &random_instance.eval_commitments,
     );
-    append_values(transcript, b"bf_cross_e", &cross_term_error_row_commitments);
+    transcript.append_values(b"bf_cross_e", &cross_term_error_row_commitments);
     let folding_challenge = transcript.challenge();
 
     let folded_u = f(1) + folding_challenge * random_u;
@@ -1325,7 +1333,7 @@ fn prove_from_protocol_witness<R: RngCore>(
     )
     .expect("folded error rows open");
 
-    append_values(transcript, b"bf_az_bz_cz", &[az_rx, bz_rx, cz_rx]);
+    transcript.append_values(b"bf_az_bz_cz", &[az_rx, bz_rx, cz_rx]);
     append_vector_opening(
         transcript,
         b"bf_error_opening",
@@ -1448,20 +1456,9 @@ fn append_relaxed_instance_from_parts(
 ) {
     transcript.append(&Label(labels.u));
     u.append_to_transcript(transcript);
-    append_values(transcript, labels.witness, witness_commitments);
-    append_values(transcript, labels.error, error_commitments);
-    append_values(transcript, labels.eval, eval_commitments);
-}
-
-fn append_values<A: AppendToTranscript>(
-    transcript: &mut Blake2bTranscript<F>,
-    label: &'static [u8],
-    values: &[A],
-) {
-    transcript.append(&LabelWithCount(label, values.len() as u64));
-    for value in values {
-        value.append_to_transcript(transcript);
-    }
+    transcript.append_values(labels.witness, witness_commitments);
+    transcript.append_values(labels.error, error_commitments);
+    transcript.append_values(labels.eval, eval_commitments);
 }
 
 fn append_vector_opening(
@@ -1470,7 +1467,7 @@ fn append_vector_opening(
     blinding_label: &'static [u8],
     opening: &jolt_crypto::VectorCommitmentOpening<F>,
 ) {
-    append_values(transcript, row_label, &opening.combined_vector);
+    transcript.append_values(row_label, &opening.combined_vector);
     transcript.append(&Label(blinding_label));
     opening.combined_blinding.append_to_transcript(transcript);
 }
@@ -1692,7 +1689,7 @@ fn prove_slow_sumcheck(
         let mut compressed = Vec::with_capacity(degree);
         compressed.push(coefficients[0]);
         compressed.extend_from_slice(&coefficients[2..]);
-        append_values(transcript, label, &compressed);
+        transcript.append_values(label, &compressed);
         let challenge = transcript.challenge();
         running_sum = eval_poly(&coefficients, challenge);
         prefix.push(challenge);

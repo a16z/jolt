@@ -2,7 +2,7 @@
 
 mod support;
 
-use jolt_blindfold::{verify, VerificationError};
+use jolt_blindfold::VerificationError;
 use jolt_poly::CompressedPoly;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -14,7 +14,8 @@ fn verify_blindfold_protocol_pipeline(
 ) -> Result<(), VerificationError<F>> {
     let mut transcript = Blake2bTranscript::<F>::new(b"protocol-backed-blindfold-proof");
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
-    verify::<F, VC, _>(&full.protocol, &full.proof, &full.setup, &mut transcript)
+    full.protocol
+        .verify::<VC, _>(&full.proof, &full.setup, &mut transcript)
 }
 
 #[test]
@@ -146,7 +147,10 @@ fn blindfold_protocol_pipeline_rejects_wrong_transcript() {
     let mut transcript = Blake2bTranscript::<F>::new(b"wrong-transcript");
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
 
-    assert!(verify::<F, VC, _>(&full.protocol, &full.proof, &full.setup, &mut transcript).is_err());
+    assert!(full
+        .protocol
+        .verify::<VC, _>(&full.proof, &full.setup, &mut transcript)
+        .is_err());
 }
 
 #[test]

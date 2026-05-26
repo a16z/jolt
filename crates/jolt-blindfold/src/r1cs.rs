@@ -53,193 +53,267 @@ pub struct FinalOpeningLayout {
     pub blinding: Option<Variable>,
 }
 
-pub fn build_with_sources<F, O, P, Ch, C>(
-    builder: &mut R1csBuilder<F>,
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-    publics: &[(P, F)],
-    challenges: &[(Ch, F)],
-) -> Result<Layout, Error>
+impl<F, O, Com, P, Ch> BlindFoldStatement<F, O, Com, P, Ch>
+where
+    F: Field,
+{
+    pub fn build<R>(
+        &self,
+        builder: &mut R1csBuilder<F>,
+        claim_sources: &mut R,
+    ) -> Result<Layout, Error>
+    where
+        R: ClaimSources<F, Opening = O, Challenge = Ch, Public = P>,
+    {
+        let layout = self.allocate_layout(builder)?;
+        self.append(builder, &layout, claim_sources)?;
+        Ok(layout)
+    }
+
+    pub fn append<R>(
+        &self,
+        builder: &mut R1csBuilder<F>,
+        layout: &Layout,
+        claim_sources: &mut R,
+    ) -> Result<(), Error>
+    where
+        R: ClaimSources<F, Opening = O, Challenge = Ch, Public = P>,
+    {
+        self.validate_layout_counts(layout)?;
+
+        for (stage_index, (stage, stage_layout)) in
+            self.stages.iter().zip(&layout.stages).enumerate()
+        {
+            assert_claim_expr_eq(
+                builder,
+                &stage.input_claim,
+                stage_layout.sumcheck.input_claim,
+                claim_sources,
+            )?;
+
+            append_sumcheck_r1cs_constraints_for_domain(
+                builder,
+                stage.statement,
+                &stage.consistency.rounds,
+                &stage_layout.sumcheck,
+                stage.domain,
+            )
+            .map_err(|source| Error::Sumcheck {
+                stage_index,
+                source,
+            })?;
+
+            assert_claim_expr_eq(
+                builder,
+                &stage.output_claim,
+                stage_layout.sumcheck.output_claim,
+                claim_sources,
+            )?;
+        }
+
+        for (binding, binding_layout) in self.final_openings.iter().zip(&layout.final_openings) {
+            let Some(evaluation) = binding_layout.evaluation else {
+                continue;
+            };
+            let mut combined = LinearCombination::zero();
+            for (opening_id, &coefficient) in binding.opening_ids.iter().zip(&binding.coefficients)
+            {
+                combined = combined
+                    + claim_sources
+                        .opening(opening_id)?
+                        .into_linear_combination()
+                        .scale(coefficient);
+            }
+            builder.assert_equal(combined, evaluation);
+        }
+
+        Ok(())
+    }
+
+    pub fn allocate_layout(&self, builder: &mut R1csBuilder<F>) -> Result<Layout, LayoutError> {
+        let witness_row_len = self.witness_row_len()?;
+
+        let coefficients = self
+            .stages
+            .iter()
+            .enumerate()
+            .map(|(stage_index, stage)| {
+                stage
+                    .validate_sumcheck_statement()
+                    .map_err(|source| LayoutError::Sumcheck {
+                        stage_index,
+                        source,
+                    })?;
+                Ok(stage
+                    .consistency
+                    .rounds
+                    .iter()
+                    .map(|round| {
+                        let coefficients = (0..=round.degree)
+                            .map(|_| builder.alloc_unknown())
+                            .collect::<Vec<_>>();
+                        for _ in coefficients.len()..witness_row_len {
+                            let _ = builder.alloc(F::zero());
+                        }
+                        coefficients
+                    })
+                    .collect::<Vec<_>>())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let output_claim_rows = self
+            .stages
+            .iter()
+            .map(|stage| stage.allocate_output_claim_rows(builder, witness_row_len))
+            .collect::<Vec<_>>();
+
+        let stages = self
+            .stages
+            .iter()
+            .zip(coefficients)
+            .zip(output_claim_rows)
+            .map(|((stage, stage_coefficients), output_claim_rows)| {
+                let input_claim = builder.alloc_unknown();
+                let mut claim_in = input_claim;
+                let mut rounds = Vec::with_capacity(stage.consistency.rounds.len());
+
+                for coefficients in stage_coefficients {
+                    let claim_out = builder.alloc_unknown();
+                    rounds.push(SumcheckR1csRoundLayout {
+                        claim_in,
+                        coefficients,
+                        claim_out,
+                    });
+                    claim_in = claim_out;
+                }
+
+                Ok(StageLayout {
+                    output_claim_rows,
+                    sumcheck: SumcheckR1csLayout {
+                        input_claim,
+                        rounds,
+                        output_claim: claim_in,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, LayoutError>>()?;
+
+        let final_openings = self
+            .final_openings
+            .iter()
+            .map(|binding| FinalOpeningLayout {
+                evaluation: (!binding.opening_ids.is_empty())
+                    .then(|| allocate_private_row_scalar(builder, witness_row_len)),
+                blinding: (!binding.opening_ids.is_empty())
+                    .then(|| allocate_private_row_scalar(builder, witness_row_len)),
+            })
+            .collect();
+
+        Ok(Layout {
+            witness_row_len,
+            stages,
+            final_openings,
+        })
+    }
+
+    fn witness_row_len(&self) -> Result<usize, LayoutError> {
+        let round_coefficients = self
+            .stages
+            .iter()
+            .flat_map(|stage| &stage.consistency.rounds)
+            .map(|round| round.degree.saturating_add(1))
+            .max()
+            .unwrap_or(1);
+        let output_claim_row_len = self
+            .stages
+            .iter()
+            .map(|stage| stage.output_claim_rows.row_len)
+            .max()
+            .unwrap_or(0);
+        let row_len = round_coefficients.max(output_claim_row_len).max(1);
+        row_len
+            .checked_next_power_of_two()
+            .ok_or(LayoutError::DimensionOverflow {
+                name: "witness row length",
+                value: row_len,
+            })
+    }
+
+    fn validate_layout_counts(&self, layout: &Layout) -> Result<(), Error> {
+        if self.stages.len() != layout.stages.len() {
+            return Err(Error::LayoutStageCountMismatch {
+                statement_stages: self.stages.len(),
+                layout_stages: layout.stages.len(),
+            });
+        }
+
+        if self.final_openings.len() != layout.final_openings.len() {
+            return Err(Error::LayoutStageCountMismatch {
+                statement_stages: self.final_openings.len(),
+                layout_stages: layout.final_openings.len(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+impl<F, O, Com, P, Ch> BlindFoldStatement<F, O, Com, P, Ch>
 where
     F: Field,
     O: Clone + PartialEq,
     P: Clone + PartialEq,
     Ch: Clone + PartialEq,
 {
-    let layout = allocate_layout(builder, statement)?;
-    let mut claim_sources = ClaimSourceTable::<F, O, P, Ch>::new();
-    insert_output_claim_sources(statement, &layout, &mut claim_sources)?;
-    for (id, value) in publics {
-        claim_sources.insert_public(id.clone(), *value);
-    }
-    for (id, value) in challenges {
-        claim_sources.insert_challenge(id.clone(), *value);
-    }
-    append(builder, statement, &layout, &mut claim_sources)?;
-    Ok(layout)
-}
-
-pub fn build<F, O, P, Ch, C, R>(
-    builder: &mut R1csBuilder<F>,
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-    claim_sources: &mut R,
-) -> Result<Layout, Error>
-where
-    F: Field,
-    R: ClaimSources<F, Opening = O, Challenge = Ch, Public = P>,
-{
-    let layout = allocate_layout(builder, statement)?;
-    append(builder, statement, &layout, claim_sources)?;
-    Ok(layout)
-}
-
-pub fn append<F, O, P, Ch, C, R>(
-    builder: &mut R1csBuilder<F>,
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-    layout: &Layout,
-    claim_sources: &mut R,
-) -> Result<(), Error>
-where
-    F: Field,
-    R: ClaimSources<F, Opening = O, Challenge = Ch, Public = P>,
-{
-    validate_stage_count(statement, layout)?;
-    validate_final_opening_count(statement, layout)?;
-
-    for (stage_index, (stage, stage_layout)) in
-        statement.stages.iter().zip(&layout.stages).enumerate()
-    {
-        assert_claim_expr_eq(
-            builder,
-            &stage.input_claim,
-            stage_layout.sumcheck.input_claim,
-            claim_sources,
-        )?;
-
-        append_sumcheck_r1cs_constraints_for_domain(
-            builder,
-            stage.statement,
-            &stage.consistency.rounds,
-            &stage_layout.sumcheck,
-            stage.domain,
-        )
-        .map_err(|source| Error::Sumcheck {
-            stage_index,
-            source,
-        })?;
-
-        assert_claim_expr_eq(
-            builder,
-            &stage.output_claim,
-            stage_layout.sumcheck.output_claim,
-            claim_sources,
-        )?;
-    }
-
-    for (binding, binding_layout) in statement.final_openings.iter().zip(&layout.final_openings) {
-        let Some(evaluation) = binding_layout.evaluation else {
-            continue;
-        };
-        let mut combined = LinearCombination::zero();
-        for (opening_id, &coefficient) in binding.opening_ids.iter().zip(&binding.coefficients) {
-            let variable = claim_sources.opening(opening_id)?;
-            combined = combined + LinearCombination::variable(variable).scale(coefficient);
+    pub fn build_with_sources(
+        &self,
+        builder: &mut R1csBuilder<F>,
+        publics: &[(P, F)],
+        challenges: &[(Ch, F)],
+    ) -> Result<Layout, Error> {
+        let layout = self.allocate_layout(builder)?;
+        let mut claim_sources = ClaimSourceTable::<F, O, P, Ch>::new();
+        self.insert_output_claim_sources(&layout, &mut claim_sources)?;
+        for (id, value) in publics {
+            claim_sources.insert_public(id.clone(), *value);
         }
-        builder.assert_equal(combined, evaluation);
+        for (id, value) in challenges {
+            claim_sources.insert_challenge(id.clone(), *value);
+        }
+        self.append(builder, &layout, &mut claim_sources)?;
+        Ok(layout)
     }
 
-    Ok(())
-}
-
-pub fn allocate_layout<F, O, P, Ch, C>(
-    builder: &mut R1csBuilder<F>,
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-) -> Result<Layout, LayoutError>
-where
-    F: Field,
-{
-    let witness_row_len = witness_row_len(statement)?;
-
-    let coefficients = statement
-        .stages
-        .iter()
-        .enumerate()
-        .map(|(stage_index, stage)| {
-            validate_stage_statement(stage.statement, &stage.consistency.rounds).map_err(
-                |source| LayoutError::Sumcheck {
-                    stage_index,
-                    source,
-                },
-            )?;
-            Ok(stage
-                .consistency
-                .rounds
+    fn insert_output_claim_sources(
+        &self,
+        layout: &Layout,
+        claim_sources: &mut ClaimSourceTable<F, O, P, Ch>,
+    ) -> Result<(), Error> {
+        let mut inserted = Vec::<(O, Variable)>::new();
+        for (stage, stage_layout) in self.stages.iter().zip(&layout.stages) {
+            let row_len = stage.output_claim_rows.row_len;
+            let variables = stage_layout
+                .output_claim_rows
                 .iter()
-                .map(|round| {
-                    let coefficients = (0..=round.degree)
-                        .map(|_| builder.alloc_unknown())
-                        .collect::<Vec<_>>();
-                    for _ in coefficients.len()..witness_row_len {
-                        let _ = builder.alloc(F::zero());
-                    }
-                    coefficients
-                })
-                .collect::<Vec<_>>())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let output_claim_rows = statement
-        .stages
-        .iter()
-        .map(|stage| allocate_output_claim_rows(builder, stage, witness_row_len))
-        .collect::<Vec<_>>();
-
-    let stages = statement
-        .stages
-        .iter()
-        .zip(coefficients)
-        .zip(output_claim_rows)
-        .map(|((stage, stage_coefficients), output_claim_rows)| {
-            let input_claim = builder.alloc_unknown();
-            let mut claim_in = input_claim;
-            let mut rounds = Vec::with_capacity(stage.consistency.rounds.len());
-
-            for coefficients in stage_coefficients {
-                let claim_out = builder.alloc_unknown();
-                rounds.push(SumcheckR1csRoundLayout {
-                    claim_in,
-                    coefficients,
-                    claim_out,
-                });
-                claim_in = claim_out;
+                .flat_map(|row| row.variables.iter().take(row_len));
+            for (opening_id, &variable) in stage.output_claim_rows.opening_ids.iter().zip(variables)
+            {
+                claim_sources.insert_opening(opening_id.clone(), variable);
+                inserted.push((opening_id.clone(), variable));
             }
-
-            Ok(StageLayout {
-                output_claim_rows,
-                sumcheck: SumcheckR1csLayout {
-                    input_claim,
-                    rounds,
-                    output_claim: claim_in,
-                },
-            })
-        })
-        .collect::<Result<Vec<_>, LayoutError>>()?;
-
-    let final_openings = statement
-        .final_openings
-        .iter()
-        .map(|binding| FinalOpeningLayout {
-            evaluation: (!binding.opening_ids.is_empty())
-                .then(|| allocate_private_row_scalar(builder, witness_row_len)),
-            blinding: (!binding.opening_ids.is_empty())
-                .then(|| allocate_private_row_scalar(builder, witness_row_len)),
-        })
-        .collect();
-
-    Ok(Layout {
-        witness_row_len,
-        stages,
-        final_openings,
-    })
+            for alias in &stage.output_claim_rows.opening_aliases {
+                let variable = inserted
+                    .iter()
+                    .find_map(|(opening_id, variable)| {
+                        (opening_id == &alias.source).then_some(*variable)
+                    })
+                    .ok_or(Error::MissingOpeningAliasSource)?;
+                claim_sources.insert_opening(alias.alias.clone(), variable);
+                inserted.push((alias.alias.clone(), variable));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn allocate_private_row_scalar<F: Field>(
@@ -260,145 +334,60 @@ fn pad_to_witness_row_boundary<F: Field>(builder: &mut R1csBuilder<F>, witness_r
     }
 }
 
-fn witness_row_len<F, O, P, Ch, C>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-) -> Result<usize, LayoutError> {
-    let round_coefficients = statement
-        .stages
-        .iter()
-        .flat_map(|stage| &stage.consistency.rounds)
-        .map(|round| round.degree.saturating_add(1))
-        .max()
-        .unwrap_or(1);
-    let output_claim_row_len = statement
-        .stages
-        .iter()
-        .map(|stage| stage.output_claim_rows.row_len)
-        .max()
-        .unwrap_or(0);
-    let row_len = round_coefficients.max(output_claim_row_len).max(1);
-    row_len
-        .checked_next_power_of_two()
-        .ok_or(LayoutError::DimensionOverflow {
-            name: "witness row length",
-            value: row_len,
-        })
+impl<F, O, Com, P, Ch> BlindFoldStage<F, O, Com, P, Ch> {
+    fn validate_sumcheck_statement(&self) -> Result<(), SumcheckR1csError> {
+        if self.statement.num_vars != self.consistency.rounds.len() {
+            return Err(SumcheckR1csError::WrongNumberOfRounds {
+                expected: self.statement.num_vars,
+                actual: self.consistency.rounds.len(),
+            });
+        }
+
+        for (round_index, round) in self.consistency.rounds.iter().enumerate() {
+            if round.degree > self.statement.degree {
+                return Err(SumcheckR1csError::DegreeBoundExceeded {
+                    round_index,
+                    bound: self.statement.degree,
+                    actual: round.degree,
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
-fn allocate_output_claim_rows<F, O, P, Ch, C>(
-    builder: &mut R1csBuilder<F>,
-    stage: &BlindFoldStage<F, O, C, P, Ch>,
-    witness_row_len: usize,
-) -> Vec<OutputClaimRowLayout>
+impl<F, O, Com, P, Ch> BlindFoldStage<F, O, Com, P, Ch>
 where
     F: Field,
 {
-    let row_count = stage.output_claim_rows.commitments.commitments.len();
-    let row_len = stage.output_claim_rows.row_len;
-    let mut remaining_openings = stage.output_claim_rows.opening_ids.len();
-    let mut rows = Vec::with_capacity(row_count);
+    fn allocate_output_claim_rows(
+        &self,
+        builder: &mut R1csBuilder<F>,
+        witness_row_len: usize,
+    ) -> Vec<OutputClaimRowLayout> {
+        let row_count = self.output_claim_rows.commitments.commitments.len();
+        let row_len = self.output_claim_rows.row_len;
+        let mut remaining_openings = self.output_claim_rows.opening_ids.len();
+        let mut rows = Vec::with_capacity(row_count);
 
-    for _ in 0..row_count {
-        let opening_slots = remaining_openings.min(row_len);
-        let mut variables = Vec::with_capacity(witness_row_len);
-        for slot in 0..witness_row_len {
-            let variable = if slot < opening_slots {
-                builder.alloc_unknown()
-            } else {
-                builder.alloc(F::zero())
-            };
-            variables.push(variable);
+        for _ in 0..row_count {
+            let opening_slots = remaining_openings.min(row_len);
+            let mut variables = Vec::with_capacity(witness_row_len);
+            for slot in 0..witness_row_len {
+                let variable = if slot < opening_slots {
+                    builder.alloc_unknown()
+                } else {
+                    builder.alloc(F::zero())
+                };
+                variables.push(variable);
+            }
+            remaining_openings -= opening_slots;
+            rows.push(OutputClaimRowLayout { variables });
         }
-        remaining_openings -= opening_slots;
-        rows.push(OutputClaimRowLayout { variables });
+
+        rows
     }
-
-    rows
-}
-
-fn insert_output_claim_sources<F, O, P, Ch, C>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-    layout: &Layout,
-    claim_sources: &mut ClaimSourceTable<F, O, P, Ch>,
-) -> Result<(), Error>
-where
-    O: Clone + PartialEq,
-{
-    let mut inserted = Vec::<(O, Variable)>::new();
-    for (stage, stage_layout) in statement.stages.iter().zip(&layout.stages) {
-        let row_len = stage.output_claim_rows.row_len;
-        let variables = stage_layout
-            .output_claim_rows
-            .iter()
-            .flat_map(|row| row.variables.iter().take(row_len));
-        for (opening_id, &variable) in stage.output_claim_rows.opening_ids.iter().zip(variables) {
-            claim_sources.insert_opening(opening_id.clone(), variable);
-            inserted.push((opening_id.clone(), variable));
-        }
-        for alias in &stage.output_claim_rows.opening_aliases {
-            let variable = inserted
-                .iter()
-                .find_map(|(opening_id, variable)| {
-                    (opening_id == &alias.source).then_some(*variable)
-                })
-                .ok_or(Error::MissingOpeningAliasSource)?;
-            claim_sources.insert_opening(alias.alias.clone(), variable);
-            inserted.push((alias.alias.clone(), variable));
-        }
-    }
-    Ok(())
-}
-
-fn validate_stage_statement<F, C>(
-    statement: jolt_sumcheck::SumcheckStatement,
-    rounds: &[jolt_sumcheck::VerifiedCommittedRound<F, C>],
-) -> Result<(), SumcheckR1csError> {
-    if statement.num_vars != rounds.len() {
-        return Err(SumcheckR1csError::WrongNumberOfRounds {
-            expected: statement.num_vars,
-            actual: rounds.len(),
-        });
-    }
-
-    for (round_index, round) in rounds.iter().enumerate() {
-        if round.degree > statement.degree {
-            return Err(SumcheckR1csError::DegreeBoundExceeded {
-                round_index,
-                bound: statement.degree,
-                actual: round.degree,
-            });
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_stage_count<F, O, P, Ch, C>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-    layout: &Layout,
-) -> Result<(), Error> {
-    if statement.stages.len() != layout.stages.len() {
-        return Err(Error::LayoutStageCountMismatch {
-            statement_stages: statement.stages.len(),
-            layout_stages: layout.stages.len(),
-        });
-    }
-
-    Ok(())
-}
-
-fn validate_final_opening_count<F, O, P, Ch, C>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-    layout: &Layout,
-) -> Result<(), Error> {
-    if statement.final_openings.len() != layout.final_openings.len() {
-        return Err(Error::LayoutStageCountMismatch {
-            statement_stages: statement.final_openings.len(),
-            layout_stages: layout.final_openings.len(),
-        });
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -515,7 +504,9 @@ mod tests {
         let statement = BlindFoldStatement::new(vec![empty_stage(2, 3, &[1, 3])], Vec::new());
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let layout = allocate_layout(&mut builder, &statement).expect("layout allocates");
+        let layout = statement
+            .allocate_layout(&mut builder)
+            .expect("layout allocates");
 
         assert_eq!(layout.stage_count(), 1);
         let stage = &layout.stages[0];
@@ -547,7 +538,8 @@ mod tests {
             final_openings: Vec::new(),
         };
 
-        let error = append(&mut builder, &statement, &layout, &mut sources)
+        let error = statement
+            .append(&mut builder, &layout, &mut sources)
             .expect_err("stage counts differ");
 
         assert_eq!(
@@ -564,7 +556,9 @@ mod tests {
         let statement = BlindFoldStatement::new(vec![empty_stage(2, 2, &[2])], Vec::new());
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let error = allocate_layout(&mut builder, &statement).expect_err("round counts differ");
+        let error = statement
+            .allocate_layout(&mut builder)
+            .expect_err("round counts differ");
 
         assert_eq!(
             error,
@@ -583,7 +577,9 @@ mod tests {
         let statement = BlindFoldStatement::new(vec![empty_stage(1, 2, &[3])], Vec::new());
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let error = allocate_layout(&mut builder, &statement).expect_err("degree exceeds bound");
+        let error = statement
+            .allocate_layout(&mut builder)
+            .expect_err("degree exceeds bound");
 
         assert_eq!(
             error,
@@ -618,8 +614,9 @@ mod tests {
             Vec::new(),
         );
 
-        let layout =
-            build(&mut builder, &statement, &mut sources).expect("constraints should build");
+        let layout = statement
+            .build(&mut builder, &mut sources)
+            .expect("constraints should build");
 
         let stage_layout = &layout.stages[0].sumcheck;
         assign(&mut builder, stage_layout.input_claim, 10);
@@ -654,7 +651,8 @@ mod tests {
         );
         let mut builder = R1csBuilder::<Fr>::new();
 
-        let layout = build_with_sources(&mut builder, &statement, &[], &[])
+        let layout = statement
+            .build_with_sources(&mut builder, &[], &[])
             .expect("constraints should build");
         let stage_layout = &layout.stages[0].sumcheck;
         assign(&mut builder, stage_layout.input_claim, 10);
@@ -686,7 +684,8 @@ mod tests {
         );
         let mut sources = ClaimSourceTable::<Fr, (), ()>::new();
 
-        let layout = build(&mut builder, &statement, &mut sources)
+        let layout = statement
+            .build(&mut builder, &mut sources)
             .expect("constraints should build for centered domain");
         let stage_layout = &layout.stages[0].sumcheck;
         assign(&mut builder, stage_layout.input_claim, 26);
@@ -711,7 +710,9 @@ mod tests {
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
 
-        let error = build(&mut builder, &statement, &mut sources).expect_err("opening is missing");
+        let error = statement
+            .build(&mut builder, &mut sources)
+            .expect_err("opening is missing");
 
         assert_eq!(error, Error::Claim(ClaimLoweringError::MissingOpening));
     }
@@ -729,12 +730,15 @@ mod tests {
             Vec::new(),
         );
         let mut builder = R1csBuilder::<Fr>::new();
-        let mut layout = allocate_layout(&mut builder, &statement).expect("layout allocates");
+        let mut layout = statement
+            .allocate_layout(&mut builder)
+            .expect("layout allocates");
         layout.stages[0].sumcheck.rounds[0].claim_in =
             layout.stages[0].sumcheck.rounds[0].claim_out;
         let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
 
-        let error = append(&mut builder, &statement, &layout, &mut sources)
+        let error = statement
+            .append(&mut builder, &layout, &mut sources)
             .expect_err("layout claim chain is broken");
 
         assert_eq!(

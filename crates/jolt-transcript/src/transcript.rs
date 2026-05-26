@@ -3,7 +3,7 @@
 //! This module provides the [`Transcript`] trait for building Fiat-Shamir transcripts
 //! and the [`AppendToTranscript`] trait for types that can be absorbed into a transcript.
 
-use crate::domain::Label;
+use crate::domain::{Label, LabelWithCount};
 use jolt_field::{Field, FromPrimitiveInt};
 
 /// Fiat-Shamir transcript for non-interactive proofs.
@@ -55,6 +55,17 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
     fn append_labeled<A: AppendToTranscript>(&mut self, label: &'static [u8], value: &A) {
         self.append(&Label(label));
         self.append(value);
+    }
+
+    /// Absorbs a domain label with a count followed by each value in order.
+    ///
+    /// Use this for transcript payloads whose domain separation must include
+    /// the number of appended items.
+    fn append_values<A: AppendToTranscript>(&mut self, label: &'static [u8], values: &[A]) {
+        self.append(&LabelWithCount(label, values.len() as u64));
+        for value in values {
+            self.append(value);
+        }
     }
 
     /// Squeezes a challenge from the transcript.

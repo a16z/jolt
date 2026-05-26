@@ -6,19 +6,18 @@ use jolt_r1cs::{ConstraintMatrices, R1csBuilder, Variable};
 use jolt_sumcheck::{CommittedOutputClaims, CommittedSumcheckConsistency};
 
 use crate::{
-    r1cs::{self, Layout},
-    BlindFoldProtocolBuilder, BlindFoldStatement, Error, RelaxedError, RelaxedInstance,
-    VerificationError,
+    r1cs::Layout, BlindFoldProtocolBuilder, BlindFoldStatement, Error, RelaxedError,
+    RelaxedInstance, VerificationError,
 };
 
 #[derive(Clone, Debug)]
-pub struct BlindFoldProtocol<F: Field, C> {
-    pub sumcheck_consistency: Vec<CommittedSumcheckConsistency<F, C>>,
-    pub committed_output_claims: Vec<CommittedOutputClaims<C>>,
+pub struct BlindFoldProtocol<F: Field, Com> {
+    pub sumcheck_consistency: Vec<CommittedSumcheckConsistency<F, Com>>,
+    pub committed_output_claims: Vec<CommittedOutputClaims<Com>>,
     pub r1cs: ConstraintMatrices<F>,
     pub layout: Layout,
     pub dimensions: BlindFoldDimensions,
-    pub eval_commitments: Vec<C>,
+    pub eval_commitments: Vec<Com>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,22 +58,22 @@ pub struct FinalOpeningWitnessCoordinates {
     pub blinding: Option<WitnessCoordinate>,
 }
 
-impl<F, C> BlindFoldProtocol<F, C>
+impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field,
 {
-    pub fn builder<O, P, Ch>() -> BlindFoldProtocolBuilder<F, O, C, P, Ch> {
+    pub fn builder<O, P, Ch>() -> BlindFoldProtocolBuilder<F, O, Com, P, Ch> {
         BlindFoldProtocolBuilder::new()
     }
 }
 
-impl<F, C> BlindFoldProtocol<F, C>
+impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field + Clone,
-    C: Clone,
+    Com: Clone,
 {
     pub(crate) fn from_parts<O, P, Ch>(
-        statement: &BlindFoldStatement<F, O, C, P, Ch>,
+        statement: &BlindFoldStatement<F, O, Com, P, Ch>,
         publics: &[(P, F)],
         challenges: &[(Ch, F)],
     ) -> Result<Self, VerificationError<F>>
@@ -83,17 +82,13 @@ where
         P: Clone + PartialEq,
         Ch: Clone + PartialEq,
     {
-        validate_statement(statement)?;
+        statement.validate()?;
 
-        let sumcheck_consistency = sumcheck_consistency(statement);
-        let committed_output_claims = committed_output_claims(statement);
-        let (r1cs, layout) = build_constraints_from_parts(statement, publics, challenges)?;
-        let dimensions = compute_dimensions(
-            &r1cs,
-            &layout,
-            &sumcheck_consistency,
-            &committed_output_claims,
-        )?;
+        let sumcheck_consistency = statement.sumcheck_consistency();
+        let committed_output_claims = statement.committed_output_claims();
+        let (r1cs, layout) = statement.build_constraints(publics, challenges)?;
+        let dimensions =
+            layout.dimensions(&r1cs, &sumcheck_consistency, &committed_output_claims)?;
 
         Ok(Self {
             sumcheck_consistency,
@@ -106,15 +101,15 @@ where
     }
 }
 
-impl<F, C> BlindFoldProtocol<F, C>
+impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field,
-    C: Clone + HomomorphicCommitment<F>,
+    Com: Clone + HomomorphicCommitment<F>,
 {
     pub fn committed_relaxed_instance(
         &self,
-        auxiliary_row_commitments: &[C],
-    ) -> Result<RelaxedInstance<F, C>, RelaxedError> {
+        auxiliary_row_commitments: &[Com],
+    ) -> Result<RelaxedInstance<F, Com>, RelaxedError> {
         if auxiliary_row_commitments.len() != self.dimensions.auxiliary_rows {
             return Err(RelaxedError::LengthMismatch {
                 name: "auxiliary row commitments",
@@ -131,7 +126,7 @@ where
                 .flat_map(|consistency| consistency.rounds.iter())
                 .map(|round| round.commitment.clone()),
         );
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness_rows.coefficients.end,
             "coefficient row commitments",
@@ -142,19 +137,19 @@ where
                 .iter()
                 .flat_map(|claims| claims.commitments.iter().cloned()),
         );
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness_rows.output_claims.end,
             "output claim row commitments",
         )?;
 
         witness_row_commitments.extend_from_slice(auxiliary_row_commitments);
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness_rows.auxiliary.end,
             "auxiliary row commitments",
         )?;
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness.row_count,
             "witness row commitments",
@@ -163,19 +158,19 @@ where
         Ok(RelaxedInstance::new(
             F::one(),
             witness_row_commitments,
-            vec![C::default(); self.dimensions.error.row_count],
+            vec![Com::default(); self.dimensions.error.row_count],
             self.eval_commitments.clone(),
         ))
     }
 }
 
-impl<F, C> BlindFoldProtocol<F, C>
+impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field,
 {
     pub fn validate_cross_term_error_rows(
         &self,
-        cross_term_error_row_commitments: &[C],
+        cross_term_error_row_commitments: &[Com],
     ) -> Result<(), RelaxedError> {
         ensure_len(
             "cross-term error row commitments",
@@ -239,20 +234,20 @@ where
     }
 }
 
-impl<F, C> BlindFoldProtocol<F, C>
+impl<F, Com> BlindFoldProtocol<F, Com>
 where
     F: Field,
-    C: Clone + HomomorphicCommitment<F>,
+    Com: Clone + HomomorphicCommitment<F>,
 {
     pub fn random_relaxed_instance(
         &self,
-        round_commitments: &[C],
-        output_claim_row_commitments: &[C],
-        auxiliary_row_commitments: &[C],
-        error_row_commitments: &[C],
-        eval_commitments: &[C],
+        round_commitments: &[Com],
+        output_claim_row_commitments: &[Com],
+        auxiliary_row_commitments: &[Com],
+        error_row_commitments: &[Com],
+        eval_commitments: &[Com],
         u: F,
-    ) -> Result<RelaxedInstance<F, C>, RelaxedError> {
+    ) -> Result<RelaxedInstance<F, Com>, RelaxedError> {
         ensure_len(
             "random round commitments",
             self.dimensions.coefficient_rows,
@@ -281,24 +276,24 @@ where
 
         let mut witness_row_commitments = Vec::with_capacity(self.dimensions.witness.row_count);
         witness_row_commitments.extend_from_slice(round_commitments);
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness_rows.coefficients.end,
             "random coefficient row commitments",
         )?;
         witness_row_commitments.extend_from_slice(output_claim_row_commitments);
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness_rows.output_claims.end,
             "random output claim row commitments",
         )?;
         witness_row_commitments.extend_from_slice(auxiliary_row_commitments);
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness_rows.auxiliary.end,
             "random auxiliary row commitments",
         )?;
-        pad_rows::<F, C>(
+        pad_rows::<F, Com>(
             &mut witness_row_commitments,
             self.dimensions.witness.row_count,
             "random witness row commitments",
@@ -313,284 +308,263 @@ where
     }
 }
 
-fn validate_statement<F, O, C, P, Ch>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-) -> Result<(), VerificationError<F>>
+impl<F, O, Com, P, Ch> BlindFoldStatement<F, O, Com, P, Ch>
 where
-    F: Field,
+    F: Field + Clone,
     O: Clone + PartialEq,
+    Com: Clone,
+    P: Clone + PartialEq,
+    Ch: Clone + PartialEq,
 {
-    validate_unique_openings(statement)?;
-    validate_output_claim_rows(statement)?;
-    for binding in &statement.final_openings {
-        if binding.opening_ids.is_empty() {
-            return Err(Error::EmptyFinalOpeningBinding.into());
-        }
-        if binding.opening_ids.len() != binding.coefficients.len() {
-            return Err(RelaxedError::LengthMismatch {
-                name: "final opening coefficients",
-                expected: binding.opening_ids.len(),
-                actual: binding.coefficients.len(),
+    fn validate(&self) -> Result<(), VerificationError<F>> {
+        self.validate_unique_openings()?;
+        self.validate_output_claim_rows()?;
+        for binding in &self.final_openings {
+            if binding.opening_ids.is_empty() {
+                return Err(Error::EmptyFinalOpeningBinding.into());
             }
-            .into());
-        }
-    }
-    Ok(())
-}
-
-fn validate_unique_openings<F, O, C, P, Ch>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-) -> Result<(), Error>
-where
-    O: Clone + PartialEq,
-{
-    let mut openings = Vec::new();
-    for stage in &statement.stages {
-        for opening_id in &stage.output_claim_rows.opening_ids {
-            if openings.contains(opening_id) {
-                return Err(Error::DuplicateOpeningSource);
-            }
-            openings.push(opening_id.clone());
-        }
-        for alias in &stage.output_claim_rows.opening_aliases {
-            if openings.contains(&alias.alias) {
-                return Err(Error::DuplicateOpeningSource);
-            }
-            if !openings.contains(&alias.source) {
-                return Err(Error::MissingOpeningAliasSource);
-            }
-            openings.push(alias.alias.clone());
-        }
-    }
-    Ok(())
-}
-
-fn validate_output_claim_rows<F, O, C, P, Ch>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-) -> Result<(), VerificationError<F>>
-where
-    F: Field,
-{
-    for stage in &statement.stages {
-        let rows = &stage.output_claim_rows;
-        let row_count = rows.commitments.commitments.len();
-        if row_count == 0 {
-            if !rows.opening_ids.is_empty() {
-                return Err(Error::OpeningRowCapacityExceeded {
-                    name: "output claim rows",
-                    ids: rows.opening_ids.len(),
-                    slots: 0,
+            if binding.opening_ids.len() != binding.coefficients.len() {
+                return Err(RelaxedError::LengthMismatch {
+                    name: "final opening coefficients",
+                    expected: binding.opening_ids.len(),
+                    actual: binding.coefficients.len(),
                 }
                 .into());
             }
-            continue;
         }
-        if rows.opening_ids.is_empty() {
-            if row_count != 0 {
+        Ok(())
+    }
+
+    fn validate_unique_openings(&self) -> Result<(), Error> {
+        let mut openings = Vec::new();
+        for stage in &self.stages {
+            for opening_id in &stage.output_claim_rows.opening_ids {
+                if openings.contains(opening_id) {
+                    return Err(Error::DuplicateOpeningSource);
+                }
+                openings.push(opening_id.clone());
+            }
+            for alias in &stage.output_claim_rows.opening_aliases {
+                if openings.contains(&alias.alias) {
+                    return Err(Error::DuplicateOpeningSource);
+                }
+                if !openings.contains(&alias.source) {
+                    return Err(Error::MissingOpeningAliasSource);
+                }
+                openings.push(alias.alias.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_output_claim_rows(&self) -> Result<(), VerificationError<F>> {
+        for stage in &self.stages {
+            let rows = &stage.output_claim_rows;
+            let row_count = rows.commitments.commitments.len();
+            if row_count == 0 {
+                if !rows.opening_ids.is_empty() {
+                    return Err(Error::OpeningRowCapacityExceeded {
+                        name: "output claim rows",
+                        ids: rows.opening_ids.len(),
+                        slots: 0,
+                    }
+                    .into());
+                }
+                continue;
+            }
+            if rows.opening_ids.is_empty() {
+                if row_count != 0 {
+                    return Err(Error::CommittedRowCountMismatch {
+                        name: "output claim rows",
+                        expected: 0,
+                        actual: row_count,
+                    }
+                    .into());
+                }
+                continue;
+            }
+            if rows.row_len == 0 {
+                return Err(Error::MissingRowLength {
+                    name: "output claim rows",
+                }
+                .into());
+            }
+            let slots =
+                row_count
+                    .checked_mul(rows.row_len)
+                    .ok_or(RelaxedError::DimensionOverflow {
+                        name: "output claim row slots",
+                        value: row_count,
+                    })?;
+            if rows.opening_ids.len() > slots {
+                return Err(Error::OpeningRowCapacityExceeded {
+                    name: "output claim rows",
+                    ids: rows.opening_ids.len(),
+                    slots,
+                }
+                .into());
+            }
+            let expected_rows = rows.opening_ids.len().div_ceil(rows.row_len);
+            if row_count != expected_rows {
                 return Err(Error::CommittedRowCountMismatch {
                     name: "output claim rows",
-                    expected: 0,
+                    expected: expected_rows,
                     actual: row_count,
                 }
                 .into());
             }
-            continue;
         }
-        if rows.row_len == 0 {
-            return Err(Error::MissingRowLength {
-                name: "output claim rows",
-            }
-            .into());
-        }
-        let slots = row_count
-            .checked_mul(rows.row_len)
-            .ok_or(RelaxedError::DimensionOverflow {
-                name: "output claim row slots",
-                value: row_count,
-            })?;
-        if rows.opening_ids.len() > slots {
-            return Err(Error::OpeningRowCapacityExceeded {
-                name: "output claim rows",
-                ids: rows.opening_ids.len(),
-                slots,
-            }
-            .into());
-        }
-        let expected_rows = rows.opening_ids.len().div_ceil(rows.row_len);
-        if row_count != expected_rows {
-            return Err(Error::CommittedRowCountMismatch {
-                name: "output claim rows",
-                expected: expected_rows,
-                actual: row_count,
-            }
-            .into());
-        }
+        Ok(())
     }
-    Ok(())
-}
 
-fn sumcheck_consistency<F, O, C, P, Ch>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-) -> Vec<CommittedSumcheckConsistency<F, C>>
-where
-    F: Clone,
-    C: Clone,
-{
-    statement
-        .stages
-        .iter()
-        .map(|stage| stage.consistency.clone())
-        .collect()
-}
-
-fn committed_output_claims<F, O, C, P, Ch>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-) -> Vec<CommittedOutputClaims<C>>
-where
-    C: Clone,
-{
-    statement
-        .stages
-        .iter()
-        .map(|stage| stage.output_claim_rows.commitments.clone())
-        .collect()
-}
-
-fn build_constraints_from_parts<F, O, P, Ch, C>(
-    statement: &BlindFoldStatement<F, O, C, P, Ch>,
-    publics: &[(P, F)],
-    challenges: &[(Ch, F)],
-) -> Result<(ConstraintMatrices<F>, Layout), VerificationError<F>>
-where
-    F: Field,
-    O: Clone + PartialEq,
-    P: Clone + PartialEq,
-    Ch: Clone + PartialEq,
-{
-    let mut r1cs = R1csBuilder::new();
-    let layout = r1cs::build_with_sources(&mut r1cs, statement, publics, challenges)?;
-    Ok((r1cs.into_matrices(), layout))
-}
-
-fn compute_dimensions<F: Field, C>(
-    r1cs: &ConstraintMatrices<F>,
-    layout: &Layout,
-    sumcheck_consistency: &[CommittedSumcheckConsistency<F, C>],
-    output_claims: &[CommittedOutputClaims<C>],
-) -> Result<BlindFoldDimensions, RelaxedError> {
-    let total_rounds = checked_sum(
-        "total rounds",
-        sumcheck_consistency
+    fn sumcheck_consistency(&self) -> Vec<CommittedSumcheckConsistency<F, Com>> {
+        self.stages
             .iter()
-            .map(|consistency| consistency.rounds.len()),
-    )?;
-    let witness_row_len = layout.witness_row_len;
-    let coefficient_values =
-        total_rounds
-            .checked_mul(witness_row_len)
-            .ok_or(RelaxedError::DimensionOverflow {
-                name: "coefficient values",
-                value: total_rounds,
-            })?;
-    let coefficient_rows = total_rounds;
+            .map(|stage| stage.consistency.clone())
+            .collect()
+    }
 
-    let output_claim_rows = checked_sum(
-        "output claim rows",
-        output_claims.iter().map(|claims| claims.commitments.len()),
-    )?;
-    let output_claim_values =
-        output_claim_rows
-            .checked_mul(witness_row_len)
-            .ok_or(RelaxedError::DimensionOverflow {
+    fn committed_output_claims(&self) -> Vec<CommittedOutputClaims<Com>> {
+        self.stages
+            .iter()
+            .map(|stage| stage.output_claim_rows.commitments.clone())
+            .collect()
+    }
+
+    fn build_constraints(
+        &self,
+        publics: &[(P, F)],
+        challenges: &[(Ch, F)],
+    ) -> Result<(ConstraintMatrices<F>, Layout), VerificationError<F>> {
+        let mut r1cs = R1csBuilder::new();
+        let layout = self.build_with_sources(&mut r1cs, publics, challenges)?;
+        Ok((r1cs.into_matrices(), layout))
+    }
+}
+
+impl Layout {
+    fn dimensions<F: Field, Com>(
+        &self,
+        r1cs: &ConstraintMatrices<F>,
+        sumcheck_consistency: &[CommittedSumcheckConsistency<F, Com>],
+        output_claims: &[CommittedOutputClaims<Com>],
+    ) -> Result<BlindFoldDimensions, RelaxedError> {
+        let total_rounds = checked_sum(
+            "total rounds",
+            sumcheck_consistency
+                .iter()
+                .map(|consistency| consistency.rounds.len()),
+        )?;
+        let witness_row_len = self.witness_row_len;
+        let coefficient_values =
+            total_rounds
+                .checked_mul(witness_row_len)
+                .ok_or(RelaxedError::DimensionOverflow {
+                    name: "coefficient values",
+                    value: total_rounds,
+                })?;
+        let coefficient_rows = total_rounds;
+
+        let output_claim_rows = checked_sum(
+            "output claim rows",
+            output_claims.iter().map(|claims| claims.commitments.len()),
+        )?;
+        let output_claim_values = output_claim_rows.checked_mul(witness_row_len).ok_or(
+            RelaxedError::DimensionOverflow {
                 name: "output claim values",
                 value: output_claim_rows,
-            })?;
+            },
+        )?;
 
-    let r1cs_witness_values = r1cs.num_vars.saturating_sub(1);
-    let used_values = checked_sum(
-        "committed witness values",
-        [coefficient_values, output_claim_values],
-    )?;
-    let auxiliary_values = r1cs_witness_values.checked_sub(used_values).ok_or(
-        RelaxedError::InconsistentDimensions {
-            name: "auxiliary values",
-            total: r1cs_witness_values,
-            used: used_values,
-        },
-    )?;
-    let auxiliary_rows = auxiliary_values.div_ceil(witness_row_len);
-    let occupied_witness_rows = checked_sum(
-        "occupied witness rows",
-        [coefficient_rows, output_claim_rows, auxiliary_rows],
-    )?;
-    let witness_row_count =
-        checked_next_power_of_two("witness rows", occupied_witness_rows.max(1))?;
-    let witness_rows = witness_row_layout(
-        coefficient_rows,
-        output_claim_rows,
-        auxiliary_rows,
-        witness_row_count,
-    )?;
+        let r1cs_witness_values = r1cs.num_vars.saturating_sub(1);
+        let used_values = checked_sum(
+            "committed witness values",
+            [coefficient_values, output_claim_values],
+        )?;
+        let auxiliary_values = r1cs_witness_values.checked_sub(used_values).ok_or(
+            RelaxedError::InconsistentDimensions {
+                name: "auxiliary values",
+                total: r1cs_witness_values,
+                used: used_values,
+            },
+        )?;
+        let auxiliary_rows = auxiliary_values.div_ceil(witness_row_len);
+        let occupied_witness_rows = checked_sum(
+            "occupied witness rows",
+            [coefficient_rows, output_claim_rows, auxiliary_rows],
+        )?;
+        let witness_row_count =
+            checked_next_power_of_two("witness rows", occupied_witness_rows.max(1))?;
+        let witness_rows = WitnessRowLayout::from_counts(
+            coefficient_rows,
+            output_claim_rows,
+            auxiliary_rows,
+            witness_row_count,
+        )?;
 
-    let padded_constraints =
-        checked_next_power_of_two("error values", r1cs.num_constraints.max(1))?;
-    let error_row_len = witness_row_len.min(padded_constraints);
-    let error_row_count = padded_constraints / error_row_len;
+        let padded_constraints =
+            checked_next_power_of_two("error values", r1cs.num_constraints.max(1))?;
+        let error_row_len = witness_row_len.min(padded_constraints);
+        let error_row_count = padded_constraints / error_row_len;
 
-    Ok(BlindFoldDimensions {
-        witness: RowDimensions {
-            row_len: witness_row_len,
-            row_count: witness_row_count,
-        },
-        error: RowDimensions {
-            row_len: error_row_len,
-            row_count: error_row_count,
-        },
-        witness_rows,
-        coefficient_rows,
-        output_claim_rows,
-        auxiliary_rows,
-        coefficient_values,
-        auxiliary_values,
-    })
-}
-
-fn witness_row_layout(
-    coefficient_rows: usize,
-    output_claim_rows: usize,
-    auxiliary_rows: usize,
-    witness_row_count: usize,
-) -> Result<WitnessRowLayout, RelaxedError> {
-    let output_claim_start = coefficient_rows;
-    let auxiliary_start = checked_sum("witness row layout", [coefficient_rows, output_claim_rows])?;
-    let padding_start = checked_sum(
-        "witness row layout",
-        [coefficient_rows, auxiliary_rows, output_claim_rows],
-    )?;
-    if padding_start > witness_row_count {
-        return Err(RelaxedError::InconsistentDimensions {
-            name: "witness row layout",
-            total: witness_row_count,
-            used: padding_start,
-        });
+        Ok(BlindFoldDimensions {
+            witness: RowDimensions {
+                row_len: witness_row_len,
+                row_count: witness_row_count,
+            },
+            error: RowDimensions {
+                row_len: error_row_len,
+                row_count: error_row_count,
+            },
+            witness_rows,
+            coefficient_rows,
+            output_claim_rows,
+            auxiliary_rows,
+            coefficient_values,
+            auxiliary_values,
+        })
     }
-
-    Ok(WitnessRowLayout {
-        coefficients: 0..coefficient_rows,
-        output_claims: output_claim_start..auxiliary_start,
-        auxiliary: auxiliary_start..padding_start,
-        padding: padding_start..witness_row_count,
-    })
 }
 
-fn pad_rows<F, C>(
-    rows: &mut Vec<C>,
+impl WitnessRowLayout {
+    fn from_counts(
+        coefficient_rows: usize,
+        output_claim_rows: usize,
+        auxiliary_rows: usize,
+        witness_row_count: usize,
+    ) -> Result<Self, RelaxedError> {
+        let output_claim_start = coefficient_rows;
+        let auxiliary_start =
+            checked_sum("witness row layout", [coefficient_rows, output_claim_rows])?;
+        let padding_start = checked_sum(
+            "witness row layout",
+            [coefficient_rows, auxiliary_rows, output_claim_rows],
+        )?;
+        if padding_start > witness_row_count {
+            return Err(RelaxedError::InconsistentDimensions {
+                name: "witness row layout",
+                total: witness_row_count,
+                used: padding_start,
+            });
+        }
+
+        Ok(Self {
+            coefficients: 0..coefficient_rows,
+            output_claims: output_claim_start..auxiliary_start,
+            auxiliary: auxiliary_start..padding_start,
+            padding: padding_start..witness_row_count,
+        })
+    }
+}
+
+fn pad_rows<F, Com>(
+    rows: &mut Vec<Com>,
     target_len: usize,
     name: &'static str,
 ) -> Result<(), RelaxedError>
 where
     F: Field,
-    C: Clone + HomomorphicCommitment<F>,
+    Com: Clone + HomomorphicCommitment<F>,
 {
     if rows.len() > target_len {
         return Err(RelaxedError::InconsistentDimensions {
@@ -599,7 +573,7 @@ where
             used: rows.len(),
         });
     }
-    rows.resize_with(target_len, C::default);
+    rows.resize_with(target_len, Com::default);
     Ok(())
 }
 
@@ -716,13 +690,13 @@ mod tests {
         Pedersen::<Bn254G1>::commit(setup, &[Fr::from_u64(value)], &Fr::from_u64(value + 1000))
     }
 
-    fn try_statement_from_proofs<C>(
+    fn try_statement_from_proofs<Com>(
         stages: &[TestStage],
-        proofs: &[CommittedSumcheckProof<C>],
-        final_openings: Vec<FinalOpeningBinding<Fr, usize, C>>,
-    ) -> Result<BlindFoldStatement<Fr, usize, C>, VerificationError<Fr>>
+        proofs: &[CommittedSumcheckProof<Com>],
+        final_openings: Vec<FinalOpeningBinding<Fr, usize, Com>>,
+    ) -> Result<BlindFoldStatement<Fr, usize, Com>, VerificationError<Fr>>
     where
-        C: Clone + AppendToTranscript,
+        Com: Clone + AppendToTranscript,
     {
         if stages.len() != proofs.len() {
             return Err(VerificationError::StageCountMismatch {
@@ -749,7 +723,7 @@ mod tests {
                 let opening_ids =
                     (next_opening_id..next_opening_id + output_opening_count).collect();
                 next_opening_id += output_opening_count;
-                Ok::<BlindFoldStage<Fr, usize, C>, VerificationError<Fr>>(BlindFoldStage::new(
+                Ok::<BlindFoldStage<Fr, usize, Com>, VerificationError<Fr>>(BlindFoldStage::new(
                     stage.name.clone(),
                     stage.statement,
                     SumcheckDomainSpec::BooleanHypercube,
@@ -764,26 +738,26 @@ mod tests {
         Ok(BlindFoldStatement::new(stages, final_openings))
     }
 
-    fn protocol_from_proofs<C>(
+    fn protocol_from_proofs<Com>(
         stages: &[TestStage],
-        proofs: &[CommittedSumcheckProof<C>],
-        final_openings: Vec<FinalOpeningBinding<Fr, usize, C>>,
-    ) -> BlindFoldProtocol<Fr, C>
+        proofs: &[CommittedSumcheckProof<Com>],
+        final_openings: Vec<FinalOpeningBinding<Fr, usize, Com>>,
+    ) -> BlindFoldProtocol<Fr, Com>
     where
-        C: Clone + AppendToTranscript,
+        Com: Clone + AppendToTranscript,
     {
         let statement = try_statement_from_proofs(stages, proofs, final_openings)
             .expect("statement builds from committed proofs");
         protocol_from_statement(&statement)
     }
 
-    fn protocol_from_statement<C>(
-        statement: &BlindFoldStatement<Fr, usize, C>,
-    ) -> BlindFoldProtocol<Fr, C>
+    fn protocol_from_statement<Com>(
+        statement: &BlindFoldStatement<Fr, usize, Com>,
+    ) -> BlindFoldProtocol<Fr, Com>
     where
-        C: Clone,
+        Com: Clone,
     {
-        let mut builder = BlindFoldProtocol::<Fr, C>::builder::<usize, (), usize>();
+        let mut builder = BlindFoldProtocol::<Fr, Com>::builder::<usize, (), usize>();
         for stage in &statement.stages {
             builder = builder
                 .stage(stage.name.clone())
