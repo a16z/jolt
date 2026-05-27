@@ -1201,11 +1201,9 @@ impl<
         print_current_memory_usage("Stage 6a baseline");
 
         let bytecode_read_raf_params = BytecodeReadRafSumcheckParams::gen(
-            Some(&self.preprocessing.shared.program),
+            &self.preprocessing.shared.program,
             self.trace.len().log_2(),
             &self.one_hot_params,
-            self.preprocessing.is_committed_mode(),
-            None,
             &self.opening_accumulator,
             &mut self.transcript,
         );

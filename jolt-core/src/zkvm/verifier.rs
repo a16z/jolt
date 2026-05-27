@@ -1109,25 +1109,13 @@ impl<
 
     fn verify_stage6a(&mut self) -> Result<Stage6aVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let program_preprocessing = Some(&self.preprocessing.shared.program);
-        let entry_bytecode_index = self
-            .preprocessing
-            .shared
-            .program_meta
-            .entry_bytecode_index();
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
-            program_preprocessing,
+            &self.preprocessing.shared.program,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-            if self.preprocessing.shared.program.is_committed() {
-                ProgramMode::Committed
-            } else {
-                ProgramMode::Full
-            },
-            entry_bytecode_index,
-        )?;
+        );
         let booleanity = BooleanityAddressSumcheckVerifier::new(BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
