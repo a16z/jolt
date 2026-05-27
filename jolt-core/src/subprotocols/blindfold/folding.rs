@@ -61,8 +61,8 @@ fn commit_rows<F: JoltField, C: JoltCurve<F = F>>(
 
 /// Sample a random satisfying relaxed R1CS instance-witness pair.
 ///
-/// W is arranged in grid layout: coefficient rows first (one per round, padded to C),
-/// then non-coefficient values packed in subsequent rows.
+/// W is arranged in grid layout: coefficient rows first, then committed output
+/// claim rows, then regular non-coefficient rows, with padding only at the end.
 ///
 /// Two-pass approach: (1) fill W with random values (sequential, RNG-dependent),
 /// (2) commit all rows in parallel.
@@ -77,7 +77,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
 
     let hyrax = &r1cs.hyrax;
     let hyrax_C = hyrax.C;
-    let R_coeff = hyrax.R_coeff;
+    let coefficient_rows = hyrax.R_coeff;
     let R_prime = hyrax.R_prime;
     let witness_len = R_prime * hyrax_C;
 
@@ -90,13 +90,13 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
         r1cs.output_claims_opening_ids.iter().copied().collect();
 
     // OC region: fill with random values
-    let oc_start = R_coeff * hyrax_C;
+    let oc_start = coefficient_rows * hyrax_C;
     for i in 0..r1cs.output_claims_opening_ids.len() {
         W[oc_start + i] = F::random(rng);
     }
 
     // Regular noncoeff starts after OC region
-    let mut noncoeff_idx = (R_coeff + oc_rows) * hyrax_C;
+    let mut noncoeff_idx = (coefficient_rows + oc_rows) * hyrax_C;
 
     let layout = compute_witness_layout(&r1cs.stage_configs, &r1cs.extra_constraints);
     let mut seen_openings = std::collections::HashSet::new();
@@ -110,21 +110,13 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
                 W[noncoeff_idx] = F::random(rng);
                 noncoeff_idx += 1;
             }
-            LayoutStep::ConstraintVars {
-                constraint,
-                aux_var_count,
-                ..
-            } => {
+            LayoutStep::ConstraintVars { constraint, .. } => {
                 for id in &constraint.required_openings {
                     let resolved = r1cs.resolve_alias(*id);
                     if seen_openings.insert(resolved) && !oc_opening_ids.contains(&resolved) {
                         W[noncoeff_idx] = F::random(rng);
                         noncoeff_idx += 1;
                     }
-                }
-                for _ in 0..*aux_var_count {
-                    W[noncoeff_idx] = F::random(rng);
-                    noncoeff_idx += 1;
                 }
             }
             LayoutStep::CoeffRow {
@@ -156,11 +148,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
                     noncoeff_idx += 1;
                 }
             }
-            LayoutStep::ExtraConstraintVars {
-                constraint,
-                aux_var_count,
-                ..
-            } => {
+            LayoutStep::ExtraConstraintVars { constraint, .. } => {
                 for id in &constraint.required_openings {
                     let resolved = r1cs.resolve_alias(*id);
                     if seen_openings.insert(resolved) && !oc_opening_ids.contains(&resolved) {
@@ -169,18 +157,22 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
                     }
                 }
 
+                while !noncoeff_idx.is_multiple_of(hyrax_C) {
+                    noncoeff_idx += 1;
+                }
                 let output_value = F::random(rng);
                 W[noncoeff_idx] = output_value;
                 noncoeff_idx += 1;
-
-                for _ in 0..*aux_var_count {
-                    W[noncoeff_idx] = F::random(rng);
+                while !noncoeff_idx.is_multiple_of(hyrax_C) {
                     noncoeff_idx += 1;
                 }
 
                 let blinding = F::random(rng);
                 W[noncoeff_idx] = blinding;
                 noncoeff_idx += 1;
+                while !noncoeff_idx.is_multiple_of(hyrax_C) {
+                    noncoeff_idx += 1;
+                }
 
                 let (g1_0, h1) = eval_commitment_gens.expect("Missing eval commitment generators");
                 let commitment = g1_0.scalar_mul(&output_value) + h1.scalar_mul(&blinding);
@@ -189,13 +181,27 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
         }
     }
 
+    let mut aux_idx = noncoeff_idx;
+    for step in &layout {
+        match step {
+            LayoutStep::ConstraintVars { aux_var_count, .. }
+            | LayoutStep::ExtraConstraintVars { aux_var_count, .. } => {
+                for _ in 0..*aux_var_count {
+                    W[aux_idx] = F::random(rng);
+                    aux_idx += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Generate blindings for OC and noncoeff rows
     for row in 0..oc_rows {
-        w_row_blindings[R_coeff + row] = F::random(rng);
+        w_row_blindings[coefficient_rows + row] = F::random(rng);
     }
     let regular_noncoeff_rows = hyrax.regular_noncoeff_rows();
     for row in 0..regular_noncoeff_rows {
-        w_row_blindings[R_coeff + oc_rows + row] = F::random(rng);
+        w_row_blindings[coefficient_rows + oc_rows + row] = F::random(rng);
     }
 
     let u = loop {
@@ -244,18 +250,21 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve<F = F>, R: Crypt
     let oc_row_commitments: Vec<C::G1> = (0..oc_rows)
         .into_par_iter()
         .map(|row| {
-            let start = R_coeff * hyrax_C + row * hyrax_C;
+            let start = coefficient_rows * hyrax_C + row * hyrax_C;
             let end = (start + hyrax_C).min(W.len());
-            gens.commit(&W[start..end], &w_row_blindings[R_coeff + row])
+            gens.commit(&W[start..end], &w_row_blindings[coefficient_rows + row])
         })
         .collect();
 
     let noncoeff_row_commitments: Vec<C::G1> = (0..regular_noncoeff_rows)
         .into_par_iter()
         .map(|row| {
-            let start = (R_coeff + oc_rows) * hyrax_C + row * hyrax_C;
+            let start = (coefficient_rows + oc_rows) * hyrax_C + row * hyrax_C;
             let end = (start + hyrax_C).min(W.len());
-            gens.commit(&W[start..end], &w_row_blindings[R_coeff + oc_rows + row])
+            gens.commit(
+                &W[start..end],
+                &w_row_blindings[coefficient_rows + oc_rows + row],
+            )
         })
         .collect();
 
@@ -412,14 +421,14 @@ mod tests {
             assert!(gens.verify(com, row_data, &witness.w_row_blindings[round]));
         }
 
-        let R_coeff = r1cs.hyrax.R_coeff;
+        let coefficient_rows = r1cs.hyrax.R_coeff;
         for (row, com) in instance.noncoeff_row_commitments.iter().enumerate() {
-            let start = R_coeff * hyrax_C + row * hyrax_C;
+            let start = coefficient_rows * hyrax_C + row * hyrax_C;
             let end = (start + hyrax_C).min(witness.W.len());
             assert!(gens.verify(
                 com,
                 &witness.W[start..end],
-                &witness.w_row_blindings[R_coeff + row]
+                &witness.w_row_blindings[coefficient_rows + row]
             ));
         }
     }

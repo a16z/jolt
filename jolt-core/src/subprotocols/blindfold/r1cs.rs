@@ -1,4 +1,3 @@
-use super::output_constraint::SumOfProductsVisitor;
 use super::{
     compute_hyrax_params, BakedPublicInputs, Constraint, HyraxParams, LinearCombination,
     OutputClaimConstraint, StageConfig, ValueSource, Variable,
@@ -6,173 +5,6 @@ use super::{
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
 use std::collections::{BTreeMap, HashMap};
-
-enum ResolvedValue<F> {
-    Constant(F),
-    Variable(LinearCombination<F>),
-}
-
-impl<F: JoltField> ResolvedValue<F> {
-    fn into_lc(self) -> LinearCombination<F> {
-        match self {
-            Self::Constant(v) => LinearCombination::constant(v),
-            Self::Variable(lc) => lc,
-        }
-    }
-}
-
-struct R1csConstraintVisitor<'a, F> {
-    next_var: usize,
-    opening_vars: &'a HashMap<OpeningId, Variable>,
-    baked_challenge_values: &'a [F],
-    current_product: Variable,
-}
-
-struct R1csConstraintAcc<F> {
-    aux_vars: Vec<Variable>,
-    term_results: Vec<Variable>,
-    constraints: Vec<(
-        LinearCombination<F>,
-        LinearCombination<F>,
-        LinearCombination<F>,
-    )>,
-}
-
-impl<F> R1csConstraintAcc<F> {
-    fn new() -> Self {
-        Self {
-            aux_vars: Vec::new(),
-            term_results: Vec::new(),
-            constraints: Vec::new(),
-        }
-    }
-}
-
-impl<'a, F: JoltField> R1csConstraintVisitor<'a, F> {
-    fn new(
-        next_var: usize,
-        opening_vars: &'a HashMap<OpeningId, Variable>,
-        baked_challenge_values: &'a [F],
-    ) -> Self {
-        Self {
-            next_var,
-            opening_vars,
-            baked_challenge_values,
-            current_product: Variable::new(0),
-        }
-    }
-
-    fn alloc_var(&mut self) -> Variable {
-        let var = Variable::new(self.next_var);
-        self.next_var += 1;
-        var
-    }
-}
-
-impl<F: JoltField> SumOfProductsVisitor for R1csConstraintVisitor<'_, F> {
-    type Resolved = ResolvedValue<F>;
-    type Acc = R1csConstraintAcc<F>;
-
-    fn resolve(&self, vs: &ValueSource) -> ResolvedValue<F> {
-        match vs {
-            ValueSource::Opening(id) => ResolvedValue::Variable(LinearCombination::variable(
-                *self
-                    .opening_vars
-                    .get(id)
-                    .unwrap_or_else(|| panic!("Opening {id:?} not found")),
-            )),
-            ValueSource::Challenge(idx) => {
-                ResolvedValue::Constant(self.baked_challenge_values[*idx])
-            }
-            ValueSource::Constant(val) => ResolvedValue::Constant(F::from_i128(*val)),
-        }
-    }
-
-    fn on_no_factors(&mut self, acc: &mut R1csConstraintAcc<F>, coeff: ResolvedValue<F>) {
-        let aux = self.alloc_var();
-        acc.aux_vars.push(aux);
-        let a = coeff.into_lc();
-        let b = LinearCombination::constant(F::one());
-        acc.constraints
-            .push((a, b, LinearCombination::variable(aux)));
-        acc.term_results.push(aux);
-    }
-
-    fn on_single_factor(
-        &mut self,
-        acc: &mut R1csConstraintAcc<F>,
-        coeff: ResolvedValue<F>,
-        factor: ResolvedValue<F>,
-    ) {
-        let aux = self.alloc_var();
-        acc.aux_vars.push(aux);
-        match (coeff, factor) {
-            (ResolvedValue::Constant(cv), ResolvedValue::Constant(fv)) => {
-                let a = LinearCombination::constant(cv * fv);
-                let b = LinearCombination::constant(F::one());
-                acc.constraints
-                    .push((a, b, LinearCombination::variable(aux)));
-            }
-            (ResolvedValue::Constant(cv), ResolvedValue::Variable(fv)) => {
-                acc.constraints.push((
-                    LinearCombination::constant(cv),
-                    fv,
-                    LinearCombination::variable(aux),
-                ));
-            }
-            (ResolvedValue::Variable(cv), ResolvedValue::Constant(fv)) => {
-                acc.constraints.push((
-                    cv,
-                    LinearCombination::constant(fv),
-                    LinearCombination::variable(aux),
-                ));
-            }
-            (ResolvedValue::Variable(cv), ResolvedValue::Variable(fv)) => {
-                acc.constraints
-                    .push((cv, fv, LinearCombination::variable(aux)));
-            }
-        }
-        acc.term_results.push(aux);
-    }
-
-    fn on_chain_start(
-        &mut self,
-        acc: &mut R1csConstraintAcc<F>,
-        f0: ResolvedValue<F>,
-        f1: ResolvedValue<F>,
-    ) {
-        let product = self.alloc_var();
-        acc.aux_vars.push(product);
-        acc.constraints.push((
-            f0.into_lc(),
-            f1.into_lc(),
-            LinearCombination::variable(product),
-        ));
-        self.current_product = product;
-    }
-
-    fn on_chain_step(&mut self, acc: &mut R1csConstraintAcc<F>, factor: ResolvedValue<F>) {
-        let next = self.alloc_var();
-        acc.aux_vars.push(next);
-        acc.constraints.push((
-            LinearCombination::variable(self.current_product),
-            factor.into_lc(),
-            LinearCombination::variable(next),
-        ));
-        self.current_product = next;
-    }
-
-    fn on_chain_finalize(&mut self, acc: &mut R1csConstraintAcc<F>, coeff: ResolvedValue<F>) {
-        let final_term = self.alloc_var();
-        acc.aux_vars.push(final_term);
-        acc.constraints.push((
-            coeff.into_lc(),
-            LinearCombination::variable(self.current_product),
-            LinearCombination::variable(final_term),
-        ));
-        acc.term_results.push(final_term);
-    }
-}
 
 /// Sparse R1CS matrix stored as (row, col, value) triplets
 #[derive(Clone, Debug, Default)]
@@ -269,7 +101,8 @@ impl<F: JoltField> SparseR1CSMatrix<F> {
 ///
 /// The witness grid has R' × C layout:
 /// - Rows 0..total_rounds: coefficient rows (one per sumcheck round, zero-padded to C)
-/// - Rows R_coeff..R_coeff+noncoeff_rows: non-coefficient values (next_claims, etc.)
+/// - Rows R_coeff..R_coeff+output_claims_rows: committed output claim values
+/// - Rows R_coeff+output_claims_rows..: regular non-coefficient values (next_claims, etc.)
 /// - Remaining rows: zero padding
 #[derive(Clone, Debug)]
 pub struct VerifierR1CS<F: JoltField> {
@@ -345,6 +178,7 @@ pub struct VerifierR1CSBuilder<F: JoltField> {
     opening_aliases: BTreeMap<OpeningId, OpeningId>,
 }
 
+#[derive(Clone)]
 struct RoundVariables {
     coeffs: Vec<Variable>,
     next_claim: Variable,
@@ -393,6 +227,14 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         self.constraints.push(Constraint::new(a, b, c));
     }
 
+    fn add_equality_constraint(&mut self, lhs: LinearCombination<F>, rhs: LinearCombination<F>) {
+        self.add_constraint(
+            subtract_linear_combinations(lhs, rhs),
+            LinearCombination::constant(F::one()),
+            LinearCombination::new(),
+        );
+    }
+
     /// Build constraints for a single sumcheck round with baked challenge.
     ///
     /// For g(X) = c0 + c1*X + c2*X^2 + ... + cd*X^d:
@@ -429,16 +271,14 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             }
             lc
         };
-        let b = LinearCombination::constant(F::one());
-        self.add_constraint(a, b, claimed_sum);
+        self.add_equality_constraint(a, claimed_sum);
 
         // Constraint 2: Evaluation g(γ) = next_claim with baked powers of γ
         if degree == 0 {
             // g(γ) = c0
             let a = LinearCombination::variable(coeffs[0]);
-            let b = LinearCombination::constant(F::one());
             let c_lc = LinearCombination::variable(*next_claim);
-            self.add_constraint(a, b, c_lc);
+            self.add_equality_constraint(a, c_lc);
         } else {
             // g(γ) = Σ_k γ^k · c_k
             let mut a = LinearCombination::new();
@@ -449,9 +289,8 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     gamma_power *= challenge_value;
                 }
             }
-            let b = LinearCombination::constant(F::one());
             let c_lc = LinearCombination::variable(*next_claim);
-            self.add_constraint(a, b, c_lc);
+            self.add_equality_constraint(a, c_lc);
         }
     }
 
@@ -463,15 +302,13 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         let max_coeffs = self
             .stage_configs
             .iter()
-            .map(|c| c.poly_degree + 1)
+            .flat_map(|config| {
+                (0..config.num_rounds).map(|round| config.round_poly_degree(round) + 1)
+            })
             .max()
             .unwrap_or(1);
         let hyrax_C = max_coeffs.next_power_of_two();
-        let hyrax_R_coeff = if total_rounds == 0 {
-            1
-        } else {
-            total_rounds.next_power_of_two()
-        };
+        let hyrax_R_coeff = total_rounds;
         let witness_start = self.next_var;
         self.next_var = witness_start + hyrax_R_coeff * hyrax_C;
 
@@ -505,28 +342,76 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             self.next_var = oc_region_start + oc_block_offset;
         }
 
-        let mut challenge_idx = 0usize;
-        let mut batching_coeff_idx = 0usize;
-        let mut output_challenge_idx = 0usize;
-        let mut input_challenge_idx = 0usize;
-        let mut extra_challenge_idx = 0usize;
-
-        let mut current_claim = LinearCombination::<F>::new();
+        let mut initial_claim_vars: HashMap<usize, Variable> = HashMap::new();
+        let mut round_vars: HashMap<(usize, usize), RoundVariables> = HashMap::new();
+        let mut linear_output_vars: HashMap<usize, Vec<Variable>> = HashMap::new();
         let mut pending_coeffs: Option<Vec<Variable>> = None;
 
         for step in &layout {
             match step {
-                LayoutStep::ConstantInitialClaim { chain_idx } => {
-                    current_claim = LinearCombination::constant(baked.initial_claims[*chain_idx]);
-                }
-                LayoutStep::InitialClaimVar { .. } => {
+                LayoutStep::ConstantInitialClaim { .. } => {}
+                LayoutStep::InitialClaimVar { chain_idx } => {
                     let var = Variable::new(self.next_var);
                     self.next_var += 1;
-                    current_claim = LinearCombination::variable(var);
+                    initial_claim_vars.insert(*chain_idx, var);
                 }
-                LayoutStep::ConstraintVars {
-                    constraint, kind, ..
+                LayoutStep::ConstraintVars { constraint, .. } => {
+                    for opening_id in &constraint.required_openings {
+                        let resolved = self.resolve_alias(*opening_id);
+                        if let Some(&var) = global_opening_vars.get(&resolved) {
+                            global_opening_vars.insert(*opening_id, var);
+                        } else {
+                            let var = Variable::new(self.next_var);
+                            self.next_var += 1;
+                            global_opening_vars.insert(*opening_id, var);
+                            if resolved != *opening_id {
+                                global_opening_vars.insert(resolved, var);
+                            }
+                        }
+                    }
+                }
+                LayoutStep::CoeffRow {
+                    round_idx,
+                    num_coeffs,
+                    ..
                 } => {
+                    let coeffs: Vec<Variable> = (0..*num_coeffs)
+                        .map(|k| Variable::new(witness_start + round_idx * hyrax_C + k))
+                        .collect();
+                    pending_coeffs = Some(coeffs);
+                }
+                LayoutStep::NextClaim {
+                    stage_idx,
+                    round_in_stage,
+                } => {
+                    let next_claim = Variable::new(self.next_var);
+                    self.next_var += 1;
+
+                    let coeffs = pending_coeffs
+                        .take()
+                        .expect("CoeffRow must precede NextClaim");
+                    round_vars.insert(
+                        (*stage_idx, *round_in_stage),
+                        RoundVariables { coeffs, next_claim },
+                    );
+                }
+                LayoutStep::LinearFinalOutput {
+                    num_evaluations,
+                    stage_idx,
+                } => {
+                    let eval_vars: Vec<Variable> = (0..*num_evaluations)
+                        .map(|_| {
+                            let var = Variable::new(self.next_var);
+                            self.next_var += 1;
+                            var
+                        })
+                        .collect();
+                    linear_output_vars.insert(*stage_idx, eval_vars);
+                }
+                LayoutStep::PlaceholderVars { num_vars } => {
+                    self.next_var += num_vars;
+                }
+                LayoutStep::ExtraConstraintVars { constraint, .. } => {
                     for opening_id in &constraint.required_openings {
                         let resolved = self.resolve_alias(*opening_id);
                         if let Some(&var) = global_opening_vars.get(&resolved) {
@@ -541,6 +426,48 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                         }
                     }
 
+                    while !(self.next_var - witness_start).is_multiple_of(hyrax_C) {
+                        self.next_var += 1;
+                    }
+                    let output_var = Variable::new(self.next_var);
+                    self.next_var += 1;
+                    while !(self.next_var - witness_start).is_multiple_of(hyrax_C) {
+                        self.next_var += 1;
+                    }
+                    let blinding_var = Variable::new(self.next_var);
+                    self.next_var += 1;
+                    while !(self.next_var - witness_start).is_multiple_of(hyrax_C) {
+                        self.next_var += 1;
+                    }
+
+                    self.extra_output_vars.push(output_var);
+                    self.extra_blinding_vars.push(blinding_var);
+                }
+            }
+        }
+
+        let mut challenge_idx = 0usize;
+        let mut batching_coeff_idx = 0usize;
+        let mut output_challenge_idx = 0usize;
+        let mut input_challenge_idx = 0usize;
+        let mut extra_challenge_idx = 0usize;
+        let mut current_claim = LinearCombination::<F>::new();
+
+        for step in &layout {
+            match step {
+                LayoutStep::ConstantInitialClaim { chain_idx } => {
+                    current_claim = LinearCombination::constant(baked.initial_claims[*chain_idx]);
+                }
+                LayoutStep::InitialClaimVar { chain_idx } => {
+                    current_claim = LinearCombination::variable(
+                        *initial_claim_vars
+                            .get(chain_idx)
+                            .expect("initial claim variable must be allocated"),
+                    );
+                }
+                LayoutStep::ConstraintVars {
+                    constraint, kind, ..
+                } => {
                     let baked_challenge_values = match kind {
                         ConstraintKind::InitialInput => {
                             let n = constraint.num_challenges;
@@ -565,95 +492,59 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                         baked_challenge_values,
                     );
                 }
-                LayoutStep::CoeffRow {
-                    round_idx,
-                    num_coeffs,
-                    ..
+                LayoutStep::CoeffRow { .. } => {}
+                LayoutStep::NextClaim {
+                    stage_idx,
+                    round_in_stage,
                 } => {
-                    let coeffs: Vec<Variable> = (0..*num_coeffs)
-                        .map(|k| Variable::new(witness_start + round_idx * hyrax_C + k))
-                        .collect();
-                    pending_coeffs = Some(coeffs);
-                }
-                LayoutStep::NextClaim { stage_idx, .. } => {
-                    let next_claim = Variable::new(self.next_var);
-                    self.next_var += 1;
-
-                    let coeffs = pending_coeffs
-                        .take()
-                        .expect("CoeffRow must precede NextClaim");
-                    let vars = RoundVariables { coeffs, next_claim };
-
+                    let vars = round_vars
+                        .get(&(*stage_idx, *round_in_stage))
+                        .expect("round variables must be allocated");
                     let config = &stage_configs[*stage_idx];
                     let challenge_value = baked.challenges[challenge_idx];
                     let power_sums = config.uniskip_power_sums.as_deref();
 
                     let claimed_sum = std::mem::replace(
                         &mut current_claim,
-                        LinearCombination::variable(next_claim),
+                        LinearCombination::variable(vars.next_claim),
                     );
-                    self.add_round_constraints(&vars, claimed_sum, challenge_value, power_sums);
+                    self.add_round_constraints(vars, claimed_sum, challenge_value, power_sums);
                     challenge_idx += 1;
                 }
                 LayoutStep::LinearFinalOutput {
-                    num_evaluations, ..
+                    num_evaluations,
+                    stage_idx,
                 } => {
                     let baked_coeffs = &baked.batching_coefficients
                         [batching_coeff_idx..batching_coeff_idx + num_evaluations];
                     batching_coeff_idx += num_evaluations;
-
-                    let eval_vars: Vec<Variable> = (0..*num_evaluations)
-                        .map(|_| {
-                            let var = Variable::new(self.next_var);
-                            self.next_var += 1;
-                            var
-                        })
-                        .collect();
+                    let eval_vars = linear_output_vars
+                        .get(stage_idx)
+                        .expect("linear output variables must be allocated");
 
                     self.add_final_output_constraint_baked(
                         current_claim.clone(),
                         baked_coeffs,
-                        &eval_vars,
+                        eval_vars,
                     );
                 }
-                LayoutStep::PlaceholderVars { num_vars } => {
-                    self.next_var += num_vars;
-                }
-                LayoutStep::ExtraConstraintVars { constraint, .. } => {
-                    for opening_id in &constraint.required_openings {
-                        let resolved = self.resolve_alias(*opening_id);
-                        if let Some(&var) = global_opening_vars.get(&resolved) {
-                            global_opening_vars.insert(*opening_id, var);
-                        } else {
-                            let var = Variable::new(self.next_var);
-                            self.next_var += 1;
-                            global_opening_vars.insert(*opening_id, var);
-                            if resolved != *opening_id {
-                                global_opening_vars.insert(resolved, var);
-                            }
-                        }
-                    }
-
-                    let output_var = Variable::new(self.next_var);
-                    self.next_var += 1;
-
+                LayoutStep::PlaceholderVars { .. } => {}
+                LayoutStep::ExtraConstraintVars {
+                    constraint,
+                    extra_idx,
+                    ..
+                } => {
                     let n = constraint.num_challenges;
                     let baked_challenge_values = &baked.extra_constraint_challenges
                         [extra_challenge_idx..extra_challenge_idx + n];
                     extra_challenge_idx += n;
 
                     self.add_sum_of_products_constraint_baked(
-                        LinearCombination::variable(output_var),
+                        LinearCombination::variable(self.extra_output_vars[*extra_idx]),
                         constraint,
                         &global_opening_vars,
                         baked_challenge_values,
                     );
-
-                    let blinding_var = Variable::new(self.next_var);
-                    self.next_var += 1;
-
-                    self.extra_output_vars.push(output_var);
-                    self.extra_blinding_vars.push(blinding_var);
                 }
             }
         }
@@ -716,8 +607,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         for (coeff, &eval_var) in baked_coeffs.iter().zip(evaluations.iter()) {
             a = a.add_term(eval_var, *coeff);
         }
-        let b = LinearCombination::constant(F::one());
-        self.add_constraint(a, b, final_claim);
+        self.add_equality_constraint(a, final_claim);
     }
 
     /// Add general sum-of-products constraint with baked challenge values.
@@ -733,35 +623,100 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         baked_challenge_values: &[F],
     ) -> Vec<Variable> {
         if constraint.terms.is_empty() {
+            self.add_equality_constraint(LinearCombination::new(), final_claim);
             return Vec::new();
         }
 
-        let mut visitor =
-            R1csConstraintVisitor::new(self.next_var, opening_vars, baked_challenge_values);
-        let mut r1cs_acc = R1csConstraintAcc::new();
-        constraint.visit(&mut visitor, &mut r1cs_acc);
+        let mut result = LinearCombination::<F>::new();
+        let mut aux_vars = Vec::new();
 
-        self.next_var = visitor.next_var;
-        for (a, b, c) in r1cs_acc.constraints {
-            self.add_constraint(a, b, c);
-        }
-
-        let n = r1cs_acc.term_results.len();
-        if n == 1 {
-            let a = LinearCombination::constant(F::one());
-            let b = LinearCombination::variable(r1cs_acc.term_results[0]);
-            self.add_constraint(a, b, final_claim);
-        } else {
-            let mut sum_lc = LinearCombination::new();
-            for var in &r1cs_acc.term_results {
-                sum_lc = sum_lc.add_var(*var);
+        for term in &constraint.terms {
+            let mut coefficient = F::one();
+            let mut factors = Vec::new();
+            collect_r1cs_term_source(
+                &term.coeff,
+                opening_vars,
+                baked_challenge_values,
+                &mut coefficient,
+                &mut factors,
+            );
+            for factor in &term.factors {
+                collect_r1cs_term_source(
+                    factor,
+                    opening_vars,
+                    baked_challenge_values,
+                    &mut coefficient,
+                    &mut factors,
+                );
             }
-            let a = LinearCombination::constant(F::one());
-            self.add_constraint(a, sum_lc, final_claim);
+
+            if coefficient.is_zero() {
+                continue;
+            }
+
+            match factors.as_slice() {
+                [] => {
+                    result
+                        .terms
+                        .push(super::Term::new(Variable::U, coefficient));
+                }
+                [factor] => {
+                    result.terms.push(super::Term::new(*factor, coefficient));
+                }
+                [first, rest @ ..] => {
+                    let mut product = LinearCombination::variable(*first);
+                    for factor in rest {
+                        let output = Variable::new(self.next_var);
+                        self.next_var += 1;
+                        aux_vars.push(output);
+                        self.add_constraint(
+                            product,
+                            LinearCombination::variable(*factor),
+                            LinearCombination::variable(output),
+                        );
+                        product = LinearCombination::variable(output);
+                    }
+                    for mut term in product.terms {
+                        term.coeff *= coefficient;
+                        result.terms.push(term);
+                    }
+                }
+            }
         }
 
-        r1cs_acc.aux_vars
+        self.add_equality_constraint(result, final_claim);
+        aux_vars
     }
+}
+
+fn collect_r1cs_term_source<F: JoltField>(
+    source: &ValueSource,
+    opening_vars: &HashMap<OpeningId, Variable>,
+    baked_challenge_values: &[F],
+    coefficient: &mut F,
+    factors: &mut Vec<Variable>,
+) {
+    match source {
+        ValueSource::Opening(id) => factors.push(
+            *opening_vars
+                .get(id)
+                .unwrap_or_else(|| panic!("Opening {id:?} not found")),
+        ),
+        ValueSource::Challenge(idx) => *coefficient *= baked_challenge_values[*idx],
+        ValueSource::Constant(val) => *coefficient *= F::from_i128(*val),
+    }
+}
+
+fn subtract_linear_combinations<F: JoltField>(
+    mut lhs: LinearCombination<F>,
+    rhs: LinearCombination<F>,
+) -> LinearCombination<F> {
+    lhs.terms.extend(
+        rhs.terms
+            .into_iter()
+            .map(|term| super::Term::new(term.var, -term.coeff)),
+    );
+    lhs
 }
 
 #[cfg(test)]
@@ -858,7 +813,7 @@ mod tests {
         // 2 constraints per round, 120 rounds = 240
         assert_eq!(r1cs.num_constraints, 240);
         assert_eq!(r1cs.hyrax.C, 4);
-        assert_eq!(r1cs.hyrax.R_coeff, 128);
+        assert_eq!(r1cs.hyrax.R_coeff, 120);
     }
 
     #[test]
