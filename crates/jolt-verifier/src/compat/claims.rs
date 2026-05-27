@@ -1,15 +1,9 @@
 //! Compatibility opening-claim conversion.
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 use std::collections::BTreeMap;
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 use crate::compat::ids as legacy;
 use crate::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
@@ -36,7 +30,7 @@ use crate::{
             BytecodeReadRafOutputOpeningClaims, IncClaimReductionOutputOpeningClaims,
             InstructionRaVirtualizationOutputOpeningClaims,
             RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
-            Stage6AdviceCyclePhaseClaims, Stage6Claims,
+            Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6Claims,
         },
         stage7::inputs::{
             AdviceAddressPhaseOutputClaim, HammingWeightClaimReductionOutputOpeningClaims,
@@ -45,28 +39,12 @@ use crate::{
     },
     VerifierError,
 };
-
-#[cfg(feature = "field-inline")]
-use crate::stages::stage2::inputs::{
-    FieldInlineProductOutputOpeningClaims, FieldInlineStage2OutputOpeningClaims,
-};
-#[cfg(feature = "field-inline")]
-use crate::stages::stage4::inputs::{
-    FieldInlineStage4Claims, FieldRegistersReadWriteOutputOpeningClaims,
-};
-#[cfg(feature = "field-inline")]
-use crate::stages::stage5::inputs::{
-    FieldInlineStage5Claims, FieldRegistersValEvaluationOutputOpeningClaims,
-};
-#[cfg(feature = "field-inline")]
-use crate::stages::stage6::inputs::{
-    FieldInlineStage6Claims, FieldRegistersIncClaimReductionOutputOpeningClaims,
-};
 #[cfg(any(feature = "jolt-core-compat", test))]
 use jolt_claims::protocols::jolt::formulas::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
     self as native,
     formulas::{
+        booleanity, bytecode,
         claim_reductions::registers as registers_claim_reduction,
         claim_reductions::{advice, increments, instruction as instruction_claim_reduction},
         instruction, ram, registers,
@@ -83,18 +61,12 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::CircuitFlags;
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(bound = "")]
 pub struct LegacyOpeningClaims<F: Field>(pub BTreeMap<legacy::OpeningId, F>);
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 pub(crate) fn native_opening_claims_from_legacy<F: Field>(
     claims: LegacyOpeningClaims<F>,
 ) -> Vec<(native::JoltOpeningId, F)> {
@@ -105,11 +77,7 @@ pub(crate) fn native_opening_claims_from_legacy<F: Field>(
         .collect()
 }
 
-#[cfg(all(
-    feature = "jolt-core-compat",
-    not(feature = "field-inline"),
-    not(feature = "zk")
-))]
+#[cfg(all(feature = "jolt-core-compat", not(feature = "zk")))]
 pub(crate) fn clear_claims_from_legacy<F: Field>(
     claims: LegacyOpeningClaims<F>,
     trace_length: usize,
@@ -128,8 +96,6 @@ pub(crate) fn clear_claims_from_native<F: Field>(
         stage1: Stage1Claims {
             uniskip_output_claim: claims.require(outer_uniskip_opening())?,
             outer: spartan_outer_claims_from_native(&claims)?,
-            #[cfg(feature = "field-inline")]
-            field_inline: crate::stages::stage1::inputs::FieldInlineStage1Claims::zero(),
         },
         stage2: stage2_claims_from_native(&claims)?,
         stage3: stage3_claims_from_native(&claims)?,
@@ -216,14 +182,6 @@ fn stage2_claims_from_native<F: Field>(
                 next_is_noop: claims.get_or_zero(product_next_is_noop),
                 virtual_instruction: claims.get_or_zero(product_virtual_instruction),
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: FieldInlineStage2OutputOpeningClaims {
-                product: FieldInlineProductOutputOpeningClaims {
-                    field_rs1_value: F::zero(),
-                    field_rs2_value: F::zero(),
-                    field_rd_value: F::zero(),
-                },
-            },
             instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
                 lookup_output: claims.get(instruction_lookup_output),
                 left_lookup_operand: claims.get_or_zero(instruction_left_lookup_operand),
@@ -302,16 +260,6 @@ fn stage4_claims_from_native<F: Field>(
             rd_wa: claims.require(rd_wa)?,
             rd_inc: claims.require(rd_inc)?,
         },
-        #[cfg(feature = "field-inline")]
-        field_inline: FieldInlineStage4Claims {
-            field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims {
-                field_registers_val: F::zero(),
-                field_rs1_ra: F::zero(),
-                field_rs2_ra: F::zero(),
-                field_rd_wa: F::zero(),
-                field_rd_inc: F::zero(),
-            },
-        },
         ram_val_check: RamValCheckOutputOpeningClaims {
             ram_ra: claims.require(ram_ra)?,
             ram_inc: claims.require(ram_inc)?,
@@ -354,13 +302,6 @@ fn stage5_claims_from_native<F: Field>(
         registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
-        },
-        #[cfg(feature = "field-inline")]
-        field_inline: FieldInlineStage5Claims {
-            field_registers_val_evaluation: FieldRegistersValEvaluationOutputOpeningClaims {
-                field_rd_inc: F::zero(),
-                field_rd_wa: F::zero(),
-            },
         },
     })
 }
@@ -405,7 +346,11 @@ fn stage6_claims_from_native<F: Field>(
             JoltCommittedPolynomial::BytecodeRa(index),
             JoltRelationId::Booleanity,
         );
-        let Some(opening_claim) = claims.get(id) else {
+        let fallback_id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(index),
+            JoltRelationId::BytecodeReadRaf,
+        );
+        let Some(opening_claim) = claims.get(id).or_else(|| claims.get(fallback_id)) else {
             break;
         };
         booleanity_bytecode_ra.push(opening_claim);
@@ -458,8 +403,14 @@ fn stage6_claims_from_native<F: Field>(
 
     let [ram_hamming_weight] = ram::hamming_booleanity_output_openings();
     let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
+    let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
+    let booleanity_address = booleanity::booleanity_address_phase_opening();
 
     Ok(Stage6Claims {
+        address_phase: Stage6AddressPhaseClaims {
+            bytecode_read_raf: claims.require(bytecode_read_raf_address)?,
+            booleanity: claims.require(booleanity_address)?,
+        },
         bytecode_read_raf: BytecodeReadRafOutputOpeningClaims { bytecode_ra },
         booleanity: BooleanityOutputOpeningClaims {
             instruction_ra: booleanity_instruction_ra,
@@ -476,13 +427,6 @@ fn stage6_claims_from_native<F: Field>(
         inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
             ram_inc: claims.require(ram_inc)?,
             rd_inc: claims.require(rd_inc)?,
-        },
-        #[cfg(feature = "field-inline")]
-        field_inline: FieldInlineStage6Claims {
-            field_registers_inc_claim_reduction:
-                FieldRegistersIncClaimReductionOutputOpeningClaims {
-                    field_rd_inc: F::zero(),
-                },
         },
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
@@ -620,8 +564,6 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
         stage1: Stage1Claims {
             uniskip_output_claim: zero,
             outer: empty_spartan_outer_claims(),
-            #[cfg(feature = "field-inline")]
-            field_inline: crate::stages::stage1::inputs::FieldInlineStage1Claims::zero(),
         },
         stage2: Stage2Claims {
             product_uniskip_output_claim: zero,
@@ -640,14 +582,6 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
-                },
-                #[cfg(feature = "field-inline")]
-                field_inline: FieldInlineStage2OutputOpeningClaims {
-                    product: FieldInlineProductOutputOpeningClaims {
-                        field_rs1_value: zero,
-                        field_rs2_value: zero,
-                        field_rd_value: zero,
-                    },
                 },
                 instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
                     lookup_output: None,
@@ -696,16 +630,6 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_wa: zero,
                 rd_inc: zero,
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: FieldInlineStage4Claims {
-                field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims {
-                    field_registers_val: zero,
-                    field_rs1_ra: zero,
-                    field_rs2_ra: zero,
-                    field_rd_wa: zero,
-                    field_rd_inc: zero,
-                },
-            },
             ram_val_check: RamValCheckOutputOpeningClaims {
                 ram_ra: zero,
                 ram_inc: zero,
@@ -722,15 +646,12 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_inc: zero,
                 rd_wa: zero,
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: FieldInlineStage5Claims {
-                field_registers_val_evaluation: FieldRegistersValEvaluationOutputOpeningClaims {
-                    field_rd_inc: zero,
-                    field_rd_wa: zero,
-                },
-            },
         },
         stage6: Stage6Claims {
+            address_phase: Stage6AddressPhaseClaims {
+                bytecode_read_raf: zero,
+                booleanity: zero,
+            },
             bytecode_read_raf: BytecodeReadRafOutputOpeningClaims {
                 bytecode_ra: vec![zero],
             },
@@ -749,11 +670,6 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
-            },
-            #[cfg(feature = "field-inline")]
-            field_inline: FieldInlineStage6Claims {
-                field_registers_inc_claim_reduction:
-                    FieldRegistersIncClaimReductionOutputOpeningClaims { field_rd_inc: zero },
             },
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
@@ -1206,6 +1122,14 @@ fn set_optional_stage6_output<F: Field>(
     opening_claim: F,
 ) -> bool {
     match id {
+        id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
+            claims.address_phase.bytecode_read_raf = opening_claim;
+            true
+        }
+        id if id == booleanity::booleanity_address_phase_opening() => {
+            claims.address_phase.booleanity = opening_claim;
+            true
+        }
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -1488,6 +1412,12 @@ fn claim_from_stage6_outputs<F: Field>(
     }
     let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
     match id {
+        id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
+            Some(claims.address_phase.bytecode_read_raf)
+        }
+        id if id == booleanity::booleanity_address_phase_opening() => {
+            Some(claims.address_phase.booleanity)
+        }
         id if id == ram_inc => Some(claims.inc_claim_reduction.ram_inc),
         id if id == rd_inc => Some(claims.inc_claim_reduction.rd_inc),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
@@ -1578,6 +1508,12 @@ fn claim_mut_from_stage6_outputs<F: Field>(
     }
     let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
     match id {
+        id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
+            Some(&mut claims.address_phase.bytecode_read_raf)
+        }
+        id if id == booleanity::booleanity_address_phase_opening() => {
+            Some(&mut claims.address_phase.booleanity)
+        }
         id if id == ram_inc => Some(&mut claims.inc_claim_reduction.ram_inc),
         id if id == rd_inc => Some(&mut claims.inc_claim_reduction.rd_inc),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
@@ -1734,10 +1670,7 @@ fn claim_mut_from_stage7_outputs<F: Field>(
     }
 }
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn opening_id(id: legacy::OpeningId) -> native::JoltOpeningId {
     match id {
         legacy::OpeningId::Polynomial(polynomial, stage) => {
@@ -1752,10 +1685,7 @@ fn opening_id(id: legacy::OpeningId) -> native::JoltOpeningId {
     }
 }
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn polynomial_id(id: legacy::PolynomialId) -> native::JoltPolynomialId {
     match id {
         legacy::PolynomialId::Committed(polynomial) => {
@@ -1767,10 +1697,7 @@ fn polynomial_id(id: legacy::PolynomialId) -> native::JoltPolynomialId {
     }
 }
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn committed_polynomial(
     polynomial: legacy::CommittedPolynomial,
 ) -> native::JoltCommittedPolynomial {
@@ -1793,10 +1720,7 @@ fn committed_polynomial(
     }
 }
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirtualPolynomial {
     match polynomial {
         legacy::VirtualPolynomial::PC => native::JoltVirtualPolynomial::PC,
@@ -1860,13 +1784,16 @@ fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirt
         legacy::VirtualPolynomial::LookupTableFlag(index) => {
             native::JoltVirtualPolynomial::LookupTableFlag(index)
         }
+        legacy::VirtualPolynomial::BytecodeReadRafAddrClaim => {
+            native::JoltVirtualPolynomial::BytecodeReadRafAddrClaim
+        }
+        legacy::VirtualPolynomial::BooleanityAddrClaim => {
+            native::JoltVirtualPolynomial::BooleanityAddrClaim
+        }
     }
 }
 
-#[cfg(all(
-    any(test, all(feature = "jolt-core-compat", not(feature = "field-inline"))),
-    not(feature = "zk")
-))]
+#[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 fn stage_id(id: legacy::SumcheckId) -> native::JoltRelationId {
     match id {
         legacy::SumcheckId::SpartanOuter => native::JoltRelationId::SpartanOuter,
@@ -1900,7 +1827,9 @@ fn stage_id(id: legacy::SumcheckId) -> native::JoltRelationId {
         legacy::SumcheckId::RegistersValEvaluation => {
             native::JoltRelationId::RegistersValEvaluation
         }
+        legacy::SumcheckId::BytecodeReadRafAddressPhase => native::JoltRelationId::BytecodeReadRaf,
         legacy::SumcheckId::BytecodeReadRaf => native::JoltRelationId::BytecodeReadRaf,
+        legacy::SumcheckId::BooleanityAddressPhase => native::JoltRelationId::Booleanity,
         legacy::SumcheckId::Booleanity => native::JoltRelationId::Booleanity,
         legacy::SumcheckId::AdviceClaimReductionCyclePhase => {
             native::JoltRelationId::AdviceClaimReductionCyclePhase

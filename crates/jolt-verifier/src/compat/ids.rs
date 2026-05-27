@@ -24,7 +24,9 @@ pub enum SumcheckId {
     RegistersClaimReduction,
     RegistersReadWriteChecking,
     RegistersValEvaluation,
+    BytecodeReadRafAddressPhase,
     BytecodeReadRaf,
+    BooleanityAddressPhase,
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
@@ -33,7 +35,7 @@ pub enum SumcheckId {
 }
 
 impl SumcheckId {
-    pub const COUNT: usize = 23;
+    pub const COUNT: usize = 25;
 
     #[cfg(test)]
     pub const ALL: [Self; Self::COUNT] = [
@@ -54,7 +56,9 @@ impl SumcheckId {
         Self::RegistersClaimReduction,
         Self::RegistersReadWriteChecking,
         Self::RegistersValEvaluation,
+        Self::BytecodeReadRafAddressPhase,
         Self::BytecodeReadRaf,
+        Self::BooleanityAddressPhase,
         Self::Booleanity,
         Self::AdviceClaimReductionCyclePhase,
         Self::AdviceClaimReduction,
@@ -91,12 +95,14 @@ impl TryFrom<u8> for SumcheckId {
             14 => Ok(Self::RegistersClaimReduction),
             15 => Ok(Self::RegistersReadWriteChecking),
             16 => Ok(Self::RegistersValEvaluation),
-            17 => Ok(Self::BytecodeReadRaf),
-            18 => Ok(Self::Booleanity),
-            19 => Ok(Self::AdviceClaimReductionCyclePhase),
-            20 => Ok(Self::AdviceClaimReduction),
-            21 => Ok(Self::IncClaimReduction),
-            22 => Ok(Self::HammingWeightClaimReduction),
+            17 => Ok(Self::BytecodeReadRafAddressPhase),
+            18 => Ok(Self::BytecodeReadRaf),
+            19 => Ok(Self::BooleanityAddressPhase),
+            20 => Ok(Self::Booleanity),
+            21 => Ok(Self::AdviceClaimReductionCyclePhase),
+            22 => Ok(Self::AdviceClaimReduction),
+            23 => Ok(Self::IncClaimReduction),
+            24 => Ok(Self::HammingWeightClaimReduction),
             _ => Err(()),
         }
     }
@@ -158,6 +164,8 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
+    BytecodeReadRafAddrClaim,
+    BooleanityAddrClaim,
 }
 
 #[derive(

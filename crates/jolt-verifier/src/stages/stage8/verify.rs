@@ -282,7 +282,7 @@ where
 
         let hiding_evaluation_commitment = PCS::verify_zk(
             &joint_commitment,
-            &opening_point,
+            pcs_opening_point.as_slice(),
             &proof.joint_opening_proof,
             &preprocessing.pcs_setup,
             transcript,
@@ -398,18 +398,16 @@ where
             dense_embedding_scale,
         );
         #[cfg(feature = "field-inline")]
-        {
-            push_opening(
-                field_increments::field_rd_inc_reduced_opening().into(),
-                &proof.commitments.field_inline.field_registers.rd_inc,
-                stage6
-                    .output_claims
-                    .field_inline
-                    .field_registers_inc_claim_reduction
-                    .field_rd_inc,
-                dense_embedding_scale,
-            );
-        }
+        push_opening(
+            field_increments::field_rd_inc_reduced_opening().into(),
+            &proof.commitments.field_inline.field_registers.rd_inc,
+            stage6
+                .output_claims
+                .field_inline
+                .field_registers_inc_claim_reduction
+                .field_rd_inc,
+            dense_embedding_scale,
+        );
 
         for (index, commitment) in proof.commitments.ra.instruction.iter().enumerate() {
             let id = JoltOpeningId::committed(

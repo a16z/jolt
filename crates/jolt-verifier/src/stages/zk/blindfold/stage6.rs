@@ -13,13 +13,18 @@ where
     let log_t = input.checked.trace_length.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
-    let bytecode_claims = bytecode::read_raf::<PCS::Field>(formula_dimensions.bytecode_read_raf);
+    let bytecode_address_claims =
+        bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
+    let bytecode_claims =
+        bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
         input.proof.one_hot_config.committed_chunk_bits(),
     );
-    let booleanity_claims = booleanity::booleanity::<PCS::Field>(booleanity_dimensions);
+    let booleanity_address_claims =
+        booleanity::booleanity_address_phase::<PCS::Field>(booleanity_dimensions);
+    let booleanity_claims = booleanity::booleanity_cycle_phase::<PCS::Field>(booleanity_dimensions);
     let ram_hamming_claims = ram::hamming_booleanity::<PCS::Field>(trace_dimensions);
     let ram_ra_claims =
         ram::ra_virtualization::<PCS::Field>(formula_dimensions.ram_ra_virtualization);
@@ -36,7 +41,9 @@ where
     add_stage6_publics_and_challenges(
         input,
         values,
+        &bytecode_address_claims,
         &bytecode_claims,
+        &booleanity_address_claims,
         &booleanity_claims,
         &ram_hamming_claims,
         &ram_ra_claims,
@@ -112,6 +119,20 @@ where
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted, public)?;
     }
 
+    let builder = add_batched_stage(
+        builder,
+        "stage6.address_phase",
+        &[bytecode_address_claims, booleanity_address_claims],
+        &input.stage6.address_phase_consistency,
+        &input.stage6.address_phase_output_claims,
+        values,
+        vec![
+            bytecode::bytecode_read_raf_address_phase_opening(),
+            booleanity::booleanity_address_phase_opening(),
+        ],
+        Vec::new(),
+    )?;
+
     let bytecode_input_expr = map_jolt_expr(bytecode_claims.input.expression().clone());
     #[cfg(feature = "field-inline")]
     let bytecode_input_expr = bytecode_input_expr
@@ -170,13 +191,11 @@ where
         ));
     }
 
-    let mut output_ids = Vec::new();
-    output_ids.extend(map_jolt_opening_ids(
-        bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf).bytecode_ra,
-    ));
-    output_ids.extend(map_jolt_opening_ids(
-        booleanity::booleanity_output_openings(formula_dimensions.ra_layout),
-    ));
+    let (mut output_ids, aliases) = stage6_cycle_output_openings_and_aliases(
+        formula_dimensions,
+        &input.stage6.bytecode_read_raf.bytecode_ra_opening_points,
+        &input.stage6.booleanity.opening_point,
+    );
     output_ids.extend(map_jolt_opening_ids(
         ram::hamming_booleanity_output_openings().to_vec(),
     ));
@@ -236,7 +255,7 @@ where
 
     add_stage(
         builder,
-        "stage6.batch",
+        "stage6.cycle_phase",
         SumcheckStatement::new(
             input.stage6.batch_consistency.max_num_vars,
             input.stage6.batch_consistency.max_degree,
@@ -246,8 +265,43 @@ where
         &input.stage6.batch_output_claims,
         values,
         output_ids,
-        Vec::new(),
+        aliases,
         input_claim,
         output_claim,
     )
+}
+
+fn stage6_cycle_output_openings_and_aliases<F: Field>(
+    formula_dimensions: JoltFormulaDimensions,
+    bytecode_ra_opening_points: &[Vec<F>],
+    booleanity_opening_point: &[F],
+) -> (Vec<VerifierOpeningId>, Vec<OpeningAlias<VerifierOpeningId>>) {
+    let bytecode_output_openings =
+        bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
+    let booleanity_output_openings =
+        booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
+
+    let mut output_ids = map_jolt_opening_ids(bytecode_output_openings.bytecode_ra.clone());
+    let mut aliases = Vec::new();
+    for id in booleanity_output_openings {
+        let source = match id {
+            JoltOpeningId::Polynomial {
+                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+                relation: JoltRelationId::Booleanity,
+            } if bytecode_ra_opening_points
+                .get(index)
+                .is_some_and(|point| point.as_slice() == booleanity_opening_point) =>
+            {
+                bytecode_output_openings.bytecode_ra.get(index).copied()
+            }
+            _ => None,
+        };
+        if let Some(source) = source {
+            aliases.push(OpeningAlias::new(id.into(), source.into()));
+        } else {
+            output_ids.push(id.into());
+        }
+    }
+
+    (output_ids, aliases)
 }

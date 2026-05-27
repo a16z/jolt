@@ -268,7 +268,8 @@ where
             stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
             stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
             stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
-            stage6_sumcheck_proof: convert_sumcheck(proof.stage6_sumcheck_proof),
+            stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
+            stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
             stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
         };
 
@@ -319,7 +320,8 @@ where
             stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
             stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
             stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
-            stage6_sumcheck_proof: convert_sumcheck(proof.stage6_sumcheck_proof),
+            stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
+            stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
             stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
         };
 
@@ -669,7 +671,13 @@ fn convert_sumcheck_id(id: core_opening::SumcheckId) -> verifier_ids::SumcheckId
         core_opening::SumcheckId::RegistersValEvaluation => {
             verifier_ids::SumcheckId::RegistersValEvaluation
         }
+        core_opening::SumcheckId::BytecodeReadRafAddressPhase => {
+            verifier_ids::SumcheckId::BytecodeReadRafAddressPhase
+        }
         core_opening::SumcheckId::BytecodeReadRaf => verifier_ids::SumcheckId::BytecodeReadRaf,
+        core_opening::SumcheckId::BooleanityAddressPhase => {
+            verifier_ids::SumcheckId::BooleanityAddressPhase
+        }
         core_opening::SumcheckId::Booleanity => verifier_ids::SumcheckId::Booleanity,
         core_opening::SumcheckId::AdviceClaimReductionCyclePhase => {
             verifier_ids::SumcheckId::AdviceClaimReductionCyclePhase
@@ -798,6 +806,12 @@ fn convert_virtual_polynomial(
         }
         core_witness::VirtualPolynomial::LookupTableFlag(index) => {
             verifier_ids::VirtualPolynomial::LookupTableFlag(index)
+        }
+        core_witness::VirtualPolynomial::BytecodeReadRafAddrClaim => {
+            verifier_ids::VirtualPolynomial::BytecodeReadRafAddrClaim
+        }
+        core_witness::VirtualPolynomial::BooleanityAddrClaim => {
+            verifier_ids::VirtualPolynomial::BooleanityAddrClaim
         }
     }
 }

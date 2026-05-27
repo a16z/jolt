@@ -15,7 +15,7 @@ use crate::support::{
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     formulas::{
-        bytecode,
+        booleanity, bytecode,
         claim_reductions::{
             advice, hamming_weight, increments, instruction as instruction_claim_reduction,
             registers as registers_claim_reduction,
@@ -30,7 +30,7 @@ use jolt_claims::protocols::jolt::{
         },
     },
     AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltRelationId, JoltVirtualPolynomial,
+    JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -210,8 +210,10 @@ fn tampered_stage5_output_claims_reject() {
 #[test]
 fn tampered_stage6_sumcheck_payload_reject() {
     let base = real_core_case();
-    tamper_each_stage6_batch_round(&base);
-    tamper_stage6_batch_round_counts(&base);
+    tamper_each_stage6_address_phase_round(&base);
+    tamper_stage6_address_phase_round_counts(&base);
+    tamper_each_stage6_cycle_phase_round(&base);
+    tamper_stage6_cycle_phase_round_counts(&base);
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -474,14 +476,25 @@ fn precompat_tampered_stage6_sumcheck_payload_reject() {
     let base = real_precompat_core_case();
     precompat_tamper_each_round(
         &base,
-        LegacyProofStageTarget::Stage6Batch,
-        "stage6.batch.round_polynomial",
+        LegacyProofStageTarget::Stage6AddressPhase,
+        "stage6.address_phase.round_polynomial",
     );
     precompat_tamper_round_counts(
         &base,
-        LegacyProofStageTarget::Stage6Batch,
-        "stage6.batch.round_count.missing",
-        "stage6.batch.round_count.extra",
+        LegacyProofStageTarget::Stage6AddressPhase,
+        "stage6.address_phase.round_count.missing",
+        "stage6.address_phase.round_count.extra",
+    );
+    precompat_tamper_each_round(
+        &base,
+        LegacyProofStageTarget::Stage6CyclePhase,
+        "stage6.cycle_phase.round_polynomial",
+    );
+    precompat_tamper_round_counts(
+        &base,
+        LegacyProofStageTarget::Stage6CyclePhase,
+        "stage6.cycle_phase.round_count.missing",
+        "stage6.cycle_phase.round_count.extra",
     );
 }
 
@@ -841,34 +854,67 @@ fn tamper_stage5_batch_round_counts(base: &CoreVerifierCase) {
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-fn tamper_each_stage6_batch_round(base: &CoreVerifierCase) {
-    let round_count = compressed_round_count(&base.proof.stages.stage6_sumcheck_proof);
+fn tamper_each_stage6_address_phase_round(base: &CoreVerifierCase) {
+    let round_count = compressed_round_count(&base.proof.stages.stage6a_sumcheck_proof);
     for round_index in 0..round_count {
         tamper_manifest::assert_core_tamper_rejects(
-            manifest_target("stage6.batch.round_polynomial"),
+            manifest_target("stage6.address_phase.round_polynomial"),
             base,
             |case| {
-                mutate_compressed_round(&mut case.proof.stages.stage6_sumcheck_proof, round_index);
+                mutate_compressed_round(&mut case.proof.stages.stage6a_sumcheck_proof, round_index);
             },
         );
     }
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-fn tamper_stage6_batch_round_counts(base: &CoreVerifierCase) {
+fn tamper_stage6_address_phase_round_counts(base: &CoreVerifierCase) {
     tamper_manifest::assert_core_tamper_rejects(
-        manifest_target("stage6.batch.round_count.missing"),
+        manifest_target("stage6.address_phase.round_count.missing"),
         base,
         |case| {
-            pop_compressed_round(&mut case.proof.stages.stage6_sumcheck_proof);
+            pop_compressed_round(&mut case.proof.stages.stage6a_sumcheck_proof);
         },
     );
 
     tamper_manifest::assert_core_tamper_rejects(
-        manifest_target("stage6.batch.round_count.extra"),
+        manifest_target("stage6.address_phase.round_count.extra"),
         base,
         |case| {
-            push_compressed_round(&mut case.proof.stages.stage6_sumcheck_proof);
+            push_compressed_round(&mut case.proof.stages.stage6a_sumcheck_proof);
+        },
+    );
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_each_stage6_cycle_phase_round(base: &CoreVerifierCase) {
+    let round_count = compressed_round_count(&base.proof.stages.stage6b_sumcheck_proof);
+    for round_index in 0..round_count {
+        tamper_manifest::assert_core_tamper_rejects(
+            manifest_target("stage6.cycle_phase.round_polynomial"),
+            base,
+            |case| {
+                mutate_compressed_round(&mut case.proof.stages.stage6b_sumcheck_proof, round_index);
+            },
+        );
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn tamper_stage6_cycle_phase_round_counts(base: &CoreVerifierCase) {
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage6.cycle_phase.round_count.missing"),
+        base,
+        |case| {
+            pop_compressed_round(&mut case.proof.stages.stage6b_sumcheck_proof);
+        },
+    );
+
+    tamper_manifest::assert_core_tamper_rejects(
+        manifest_target("stage6.cycle_phase.round_count.extra"),
+        base,
+        |case| {
+            push_compressed_round(&mut case.proof.stages.stage6b_sumcheck_proof);
         },
     );
 }
@@ -1284,6 +1330,16 @@ fn stage6_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
     let dimensions = stage6_dimensions(base);
     let mut openings = Vec::new();
 
+    openings.extend([
+        (
+            "stage6.claims.address_phase.bytecode_read_raf",
+            bytecode::bytecode_read_raf_address_phase_opening(),
+        ),
+        (
+            "stage6.claims.address_phase.booleanity",
+            booleanity::booleanity_address_phase_opening(),
+        ),
+    ]);
     openings.extend(
         bytecode::read_raf_output_openings(dimensions.bytecode_read_raf)
             .bytecode_ra
@@ -1497,7 +1553,9 @@ fn stage2_output_alias_claim(base: &CoreVerifierCase, id: JoltOpeningId) -> Opti
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn precompat_opening_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
-    stage2_output_alias(id).or_else(|| stage3_output_alias(id))
+    stage2_output_alias(id)
+        .or_else(|| stage3_output_alias(id))
+        .or_else(|| stage6_output_alias(id))
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -1535,5 +1593,19 @@ fn stage3_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
         Some(rs2_value_input)
     } else {
         None
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage6_output_alias(id: JoltOpeningId) -> Option<JoltOpeningId> {
+    match id {
+        JoltOpeningId::Polynomial {
+            polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+            relation: JoltRelationId::Booleanity,
+        } => Some(JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(index),
+            JoltRelationId::BytecodeReadRaf,
+        )),
+        _ => None,
     }
 }

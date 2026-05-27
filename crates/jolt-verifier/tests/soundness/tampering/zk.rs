@@ -161,10 +161,10 @@ fn tampered_zk_stage5_batch_output_commitment_count_rejects_now() {
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 #[test]
-fn tampered_zk_stage6_batch_round_count_rejects_now() {
+fn tampered_zk_stage6_address_phase_round_count_rejects_now() {
     with_zk_verifier_stack(|| {
         let mut case = crate::support::core_fixtures::zk_muldiv_case();
-        pop_committed_round(&mut case.proof.stages.stage6_sumcheck_proof);
+        pop_committed_round(&mut case.proof.stages.stage6a_sumcheck_proof);
 
         support::assert_zk_rejects(case.verify());
     });
@@ -172,10 +172,10 @@ fn tampered_zk_stage6_batch_round_count_rejects_now() {
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 #[test]
-fn tampered_zk_stage6_batch_round_degree_rejects_now() {
+fn tampered_zk_stage6_address_phase_round_degree_rejects_now() {
     with_zk_verifier_stack(|| {
         let mut case = crate::support::core_fixtures::zk_muldiv_case();
-        exceed_first_committed_round_degree_bound(&mut case.proof.stages.stage6_sumcheck_proof);
+        exceed_first_committed_round_degree_bound(&mut case.proof.stages.stage6a_sumcheck_proof);
 
         support::assert_zk_rejects(case.verify());
     });
@@ -183,10 +183,43 @@ fn tampered_zk_stage6_batch_round_degree_rejects_now() {
 
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 #[test]
-fn tampered_zk_stage6_batch_output_commitment_count_rejects_now() {
+fn tampered_zk_stage6_address_phase_output_commitment_count_rejects_now() {
     with_zk_verifier_stack(|| {
         let mut case = crate::support::core_fixtures::zk_muldiv_case();
-        pop_committed_output_claim_row(&mut case.proof.stages.stage6_sumcheck_proof);
+        pop_committed_output_claim_row(&mut case.proof.stages.stage6a_sumcheck_proof);
+
+        support::assert_zk_rejects(case.verify());
+    });
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage6_cycle_phase_round_count_rejects_now() {
+    with_zk_verifier_stack(|| {
+        let mut case = crate::support::core_fixtures::zk_muldiv_case();
+        pop_committed_round(&mut case.proof.stages.stage6b_sumcheck_proof);
+
+        support::assert_zk_rejects(case.verify());
+    });
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage6_cycle_phase_round_degree_rejects_now() {
+    with_zk_verifier_stack(|| {
+        let mut case = crate::support::core_fixtures::zk_muldiv_case();
+        exceed_first_committed_round_degree_bound(&mut case.proof.stages.stage6b_sumcheck_proof);
+
+        support::assert_zk_rejects(case.verify());
+    });
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[test]
+fn tampered_zk_stage6_cycle_phase_output_commitment_count_rejects_now() {
+    with_zk_verifier_stack(|| {
+        let mut case = crate::support::core_fixtures::zk_muldiv_case();
+        pop_committed_output_claim_row(&mut case.proof.stages.stage6b_sumcheck_proof);
 
         support::assert_zk_rejects(case.verify());
     });

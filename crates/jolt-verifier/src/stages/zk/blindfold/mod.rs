@@ -91,11 +91,12 @@ use jolt_claims::{
         HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
         IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
         InstructionInputChallenge, InstructionRaVirtualizationChallenge,
-        InstructionReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltOpeningId, JoltPublicId,
-        JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, RamHammingBooleanityChallenge,
-        RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
-        RamRaVirtualizationChallenge, RamRafEvaluationPublic, RamReadWriteChallenge,
-        RamValCheckChallenge, RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
+        InstructionReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial,
+        JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+        JoltSumcheckDomain, RamHammingBooleanityChallenge, RamOutputCheckPublic,
+        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationChallenge,
+        RamRafEvaluationPublic, RamReadWriteChallenge, RamValCheckChallenge,
+        RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
         RegistersValEvaluationChallenge, SpartanShiftChallenge, SpartanShiftPublic,
     },
     public, Expr, Source, Term,
@@ -774,7 +775,9 @@ where
 fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
+    bytecode_address_claims: &JoltRelationClaims<PCS::Field>,
     bytecode_claims: &JoltRelationClaims<PCS::Field>,
+    booleanity_address_claims: &JoltRelationClaims<PCS::Field>,
     booleanity_claims: &JoltRelationClaims<PCS::Field>,
     ram_hamming_claims: &JoltRelationClaims<PCS::Field>,
     ram_ra_claims: &JoltRelationClaims<PCS::Field>,
@@ -788,7 +791,6 @@ where
     let log_t = input.checked.trace_length.ilog2() as usize;
     let log_k = input.checked.ram_K.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
-    let formula_dimensions = formula_dimensions(input)?;
 
     values.challenge(
         JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
@@ -833,15 +835,22 @@ where
         input.stage6.public.inc_gamma,
     )?;
 
+    let bytecode_address_point = input
+        .stage6
+        .address_phase_consistency
+        .try_instance_point(bytecode_address_claims.sumcheck.rounds)
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
+    let bytecode_r_address = bytecode_address_point
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
     let bytecode_point = input
         .stage6
         .batch_consistency
         .try_instance_point(bytecode_claims.sumcheck.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
-    let bytecode_opening = formula_dimensions
-        .bytecode_read_raf
-        .opening_point(&bytecode_point)
-        .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
+    let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
     let stage1_cycle = input.stage1.public.remainder_challenges[1..]
         .iter()
         .rev()
@@ -888,8 +897,8 @@ where
     let bytecode_public_values =
         bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
             bytecode: &input.preprocessing.program.bytecode.bytecode,
-            r_address: &bytecode_opening.r_address,
-            r_cycle: &bytecode_opening.r_cycle,
+            r_address: &bytecode_r_address,
+            r_cycle: &bytecode_r_cycle,
             stage_cycle_points: [
                 &stage1_cycle,
                 &stage2_cycle,
@@ -955,8 +964,8 @@ where
             field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
                 bytecode: field_inline_bytecode,
                 field_register_log_k: field_log_k,
-                r_address: &bytecode_opening.r_address,
-                r_cycle: &bytecode_opening.r_cycle,
+                r_address: &bytecode_r_address,
+                r_cycle: &bytecode_r_cycle,
                 stage1_cycle_point: &stage1_cycle,
                 field_register_read_write_point: field_read_write_address,
                 field_register_read_write_cycle_point: field_read_write_cycle,
@@ -996,6 +1005,11 @@ where
         bytecode_public_values.value(BytecodeReadRafPublic::Entry),
     )?;
 
+    let booleanity_address_point = input
+        .stage6
+        .address_phase_consistency
+        .try_instance_point(booleanity_address_claims.sumcheck.rounds)
+        .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let booleanity_point = input
         .stage6
         .batch_consistency
@@ -1010,9 +1024,14 @@ where
         .chain(input.stage6.public.booleanity_reference_cycle.iter().rev())
         .copied()
         .collect::<Vec<_>>();
+    let booleanity_full_point = [
+        booleanity_address_point.as_slice(),
+        booleanity_point.as_slice(),
+    ]
+    .concat();
     values.public(
         JoltPublicId::from(BooleanityPublic::EqAddressCycle),
-        try_eq_mle(&booleanity_point, &reference_eq_point)
+        try_eq_mle(&booleanity_full_point, &reference_eq_point)
             .map_err(|error| public_error(JoltRelationId::Booleanity, error))?,
     )?;
 

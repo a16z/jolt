@@ -352,6 +352,8 @@ impl CanonicalSerialize for VirtualPolynomial {
                 serialize_tagged_index(37, *flags as usize, writer, compress)
             }
             Self::LookupTableFlag(flag) => serialize_tagged_index(38, *flag, writer, compress),
+            Self::BytecodeReadRafAddrClaim => 39u8.serialize_with_mode(writer, compress),
+            Self::BooleanityAddrClaim => 40u8.serialize_with_mode(writer, compress),
         }
     }
 
@@ -391,7 +393,9 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RamValInit
             | Self::RamValFinal
             | Self::RamHammingWeight
-            | Self::UnivariateSkip => 1,
+            | Self::UnivariateSkip
+            | Self::BytecodeReadRafAddrClaim
+            | Self::BooleanityAddrClaim => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
@@ -465,6 +469,8 @@ impl CanonicalDeserialize for VirtualPolynomial {
                     )
                 }
                 38 => Self::LookupTableFlag(read_index(reader, compress, validate)?),
+                39 => Self::BytecodeReadRafAddrClaim,
+                40 => Self::BooleanityAddrClaim,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -705,7 +711,7 @@ mod tests {
             round_trip(polynomial)?;
             assert_eq!(bytes(&polynomial)?, bytes(&core_virtual(polynomial))?);
         }
-        assert!(VirtualPolynomial::deserialize_compressed([39u8].as_slice()).is_err());
+        assert!(VirtualPolynomial::deserialize_compressed([41u8].as_slice()).is_err());
         assert!(VirtualPolynomial::deserialize_compressed([36u8, 14u8].as_slice()).is_err());
         assert!(VirtualPolynomial::deserialize_compressed([37u8, 6u8].as_slice()).is_err());
         assert!(bytes(&VirtualPolynomial::InstructionRa(256)).is_err());
@@ -851,6 +857,8 @@ mod tests {
             VirtualPolynomial::LookupTableFlag(0),
             VirtualPolynomial::LookupTableFlag(7),
             VirtualPolynomial::LookupTableFlag(255),
+            VirtualPolynomial::BytecodeReadRafAddrClaim,
+            VirtualPolynomial::BooleanityAddrClaim,
         ];
 
         for flag in circuit_flag_cases() {
@@ -916,7 +924,9 @@ mod tests {
             SumcheckId::RegistersClaimReduction => CoreSumcheckId::RegistersClaimReduction,
             SumcheckId::RegistersReadWriteChecking => CoreSumcheckId::RegistersReadWriteChecking,
             SumcheckId::RegistersValEvaluation => CoreSumcheckId::RegistersValEvaluation,
+            SumcheckId::BytecodeReadRafAddressPhase => CoreSumcheckId::BytecodeReadRafAddressPhase,
             SumcheckId::BytecodeReadRaf => CoreSumcheckId::BytecodeReadRaf,
+            SumcheckId::BooleanityAddressPhase => CoreSumcheckId::BooleanityAddressPhase,
             SumcheckId::Booleanity => CoreSumcheckId::Booleanity,
             SumcheckId::AdviceClaimReductionCyclePhase => {
                 CoreSumcheckId::AdviceClaimReductionCyclePhase
@@ -1004,6 +1014,10 @@ mod tests {
             VirtualPolynomial::LookupTableFlag(flag) => {
                 CoreVirtualPolynomial::LookupTableFlag(flag)
             }
+            VirtualPolynomial::BytecodeReadRafAddrClaim => {
+                CoreVirtualPolynomial::BytecodeReadRafAddrClaim
+            }
+            VirtualPolynomial::BooleanityAddrClaim => CoreVirtualPolynomial::BooleanityAddrClaim,
         }
     }
 

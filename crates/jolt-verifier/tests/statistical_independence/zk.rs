@@ -247,7 +247,8 @@ fn committed_stage_shapes(
         &stages.stage3_sumcheck_proof,
         &stages.stage4_sumcheck_proof,
         &stages.stage5_sumcheck_proof,
-        &stages.stage6_sumcheck_proof,
+        &stages.stage6a_sumcheck_proof,
+        &stages.stage6b_sumcheck_proof,
         &stages.stage7_sumcheck_proof,
     ]
     .into_iter()
@@ -325,8 +326,13 @@ fn collect_jolt_proof_statistics(
         tracker,
     );
     collect_sumcheck_statistics(
-        "sumcheck.stage6_batch",
-        &proof.stages.stage6_sumcheck_proof,
+        "sumcheck.stage6_address_phase",
+        &proof.stages.stage6a_sumcheck_proof,
+        tracker,
+    );
+    collect_sumcheck_statistics(
+        "sumcheck.stage6_cycle_phase",
+        &proof.stages.stage6b_sumcheck_proof,
         tracker,
     );
     collect_sumcheck_statistics(

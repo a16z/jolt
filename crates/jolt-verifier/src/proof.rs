@@ -218,6 +218,7 @@ where
     pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage6_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
 }

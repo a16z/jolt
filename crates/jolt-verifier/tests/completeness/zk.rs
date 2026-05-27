@@ -52,7 +52,8 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
             + committed_round_rows(&case.proof.stages.stage3_sumcheck_proof)
             + committed_round_rows(&case.proof.stages.stage4_sumcheck_proof)
             + committed_round_rows(&case.proof.stages.stage5_sumcheck_proof)
-            + committed_round_rows(&case.proof.stages.stage6_sumcheck_proof)
+            + committed_round_rows(&case.proof.stages.stage6a_sumcheck_proof)
+            + committed_round_rows(&case.proof.stages.stage6b_sumcheck_proof)
             + committed_round_rows(&case.proof.stages.stage7_sumcheck_proof);
     let committed_output_claim_rows =
         committed_output_claim_rows(&case.proof.stages.stage1_uni_skip_first_round_proof)
@@ -62,7 +63,8 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
             + committed_output_claim_rows(&case.proof.stages.stage3_sumcheck_proof)
             + committed_output_claim_rows(&case.proof.stages.stage4_sumcheck_proof)
             + committed_output_claim_rows(&case.proof.stages.stage5_sumcheck_proof)
-            + committed_output_claim_rows(&case.proof.stages.stage6_sumcheck_proof)
+            + committed_output_claim_rows(&case.proof.stages.stage6a_sumcheck_proof)
+            + committed_output_claim_rows(&case.proof.stages.stage6b_sumcheck_proof)
             + committed_output_claim_rows(&case.proof.stages.stage7_sumcheck_proof);
 
     assert_eq!(committed_round_rows, modular.coefficient_rows);
@@ -92,8 +94,8 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         modular.eval_commitments
     );
 
-    assert_eq!(modular.coefficient_rows, 222);
-    assert_eq!(modular.output_claim_rows, 14);
+    assert_eq!(modular.coefficient_rows, 221);
+    assert_eq!(modular.output_claim_rows, 15);
     assert_eq!(modular.eval_commitments, 1);
     assert_eq!(modular.auxiliary_rows, 33);
     assert_eq!(modular.error_row_count, 64);
