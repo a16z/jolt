@@ -239,13 +239,14 @@ impl<F: JoltField> BakedPublicInputs<F> {
 ///
 /// W is laid out as an R' × C grid:
 /// - Rows 0..total_rounds: coefficient rows (one per sumcheck round)
-/// - Rows R_coeff..R_coeff+noncoeff_rows: non-coefficient values (packed)
+/// - Rows R_coeff..R_coeff+output_claims_rows: committed output claim rows
+/// - Rows R_coeff+output_claims_rows..: regular non-coefficient values (packed)
 /// - Remaining rows: zero padding to R'
 #[derive(Clone, Debug)]
 pub struct HyraxParams {
     /// Column count (power of 2, ≥ max coefficient count across all rounds)
     pub C: usize,
-    /// Coefficient rows: next_power_of_2(total_rounds)
+    /// Coefficient rows: one row per sumcheck round.
     pub R_coeff: usize,
     /// Total W rows: next_power_of_2(R_coeff + output_claims_rows + noncoeff_rows)
     pub R_prime: usize,
@@ -253,7 +254,7 @@ pub struct HyraxParams {
     pub noncoeff_count: usize,
     /// Total sumcheck rounds
     pub total_rounds: usize,
-    /// Hyrax rows between R_coeff and regular noncoeff, holding output claim values.
+    /// Hyrax rows between coefficient rows and regular noncoeff, holding output claim values.
     /// Row commitments come from per-stage `commit_chunked` (not fresh commitments).
     pub output_claims_rows: usize,
 }
@@ -304,17 +305,14 @@ pub fn compute_hyrax_params(
     let total_rounds: usize = stage_configs.iter().map(|s| s.num_rounds).sum();
     let max_coeffs = stage_configs
         .iter()
-        .map(|c| c.poly_degree + 1)
+        .flat_map(|config| (0..config.num_rounds).map(|round| config.round_poly_degree(round) + 1))
         .max()
         .unwrap_or(1);
     let C = max_coeffs.next_power_of_two();
-    let R_coeff = if total_rounds == 0 {
-        1
-    } else {
-        total_rounds.next_power_of_two()
-    };
+    let R_coeff = total_rounds;
     let regular_noncoeff_rows = noncoeff_count.div_ceil(C);
-    let R_prime = (R_coeff + output_claims_rows + regular_noncoeff_rows).next_power_of_two();
+    let used_rows = R_coeff + output_claims_rows + regular_noncoeff_rows;
+    let R_prime = used_rows.max(1).next_power_of_two();
 
     HyraxParams {
         C,
@@ -390,6 +388,8 @@ pub struct StageConfig {
     pub num_rounds: usize,
     /// Degree of the round polynomials (typically 3 for cubic)
     pub poly_degree: usize,
+    /// Per-round degrees when a stage contains rounds with non-uniform degrees.
+    pub round_poly_degrees: Option<Vec<usize>>,
     /// Whether this stage starts a new independent chain with its own initial claim.
     /// When true, the first round of this stage uses a separate initial_claim
     /// rather than chaining from the previous stage's last round.
@@ -413,6 +413,7 @@ impl StageConfig {
         Self {
             num_rounds,
             poly_degree,
+            round_poly_degrees: None,
             starts_new_chain: false,
             uniskip_power_sums: None,
             final_output: None,
@@ -425,6 +426,7 @@ impl StageConfig {
         Self {
             num_rounds,
             poly_degree,
+            round_poly_degrees: None,
             starts_new_chain: true,
             uniskip_power_sums: None,
             final_output: None,
@@ -438,6 +440,7 @@ impl StageConfig {
         Self {
             num_rounds: 1,
             poly_degree,
+            round_poly_degrees: None,
             starts_new_chain: false,
             uniskip_power_sums: Some(power_sums),
             final_output: None,
@@ -450,6 +453,7 @@ impl StageConfig {
         Self {
             num_rounds: 1,
             poly_degree,
+            round_poly_degrees: None,
             starts_new_chain: true,
             uniskip_power_sums: Some(power_sums),
             final_output: None,
@@ -484,13 +488,32 @@ impl StageConfig {
         self.uniskip_power_sums.is_some()
     }
 
+    pub fn new_chain_with_round_degrees(round_poly_degrees: Vec<usize>) -> Self {
+        let poly_degree = round_poly_degrees.iter().copied().max().unwrap_or(0);
+        Self {
+            num_rounds: round_poly_degrees.len(),
+            poly_degree,
+            round_poly_degrees: Some(round_poly_degrees),
+            starts_new_chain: true,
+            uniskip_power_sums: None,
+            final_output: None,
+            initial_input: None,
+        }
+    }
+
+    pub fn round_poly_degree(&self, round: usize) -> usize {
+        self.round_poly_degrees
+            .as_ref()
+            .and_then(|degrees| degrees.get(round).copied())
+            .unwrap_or(self.poly_degree)
+    }
+
     /// Whether this chain-starting stage has an initial_input constraint,
     /// meaning its initial claim should be a witness variable (not a baked constant).
     pub fn has_initial_claim_var(&self) -> bool {
         self.initial_input
             .as_ref()
-            .and_then(|ii| ii.constraint.as_ref())
-            .is_some_and(|c| !c.terms.is_empty())
+            .is_some_and(|ii| ii.constraint.is_some())
     }
 }
 

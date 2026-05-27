@@ -63,7 +63,6 @@ use crate::zkvm::{
         IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
         RamRaClaimReductionSumcheckVerifier,
     },
-    config::ProgramMode,
     fiat_shamir_preamble,
     instruction_lookups::{
         ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
@@ -632,25 +631,13 @@ impl<
         ProofVerifyError,
     > {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let program_mode = if self.preprocessing.shared.program.is_committed() {
-            ProgramMode::Committed
-        } else {
-            ProgramMode::Full
-        };
-        let entry_bytecode_index = self
-            .preprocessing
-            .shared
-            .program_meta
-            .entry_bytecode_index();
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new::<PCS>(
-            Some(&self.preprocessing.shared.program),
+            &self.preprocessing.shared.program,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-            program_mode,
-            entry_bytecode_index,
-        )?;
+        );
         let booleanity_params = BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
