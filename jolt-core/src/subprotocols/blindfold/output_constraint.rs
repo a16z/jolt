@@ -223,7 +223,7 @@ impl OutputClaimConstraint {
     }
 
     pub fn batch(constraints: &[Option<OutputClaimConstraint>]) -> Option<Self> {
-        Some(Self::batch_optional(constraints))
+        Self::batch_optional(constraints)
     }
 
     fn batch_inner(constraints: &[&OutputClaimConstraint]) -> Self {
@@ -231,8 +231,10 @@ impl OutputClaimConstraint {
         Self::batch_optional_refs(constraints)
     }
 
-    fn batch_optional(constraints: &[Option<OutputClaimConstraint>]) -> Self {
-        Self::batch_optional_refs(constraints.iter().map(|constraint| constraint.as_ref()))
+    fn batch_optional(constraints: &[Option<OutputClaimConstraint>]) -> Option<Self> {
+        constraints.iter().any(Option::is_some).then(|| {
+            Self::batch_optional_refs(constraints.iter().map(|constraint| constraint.as_ref()))
+        })
     }
 
     fn batch_optional_refs<'a>(
@@ -273,7 +275,9 @@ impl OutputClaimConstraint {
             challenge_offset += constraint.num_challenges;
         }
 
-        Self::new(combined_terms, combined_openings)
+        let mut batched = Self::new(combined_terms, combined_openings);
+        batched.num_challenges = challenge_offset;
+        batched
     }
 
     fn offset_challenge(value: &ValueSource, offset: usize) -> ValueSource {
@@ -434,5 +438,23 @@ mod tests {
         assert_eq!(constraint.terms.len(), 3);
         assert_eq!(constraint.required_openings.len(), 4);
         assert_eq!(constraint.num_challenges, 1);
+    }
+
+    #[test]
+    fn test_batch_optional_preserves_reserved_challenge_slots() {
+        let constraint = OutputClaimConstraint::linear(vec![(
+            ValueSource::Challenge(0),
+            ValueSource::Opening(test_opening(0)),
+        )]);
+
+        let batched = OutputClaimConstraint::batch(&[Some(constraint), None])
+            .expect("one output constraint is present");
+
+        assert_eq!(batched.num_challenges, 3);
+    }
+
+    #[test]
+    fn test_batch_optional_returns_none_without_constraints() {
+        assert!(OutputClaimConstraint::batch(&[None, None]).is_none());
     }
 }

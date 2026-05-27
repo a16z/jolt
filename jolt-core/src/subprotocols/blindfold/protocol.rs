@@ -92,7 +92,8 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
             b"bf_committed_e",
             b"bf_committed_eval",
             transcript,
-        );
+        )
+        .expect("prover-controlled real instance shape must match verifier R1CS");
 
         let (random_instance, random_witness, random_z) = sample_random_satisfying_pair(
             self.gens,
@@ -109,7 +110,8 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
             b"bf_random_e",
             b"bf_random_eval",
             transcript,
-        );
+        )
+        .expect("prover-controlled random instance shape must match verifier R1CS");
 
         let T = compute_cross_term(
             self.r1cs,
@@ -483,6 +485,11 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
         {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
+        if input.round_commitments.len() != hyrax.R_coeff
+            || proof.random_instance.round_commitments.len() != hyrax.R_coeff
+        {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
         if input.output_claims_row_commitments.len() != expected_oc_rows
             || proof.random_instance.output_claims_row_commitments.len() != expected_oc_rows
         {
@@ -509,7 +516,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
             b"bf_committed_e",
             b"bf_committed_eval",
             transcript,
-        );
+        )?;
 
         append_instance_to_transcript(
             &proof.random_instance,
@@ -519,7 +526,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
             b"bf_random_e",
             b"bf_random_eval",
             transcript,
-        );
+        )?;
 
         transcript.append_commitments(b"bf_cross_e", &proof.cross_term_row_commitments);
 
@@ -716,14 +723,14 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
     error_label: &'static [u8],
     eval_label: &'static [u8],
     transcript: &mut impl Transcript,
-) {
+) -> Result<(), BlindFoldVerifyError> {
+    let witness_row_commitments =
+        instance.all_w_row_commitments(r1cs.hyrax.R_coeff, r1cs.hyrax.R_prime)?;
     transcript.append_scalar(u_label, &instance.u);
-    let witness_row_commitments = instance
-        .all_w_row_commitments(r1cs.hyrax.R_coeff, r1cs.hyrax.R_prime)
-        .expect("relaxed instance shape must match verifier R1CS");
     transcript.append_commitments(witness_label, &witness_row_commitments);
     transcript.append_commitments(error_label, &instance.e_row_commitments);
     transcript.append_commitments(eval_label, &instance.eval_commitments);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -904,6 +911,49 @@ mod tests {
             ),
             "Verification should fail with wrong proof length: {result:?}"
         );
+    }
+
+    #[test]
+    fn test_blindfold_rejects_malformed_random_round_commitments() {
+        type F = Fr;
+
+        let configs = [StageConfig::new(1, 3)];
+        let round = RoundWitness::new(
+            vec![
+                F::from_u64(40),
+                F::from_u64(5),
+                F::from_u64(10),
+                F::from_u64(5),
+            ],
+            F::from_u64(3),
+        );
+        let blindfold_witness =
+            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+
+        let (real_instance, real_witness, r1cs, gens, z) =
+            make_test_instance(&configs, &blindfold_witness);
+
+        let prover = BlindFoldProver::new(&gens, &r1cs, None);
+        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+
+        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
+        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        let extra_commitment = proof.random_instance.round_commitments[0];
+        proof
+            .random_instance
+            .round_commitments
+            .push(extra_commitment);
+
+        let verifier_input = BlindFoldVerifierInput {
+            round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        };
+
+        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
+        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+
+        assert_eq!(result, Err(BlindFoldVerifyError::MalformedProof));
     }
 
     #[test]
