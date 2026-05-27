@@ -569,17 +569,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
         }
     }
 
-    fn round_offset(&self, max_num_rounds: usize) -> usize {
-        match self.params.phase {
-            ReductionPhase::CycleVariables => {
-                // Align to the *start* of Booleanity's cycle segment, so local rounds correspond
-                // to low Dory column bits in the unified point ordering.
-                let booleanity_rounds = self.params.log_k_chunk + self.params.log_t;
-                let booleanity_offset = max_num_rounds - booleanity_rounds;
-                booleanity_offset + self.params.log_k_chunk
-            }
-            ReductionPhase::AddressVariables => 0,
-        }
+    fn round_offset(&self, _max_num_rounds: usize) -> usize {
+        0
     }
 
     #[cfg(feature = "allocative")]
@@ -672,16 +663,8 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         }
     }
 
-    fn round_offset(&self, max_num_rounds: usize) -> usize {
-        let params = self.params.borrow();
-        match params.phase {
-            ReductionPhase::CycleVariables => {
-                let booleanity_rounds = params.log_k_chunk + params.log_t;
-                let booleanity_offset = max_num_rounds - booleanity_rounds;
-                booleanity_offset + params.log_k_chunk
-            }
-            ReductionPhase::AddressVariables => 0,
-        }
+    fn round_offset(&self, _max_num_rounds: usize) -> usize {
+        0
     }
 }
 
