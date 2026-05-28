@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout source branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: refactor/audit-prep
           fetch-depth: 0
