@@ -122,15 +122,12 @@ where
             .as_ref()
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
         transcript.append(&Label(b"BlindFold"));
-        jolt_blindfold::verify::<F, VC, T>(
-            &blindfold.protocol,
-            proof.blindfold_proof()?,
-            vc_setup,
-            &mut transcript,
-        )
-        .map_err(|error| VerifierError::BlindFoldVerificationFailed {
-            reason: error.to_string(),
-        })?;
+        blindfold
+            .protocol
+            .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
+            .map_err(|error| VerifierError::BlindFoldVerificationFailed {
+                reason: error.to_string(),
+            })?;
         return Ok(());
     }
 
