@@ -232,6 +232,14 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         "invalid and excessive trace lengths are checked during input validation",
     ),
     checked_standard(
+        "proof.protocol",
+        "proof.protocol",
+        VerifierPhase::Preamble,
+        MutationStrategy::ChangeEnumVariant,
+        TamperCoverage::Active,
+        "proof protocol metadata must match the selected verifier build and runtime mode",
+    ),
+    checked_standard(
         "proof.ram_K",
         "proof.ram_K",
         VerifierPhase::Preamble,
@@ -242,18 +250,18 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.rw_config",
         "proof.rw_config",
-        VerifierPhase::Stage2,
+        VerifierPhase::Preamble,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "stage 2 consumes RAM read-write phase lengths when slicing batched points",
+        "read-write phase splits are checked during input validation",
     ),
-    later_standard(
+    checked_standard(
         "proof.one_hot_config",
         "proof.one_hot_config",
-        VerifierPhase::Stage6,
+        VerifierPhase::Preamble,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::Deferred,
-        "one-hot configuration is transcript-bound now but substantively checked by later RA virtualization stages",
+        TamperCoverage::Active,
+        "one-hot chunk parameters are checked during input validation",
     ),
     checked_standard(
         "proof.trace_polynomial_order",
@@ -1041,6 +1049,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.joint_opening_proof",
         "proof.untrusted_advice_commitment",
         "proof.claims",
+        "proof.protocol",
         "proof.trace_length",
         "proof.ram_K",
         "proof.rw_config",

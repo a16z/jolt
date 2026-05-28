@@ -26,7 +26,7 @@ use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
 };
-use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+use jolt_crypto::{Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 #[cfg(not(feature = "zk"))]
 use jolt_dory::DoryCommitment;
 use jolt_dory::{DoryScheme, DoryVerifierSetup};
@@ -418,6 +418,28 @@ impl CorePrecompatVerifierCase {
         *opening_claim += CoreField::from_u64(delta);
         true
     }
+
+    pub fn remove_opening_claim(&mut self, id: JoltOpeningId) -> bool {
+        self.proof
+            .opening_claims
+            .0
+            .remove(&core_opening_id(id))
+            .is_some()
+    }
+
+    pub fn first_dory_commitment_round_trips_through_modular_type(&self) -> bool {
+        let converted: ConvertedProof = self
+            .proof
+            .clone_via_bytes()
+            .try_into()
+            .expect("convert standard core proof");
+        let modular_inner: jolt_core::ark_bn254::Fq12 = converted.commitments.rd_inc.0.into();
+        let Some((core_commitment, _)) = self.proof.commitments.split_first() else {
+            return false;
+        };
+
+        modular_inner == core_commitment.0 && !converted.commitments.rd_inc.0.is_identity()
+    }
 }
 
 #[cfg(feature = "zk")]
@@ -604,7 +626,9 @@ fn case_from_parts(fixture: GeneratedCoreFixture, public_io: JoltDevice) -> Core
             .expect("convert standard core proof"),
         trusted_advice_commitment: fixture
             .trusted_advice_commitment
-            .map(<DoryCommitmentScheme as CorePcsBridge<CoreField>>::commitment_into_verifier),
+            .map(<DoryCommitmentScheme as CorePcsBridge<CoreField>>::commitment_into_verifier)
+            .transpose()
+            .expect("convert trusted advice commitment"),
     }
 }
 
@@ -615,7 +639,9 @@ fn precompat_case_from_parts(
 ) -> CorePrecompatVerifierCase {
     let modular_trusted_advice_commitment = fixture
         .trusted_advice_commitment
-        .map(<DoryCommitmentScheme as CorePcsBridge<CoreField>>::commitment_into_verifier);
+        .map(<DoryCommitmentScheme as CorePcsBridge<CoreField>>::commitment_into_verifier)
+        .transpose()
+        .expect("convert trusted advice commitment");
 
     CorePrecompatVerifierCase {
         preprocessing: convert_preprocessing(&fixture.core_preprocessing),

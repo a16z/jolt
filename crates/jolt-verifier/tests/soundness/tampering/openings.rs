@@ -10,7 +10,10 @@
 use crate::support::{core_fixtures, tamper_manifest};
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
-    formulas::{committed_openings::final_opening_ids, dimensions::JoltFormulaDimensions},
+    formulas::{
+        committed_openings::final_opening_ids, dimensions::JoltFormulaDimensions,
+        spartan::outer_uniskip_opening,
+    },
     JoltOpeningId,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -19,6 +22,8 @@ use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_verifier::compat::claims::offset_opening_claim;
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+use jolt_verifier::VerifierError;
 
 #[test]
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
@@ -60,6 +65,26 @@ fn precompat_tampered_opening_value_reject() {
             },
         );
     }
+}
+
+#[test]
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn precompat_missing_required_opening_claim_returns_error_without_panic() {
+    let mut case = core_fixtures::standard_muldiv_precompat_case();
+    let missing = outer_uniskip_opening();
+    assert!(
+        case.remove_opening_claim(missing),
+        "legacy core fixture is missing required opening claim {missing:?}"
+    );
+
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| case.verify_after_compat()));
+
+    assert!(result.is_ok(), "compat conversion should not panic");
+    assert!(matches!(
+        result.expect("panic already checked"),
+        Err(VerifierError::MissingOpeningClaim { id }) if id == missing
+    ));
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]

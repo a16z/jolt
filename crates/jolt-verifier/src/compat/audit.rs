@@ -8,7 +8,6 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig},
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -65,9 +64,6 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let config = JoltProtocolConfig::for_zk(true);
-    validate_proof_config(&config, proof)?;
-
     let checked = validate_inputs(
         preprocessing,
         public_io,

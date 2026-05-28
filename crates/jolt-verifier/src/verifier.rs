@@ -8,6 +8,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
+    config::{validate_proof_config, JOLT_VERIFIER_CONFIG},
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -191,9 +192,7 @@ where
         });
     }
 
-    if !proof.ram_K.is_power_of_two() {
-        return Err(VerifierError::InvalidRamK { got: proof.ram_K });
-    }
+    validate_proof_config(&JOLT_VERIFIER_CONFIG, preprocessing, proof, zk)?;
 
     let vc_capacity = if zk {
         Some(validate_zk_vector_commitment_setup::<PCS, VC>(
@@ -465,9 +464,11 @@ where
 mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
-    use common::jolt_device::{JoltDevice, MemoryLayout};
+    use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-    use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
+    #[cfg(feature = "zk")]
+    use jolt_crypto::PedersenSetup;
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen, VectorCommitmentOpening};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
@@ -620,6 +621,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn validate_inputs_normalizes_public_output() {
         let preprocessing = test_preprocessing();
         let mut public_io = JoltDevice {
@@ -651,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn validate_inputs_rejects_public_io_layout_mismatch() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice::default();
@@ -663,6 +666,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "zk")]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -678,6 +682,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "zk")]
     fn validate_inputs_rejects_small_zk_vector_commitment_setup() {
         let mut preprocessing = test_preprocessing();
         preprocessing.vc_setup = Some(PedersenSetup::new(
@@ -696,6 +701,115 @@ mod tests {
         ));
     }
 
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn validate_inputs_rejects_runtime_zk_flag_mismatch() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, true),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn validate_inputs_rejects_tampered_protocol_metadata() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.protocol = crate::config::JoltProtocolConfig::for_zk(true);
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn validate_inputs_rejects_invalid_one_hot_chunk_size() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.one_hot_config.log_k_chunk = 6;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::InvalidOneHotConfig(_))
+        ));
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn validate_inputs_rejects_invalid_read_write_phase_split() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.rw_config.ram_rw_phase2_num_rounds = 3;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::InvalidReadWriteConfig(_))
+        ));
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn validate_inputs_rejects_ram_domain_below_static_minimum() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.ram_K = 2;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::InvalidRamK {
+                got: 2,
+                min: 4,
+                max: 32,
+            })
+        ));
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn validate_inputs_rejects_ram_domain_above_memory_layout_maximum() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.ram_K = 64;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::InvalidRamK {
+                got: 64,
+                min: 4,
+                max: 32,
+            })
+        ));
+    }
+
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
             crate::proof::JoltCommitments::new(
@@ -711,17 +825,17 @@ mod tests {
             (),
             None,
             claims,
-            1,
-            1,
+            16,
+            4,
             JoltReadWriteConfig {
-                ram_rw_phase1_num_rounds: 0,
-                ram_rw_phase2_num_rounds: 0,
-                registers_rw_phase1_num_rounds: 0,
-                registers_rw_phase2_num_rounds: 0,
+                ram_rw_phase1_num_rounds: 4,
+                ram_rw_phase2_num_rounds: 2,
+                registers_rw_phase1_num_rounds: 4,
+                registers_rw_phase2_num_rounds: 7,
             },
             JoltOneHotConfig {
-                log_k_chunk: 0,
-                lookups_ra_virtual_log_k_chunk: 0,
+                log_k_chunk: 4,
+                lookups_ra_virtual_log_k_chunk: 16,
             },
             crate::proof::TracePolynomialOrder::CycleMajor,
         )
@@ -981,12 +1095,15 @@ mod tests {
     }
 
     fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        let memory_layout = MemoryLayout {
+        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
+            program_size: Some(8),
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
             max_input_size: 8,
             max_output_size: 8,
+            stack_size: 8,
             heap_size: 8,
-            ..MemoryLayout::default()
-        };
+        });
         JoltVerifierPreprocessing::new(
             JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),

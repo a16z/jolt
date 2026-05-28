@@ -62,8 +62,17 @@ pub enum VerifierError {
     #[error("invalid trace length {got}; expected a power of two no larger than {max}")]
     InvalidTraceLength { got: usize, max: usize },
 
-    #[error("invalid RAM domain size {got}; expected a power of two")]
-    InvalidRamK { got: usize },
+    #[error("invalid RAM domain size {got}; expected a power of two in [{min}, {max}]")]
+    InvalidRamK { got: usize, min: usize, max: usize },
+
+    #[error("invalid one-hot configuration: {0}")]
+    InvalidOneHotConfig(String),
+
+    #[error("invalid read-write checking configuration: {0}")]
+    InvalidReadWriteConfig(String),
+
+    #[error("commitment conversion failed: {reason}")]
+    CommitmentConversionFailed { reason: String },
 
     #[error("missing stage claim opening input {id:?}")]
     MissingStageClaimOpening { id: JoltOpeningId },

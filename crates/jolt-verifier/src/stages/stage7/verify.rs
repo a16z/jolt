@@ -798,12 +798,7 @@ fn verify_advice_address_phase<F: Field>(
     stage4: &Stage4ClearOutput<F>,
     stage6: &Stage6ClearOutput<F>,
 ) -> Result<VerifiedAdviceAddressPhaseSumcheck<F>, VerifierError> {
-    let advice_point = batch
-        .try_instance_point_at(0, claim.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::AdviceClaimReduction,
-            reason: error.to_string(),
-        })?;
+    let advice_point = advice_address_phase_point(batch, claim)?;
     let cycle_phase = stage6_verified_advice_cycle_phase(stage6, kind)?;
     let opening_point = layout
         .address_phase_opening_point(&cycle_phase.cycle_phase_variables, advice_point)
@@ -859,12 +854,7 @@ fn advice_address_phase_public<F: Field, C>(
     kind: JoltAdviceKind,
     stage6: &Stage6ZkOutput<F, C>,
 ) -> Result<AdviceAddressPhasePublicOutput<F>, VerifierError> {
-    let advice_point = batch
-        .try_instance_point_at(0, claim.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::AdviceClaimReduction,
-            reason: error.to_string(),
-        })?;
+    let advice_point = advice_address_phase_committed_point(batch, claim)?;
     let cycle_phase = stage6_advice_cycle_phase_public(stage6, kind)?;
     let opening_point = layout
         .address_phase_opening_point(&cycle_phase.cycle_phase_variables, &advice_point)
@@ -878,6 +868,33 @@ fn advice_address_phase_public<F: Field, C>(
         sumcheck_point: advice_point,
         opening_point,
     })
+}
+
+fn advice_address_phase_point<'a, F: Field>(
+    batch: &'a jolt_sumcheck::BatchedEvaluationClaim<F>,
+    claim: &JoltRelationClaims<F>,
+) -> Result<&'a [F], VerifierError> {
+    batch
+        .try_instance_point(claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::AdviceClaimReduction,
+            reason: error.to_string(),
+        })
+}
+
+fn advice_address_phase_committed_point<F, C>(
+    batch: &BatchedCommittedSumcheckConsistency<F, C>,
+    claim: &JoltRelationClaims<F>,
+) -> Result<Vec<F>, VerifierError>
+where
+    F: Field + Copy,
+{
+    batch
+        .try_instance_point(claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::AdviceClaimReduction,
+            reason: error.to_string(),
+        })
 }
 
 fn stage6_advice_cycle_phase_claim<F: Field>(
@@ -940,5 +957,99 @@ where
     }
     if let Some(opening_claim) = &claims.advice_address_phase.untrusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::expect_used, reason = "tests fail loudly on helper errors")]
+
+    use super::*;
+    use jolt_claims::protocols::jolt::formulas::dimensions::{
+        CommitmentMatrixShape, TracePolynomialOrder,
+    };
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_sumcheck::{
+        BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, CommittedSumcheckConsistency,
+        EvaluationClaim, VerifiedCommittedRound,
+    };
+
+    #[test]
+    fn clear_advice_address_phase_uses_batched_suffix_for_cycle_major_layout() {
+        let layout = advice_layout(TracePolynomialOrder::CycleMajor);
+        assert!(layout.dimensions().has_address_phase());
+        let claim = advice::address_phase::<Fr>(JoltAdviceKind::Trusted, layout.dimensions());
+        let batch = clear_batch(claim.sumcheck.rounds + 4);
+
+        let point = advice_address_phase_point(&batch, &claim).expect("suffix point");
+        let expected = suffix(batch.reduction.point.as_slice(), claim.sumcheck.rounds);
+
+        assert_eq!(point, expected.as_slice());
+    }
+
+    #[test]
+    fn committed_advice_address_phase_uses_batched_suffix_for_address_major_layout() {
+        let layout = advice_layout(TracePolynomialOrder::AddressMajor);
+        assert!(layout.dimensions().has_address_phase());
+        let claim = advice::address_phase::<Fr>(JoltAdviceKind::Untrusted, layout.dimensions());
+        let batch = committed_batch(claim.sumcheck.rounds + 6);
+
+        let point = advice_address_phase_committed_point(&batch, &claim).expect("suffix point");
+        let challenges = batch
+            .consistency
+            .rounds
+            .iter()
+            .map(|round| round.challenge)
+            .collect::<Vec<_>>();
+
+        assert_eq!(point, suffix(&challenges, claim.sumcheck.rounds));
+    }
+
+    fn advice_layout(trace_order: TracePolynomialOrder) -> AdviceClaimReductionLayout {
+        AdviceClaimReductionLayout::new(
+            trace_order,
+            8,
+            4,
+            CommitmentMatrixShape::balanced(12),
+            CommitmentMatrixShape::balanced(8),
+        )
+    }
+
+    fn clear_batch(max_num_vars: usize) -> BatchedEvaluationClaim<Fr> {
+        BatchedEvaluationClaim {
+            reduction: EvaluationClaim {
+                point: challenges(max_num_vars).into(),
+                value: Fr::from_u64(0),
+            },
+            batching_coefficients: Vec::new(),
+            max_num_vars,
+            max_degree: 2,
+        }
+    }
+
+    fn committed_batch(max_num_vars: usize) -> BatchedCommittedSumcheckConsistency<Fr, ()> {
+        BatchedCommittedSumcheckConsistency {
+            consistency: CommittedSumcheckConsistency {
+                rounds: challenges(max_num_vars)
+                    .into_iter()
+                    .map(|challenge| VerifiedCommittedRound {
+                        commitment: (),
+                        degree: 2,
+                        challenge,
+                    })
+                    .collect(),
+            },
+            batching_coefficients: Vec::new(),
+            max_num_vars,
+            max_degree: 2,
+        }
+    }
+
+    fn challenges(count: usize) -> Vec<Fr> {
+        (1..=count as u64).map(Fr::from_u64).collect()
+    }
+
+    fn suffix(values: &[Fr], len: usize) -> Vec<Fr> {
+        values[values.len() - len..].to_vec()
     }
 }
