@@ -280,6 +280,8 @@ pub enum JoltVirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
+    BytecodeReadRafAddrClaim,
+    BooleanityAddrClaim,
 }
 
 #[derive(

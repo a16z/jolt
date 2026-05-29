@@ -33,6 +33,7 @@ members = [
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
+  "crates/jolt-verifier",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
@@ -104,6 +105,7 @@ members = [
   "examples/modinv/guest",
   "examples/advice-demo",
   "examples/advice-demo/guest",
+  "examples/advice-consumer/guest",
   "examples/sig-recovery/host",
   "examples/sig-recovery/guest",
   "zklean-extractor",
@@ -383,6 +385,7 @@ jolt-claims = { path = "./crates/jolt-claims" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
+jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }

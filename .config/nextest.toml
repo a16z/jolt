@@ -3,7 +3,14 @@
 # only serializes within a single process. Nextest runs each test in its own
 # process, so we use a test group to enforce serial execution instead.
 dory = { max-threads = 1 }
+# ZK verifier fixture tests generate shared temp artifacts and use large stacks;
+# keep them serial to avoid host memory and fixture contention.
+zk-core-fixtures = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'test(dory)'
 test-group = 'dory'
+
+[[profile.default.overrides]]
+filter = 'package(jolt-verifier) and test(zk)'
+test-group = 'zk-core-fixtures'

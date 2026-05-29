@@ -22,8 +22,8 @@ struct TestState {
 ///
 /// The byte layout intentionally matches `jolt-core`'s hash transcripts:
 /// appends hash `state || round || payload`, squeezes hash `state || round`,
-/// and standard challenges use the same 125-bit Montgomery-friendly decoding
-/// path as `jolt-core`.
+/// and challenges use the same 125-bit Montgomery-friendly decoding path as
+/// `jolt-core`.
 pub struct DigestTranscript<D: Digest<OutputSize = U32> + 'static, F> {
     state: [u8; 32],
     n_rounds: u32,
@@ -167,7 +167,7 @@ where
     }
 
     fn challenge_scalar(&mut self) -> F {
-        let mut buf = [0u8; 32];
+        let mut buf = [0u8; 16];
         self.challenge_bytes(&mut buf);
         F::from_scalar_challenge_bytes(&buf)
     }
@@ -207,11 +207,11 @@ mod tests {
     type TestTranscript = DigestTranscript<Blake2b<U32>, ChallengeByteLen>;
 
     #[test]
-    fn scalar_challenge_uses_full_digest_width() {
+    fn scalar_challenge_matches_core_width() {
         let mut transcript = TestTranscript::new(b"challenge-width");
         assert_eq!(transcript.challenge(), ChallengeByteLen(16));
 
         let mut transcript = TestTranscript::new(b"challenge-width");
-        assert_eq!(transcript.challenge_scalar(), ChallengeByteLen(32));
+        assert_eq!(transcript.challenge_scalar(), ChallengeByteLen(16));
     }
 }
