@@ -8,6 +8,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
+    config::{validate_proof_config, JoltProtocolConfig},
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -43,6 +44,7 @@ where
         zk,
     )?;
     validate_proof_consistency(proof, checked.zk)?;
+    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);

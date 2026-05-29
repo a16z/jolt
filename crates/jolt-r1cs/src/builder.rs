@@ -39,12 +39,6 @@ pub struct LinearCombination<F> {
     pub terms: Vec<(Variable, F)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AssignedScalar<F: Field> {
-    pub value: F,
-    pub lc: LinearCombination<F>,
-}
-
 impl<F> LinearCombination<F> {
     pub fn zero() -> Self {
         Self { terms: Vec::new() }
@@ -82,6 +76,7 @@ impl<F: Field> LinearCombination<F> {
         self
     }
 
+    #[cfg(test)]
     pub fn as_constant(&self) -> Option<F> {
         let mut value = F::zero();
         for &(variable, coefficient) in &self.terms {
@@ -130,29 +125,6 @@ impl<F: Field> LinearCombination<F> {
 impl<F: Field> From<Variable> for LinearCombination<F> {
     fn from(variable: Variable) -> Self {
         Self::variable(variable)
-    }
-}
-
-impl<F: Field> AssignedScalar<F> {
-    pub fn new(value: F, lc: LinearCombination<F>) -> Self {
-        Self { value, lc }
-    }
-
-    pub fn constant(value: F) -> Self {
-        Self::new(value, LinearCombination::constant(value))
-    }
-
-    pub fn variable(value: F, variable: Variable) -> Self {
-        Self::new(value, LinearCombination::variable(variable))
-    }
-
-    pub fn alloc(builder: &mut R1csBuilder<F>, value: F) -> Self {
-        let variable = builder.alloc(value);
-        Self::variable(value, variable)
-    }
-
-    pub fn scale(self, scale: F) -> Self {
-        Self::new(self.value * scale, self.lc.scale(scale))
     }
 }
 

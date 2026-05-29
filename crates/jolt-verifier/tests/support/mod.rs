@@ -84,7 +84,7 @@ pub fn assert_zk_accepts(result: Result<(), VerifierError>) {
 pub fn assert_rejects_mode(zk: bool, result: Result<(), VerifierError>) {
     let result_debug = format!("{result:?}");
     let rejected = match result {
-        Ok(()) | Err(VerifierError::Unimplemented) => false,
+        Ok(()) => false,
         Err(_) => true,
     };
 

@@ -739,16 +739,6 @@ fn collect_advice_contribution<F: Field>(
                 reason: error.to_string(),
             }
         })?;
-    if advice_num_vars > r_address.len() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: format!(
-                "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
-                r_address.len()
-            ),
-        });
-    }
-
     let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
     *full_eval += selector * opening_claim;
     contributions.push(VerifiedRamValCheckAdviceContribution {

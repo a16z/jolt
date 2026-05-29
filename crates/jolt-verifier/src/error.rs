@@ -125,7 +125,4 @@ pub enum VerifierError {
 
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
-
-    #[error("verifier functionality has not been implemented yet")]
-    Unimplemented,
 }

@@ -48,8 +48,7 @@ rules:
       include:
         - /crates/jolt-verifier/src/stages/**/*.rs
       exclude:
-        - /crates/jolt-verifier/src/stages/**/verify.rs
-        - /crates/jolt-verifier/src/stages/stage8.rs
+        - /crates/jolt-verifier/src/stages/**/verify*.rs
     pattern-regex: '\b(SumcheckVerifier::verify|BatchedSumcheckVerifier::verify|try_evaluate\(|append_labeled\()'
 
   - id: jolt-verifier-zk-modules-use-statements-not-claims
@@ -58,7 +57,7 @@ rules:
     message: "Committed stage helpers must use SumcheckStatement/consistency APIs, not construct scalar SumcheckClaim values."
     paths:
       include:
-        - /crates/jolt-verifier/src/stages/committed.rs
+        - /crates/jolt-verifier/src/stages/zk/committed.rs
     pattern-regex: '\bSumcheckClaim::new\b'
 
   - id: jolt-verifier-zk-modules-no-clear-claims
@@ -67,7 +66,7 @@ rules:
     message: "Committed stage helpers must not read clear scalar claims."
     paths:
       include:
-        - /crates/jolt-verifier/src/stages/committed.rs
+        - /crates/jolt-verifier/src/stages/zk/committed.rs
     pattern-regex: '\bclear_claims\s*\('
 
   - id: jolt-verifier-zk-branches-use-statements-not-claims
@@ -76,7 +75,7 @@ rules:
     message: "ZK stage branches must use SumcheckStatement/consistency APIs, not scalar SumcheckClaim values."
     paths:
       include:
-        - /crates/jolt-verifier/src/stages/**/verify.rs
+        - /crates/jolt-verifier/src/stages/**/verify*.rs
     pattern: |
       if $CHECKED.zk {
         ...
@@ -90,7 +89,7 @@ rules:
     message: "ZK stage branches must not read clear scalar claims."
     paths:
       include:
-        - /crates/jolt-verifier/src/stages/**/verify.rs
+        - /crates/jolt-verifier/src/stages/**/verify*.rs
     pattern: |
       if $CHECKED.zk {
         ...
