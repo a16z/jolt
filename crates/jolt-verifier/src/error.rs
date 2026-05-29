@@ -62,8 +62,11 @@ pub enum VerifierError {
     #[error("invalid trace length {got}; expected a power of two no larger than {max}")]
     InvalidTraceLength { got: usize, max: usize },
 
-    #[error("invalid RAM domain size {got}; expected a power of two")]
-    InvalidRamK { got: usize },
+    #[error("invalid RAM domain size {got}; expected a power of two in [{min}, {max}]")]
+    InvalidRamK { got: usize, min: usize, max: usize },
+
+    #[error("invalid verifier memory layout: {reason}")]
+    InvalidMemoryLayout { reason: String },
 
     #[error("missing stage claim opening input {id:?}")]
     MissingStageClaimOpening { id: JoltOpeningId },

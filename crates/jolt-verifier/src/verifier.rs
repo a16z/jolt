@@ -4,6 +4,7 @@ use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
@@ -193,8 +194,24 @@ where
         });
     }
 
-    if !proof.ram_K.is_power_of_two() {
-        return Err(VerifierError::InvalidRamK { got: proof.ram_K });
+    let min_ram_k = compute_min_ram_k(
+        &preprocessing.program.ram,
+        &preprocessing.program.memory_layout,
+    )
+    .map_err(|error| VerifierError::InvalidMemoryLayout {
+        reason: error.to_string(),
+    })?;
+    let max_ram_k = compute_max_ram_k(&preprocessing.program.memory_layout).map_err(|error| {
+        VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        }
+    })?;
+    if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_k || proof.ram_K > max_ram_k {
+        return Err(VerifierError::InvalidRamK {
+            got: proof.ram_K,
+            min: min_ram_k,
+            max: max_ram_k,
+        });
     }
 
     let vc_capacity = if zk {
@@ -467,7 +484,7 @@ where
 mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
-    use common::jolt_device::{JoltDevice, MemoryLayout};
+    use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::Fr;
@@ -665,6 +682,42 @@ mod tests {
     }
 
     #[test]
+    fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.ram_K = 2;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::InvalidRamK { got: 2, min: 4, .. })
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_ram_domain_above_layout_maximum() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout.clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.ram_K = 1 << 20;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false, false),
+            Err(VerifierError::InvalidRamK {
+                got,
+                min: 4,
+                max,
+            }) if got == 1 << 20 && max < got
+        ));
+    }
+
+    #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -714,7 +767,7 @@ mod tests {
             None,
             claims,
             1,
-            1,
+            4,
             JoltReadWriteConfig {
                 ram_rw_phase1_num_rounds: 0,
                 ram_rw_phase2_num_rounds: 0,
@@ -983,12 +1036,15 @@ mod tests {
     }
 
     fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        let memory_layout = MemoryLayout {
+        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
             max_input_size: 8,
             max_output_size: 8,
+            stack_size: 8,
             heap_size: 8,
-            ..MemoryLayout::default()
-        };
+        });
         JoltVerifierPreprocessing::new(
             JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),
