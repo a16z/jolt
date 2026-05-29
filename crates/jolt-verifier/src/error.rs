@@ -71,9 +71,6 @@ pub enum VerifierError {
     #[error("invalid read-write checking configuration: {0}")]
     InvalidReadWriteConfig(String),
 
-    #[error("commitment conversion failed: {reason}")]
-    CommitmentConversionFailed { reason: String },
-
     #[error("missing stage claim opening input {id:?}")]
     MissingStageClaimOpening { id: JoltOpeningId },
 

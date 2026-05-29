@@ -29,7 +29,6 @@ use jolt_sumcheck::{
     ClearProof, ClearSumcheckProof, CommittedOutputClaims, CommittedRound, CommittedSumcheckProof,
     CompressedSumcheckProof, SumcheckProof,
 };
-use serde::Deserialize;
 
 #[cfg(feature = "zk")]
 use jolt_blindfold::BlindFoldProof as ModularBlindFoldProof;
@@ -89,7 +88,7 @@ where
 
     fn commitment_into_verifier(
         commitment: Self::Commitment,
-    ) -> Result<<Self::VerifierPcs as ModularCommitment>::Output, VerifierError>;
+    ) -> <Self::VerifierPcs as ModularCommitment>::Output;
 
     fn proof_into_verifier(
         proof: Self::Proof,
@@ -99,10 +98,8 @@ where
 impl CorePcsBridge<ark_bn254::Fr> for CoreDoryCommitmentScheme {
     type VerifierPcs = DoryScheme;
 
-    fn commitment_into_verifier(
-        commitment: Self::Commitment,
-    ) -> Result<DoryCommitment, VerifierError> {
-        core_dory_commitment_into_verifier(&commitment).map(DoryCommitment)
+    fn commitment_into_verifier(commitment: Self::Commitment) -> DoryCommitment {
+        DoryCommitment(core_dory_commitment_into_verifier(&commitment))
     }
 
     fn proof_into_verifier(proof: Self::Proof) -> DoryProof {
@@ -192,7 +189,7 @@ where
     let commitments = commitments
         .into_iter()
         .map(PCS::commitment_into_verifier)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
 
     commitments_from_proof_payload_order(commitments, instruction_ra_count, ram_ra_count)
 }
@@ -283,8 +280,7 @@ where
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
-                .map(PCS::commitment_into_verifier)
-                .transpose()?,
+                .map(PCS::commitment_into_verifier),
             claims: JoltProofClaims::Clear(convert_opening_claims(
                 proof.opening_claims,
                 proof.trace_length,
@@ -336,8 +332,7 @@ where
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
-                .map(PCS::commitment_into_verifier)
-                .transpose()?,
+                .map(PCS::commitment_into_verifier),
             claims: JoltProofClaims::Zk {
                 blindfold_proof: legacy_blindfold_proof_into_modular::<F, C>(
                     &proof.blindfold_proof,
@@ -461,24 +456,10 @@ where
         .collect()
 }
 
-fn core_dory_commitment_into_verifier(
-    commitment: &CoreDoryCommitment,
-) -> Result<Bn254GT, VerifierError> {
-    use ark_serialize::CanonicalSerialize;
-
-    let mut bytes = Vec::with_capacity(commitment.0.compressed_size());
-    commitment
-        .0
-        .serialize_compressed(&mut bytes)
-        .map_err(|error| VerifierError::CommitmentConversionFailed {
-            reason: error.to_string(),
-        })?;
-
-    let deserializer =
-        serde::de::value::SeqDeserializer::<_, serde::de::value::Error>::new(bytes.into_iter());
-    Bn254GT::deserialize(deserializer).map_err(|error| VerifierError::CommitmentConversionFailed {
-        reason: error.to_string(),
-    })
+fn core_dory_commitment_into_verifier(commitment: &CoreDoryCommitment) -> Bn254GT {
+    // SAFETY: `jolt-core` Dory and modular `jolt-dory` use thin wrappers
+    // over the same arkworks `Fq12` target-group element.
+    unsafe { std::mem::transmute_copy(commitment) }
 }
 
 #[cfg(feature = "zk")]
