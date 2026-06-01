@@ -295,21 +295,31 @@ impl<F: JoltField> RLCPolynomial<F> {
                         });
                 }
                 DoryLayout::AddressMajor => {
-                    let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
-                    dense_result
-                        .par_iter_mut()
-                        .step_by(num_columns / cycles_per_row)
+                    let dense_stride = DoryGlobals::dense_stride();
+                    dense_result = self
+                        .dense_rlc
+                        .par_iter()
                         .enumerate()
-                        .for_each(|(offset, dot_product_result)| {
-                            *dot_product_result = self
-                                .dense_rlc
-                                .par_iter()
-                                .skip(offset)
-                                .step_by(cycles_per_row)
-                                .zip(left_vec.par_iter())
-                                .map(|(&a, &b)| -> F { a * b })
-                                .sum::<F>();
-                        });
+                        .fold(
+                            || unsafe_allocate_zero_vec(num_columns),
+                            |mut acc, (cycle, coeff)| {
+                                let scaled_index = cycle.saturating_mul(dense_stride);
+                                let row_index = scaled_index / num_columns;
+                                if row_index >= left_vec.len() {
+                                    return acc;
+                                }
+                                let col_index = scaled_index % num_columns;
+                                acc[col_index] += *coeff * left_vec[row_index];
+                                acc
+                            },
+                        )
+                        .reduce(
+                            || unsafe_allocate_zero_vec(num_columns),
+                            |mut a, b| {
+                                a.iter_mut().zip(b.iter()).for_each(|(x, y)| *x += *y);
+                                a
+                            },
+                        );
                 }
             }
             dense_result
@@ -415,7 +425,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
             return self.address_major_vector_matrix_product(left_vec, num_columns, &ctx);
         }
 
-        let T = DoryGlobals::get_T();
+        let T = DoryGlobals::get_embedded_t();
         match &ctx.trace_source {
             TraceSource::Materialized(trace) => {
                 self.materialized_vector_matrix_product(left_vec, num_columns, trace, &ctx, T)

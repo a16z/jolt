@@ -41,12 +41,13 @@
 
 use crate::curve::JoltCurve;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::dory::DoryGlobals;
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
-    AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier, ReductionPhase,
-    RegistersClaimReductionSumcheckVerifier,
+    AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
+    PrecommittedClaimReduction, PrecommittedParams, RegistersClaimReductionSumcheckVerifier,
 };
 use crate::zkvm::config::OneHotParams;
 use crate::zkvm::{
@@ -152,6 +153,36 @@ impl<
         A: AbstractVerifierOpeningAccumulator<F>,
     > TranspilableVerifier<'a, F, C, PCS, ProofTranscript, A>
 {
+    #[inline]
+    fn main_total_vars(&self) -> usize {
+        let trace_log_t = self.proof.trace_length.log_2();
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let mut max_total_vars = trace_log_t + log_k_chunk;
+        for total_vars in self.precommitted_candidate_total_vars() {
+            max_total_vars = max_total_vars.max(total_vars);
+        }
+        max_total_vars
+    }
+
+    #[inline]
+    fn precommitted_candidate_total_vars(&self) -> Vec<usize> {
+        let mut candidates = Vec::new();
+        if self.trusted_advice_commitment.is_some() {
+            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.program_io.memory_layout.max_trusted_advice_size as usize,
+            );
+            candidates.push(sigma + nu);
+        }
+
+        if self.proof.untrusted_advice_commitment.is_some() {
+            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.program_io.memory_layout.max_untrusted_advice_size as usize,
+            );
+            candidates.push(sigma + nu);
+        }
+        candidates
+    }
+
     /// Create a TranspilableVerifier for real verification.
     ///
     /// This constructor creates a new `VerifierOpeningAccumulator` and populates
@@ -252,9 +283,9 @@ impl<
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
         // Construct full params from the validated config
-        let bytecode_K = preprocessing.shared.bytecode.code_size;
+        let bytecode_len = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_len, proof.ram_K);
 
         Ok(TranspilableVerifier {
             trusted_advice_commitment,
@@ -283,9 +314,9 @@ impl<
         opening_accumulator: A,
     ) -> Self {
         let spartan_key = UniformSpartanKey::new(proof.trace_length.next_power_of_two());
-        let bytecode_K = preprocessing.shared.bytecode.code_size;
+        let bytecode_len = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_len, proof.ram_K);
 
         Self {
             trusted_advice_commitment,
@@ -560,6 +591,12 @@ impl<
     }
 
     fn verify_stage6(&mut self) -> Result<(), ProofVerifyError> {
+        let _ = DoryGlobals::initialize_main_with_log_embedding(
+            self.one_hot_params.k_chunk,
+            self.proof.trace_length,
+            self.main_total_vars(),
+            Some(self.proof.dory_layout),
+        );
         let (bytecode_read_raf_params, booleanity_params) = self.verify_stage6a()?;
         self.verify_stage6b(bytecode_read_raf_params, booleanity_params)
     }
@@ -631,20 +668,28 @@ impl<
             &mut self.transcript,
         );
 
+        let main_total_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
+        let precommitted_candidates = self.precommitted_candidate_total_vars();
+        let precommitted_scheduling_reference =
+            PrecommittedClaimReduction::<F>::scheduling_reference(
+                main_total_vars,
+                &precommitted_candidates,
+            );
+
         // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.trusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_trusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Trusted,
-                &self.program_io.memory_layout,
-                self.proof.trace_length,
+                self.program_io.memory_layout.max_trusted_advice_size as usize,
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
         }
         if self.proof.untrusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_untrusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Untrusted,
-                &self.program_io.memory_layout,
-                self.proof.trace_length,
+                self.program_io.memory_layout.max_untrusted_advice_size as usize,
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
         }
@@ -693,18 +738,30 @@ impl<
         if let Some(advice_reduction_verifier_trusted) =
             self.advice_reduction_verifier_trusted.as_mut()
         {
-            let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
-                params.phase = ReductionPhase::AddressVariables;
+            if advice_reduction_verifier_trusted
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                advice_reduction_verifier_trusted
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
         if let Some(advice_reduction_verifier_untrusted) =
             self.advice_reduction_verifier_untrusted.as_mut()
         {
-            let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
-                params.phase = ReductionPhase::AddressVariables;
+            if advice_reduction_verifier_untrusted
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
+                advice_reduction_verifier_untrusted
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(advice_reduction_verifier_untrusted);
             }
         }

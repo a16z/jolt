@@ -1,42 +1,9 @@
-//! Two-phase advice claim reduction (Stage 6 cycle → Stage 7 address)
-//!
-//! This module generalizes the previous single-phase `AdviceClaimReduction` so that trusted and
-//! untrusted advice can be committed as an arbitrary Dory matrix `2^{nu_a} x 2^{sigma_a}` (balanced
-//! by default), while still keeping a **single Stage 8 Dory opening** at the unified Dory point.
-//!
-//! For an advice matrix embedded as the **top-left block** `2^{nu_a} x 2^{sigma_a}`, the *native*
-//! advice evaluation point (in Dory order, LSB-first) is:
-//! - `advice_cols = col_coords[0..sigma_a]`
-//! - `advice_rows = row_coords[0..nu_a]`
-//! - `advice_point = [advice_cols || advice_rows]`
-//!
-//! In our current pipeline, `cycle` coordinates come from Stage 6 and `addr` coordinates come from
-//! Stage 7.
-//! - **Phase 1 (Stage 6)**: bind the cycle-derived advice coordinates and output an intermediate
-//!   scalar claim `C_mid`.
-//! - **Phase 2 (Stage 7)**: resume from `C_mid`, bind the address-derived advice coordinates, and
-//!   cache the final advice opening `AdviceMLE(advice_point)` for batching into Stage 8.
-//!
-//! ## Dummy-gap scaling (within Stage 6)
-//! With cycle-major order, there may be a gap during the cycle phase where the cycle variables
-//! being bound in the batched sumcheck do not appear in the advice polynommial.
-//!
-//! We handle this without modifying the generic batched sumcheck by treating those intervening
-//! rounds as **dummy internal rounds** (constant univariates), and maintaining a running scaling
-//! factor `2^{-dummy_done}` so the per-round univariates remain consistent.
-//!
-//! Trusted and untrusted advice run as **separate** sumcheck instances (each may have different
-//! dimensions).
-//!
-
-use std::cell::RefCell;
-use std::cmp::{min, Ordering};
-use std::ops::Range;
+//! Two-phase advice claim reduction (Stage 6 cycle -> Stage 7 address).
 
 use crate::field::JoltField;
-use crate::poly::commitment::dory::{DoryGlobals, DoryLayout};
+use crate::poly::commitment::dory::DoryGlobals;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
@@ -49,13 +16,14 @@ use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::transcripts::Transcript;
-use crate::utils::math::Math;
-use crate::zkvm::config::OneHotConfig;
+use crate::zkvm::claim_reductions::{
+    permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
+    PrecommittedClaimReduction, PrecommittedPhase, PrecommittedSchedulingReference,
+    TWO_PHASE_DEGREE_BOUND,
+};
 use allocative::Allocative;
-use common::jolt_device::MemoryLayout;
-use rayon::prelude::*;
 
-const DEGREE_BOUND: usize = 2;
+use super::precommitted::{PrecommittedParams, PrecommittedProver};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative)]
 pub enum AdviceKind {
@@ -63,134 +31,52 @@ pub enum AdviceKind {
     Untrusted,
 }
 
-#[derive(Debug, Clone, Allocative, PartialEq, Eq)]
-pub enum ReductionPhase {
-    CycleVariables,
-    AddressVariables,
-}
-
 #[derive(Clone, Allocative)]
 pub struct AdviceClaimReductionParams<F: JoltField> {
     pub kind: AdviceKind,
-    pub phase: ReductionPhase,
-    pub log_k_chunk: usize,
-    pub log_t: usize,
+    pub precommitted: PrecommittedClaimReduction<F>,
     pub advice_col_vars: usize,
     pub advice_row_vars: usize,
-    /// Number of column variables in the main Dory matrix
-    pub main_col_vars: usize,
-    /// Number of row variables in the main Dory matrix
-    pub main_row_vars: usize,
-    #[allocative(skip)]
-    pub cycle_phase_row_rounds: Range<usize>,
-    #[allocative(skip)]
-    pub cycle_phase_col_rounds: Range<usize>,
     pub r_val: OpeningPoint<BIG_ENDIAN, F>,
-    /// (little-endian) challenges for the cycle phase variables
-    pub cycle_var_challenges: Vec<F::Challenge>,
-}
-
-fn cycle_phase_round_schedule(
-    log_T: usize,
-    log_k_chunk: usize,
-    main_col_vars: usize,
-    advice_row_vars: usize,
-    advice_col_vars: usize,
-) -> (Range<usize>, Range<usize>) {
-    match DoryGlobals::get_layout() {
-        DoryLayout::CycleMajor => {
-            // Low-order cycle variables correspond to the low-order bits of the
-            // column index
-            let col_binding_rounds = 0..min(log_T, advice_col_vars);
-            // High-order cycle variables correspond to the low-order bits of the
-            // rows index
-            let row_binding_rounds =
-                min(log_T, main_col_vars)..min(log_T, main_col_vars + advice_row_vars);
-            (col_binding_rounds, row_binding_rounds)
-        }
-        DoryLayout::AddressMajor => {
-            // Low-order cycle variables correspond to the high-order bits of the
-            // column index
-            let col_binding_rounds = 0..advice_col_vars.saturating_sub(log_k_chunk);
-            // High-order cycle variables correspond to the bits of the row index
-            let row_binding_rounds = main_col_vars.saturating_sub(log_k_chunk)
-                ..min(
-                    log_T,
-                    main_col_vars.saturating_sub(log_k_chunk) + advice_row_vars,
-                );
-            (col_binding_rounds, row_binding_rounds)
-        }
-    }
 }
 
 impl<F: JoltField> AdviceClaimReductionParams<F> {
     pub fn new(
         kind: AdviceKind,
-        memory_layout: &MemoryLayout,
-        trace_len: usize,
+        advice_size_bytes: usize,
+        scheduling_reference: PrecommittedSchedulingReference,
         accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
-        let max_advice_size_bytes = match kind {
-            AdviceKind::Trusted => memory_layout.max_trusted_advice_size as usize,
-            AdviceKind::Untrusted => memory_layout.max_untrusted_advice_size as usize,
-        };
-
-        let log_t = trace_len.log_2();
-        let log_k_chunk = OneHotConfig::new(log_t).log_k_chunk as usize;
-        let (main_col_vars, main_row_vars) = DoryGlobals::main_sigma_nu(log_k_chunk, log_t);
-
         let r_val = accumulator
             .get_advice_opening(kind, SumcheckId::RamValCheck)
             .map(|(p, _)| p)
             .unwrap();
 
         let (advice_col_vars, advice_row_vars) =
-            DoryGlobals::advice_sigma_nu_from_max_bytes(max_advice_size_bytes);
-        let (col_binding_rounds, row_binding_rounds) = cycle_phase_round_schedule(
-            log_t,
-            log_k_chunk,
-            main_col_vars,
-            advice_row_vars,
-            advice_col_vars,
-        );
+            DoryGlobals::advice_sigma_nu_from_max_bytes(advice_size_bytes);
+        let precommitted =
+            PrecommittedClaimReduction::new(advice_row_vars, advice_col_vars, scheduling_reference);
 
         Self {
             kind,
-            phase: ReductionPhase::CycleVariables,
+            precommitted,
             advice_col_vars,
             advice_row_vars,
-            log_k_chunk,
-            log_t,
-            main_col_vars,
-            main_row_vars,
-            cycle_phase_row_rounds: row_binding_rounds,
-            cycle_phase_col_rounds: col_binding_rounds,
             r_val,
-            cycle_var_challenges: vec![],
         }
-    }
-
-    /// (Total # advice variables) - (# variables bound during cycle phase)
-    pub fn num_address_phase_rounds(&self) -> usize {
-        (self.advice_col_vars + self.advice_row_vars)
-            - (self.cycle_phase_col_rounds.len() + self.cycle_phase_row_rounds.len())
     }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
-        match self.phase {
-            ReductionPhase::CycleVariables => {
-                let mut claim = F::zero();
-                if let Some((_, eval)) =
-                    accumulator.get_advice_opening(self.kind, SumcheckId::RamValCheck)
-                {
-                    claim += eval;
-                }
-                claim
+        match self.precommitted.phase {
+            PrecommittedPhase::CycleVariables => {
+                accumulator
+                    .get_advice_opening(self.kind, SumcheckId::RamValCheck)
+                    .expect("RamValCheck advice opening missing")
+                    .1
             }
-            ReductionPhase::AddressVariables => {
-                // Address phase starts from the cycle phase intermediate claim.
+            PrecommittedPhase::AddressVariables => {
                 accumulator
                     .get_advice_opening(self.kind, SumcheckId::AdviceClaimReductionCyclePhase)
                     .expect("Cycle phase intermediate claim not found")
@@ -200,77 +86,34 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
     }
 
     fn degree(&self) -> usize {
-        DEGREE_BOUND
+        TWO_PHASE_DEGREE_BOUND
     }
 
     fn num_rounds(&self) -> usize {
-        match self.phase {
-            ReductionPhase::CycleVariables => {
-                if !self.cycle_phase_row_rounds.is_empty() {
-                    self.cycle_phase_row_rounds.end - self.cycle_phase_col_rounds.start
-                } else {
-                    self.cycle_phase_col_rounds.len()
-                }
-            }
-            ReductionPhase::AddressVariables => {
-                let first_phase_rounds =
-                    self.cycle_phase_row_rounds.len() + self.cycle_phase_col_rounds.len();
-                // Total advice variables, minus the variables bound during the cycle phase
-                (self.advice_col_vars + self.advice_row_vars) - first_phase_rounds
-            }
-        }
+        self.precommitted.num_rounds_for_current_phase()
     }
 
-    /// Rearrange the opening point so that it is big-endian with respect to the original,
-    /// unpermuted advice/EQ polynomials.
-    fn normalize_opening_point(
-        &self,
-        challenges: &[<F as JoltField>::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
-        if self.phase == ReductionPhase::CycleVariables {
-            let advice_vars = self.advice_col_vars + self.advice_row_vars;
-            let mut advice_var_challenges: Vec<F::Challenge> = Vec::with_capacity(advice_vars);
-            advice_var_challenges
-                .extend_from_slice(&challenges[self.cycle_phase_col_rounds.clone()]);
-            advice_var_challenges
-                .extend_from_slice(&challenges[self.cycle_phase_row_rounds.clone()]);
-            return OpeningPoint::<LITTLE_ENDIAN, F>::new(advice_var_challenges).match_endianness();
-        }
-
-        match DoryGlobals::get_layout() {
-            DoryLayout::CycleMajor => OpeningPoint::<LITTLE_ENDIAN, F>::new(
-                [self.cycle_var_challenges.as_slice(), challenges].concat(),
-            )
-            .match_endianness(),
-            DoryLayout::AddressMajor => OpeningPoint::<LITTLE_ENDIAN, F>::new(
-                [challenges, self.cycle_var_challenges.as_slice()].concat(),
-            )
-            .match_endianness(),
-        }
+    fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
+        self.precommitted.normalize_opening_point(challenges)
     }
 
     #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        match self.phase {
-            ReductionPhase::CycleVariables => {
-                let val_opening = match self.kind {
-                    AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValCheck),
-                    AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::RamValCheck),
-                };
-                InputClaimConstraint::direct(val_opening)
-            }
-            ReductionPhase::AddressVariables => {
-                let cycle_phase_opening = match self.kind {
-                    AdviceKind::Trusted => {
-                        OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
-                    }
-                    AdviceKind::Untrusted => {
-                        OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
-                    }
-                };
-                InputClaimConstraint::direct(cycle_phase_opening)
-            }
-        }
+        let opening = match self.precommitted.phase {
+            PrecommittedPhase::CycleVariables => match self.kind {
+                AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::RamValCheck),
+                AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::RamValCheck),
+            },
+            PrecommittedPhase::AddressVariables => match self.kind {
+                AdviceKind::Trusted => {
+                    OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                }
+                AdviceKind::Untrusted => {
+                    OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
+                }
+            },
+        };
+        InputClaimConstraint::direct(opening)
     }
 
     #[cfg(feature = "zk")]
@@ -280,9 +123,9 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
 
     #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        match self.phase {
-            ReductionPhase::CycleVariables => {
-                if self.num_address_phase_rounds() > 0 {
+        match self.precommitted.phase {
+            PrecommittedPhase::CycleVariables => {
+                if self.precommitted.num_address_phase_rounds() > 0 {
                     let advice_opening = match self.kind {
                         AdviceKind::Trusted => {
                             OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReductionCyclePhase)
@@ -295,15 +138,19 @@ impl<F: JoltField> SumcheckInstanceParams<F> for AdviceClaimReductionParams<F> {
                 }
                 self.final_advice_output_claim_constraint()
             }
-            ReductionPhase::AddressVariables => self.final_advice_output_claim_constraint(),
+            PrecommittedPhase::AddressVariables => self.final_advice_output_claim_constraint(),
         }
     }
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        match self.phase {
-            ReductionPhase::CycleVariables if self.num_address_phase_rounds() > 0 => vec![],
-            ReductionPhase::CycleVariables | ReductionPhase::AddressVariables => {
+        match self.precommitted.phase {
+            PrecommittedPhase::CycleVariables
+                if self.precommitted.num_address_phase_rounds() > 0 =>
+            {
+                vec![]
+            }
+            PrecommittedPhase::CycleVariables | PrecommittedPhase::AddressVariables => {
                 vec![self.final_advice_output_scale(sumcheck_challenges)]
             }
         }
@@ -317,8 +164,6 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
             AdviceKind::Trusted => OpeningId::TrustedAdvice(SumcheckId::AdviceClaimReduction),
             AdviceKind::Untrusted => OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction),
         };
-        // output = (eq_combined * scale) * advice_claim
-        // Challenge(0) holds eq_combined * scale (computed in output_constraint_challenge_values)
         Some(OutputClaimConstraint::linear(vec![(
             ValueSource::Challenge(0),
             ValueSource::Opening(advice_opening),
@@ -326,191 +171,160 @@ impl<F: JoltField> AdviceClaimReductionParams<F> {
     }
 
     fn final_advice_output_scale(&self, sumcheck_challenges: &[F::Challenge]) -> F {
-        let opening_point = self.normalize_opening_point(sumcheck_challenges);
-        let eq_eval = EqPolynomial::mle(&opening_point.r, &self.r_val.r);
-
-        let total_cycle_phase_rounds = if !self.cycle_phase_row_rounds.is_empty() {
-            self.cycle_phase_row_rounds.end - self.cycle_phase_col_rounds.start
-        } else {
-            self.cycle_phase_col_rounds.len()
+        let eq_eval = self.final_advice_eq_eval(sumcheck_challenges);
+        let scale = match self.precommitted.phase {
+            PrecommittedPhase::CycleVariables => self.precommitted.cycle_phase_skip_scale(),
+            PrecommittedPhase::AddressVariables => {
+                precommitted_skip_round_scale(&self.precommitted)
+            }
         };
-        let active_cycle_phase_rounds =
-            self.cycle_phase_col_rounds.len() + self.cycle_phase_row_rounds.len();
-        let dummy_rounds = total_cycle_phase_rounds.saturating_sub(active_cycle_phase_rounds);
-
-        let two_inv = F::from_u64(2).inverse().unwrap();
-        let scale = (0..dummy_rounds).fold(F::one(), |acc, _| acc * two_inv);
-
         eq_eval * scale
+    }
+
+    fn final_advice_eq_eval(&self, sumcheck_challenges: &[F::Challenge]) -> F {
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(
+            self.precommitted
+                .poly_opening_round_permutation_be()
+                .iter()
+                .map(|&global_round| {
+                    self.challenge_for_global_round(global_round, sumcheck_challenges)
+                })
+                .collect(),
+        );
+        EqPolynomial::mle(&opening_point.r, &self.r_val.r)
+    }
+
+    fn challenge_for_global_round(
+        &self,
+        global_round: usize,
+        sumcheck_challenges: &[F::Challenge],
+    ) -> F::Challenge {
+        let cycle_rounds = self.precommitted.cycle_alignment_rounds();
+        if global_round < cycle_rounds {
+            return match self.precommitted.phase {
+                PrecommittedPhase::CycleVariables => sumcheck_challenges[global_round],
+                PrecommittedPhase::AddressVariables => {
+                    let idx = self
+                        .precommitted
+                        .cycle_phase_rounds()
+                        .binary_search(&global_round)
+                        .expect("cycle round should be active for advice polynomial");
+                    self.precommitted.cycle_var_challenges[idx]
+                }
+            };
+        }
+
+        assert_eq!(
+            self.precommitted.phase,
+            PrecommittedPhase::AddressVariables,
+            "cycle-phase final advice scale should not contain address rounds"
+        );
+        sumcheck_challenges[global_round - cycle_rounds]
+    }
+}
+
+impl<F: JoltField> PrecommittedParams<F> for AdviceClaimReductionParams<F> {
+    fn precommitted(&self) -> &PrecommittedClaimReduction<F> {
+        &self.precommitted
+    }
+
+    fn precommitted_mut(&mut self) -> &mut PrecommittedClaimReduction<F> {
+        &mut self.precommitted
+    }
+
+    fn get_cycle_challenges<A: AbstractVerifierOpeningAccumulator<F>>(
+        &self,
+        accumulator: &A,
+    ) -> Vec<F::Challenge> {
+        let (cycle_opening_point, _) = accumulator
+            .get_advice_opening(self.kind, SumcheckId::AdviceClaimReductionCyclePhase)
+            .expect("Cycle phase intermediate claim not found");
+        let opening_point_le: OpeningPoint<LITTLE_ENDIAN, F> =
+            cycle_opening_point.match_endianness();
+        opening_point_le.r
     }
 }
 
 #[derive(Allocative)]
 pub struct AdviceClaimReductionProver<F: JoltField> {
-    pub params: AdviceClaimReductionParams<F>,
-    advice_poly: MultilinearPolynomial<F>,
-    eq_poly: MultilinearPolynomial<F>,
-    /// Maintains the running internal scaling factor 2^{-dummy_done}.
-    scale: F,
+    core: PrecommittedProver<F, AdviceClaimReductionParams<F>>,
 }
 
 impl<F: JoltField> AdviceClaimReductionProver<F> {
+    pub fn params(&self) -> &AdviceClaimReductionParams<F> {
+        self.core.params()
+    }
+
+    pub fn transition_to_address_phase(&mut self) {
+        self.core.transition_to_address_phase();
+    }
+
     pub fn initialize(
         params: AdviceClaimReductionParams<F>,
         advice_poly: MultilinearPolynomial<F>,
     ) -> Self {
-        let eq_evals = EqPolynomial::evals(&params.r_val.r);
-
-        let main_cols = 1 << params.main_col_vars;
-        // Maps a (row, col) position in the Dory matrix layout to its
-        // implied (address, cycle).
-        let row_col_to_address_cycle = |row: usize, col: usize| -> (usize, usize) {
-            match DoryGlobals::get_layout() {
-                DoryLayout::CycleMajor => {
-                    let global_index = row as u128 * main_cols + col as u128;
-                    let address = global_index / (1 << params.log_t);
-                    let cycle = global_index % (1 << params.log_t);
-                    (address as usize, cycle as usize)
-                }
-                DoryLayout::AddressMajor => {
-                    let global_index = row as u128 * main_cols + col as u128;
-                    let address = global_index % (1 << params.log_k_chunk);
-                    let cycle = global_index / (1 << params.log_k_chunk);
-                    (address as usize, cycle as usize)
-                }
-            }
+        let eq_evals =
+            precommitted_eq_evals_with_scaling(&params.r_val.r, None, &params.precommitted);
+        let (advice_poly, eq_poly): (MultilinearPolynomial<F>, MultilinearPolynomial<F>) = {
+            let MultilinearPolynomial::U64Scalars(poly) = advice_poly else {
+                panic!("Advice should have u64 coefficients");
+            };
+            let mut permuted =
+                permute_precommitted_polys(vec![poly.coeffs], &params.precommitted).into_iter();
+            let advice_poly = permuted
+                .next()
+                .expect("expected one permuted advice polynomial");
+            let eq_poly = eq_evals.into();
+            (advice_poly, eq_poly)
         };
-
-        let advice_cols = 1 << params.advice_col_vars;
-        // Maps an index in the advice vector to its implied (address, cycle), based
-        // on the position the index maps to in the Dory matrix layout.
-        let advice_index_to_address_cycle = |index: usize| -> (usize, usize) {
-            let row = index / advice_cols;
-            let col = index % advice_cols;
-            row_col_to_address_cycle(row, col)
-        };
-
-        let mut permuted_coeffs: Vec<(usize, (u64, F))> = match advice_poly {
-            MultilinearPolynomial::U64Scalars(poly) => poly
-                .coeffs
-                .into_par_iter()
-                .zip(eq_evals.into_par_iter())
-                .enumerate()
-                .collect(),
-            _ => panic!("Advice should have u64 coefficients"),
-        };
-        // Sort the advice and EQ polynomial coefficients by (address, cycle).
-        // By sorting this way, binding the resulting polynomials in low-to-high
-        // order is equivalent to binding the original polynomials' "cycle" variables
-        // low-to-high, then their "address" variables low-to-high.
-        permuted_coeffs.par_sort_by(|&(index_a, _), &(index_b, _)| {
-            let (address_a, cycle_a) = advice_index_to_address_cycle(index_a);
-            let (address_b, cycle_b) = advice_index_to_address_cycle(index_b);
-            match address_a.cmp(&address_b) {
-                Ordering::Less => Ordering::Less,
-                Ordering::Greater => Ordering::Greater,
-                Ordering::Equal => cycle_a.cmp(&cycle_b),
-            }
-        });
-
-        let (advice_coeffs, eq_coeffs): (Vec<_>, Vec<_>) = permuted_coeffs
-            .into_par_iter()
-            .map(|(_, coeffs)| coeffs)
-            .unzip();
-        let advice_poly = advice_coeffs.into();
-        let eq_poly = eq_coeffs.into();
 
         Self {
-            params,
-            advice_poly,
-            eq_poly,
-            scale: F::one(),
+            core: PrecommittedProver::new(params, advice_poly, eq_poly, None),
         }
     }
 
-    fn compute_message_unscaled(&mut self, previous_claim_unscaled: F) -> UniPoly<F> {
-        let half = self.advice_poly.len() / 2;
-        let evals: [F; DEGREE_BOUND] = (0..half)
-            .into_par_iter()
-            .map(|j| {
-                let a_evals = self
-                    .advice_poly
-                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                let eq_evals = self
-                    .eq_poly
-                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+    pub fn from_bound_state(
+        params: AdviceClaimReductionParams<F>,
+        advice_coeffs: Vec<F>,
+        eq_coeffs: Vec<F>,
+    ) -> Self {
+        Self::from_bound_state_with_scale(params, advice_coeffs, eq_coeffs, F::one())
+    }
 
-                let mut out = [F::zero(); DEGREE_BOUND];
-                for i in 0..DEGREE_BOUND {
-                    out[i] = a_evals[i] * eq_evals[i];
-                }
-                out
-            })
-            .reduce(
-                || [F::zero(); DEGREE_BOUND],
-                |mut acc, arr| {
-                    acc.par_iter_mut()
-                        .zip(arr.par_iter())
-                        .for_each(|(a, b)| *a += *b);
-                    acc
-                },
-            );
-        UniPoly::from_evals_and_hint(previous_claim_unscaled, &evals)
+    pub fn from_bound_state_with_scale(
+        params: AdviceClaimReductionParams<F>,
+        advice_coeffs: Vec<F>,
+        eq_coeffs: Vec<F>,
+        scale: F,
+    ) -> Self {
+        let mut prover = Self {
+            core: PrecommittedProver::new(
+                params,
+                MultilinearPolynomial::from(advice_coeffs),
+                MultilinearPolynomial::from(eq_coeffs),
+                None,
+            ),
+        };
+        prover.core.set_scale(scale);
+        prover
     }
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimReductionProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        &self.params
+        self.core.params()
+    }
+
+    fn round_offset(&self, _max_num_rounds: usize) -> usize {
+        0
     }
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
-        if self.params.phase == ReductionPhase::CycleVariables
-            && !self.params.cycle_phase_col_rounds.contains(&round)
-            && !self.params.cycle_phase_row_rounds.contains(&round)
-        {
-            // Current sumcheck variable does not appear in advice polynomial, so we
-            // can simply send a constant polynomial equal to the previous claim divided by 2
-            UniPoly::from_coeff(vec![previous_claim * F::from_u64(2).inverse().unwrap()])
-        } else {
-            // Account for (1) internal dummy rounds already traversed and
-            // (2) trailing dummy rounds after this instance's active window in the batched sumcheck.
-            let num_trailing_variables = match self.params.phase {
-                ReductionPhase::CycleVariables => {
-                    self.params.log_t.saturating_sub(self.params.num_rounds())
-                }
-                ReductionPhase::AddressVariables => self
-                    .params
-                    .log_k_chunk
-                    .saturating_sub(self.params.num_rounds()),
-            };
-            let scaling_factor = self.scale * F::one().mul_pow_2(num_trailing_variables);
-            let prev_unscaled = previous_claim * scaling_factor.inverse().unwrap();
-            let poly_unscaled = self.compute_message_unscaled(prev_unscaled);
-            poly_unscaled * scaling_factor
-        }
+        self.core.compute_message(round, previous_claim)
     }
 
     fn ingest_challenge(&mut self, r_j: F::Challenge, round: usize) {
-        match self.params.phase {
-            ReductionPhase::CycleVariables => {
-                if !self.params.cycle_phase_col_rounds.contains(&round)
-                    && !self.params.cycle_phase_row_rounds.contains(&round)
-                {
-                    // Each dummy internal round halves the running claim; equivalently, we multiply the
-                    // scaling factor by 1/2.
-                    self.scale *= F::from_u64(2).inverse().unwrap();
-                } else {
-                    self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-                    self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-                    self.params.cycle_var_challenges.push(r_j);
-                }
-            }
-            ReductionPhase::AddressVariables => {
-                self.advice_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-                self.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
-            }
-        }
+        self.core.ingest_challenge(r_j, round);
     }
 
     fn cache_openings(
@@ -518,43 +332,26 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
         accumulator: &mut ProverOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
-        if self.params.phase == ReductionPhase::CycleVariables {
-            // Compute the intermediate claim C_mid = (2^{-gap}) * Σ_y advice(y) * eq(y),
-            // where y are the remaining (address-derived) advice row variables.
-            let len = self.advice_poly.len();
-            debug_assert_eq!(len, self.eq_poly.len());
-
-            let mut sum = F::zero();
-            for i in 0..len {
-                sum += self.advice_poly.get_bound_coeff(i) * self.eq_poly.get_bound_coeff(i);
-            }
-            let c_mid = sum * self.scale;
-
-            match self.params.kind {
+        let params = self.core.params();
+        let opening_point = params.normalize_opening_point(sumcheck_challenges);
+        if params.is_cycle_phase() && params.precommitted.num_address_phase_rounds() > 0 {
+            let c_mid = self.core.cycle_intermediate_claim();
+            match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    // This is a phase-boundary intermediate reduction claim (c_mid), not an advice
-                    // polynomial opening. Store it without an opening point so it can't be deduped
-                    // against the final advice opening.
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point.clone(),
                     c_mid,
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    // This is a phase-boundary intermediate reduction claim (c_mid), not an advice
-                    // polynomial opening. Store it without an opening point so it can't be deduped
-                    // against the final advice opening.
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point.clone(),
                     c_mid,
                 ),
             }
         }
 
-        // If we're done binding advice variables, cache the final advice opening
-        if self.advice_poly.len() == 1 {
-            let advice_claim = self.advice_poly.final_sumcheck_claim();
-            match self.params.kind {
+        if let Some(advice_claim) = self.core.final_claim_if_ready() {
+            match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     SumcheckId::AdviceClaimReduction,
                     opening_point,
@@ -567,10 +364,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
                 ),
             }
         }
-    }
-
-    fn round_offset(&self, _max_num_rounds: usize) -> usize {
-        0
     }
 
     #[cfg(feature = "allocative")]
@@ -580,21 +373,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimRe
 }
 
 pub struct AdviceClaimReductionVerifier<F: JoltField> {
-    pub params: RefCell<AdviceClaimReductionParams<F>>,
+    pub params: AdviceClaimReductionParams<F>,
 }
 
 impl<F: JoltField> AdviceClaimReductionVerifier<F> {
     pub fn new(
         kind: AdviceKind,
-        memory_layout: &MemoryLayout,
-        trace_len: usize,
+        advice_size_bytes: usize,
+        scheduling_reference: PrecommittedSchedulingReference,
         accumulator: &dyn OpeningAccumulator<F>,
     ) -> Self {
-        let params = AdviceClaimReductionParams::new(kind, memory_layout, trace_len, accumulator);
+        let params = AdviceClaimReductionParams::new(
+            kind,
+            advice_size_bytes,
+            scheduling_reference,
+            accumulator,
+        );
 
-        Self {
-            params: RefCell::new(params),
-        }
+        Self { params }
     }
 }
 
@@ -602,19 +398,21 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     SumcheckInstanceVerifier<F, T, A> for AdviceClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
-        unsafe { &*self.params.as_ptr() }
+        &self.params
     }
 
     fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
-        let params = self.params.borrow();
-        match params.phase {
-            ReductionPhase::CycleVariables if params.num_address_phase_rounds() > 0 => {
+        let params = &self.params;
+        match params.precommitted.phase {
+            PrecommittedPhase::CycleVariables
+                if params.precommitted.num_address_phase_rounds() > 0 =>
+            {
                 accumulator
                     .get_advice_opening(params.kind, SumcheckId::AdviceClaimReductionCyclePhase)
-                    .unwrap_or_else(|| panic!("Cycle phase intermediate claim not found",))
+                    .unwrap_or_else(|| panic!("Cycle phase intermediate claim not found"))
                     .1
             }
-            ReductionPhase::CycleVariables | ReductionPhase::AddressVariables => {
+            PrecommittedPhase::CycleVariables | PrecommittedPhase::AddressVariables => {
                 let advice_claim = accumulator
                     .get_advice_opening(params.kind, SumcheckId::AdviceClaimReduction)
                     .expect("Final advice claim not found")
@@ -627,32 +425,22 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 
     fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
-        let mut params = self.params.borrow_mut();
-        if params.phase == ReductionPhase::CycleVariables {
+        let params = &self.params;
+        if params.is_cycle_phase() && params.precommitted.num_address_phase_rounds() > 0 {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator.append_trusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    // This is a phase-boundary intermediate reduction claim (c_mid), not an advice
-                    // polynomial opening. Store it without an opening point so it can't be deduped
-                    // against the final advice opening.
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point.clone(),
                 ),
                 AdviceKind::Untrusted => accumulator.append_untrusted_advice(
                     SumcheckId::AdviceClaimReductionCyclePhase,
-                    // This is a phase-boundary intermediate reduction claim (c_mid), not an advice
-                    // polynomial opening. Store it without an opening point so it can't be deduped
-                    // against the final advice opening.
-                    OpeningPoint::<BIG_ENDIAN, F>::new(vec![]),
+                    opening_point,
                 ),
             }
-            let opening_point_le: OpeningPoint<LITTLE_ENDIAN, F> = opening_point.match_endianness();
-            params.cycle_var_challenges = opening_point_le.r;
         }
 
-        if params.num_address_phase_rounds() == 0
-            || params.phase == ReductionPhase::AddressVariables
-        {
+        if params.precommitted.num_address_phase_rounds() == 0 || !params.is_cycle_phase() {
             let opening_point = params.normalize_opening_point(sumcheck_challenges);
             match params.kind {
                 AdviceKind::Trusted => accumulator
@@ -677,24 +465,24 @@ mod tests {
 
     #[test]
     fn final_advice_output_scale_counts_leading_dummy_rounds_when_col_range_is_empty() {
-        let challenges = [11, 12, 0]
+        let challenges = [0, 12, 13]
             .map(|value| Challenge::from(value as u128))
             .to_vec();
         let active_opening_point =
-            OpeningPoint::<LITTLE_ENDIAN, Fr>::new(challenges[2..3].to_vec()).match_endianness();
+            OpeningPoint::<LITTLE_ENDIAN, Fr>::new(challenges[0..1].to_vec()).match_endianness();
+        let scheduling_reference = PrecommittedSchedulingReference {
+            main_total_vars: 3,
+            reference_total_vars: 3,
+            cycle_alignment_rounds: 3,
+            address_rounds: 0,
+            joint_col_vars: 0,
+        };
         let params = AdviceClaimReductionParams {
             kind: AdviceKind::Trusted,
-            phase: ReductionPhase::CycleVariables,
-            log_k_chunk: 2,
-            log_t: 6,
-            advice_col_vars: 1,
+            precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
+            advice_col_vars: 0,
             advice_row_vars: 1,
-            main_col_vars: 4,
-            main_row_vars: 4,
-            cycle_phase_col_rounds: 0..0,
-            cycle_phase_row_rounds: 2..3,
             r_val: active_opening_point,
-            cycle_var_challenges: vec![],
         };
 
         let two_inv = Fr::from_u64(2).inverse().unwrap();
@@ -702,6 +490,36 @@ mod tests {
         assert_eq!(
             params.final_advice_output_scale(&challenges),
             two_inv * two_inv
+        );
+    }
+
+    #[test]
+    fn final_advice_output_scale_ignores_unrun_address_dummy_rounds() {
+        let challenges = [11, 12]
+            .map(|value| Challenge::from(value as u128))
+            .to_vec();
+        let r_val = OpeningPoint::<BIG_ENDIAN, Fr>::new(vec![Challenge::from(7)]);
+        let scheduling_reference = PrecommittedSchedulingReference {
+            main_total_vars: 4,
+            reference_total_vars: 4,
+            cycle_alignment_rounds: 2,
+            address_rounds: 2,
+            joint_col_vars: 0,
+        };
+        let params = AdviceClaimReductionParams {
+            kind: AdviceKind::Trusted,
+            precommitted: PrecommittedClaimReduction::new(1, 0, scheduling_reference),
+            advice_col_vars: 0,
+            advice_row_vars: 1,
+            r_val,
+        };
+
+        let two_inv = Fr::from_u64(2).inverse().unwrap();
+        let expected_eq = EqPolynomial::mle(&[challenges[0]], &params.r_val.r);
+
+        assert_eq!(
+            params.final_advice_output_scale(&challenges),
+            expected_eq * two_inv
         );
     }
 }

@@ -1,6 +1,6 @@
 //! Dory polynomial commitment scheme implementation
 
-use super::dory_globals::{DoryGlobals, DoryLayout};
+use super::dory_globals::DoryGlobals;
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
     ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup,
@@ -63,6 +63,18 @@ fn maybe_blind_commitment(setup: &ArkworksProverSetup, commitment: ArkGT) -> (Ar
     }
 }
 
+#[inline]
+fn canonical_setup_log_n(max_num_vars: usize) -> usize {
+    // Dory's generator count depends on ceil(max_log_n / 2), so odd/even pairs like
+    // 23 and 24 share the same generator bucket. Canonicalizing to the even bucket
+    // representative keeps those runs on a single URS file.
+    if max_num_vars.is_multiple_of(2) {
+        max_num_vars
+    } else {
+        max_num_vars + 1
+    }
+}
+
 pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
     transcript: &mut ProofTranscript,
     opening_point: &[F::Challenge],
@@ -105,13 +117,13 @@ impl CommitmentScheme for DoryCommitmentScheme {
 
     fn setup_prover(max_num_vars: usize) -> Self::ProverSetup {
         let _span = trace_span!("DoryCommitmentScheme::setup_prover").entered();
+        let canonical_max_num_vars = canonical_setup_log_n(max_num_vars);
         #[cfg(test)]
         DoryGlobals::configure_test_cache_root();
-
         #[cfg(not(target_arch = "wasm32"))]
-        let setup = ArkworksProverSetup::new_from_urs(max_num_vars);
+        let setup = ArkworksProverSetup::new_from_urs(canonical_max_num_vars);
         #[cfg(target_arch = "wasm32")]
-        let setup = ArkworksProverSetup::new(max_num_vars);
+        let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
         // The prepared-point cache in dory-pcs is global and can only be initialized once.
         // In unit tests, multiple setups with different sizes are created, so initializing the
@@ -194,8 +206,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
         let sigma = num_cols.log_2();
         let nu = num_rows.log_2();
 
-        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
-        let ark_point: Vec<ArkFr> = reordered_point
+        let ark_point: Vec<ArkFr> = opening_point
             .iter()
             .rev()
             .map(|p| {
@@ -237,10 +248,8 @@ impl CommitmentScheme for DoryCommitmentScheme {
     ) -> Result<(), ProofVerifyError> {
         let _span = trace_span!("DoryCommitmentScheme::verify").entered();
 
-        let reordered_point = reorder_opening_point_for_layout::<ark_bn254::Fr>(opening_point);
-
         // Dory uses the opposite endian-ness as Jolt
-        let ark_point: Vec<ArkFr> = reordered_point
+        let ark_point: Vec<ArkFr> = opening_point
             .iter()
             .rev()
             .map(|p| {
@@ -270,7 +279,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             setup.clone().into_inner(),
             &mut dory_transcript,
         )
-        .map_err(|_| ProofVerifyError::InternalError)?;
+        .map_err(|err| ProofVerifyError::DoryError(format!("dory::verify failed: {err:?}")))?;
 
         Ok(())
     }
@@ -494,26 +503,5 @@ where
             .collect();
         let h1 = C::G1::from(setup.0.h1);
         Some((g1s, h1))
-    }
-}
-
-/// Reorders opening_point for AddressMajor layout.
-///
-/// For AddressMajor layout, reorders opening_point from [r_address, r_cycle] to [r_cycle, r_address].
-/// This ensures that after Dory's reversal and splitting:
-/// - Column (right) vector gets address variables (matching AddressMajor column indexing)
-/// - Row (left) vector gets cycle variables (matching AddressMajor row indexing)
-///
-/// For CycleMajor layout, returns the point unchanged.
-fn reorder_opening_point_for_layout<F: JoltField>(
-    opening_point: &[F::Challenge],
-) -> Vec<F::Challenge> {
-    if DoryGlobals::get_layout() == DoryLayout::AddressMajor {
-        let log_T = DoryGlobals::get_T().log_2();
-        let log_K = opening_point.len().saturating_sub(log_T);
-        let (r_address, r_cycle) = opening_point.split_at(log_K);
-        [r_cycle, r_address].concat()
-    } else {
-        opening_point.to_vec()
     }
 }
