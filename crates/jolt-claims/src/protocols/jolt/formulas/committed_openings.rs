@@ -67,6 +67,8 @@ pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelati
         JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice => {
             JoltRelationId::AdviceClaimReduction
         }
+        JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
+        JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
     }
 }
 

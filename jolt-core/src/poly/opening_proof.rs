@@ -157,6 +157,10 @@ pub enum SumcheckId {
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
+    BytecodeClaimReductionCyclePhase,
+    BytecodeClaimReduction,
+    ProgramImageClaimReductionCyclePhase,
+    ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }

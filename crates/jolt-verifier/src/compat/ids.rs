@@ -30,12 +30,16 @@ pub enum SumcheckId {
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
+    BytecodeClaimReductionCyclePhase,
+    BytecodeClaimReduction,
+    ProgramImageClaimReductionCyclePhase,
+    ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }
 
 impl SumcheckId {
-    pub const COUNT: usize = 25;
+    pub const COUNT: usize = 29;
 
     #[cfg(test)]
     pub const ALL: [Self; Self::COUNT] = [
@@ -62,6 +66,10 @@ impl SumcheckId {
         Self::Booleanity,
         Self::AdviceClaimReductionCyclePhase,
         Self::AdviceClaimReduction,
+        Self::BytecodeClaimReductionCyclePhase,
+        Self::BytecodeClaimReduction,
+        Self::ProgramImageClaimReductionCyclePhase,
+        Self::ProgramImageClaimReduction,
         Self::IncClaimReduction,
         Self::HammingWeightClaimReduction,
     ];
@@ -101,8 +109,12 @@ impl TryFrom<u8> for SumcheckId {
             20 => Ok(Self::Booleanity),
             21 => Ok(Self::AdviceClaimReductionCyclePhase),
             22 => Ok(Self::AdviceClaimReduction),
-            23 => Ok(Self::IncClaimReduction),
-            24 => Ok(Self::HammingWeightClaimReduction),
+            23 => Ok(Self::BytecodeClaimReductionCyclePhase),
+            24 => Ok(Self::BytecodeClaimReduction),
+            25 => Ok(Self::ProgramImageClaimReductionCyclePhase),
+            26 => Ok(Self::ProgramImageClaimReduction),
+            27 => Ok(Self::IncClaimReduction),
+            28 => Ok(Self::HammingWeightClaimReduction),
             _ => Err(()),
         }
     }
@@ -116,9 +128,11 @@ pub enum CommittedPolynomial {
     RamInc,
     InstructionRa(usize),
     BytecodeRa(usize),
+    BytecodeChunk(usize),
     RamRa(usize),
     TrustedAdvice,
     UntrustedAdvice,
+    ProgramImageInit,
 }
 
 #[derive(
@@ -164,8 +178,11 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
+    BytecodeValStage(usize),
     BytecodeReadRafAddrClaim,
     BooleanityAddrClaim,
+    BytecodeClaimReductionIntermediate,
+    ProgramImageInitContributionRw,
 }
 
 #[derive(
