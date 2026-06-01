@@ -266,13 +266,22 @@ impl CanonicalSerialize for CommittedPolynomial {
             Self::RamRa(i) => serialize_tagged_index(4, *i, writer, compress),
             Self::TrustedAdvice => 5u8.serialize_with_mode(writer, compress),
             Self::UntrustedAdvice => 6u8.serialize_with_mode(writer, compress),
+            Self::BytecodeChunk(i) => serialize_tagged_index(7, *i, writer, compress),
+            Self::ProgramImageInit => 8u8.serialize_with_mode(writer, compress),
         }
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         match self {
-            Self::RdInc | Self::RamInc | Self::TrustedAdvice | Self::UntrustedAdvice => 1,
-            Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => 2,
+            Self::RdInc
+            | Self::RamInc
+            | Self::TrustedAdvice
+            | Self::UntrustedAdvice
+            | Self::ProgramImageInit => 1,
+            Self::InstructionRa(_)
+            | Self::BytecodeRa(_)
+            | Self::RamRa(_)
+            | Self::BytecodeChunk(_) => 2,
         }
     }
 }
@@ -298,6 +307,8 @@ impl CanonicalDeserialize for CommittedPolynomial {
                 4 => Self::RamRa(read_index(reader, compress, validate)?),
                 5 => Self::TrustedAdvice,
                 6 => Self::UntrustedAdvice,
+                7 => Self::BytecodeChunk(read_index(reader, compress, validate)?),
+                8 => Self::ProgramImageInit,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -354,6 +365,9 @@ impl CanonicalSerialize for VirtualPolynomial {
             Self::LookupTableFlag(flag) => serialize_tagged_index(38, *flag, writer, compress),
             Self::BytecodeReadRafAddrClaim => 39u8.serialize_with_mode(writer, compress),
             Self::BooleanityAddrClaim => 40u8.serialize_with_mode(writer, compress),
+            Self::BytecodeValStage(i) => serialize_tagged_index(41, *i, writer, compress),
+            Self::BytecodeClaimReductionIntermediate => 42u8.serialize_with_mode(writer, compress),
+            Self::ProgramImageInitContributionRw => 43u8.serialize_with_mode(writer, compress),
         }
     }
 
@@ -395,11 +409,14 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::RamHammingWeight
             | Self::UnivariateSkip
             | Self::BytecodeReadRafAddrClaim
-            | Self::BooleanityAddrClaim => 1,
+            | Self::BooleanityAddrClaim
+            | Self::BytecodeClaimReductionIntermediate
+            | Self::ProgramImageInitContributionRw => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
-            | Self::LookupTableFlag(_) => 2,
+            | Self::LookupTableFlag(_)
+            | Self::BytecodeValStage(_) => 2,
         }
     }
 }
@@ -471,6 +488,9 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 38 => Self::LookupTableFlag(read_index(reader, compress, validate)?),
                 39 => Self::BytecodeReadRafAddrClaim,
                 40 => Self::BooleanityAddrClaim,
+                41 => Self::BytecodeValStage(read_index(reader, compress, validate)?),
+                42 => Self::BytecodeClaimReductionIntermediate,
+                43 => Self::ProgramImageInitContributionRw,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -665,7 +685,7 @@ mod tests {
                 core_params.lookups_ra_virtual_log_k_chunk
             );
             assert_eq!(params.k_chunk, core_params.k_chunk);
-            assert_eq!(params.bytecode_k, core_params.bytecode_k);
+            assert_eq!(params.bytecode_k, core_params.bytecode_len);
             assert_eq!(params.ram_k, core_params.ram_k);
             assert_eq!(params.instruction_d, core_params.instruction_d);
             assert_eq!(params.bytecode_d, core_params.bytecode_d);
@@ -700,7 +720,7 @@ mod tests {
             round_trip(polynomial)?;
             assert_eq!(bytes(&polynomial)?, bytes(&core_committed(polynomial))?);
         }
-        assert!(CommittedPolynomial::deserialize_compressed([7u8].as_slice()).is_err());
+        assert!(CommittedPolynomial::deserialize_compressed([9u8].as_slice()).is_err());
         assert!(bytes(&CommittedPolynomial::InstructionRa(256)).is_err());
         Ok(())
     }
@@ -711,7 +731,7 @@ mod tests {
             round_trip(polynomial)?;
             assert_eq!(bytes(&polynomial)?, bytes(&core_virtual(polynomial))?);
         }
-        assert!(VirtualPolynomial::deserialize_compressed([41u8].as_slice()).is_err());
+        assert!(VirtualPolynomial::deserialize_compressed([44u8].as_slice()).is_err());
         assert!(VirtualPolynomial::deserialize_compressed([36u8, 14u8].as_slice()).is_err());
         assert!(VirtualPolynomial::deserialize_compressed([37u8, 6u8].as_slice()).is_err());
         assert!(bytes(&VirtualPolynomial::InstructionRa(256)).is_err());
@@ -806,11 +826,15 @@ mod tests {
             CommittedPolynomial::BytecodeRa(0),
             CommittedPolynomial::BytecodeRa(7),
             CommittedPolynomial::BytecodeRa(255),
+            CommittedPolynomial::BytecodeChunk(0),
+            CommittedPolynomial::BytecodeChunk(7),
+            CommittedPolynomial::BytecodeChunk(255),
             CommittedPolynomial::RamRa(0),
             CommittedPolynomial::RamRa(7),
             CommittedPolynomial::RamRa(255),
             CommittedPolynomial::TrustedAdvice,
             CommittedPolynomial::UntrustedAdvice,
+            CommittedPolynomial::ProgramImageInit,
         ]
     }
 
@@ -857,8 +881,13 @@ mod tests {
             VirtualPolynomial::LookupTableFlag(0),
             VirtualPolynomial::LookupTableFlag(7),
             VirtualPolynomial::LookupTableFlag(255),
+            VirtualPolynomial::BytecodeValStage(0),
+            VirtualPolynomial::BytecodeValStage(4),
+            VirtualPolynomial::BytecodeValStage(255),
             VirtualPolynomial::BytecodeReadRafAddrClaim,
             VirtualPolynomial::BooleanityAddrClaim,
+            VirtualPolynomial::BytecodeClaimReductionIntermediate,
+            VirtualPolynomial::ProgramImageInitContributionRw,
         ];
 
         for flag in circuit_flag_cases() {
@@ -932,6 +961,14 @@ mod tests {
                 CoreSumcheckId::AdviceClaimReductionCyclePhase
             }
             SumcheckId::AdviceClaimReduction => CoreSumcheckId::AdviceClaimReduction,
+            SumcheckId::BytecodeClaimReductionCyclePhase => {
+                CoreSumcheckId::BytecodeClaimReductionCyclePhase
+            }
+            SumcheckId::BytecodeClaimReduction => CoreSumcheckId::BytecodeClaimReduction,
+            SumcheckId::ProgramImageClaimReductionCyclePhase => {
+                CoreSumcheckId::ProgramImageClaimReductionCyclePhase
+            }
+            SumcheckId::ProgramImageClaimReduction => CoreSumcheckId::ProgramImageClaimReduction,
             SumcheckId::IncClaimReduction => CoreSumcheckId::IncClaimReduction,
             SumcheckId::HammingWeightClaimReduction => CoreSumcheckId::HammingWeightClaimReduction,
         }
@@ -959,9 +996,11 @@ mod tests {
             CommittedPolynomial::RamInc => CoreCommittedPolynomial::RamInc,
             CommittedPolynomial::InstructionRa(i) => CoreCommittedPolynomial::InstructionRa(i),
             CommittedPolynomial::BytecodeRa(i) => CoreCommittedPolynomial::BytecodeRa(i),
+            CommittedPolynomial::BytecodeChunk(i) => CoreCommittedPolynomial::BytecodeChunk(i),
             CommittedPolynomial::RamRa(i) => CoreCommittedPolynomial::RamRa(i),
             CommittedPolynomial::TrustedAdvice => CoreCommittedPolynomial::TrustedAdvice,
             CommittedPolynomial::UntrustedAdvice => CoreCommittedPolynomial::UntrustedAdvice,
+            CommittedPolynomial::ProgramImageInit => CoreCommittedPolynomial::ProgramImageInit,
         }
     }
 
@@ -1014,10 +1053,19 @@ mod tests {
             VirtualPolynomial::LookupTableFlag(flag) => {
                 CoreVirtualPolynomial::LookupTableFlag(flag)
             }
+            VirtualPolynomial::BytecodeValStage(stage) => {
+                CoreVirtualPolynomial::BytecodeValStage(stage)
+            }
             VirtualPolynomial::BytecodeReadRafAddrClaim => {
                 CoreVirtualPolynomial::BytecodeReadRafAddrClaim
             }
             VirtualPolynomial::BooleanityAddrClaim => CoreVirtualPolynomial::BooleanityAddrClaim,
+            VirtualPolynomial::BytecodeClaimReductionIntermediate => {
+                CoreVirtualPolynomial::BytecodeClaimReductionIntermediate
+            }
+            VirtualPolynomial::ProgramImageInitContributionRw => {
+                CoreVirtualPolynomial::ProgramImageInitContributionRw
+            }
         }
     }
 

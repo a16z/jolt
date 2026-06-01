@@ -1710,12 +1710,18 @@ fn committed_polynomial(
         legacy::CommittedPolynomial::BytecodeRa(index) => {
             native::JoltCommittedPolynomial::BytecodeRa(index)
         }
+        legacy::CommittedPolynomial::BytecodeChunk(index) => {
+            native::JoltCommittedPolynomial::BytecodeChunk(index)
+        }
         legacy::CommittedPolynomial::RamRa(index) => native::JoltCommittedPolynomial::RamRa(index),
         legacy::CommittedPolynomial::TrustedAdvice => {
             native::JoltCommittedPolynomial::TrustedAdvice
         }
         legacy::CommittedPolynomial::UntrustedAdvice => {
             native::JoltCommittedPolynomial::UntrustedAdvice
+        }
+        legacy::CommittedPolynomial::ProgramImageInit => {
+            native::JoltCommittedPolynomial::ProgramImageInit
         }
     }
 }
@@ -1784,11 +1790,20 @@ fn virtual_polynomial(polynomial: legacy::VirtualPolynomial) -> native::JoltVirt
         legacy::VirtualPolynomial::LookupTableFlag(index) => {
             native::JoltVirtualPolynomial::LookupTableFlag(index)
         }
+        legacy::VirtualPolynomial::BytecodeValStage(index) => {
+            native::JoltVirtualPolynomial::BytecodeValStage(index)
+        }
         legacy::VirtualPolynomial::BytecodeReadRafAddrClaim => {
             native::JoltVirtualPolynomial::BytecodeReadRafAddrClaim
         }
         legacy::VirtualPolynomial::BooleanityAddrClaim => {
             native::JoltVirtualPolynomial::BooleanityAddrClaim
+        }
+        legacy::VirtualPolynomial::BytecodeClaimReductionIntermediate => {
+            native::JoltVirtualPolynomial::BytecodeClaimReductionIntermediate
+        }
+        legacy::VirtualPolynomial::ProgramImageInitContributionRw => {
+            native::JoltVirtualPolynomial::ProgramImageInitContributionRw
         }
     }
 }
@@ -1835,6 +1850,18 @@ fn stage_id(id: legacy::SumcheckId) -> native::JoltRelationId {
             native::JoltRelationId::AdviceClaimReductionCyclePhase
         }
         legacy::SumcheckId::AdviceClaimReduction => native::JoltRelationId::AdviceClaimReduction,
+        legacy::SumcheckId::BytecodeClaimReductionCyclePhase => {
+            native::JoltRelationId::BytecodeClaimReductionCyclePhase
+        }
+        legacy::SumcheckId::BytecodeClaimReduction => {
+            native::JoltRelationId::BytecodeClaimReduction
+        }
+        legacy::SumcheckId::ProgramImageClaimReductionCyclePhase => {
+            native::JoltRelationId::ProgramImageClaimReductionCyclePhase
+        }
+        legacy::SumcheckId::ProgramImageClaimReduction => {
+            native::JoltRelationId::ProgramImageClaimReduction
+        }
         legacy::SumcheckId::IncClaimReduction => native::JoltRelationId::IncClaimReduction,
         legacy::SumcheckId::HammingWeightClaimReduction => {
             native::JoltRelationId::HammingWeightClaimReduction
