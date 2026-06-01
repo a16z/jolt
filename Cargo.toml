@@ -55,6 +55,7 @@ members = [
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
   "jolt-inlines/p256",
+  "jolt-inlines/poseidon2-goldilocks",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
@@ -257,6 +258,10 @@ sha3 = "0.11"
 blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
+p3-field = "0.5.3"
+p3-goldilocks = "0.5.3"
+p3-poseidon2 = "0.5.3"
+p3-symmetric = "0.5.3"
 digest = "0.11"
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.3.0", features = [
@@ -405,3 +410,4 @@ jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
 jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+jolt-inlines-poseidon2-goldilocks = { path = "./jolt-inlines/poseidon2-goldilocks", default-features = false }
