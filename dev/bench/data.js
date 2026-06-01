@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780090593677,
+  "lastUpdate": 1780340608913,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -108238,6 +108238,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 868316,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "khajepour.amirhossein@gmail.com",
+            "name": "Amirhossein Khajehpour",
+            "username": "RadNi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f97cbad1cce6a0d4d489402d185be152d97a523",
+          "message": "refactor: add precommitted polynomial reductions (#1572)\n\n* feat(zkvm): integrate precommitted Dory geometry across prover and verifier\n\nAdopt embedded-main Dory scheduling with shared precommitted claim-reduction plumbing so stage 6/8 can handle dominant precommitted contexts consistently in both zk and non-zk flows.\n\nMade-with: Cursor\n(cherry picked from commit d7b160bce6bf4910ab70470149defe3cee9dcb0b)\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(claim-reduction): preserve advice handoff scale\n\nKeep the precommitted scale when rebuilding advice claim-reduction state from bound coefficients so GPU cycle-phase handoff remains consistent across dummy rounds.\n\n(cherry picked from commit e58c0df892593db257121830ef24897f5a3f9f40)\n\n* fix(advice): align verifier scale with precommit order\n\nCompute the verifier advice equality evaluation in the same precommitted\nopening order used by the prover, while keeping the cycle-phase skip scale\nseparate from the full address-phase scale.\n\nAvoid reading Dory main_t when the precommitted schedule does not need it,\nso unit tests that do not initialize Dory globals can still construct the\nschedule.\n\n(cherry picked from commit f19c179eed3fbf8bbb7424ebc2f6f7f7288eaa21)\n\n* fix(zkvm): align precommitted advice with stage6 split\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): update transpilable verifier for precommitted advice\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): transition precommitted advice in transpilable verifier\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* style: format precommitted advice branch\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): satisfy strict clippy for precommitted advice\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): remove unused advice output constraint helper\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* refactor(zkvm): align precommitted advice reduction shape\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* refactor(dory): move address-major layout cleanup into precommitted stack\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* refactor(dory): align commitment scheme before committed programs\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* chore(dory): remove unused opening hint accessors\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(dory): derive stage8 opening point by layout\n\nUse the cycle/address ordering expected by the active Dory layout when the main trace domain anchors Stage 8, so precommitted advice openings verify in AddressMajor mode.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(dory): match final stage8 verifier error\n\nKeep the PR 02 Stage 8 verifier fix byte-for-byte aligned with the final merged branch while preserving the AddressMajor advice proof fix.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* chore(dory): remove dense tier setup alias\n\nUse local type inference for the dense AddressMajor setup tuple to avoid carrying an intermediate-only alias.\n\nMade-with: Cursor\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* refactor(dory): share stage8 opening point selection\n\nMove the common Stage 8 Dory opening-point selection into the commitment scheme module so prover and verifier use the same layout logic.\n\nMade-with: Cursor\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): preserve precommitted cycle openings\n\nCache real cycle-phase opening points for precommitted advice reductions so verifier phase transitions reconstruct the address phase from accumulator state.\n\nMade-with: Cursor\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): gate final opening helper behind prover\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): share final opening helper\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): drop stale opening point imports\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n---------\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\nCo-authored-by: Omid Bodaghi <42227752+omibo@users.noreply.github.com>\nCo-authored-by: Quang Dao <quang.dao@layerzerolabs.org>",
+          "timestamp": "2026-06-01T14:03:59-04:00",
+          "tree_id": "c4fd1c0b93ac41cd92c18f16ac72340b82ddfae2",
+          "url": "https://github.com/a16z/jolt/commit/7f97cbad1cce6a0d4d489402d185be152d97a523"
+        },
+        "date": 1780340605456,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9558,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3477,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 495048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 493532,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 497176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7193,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 497440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5789,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 497428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.9074,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 493856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8958,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 221608,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4574,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 867344,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5527,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 497636,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4542,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 501308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.3011,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 499308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7944,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 497336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.6518,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1052348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2656,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 634324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 105.6636,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2128476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4758,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 492588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5051,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.6029,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866460,
             "unit": "KB",
             "extra": ""
           }
