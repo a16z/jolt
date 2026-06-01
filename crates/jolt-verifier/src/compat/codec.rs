@@ -685,7 +685,7 @@ mod tests {
                 core_params.lookups_ra_virtual_log_k_chunk
             );
             assert_eq!(params.k_chunk, core_params.k_chunk);
-            assert_eq!(params.bytecode_k, core_params.bytecode_len);
+            assert_eq!(params.bytecode_k, core_params.bytecode_k);
             assert_eq!(params.ram_k, core_params.ram_k);
             assert_eq!(params.instruction_d, core_params.instruction_d);
             assert_eq!(params.bytecode_d, core_params.bytecode_d);
