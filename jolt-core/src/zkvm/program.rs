@@ -97,12 +97,9 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub meta: ProgramMetadata,
     pub bytecode_commitments: TrustedBytecodeCommitments<PCS>,
     pub program_commitments: TrustedProgramCommitments<PCS>,
-    #[cfg(feature = "prover")]
-    pub prover_data: Option<CommittedProgramProverData<PCS>>,
 }
 
-#[cfg(feature = "prover")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub full: FullProgramPreprocessing,
     pub bytecode_hints: TrustedBytecodeHints<PCS>,
@@ -202,8 +199,6 @@ where
                     compress,
                     validate,
                 )?,
-                #[cfg(feature = "prover")]
-                prover_data: None,
             })),
             _ => Err(SerializationError::InvalidData),
         }
@@ -236,66 +231,41 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         generators: &PCS::ProverSetup,
         bytecode_chunk_count: usize,
         max_log_k_chunk: usize,
-    ) -> Self {
+    ) -> (Self, CommittedProgramProverData<PCS>) {
         let Self::Full(full) = self else {
             panic!("cannot commit already-committed program preprocessing");
         };
         let meta = full.meta();
-        #[cfg(feature = "prover")]
         let (bytecode_commitments, bytecode_hints) = TrustedBytecodeCommitments::derive(
             &full.bytecode,
             generators,
             max_log_k_chunk,
             bytecode_chunk_count,
         );
-        #[cfg(not(feature = "prover"))]
-        let (bytecode_commitments, _bytecode_hints) = TrustedBytecodeCommitments::derive(
-            &full.bytecode,
-            generators,
-            max_log_k_chunk,
-            bytecode_chunk_count,
-        );
-        #[cfg(feature = "prover")]
         let (program_commitments, program_hints) =
             TrustedProgramCommitments::derive(&full, memory_layout, generators);
-        #[cfg(not(feature = "prover"))]
-        let (program_commitments, _program_hints) =
-            TrustedProgramCommitments::derive(&full, memory_layout, generators);
-        Self::Committed(CommittedProgramPreprocessing {
-            meta,
-            bytecode_commitments,
-            program_commitments,
-            #[cfg(feature = "prover")]
-            prover_data: Some(CommittedProgramProverData {
+
+        (
+            Self::Committed(CommittedProgramPreprocessing {
+                meta,
+                bytecode_commitments,
+                program_commitments,
+            }),
+            CommittedProgramProverData {
                 full,
                 bytecode_hints,
                 program_hints,
-            }),
-        })
-    }
-
-    pub fn full(&self) -> Option<&FullProgramPreprocessing> {
-        match self {
-            Self::Full(full) => Some(full),
-            Self::Committed(_committed) => {
-                #[cfg(feature = "prover")]
-                {
-                    _committed.prover_data.as_ref().map(|data| &data.full)
-                }
-                #[cfg(not(feature = "prover"))]
-                {
-                    None
-                }
-            }
-        }
+            },
+        )
     }
 
     pub fn as_full(&self) -> Result<&FullProgramPreprocessing, ProofVerifyError> {
-        self.full().ok_or_else(|| {
-            ProofVerifyError::BytecodeTypeMismatch(
+        match self {
+            Self::Full(full) => Ok(full),
+            Self::Committed(_) => Err(ProofVerifyError::BytecodeTypeMismatch(
                 "full program preprocessing unavailable in committed mode".to_string(),
-            )
-        })
+            )),
+        }
     }
 
     pub fn is_full(&self) -> bool {
@@ -313,35 +283,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         }
     }
 
-    pub fn bytecode_hints(&self) -> Option<&TrustedBytecodeHints<PCS>> {
-        match self {
-            #[cfg(feature = "prover")]
-            Self::Committed(committed) => committed
-                .prover_data
-                .as_ref()
-                .map(|data| &data.bytecode_hints),
-            #[cfg(not(feature = "prover"))]
-            Self::Committed(_) => None,
-            Self::Full(_) => None,
-        }
-    }
-
     pub fn program_commitments(&self) -> Option<&TrustedProgramCommitments<PCS>> {
         match self {
             Self::Committed(committed) => Some(&committed.program_commitments),
-            Self::Full(_) => None,
-        }
-    }
-
-    pub fn program_hints(&self) -> Option<&TrustedProgramHints<PCS>> {
-        match self {
-            #[cfg(feature = "prover")]
-            Self::Committed(committed) => committed
-                .prover_data
-                .as_ref()
-                .map(|data| &data.program_hints),
-            #[cfg(not(feature = "prover"))]
-            Self::Committed(_) => None,
             Self::Full(_) => None,
         }
     }
@@ -400,8 +344,6 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 meta: committed.meta.clone(),
                 bytecode_commitments: committed.bytecode_commitments.clone(),
                 program_commitments: committed.program_commitments.clone(),
-                #[cfg(feature = "prover")]
-                prover_data: None,
             }),
         }
     }
@@ -437,7 +379,7 @@ pub struct TrustedProgramCommitments<PCS: CommitmentScheme> {
     pub program_image_num_words: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TrustedProgramHints<PCS: CommitmentScheme> {
     pub program_image_hint: PCS::OpeningProofHint,
 }

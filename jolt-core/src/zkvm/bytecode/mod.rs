@@ -23,7 +23,7 @@ pub struct TrustedBytecodeCommitments<PCS: CommitmentScheme> {
     pub bytecode_T: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TrustedBytecodeHints<PCS: CommitmentScheme> {
     pub hints: Vec<PCS::OpeningProofHint>,
 }

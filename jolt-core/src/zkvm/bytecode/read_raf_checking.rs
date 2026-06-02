@@ -45,7 +45,7 @@ use crate::{
             NUM_CIRCUIT_FLAGS,
         },
         lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
-        program::ProgramPreprocessing,
+        program::{FullProgramPreprocessing, ProgramPreprocessing},
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -826,6 +826,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     ) -> Self {
         let params = BytecodeReadRafSumcheckParams::gen(
             program,
+            None,
             n_cycle_vars,
             one_hot_params,
             opening_accumulator,
@@ -1621,6 +1622,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen<PCS: CommitmentScheme>(
         program: &ProgramPreprocessing<PCS>,
+        materialized_program: Option<&FullProgramPreprocessing>,
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
@@ -1652,7 +1654,14 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         // full bytecode table is available. The proxy committed path only needs staged
         // `Val_s(r_bc)` openings, so keep the placeholder MLEs tiny instead of allocating
         // length-K zero buffers that will never be uploaded or evaluated on Rust.
-        let val_polys = if let Ok(program) = program.as_full() {
+        let program_source = match program_mode {
+            ProgramMode::Full => match program {
+                ProgramPreprocessing::Full(full) => Some(full),
+                ProgramPreprocessing::Committed(_) => unreachable!("program_mode checked above"),
+            },
+            ProgramMode::Committed => materialized_program,
+        };
+        let val_polys = if let Some(program) = program_source {
             let r_register_4 = opening_accumulator
                 .get_virtual_polynomial_opening(
                     VirtualPolynomial::RdWa,

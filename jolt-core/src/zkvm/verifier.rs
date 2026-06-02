@@ -27,7 +27,7 @@ use crate::zkvm::bytecode::chunks::{
 };
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::{OneHotParams, ProgramMode};
-use crate::zkvm::program::{ProgramMetadata, ProgramPreprocessing};
+use crate::zkvm::program::{CommittedProgramProverData, ProgramMetadata, ProgramPreprocessing};
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 #[cfg(feature = "zk")]
@@ -2174,7 +2174,10 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
         memory_layout: MemoryLayout,
         max_padded_trace_length: usize,
         bytecode_chunk_count: usize,
-    ) -> JoltSharedPreprocessing<PCS> {
+    ) -> (
+        JoltSharedPreprocessing<PCS>,
+        CommittedProgramProverData<PCS>,
+    ) {
         let bytecode_len = program.bytecode_len();
         assert!(
             is_valid_committed_bytecode_chunking_for_len(bytecode_len, bytecode_chunk_count),
@@ -2191,14 +2194,15 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
         };
         let (max_total_vars, max_log_k_chunk) = shared.compute_max_total_vars(true);
         let generators = PCS::setup_prover(max_total_vars);
-        shared.program = shared.program.commit(
+        let (committed_program, prover_data) = shared.program.commit(
             &shared.memory_layout,
             &generators,
             shared.bytecode_chunk_count,
             max_log_k_chunk,
         );
+        shared.program = committed_program;
         shared.program_meta = shared.program.meta();
-        shared
+        (shared, prover_data)
     }
 
     pub fn is_committed_mode(&self) -> bool {

@@ -593,7 +593,13 @@ impl MacroBuilder {
             pub fn #preprocess_shared_committed_fn_name(
                 program: &mut dyn jolt::host::JoltProgramSource,
                 bytecode_chunk_count: usize,
-            ) -> Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
+            ) -> Result<
+                (
+                    jolt::JoltSharedPreprocessing,
+                    jolt::CommittedProgramProverData<jolt::PCS>,
+                ),
+                jolt::PreprocessingError,
+            >
             {
                 #imports
 
@@ -611,14 +617,14 @@ impl MacroBuilder {
 
                 let program_data =
                     jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
-                let shared_preprocessing = JoltSharedPreprocessing::new_committed(
+                let (shared_preprocessing, committed_program_prover_data) = JoltSharedPreprocessing::new_committed(
                     program_data,
                     memory_layout,
                     #max_trace_length,
                     bytecode_chunk_count,
                 );
 
-                Ok(shared_preprocessing)
+                Ok((shared_preprocessing, committed_program_prover_data))
             }
         }
     }
@@ -666,9 +672,12 @@ impl MacroBuilder {
                 >
             {
                 #imports
-                let shared_preprocessing =
+                let (shared_preprocessing, committed_program_prover_data) =
                     #preprocess_shared_committed_fn_name(program, bytecode_chunk_count)?;
-                Ok(JoltProverPreprocessing::new(shared_preprocessing))
+                Ok(JoltProverPreprocessing::new_committed(
+                    shared_preprocessing,
+                    committed_program_prover_data,
+                ))
             }
         }
     }

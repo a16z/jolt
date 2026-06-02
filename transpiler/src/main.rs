@@ -301,7 +301,6 @@ fn main() {
                     meta: committed.meta.clone(),
                     bytecode_commitments,
                     program_commitments,
-                    prover_data: None,
                 })
             }
         };
