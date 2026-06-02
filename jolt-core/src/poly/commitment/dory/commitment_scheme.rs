@@ -19,6 +19,7 @@ use crate::{
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use dory::primitives::{
     arithmetic::{Field as DoryField, Group, PairingCurve},
     poly::Polynomial,
@@ -30,7 +31,7 @@ use tracing::trace_span;
 #[derive(Clone)]
 pub struct DoryCommitmentScheme;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DoryOpeningProofHint {
     row_commitments: Vec<ArkG1>,
     commit_blind: ArkFr,

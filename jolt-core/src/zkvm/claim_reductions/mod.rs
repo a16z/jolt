@@ -15,10 +15,9 @@ pub use advice::{
 pub use bytecode::{
     BytecodeClaimReductionParams, BytecodeClaimReductionProver, BytecodeClaimReductionVerifier,
 };
-pub use hamming_weight::{
-    HammingWeightClaimReductionParams, HammingWeightClaimReductionProver,
-    HammingWeightClaimReductionVerifier,
-};
+#[cfg(feature = "prover")]
+pub use hamming_weight::HammingWeightClaimReductionProver;
+pub use hamming_weight::{HammingWeightClaimReductionParams, HammingWeightClaimReductionVerifier};
 pub use increments::{
     IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
     IncClaimReductionSumcheckVerifier,
@@ -30,7 +29,8 @@ pub use instruction_lookups::{
 pub use precommitted::{
     permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
     precommitted_sumcheck_inverse_index_permutation, PrecommittedClaimReduction,
-    PrecommittedParams, PrecommittedPhase, PrecommittedSchedulingReference, TWO_PHASE_DEGREE_BOUND,
+    PrecommittedParams, PrecommittedPhase, PrecommittedPolynomial, PrecommittedSchedulingReference,
+    TWO_PHASE_DEGREE_BOUND,
 };
 pub use program_image::{
     ProgramImageClaimReductionParams, ProgramImageClaimReductionProver,
