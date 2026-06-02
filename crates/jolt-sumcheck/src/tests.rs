@@ -1203,7 +1203,7 @@ fn committed_rounds_reject_degree_bound_before_absorbing() {
         degree: 3,
     }];
     let mut transcript = Blake2bTranscript::<F>::new(b"committed-sumcheck");
-    let before = *transcript.state();
+    let before = transcript.state();
 
     let result = SumcheckVerifier::verify_committed_round_consistency(
         SumcheckStatement::new(1, 2),
@@ -1215,7 +1215,7 @@ fn committed_rounds_reject_degree_bound_before_absorbing() {
         result,
         Err(SumcheckError::DegreeBoundExceeded { got: 3, max: 2 })
     ));
-    assert_eq!(*transcript.state(), before);
+    assert_eq!(transcript.state(), before);
 }
 
 #[test]
@@ -1289,7 +1289,7 @@ fn committed_proof_rejects_bad_round_before_output_claims() {
         },
     };
     let mut transcript = Blake2bTranscript::<F>::new(b"committed-proof");
-    let before = *transcript.state();
+    let before = transcript.state();
 
     let result = proof.verify_committed_consistency(SumcheckStatement::new(1, 2), &mut transcript);
 
@@ -1297,7 +1297,7 @@ fn committed_proof_rejects_bad_round_before_output_claims() {
         result,
         Err(SumcheckError::DegreeBoundExceeded { got: 3, max: 2 })
     ));
-    assert_eq!(*transcript.state(), before);
+    assert_eq!(transcript.state(), before);
 }
 
 #[test]

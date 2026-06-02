@@ -1,64 +1,58 @@
-//! Fiat-Shamir transcript implementations for [Jolt](https://github.com/a16z/jolt).
+//! Fiat-Shamir transcripts for Jolt, backed by spongefish.
 //!
-//! This crate provides hash-based Fiat-Shamir transcripts that convert
-//! interactive proof protocols into non-interactive ones. The transcript
-//! maintains a 256-bit running state, absorbs prover messages via hashing,
-//! and squeezes deterministic challenges for the verifier.
+//! Two surfaces:
 //!
-//! # Traits
+//! - **Split spongefish-native traits** ([`ProverTranscript`],
+//!   [`VerifierTranscript`], [`OptimizedChallenge`]) — implemented directly
+//!   on `spongefish::ProverState` / `spongefish::VerifierState`. Use these
+//!   for new code.
+//! - **Source-compatible facade** ([`Transcript`], [`AppendToTranscript`],
+//!   [`Blake2bTranscript`], [`KeccakTranscript`], [`PoseidonTranscript`]) —
+//!   preserved for `jolt-sumcheck`, `jolt-openings`, and `jolt-crypto`. Will
+//!   be retired once `jolt-core` migrates to the split-trait surface.
 //!
-//! - [`Transcript`]: Main transcript trait — `new(label)`, `append_bytes(bytes)`,
-//!   `append(value)`, `challenge()`, `challenge_vector(len)`, `state()`.
-//! - [`AppendToTranscript`]: For types that can be absorbed into a transcript.
-//!
-//! # Implementations
-//!
-//! Hash backends use a `state || round_counter` domain separation scheme and
-//! delegate field-family challenge decoding to `TranscriptChallenge`.
-//!
-//! - [`Blake2bTranscript`]: Uses Blake2b-256. Default choice for Jolt proofs.
-//! - [`KeccakTranscript`]: Uses Keccak-256. EVM-compatible for on-chain verification.
-//! - [`PoseidonTranscript`]: Uses Poseidon over BN254 when the `poseidon` feature is enabled.
-//!
-//! # Dependency position
-//!
-//! Depends on `jolt-field` for field challenge decoding and transcript
-//! absorption. The `poseidon` feature enables BN254/Poseidon dependencies.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use jolt_transcript::{Transcript, Blake2bTranscript};
-//! use jolt_field::{FromPrimitiveInt, Fr};
-//!
-//! let mut transcript = Blake2bTranscript::<Fr>::new(b"my_protocol");
-//!
-//! // Absorb field elements using append (AppendToTranscript)
-//! let value = Fr::from_u64(42);
-//! transcript.append(&value);
-//!
-//! // Absorb raw bytes directly
-//! transcript.append_bytes(b"raw bytes");
-//!
-//! // Squeeze a challenge — returns Fr directly
-//! let challenge: Fr = transcript.challenge();
-//! ```
+//! Three sponges feature-gated: `transcript-blake2b` (spongefish
+//! `Blake2b512`), `transcript-keccak` (spongefish `Keccak`),
+//! `transcript-poseidon` (local Circom-compatible BN254 [`PoseidonSponge`]).
 
 #![deny(missing_docs)]
 
-mod blake2b;
-mod blanket;
-mod digest;
-pub mod domain;
-mod keccak;
-#[cfg(feature = "poseidon")]
+mod codec;
+mod legacy;
+#[cfg(feature = "transcript-poseidon")]
 mod poseidon;
-mod transcript;
+mod prover;
+mod setup;
+mod verifier;
 
-pub use blake2b::Blake2bTranscript;
-pub use digest::DigestTranscript;
-pub use domain::{Label, LabelWithCount, U64Word};
-pub use keccak::KeccakTranscript;
-#[cfg(feature = "poseidon")]
-pub use poseidon::PoseidonTranscript;
-pub use transcript::{AppendToTranscript, Transcript};
+pub use codec::BytesMsg;
+pub use legacy::{
+    AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word, MAX_LABEL_LEN,
+};
+pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
+
+/// Source-compatible re-exports of legacy label / count / word helpers
+/// under their `jolt_transcript::domain::*` path (matches the path used
+/// by jolt-dory and earlier modular consumers).
+pub mod domain {
+    pub use crate::legacy::{Label, LabelWithCount, U64Word};
+}
+
+#[cfg(feature = "transcript-poseidon")]
+pub use poseidon::PoseidonSponge;
+pub use prover::{OptimizedChallenge, ProverTranscript};
+pub use verifier::VerifierTranscript;
+
+/// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge).
+#[cfg(feature = "transcript-blake2b")]
+pub type Blake2bTranscript<F = jolt_field::Fr> =
+    SpongeTranscript<spongefish::instantiations::Blake2b512, F>;
+
+/// Fiat-Shamir transcript backed by Keccak-f1600 (spongefish duplex sponge).
+#[cfg(feature = "transcript-keccak")]
+pub type KeccakTranscript<F = jolt_field::Fr> =
+    SpongeTranscript<spongefish::instantiations::Keccak, F>;
+
+/// Fiat-Shamir transcript backed by Circom-compatible BN254 Poseidon.
+#[cfg(feature = "transcript-poseidon")]
+pub type PoseidonTranscript<F = jolt_field::Fr> = SpongeTranscript<PoseidonSponge, F>;

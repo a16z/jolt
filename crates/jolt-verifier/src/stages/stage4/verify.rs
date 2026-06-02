@@ -835,8 +835,8 @@ mod tests {
             Fr::from_u64(0)
         }
 
-        fn state(&self) -> &[u8; 32] {
-            &self.state
+        fn state(&self) -> [u8; 32] {
+            self.state
         }
     }
 

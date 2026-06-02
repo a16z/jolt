@@ -5,6 +5,7 @@ pub mod soundness;
 pub mod source_to_jolt_expansion_equivalence;
 pub mod split_eq_bind;
 pub mod synthesis;
+pub mod transcript_symmetry;
 
 use std::fmt;
 
@@ -137,6 +138,9 @@ pub enum JoltInvariants {
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
     FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),
     Soundness(soundness::SoundnessInvariant),
+    TranscriptConsistencyBlake2b(transcript_symmetry::TranscriptConsistencyBlake2bInvariant),
+    TranscriptConsistencyKeccak(transcript_symmetry::TranscriptConsistencyKeccakInvariant),
+    TranscriptConsistencyPoseidon(transcript_symmetry::TranscriptConsistencyPoseidonInvariant),
     SourceToJoltExpansionEquivalence(
         source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
     ),
@@ -149,6 +153,9 @@ macro_rules! dispatch {
             JoltInvariants::SplitEqBindHighLow($inv) => $body,
             JoltInvariants::FieldMulScalar($inv) => $body,
             JoltInvariants::Soundness($inv) => $body,
+            JoltInvariants::TranscriptConsistencyBlake2b($inv) => $body,
+            JoltInvariants::TranscriptConsistencyKeccak($inv) => $body,
+            JoltInvariants::TranscriptConsistencyPoseidon($inv) => $body,
             JoltInvariants::SourceToJoltExpansionEquivalence($inv) => $body,
         }
     };
@@ -161,6 +168,15 @@ impl JoltInvariants {
             Self::SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
             Self::FieldMulScalar(field_mul_scalar::FieldMulScalarInvariant),
             Self::Soundness(soundness::SoundnessInvariant),
+            Self::TranscriptConsistencyBlake2b(
+                transcript_symmetry::TranscriptConsistencyBlake2bInvariant,
+            ),
+            Self::TranscriptConsistencyKeccak(
+                transcript_symmetry::TranscriptConsistencyKeccakInvariant,
+            ),
+            Self::TranscriptConsistencyPoseidon(
+                transcript_symmetry::TranscriptConsistencyPoseidonInvariant,
+            ),
             Self::SourceToJoltExpansionEquivalence(
                 source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
             ),
