@@ -8,6 +8,12 @@ jolt-core = { workspace = true, features = ["host"] }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
+jolt-transcript = { workspace = true, features = [
+  "transcript-blake2b",
+  "transcript-keccak",
+  "transcript-poseidon",
+] }
+spongefish = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
 
@@ -28,7 +34,7 @@ enumset = "1"
 schemars = "1.2"
 tempfile = "3"
 
-rust-code-analysis = "0.0.24"
+rust-code-analysis = "0.0.25"
 
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }

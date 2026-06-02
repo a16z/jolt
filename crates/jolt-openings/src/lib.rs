@@ -6,8 +6,9 @@
 //!
 //! # Design
 //!
-//! - **Stateless.** No accumulators. Claims are plain data ([`ProverClaim`],
-//!   [`VerifierClaim`]) collected by the caller in `Vec`s.
+//! - **Stateless.** No accumulators. Claims are plain data
+//!   ([`ProverOpeningClaim`], [`VerifierOpeningClaim`]) collected by the caller
+//!   in `Vec`s.
 //! - **Reduction is separate from proving.** [`reduce_prover`] /
 //!   [`reduce_verifier`] transform claims (many → fewer) via RLC.
 //!   The PCS opens the reduced claims.
@@ -35,7 +36,7 @@ pub mod mock;
 mod reduction;
 mod schemes;
 
-pub use claims::{ProverClaim, VerifierClaim};
+pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 

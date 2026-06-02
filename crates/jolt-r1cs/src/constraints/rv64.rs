@@ -10,8 +10,8 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=34]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | `[35..=36]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[1..=35]` | R1CS inputs (registers, flags, PC, lookups) |
+//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
@@ -68,11 +68,166 @@ pub const NUM_EQ_CONSTRAINTS: usize = 19;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
 
+pub const fn const_column() -> usize {
+    V_CONST
+}
+
+pub const fn input_column(input_index: usize) -> Option<usize> {
+    if input_index < NUM_R1CS_INPUTS {
+        Some(1 + input_index)
+    } else {
+        None
+    }
+}
+
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
-use crate::constraint::SparseRow;
+use crate::constraint::{ConstraintMatrixEvalError, SparseRow};
+use jolt_claims::protocols::jolt::{
+    formulas::spartan::{
+        SpartanOuterClaimError, SpartanOuterDimensions, SpartanOuterLinearForms,
+        SpartanOuterRemainderPlan,
+    },
+    SpartanOuterPublic,
+};
 use jolt_field::Field;
+use thiserror::Error as ThisError;
+
+type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
+
+/// Errors while deriving the RV64 Spartan outer remainder claim.
+#[derive(Clone, Debug, ThisError, PartialEq, Eq)]
+pub enum Rv64SpartanOuterRemainderError {
+    /// The remainder proof did not produce the stream-selector challenge.
+    #[error("missing Spartan outer remainder stream challenge")]
+    MissingStreamChallenge,
+    /// A `jolt-claims` Spartan outer formula parameter was invalid.
+    #[error("{0}")]
+    Claim(#[from] SpartanOuterClaimError),
+    /// The RV64 R1CS input cannot be represented by a matrix column.
+    #[error("R1CS input index {index} has no matrix column")]
+    MissingInputColumn {
+        /// R1CS input index.
+        index: usize,
+    },
+    /// R1CS matrix evaluation failed.
+    #[error("{0}")]
+    Matrix(#[from] ConstraintMatrixEvalError),
+    /// The provided opening vector did not match the expected R1CS input count.
+    #[error("opening length mismatch: expected {expected}, got {got}")]
+    OpeningLengthMismatch {
+        /// Expected number of input openings.
+        expected: usize,
+        /// Actual number of input openings.
+        got: usize,
+    },
+    /// RV64 equality rows should not contribute to the C linear form.
+    #[error("RV64 equality rows unexpectedly contribute to the C linear form")]
+    UnexpectedCContribution,
+}
+
+/// Coefficients needed to evaluate the RV64 Spartan outer remainder claim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rv64SpartanOuterRemainder<F: Field> {
+    tau_kernel: F,
+    linear_forms: SpartanOuterLinearForms<F>,
+}
+
+/// Fiat-Shamir challenges used to derive the RV64 Spartan outer remainder claim.
+#[derive(Clone, Copy, Debug)]
+pub struct Rv64SpartanOuterRemainderChallenges<'a, F> {
+    pub tau: &'a [F],
+    pub uniskip: F,
+    pub remainder: &'a [F],
+}
+
+impl<F: Field> Rv64SpartanOuterRemainder<F> {
+    /// Derives the verifier-side remainder claim coefficients for RV64.
+    pub fn new(
+        dimensions: &SpartanOuterDimensions,
+        challenges: Rv64SpartanOuterRemainderChallenges<'_, F>,
+    ) -> Result<Self, Rv64SpartanOuterRemainderError> {
+        let plan = SpartanOuterRemainderPlan::from_dimensions(dimensions);
+        let Some((&r_stream, _)) = challenges.remainder.split_first() else {
+            return Err(Rv64SpartanOuterRemainderError::MissingStreamChallenge);
+        };
+
+        let row_weights = plan.row_weights(challenges.uniskip, r_stream)?;
+        let input_indices = plan.r1cs_input_indices()?;
+        let columns: Vec<_> = input_indices
+            .into_iter()
+            .map(|index| {
+                input_column(index)
+                    .ok_or(Rv64SpartanOuterRemainderError::MissingInputColumn { index })
+            })
+            .collect::<Result<_, _>>()?;
+
+        let matrices = rv64_spartan_outer_constraints::<F>();
+        let weighted = matrices.weighted_columns(&row_weights, &columns)?;
+        let constant_contributions =
+            matrices.public_column_contributions(&row_weights, const_column(), F::one())?;
+        if !constant_contributions.c.is_zero() {
+            return Err(Rv64SpartanOuterRemainderError::UnexpectedCContribution);
+        }
+        let tau_kernel =
+            plan.tau_kernel(challenges.tau, challenges.uniskip, challenges.remainder)?;
+
+        Ok(Self {
+            tau_kernel,
+            linear_forms: SpartanOuterLinearForms {
+                az_coefficients: weighted.a,
+                bz_coefficients: weighted.b,
+                az_constant: constant_contributions.a,
+                bz_constant: constant_contributions.b,
+            },
+        })
+    }
+
+    /// Evaluates the expected unbatched output claim from ordered R1CS openings.
+    pub fn expected_output_claim(
+        &self,
+        r1cs_input_openings: &[F],
+    ) -> Result<F, Rv64SpartanOuterRemainderError> {
+        let expected = self.linear_forms.az_coefficients.len();
+        if r1cs_input_openings.len() != expected {
+            return Err(Rv64SpartanOuterRemainderError::OpeningLengthMismatch {
+                expected,
+                got: r1cs_input_openings.len(),
+            });
+        }
+
+        Ok(self.tau_kernel
+            * eval_linear_form(
+                &self.linear_forms.az_coefficients,
+                self.linear_forms.az_constant,
+                r1cs_input_openings,
+            )
+            * eval_linear_form(
+                &self.linear_forms.bz_coefficients,
+                self.linear_forms.bz_constant,
+                r1cs_input_openings,
+            ))
+    }
+
+    pub fn public_claims(
+        &self,
+        dimensions: &SpartanOuterDimensions,
+    ) -> Result<Vec<(SpartanOuterPublic, F)>, Rv64SpartanOuterRemainderError> {
+        SpartanOuterRemainderPlan::from_dimensions(dimensions)
+            .public_claims(self.tau_kernel, &self.linear_forms)
+            .map_err(Into::into)
+    }
+}
+
+fn eval_linear_form<F: Field>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
+    coefficients
+        .iter()
+        .zip(inputs)
+        .fold(constant, |acc, (&coefficient, &input)| {
+            acc + coefficient * input
+        })
+}
 
 /// Helper: sparse row from `[(variable_index, coefficient)]` pairs.
 ///
@@ -104,18 +259,10 @@ fn row_wide<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
         .collect()
 }
 
-/// Build the Jolt RV64 R1CS constraint matrices.
-///
-/// Returns 22 constraints over 38 variables per cycle:
-/// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
-/// - 3 product: `left · right = output` → A=left, B=right, C=output
-///
-/// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
-/// product factors at 36–37).
-pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
-    let mut a_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
-    let mut b_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
-    let mut c_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_CONSTRAINTS_PER_CYCLE);
+fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
+    let mut a_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
+    let mut b_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
+    let mut c_rows: Vec<SparseRow<F>> = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
 
     let empty = || Vec::new();
 
@@ -357,6 +504,14 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     ]));
     c_rows.push(empty());
 
+    (a_rows, b_rows, c_rows)
+}
+
+fn append_product_constraints<F: Field>(
+    a_rows: &mut Vec<SparseRow<F>>,
+    b_rows: &mut Vec<SparseRow<F>>,
+    c_rows: &mut Vec<SparseRow<F>>,
+) {
     // Product constraints (19-21)
     // Form: left · right = output  →  A=left, B=right, C=output
 
@@ -374,6 +529,39 @@ pub fn rv64_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
+}
+
+/// Build only the Jolt RV64 equality-conditional constraints.
+///
+/// Returns the 19 rows with form `guard · (left - right) = 0`, over the
+/// standard 38-variable per-cycle witness layout. Product constraints are
+/// intentionally excluded for consumers that handle multiplication checks in
+/// a separate protocol step.
+pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+    let (a_rows, b_rows, c_rows) = rv64_eq_constraint_rows();
+    crate::ConstraintMatrices::new(
+        NUM_EQ_CONSTRAINTS,
+        NUM_VARS_PER_CYCLE,
+        a_rows,
+        b_rows,
+        c_rows,
+    )
+}
+
+/// Build the full Jolt RV64 R1CS constraint matrices.
+///
+/// Returns 22 constraints over 38 variables per cycle:
+/// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
+/// - 3 product: `left · right = output` → A=left, B=right, C=output
+///
+/// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
+/// product factors at 36–37).
+pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+    let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
+    a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
+    b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
+    c_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
+    append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
 
     crate::ConstraintMatrices::new(
         NUM_CONSTRAINTS_PER_CYCLE,
@@ -407,7 +595,7 @@ mod tests {
 
     #[test]
     fn noop_satisfies_constraints() {
-        let matrices = rv64_constraints::<Fr>();
+        let matrices = rv64_trace_constraints::<Fr>();
         assert_eq!(matrices.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
         assert_eq!(matrices.num_vars, NUM_VARS_PER_CYCLE);
         matrices
@@ -417,9 +605,80 @@ mod tests {
 
     #[test]
     fn constraint_count() {
-        let matrices = rv64_constraints::<Fr>();
+        let matrices = rv64_trace_constraints::<Fr>();
         assert_eq!(matrices.a.len(), 22);
         assert_eq!(matrices.b.len(), 22);
         assert_eq!(matrices.c.len(), 22);
+    }
+
+    #[test]
+    fn spartan_outer_constraints_plus_product_constraints_match_full_constraints() {
+        let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows::<Fr>();
+        append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
+        let matrices = rv64_trace_constraints::<Fr>();
+
+        assert_eq!(matrices.a, a_rows);
+        assert_eq!(matrices.b, b_rows);
+        assert_eq!(matrices.c, c_rows);
+    }
+
+    #[test]
+    fn eq_constraint_public_column_has_no_c_contribution() {
+        let matrices = rv64_spartan_outer_constraints::<Fr>();
+        let row_weights = vec![Fr::from_u64(1); NUM_EQ_CONSTRAINTS];
+        let contributions = matrices
+            .public_column_contributions(&row_weights, const_column(), Fr::from_u64(1))
+            .expect("const column evaluates");
+
+        assert!(contributions.c.is_zero());
+    }
+
+    #[test]
+    fn outer_remainder_expected_claim_matches_public_coefficients() {
+        let dimensions = SpartanOuterDimensions::rv64(1);
+        let tau = [Fr::from_u64(0), Fr::from_u64(0), Fr::from_i64(-4)];
+        let remainder_challenges = [Fr::from_u64(0), Fr::from_u64(0)];
+        let formula = Rv64SpartanOuterRemainder::new(
+            &dimensions,
+            Rv64SpartanOuterRemainderChallenges {
+                tau: &tau,
+                uniskip: Fr::from_i64(-4),
+                remainder: &remainder_challenges,
+            },
+        )
+        .expect("remainder formula derives");
+        let openings = (1..=NUM_R1CS_INPUTS)
+            .map(|value| Fr::from_u64(value as u64))
+            .collect::<Vec<_>>();
+        let expected = formula
+            .expected_output_claim(&openings)
+            .expect("opening length matches");
+
+        let mut reconstructed = Fr::zero();
+        for (public, value) in formula
+            .public_claims(&dimensions)
+            .expect("public coefficients derive")
+        {
+            reconstructed += match public {
+                SpartanOuterPublic::QuadraticCoefficient { left, right } => {
+                    value * openings[left] * openings[right]
+                }
+                SpartanOuterPublic::LinearCoefficient(index) => value * openings[index],
+                SpartanOuterPublic::ConstantCoefficient => value,
+            };
+        }
+
+        assert_eq!(expected, reconstructed);
+    }
+
+    #[test]
+    fn input_columns_follow_const_then_inputs_layout() {
+        assert_eq!(const_column(), V_CONST);
+        assert_eq!(input_column(0), Some(V_LEFT_INSTRUCTION_INPUT));
+        assert_eq!(
+            input_column(NUM_R1CS_INPUTS - 1),
+            Some(V_FLAG_IS_LAST_IN_SEQUENCE)
+        );
+        assert_eq!(input_column(NUM_R1CS_INPUTS), None);
     }
 }

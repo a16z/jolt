@@ -24,7 +24,7 @@
 
 use jolt_field::{Fr, ReducingBytes};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
+use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
@@ -114,9 +114,10 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let mut verifier_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
-    let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>>(
+    let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &round_proofs,
+        BooleanHypercube,
         &mut verifier_transcript,
     );
 

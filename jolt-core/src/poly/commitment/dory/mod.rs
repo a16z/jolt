@@ -13,7 +13,7 @@ mod tests;
 
 #[cfg(feature = "zk")]
 pub use commitment_scheme::bind_opening_inputs_zk;
-pub use commitment_scheme::{bind_opening_inputs, DoryCommitmentScheme};
+pub use commitment_scheme::{bind_opening_inputs, DoryCommitmentScheme, DoryOpeningProofHint};
 pub use dory_globals::{DoryContext, DoryGlobals, DoryLayout};
 pub use jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 pub use wrappers::{

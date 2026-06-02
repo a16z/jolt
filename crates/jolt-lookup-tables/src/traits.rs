@@ -1,6 +1,7 @@
 //! Lookup-table-related traits.
 
 use jolt_field::Field;
+use jolt_riscv::{JoltInstruction, JoltInstructionRowData};
 use std::fmt::Debug;
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -28,6 +29,28 @@ pub trait LookupTable: Clone + Debug + Send + Sync {
 pub trait InstructionLookupTable<const XLEN: usize> {
     fn lookup_table(&self) -> Option<LookupTableKind<XLEN>>;
 }
+
+macro_rules! impl_jolt_instruction_lookup_table {
+    (
+        instructions: [$($kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        impl<const XLEN: usize, T: JoltInstructionRowData> InstructionLookupTable<XLEN>
+            for JoltInstruction<T>
+        {
+            #[inline]
+            fn lookup_table(&self) -> Option<LookupTableKind<XLEN>> {
+                match self {
+                    JoltInstruction::Noop(_) => None,
+                    $(
+                        JoltInstruction::$variant(instruction) => instruction.lookup_table(),
+                    )*
+                }
+            }
+        }
+    };
+}
+
+jolt_riscv::for_each_jolt_instruction_kind!(impl_jolt_instruction_lookup_table);
 
 macro_rules! impl_lookup_table {
     ($instr:ident, Some($table:ident)) => {
@@ -83,4 +106,24 @@ pub trait LookupQuery<const XLEN: usize> {
 
     /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_riscv::{
+        instructions::{Add, Ld, Noop},
+        JoltInstructionRow,
+    };
+
+    #[test]
+    fn aggregate_instruction_dispatches_lookup_table() {
+        let add = JoltInstruction::Add(Add(JoltInstructionRow::default()));
+        let load = JoltInstruction::Ld(Ld(JoltInstructionRow::default()));
+        let noop = JoltInstruction::Noop(Noop(JoltInstructionRow::default()));
+
+        assert!(InstructionLookupTable::<64>::lookup_table(&add).is_some());
+        assert!(InstructionLookupTable::<64>::lookup_table(&load).is_none());
+        assert!(InstructionLookupTable::<64>::lookup_table(&noop).is_none());
+    }
 }

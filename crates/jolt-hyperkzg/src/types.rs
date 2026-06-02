@@ -45,6 +45,13 @@ impl<P: PairingGroup> Eq for HyperKZGCommitment<P> {}
 
 impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZGCommitment<P> {
     #[inline]
+    fn add(c1: &Self, c2: &Self) -> Self {
+        Self {
+            point: <P::G1 as HomomorphicCommitment<F>>::add(&c1.point, &c2.point),
+        }
+    }
+
+    #[inline]
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
         Self {
             point: HomomorphicCommitment::linear_combine(&c1.point, &c2.point, scalar),
@@ -55,7 +62,7 @@ impl<P: PairingGroup, F: jolt_field::Field> HomomorphicCommitment<F> for HyperKZ
 impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
     fn default() -> Self {
         Self {
-            point: P::G1::identity(),
+            point: <P::G1 as JoltGroup>::identity(),
         }
     }
 }
@@ -66,7 +73,7 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
 /// - `w`: KZG witness commitments for the three evaluation points `[r, -r, r^2]`
 /// - `v`: evaluations of all intermediate polynomials at the three points
 ///   (`v[t][k]` = polynomial k evaluated at point t)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "P::G1: Serialize, P::ScalarField: Serialize",
     deserialize = "P::G1: for<'a> Deserialize<'a>, P::ScalarField: for<'a> Deserialize<'a>"
