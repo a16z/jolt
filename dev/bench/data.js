@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780410752088,
+  "lastUpdate": 1780414196463,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -108994,6 +108994,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865932,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "62744899+shreyas-londhe@users.noreply.github.com",
+            "name": "Shreyas Londhe",
+            "username": "shreyas-londhe"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "79df8e6ad9b2bdc668a31b6f5740e3630e36c867",
+          "message": "spec: port jolt-transcript to spongefish (#1455)\n\n* spec: port jolt-transcript to spongefish\n\n* spec: narrow scope to crates/jolt-transcript internal port\n\n* spec: narrow jolt-transcript port to crate-only with compat layer\n\n* spec: resolve implementation ambiguities found in analyze-spec review\n\nConcrete field type (ark_bn254::Fr) named for all decoders. Compat\nfacade trait bound requirements (Default + Clone + Sync + Send + 'static)\nmade explicit. Test command gains feature flags for all three sponges.\nInvariant struct shape clarified as three concrete structs (not generic)\nmatching the JoltInvariants dispatch pattern. JoltInvariants enum update\nadded to jolt-eval acceptance criteria.\n\n* feat(jolt-transcript): port internals to spongefish 0.7\n\nReasons:\n- Establish spongefish-native ProverTranscript/VerifierTranscript split\n  surface on top of spongefish::ProverState / VerifierState so future\n  jolt-core, dory, and gnark transpiler migrations land on a single\n  Fiat-Shamir construction owned by this crate.\n- Replace the hand-rolled digest-based transcript with a duplex sponge\n  to get NARG byte strings, DomainSeparator-based protocol-id/session/\n  instance binding, and check_eof rejection of trailing proof bytes.\n- Add a Circom-compatible BN254 Poseidon sponge (rate-2 capacity-1 over\n  light-poseidon::Poseidon::new_circom(3), byte-driven via 31-byte LE\n  chunks) so the gnark verifier follow-up can recompute the same\n  challenge stream.\n\nLayout: flat crates/jolt-transcript/src/ (lib, domain, codec, prover,\nverifier, poseidon, compat). The compat module preserves the legacy\nTranscript / AppendToTranscript / Label / LabelWithCount / U64Word\nsurface for jolt-sumcheck, jolt-openings, and jolt-crypto and routes\nTranscript::new(label) through the same DomainSeparator builder as the\nsplit traits.\n\nPer-sponge challenge-width contract: Blake2b and Keccak expose both a\n128-bit-truncating OptimizedChallenge::challenge_128 and a full-field\nFieldEl decoder; PoseidonSponge has no OptimizedChallenge impl, so the\n128-bit method on a Poseidon-backed state is a compile error.\n\nKnown-vector tests pin the absolute Fr challenge value per backend for\nnew(b\"Jolt\") + append_bytes(12345u64.to_be_bytes()) so any accidental\nencoding change (PROTOCOL_ID, session encoding, append_bytes layout,\nchallenge decoder) flips the pinned bytes.\n\n* feat(jolt-eval): add transcript_prover_verifier_consistency invariant\n\nReasons:\n- Provide an in-tree mechanical correctness gauge for the new\n  jolt-transcript spongefish wiring, since jolt-core does not yet\n  exercise the new ProverTranscript / VerifierTranscript surface and\n  the muldiv e2e only touches the compat facade.\n- The differential check (prover/verifier pair driven by the same\n  operation sequence must round-trip every prover_message and agree on\n  every verifier_message) directly mechanises the sponge-symmetry\n  invariant declared in the spec, and any future encoding regression\n  in BytesMsg, FieldEl, or the DomainSeparator routing will surface\n  here without waiting for a full e2e run.\n\nAdds three concrete Invariant structs (one per sponge) sharing an Op\nenum that covers PublicBytes, PublicScalar, ProverBytes, ProverScalar,\nand Challenge. Pattern follows SplitEqBindLowHigh / SplitEqBindHighLow\nsince the #[invariant] macro does not support generics. Seed corpus\ncovers empty, single-message per variant, 10-message mixed, and\n1000-message mixed. Fuzz targets compile against libfuzzer-sys.\n\nAlso fixes sync_targets.sh to (a) skip the macro_tests module and\n(b) match struct names containing digits (e.g. TranscriptConsistency\nBlake2bInvariant).\n\n* spec: mark jolt-transcript-spongefish status implemented\n\n* fix(ci): rustfmt, taplo, and pin generic-array 0.14.7\n\n- rustfmt: post-merge files reformatted (line-wrapping diffs in lib.rs,\n  prover.rs, setup.rs, transcript_symmetry.rs).\n- taplo: 2-space indentation on Cargo.toml feature lists.\n- Cargo.lock: pin `generic-array` to 0.14.7 (matches upstream main's\n  lock). The fresh resolution after the upstream merge pulled in\n  0.14.9, whose new `as_slice` deprecation tripped clippy's\n  `-D warnings` against jolt-inlines-p256 even though that crate is\n  unchanged.\n- transcript_symmetry.rs: expand the 3-arg `transcript_invariant!`\n  macro into three explicit impls. rustfmt cycles indentation inside\n  `#[doc = concat!(...)]` macro arms on each run, so the macro form\n  failed `cargo fmt --check` deterministically; hand-written impls\n  avoid the unstable rustfmt path.\n\n* fix(jolt-transcript): generic FieldEl and guard BytesMsg length overflow\n\nAddress PR #1455 review:\n- Generalize FieldEl<F> / FieldElOptimized<F> over jolt-field traits\n  (CanonicalBytes for Encoding, ReducingBytes/FromPrimitiveInt for\n  Decoding) so the codec is not pinned to ark_bn254::Fr.\n- BytesMsg::deserialize_from_narg used `8 + len` directly, which wraps\n  on attacker-supplied len = u64::MAX and lets buf[8..8+len] panic\n  instead of returning VerificationError. Use checked_add and add a\n  regression test feeding u64::MAX.\n\n* perf(jolt-transcript): drop per-op peek_state cache in SpongeTranscript\n\nAddress PR #1455 review. SpongeTranscript cloned the entire sponge and\nsqueezed 32 bytes on every append_bytes / challenge to keep state()\nreturning a reference cheaply. For PoseidonSponge each clone re-ran\nPoseidon::new_circom(3), rebuilding BN254 x5 round constants per op.\n\nNo production caller of state() exists in this branch -- the method is\nonly used by debug-only cross-verifier comparisons. Change the Transcript\ntrait to return owned [u8; 32] and peek on demand inside state(),\nremoving the cache field and the per-op clone.\n\n* docs(jolt-transcript): note compat challenge() vs OptimizedChallenge divergence\n\nAddress PR #1455 review. compat::SpongeTranscript::challenge squeezes 16\nbytes uniformly across all sponges, including Poseidon, while the\nsplit-trait OptimizedChallenge in prover.rs is deliberately not\nimplemented for Poseidon (compile error). The divergence is intentional:\ncompat preserves the legacy jolt-core challenge width for in-flight\nconsumers and goes away once they migrate. Document the asymmetry inline\nso future readers don't treat compat as a bug.\n\n* fix(jolt-transcript): drop Encoding impl on FieldElOptimized to block silent NARG misuse\n\nAddress PR #1455 review. Spongefish 0.7's blanket\n`impl<T: Encoding<[u8]>> NargSerialize for T` (io.rs:62) meant\n`prover_message(&FieldElOptimized(f))` compiled silently, wrote 32 bytes\ninto the NARG, and the verifier had no `NargDeserialize` impl to read\nthem back — leaving the data orphaned and surfacing as a far-away\n`check_eof` failure. Drop the `Encoding` impl entirely so misuse fails\nat the call site. `FieldElOptimized` is verifier-message-only (Decoding\nvia squeeze), so no caller is affected.\n\n* refactor(jolt-transcript): drop Clone bound from compat::Transcript\n\nSpongefish deliberately makes prover state non-cloneable to prevent\nfork-and-resume of a Fiat-Shamir transcript. The compat facade trait\nrequired Clone, which defeated that mitigation at the API level.\n\nDrop the bound from compat::Transcript and remove the manual Clone\nimpl on SpongeTranscript. Removes test_clone_independence from the\nshared transcript test macro (no longer applicable).\n\nPer mmaker's review on a16z/jolt#1455.\n\n* refactor(jolt-transcript): drop FieldElOptimized, use spongefish u128 codec\n\n`FieldElOptimized<F>` and `UniformFrBytes` wrapped spongefish's u128\nabsorb path with our own newtype. The wrapper added indirection\nwithout behavior — spongefish's built-in `u128` codec encodes\nidentical bytes (16-byte LE) and decodes to the same truncated\nchallenge.\n\nDelete both wrappers from `codec.rs`. Collapse every\n`OptimizedChallenge` body in `prover.rs` and `verifier.rs` to\n`Fr::from(verifier_message::<u128>(self))`. Wire format preserved\nexactly — `to_le_bytes` is spongefish's u128 Encoding too.\n\n`FieldEl<F>` (full-field LE absorb / 64-byte uniform decode) stays —\nspongefish 0.7's `ark-ff` feature would pull in `ark-ff ^0.6`,\nincompatible with the workspace's pinned `ark-ff 0.5` fork.\n\nPer mmaker's review on a16z/jolt#1455.\n\n* refactor(jolt-transcript): rename `compat` module to `legacy`\n\nThe source-compatible facade (`Transcript`, `SpongeTranscript`,\n`AppendToTranscript`, `Label`, `LabelWithCount`, `U64Word`) is slated\nfor deletion once jolt-sumcheck / jolt-openings / jolt-crypto migrate\nto the native split-trait surface. Rename `mod compat` to `mod legacy`\nto advertise the lifecycle — \"compat\" implied a permanent\ncompatibility shim; \"legacy\" names what it is.\n\nInternal rename only — public API surface unchanged.\n\nPer mmaker's review on a16z/jolt#1455.\n\n* feat(jolt-transcript): native construction API — prover_transcript / verifier_transcript\n\nTwo positional factory functions plus one escape hatch:\n\n  prover_transcript(session: &[u8], instance: [u8; 32], sponge)\n      -> ProverState<H, StdRng>\n  verifier_transcript(session: &[u8], instance: [u8; 32], sponge, narg)\n      -> VerifierState<'_, H>\n  transcript_builder() -> DomainSeparator<WithoutInstance, WithoutSession>\n\n`instance: [u8; 32]` is positional and required. `transcript_builder()`\nexposes spongefish's `DomainSeparator` with PROTOCOL_ID pre-bound for\ncomposite verifiers (e.g. `BlindFold` sub-rounds) that need the full\ntype-state builder.\n\n`EmptyInstance` is retained in setup.rs for the legacy facade, which\nstill absorbs an empty instance step in its own constructor. The new\nfactory uses `InstanceDigest` internally for the 32-byte digest.\n\nUpdate jolt-eval transcript-symmetry invariant to the new shape with\na placeholder INSTANCE_DIGEST.\n\nPer mmaker's review on a16z/jolt#1455.\n\n* docs(jolt-transcript): check_eof contract + regression tests\n\nStrengthen the `VerifierTranscript::check_eof` doc-comment to spell\nout the malleability consequence of skipping it and the contract for\ncallers: invoke once at the end of the top-level verify function on\nthe success path; error paths skip it.\n\nAdd `tests/narg_eof_tests.rs` covering the regression: exact-NARG\nverifies, trailing 7 bytes / 1 byte rejects, unread prover messages\nreject. Add `tests/native_traits_tests.rs` covering the native\nsplit-trait surface (`ProverTranscript`, `VerifierTranscript`,\n`OptimizedChallenge`) — round-trip, 128-bit truncation, session and\ninstance domain separation — for Blake2b and Keccak backends.\n\nPer mmaker's review on a16z/jolt#1455.\n\n* chore(jolt-transcript): rename PROTOCOL_ID to drop \"spongefish\"\n\nPROTOCOL_ID should name the protocol, not the cryptographic substrate\nit runs on. Spongefish is the duplex-sponge framework we're built on;\nit's an implementation choice, not the identity of this transcript.\n\nChange `a16z/jolt-transcript/spongefish/v1` → `a16z/jolt-transcript/v1`.\n\nWire-format-breaking — PROTOCOL_ID is absorbed first, so every\ndownstream challenge shifts. Repin all four known-vector tests\n(Blake2b, Keccak, Poseidon, narg_eof PROTOCOL_ID byte check). Spec\ndoc updated to match.\n\nAcceptable here because the spongefish-based wire format isn't shipped yet.\n\n* refactor(jolt-transcript): drop FieldEl, use spongefish ark-ff codec\n\nDowngrade spongefish 0.7 → 0.6.1 and switch `[patch.crates-io]` → `[replace]`.\nSpongefish 0.6.1 requires `ark-ff ^0.5`, matching the workspace's pinned\n`a16z/arkworks-algebra@dev/twist-shout` fork (0.5.0); `[replace]`\noverrides by exact `name:version` so the spongefish-side transitive\nark-ff dep resolves to our fork, eliminating the multi-version skew that\nforced the local `FieldEl<F>` wrapper.\n\nEnable `spongefish/ark-ff` in jolt-transcript and delete `FieldEl<F>`\nand `UniformFrBytes`. Field absorbs now go through spongefish's\n`Encoding<[u8]>` for `ark_ff::Fp<C, N>` directly — big-endian canonical\nencoding per RFC8017. `codec.rs` retains only `BytesMsg` (length-prefixed\nbyte string framing) since spongefish lacks a length-prefixed Vec<u8>.\n\nWire-format-breaking for scalar absorbs (LE → BE). Known-vector tests\nin this crate use `append_bytes` (byte-level) not field absorbs, so\nthey are unaffected. `jolt-eval/transcript_symmetry` updated to use\n`ark_bn254::Fr` directly (spongefish's Encoding impl is on `Fp`, not\non the `jolt_field::Fr` newtype — orphan rule blocks forwarding impls\ninside jolt-transcript).\n\nPer mmaker's review on a16z/jolt#1455.\n\n* chore: apply rustfmt and taplo after merge\n\n* refactor(jolt-transcript): use dot-call syntax in tests per mmaker feedback\n\n* style: rustfmt narg_eof_tests\n\n---------\n\nCo-authored-by: vishal <vishalkoolkarni0045@gmail.com>",
+          "timestamp": "2026-06-02T07:26:02-07:00",
+          "tree_id": "0e573f55d29a1337cd8435570674eefc0df91a98",
+          "url": "https://github.com/a16z/jolt/commit/79df8e6ad9b2bdc668a31b6f5740e3630e36c867"
+        },
+        "date": 1780414193357,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.5507,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 866032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3466,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 507008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 506960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7306,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5859,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.9806,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.8446,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 191336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4602,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5653,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4559,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 504596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.4787,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 509076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7899,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 506980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.8062,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1045140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3999,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 630700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 97.2816,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2144756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4985,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5563,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5999,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866308,
             "unit": "KB",
             "extra": ""
           }
