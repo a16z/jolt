@@ -53,21 +53,21 @@ The goal of Stage 8 is still the same: every committed polynomial should be open
 
 We use the following terminology:
 
-- **Native trace layout**: the Dory layout induced by trace-domain polynomials, with $T + K$ variables.
+- **Native trace layout**: the Dory layout induced by trace-domain polynomials, with $\ell_T + \ell_K$ variables.
 - **Embedded precommitted polynomial**: a precommitted polynomial whose committed Dory matrix fits inside the native trace layout. It is embedded by top-left zero padding.
 - **Dominant precommitted polynomial**: a precommitted polynomial that is larger than the native trace layout. It determines an enlarged final opening layout.
 - **Final opening layout**: the Dory matrix used by the single Stage 8 opening proof. This is the native trace layout when no dominant precommitted polynomial exists, and the enlarged layout otherwise.
 
 In this section we write:
 
-- $T$ for the **log** trace length
-- $K$ for the **log** address-space size
-- $B$ for the number of **extra** variables contributed by the dominant precommitted polynomial beyond the native trace layout
+- $\ell_T$ for the number of cycle variables, i.e. the **log** trace length
+- $\ell_K$ for the number of address variables, i.e. the **log** address-space size
+- $\ell_B$ for the number of **extra** variables contributed by the dominant precommitted polynomial beyond the native trace layout
 
 With that notation, the final opening layout has
 
 $$
-D = T + K + B.
+D = \ell_T + \ell_K + \ell_B.
 $$
 
 Equivalently, Stage 8 works in a Dory matrix of size $2^{\nu_D} \times 2^{\sigma_D}$ where
@@ -78,16 +78,16 @@ $$
 
 Here $\nu_D$ is the number of **row variables** and $\sigma_D$ is the number of **column variables**. This matches the implementation in `DoryGlobals::balanced_sigma_nu()` and the split used by `PrecommittedClaimReduction::project_dory_round_permutation_for_poly()`.
 
-The native trace layout is the special case $B = 0$. The design constraint is that dominant precommitted polynomials should not force the earlier trace-domain sumchecks to run over a padded trace. So Jolt schedules the final-opening reductions as follows:
+The native trace layout is the special case $\ell_B = 0$. The design constraint is that dominant precommitted polynomials should not force the earlier trace-domain sumchecks to run over a padded trace. So Jolt schedules the final-opening reductions as follows:
 
-- the **cycle stage** (Stage 6b) has exactly $T + B$ rounds
-- the **address stage** (Stage 7) has exactly $K$ rounds
+- the **cycle stage** (Stage 6b) has exactly $\ell_T + \ell_B$ rounds
+- the **address stage** (Stage 7) has exactly $\ell_K$ rounds
 - precommitted reductions are forward-loaded so they see the extra dominant coordinates
 - native trace-domain reductions are backward-loaded so their old round scheduling is preserved
 
 This keeps trace-domain work native through the earlier stages and leaves Stage 8 with only one normalization problem: all produced opening points must be interpreted inside the final opening layout.
 
-If some precommitted polynomial already has $D$ variables, we call it a **dominant precommitted polynomial**. Otherwise there is **no dominant precommitted polynomial**, $B = 0$, and the final opening layout is just the native trace layout.
+If some precommitted polynomial already has $D$ variables, we call it a **dominant precommitted polynomial**. Otherwise there is **no dominant precommitted polynomial**, $\ell_B = 0$, and the final opening layout is just the native trace layout.
 
 #### How Native Polynomials Sit In The Final Layout
 
@@ -101,13 +101,13 @@ so the final Dory matrix has $2^2 = 4$ rows and $2^3 = 8$ columns, for a total o
 
 ##### `CycleMajor` dense placement
 
-Take a dense polynomial with $T = 3$ variables and coefficients
+Take a dense polynomial with $\ell_T = 3$ variables and coefficients
 
 $$
 a_{000}, a_{001}, a_{010}, a_{011}, a_{100}, a_{101}, a_{110}, a_{111}.
 $$
 
-In `CycleMajor`, the dense polynomial is written across the top of the final matrix, so only the lowest $T$ index bits vary:
+In `CycleMajor`, the dense polynomial is written across the top of the final matrix, so only the lowest $\ell_T$ index bits vary:
 
 ```text
 Final 4 x 8 matrix
@@ -123,7 +123,7 @@ so the first $2$ bits are fixed and only the last $3$ bits vary.
 
 ##### `AddressMajor` dense placement
 
-Now take the same final opening layout $D = 5$, but the dense polynomial should use the highest $T = 3$ bits. Then its coefficients are written into slots whose last $K+B = 2$ bits are zero:
+Now take the same final opening layout $D = 5$, but the dense polynomial should use the highest $\ell_T = 3$ bits. Then its coefficients are written into slots whose last $\ell_K+\ell_B = 2$ bits are zero:
 
 In the same $4 \times 8$ matrix this looks like:
 
@@ -139,19 +139,19 @@ row11   | a_110  |    .   |    .   |    .   | a_111  |    .   |    .   |    .   
 
 The same idea applies to one-hot polynomials:
 
-- in `CycleMajor`, they use the lowest $T+K$ bits
-- in `AddressMajor`, they use the highest $T+K$ bits, so the trailing $B$ bits are zero
+- in `CycleMajor`, they use the lowest $\ell_T+\ell_K$ bits
+- in `AddressMajor`, they use the highest $\ell_T+\ell_K$ bits, so the trailing $\ell_B$ bits are zero
 
 
 #### When Address-Major Dense Stride Exceeds The Row Width
 
-In `AddressMajor`, dense polynomials are embedded with stride $2^{K+B}$. Sometimes that stride is larger than the number of columns of the final Dory matrix. This is the special branch handled in `dory/wrappers.rs`.
+In `AddressMajor`, dense polynomials are embedded with stride $2^{\ell_K+\ell_B}$. Sometimes that stride is larger than the number of columns of the final Dory matrix. This is the special branch handled in `dory/wrappers.rs`.
 
 Take a real example:
 
 - final opening layout $D = 7$, so the balanced Dory matrix is $2^3 \times 2^4 = 8 \times 16$
-- dense polynomial has $T = 2$ variables, so it has 4 coefficients
-- therefore $K+B = 5$, so the stride is $2^5 = 32$
+- dense polynomial has $\ell_T = 2$ variables, so it has 4 coefficients
+- therefore $\ell_K+\ell_B = 5$, so the stride is $2^5 = 32$
 
 Since the row width is only 16, consecutive coefficients jump by two whole rows:
 
@@ -191,13 +191,13 @@ Now we study two cases:
 If there **is** a dominant precommitted polynomial, let the raw cycle-stage challenges be
 
 $$
-[x_1, x_2, \dots, x_B, x_{B+1}, \dots, x_{B+T}]
+[x_1, x_2, \dots, x_{\ell_B}, x_{\ell_B+1}, \dots, x_{\ell_B+\ell_T}]
 $$
 
 and the raw address-stage challenges be
 
 $$
-[y_1, y_2, \dots, y_K].
+[y_1, y_2, \dots, y_{\ell_K}].
 $$
 
 The final big-endian Dory opening point is obtained by normalizing these challenges into Dory order.
@@ -205,24 +205,24 @@ The final big-endian Dory opening point is obtained by normalizing these challen
 For **AddressMajor**:
 
 $$
-[x_{B+T}, x_{B+T-1}, \dots, x_{B+1} \Vert y_K, y_{K-1}, \dots, y_1 \Vert x_B, x_{B-1}, \dots, x_1]
+[x_{\ell_B+\ell_T}, x_{\ell_B+\ell_T-1}, \dots, x_{\ell_B+1} \Vert y_{\ell_K}, y_{\ell_K-1}, \dots, y_1 \Vert x_{\ell_B}, x_{\ell_B-1}, \dots, x_1]
 $$
 
 For **CycleMajor**:
 
 $$
-[x_B, x_{B-1}, \dots, x_1 \Vert y_K, y_{K-1}, \dots, y_1 \Vert x_{B+T}, x_{B+T-1}, \dots, x_{B+1}]
+[x_{\ell_B}, x_{\ell_B-1}, \dots, x_1 \Vert y_{\ell_K}, y_{\ell_K-1}, \dots, y_1 \Vert x_{\ell_B+\ell_T}, x_{\ell_B+\ell_T-1}, \dots, x_{\ell_B+1}]
 $$
 
-Each block is reversed, and the extra $B$ variables move to different sides depending on the layout.
+Each block is reversed, and the extra $\ell_B$ variables move to different sides depending on the layout.
 
 If there is **no dominant precommitted polynomial**, then the final point is anchored by the ordinary native openings:
 
-- in this case the final opening layout is just the native trace layout, so $B = 0$
+- in this case the final opening layout is just the native trace layout, so $\ell_B = 0$
 - let $r_{\mathrm{inc}}$ be the cycle-stage opening point from `IncClaimReduction`
-- let $r_{\mathrm{ham}}$ be the address-stage opening point from `HammingWeightClaimReduction`
+- let $r_{\mathrm{ham}}$ be the full opening point from `HammingWeightClaimReduction`, decomposed as $r_{\mathrm{ham}} = [r_{\mathrm{addr}} \Vert r_{\mathrm{cyc}}]$ where $r_{\mathrm{addr}}$ has length $\ell_K$
 
-These are already normalized opening points.
+These are already normalized opening points. In `CycleMajor`, `compute_final_opening_point()` checks that the `IncClaimReduction` opening point agrees with the native cycle suffix $r_{\mathrm{cyc}}$. When there are no extra dominant coordinates, this means $r_{\mathrm{inc}} = r_{\mathrm{cyc}}$.
 
 Then:
 
@@ -233,7 +233,7 @@ r_{\mathrm{final}} =
 \big[
 r_{\mathrm{inc}}
 \Vert
-r_{\mathrm{ham}}
+r_{\mathrm{addr}}
 \big]
 $$
 
@@ -241,8 +241,12 @@ For **CycleMajor**:
 
 $$
 r_{\mathrm{final}} =
-\big[
 r_{\mathrm{ham}}
+=
+\big[
+r_{\mathrm{addr}}
+\Vert
+r_{\mathrm{inc}}
 \big].
 $$
 
