@@ -368,6 +368,7 @@ impl InlineExpansionBuilder {
 
     /// Emit or constant-fold a 32-bit rotate-right operation.
     pub fn rotri32(&mut self, rs1: Value, shamt: u32, rd: u8) -> Value {
+        debug_assert!(shamt <= 32, "rotri32 shift amount must be at most 32");
         if shamt == 0 || shamt == 32 {
             return self.xor(rs1, Value::Imm(0), rd);
         }
@@ -432,6 +433,7 @@ impl InlineExpansionBuilder {
 
     /// Emit or constant-fold a 64-bit rotate-right by `amount` bits.
     pub fn rotr64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        debug_assert!(amount <= 64, "rotr64 shift amount must be at most 64");
         if amount == 0 || amount == 64 {
             return self.xor(rs1, Value::Imm(0), rd);
         }
@@ -448,6 +450,7 @@ impl InlineExpansionBuilder {
 
     /// Emit or constant-fold a 64-bit rotate-left by `amount` bits.
     pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
+        debug_assert!(amount <= 64, "rotl64 shift amount must be at most 64");
         self.rotr64(rs1, 64 - amount, rd)
     }
 
