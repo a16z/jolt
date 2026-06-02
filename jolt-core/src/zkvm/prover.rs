@@ -2441,6 +2441,11 @@ where
         shared: JoltSharedPreprocessing<PCS>,
         generators: PCS::ProverSetup,
     ) -> Self {
+        assert!(
+            !shared.program.is_committed(),
+            "full program prover preprocessing requires full shared preprocessing; use \
+             JoltProverPreprocessing::new_committed for committed programs"
+        );
         Self {
             generators,
             shared,
@@ -2452,13 +2457,12 @@ where
     pub fn new_committed(
         shared: JoltSharedPreprocessing<PCS>,
         committed_program_prover_data: CommittedProgramProverData<PCS>,
+        generators: PCS::ProverSetup,
     ) -> Self {
         assert!(
             shared.program.is_committed(),
             "committed program prover data requires committed shared preprocessing"
         );
-        let (max_total_vars, _) = shared.compute_max_total_vars(true);
-        let generators = PCS::setup_prover(max_total_vars);
         Self {
             generators,
             shared,
@@ -2469,8 +2473,12 @@ where
 
     #[tracing::instrument(skip_all, name = "JoltProverPreprocessing::new")]
     pub fn new(shared: JoltSharedPreprocessing<PCS>) -> Self {
-        let committed_mode = shared.program.is_committed();
-        let (max_total_vars, _) = shared.compute_max_total_vars(committed_mode);
+        assert!(
+            !shared.program.is_committed(),
+            "JoltProverPreprocessing::new requires full shared preprocessing; use \
+             JoltProverPreprocessing::new_committed for committed programs"
+        );
+        let (max_total_vars, _) = shared.compute_max_total_vars(false);
         let generators = PCS::setup_prover(max_total_vars);
 
         Self::new_with_generators(shared, generators)
@@ -2596,6 +2604,13 @@ mod tests {
     use crate::{curve::JoltCurve, field::JoltField};
     use jolt_riscv::JoltInstructionRow;
 
+    type TestCommittedSharedPreprocessing = (
+        JoltSharedPreprocessing,
+        CommittedProgramProverData<DoryCommitmentScheme>,
+        <DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+        Arc<ProgramPreprocessing>,
+    );
+
     #[cfg(feature = "zk")]
     fn round_commitment_data<F: JoltField, C: JoltCurve<F = F>, R: rand_core::RngCore>(
         gens: &PedersenGenerators<C>,
@@ -2665,23 +2680,16 @@ mod tests {
         memory_layout: common::jolt_device::MemoryLayout,
         max_trace_len: usize,
         bytecode_chunk_count: usize,
-    ) -> Result<
-        (
-            JoltSharedPreprocessing,
-            CommittedProgramProverData<DoryCommitmentScheme>,
-            Arc<ProgramPreprocessing>,
-        ),
-        PreprocessingError,
-    > {
+    ) -> Result<TestCommittedSharedPreprocessing, PreprocessingError> {
         let program = ProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)?;
-        let (shared, prover_data) = JoltSharedPreprocessing::new_committed(
+        let (shared, prover_data, generators) = JoltSharedPreprocessing::new_committed(
             program.clone(),
             memory_layout,
             max_trace_len,
             bytecode_chunk_count,
         );
         let program = Arc::new(program);
-        Ok((shared, prover_data, program))
+        Ok((shared, prover_data, generators, program))
     }
 
     #[test]
@@ -3329,7 +3337,7 @@ mod tests {
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-        let (shared_preprocessing, committed_program_prover_data, _program_data) =
+        let (shared_preprocessing, committed_program_prover_data, generators, _program_data) =
             test_shared_preprocessing_committed(
                 bytecode,
                 init_memory_state,
@@ -3342,6 +3350,7 @@ mod tests {
         let prover_preprocessing = JoltProverPreprocessing::new_committed(
             shared_preprocessing.clone(),
             committed_program_prover_data,
+            generators,
         );
         let elf_contents_opt = program.get_elf_contents();
         let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
@@ -3378,7 +3387,7 @@ mod tests {
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-        let (shared_preprocessing, committed_program_prover_data, _program_data) =
+        let (shared_preprocessing, committed_program_prover_data, generators, _program_data) =
             test_shared_preprocessing_committed(
                 bytecode,
                 init_memory_state,
@@ -3392,6 +3401,7 @@ mod tests {
             JoltProverPreprocessing::new_committed(
                 shared_preprocessing,
                 committed_program_prover_data,
+                generators,
             );
 
         let mut encoded = Vec::new();

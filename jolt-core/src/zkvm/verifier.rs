@@ -2177,6 +2177,7 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
     ) -> (
         JoltSharedPreprocessing<PCS>,
         CommittedProgramProverData<PCS>,
+        PCS::ProverSetup,
     ) {
         let bytecode_len = program.bytecode_len();
         assert!(
@@ -2202,7 +2203,7 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
         );
         shared.program = committed_program;
         shared.program_meta = shared.program.meta();
-        (shared, prover_data)
+        (shared, prover_data, generators)
     }
 
     pub fn is_committed_mode(&self) -> bool {

@@ -597,6 +597,7 @@ impl MacroBuilder {
                 (
                     jolt::JoltSharedPreprocessing,
                     jolt::CommittedProgramProverData<jolt::PCS>,
+                    <jolt::PCS as jolt::CommitmentScheme>::ProverSetup,
                 ),
                 jolt::PreprocessingError,
             >
@@ -617,14 +618,15 @@ impl MacroBuilder {
 
                 let program_data =
                     jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
-                let (shared_preprocessing, committed_program_prover_data) = JoltSharedPreprocessing::new_committed(
-                    program_data,
-                    memory_layout,
-                    #max_trace_length,
-                    bytecode_chunk_count,
-                );
+                let (shared_preprocessing, committed_program_prover_data, generators) =
+                    JoltSharedPreprocessing::new_committed(
+                        program_data,
+                        memory_layout,
+                        #max_trace_length,
+                        bytecode_chunk_count,
+                    );
 
-                Ok((shared_preprocessing, committed_program_prover_data))
+                Ok((shared_preprocessing, committed_program_prover_data, generators))
             }
         }
     }
@@ -672,11 +674,12 @@ impl MacroBuilder {
                 >
             {
                 #imports
-                let (shared_preprocessing, committed_program_prover_data) =
+                let (shared_preprocessing, committed_program_prover_data, generators) =
                     #preprocess_shared_committed_fn_name(program, bytecode_chunk_count)?;
                 Ok(JoltProverPreprocessing::new_committed(
                     shared_preprocessing,
                     committed_program_prover_data,
+                    generators,
                 ))
             }
         }
