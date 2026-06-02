@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780345641898,
+  "lastUpdate": 1780410752088,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -108742,6 +108742,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861360,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "khajepour.amirhossein@gmail.com",
+            "name": "Amirhossein Khajehpour",
+            "username": "RadNi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f3de3c9160498abdd7452740b37869ecbc60f611",
+          "message": "feat: integrate bytecode and program image reductions (#1584)\n\n* feat(zkvm): add bytecode program reductions\n\nCo-authored-by: Amirhossein Khajehpour <khajepour.amirhossein@gmail.com>\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): reconcile committed reduction integration with source branch\n\nCo-authored-by: Amirhossein Khajehpour <khajepour.amirhossein@gmail.com>\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): clean up reduction rebase artifacts\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* chore(dory): remove setup cache debug bypass\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): transition committed reductions from accumulator state\n\nUpdate bytecode and program-image verifier integration to use the shared precommitted phase transition helper after cycle-phase openings are cached.\n\nMade-with: Cursor\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): align committed bytecode metadata flow\n\nThread committed bytecode metadata consistently through prover and verifier paths so bytecode reduction state stays synchronized.\n\nMade-with: Cursor\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): gate prover-only reduction code\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): align shared opening helper inputs\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* chore(poly): remove debug opening accessors\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): clean up committed bytecode mode plumbing\n\nAlign PR04 with the target branch's committed-program opening plumbing after the BlindFold hardening update.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(verifier): align compat bytecode field name\n\nKeep the verifier compatibility assertion in sync with the PR04 OneHotParams naming after committed-bytecode metadata cleanup.\n\nSigned-off-by: Amirhossein Khajehpour <khajepour.amirhossein@gmail.com>\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* refactor(zkvm): clarify bytecode sizing names\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(verifier): align compat bytecode length name\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): persist committed prover preprocessing\n\nKeep committed program preprocessing verifier-safe while storing materialized program data and opening hints on prover preprocessing so serialized committed provers can prove after deserialization.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(zkvm): reuse committed preprocessing setup\n\nEnsure committed program data and prover preprocessing share the same PCS setup so randomized commitment schemes verify correctly.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n* fix(verifier): align transpiled committed transcript\n\nAbsorb committed bytecode and program image commitments in the transpilable verifier so committed-mode challenges match native verification.\n\nCo-authored-by: Cursor <cursoragent@cursor.com>\n\n---------\n\nSigned-off-by: Amirhossein Khajehpour <khajepour.amirhossein@gmail.com>\nCo-authored-by: Quang Dao <qvd@andrew.cmu.edu>\nCo-authored-by: Cursor <cursoragent@cursor.com>",
+          "timestamp": "2026-06-02T09:28:06-04:00",
+          "tree_id": "4eccc36dd0247ea8ec5b7f01327f143af19fcb55",
+          "url": "https://github.com/a16z/jolt/commit/f3de3c9160498abdd7452740b37869ecbc60f611"
+        },
+        "date": 1780410747967,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.5702,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 870540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3609,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 504724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 509476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7212,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.581,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.913,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0315,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 191752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4376,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5639,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 506960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4639,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.4723,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 504820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7827,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 503404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.6582,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1054432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3804,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 627092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 104.3706,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2113736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.493,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 507168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5273,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.9702,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 865932,
             "unit": "KB",
             "extra": ""
           }
