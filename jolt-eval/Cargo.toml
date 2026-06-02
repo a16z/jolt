@@ -34,7 +34,7 @@ enumset = "1"
 schemars = "1.2"
 tempfile = "3"
 
-rust-code-analysis = "0.0.24"
+rust-code-analysis = "0.0.25"
 
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }

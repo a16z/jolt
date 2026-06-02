@@ -1,0 +1,56 @@
+//! Typed inputs for stage 6b.
+
+use jolt_field::Field;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct BytecodeReadRafOutputOpeningClaims<F: Field> {
+    pub bytecode_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct BooleanityOutputOpeningClaims<F: Field> {
+    pub instruction_ra: Vec<F>,
+    pub bytecode_ra: Vec<F>,
+    pub ram_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct RamHammingBooleanityOutputOpeningClaims<F: Field> {
+    pub ram_hamming_weight: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct RamRaVirtualizationOutputOpeningClaims<F: Field> {
+    pub ram_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct InstructionRaVirtualizationOutputOpeningClaims<F: Field> {
+    pub committed_instruction_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct IncClaimReductionOutputOpeningClaims<F: Field> {
+    pub ram_inc: F,
+    pub rd_inc: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Stage6AdviceCyclePhaseClaims<F: Field> {
+    pub trusted: Option<AdviceCyclePhaseOutputClaim<F>>,
+    pub untrusted: Option<AdviceCyclePhaseOutputClaim<F>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct AdviceCyclePhaseOutputClaim<F: Field> {
+    pub opening_claim: F,
+}

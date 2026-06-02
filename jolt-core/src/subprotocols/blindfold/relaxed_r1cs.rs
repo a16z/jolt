@@ -56,7 +56,8 @@ pub struct RelaxedR1CSWitness<F: JoltField> {
     pub E: Vec<F>,
     /// Witness values in grid layout (R' × C)
     pub W: Vec<F>,
-    /// One blinding per W row (R' elements: coefficient row blindings, then non-coeff, then padding zeros)
+    /// One blinding per W row (R' elements: coefficient rows, output claim rows,
+    /// regular non-coeff rows, then padding zeros)
     pub w_row_blindings: Vec<F>,
     /// One blinding per E row (R_E elements)
     pub e_row_blindings: Vec<F>,
@@ -190,26 +191,26 @@ impl<F: JoltField, C: JoltCurve<F = F>> RelaxedR1CSInstance<F, C> {
         })
     }
 
-    /// All W row commitments in order:
-    ///   coeff rows (padded to R_coeff) |
+    /// All W row commitments in the verifier witness-grid order:
+    ///   coefficient rows |
     ///   output claims rows |
     ///   regular noncoeff rows |
     ///   padding to R'
     pub fn all_w_row_commitments(
         &self,
-        R_coeff: usize,
+        coefficient_rows: usize,
         R_prime: usize,
     ) -> Result<Vec<C::G1>, BlindFoldVerifyError> {
-        let total_non_padding = R_coeff
+        let total_non_padding = coefficient_rows
             + self.output_claims_row_commitments.len()
             + self.noncoeff_row_commitments.len();
-        if self.round_commitments.len() > R_coeff || total_non_padding > R_prime {
+        if self.round_commitments.len() > coefficient_rows || total_non_padding > R_prime {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
 
         let mut rows = Vec::with_capacity(R_prime);
         rows.extend_from_slice(&self.round_commitments);
-        rows.resize(R_coeff, C::G1::zero());
+        rows.resize(coefficient_rows, C::G1::zero());
         rows.extend_from_slice(&self.output_claims_row_commitments);
         rows.extend_from_slice(&self.noncoeff_row_commitments);
         rows.resize(R_prime, C::G1::zero());

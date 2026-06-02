@@ -24,6 +24,8 @@ keywords = ["SNARK", "cryptography", "proofs"]
 
 [workspace]
 members = [
+  "crates/jolt-claims",
+  "crates/jolt-blindfold",
   "crates/jolt-crypto",
   "crates/jolt-program",
   "crates/jolt-poly",
@@ -31,6 +33,7 @@ members = [
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
+  "crates/jolt-verifier",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
@@ -102,6 +105,7 @@ members = [
   "examples/modinv/guest",
   "examples/advice-demo",
   "examples/advice-demo/guest",
+  "examples/advice-consumer/guest",
   "examples/sig-recovery/host",
   "examples/sig-recovery/guest",
   "zklean-extractor",
@@ -288,7 +292,7 @@ rand_distr = "0.4.3"
 
 # Serialization
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0.108", default-features = false }
+serde_json = { version = "1.0.150", default-features = false }
 rmp-serde = "1.3.0"
 bincode = { version = "2", features = ["serde"] }
 postcard = { version = "1.0.8", default-features = false, features = [
@@ -379,10 +383,14 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
+jolt-blindfold = { path = "./crates/jolt-blindfold" }
+jolt-claims = { path = "./crates/jolt-claims" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
+jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-poly = { path = "./crates/jolt-poly" }
+jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }

@@ -7,7 +7,7 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, TranscriptChallenge};
+use jolt_field::{CanonicalBytes, Field, FromPrimitiveInt, TranscriptChallenge};
 use spongefish::{DuplexSpongeInterface, Encoding};
 
 use crate::codec::BytesMsg;
@@ -47,14 +47,48 @@ pub trait Transcript: Default + Sync + Send + 'static {
         value.append_to_transcript(self);
     }
 
+    /// Absorbs a domain label followed by a value.
+    fn append_labeled<A: AppendToTranscript>(&mut self, label: &'static [u8], value: &A) {
+        self.append(&Label(label));
+        self.append(value);
+    }
+
+    /// Absorbs a domain label with a count followed by each value in order.
+    fn append_values<A: AppendToTranscript>(&mut self, label: &'static [u8], values: &[A]) {
+        self.append(&LabelWithCount(label, values.len() as u64));
+        for value in values {
+            self.append(value);
+        }
+    }
+
     /// Squeezes a challenge.
     #[must_use]
     fn challenge(&mut self) -> Self::Challenge;
+
+    /// Squeezes a non-optimized scalar challenge from the transcript.
+    #[must_use]
+    fn challenge_scalar(&mut self) -> Self::Challenge {
+        self.challenge()
+    }
 
     /// Squeezes `len` challenges.
     #[must_use]
     fn challenge_vector(&mut self, len: usize) -> Vec<Self::Challenge> {
         (0..len).map(|_| self.challenge()).collect()
+    }
+
+    /// Squeezes one scalar challenge and returns its powers `[1, gamma, gamma^2, ...]`.
+    #[must_use]
+    fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge>
+    where
+        Self::Challenge: Field,
+    {
+        let gamma = self.challenge_scalar();
+        let mut powers = vec![Self::Challenge::from_u64(1); len];
+        for index in 1..len {
+            powers[index] = powers[index - 1] * gamma;
+        }
+        powers
     }
 
     /// Current 256-bit transcript state. Peeked non-destructively by
@@ -76,6 +110,12 @@ pub trait Transcript: Default + Sync + Send + 'static {
 pub trait AppendToTranscript {
     /// Absorbs this value into the transcript.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
+
+    /// Byte length of the payload absorbed by [`append_to_transcript`], when
+    /// the type participates in jolt-core's variable-length labeled appends.
+    fn transcript_payload_len(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// Big-endian field element absorption (matches jolt-core's EVM-compatible
@@ -231,6 +271,14 @@ where
         let mut buf = [0u8; 16];
         let _ = self.sponge.squeeze(&mut buf);
         F::from_challenge_bytes(&buf)
+    }
+
+    fn challenge_scalar(&mut self) -> F {
+        // Mirrors the digest transcript's scalar challenge: same 16-byte
+        // squeeze width as `challenge`, but the non-optimized decoding path.
+        let mut buf = [0u8; 16];
+        let _ = self.sponge.squeeze(&mut buf);
+        F::from_scalar_challenge_bytes(&buf)
     }
 
     fn state(&self) -> [u8; 32] {

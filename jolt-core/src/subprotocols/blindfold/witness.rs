@@ -9,7 +9,7 @@ use super::r1cs::VerifierR1CS;
 use super::OutputClaimConstraint;
 #[cfg(test)]
 use super::StageConfig;
-use super::{SumOfProductsVisitor, ValueSource};
+use super::ValueSource;
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
 
@@ -237,14 +237,12 @@ impl<F: JoltField> BlindFoldWitness<F> {
         z[0] = u;
 
         let hyrax_C = r1cs.hyrax.C;
-        let hyrax_R_coeff = r1cs.hyrax.R_coeff;
+        let coefficient_rows = r1cs.hyrax.R_coeff;
         let output_claims_rows = r1cs.hyrax.output_claims_rows;
         let witness_start = 1;
-        // Regular noncoeff starts after coeff rows AND output claims rows
-        let mut noncoeff_idx = witness_start + (hyrax_R_coeff + output_claims_rows) * hyrax_C;
+        let mut noncoeff_idx = witness_start + (coefficient_rows + output_claims_rows) * hyrax_C;
 
-        // Assign output claims values into the dedicated OC region
-        let oc_region_start = witness_start + hyrax_R_coeff * hyrax_C;
+        let oc_region_start = witness_start + coefficient_rows * hyrax_C;
         for (i, val) in self.output_claims_values.iter().enumerate() {
             z[oc_region_start + i] = *val;
         }
@@ -266,34 +264,32 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 LayoutStep::ConstraintVars {
                     constraint,
                     new_opening_count,
-                    aux_var_count,
                     kind,
                     stage_idx,
+                    ..
                 } => {
                     let witness_data = match kind {
                         ConstraintKind::InitialInput => self.stages[*stage_idx]
                             .initial_input
                             .as_ref()
                             .and_then(|w| match w {
-                                FinalOutputWitness::General {
-                                    opening_values,
-                                    challenge_values,
-                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                                FinalOutputWitness::General { opening_values, .. } => {
+                                    Some(opening_values.as_slice())
+                                }
                                 _ => None,
                             }),
                         ConstraintKind::FinalOutput => self.stages[*stage_idx]
                             .final_output
                             .as_ref()
                             .and_then(|w| match w {
-                                FinalOutputWitness::General {
-                                    opening_values,
-                                    challenge_values,
-                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                                FinalOutputWitness::General { opening_values, .. } => {
+                                    Some(opening_values.as_slice())
+                                }
                                 _ => None,
                             }),
                     };
 
-                    if let Some((opening_values, challenge_values)) = witness_data {
+                    if let Some(opening_values) = witness_data {
                         for (opening_id, val) in
                             constraint.required_openings.iter().zip(opening_values)
                         {
@@ -303,16 +299,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
                                 noncoeff_idx += 1;
                             }
                         }
-
-                        let aux_values =
-                            Self::compute_aux_vars(constraint, opening_values, challenge_values);
-                        debug_assert_eq!(aux_values.len(), *aux_var_count);
-                        for val in aux_values {
-                            z[noncoeff_idx] = val;
-                            noncoeff_idx += 1;
-                        }
                     } else {
-                        noncoeff_idx += new_opening_count + aux_var_count;
+                        noncoeff_idx += new_opening_count;
                     }
                 }
                 LayoutStep::CoeffRow {
@@ -362,8 +350,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 LayoutStep::ExtraConstraintVars {
                     constraint,
                     new_opening_count,
-                    aux_var_count,
                     extra_idx,
+                    ..
                 } => {
                     if let Some(witness) = self.extra_constraints.get(*extra_idx) {
                         for (opening_id, val) in constraint
@@ -378,9 +366,90 @@ impl<F: JoltField> BlindFoldWitness<F> {
                             }
                         }
 
+                        while !(noncoeff_idx - witness_start).is_multiple_of(hyrax_C) {
+                            noncoeff_idx += 1;
+                        }
                         z[noncoeff_idx] = witness.output_value;
                         noncoeff_idx += 1;
+                        while !(noncoeff_idx - witness_start).is_multiple_of(hyrax_C) {
+                            noncoeff_idx += 1;
+                        }
 
+                        z[noncoeff_idx] = witness.blinding;
+                        noncoeff_idx += 1;
+                        while !(noncoeff_idx - witness_start).is_multiple_of(hyrax_C) {
+                            noncoeff_idx += 1;
+                        }
+                    } else {
+                        noncoeff_idx += new_opening_count;
+                        while !(noncoeff_idx - witness_start).is_multiple_of(hyrax_C) {
+                            noncoeff_idx += 1;
+                        }
+                        noncoeff_idx += 1;
+                        while !(noncoeff_idx - witness_start).is_multiple_of(hyrax_C) {
+                            noncoeff_idx += 1;
+                        }
+                        noncoeff_idx += 1;
+                        while !(noncoeff_idx - witness_start).is_multiple_of(hyrax_C) {
+                            noncoeff_idx += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut aux_idx = noncoeff_idx;
+        for step in &layout {
+            match step {
+                LayoutStep::ConstraintVars {
+                    constraint,
+                    aux_var_count,
+                    kind,
+                    stage_idx,
+                    ..
+                } => {
+                    let witness_data = match kind {
+                        ConstraintKind::InitialInput => self.stages[*stage_idx]
+                            .initial_input
+                            .as_ref()
+                            .and_then(|w| match w {
+                                FinalOutputWitness::General {
+                                    opening_values,
+                                    challenge_values,
+                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                                _ => None,
+                            }),
+                        ConstraintKind::FinalOutput => self.stages[*stage_idx]
+                            .final_output
+                            .as_ref()
+                            .and_then(|w| match w {
+                                FinalOutputWitness::General {
+                                    opening_values,
+                                    challenge_values,
+                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                                _ => None,
+                            }),
+                    };
+
+                    if let Some((opening_values, challenge_values)) = witness_data {
+                        let aux_values =
+                            Self::compute_aux_vars(constraint, opening_values, challenge_values);
+                        debug_assert_eq!(aux_values.len(), *aux_var_count);
+                        for val in aux_values {
+                            z[aux_idx] = val;
+                            aux_idx += 1;
+                        }
+                    } else {
+                        aux_idx += aux_var_count;
+                    }
+                }
+                LayoutStep::ExtraConstraintVars {
+                    constraint,
+                    aux_var_count,
+                    extra_idx,
+                    ..
+                } => {
+                    if let Some(witness) = self.extra_constraints.get(*extra_idx) {
                         let aux_values = Self::compute_aux_vars(
                             constraint,
                             &witness.opening_values,
@@ -388,16 +457,14 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         );
                         debug_assert_eq!(aux_values.len(), *aux_var_count);
                         for val in aux_values {
-                            z[noncoeff_idx] = val;
-                            noncoeff_idx += 1;
+                            z[aux_idx] = val;
+                            aux_idx += 1;
                         }
-
-                        z[noncoeff_idx] = witness.blinding;
-                        noncoeff_idx += 1;
                     } else {
-                        noncoeff_idx += new_opening_count + 1 + aux_var_count + 1;
+                        aux_idx += aux_var_count;
                     }
                 }
+                _ => {}
             }
         }
 
@@ -457,34 +524,44 @@ impl<F: JoltField> BlindFoldWitness<F> {
     /// Compute auxiliary variables for a general constraint.
     ///
     /// This must match the order of aux var allocation in `add_sum_of_products_constraint`.
-    /// The R1CS builder allocates aux vars in this order per term:
-    /// - No factors: 1 aux var (coeff * 1)
-    /// - Single factor: 1 aux var (coeff * factor)
-    /// - Multiple factors: (n-1) aux vars for chain multiplication + 1 for coeff*product
+    /// Aux variables are needed only for products of two hidden opening-derived values.
     fn compute_aux_vars(
         constraint: &OutputClaimConstraint,
         opening_values: &[F],
         challenge_values: &[F],
     ) -> Vec<F> {
-        let mut visitor = WitnessAuxVisitor::new(constraint, opening_values, challenge_values);
+        let resolver = WitnessAuxResolver::new(constraint, opening_values, challenge_values);
         let mut aux_vars = Vec::new();
-        constraint.visit(&mut visitor, &mut aux_vars);
+        for term in &constraint.terms {
+            let mut factors = Vec::new();
+            resolver.collect_hidden_factor(&term.coeff, &mut factors);
+            for factor in &term.factors {
+                resolver.collect_hidden_factor(factor, &mut factors);
+            }
+
+            let [first, rest @ ..] = factors.as_slice() else {
+                continue;
+            };
+            let mut product = *first;
+            for factor in rest {
+                product *= *factor;
+                aux_vars.push(product);
+            }
+        }
         aux_vars
     }
 }
 
-struct WitnessAuxVisitor<'a, F> {
+struct WitnessAuxResolver<'a, F> {
     opening_map: std::collections::HashMap<OpeningId, usize>,
     opening_values: &'a [F],
-    challenge_values: &'a [F],
-    current_product: F,
 }
 
-impl<'a, F: JoltField> WitnessAuxVisitor<'a, F> {
+impl<'a, F: JoltField> WitnessAuxResolver<'a, F> {
     fn new(
         constraint: &OutputClaimConstraint,
         opening_values: &'a [F],
-        challenge_values: &'a [F],
+        _challenge_values: &'a [F],
     ) -> Self {
         let opening_map = constraint
             .required_openings
@@ -495,47 +572,14 @@ impl<'a, F: JoltField> WitnessAuxVisitor<'a, F> {
         Self {
             opening_map,
             opening_values,
-            challenge_values,
-            current_product: F::zero(),
-        }
-    }
-}
-
-impl<F: JoltField> SumOfProductsVisitor for WitnessAuxVisitor<'_, F> {
-    type Resolved = F;
-    type Acc = Vec<F>;
-
-    fn resolve(&self, vs: &ValueSource) -> F {
-        match vs {
-            ValueSource::Opening(id) => {
-                let idx = *self.opening_map.get(id).expect("Opening not found");
-                self.opening_values[idx]
-            }
-            ValueSource::Challenge(idx) => self.challenge_values[*idx],
-            ValueSource::Constant(val) => F::from_i128(*val),
         }
     }
 
-    fn on_no_factors(&mut self, acc: &mut Vec<F>, coeff: F) {
-        acc.push(coeff);
-    }
-
-    fn on_single_factor(&mut self, acc: &mut Vec<F>, coeff: F, factor: F) {
-        acc.push(coeff * factor);
-    }
-
-    fn on_chain_start(&mut self, acc: &mut Vec<F>, f0: F, f1: F) {
-        self.current_product = f0 * f1;
-        acc.push(self.current_product);
-    }
-
-    fn on_chain_step(&mut self, acc: &mut Vec<F>, factor: F) {
-        self.current_product *= factor;
-        acc.push(self.current_product);
-    }
-
-    fn on_chain_finalize(&mut self, acc: &mut Vec<F>, coeff: F) {
-        acc.push(coeff * self.current_product);
+    fn collect_hidden_factor(&self, source: &ValueSource, factors: &mut Vec<F>) {
+        if let ValueSource::Opening(id) = source {
+            let idx = *self.opening_map.get(id).expect("Opening not found");
+            factors.push(self.opening_values[idx]);
+        }
     }
 }
 

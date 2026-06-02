@@ -31,6 +31,8 @@ pub enum CommittedPolynomial {
     InstructionRa(usize),
     /// One-hot ra polynomial for the bytecode instance of Shout
     BytecodeRa(usize),
+    /// Dense committed bytecode chunk polynomial for committed program mode.
+    BytecodeChunk(usize),
     /// One-hot ra/wa polynomial for the RAM instance of Twist
     /// Note that for RAM, ra and wa are the same polynomial because
     /// there is at most one load or store per cycle.
@@ -41,6 +43,8 @@ pub enum CommittedPolynomial {
     /// Untrusted advice polynomial - committed during proving, commitment in proof.
     /// Length cannot exceed max_trace_length.
     UntrustedAdvice,
+    /// Program image (initial RAM image) polynomial for committed program mode.
+    ProgramImageInit,
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -128,8 +132,11 @@ impl CommittedPolynomial {
                     .collect();
                 PCS::process_chunk_onehot(setup, one_hot_params.k_chunk, &row)
             }
-            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
-                panic!("Advice polynomials should not use streaming witness generation")
+            CommittedPolynomial::TrustedAdvice
+            | CommittedPolynomial::UntrustedAdvice
+            | CommittedPolynomial::ProgramImageInit
+            | CommittedPolynomial::BytecodeChunk(_) => {
+                panic!("Precommitted polynomials should not use streaming witness generation")
             }
         }
     }
@@ -214,8 +221,11 @@ impl CommittedPolynomial {
                     one_hot_params.k_chunk,
                 ))
             }
-            CommittedPolynomial::TrustedAdvice | CommittedPolynomial::UntrustedAdvice => {
-                panic!("Advice polynomials should not use generate_witness")
+            CommittedPolynomial::TrustedAdvice
+            | CommittedPolynomial::UntrustedAdvice
+            | CommittedPolynomial::ProgramImageInit
+            | CommittedPolynomial::BytecodeChunk(_) => {
+                panic!("Precommitted polynomials should not use generate_witness")
             }
         }
     }
@@ -271,4 +281,9 @@ pub enum VirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
+    BytecodeValStage(usize),
+    BytecodeReadRafAddrClaim,
+    BooleanityAddrClaim,
+    BytecodeClaimReductionIntermediate,
+    ProgramImageInitContributionRw,
 }

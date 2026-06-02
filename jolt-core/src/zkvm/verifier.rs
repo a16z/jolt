@@ -28,7 +28,6 @@ use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
 use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::zkvm::bytecode::{BytecodePreprocessing, PreprocessingError};
-use crate::zkvm::claim_reductions::advice::ReductionPhase;
 use crate::zkvm::claim_reductions::RegistersClaimReductionSumcheckVerifier;
 use crate::zkvm::config::OneHotParams;
 #[cfg(feature = "prover")]
@@ -42,13 +41,16 @@ use crate::zkvm::ram::RAMPreprocessing;
 use crate::zkvm::witness::all_committed_polynomials;
 use crate::zkvm::Serializable;
 use crate::zkvm::{
-    bytecode::read_raf_checking::BytecodeReadRafSumcheckVerifier,
+    bytecode::read_raf_checking::{
+        BytecodeReadRafAddressSumcheckVerifier, BytecodeReadRafCycleSumcheckVerifier,
+        BytecodeReadRafSumcheckParams,
+    },
     claim_reductions::{
         AdviceClaimReductionVerifier, AdviceKind, HammingWeightClaimReductionVerifier,
         IncClaimReductionSumcheckVerifier, InstructionLookupsClaimReductionSumcheckVerifier,
-        RamRaClaimReductionSumcheckVerifier,
+        PrecommittedClaimReduction, PrecommittedParams, RamRaClaimReductionSumcheckVerifier,
     },
-    fiat_shamir_preamble,
+    compute_final_opening_point, fiat_shamir_preamble,
     instruction_lookups::{
         ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
         read_raf_checking::InstructionReadRafSumcheckVerifier,
@@ -76,16 +78,16 @@ use crate::zkvm::{
 };
 use crate::{
     field::JoltField,
-    poly::{
-        eq_poly::EqPolynomial,
-        opening_proof::{
-            compute_advice_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId,
-            SumcheckId, VerifierOpeningAccumulator,
-        },
+    poly::opening_proof::{
+        compute_lagrange_factor, DoryOpeningState, OpeningAccumulator, OpeningId, SumcheckId,
+        VerifierOpeningAccumulator,
     },
     pprof_scope,
     subprotocols::{
-        booleanity::{BooleanitySumcheckParams, BooleanitySumcheckVerifier},
+        booleanity::{
+            BooleanityAddressSumcheckVerifier, BooleanityCycleSumcheckVerifier,
+            BooleanitySumcheckParams,
+        },
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
     transcripts::Transcript,
@@ -257,6 +259,36 @@ impl<
         ProofTranscript: Transcript,
     > JoltVerifier<'a, F, C, PCS, ProofTranscript>
 {
+    #[inline]
+    fn main_total_vars(&self) -> usize {
+        let trace_log_t = self.proof.trace_length.log_2();
+        let log_k_chunk = self.one_hot_params.log_k_chunk;
+        let mut max_total_vars = trace_log_t + log_k_chunk;
+        for total_vars in self.precommitted_candidate_total_vars() {
+            max_total_vars = max_total_vars.max(total_vars);
+        }
+        max_total_vars
+    }
+
+    #[inline]
+    fn precommitted_candidate_total_vars(&self) -> Vec<usize> {
+        let mut candidates = Vec::new();
+        if self.trusted_advice_commitment.is_some() {
+            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.program_io.memory_layout.max_trusted_advice_size as usize,
+            );
+            candidates.push(sigma + nu);
+        }
+
+        if self.proof.untrusted_advice_commitment.is_some() {
+            let (sigma, nu) = DoryGlobals::advice_sigma_nu_from_max_bytes(
+                self.program_io.memory_layout.max_untrusted_advice_size as usize,
+            );
+            candidates.push(sigma + nu);
+        }
+        candidates
+    }
+
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
         proof: JoltProof<F, C, PCS, ProofTranscript>,
@@ -359,9 +391,9 @@ impl<
             .map_err(ProofVerifyError::InvalidReadWriteConfig)?;
 
         // Construct full params from the validated config.
-        let bytecode_K = preprocessing.shared.bytecode.code_size;
+        let bytecode_len = preprocessing.shared.bytecode.code_size;
         let one_hot_params =
-            OneHotParams::from_config(&proof.one_hot_config, bytecode_K, proof.ram_K);
+            OneHotParams::from_config(&proof.one_hot_config, bytecode_len, proof.ram_K);
 
         Ok(Self {
             trusted_advice_commitment,
@@ -459,7 +491,7 @@ impl<
         let stage5_result = self
             .verify_stage5()
             .inspect_err(|e| tracing::error!("Stage 5: {e}"))?;
-        let stage6_result = self
+        let (stage6a_result, stage6b_result) = self
             .verify_stage6()
             .inspect_err(|e| tracing::error!("Stage 6: {e}"))?;
         let stage7_result = self
@@ -478,7 +510,8 @@ impl<
                     stage3_result.challenges.clone(),
                     stage4_result.challenges.clone(),
                     stage5_result.challenges.clone(),
-                    stage6_result.challenges.clone(),
+                    stage6a_result.challenges.clone(),
+                    stage6b_result.challenges.clone(),
                     stage7_result.challenges.clone(),
                 ];
                 let uniskip_challenges = [uniskip_challenge1, uniskip_challenge2];
@@ -489,7 +522,8 @@ impl<
                     stage3_result.batched_output_constraint,
                     stage4_result.batched_output_constraint,
                     stage5_result.batched_output_constraint,
-                    stage6_result.batched_output_constraint,
+                    stage6a_result.batched_output_constraint,
+                    stage6b_result.batched_output_constraint,
                     stage7_result.batched_output_constraint,
                 ];
 
@@ -499,7 +533,8 @@ impl<
                     stage3_result.batched_input_constraint.clone(),
                     stage4_result.batched_input_constraint.clone(),
                     stage5_result.batched_input_constraint.clone(),
-                    stage6_result.batched_input_constraint.clone(),
+                    stage6a_result.batched_input_constraint.clone(),
+                    stage6b_result.batched_input_constraint.clone(),
                     stage7_result.batched_input_constraint.clone(),
                 ];
 
@@ -513,17 +548,19 @@ impl<
                     stage3_result.input_constraint_challenge_values.clone(),
                     stage4_result.input_constraint_challenge_values.clone(),
                     stage5_result.input_constraint_challenge_values.clone(),
-                    stage6_result.input_constraint_challenge_values.clone(),
+                    stage6a_result.input_constraint_challenge_values.clone(),
+                    stage6b_result.input_constraint_challenge_values.clone(),
                     stage7_result.input_constraint_challenge_values.clone(),
                 ];
 
-                let output_constraint_challenge_values: [Vec<F>; 7] = [
+                let output_constraint_challenge_values: [Vec<F>; 8] = [
                     stage1_result.output_constraint_challenge_values.clone(),
                     stage2_result.output_constraint_challenge_values.clone(),
                     stage3_result.output_constraint_challenge_values.clone(),
                     stage4_result.output_constraint_challenge_values.clone(),
                     stage5_result.output_constraint_challenge_values.clone(),
-                    stage6_result.output_constraint_challenge_values.clone(),
+                    stage6a_result.output_constraint_challenge_values.clone(),
+                    stage6b_result.output_constraint_challenge_values.clone(),
                     stage7_result.output_constraint_challenge_values.clone(),
                 ];
 
@@ -533,7 +570,8 @@ impl<
                 oc_blocks.extend(stage3_result.oc_block_ids);
                 oc_blocks.extend(stage4_result.oc_block_ids);
                 oc_blocks.extend(stage5_result.oc_block_ids);
-                oc_blocks.extend(stage6_result.oc_block_ids);
+                oc_blocks.extend(stage6a_result.oc_block_ids);
+                oc_blocks.extend(stage6b_result.oc_block_ids);
                 oc_blocks.extend(stage7_result.oc_block_ids);
 
                 let uniskip_output_constraints = [
@@ -1020,26 +1058,120 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage6(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage6(
+        &mut self,
+    ) -> Result<(StageVerifyResult<F>, StageVerifyResult<F>), ProofVerifyError> {
+        let _ = DoryGlobals::initialize_main_with_log_embedding(
+            self.one_hot_params.k_chunk,
+            self.proof.trace_length,
+            self.main_total_vars(),
+            Some(self.proof.dory_layout),
+        );
+        let (bytecode_read_raf_params, booleanity_params, stage6a_result) =
+            self.verify_stage6a()?;
+        let stage6b_result = self.verify_stage6b(bytecode_read_raf_params, booleanity_params)?;
+        Ok((stage6a_result, stage6b_result))
+    }
+
+    #[expect(clippy::type_complexity)]
+    fn verify_stage6a(
+        &mut self,
+    ) -> Result<
+        (
+            BytecodeReadRafSumcheckParams<F>,
+            BooleanitySumcheckParams<F>,
+            StageVerifyResult<F>,
+        ),
+        ProofVerifyError,
+    > {
         let n_cycle_vars = self.proof.trace_length.log_2();
-        let bytecode_read_raf = BytecodeReadRafSumcheckVerifier::gen(
+        let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             &self.preprocessing.shared.bytecode,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
         );
-
-        let ram_hamming_booleanity =
-            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
-        let booleanity_params = BooleanitySumcheckParams::new(
+        let booleanity = BooleanityAddressSumcheckVerifier::new(BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
-        );
+        ));
 
-        let booleanity = BooleanitySumcheckVerifier::new(booleanity_params);
+        let instances: Vec<
+            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
+        > = vec![&bytecode_read_raf, &booleanity];
+        let (batching_coefficients, r_stage6a) = BatchedSumcheck::verify(
+            &self.proof.stage6a_sumcheck_proof,
+            instances.clone(),
+            &mut self.opening_accumulator,
+            &mut self.transcript,
+        )?;
+        #[cfg(not(feature = "zk"))]
+        let _ = &batching_coefficients;
+        #[cfg(feature = "zk")]
+        {
+            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
+            let batched_output_constraint = batch_output_constraints(&instances);
+            let batched_input_constraint = batch_input_constraints(&instances);
+            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
+            let mut input_constraint_challenge_values: Vec<F> =
+                scale_batching_coefficients(&batching_coefficients, &instances);
+            for instance in &instances {
+                let num_rounds = instance.num_rounds();
+                let offset = instance.round_offset(max_num_rounds);
+                let r_slice = &r_stage6a[offset..offset + num_rounds];
+                output_constraint_challenge_values.extend(
+                    instance
+                        .get_params()
+                        .output_constraint_challenge_values(r_slice),
+                );
+                input_constraint_challenge_values.extend(
+                    instance
+                        .get_params()
+                        .input_constraint_challenge_values(&self.opening_accumulator),
+                );
+            }
+            let stage_result = StageVerifyResult::new(
+                r_stage6a,
+                batched_output_constraint,
+                output_constraint_challenge_values,
+                batched_input_constraint,
+                input_constraint_challenge_values,
+                vec![regular_oc_ids],
+            );
+            Ok((
+                bytecode_read_raf.into_params(),
+                booleanity.into_params(),
+                stage_result,
+            ))
+        }
+        #[cfg(not(feature = "zk"))]
+        Ok((
+            bytecode_read_raf.into_params(),
+            booleanity.into_params(),
+            StageVerifyResult {
+                challenges: r_stage6a,
+            },
+        ))
+    }
+
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
+    fn verify_stage6b(
+        &mut self,
+        bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
+        booleanity_params: BooleanitySumcheckParams<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+        let bytecode_read_raf = BytecodeReadRafCycleSumcheckVerifier::new(
+            bytecode_read_raf_params,
+            &self.opening_accumulator,
+        );
+        let ram_hamming_booleanity =
+            HammingBooleanitySumcheckVerifier::new(&self.opening_accumulator);
+        let booleanity =
+            BooleanityCycleSumcheckVerifier::new(booleanity_params, &self.opening_accumulator);
         let ram_ra_virtual = RamRaVirtualSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
@@ -1057,20 +1189,28 @@ impl<
             &mut self.transcript,
         );
 
-        // Advice claim reduction (Phase 1 in Stage 6): trusted and untrusted are separate instances.
+        let main_total_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
+        let precommitted_candidates = self.precommitted_candidate_total_vars();
+        let precommitted_scheduling_reference =
+            PrecommittedClaimReduction::<F>::scheduling_reference(
+                main_total_vars,
+                &precommitted_candidates,
+            );
+
+        // Advice claim reduction (Phase 1 in Stage 6b): trusted and untrusted are separate instances.
         if self.trusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_trusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Trusted,
-                &self.program_io.memory_layout,
-                self.proof.trace_length,
+                self.program_io.memory_layout.max_trusted_advice_size as usize,
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
         }
         if self.proof.untrusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_untrusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Untrusted,
-                &self.program_io.memory_layout,
-                self.proof.trace_length,
+                self.program_io.memory_layout.max_untrusted_advice_size as usize,
+                precommitted_scheduling_reference,
                 &self.opening_accumulator,
             ));
         }
@@ -1092,8 +1232,8 @@ impl<
             instances.push(advice);
         }
 
-        let (batching_coefficients, r_stage6) = BatchedSumcheck::verify(
-            &self.proof.stage6_sumcheck_proof,
+        let (batching_coefficients, r_stage6b) = BatchedSumcheck::verify(
+            &self.proof.stage6b_sumcheck_proof,
             instances.clone(),
             &mut self.opening_accumulator,
             &mut self.transcript,
@@ -1111,7 +1251,7 @@ impl<
             for instance in &instances {
                 let num_rounds = instance.num_rounds();
                 let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage6[offset..offset + num_rounds];
+                let r_slice = &r_stage6b[offset..offset + num_rounds];
                 output_constraint_challenge_values.extend(
                     instance
                         .get_params()
@@ -1124,7 +1264,7 @@ impl<
                 );
             }
             Ok(StageVerifyResult::new(
-                r_stage6,
+                r_stage6b,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
@@ -1134,7 +1274,7 @@ impl<
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
-            challenges: r_stage6,
+            challenges: r_stage6b,
         })
     }
 
@@ -1142,12 +1282,12 @@ impl<
     #[allow(clippy::too_many_arguments)]
     fn verify_blindfold(
         &mut self,
-        sumcheck_challenges: &[Vec<F::Challenge>; 7],
+        sumcheck_challenges: &[Vec<F::Challenge>; 8],
         uniskip_challenges: [F::Challenge; 2],
-        stage_output_constraints: &[Option<OutputClaimConstraint>; 7],
-        output_constraint_challenge_values: &[Vec<F>; 7],
-        stage_input_constraints: &[InputClaimConstraint; 7],
-        input_constraint_challenge_values: &[Vec<F>; 7],
+        stage_output_constraints: &[Option<OutputClaimConstraint>; 8],
+        output_constraint_challenge_values: &[Vec<F>; 8],
+        stage_input_constraints: &[InputClaimConstraint; 8],
+        input_constraint_challenge_values: &[Vec<F>; 8],
         // For stages 0-1: batched input constraint for regular rounds (different from uni-skip)
         stage1_batched_input: &InputClaimConstraint,
         stage2_batched_input: &InputClaimConstraint,
@@ -1166,7 +1306,8 @@ impl<
             &self.proof.stage3_sumcheck_proof,
             &self.proof.stage4_sumcheck_proof,
             &self.proof.stage5_sumcheck_proof,
-            &self.proof.stage6_sumcheck_proof,
+            &self.proof.stage6a_sumcheck_proof,
+            &self.proof.stage6b_sumcheck_proof,
             &self.proof.stage7_sumcheck_proof,
         ];
 
@@ -1183,7 +1324,7 @@ impl<
         let mut stage_configs = Vec::new();
         // Track which stage_config index corresponds to uni-skip and regular first rounds
         let mut uniskip_indices: Vec<usize> = Vec::new(); // Only 2 elements for stages 0-1
-        let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 7 elements for all stages
+        let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 8 elements for all stages
         let mut last_round_indices: Vec<usize> = Vec::new();
 
         for (stage_idx, proof) in stage_proofs.iter().enumerate() {
@@ -1216,10 +1357,8 @@ impl<
             // Record first regular round index for its input constraint
             regular_first_round_indices.push(stage_configs.len());
 
-            // Add regular sumcheck rounds
-            let num_rounds = proof.num_rounds();
-            for round_idx in 0..num_rounds {
-                let poly_degree = match proof {
+            let round_poly_degrees = (0..proof.num_rounds())
+                .map(|round_idx| match proof {
                     crate::subprotocols::sumcheck::SumcheckInstanceProof::Clear(std_proof) => {
                         std_proof.compressed_polys[round_idx]
                             .coeffs_except_linear_term
@@ -1228,17 +1367,11 @@ impl<
                     crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) => {
                         zk_proof.poly_degrees[round_idx]
                     }
-                };
-                // First regular round ALWAYS starts a new chain
-                // (batched claims differ from uni-skip output due to batching coefficients)
-                let starts_new_chain = round_idx == 0;
-                let config = if starts_new_chain {
-                    StageConfig::new_chain(1, poly_degree)
-                } else {
-                    StageConfig::new(1, poly_degree)
-                };
-                stage_configs.push(config);
-            }
+                })
+                .collect::<Vec<_>>();
+            stage_configs.push(StageConfig::new_chain_with_round_degrees(
+                round_poly_degrees,
+            ));
 
             // Record the last round index for output constraint
             last_round_indices.push(stage_configs.len() - 1);
@@ -1274,7 +1407,7 @@ impl<
             }
         }
 
-        // Add initial_input configurations for regular first rounds (all 7 stages)
+        // Add initial_input configurations for regular first rounds (all 8 stages)
         // These use the batched input constraints from the stage results
         let regular_constraints = [
             stage1_batched_input.clone(),       // Stage 0 regular
@@ -1282,8 +1415,9 @@ impl<
             stage_input_constraints[2].clone(), // Stage 2
             stage_input_constraints[3].clone(), // Stage 3
             stage_input_constraints[4].clone(), // Stage 4
-            stage_input_constraints[5].clone(), // Stage 5
-            stage_input_constraints[6].clone(), // Stage 6
+            stage_input_constraints[5].clone(), // Stage 5 (6a)
+            stage_input_constraints[6].clone(), // Stage 6 (6b)
+            stage_input_constraints[7].clone(), // Stage 7
         ];
         for (i, constraint) in regular_constraints.iter().enumerate() {
             let idx = regular_first_round_indices[i];
@@ -1311,7 +1445,7 @@ impl<
             }
         }
 
-        let all_input_challenge_values: [&[F]; 9] = [
+        let all_input_challenge_values: [&[F]; 10] = [
             &input_constraint_challenge_values[0],
             stage1_batched_input_values,
             &input_constraint_challenge_values[1],
@@ -1321,6 +1455,7 @@ impl<
             &input_constraint_challenge_values[4],
             &input_constraint_challenge_values[5],
             &input_constraint_challenge_values[6],
+            &input_constraint_challenge_values[7],
         ];
         let mut baked_input_challenges: Vec<F> = Vec::new();
         for expected_values in all_input_challenge_values.iter() {
@@ -1400,13 +1535,13 @@ impl<
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
+        self.transcript.append_label(b"BlindFold");
 
         verifier
             .verify(
                 &self.proof.blindfold_proof,
                 &verifier_input,
-                &mut blindfold_transcript,
+                &mut self.transcript,
             )
             .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 
@@ -1434,20 +1569,32 @@ impl<
         if let Some(advice_reduction_verifier_trusted) =
             self.advice_reduction_verifier_trusted.as_mut()
         {
-            let mut params = advice_reduction_verifier_trusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
+            if advice_reduction_verifier_trusted
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
                 // Transition phase
-                params.phase = ReductionPhase::AddressVariables;
+                advice_reduction_verifier_trusted
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(advice_reduction_verifier_trusted);
             }
         }
         if let Some(advice_reduction_verifier_untrusted) =
             self.advice_reduction_verifier_untrusted.as_mut()
         {
-            let mut params = advice_reduction_verifier_untrusted.params.borrow_mut();
-            if params.num_address_phase_rounds() > 0 {
+            if advice_reduction_verifier_untrusted
+                .params
+                .precommitted
+                .num_address_phase_rounds()
+                > 0
+            {
                 // Transition phase
-                params.phase = ReductionPhase::AddressVariables;
+                advice_reduction_verifier_untrusted
+                    .params
+                    .transition_to_address_phase(&self.opening_accumulator);
                 instances.push(advice_reduction_verifier_untrusted);
             }
         }
@@ -1500,61 +1647,66 @@ impl<
 
     /// Stage 8: Dory batch opening verification.
     fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
-        // Get the unified opening point from HammingWeightClaimReduction
-        // This contains (r_address_stage7 || r_cycle_stage6) in big-endian
-        let (opening_point, _) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::InstructionRa(0),
-            SumcheckId::HammingWeightClaimReduction,
-        );
-        let log_k_chunk = self.one_hot_params.log_k_chunk;
-        let r_address_stage7 = &opening_point.r[..log_k_chunk];
+        let native_main_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
+        let opening_point = compute_final_opening_point(
+            &self.opening_accumulator,
+            native_main_vars,
+            self.one_hot_params.log_k_chunk,
+            self.proof.dory_layout,
+        )?;
 
         // 1. Collect all (polynomial, claim) pairs
         let mut polynomial_claims = Vec::new();
         let mut scaling_factors = Vec::new();
 
         // Dense polynomials: RamInc and RdInc (from IncClaimReduction in Stage 6)
-        let (_, ram_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
+        let (ram_inc_point, ram_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RamInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let (rd_inc_point, rd_inc_claim) =
+            self.opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::RdInc,
+                SumcheckId::IncClaimReduction,
+            );
+        let ram_inc_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ram_inc_point.r);
+        let rd_inc_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &rd_inc_point.r);
+        polynomial_claims.push((
             CommittedPolynomial::RamInc,
-            SumcheckId::IncClaimReduction,
-        );
-        let (_, rd_inc_claim) = self.opening_accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::IncClaimReduction,
-        );
-
-        // Dense polynomials are zero-padded in the Dory matrix, so their evaluation
-        // includes a factor eq(r_addr, 0) = ∏(1 − r_addr_i).
-        let lagrange_factor: F = EqPolynomial::zero_selector(r_address_stage7);
-        polynomial_claims.push((CommittedPolynomial::RamInc, ram_inc_claim * lagrange_factor));
-        scaling_factors.push(lagrange_factor);
-        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * lagrange_factor));
-        scaling_factors.push(lagrange_factor);
+            ram_inc_claim * ram_inc_lagrange,
+        ));
+        scaling_factors.push(ram_inc_lagrange);
+        polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * rd_inc_lagrange));
+        scaling_factors.push(rd_inc_lagrange);
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         for i in 0..self.one_hot_params.instruction_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::InstructionRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::InstructionRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
         for i in 0..self.one_hot_params.bytecode_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::BytecodeRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::BytecodeRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
         for i in 0..self.one_hot_params.ram_d {
-            let (_, claim) = self.opening_accumulator.get_committed_polynomial_opening(
+            let (ra_point, claim) = self.opening_accumulator.get_committed_polynomial_opening(
                 CommittedPolynomial::RamRa(i),
                 SumcheckId::HammingWeightClaimReduction,
             );
-            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim));
-            scaling_factors.push(F::one());
+            let lagrange = compute_lagrange_factor::<F>(&opening_point.r, &ra_point.r);
+            polynomial_claims.push((CommittedPolynomial::RamRa(i), claim * lagrange));
+            scaling_factors.push(lagrange);
         }
 
         // Advice polynomials: TrustedAdvice and UntrustedAdvice (from AdviceClaimReduction in Stage 6)
@@ -1567,8 +1719,7 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
         {
-            let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::TrustedAdvice,
                 advice_claim * lagrange_factor,
@@ -1581,8 +1732,7 @@ impl<
             .opening_accumulator
             .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
         {
-            let lagrange_factor =
-                compute_advice_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
+            let lagrange_factor = compute_lagrange_factor::<F>(&opening_point.r, &advice_point.r);
             polynomial_claims.push((
                 CommittedPolynomial::UntrustedAdvice,
                 advice_claim * lagrange_factor,

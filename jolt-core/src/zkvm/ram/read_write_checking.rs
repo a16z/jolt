@@ -169,12 +169,12 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
 
     #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
-        // expected_output_claim = eq_eval * ra * (val + γ*(val + inc))
-        //                       = eq_eval * ra * val * (1+γ) + eq_eval * ra * inc * γ
+        // expected_output_claim = eq_eval * ra * (val + gamma * (val + inc)).
         //
         // Challenge layout:
-        //   Challenge(0) = eq_eval * (1 + γ)
-        //   Challenge(1) = eq_eval * γ
+        //   Challenge(0) = eq_eval
+        //   Challenge(1) = eq_eval * gamma
+        //   Challenge(2) = eq_eval * gamma
         let ra_opening =
             OpeningId::virt(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
         let val_opening =
@@ -185,7 +185,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
         );
 
         let terms = vec![
-            // eq*(1+γ) * ra * val
             ProductTerm::scaled(
                 ValueSource::Challenge(0),
                 vec![
@@ -193,9 +192,15 @@ impl<F: JoltField> SumcheckInstanceParams<F> for RamReadWriteCheckingParams<F> {
                     ValueSource::Opening(val_opening),
                 ],
             ),
-            // eq*γ * ra * inc
             ProductTerm::scaled(
                 ValueSource::Challenge(1),
+                vec![
+                    ValueSource::Opening(ra_opening),
+                    ValueSource::Opening(val_opening),
+                ],
+            ),
+            ProductTerm::scaled(
+                ValueSource::Challenge(2),
                 vec![
                     ValueSource::Opening(ra_opening),
                     ValueSource::Opening(inc_opening),
@@ -219,9 +224,8 @@ impl<F: JoltField> RamReadWriteCheckingParams<F> {
         let eq_eval_cycle = EqPolynomial::mle_endian(&self.r_cycle, &r_cycle);
 
         let gamma = self.gamma;
-        let one_plus_gamma = F::one() + gamma;
 
-        vec![eq_eval_cycle * one_plus_gamma, eq_eval_cycle * gamma]
+        vec![eq_eval_cycle, eq_eval_cycle * gamma, eq_eval_cycle * gamma]
     }
 }
 
