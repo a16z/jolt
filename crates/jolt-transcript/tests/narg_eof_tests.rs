@@ -38,7 +38,9 @@ fn check_eof_accepts_exact_narg() {
             .expect("valid prover message must deserialize");
         assert_eq!(got.as_slice(), *expected);
     }
-    verifier.check_eof().expect("exact narg must pass check_eof");
+    verifier
+        .check_eof()
+        .expect("exact narg must pass check_eof");
 }
 
 #[test]
