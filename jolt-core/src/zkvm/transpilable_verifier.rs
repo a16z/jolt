@@ -360,6 +360,19 @@ impl<
             self.transcript
                 .append_serializable(b"trusted_advice", trusted_advice_commitment);
         }
+        if let Some(trusted_bytecode) = self.preprocessing.shared.program.bytecode_commitments() {
+            for commitment in &trusted_bytecode.commitments {
+                self.transcript
+                    .append_serializable(b"bytecode_chunk_commit", commitment);
+            }
+        }
+        if self.preprocessing.shared.program.is_committed() {
+            let trusted = self.preprocessing.shared.program.as_committed()?;
+            self.transcript.append_serializable(
+                b"program_image_commitment",
+                &trusted.program_image_commitment,
+            );
+        }
 
         self.verify_stage1()
             .inspect_err(|e| tracing::error!("Stage 1: {e}"))?;
