@@ -32,6 +32,36 @@ fn fresh_hasher() -> Poseidon<Fr> {
     Poseidon::<Fr>::new_circom(3).expect("light-poseidon: width-4 init")
 }
 
+/// Low 128 bits (limbs 0–1) of a full field-element squeeze, for the Poseidon
+/// [`OptimizedChallenge`](crate::OptimizedChallenge) impls.
+///
+/// The byte-sponges (Blake2b/Keccak) implement `challenge_128` by squeezing a
+/// 16-byte `u128` directly, because every byte they emit is uniform. A
+/// `PoseidonSponge` squeeze is `state.into_bigint().to_bytes_le()` — a field
+/// element whose top limb is bounded by the BN254 modulus, so its *high* bytes
+/// are NOT uniform. Reading a 16-byte `u128` off a second, buffered squeeze
+/// would therefore draw from those non-uniform high bytes and correlate
+/// consecutive challenges. Squeezing a whole element instead (the caller passes
+/// `verifier_message::<ark_bn254::Fr>()`) yields uniform low 128 bits and advances the
+/// sponge by one fresh permutation per challenge — matching the per-challenge
+/// independence the byte-sponges get for free. The low 128 bits of a uniform
+/// field element are uniform to within ≈2⁻¹²⁶ (statistical distance ≈ 2¹²⁸/p).
+///
+/// Returns a `u128` so the caller wraps it with `Fr::from(..)`, exactly as the
+/// byte-sponge impls wrap `verifier_message::<u128>()`.
+pub(crate) fn low_128_bits(squeezed: Fr) -> u128 {
+    let limbs = squeezed.into_bigint().0;
+    (u128::from(limbs[1]) << 64) | u128::from(limbs[0])
+}
+
+// TODO(#1455 follow-up): `PoseidonSponge` is NOT a proper DSFS sponge. Per mmaker's #1455 review,
+// the squeeze is hash-chain-like (not a true sponge), absorb throws away ~1/4 of the rate and
+// squeeze wastes ~all of it (≈25% / ≥50% throughput loss), and it is not streaming-friendly. It
+// should be rewritten as a real `spongefish::Permutation` consumed via `DuplexSponge<P>`.
+// RISK of using it as-is (decision C2 — "include Poseidon now"): any challenge/proof format pinned
+// on this sponge — especially under the NARG proof model, where the absorb layout bakes into the
+// proof bytes — will break a SECOND time when the sponge is rewritten. Kept now for feature parity;
+// revisit before the gnark/on-chain verifier depends on the Poseidon layout.
 /// Width-4 Poseidon duplex sponge over BN254 `Fr`, byte-driven.
 pub struct PoseidonSponge {
     hasher: Poseidon<Fr>,

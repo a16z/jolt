@@ -69,3 +69,16 @@ impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak
         Fr::from(VerifierState::verifier_message::<u128>(self))
     }
 }
+
+// OPTIONAL (remove if not needed) — see the note above the prover-side Poseidon
+// impl in `prover.rs`. Not required by the migration; Poseidon may keep full-field
+// challenges instead. Mirror of the prover impl.
+#[cfg(feature = "transcript-poseidon")]
+impl OptimizedChallenge for VerifierState<'_, crate::PoseidonSponge> {
+    fn challenge_128(&mut self) -> Fr {
+        // Mirror of the prover impl: squeeze a full element, keep the low 128 bits.
+        Fr::from(crate::poseidon::low_128_bits(
+            VerifierState::verifier_message::<ark_bn254::Fr>(self),
+        ))
+    }
+}

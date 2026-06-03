@@ -47,10 +47,14 @@ where
     }
 }
 
-/// 128-bit-truncating challenge decoder. Implemented for sponges where the
-/// optimization is sound (Blake2b, Keccak); deliberately not implemented
-/// for [`PoseidonSponge`](crate::PoseidonSponge), so calling it on a
-/// Poseidon-backed state is a compile error.
+/// 128-bit challenge decoder, defined for all three sponges.
+///
+/// Blake2b/Keccak squeeze a 16-byte `u128` directly — sound because every byte
+/// they emit is uniform. [`PoseidonSponge`](crate::PoseidonSponge) squeezes a
+/// *field element* whose high bytes are bounded by the BN254 modulus (so not
+/// uniform); it therefore squeezes a whole element and keeps the uniform low
+/// 128 bits. Either way the result is a 128-bit value embedded in [`Fr`], so
+/// downstream fast-multiplication paths are identical across sponges.
 pub trait OptimizedChallenge {
     /// Squeezes a 128-bit-truncated challenge as an [`Fr`].
     fn challenge_128(&mut self) -> Fr;
@@ -73,5 +77,33 @@ where
 {
     fn challenge_128(&mut self) -> Fr {
         Fr::from(ProverState::verifier_message::<u128>(self))
+    }
+}
+
+// OPTIONAL (remove if not needed) — this impl is NOT required by the transcript
+// migration. Poseidon's optimized challenge was historically a FULL 254-bit field
+// element (`transcript-poseidon` forces `challenge-254-bit`; legacy jolt-core's
+// `challenge_scalar_128_bits` for Poseidon is `unimplemented!`). The migration can
+// preserve that by mapping Poseidon's `challenge_scalar_optimized` to
+// `verifier_message::<Fr>()` (full field), in which case `challenge_128` is never
+// called on Poseidon and this impl is dead code. It exists only to OPTIONALLY give
+// Poseidon the same 128-bit fast-multiply path as Blake2b/Keccak, which requires
+// decoupling `transcript-poseidon` from `challenge-254-bit` (decision D5b). Since
+// `PoseidonSponge` is itself slated for a DSFS rewrite (see the TODO above the
+// struct), prefer NOT to pin a 128-bit Poseidon challenge format unless D5b is
+// deliberately taken in Phase 3. Decision point: jolt-core wiring of
+// `challenge_scalar_optimized` for the Poseidon config.
+#[cfg(feature = "transcript-poseidon")]
+impl<R> OptimizedChallenge for ProverState<crate::PoseidonSponge, R>
+where
+    R: RngCore + CryptoRng,
+{
+    fn challenge_128(&mut self) -> Fr {
+        // Field-native sponge: squeeze a full element (the raw ark type, which
+        // spongefish can decode) and keep the uniform low 128 bits — its high
+        // bytes are modulus-bounded. `Fr::from(u128)` mirrors the byte-sponges.
+        Fr::from(crate::poseidon::low_128_bits(
+            ProverState::verifier_message::<ark_bn254::Fr>(self),
+        ))
     }
 }
