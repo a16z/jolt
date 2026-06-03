@@ -122,6 +122,12 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
         instruction: &SourceInstruction,
         profile: JoltInstructionProfile,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        if !profile.supports_source(SourceInstructionKind::Inline)
+            || instruction.kind() != SourceInstructionKind::Inline
+        {
+            return Err(ExpansionError::UnsupportedInstruction);
+        }
+
         let inline = instruction
             .row()
             .inline
@@ -129,9 +135,6 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
                 "missing inline source metadata",
             ))?;
 
-        if !profile.supports_source(SourceInstructionKind::Inline) {
-            return Err(ExpansionError::UnsupportedInstruction);
-        }
         let registration = lookup_inline(inline)?;
         if !profile.supports_inline(registration.extension) {
             return Err(ExpansionError::UnsupportedInstruction);

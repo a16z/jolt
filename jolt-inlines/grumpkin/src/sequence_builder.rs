@@ -16,7 +16,6 @@ impl GrumpkinDivAdv {
     fn new(
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
-        _is_base_field: bool,
     ) -> Result<Self, ExpansionError> {
         let vr = asm.allocate_for_inline()?;
         Ok(GrumpkinDivAdv { asm, vr, operands })
@@ -80,7 +79,7 @@ impl InlineOp for GrumpkinDivQAdv {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        GrumpkinDivAdv::new(asm, operands, true)?.inline_sequence()
+        GrumpkinDivAdv::new(asm, operands)?.inline_sequence()
     }
 
     fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
@@ -100,7 +99,7 @@ impl InlineOp for GrumpkinDivRAdv {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        GrumpkinDivAdv::new(asm, operands, false)?.inline_sequence()
+        GrumpkinDivAdv::new(asm, operands)?.inline_sequence()
     }
 
     fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
