@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780414196463,
+  "lastUpdate": 1780587975689,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -109246,6 +109246,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866308,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8775247b622c3289679a944eeda3c220f7f38e11",
+          "message": "Move inline expansion to jolt-program recipes (#1533)\n\n* docs(inline): rewrite expansion grammar spec\n\n* docs(inline): clarify extraction and temp lifetimes\n\n* docs(inline): document extraction limits\n\n* docs(inline): clarify advice and allocator cutover\n\n* docs(inline): add admissibility contract\n\n* docs(inline): default-deny admissibility\n\n* test(inline): add registered fixtures\n\n* feat(inline): add registration admissibility\n\nRecord public/internal inline admissibility on registrations and expose it through the SDK trait. Update shipped inline registrations and fixtures so the classification comes from registration metadata instead of a duplicated test-side table.\n\n* feat(inline): route static expansion through recipes\n\nMove registered inline static expansion onto jolt-program recipes and materialization. The tracer provider now returns an ExpandedInstructionSequence, shipped inline crates build through InlineExpansionBuilder, reset rows come from ExpansionAllocator, and the obsolete tracer InstrAssembler static path is removed.\n\nUpdate parity fixtures for the intentional rd=x0 allocator-collision fix where nested helper temps now avoid the remapped destination register.\n\n* refactor(inline): make blake3 extraction-friendly\n\nReplace the generic FnMut BLAKE3 round scheduler with direct first-order schedule calls so Hax can emit the sequence builder Lean without hitting associated-output constraints. Document the extraction-friendly helper-shape decision in the inline expansion grammar spec.\n\n* fix(inline): align rd-zero trace expansion\n\nRoute registered inline rd=x0 tracing through the same jolt-program allocator/materializer path used by static bytecode expansion. This prevents nested helper temps from diverging between bytecode and trace rows.\n\nRecord the Hax/Aeneas extraction follow-up in the inline expansion grammar spec: use compact tags/plain rows for extraction instead of requiring the full jolt-riscv marker-wrapper universe.\n\n* refactor(riscv): remove source row mapper\n\nReplace the remaining SourceInstruction::map_row call sites with explicit row rewrites plus SourceInstruction::new. This keeps the API first-order and trims unnecessary extractor-facing surface.\n\n* fix(inline): enforce raw opcode admissibility\n\nReject internal-only inline registrations in the production raw-bytecode expansion provider after source and package profile checks. Keep recipe hashing, trace-file generation, and inline test execution on explicit trusted materialization paths so internal helpers remain testable without becoming guest-admissible bytecode.\n\n* refactor(inline): remove admissibility machinery\n\nRemove the partial raw-inline admission model from code, fixtures, and the inline expansion grammar spec. The PR now preserves the existing guest bytecode trust model while keeping the static expansion cutover focused on the jolt-program recipe/materializer path.\n\n* test(inline): compact expansion fixtures\n\nStore registered inline parity hashes as compact JSONL records instead of pretty JSON with repeated SourceInstruction inputs. Tests reconstruct inputs from registration metadata and scenarios, preserving the same hash oracle with a much smaller PR diff.\n\n* refactor(expand): tighten inline materialization\n\n* fix(inline): address provider review nits",
+          "timestamp": "2026-06-04T07:42:35-07:00",
+          "tree_id": "884677c9135105794f3bff9e4a891cec597ca3fd",
+          "url": "https://github.com/a16z/jolt/commit/8775247b622c3289679a944eeda3c220f7f38e11"
+        },
+        "date": 1780587973024,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.977,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 868740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3386,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 507152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 501288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 504456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.724,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5833,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8965,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9485,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 196244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4393,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 865664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5548,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4544,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 507400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.5365,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 508996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7806,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 507024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.6678,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1053276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3376,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 643120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 103.8028,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2122220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4869,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5319,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5999,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 869792,
             "unit": "KB",
             "extra": ""
           }
