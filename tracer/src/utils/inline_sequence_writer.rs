@@ -7,8 +7,6 @@
 
 use crate::instruction::format::format_inline::FormatInline;
 use crate::instruction::Instruction;
-use crate::utils::inline_helpers::InstrAssembler;
-use crate::utils::virtual_registers::VirtualRegisterAllocator;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
@@ -59,16 +57,6 @@ impl From<&SequenceInputs> for FormatInline {
             rs2: input.rs2,
             rs3: input.rs3,
         }
-    }
-}
-
-impl From<&SequenceInputs> for InstrAssembler {
-    fn from(input: &SequenceInputs) -> Self {
-        InstrAssembler::new_inline(
-            input.address,
-            input.is_compressed,
-            &VirtualRegisterAllocator::default(),
-        )
     }
 }
 
