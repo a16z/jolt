@@ -15,6 +15,8 @@ use crate::poly::opening_proof::{AbstractVerifierOpeningAccumulator, ProverOpeni
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
+use crate::transcript_msgs::{ProverFs, VerifierFs};
+#[cfg(feature = "zk")]
 use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
 
@@ -133,19 +135,19 @@ pub fn build_uniskip_first_round_poly<
 
 /// Prove-only helper for a uni-skip first round instance (non-ZK mode).
 /// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
-pub fn prove_uniskip_round<F: JoltField, T: Transcript, I: SumcheckInstanceProver<F, T>>(
+pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
-    transcript: &mut T,
-) -> UniSkipFirstRoundProof<F, T> {
+    transcript: &mut impl ProverFs<F>,
+) -> UniSkipFirstRoundProof<F> {
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
-    // Append full polynomial and derive r0
-    transcript.append_scalars(b"uniskip_poly", &uni_poly.coeffs);
-    let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+    // Write the full first-round polynomial into the NARG and derive r0.
+    transcript.write_slice(&uni_poly.coeffs);
+    let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
     opening_accumulator.flush_to_transcript(transcript);
-    UniSkipFirstRoundProof::new(uni_poly)
+    UniSkipFirstRoundProof::new()
 }
 
 /// ZK variant: commits to coefficients instead of revealing them.
@@ -155,7 +157,7 @@ pub fn prove_uniskip_round_zk<
     F: JoltField,
     C: JoltCurve<F = F>,
     T: Transcript,
-    I: SumcheckInstanceProver<F, T>,
+    I: SumcheckInstanceProver<F>,
     R: CryptoRngCore,
 >(
     instance: &mut I,
@@ -164,7 +166,7 @@ pub fn prove_uniskip_round_zk<
     transcript: &mut T,
     pedersen_gens: &PedersenGenerators<C>,
     rng: &mut R,
-) -> ZkUniSkipFirstRoundProof<F, C, T> {
+) -> ZkUniSkipFirstRoundProof<F, C> {
     use crate::subprotocols::blindfold::UniSkipStageData;
 
     let input_claim = instance.input_claim(opening_accumulator);
@@ -218,55 +220,75 @@ pub fn prove_uniskip_round_zk<
     ZkUniSkipFirstRoundProof::new(commitment, poly_degree, output_claims_commitments)
 }
 
-/// The sumcheck proof for a univariate skip round
-/// Consists of the (single) univariate polynomial sent in that round, no omission of any coefficient
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct UniSkipFirstRoundProof<F: JoltField, T: Transcript> {
-    pub uni_poly: UniPoly<F>,
-    _marker: PhantomData<T>,
+/// Mode marker for a univariate-skip first round (non-ZK).
+///
+/// Under the NARG the full first-round polynomial lives in the NARG byte-string,
+/// not in this struct — the prover writes it via `write_slice` and the verifier
+/// reads it back with `read_slice`.
+///
+/// ⚠️ ZK-MIGRATION NOTE (parallel to `ClearSumcheckProof`; see DEV-27): do NOT re-add a
+/// `uni_poly` field. The first-round poly is in the NARG (Option B). The ZK path uses the
+/// separate [`ZkUniSkipFirstRoundProof`] (Pedersen commitment + degree), NOT this struct,
+/// and the only code that ever read the old `uni_poly` was `poly_degree()` — now
+/// `unreachable!()` on the `Standard` arm (only the `Zk` variant carries a degree). If the
+/// ZK migration ever needs the Standard first-round coeffs, read them from the NARG
+/// (`read_slice`), do not restore the field. (Unlike `compressed_polys`, there is currently
+/// no lingering cfg(zk) reader of this field, so nothing here blocks the zk build.)
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
+pub struct UniSkipFirstRoundProof<F: JoltField> {
+    _marker: PhantomData<F>,
 }
 
-impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
-    pub fn new(uni_poly: UniPoly<F>) -> Self {
+impl<F: JoltField> UniSkipFirstRoundProof<F> {
+    pub fn new() -> Self {
         Self {
-            uni_poly,
             _marker: PhantomData,
         }
     }
 
-    /// Verify only the univariate-skip first round.
-    /// Returns the challenge derived during verification.
+    /// Verify only the univariate-skip first round by reading the polynomial back
+    /// from the NARG. The checks (degree, symmetric-domain sum, evaluation) are
+    /// identical to the cleartext path; only the source of the polynomial changed.
     pub fn verify<
         const N: usize,
         const FIRST_ROUND_POLY_NUM_COEFFS: usize,
         A: AbstractVerifierOpeningAccumulator<F>,
     >(
-        proof: &Self,
-        sumcheck_instance: &dyn SumcheckInstanceVerifier<F, T, A>,
+        _proof: &Self,
+        sumcheck_instance: &dyn SumcheckInstanceVerifier<F, A>,
         opening_accumulator: &mut A,
-        transcript: &mut T,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
-        // Degree check for the high-degree first polynomial
-        if proof.uni_poly.degree() > degree_bound {
+
+        // Read the full first-round polynomial back from the NARG and derive r0.
+        let coeffs: Vec<F> = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?;
+        // The first-round polynomial has a fixed coefficient count; reject a frame of
+        // any other length before it reaches `check_sum_evals` (which indexes by
+        // `FIRST_ROUND_POLY_NUM_COEFFS` and assumes exactly that many coefficients).
+        if coeffs.len() != FIRST_ROUND_POLY_NUM_COEFFS {
             return Err(ProofVerifyError::InvalidInputLength(
-                degree_bound,
-                proof.uni_poly.degree(),
+                FIRST_ROUND_POLY_NUM_COEFFS,
+                coeffs.len(),
             ));
         }
-
-        // Append full polynomial and derive r0
-        transcript.append_scalars(b"uniskip_poly", &proof.uni_poly.coeffs);
-        let r0 = transcript.challenge_scalar_optimized::<F>();
+        let uni_poly = UniPoly::from_coeff(coeffs);
+        if uni_poly.degree() > degree_bound {
+            return Err(ProofVerifyError::InvalidInputLength(
+                degree_bound,
+                uni_poly.degree(),
+            ));
+        }
+        let r0 = transcript.challenge_optimized();
 
         // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
         let input_claim = sumcheck_instance.input_claim(opening_accumulator);
-        let input_claim_ok = proof
-            .uni_poly
-            .check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
+        let input_claim_ok = uni_poly.check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
 
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
-        let expected_output = proof.uni_poly.evaluate(&r0);
+        let expected_output = uni_poly.evaluate(&r0);
         let claimed_output = sumcheck_instance.expected_output_claim(opening_accumulator, &[r0]);
         let output_claim_ok = claimed_output == expected_output;
 
@@ -284,15 +306,15 @@ impl<F: JoltField, T: Transcript> UniSkipFirstRoundProof<F, T> {
 /// Contains only the Pedersen commitment to polynomial coefficients.
 /// Actual verification is deferred to BlindFold R1CS.
 #[derive(Debug, Clone)]
-pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve<F = F>, T: Transcript> {
+pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve<F = F>> {
     pub commitment: C::G1,
     pub poly_degree: usize,
     /// Pedersen commitments to output claims, chunked to fit generator count
     pub output_claims_commitments: Vec<C::G1>,
-    _marker: PhantomData<(F, T)>,
+    _marker: PhantomData<F>,
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ZkUniSkipFirstRoundProof<F, C, T> {
+impl<F: JoltField, C: JoltCurve<F = F>> ZkUniSkipFirstRoundProof<F, C> {
     pub fn new(
         commitment: C::G1,
         poly_degree: usize,
@@ -310,12 +332,12 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ZkUniSkipFirstRoundProof<
     /// The actual polynomial verification (sum check + evaluation) is done by BlindFold.
     pub fn verify_transcript<
         A: AbstractVerifierOpeningAccumulator<F>,
-        I: SumcheckInstanceVerifier<F, T, A>,
+        I: SumcheckInstanceVerifier<F, A>,
     >(
         &self,
         sumcheck_instance: &I,
         opening_accumulator: &mut A,
-        transcript: &mut T,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<F::Challenge, ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
         if self.poly_degree > degree_bound {
@@ -325,20 +347,20 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ZkUniSkipFirstRoundProof<
             ));
         }
 
-        transcript.append_commitment(b"sumcheck_commitment", &self.commitment);
+        transcript.absorb(&self.commitment);
 
-        let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+        let r0: F::Challenge = transcript.challenge_optimized();
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
 
-        transcript.append_commitments(b"output_claims_coms", &self.output_claims_commitments);
+        transcript.absorb(&self.output_claims_commitments);
         opening_accumulator.take_pending_claims();
 
         Ok(r0)
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalSerialize
-    for ZkUniSkipFirstRoundProof<F, C, T>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize
+    for ZkUniSkipFirstRoundProof<F, C>
 {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
@@ -359,8 +381,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
-    for ZkUniSkipFirstRoundProof<F, C, T>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize
+    for ZkUniSkipFirstRoundProof<F, C>
 {
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
@@ -379,8 +401,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ark_serialize::Valid
-    for ZkUniSkipFirstRoundProof<F, C, T>
+impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid
+    for ZkUniSkipFirstRoundProof<F, C>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.commitment.check()?;
@@ -390,27 +412,34 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ark_serialize::Valid
 
 /// Unified proof enum for uni-skip first round (similar to SumcheckInstanceProof).
 #[derive(Debug, Clone)]
-pub enum UniSkipFirstRoundProofVariant<F: JoltField, C: JoltCurve<F = F>, T: Transcript> {
-    Standard(UniSkipFirstRoundProof<F, T>),
-    Zk(ZkUniSkipFirstRoundProof<F, C, T>),
+pub enum UniSkipFirstRoundProofVariant<F: JoltField, C: JoltCurve<F = F>> {
+    Standard(UniSkipFirstRoundProof<F>),
+    Zk(ZkUniSkipFirstRoundProof<F, C>),
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> UniSkipFirstRoundProofVariant<F, C, T> {
+impl<F: JoltField, C: JoltCurve<F = F>> UniSkipFirstRoundProofVariant<F, C> {
     pub fn is_zk(&self) -> bool {
         matches!(self, Self::Zk(_))
     }
 
     /// Returns the polynomial degree for BlindFold R1CS configuration.
+    ///
+    /// Only queried for ZK proofs (`verify_blindfold`, `cfg(feature = "zk")`),
+    /// where the variant is always `Zk`. A `Standard` proof's first-round poly
+    /// lives in the NARG (no in-struct coefficients), and BlindFold never runs
+    /// against it, so that arm is unreachable.
     pub fn poly_degree(&self) -> usize {
         match self {
-            Self::Standard(p) => p.uni_poly.degree(),
+            Self::Standard(_) => {
+                unreachable!("poly_degree is only queried for ZK (BlindFold) proofs")
+            }
             Self::Zk(p) => p.poly_degree,
         }
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalSerialize
-    for UniSkipFirstRoundProofVariant<F, C, T>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize
+    for UniSkipFirstRoundProofVariant<F, C>
 {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
@@ -437,8 +466,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
-    for UniSkipFirstRoundProofVariant<F, C, T>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize
+    for UniSkipFirstRoundProofVariant<F, C>
 {
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
@@ -462,8 +491,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> CanonicalDeserialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, T: Transcript> ark_serialize::Valid
-    for UniSkipFirstRoundProofVariant<F, C, T>
+impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid
+    for UniSkipFirstRoundProofVariant<F, C>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         match self {

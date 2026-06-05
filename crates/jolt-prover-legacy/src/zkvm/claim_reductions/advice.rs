@@ -15,7 +15,6 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
 use crate::zkvm::claim_reductions::{
     permute_precommitted_polys, precommitted_eq_evals_with_scaling, precommitted_skip_round_scale,
     PrecommittedClaimReduction, PrecommittedPhase, PrecommittedSchedulingReference,
@@ -310,7 +309,7 @@ impl<F: JoltField> AdviceClaimReductionProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for AdviceClaimReductionProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for AdviceClaimReductionProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         self.core.params()
     }
@@ -394,8 +393,8 @@ impl<F: JoltField> AdviceClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for AdviceClaimReductionVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for AdviceClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

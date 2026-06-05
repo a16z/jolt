@@ -42,7 +42,6 @@ prover = [
   "dep:jolt-openings",
   "dep:jolt-poly",
   "dep:jolt-sumcheck",
-  "dep:jolt-transcript",
   "dep:jolt-verifier",
 ]
 # This is for building jolt-prover-legacy without prover capabilities, e.g. for recursion
@@ -62,6 +61,14 @@ field-inline = [
 transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
 transcript-keccak = []
 transcript-blake2b = []
+# Gates `zkvm::transpilable_verifier` (the symbolic on-chain-verifier generator
+# consumed by the `transpiler` crate). It is built on the now-removed hand-rolled
+# `crate::transcripts::Transcript` trait — which the `transpiler` implements
+# symbolically (`impl Transcript for PoseidonAstTranscript`) — and cannot be
+# expressed against spongefish's concrete `VerifierState`. Off by default during
+# the transcript→spongefish migration; the gnark/Solidity regeneration that
+# revives it is a coordinated follow-up (spec Non-Goal #2). See DEV-21.
+transpiler = []
 
 [dependencies]
 ark-bn254.workspace = true
@@ -111,7 +118,7 @@ jolt-lookup-tables = { workspace = true, optional = true }
 jolt-openings = { workspace = true, optional = true }
 jolt-poly = { workspace = true, optional = true }
 jolt-sumcheck = { workspace = true, optional = true }
-jolt-transcript = { workspace = true, optional = true }
+jolt-transcript.workspace = true
 jolt-verifier = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [

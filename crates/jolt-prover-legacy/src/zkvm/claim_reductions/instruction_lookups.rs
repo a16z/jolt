@@ -20,7 +20,7 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::FsChallenge;
 use crate::utils::math::Math;
 use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::instruction::LookupQuery;
@@ -45,9 +45,9 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckParams<F> {
     pub fn new(
         trace_len: usize,
         accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
-        let gamma = transcript.challenge_scalar::<F>();
+        let gamma = transcript.challenge_field();
         let gamma_sqr = gamma.square();
         let gamma_cub = gamma_sqr * gamma;
         let gamma_quart = gamma_sqr.square();
@@ -208,7 +208,7 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+impl<F: JoltField> SumcheckInstanceProver<F>
     for InstructionLookupsClaimReductionSumcheckProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -264,7 +264,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             panic!("Should finish sumcheck on phase 2");
         };
 
-        let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
+        let opening_point = SumcheckInstanceProver::<F>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         let lookup_output_claim = state.lookup_output_poly.final_sumcheck_claim();
@@ -618,7 +618,7 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckVerifier<F> {
     pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         trace_len: usize,
         accumulator: &A,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params =
             InstructionLookupsClaimReductionSumcheckParams::new(trace_len, accumulator, transcript);
@@ -626,15 +626,15 @@ impl<F: JoltField> InstructionLookupsClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for InstructionLookupsClaimReductionSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for InstructionLookupsClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
 
     fn expected_output_claim(&self, accumulator: &A, sumcheck_challenges: &[F::Challenge]) -> F {
-        let opening_point = SumcheckInstanceVerifier::<F, T, A>::get_params(self)
+        let opening_point = SumcheckInstanceVerifier::<F, A>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         let (r_spartan, _) = accumulator.get_virtual_polynomial_opening(
@@ -672,7 +672,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 
     fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
-        let opening_point = SumcheckInstanceVerifier::<F, T, A>::get_params(self)
+        let opening_point = SumcheckInstanceVerifier::<F, A>::get_params(self)
             .normalize_opening_point(sumcheck_challenges);
 
         accumulator.append_virtual(

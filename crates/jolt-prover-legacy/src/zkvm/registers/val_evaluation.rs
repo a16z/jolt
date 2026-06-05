@@ -25,7 +25,6 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
     zkvm::{
         bytecode::BytecodePreprocessing,
         witness::{CommittedPolynomial, VirtualPolynomial},
@@ -195,7 +194,7 @@ impl<F: JoltField> ValEvaluationSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ValEvaluationSumcheckProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for ValEvaluationSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -296,8 +295,8 @@ impl<F: JoltField> ValEvaluationSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for ValEvaluationSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for ValEvaluationSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

@@ -32,7 +32,6 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{
         config::{OneHotParams, ReadWriteConfig},
@@ -272,7 +271,7 @@ impl<F: JoltField> RafEvaluationSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RafEvaluationSumcheckProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for RafEvaluationSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -381,8 +380,8 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for RafEvaluationSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for RafEvaluationSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);

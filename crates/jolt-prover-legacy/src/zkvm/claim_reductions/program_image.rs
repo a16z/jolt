@@ -21,7 +21,6 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 use crate::zkvm::claim_reductions::{
     permute_precommitted_polys, precommitted_skip_round_scale, PrecommittedClaimReduction,
@@ -338,7 +337,7 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+impl<F: JoltField> SumcheckInstanceProver<F>
     for ProgramImageClaimReductionProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -399,8 +398,8 @@ impl<F: JoltField> ProgramImageClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for ProgramImageClaimReductionVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for ProgramImageClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

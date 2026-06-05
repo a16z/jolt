@@ -5,8 +5,8 @@ pub mod sha2_chain;
 use ark_bn254::Fr;
 use jolt_prover_legacy::curve::Bn254Curve;
 use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_prover_legacy::transcripts::Blake2bTranscript;
 use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_transcript::Blake2b512;
 pub use jolt_verifier::VerifierError;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
@@ -21,7 +21,7 @@ pub use tracer::JoltDevice;
 pub type F = Fr;
 pub type C = Bn254Curve;
 pub type PCS = DoryCommitmentScheme;
-pub type FS = Blake2bTranscript;
+pub type FS = Blake2b512;
 pub type VerifierField = jolt_field::Fr;
 pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;

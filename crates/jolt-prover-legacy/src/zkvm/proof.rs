@@ -39,6 +39,7 @@ use jolt_sumcheck::{
     ClearProof, ClearSumcheckProof, CommittedOutputClaims, CommittedRound, CommittedSumcheckProof,
     CompressedSumcheckProof, SumcheckProof,
 };
+use jolt_transcript::DuplexSpongeInterface;
 
 use crate::{
     curve::{Bn254Curve, JoltCurve},
@@ -52,7 +53,6 @@ use crate::{
     subprotocols::{
         sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
     },
-    transcripts::Transcript,
     zkvm::{
         config::{OneHotConfig as ProverOneHotConfig, ReadWriteConfig as ProverReadWriteConfig},
         preprocessing::{BlindfoldSetup, JoltSharedPreprocessing},
@@ -403,8 +403,8 @@ fn commitments_from_proof_payload_order<C>(
     clippy::type_complexity,
     reason = "private converter returns the verifier-native proof with projected backend types"
 )]
-pub(crate) fn proof_parts_into_verifier<F, C, PCS, FS>(
-    proof: ProverProofParts<F, C, PCS, FS>,
+pub(crate) fn proof_parts_into_verifier<F, C, PCS, H>(
+    proof: ProverProofParts<F, C, PCS, H>,
 ) -> Result<
     JoltProof<
         <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
@@ -416,7 +416,7 @@ where
     F: ProofField,
     C: ProofCurve<F>,
     PCS: ProofCommitmentScheme<F>,
-    FS: Transcript,
+    H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
     let commitments =
@@ -459,8 +459,8 @@ where
     clippy::type_complexity,
     reason = "private converter returns the verifier-native proof with projected backend types"
 )]
-pub(crate) fn proof_parts_into_verifier<F, C, PCS, FS>(
-    proof: ProverProofParts<F, C, PCS, FS>,
+pub(crate) fn proof_parts_into_verifier<F, C, PCS, H>(
+    proof: ProverProofParts<F, C, PCS, H>,
 ) -> Result<
     JoltProof<
         <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
@@ -472,7 +472,7 @@ where
     F: ProofField,
     C: ProofCurve<F>,
     PCS: ProofCommitmentScheme<F>,
-    FS: Transcript,
+    H: DuplexSpongeInterface,
 {
     let one_hot_config = convert_one_hot_config(proof.one_hot_config);
     let commitments =
@@ -509,13 +509,12 @@ where
     })
 }
 
-fn convert_uniskip<F, C, FS>(
-    proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+fn convert_uniskip<F, C>(
+    proof: UniSkipFirstRoundProofVariant<F, C>,
 ) -> SumcheckProof<F::VerifierField, C::VerifierRoundCommitment>
 where
     F: ProofField,
     C: ProofCurve<F>,
-    FS: Transcript,
 {
     match proof {
         UniSkipFirstRoundProofVariant::Standard(proof) => {
@@ -533,13 +532,12 @@ where
     }
 }
 
-fn convert_sumcheck<F, C, FS>(
-    proof: SumcheckInstanceProof<F, C, FS>,
+fn convert_sumcheck<F, C>(
+    proof: SumcheckInstanceProof<F, C>,
 ) -> SumcheckProof<F::VerifierField, C::VerifierRoundCommitment>
 where
     F: ProofField,
     C: ProofCurve<F>,
-    FS: Transcript,
 {
     match proof {
         SumcheckInstanceProof::Clear(proof) => {

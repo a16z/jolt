@@ -2844,7 +2844,6 @@ dependencies = [
  "thiserror 2.0.18",
 ]
 
-[[package]]
 name = "jolt-crypto"
 version = "0.1.0"
 dependencies = [
@@ -6012,6 +6011,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "074f823019979d89e8d46a966feb3d173f3db9a21c6764f8c2282e137017bba5"
 dependencies = [
+ "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "blake2 0.11.0-rc.6",
@@ -6021,6 +6021,18 @@ dependencies = [
  "rand 0.8.5",
  "sha2 0.11.0",
  "sha3 0.11.0-rc.9",
+ "spongefish-derive",
+]
+
+[[package]]
+name = "spongefish-derive"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d60e339e6913c02844921b60ab035e40704f9fb57d96663d734f8ae410756a44"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

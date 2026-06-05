@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     field::JoltField,
-    transcripts::Transcript,
+    transcript_msgs::{ProverFs, VerifierFs},
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -314,7 +314,7 @@ pub trait AbstractVerifierOpeningAccumulator<F: JoltField>: OpeningAccumulator<F
     );
 
     /// Flush accumulated pending claims to the transcript.
-    fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T);
+    fn flush_to_transcript<T: VerifierFs<F>>(&mut self, transcript: &mut T);
 
     /// Take pending claims (for ZK mode output commitment).
     fn take_pending_claims(&mut self) -> Vec<F>;
@@ -616,9 +616,9 @@ where
         self.insert_or_alias_opening(key, opening_point, claim);
     }
 
-    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+    pub fn flush_to_transcript<T: ProverFs<F>>(&mut self, transcript: &mut T) {
         for claim in self.pending_claims.drain(..) {
-            transcript.append_scalar(b"opening_claim", &claim);
+            transcript.absorb(&claim);
         }
         self.pending_claim_ids.clear();
     }
@@ -738,9 +738,9 @@ impl<F: JoltField> AbstractVerifierOpeningAccumulator<F> for VerifierOpeningAccu
         self.populate_or_alias_opening(key, opening_point);
     }
 
-    fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+    fn flush_to_transcript<T: VerifierFs<F>>(&mut self, transcript: &mut T) {
         for claim in self.pending_claims.drain(..) {
-            transcript.append_scalar(b"opening_claim", &claim);
+            transcript.absorb(&claim);
         }
         self.pending_claim_ids.clear();
     }

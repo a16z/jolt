@@ -9,7 +9,6 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::streaming_schedule::StreamingSchedule;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
-use crate::transcripts::Transcript;
 
 pub trait StreamingSumcheckWindow<F: JoltField>: Sized + MaybeAllocative + Send + Sync {
     type Shared;
@@ -107,11 +106,10 @@ where
     }
 }
 
-impl<F, T, S, Shared, Streaming, Linear> SumcheckInstanceProver<F, T>
+impl<F, S, Shared, Streaming, Linear> SumcheckInstanceProver<F>
     for StreamingSumcheck<F, S, Shared, Streaming, Linear>
 where
     F: JoltField,
-    T: Transcript,
     S: StreamingSchedule,
     Shared: SumcheckInstanceParams<F> + MaybeAllocative + Send + Sync,
     Streaming: StreamingSumcheckWindow<F, Shared = Shared>,

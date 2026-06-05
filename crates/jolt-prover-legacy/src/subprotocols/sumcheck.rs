@@ -13,7 +13,7 @@ use crate::poly::opening_proof::{
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::{ProverFs, VerifierFs};
 use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
@@ -34,22 +34,23 @@ pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
     /// Returns (proof, challenges, initial_batched_claim)
     /// For non-ZK mode - returns ClearSumcheckProof with polynomial coefficients visible.
-    pub fn prove<F: JoltField, ProofTranscript: Transcript>(
-        mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
+    pub fn prove<F: JoltField>(
+        mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
-    ) -> (ClearSumcheckProof<F, ProofTranscript>, Vec<F::Challenge>, F) {
+        transcript: &mut impl ProverFs<F>,
+    ) -> (ClearSumcheckProof<F>, Vec<F::Challenge>, F) {
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
             .max()
             .unwrap();
 
+        // Input claims are shared (the verifier recomputes them from openings).
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.append_scalar(b"sumcheck_claim", &input_claim);
+            transcript.absorb(&input_claim);
         });
-        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        let batching_coeffs: Vec<F> = transcript.challenge_vec(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -80,7 +81,6 @@ impl BatchedSumcheck {
         let mut batched_claim: F = initial_batched_claim;
 
         let mut r_sumcheck: Vec<F::Challenge> = Vec::with_capacity(max_num_rounds);
-        let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(max_num_rounds);
         let two_inv = F::from_u64(2).inverse().unwrap();
 
         for round in 0..max_num_rounds {
@@ -119,9 +119,11 @@ impl BatchedSumcheck {
 
             let compressed_poly = batched_univariate_poly.compress();
 
-            // append the prover's message to the transcript
-            transcript.append_scalars(b"sumcheck_poly", &compressed_poly.coeffs_except_linear_term);
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            // Write the prover's round polynomial into the NARG (prover-only payload).
+            // The self-delimiting frame lets the verifier read back the exact (possibly
+            // round-varying) number of coefficients.
+            transcript.write_slice(&compressed_poly.coeffs_except_linear_term);
+            let r_j = transcript.challenge_optimized();
             r_sumcheck.push(r_j);
 
             individual_claims
@@ -150,8 +152,6 @@ impl BatchedSumcheck {
                     sumcheck.ingest_challenge(r_j, round - offset);
                 }
             }
-
-            compressed_polys.push(compressed_poly);
         }
 
         // Allow each sumcheck instance to perform any end-of-protocol work (e.g. flushing
@@ -179,11 +179,7 @@ impl BatchedSumcheck {
 
         opening_accumulator.flush_to_transcript(transcript);
 
-        (
-            ClearSumcheckProof::new(compressed_polys),
-            r_sumcheck,
-            initial_batched_claim,
-        )
+        (ClearSumcheckProof::new(), r_sumcheck, initial_batched_claim)
     }
 
     /// Prove a batched sumcheck with Pedersen commitments (ZK mode).
@@ -204,14 +200,14 @@ impl BatchedSumcheck {
         ProofTranscript: Transcript,
         R: CryptoRngCore,
     >(
-        mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
+        mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
         transcript: &mut ProofTranscript,
         pedersen_gens: &PedersenGenerators<C>,
         rng: &mut R,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -405,13 +401,11 @@ impl BatchedSumcheck {
         )
     }
 
-    pub fn verify<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>(
-        proof: &SumcheckInstanceProof<F, C, ProofTranscript>,
-        sumcheck_instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        >,
+    pub fn verify<F: JoltField, C: JoltCurve<F = F>>(
+        proof: &SumcheckInstanceProof<F, C>,
+        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
@@ -428,10 +422,10 @@ impl BatchedSumcheck {
         if !is_zk {
             sumcheck_instances.iter().for_each(|sumcheck| {
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.append_scalar(b"sumcheck_claim", &input_claim);
+                transcript.absorb(&input_claim);
             });
         }
-        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        let batching_coeffs: Vec<F> = transcript.challenge_vec(sumcheck_instances.len());
 
         // To see why we may need to scale by a power of two, consider a batch of
         // two sumchecks:
@@ -474,8 +468,7 @@ impl BatchedSumcheck {
         if !is_zk {
             opening_accumulator.flush_to_transcript(transcript);
         } else if let SumcheckInstanceProof::Zk(zk_proof) = proof {
-            transcript
-                .append_commitments(b"output_claims_coms", &zk_proof.output_claims_commitments);
+            transcript.absorb(&zk_proof.output_claims_commitments);
             opening_accumulator.take_pending_claims();
         }
 
@@ -489,15 +482,11 @@ impl BatchedSumcheck {
 
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
     /// Used by opening proof reduction which doesn't need ZK mode.
-    pub fn verify_standard<
-        F: JoltField,
-        ProofTranscript: Transcript,
-        A: AbstractVerifierOpeningAccumulator<F>,
-    >(
-        proof: &ClearSumcheckProof<F, ProofTranscript>,
-        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>>,
+    pub fn verify_standard<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
+        proof: &ClearSumcheckProof<F>,
+        sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, A>>,
         opening_accumulator: &mut A,
-        transcript: &mut ProofTranscript,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
@@ -510,14 +499,14 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        // Append input claims to transcript BEFORE deriving batching coefficients
+        // Absorb input claims BEFORE deriving batching coefficients
         // (must match ordering in BatchedSumcheck::prove)
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.append_scalar(b"sumcheck_claim", &input_claim);
+            transcript.absorb(&input_claim);
         });
 
-        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        let batching_coeffs: Vec<F> = transcript.challenge_vec(sumcheck_instances.len());
 
         let claim: F = sumcheck_instances
             .iter()
@@ -554,41 +543,47 @@ impl BatchedSumcheck {
     }
 }
 
-/// Clear (non-ZK) sumcheck proof - coefficients visible to verifier.
-/// Used in non-ZK mode where the verifier evaluates polynomials directly.
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
-pub struct ClearSumcheckProof<F: JoltField, ProofTranscript: Transcript> {
-    pub compressed_polys: Vec<CompressedUniPoly<F>>,
-    _marker: PhantomData<ProofTranscript>,
+/// Clear (non-ZK) sumcheck proof.
+///
+/// Under the NARG (Option B) the round-polynomial coefficients live in the NARG
+/// byte-string, not in this struct — the prover writes them via `write_slice` and
+/// the verifier reads them back with `read_slice`. The struct is a mode marker (the
+/// `SumcheckInstanceProof::Clear` variant) carrying no data.
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
+pub struct ClearSumcheckProof<F: JoltField> {
+    _marker: PhantomData<F>,
 }
 
-impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTranscript> {
-    pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> Self {
+impl<F: JoltField> ClearSumcheckProof<F> {
+    pub fn new() -> Self {
         Self {
-            compressed_polys,
             _marker: PhantomData,
         }
     }
 
-    /// Verify this standard sumcheck proof by evaluating polynomials.
+    /// Verify this standard sumcheck by reading each round polynomial back from the
+    /// NARG and evaluating it — the math is identical to the cleartext path; only the
+    /// source of the coefficients changed (NARG instead of a struct field).
     pub fn verify(
         &self,
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
         let mut e = claim;
-        let mut r: Vec<F::Challenge> = Vec::new();
+        let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
 
-        if self.compressed_polys.len() != num_rounds {
-            return Err(ProofVerifyError::InvalidInputLength(
-                num_rounds,
-                self.compressed_polys.len(),
-            ));
-        }
-        for i in 0..self.compressed_polys.len() {
-            let poly_degree = self.compressed_polys[i].degree();
+        for _ in 0..num_rounds {
+            // Read the prover's round polynomial back from the NARG and reconstruct it.
+            let coeffs_except_linear_term: Vec<F> = transcript
+                .read_slice()
+                .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+            let poly = CompressedUniPoly {
+                coeffs_except_linear_term,
+            };
+
+            let poly_degree = poly.degree();
             if poly_degree == 0 || poly_degree > degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(
                     degree_bound,
@@ -596,16 +591,9 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
                 ));
             }
 
-            // append the prover's message to the transcript
-            transcript.append_scalars(
-                b"sumcheck_poly",
-                &self.compressed_polys[i].coeffs_except_linear_term,
-            );
-
-            //derive the verifier's challenge for the next round
-            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+            let r_i: F::Challenge = transcript.challenge_optimized();
             r.push(r_i);
-            e = self.compressed_polys[i].eval_from_hint(&e, &r_i);
+            e = poly.eval_from_hint(&e, &r_i);
         }
 
         Ok((e, r))
@@ -616,18 +604,18 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
 /// The verifier appends commitments to transcript and derives challenges,
 /// but polynomial evaluation is verified by BlindFold's R1CS constraints.
 #[derive(Debug, Clone)]
-pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> {
+pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve<F = F>> {
     /// Pedersen commitments to round polynomials (G1 curve elements)
     pub round_commitments: Vec<C::G1>,
     /// Polynomial degrees for each round (public info needed for R1CS construction)
     pub poly_degrees: Vec<usize>,
     /// Pedersen commitments to output claims, chunked to fit generator count
     pub output_claims_commitments: Vec<C::G1>,
-    _marker: PhantomData<(F, ProofTranscript)>,
+    _marker: PhantomData<F>,
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalSerialize
-    for ZkSumcheckProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize
+    for ZkSumcheckProof<F, C>
 {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
@@ -649,8 +637,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> ark_serialize::Valid
-    for ZkSumcheckProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid
+    for ZkSumcheckProof<F, C>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.round_commitments.check()?;
@@ -659,8 +647,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> ark_seriali
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDeserialize
-    for ZkSumcheckProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize
+    for ZkSumcheckProof<F, C>
 {
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
@@ -681,8 +669,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDe
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
-    ZkSumcheckProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>>
+    ZkSumcheckProof<F, C>
 {
     pub fn new(
         round_commitments: Vec<C::G1>,
@@ -703,7 +691,7 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
         &self,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         if self.round_commitments.len() != num_rounds {
             return Err(ProofVerifyError::InvalidInputLength(
@@ -726,8 +714,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
 
         let mut r: Vec<F::Challenge> = Vec::new();
         for commitment in &self.round_commitments {
-            transcript.append_commitment(b"sumcheck_commitment", commitment);
-            let r_i: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+            transcript.absorb(commitment);
+            let r_i: F::Challenge = transcript.challenge_optimized();
             r.push(r_i);
         }
 
@@ -736,15 +724,15 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
 }
 
 #[derive(Debug, Clone)]
-pub enum SumcheckInstanceProof<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> {
+pub enum SumcheckInstanceProof<F: JoltField, C: JoltCurve<F = F>> {
     /// Non-ZK: coefficients visible to verifier
-    Clear(ClearSumcheckProof<F, ProofTranscript>),
+    Clear(ClearSumcheckProof<F>),
     /// ZK: only commitments visible, coefficients hidden in BlindFold
-    Zk(ZkSumcheckProof<F, C, ProofTranscript>),
+    Zk(ZkSumcheckProof<F, C>),
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalSerialize
-    for SumcheckInstanceProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize
+    for SumcheckInstanceProof<F, C>
 {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
@@ -771,8 +759,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> ark_serialize::Valid
-    for SumcheckInstanceProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid
+    for SumcheckInstanceProof<F, C>
 {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         match self {
@@ -782,8 +770,8 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> ark_seriali
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDeserialize
-    for SumcheckInstanceProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize
+    for SumcheckInstanceProof<F, C>
 {
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
@@ -805,12 +793,15 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript> CanonicalDe
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
-    SumcheckInstanceProof<F, C, ProofTranscript>
+impl<F: JoltField, C: JoltCurve<F = F>>
+    SumcheckInstanceProof<F, C>
 {
     /// Create a standard (non-ZK) sumcheck proof.
-    pub fn new_standard(compressed_polys: Vec<CompressedUniPoly<F>>) -> Self {
-        Self::Clear(ClearSumcheckProof::new(compressed_polys))
+    ///
+    /// The `Clear` variant is a data-free marker: the round polynomials are
+    /// written to (and read back from) the NARG, not stored in the proof struct.
+    pub fn new_standard() -> Self {
+        Self::Clear(ClearSumcheckProof::new())
     }
 
     /// Create a ZK sumcheck proof with only commitments and polynomial degrees.
@@ -834,7 +825,7 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
-        transcript: &mut ProofTranscript,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
         match self {
             Self::Clear(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),
@@ -855,7 +846,9 @@ impl<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>
 
     pub fn num_rounds(&self) -> usize {
         match self {
-            Self::Clear(proof) => proof.compressed_polys.len(),
+            // Clear round count lives in the NARG, not the struct; the verifier derives
+            // it from the sumcheck instances (this is only read on the ZK path).
+            Self::Clear(_) => 0,
             Self::Zk(proof) => proof.round_commitments.len(),
         }
     }

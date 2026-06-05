@@ -520,8 +520,8 @@ mod tests {
         let mut t3 = TestTranscript::new(b"opt_vector_test");
         let mut t4 = TestTranscript::new(b"opt_vector_test");
 
-        let challenges3: Vec<<Fr as JoltField>::Challenge> = t3.challenge_vector_optimized::<Fr>(5);
-        let challenges4: Vec<<Fr as JoltField>::Challenge> = t4.challenge_vector_optimized::<Fr>(5);
+        let challenges3: Vec<<Fr as JoltField>::Challenge> = t3.challenge_optimized_vec(5);
+        let challenges4: Vec<<Fr as JoltField>::Challenge> = t4.challenge_optimized_vec(5);
 
         assert_eq!(challenges3.len(), 5);
         assert_eq!(

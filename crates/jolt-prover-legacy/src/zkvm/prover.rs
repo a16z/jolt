@@ -2,6 +2,9 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
+use jolt_transcript::{prover_transcript, DuplexSpongeInterface, ProverState};
+use rand::rngs::StdRng;
+use std::marker::PhantomData;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
@@ -58,7 +61,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::UniSkipFirstRoundProofVariant,
     },
-    transcripts::Transcript,
+    transcript_msgs::{AbsorbFs, FsChallenge, ProverFs},
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         bytecode::{
@@ -181,7 +184,7 @@ pub struct JoltCpuProver<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
+    H: DuplexSpongeInterface,
 > {
     pub preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
     pub program_io: JoltDevice,
@@ -200,7 +203,7 @@ pub struct JoltCpuProver<
     program_image_reduction_prover: Option<ProgramImageClaimReductionProver<F>>,
     pub unpadded_trace_len: usize,
     pub padded_trace_len: usize,
-    pub transcript: ProofTranscript,
+    pub transcript: ProverState<H, StdRng>,
     pub opening_accumulator: ProverOpeningAccumulator<F>,
     pub spartan_key: UniformSpartanKey<F>,
     pub initial_ram_state: Vec<u64>,
@@ -220,8 +223,10 @@ impl<
         F: JoltField,
         C: JoltCurve<F = F>,
         PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-        ProofTranscript: Transcript,
-    > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
+        H: DuplexSpongeInterface<U = u8> + Default,
+    > JoltCpuProver<'a, F, C, PCS, H>
+where
+    ProverState<H, StdRng>: ProverFs<F>,
 {
     #[expect(
         clippy::too_many_arguments,
@@ -369,7 +374,10 @@ impl<
             )
             .next_power_of_two() as usize;
 
-        let transcript = ProofTranscript::new(b"Jolt");
+        // Milestone: a fixed instance + the `fiat_shamir_preamble` absorbed below binds the
+        // public statement. Folding the preamble into `instance = Blake2b(statement)` is a
+        // follow-up cleanup (see DEV-19).
+        let transcript = prover_transcript(b"Jolt", [0u8; 32], H::default());
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
 
         let spartan_key = UniformSpartanKey::new(trace.len());
@@ -434,8 +442,8 @@ impl<
     fn prove_parts(
         mut self,
     ) -> (
-        JoltProofParts<F, C, PCS, ProofTranscript>,
-        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+        JoltProofParts<F, C, PCS, H>,
+        Option<ProverDebugInfo<F, H, PCS>>,
     ) {
         let _pprof_prove = pprof_scope!("prove");
 
@@ -485,14 +493,12 @@ impl<
         {
             for commitment in &bytecode_commitments.commitments {
                 self.transcript
-                    .append_serializable(b"bytecode_chunk_commit", commitment);
+                    .absorb(commitment);
             }
         }
         if let Some(program_commitments) = self.preprocessing.shared.program.program_commitments() {
-            self.transcript.append_serializable(
-                b"program_image_commitment",
-                &program_commitments.program_image_commitment,
-            );
+            self.transcript
+                .absorb(&program_commitments.program_image_commitment);
         }
 
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, r_stage1) =
@@ -534,11 +540,15 @@ impl<
             );
         }
 
+        // The NARG byte-string is the prover-only proof payload (sumcheck/uniskip round
+        // polynomials) written via `prover_message` across all stages.
+        let narg = self.transcript.narg_string().to_vec();
+
         #[cfg(test)]
         let debug_info = Some(ProverDebugInfo {
-            transcript: self.transcript.clone(),
             opening_accumulator: self.opening_accumulator.clone(),
             prover_setup: self.preprocessing.generators.clone(),
+            _marker: PhantomData,
         });
         #[cfg(not(test))]
         let debug_info = None;
@@ -566,6 +576,8 @@ impl<
             rw_config: self.rw_config.clone(),
             one_hot_config: self.one_hot_params.to_config(),
             dory_layout: DoryGlobals::get_layout(),
+            narg,
+            _marker: PhantomData,
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -594,7 +606,7 @@ impl<
                 <PCS as crate::zkvm::proof::ProofCommitmentScheme<F>>::VerifierPcs,
                 <C as crate::zkvm::proof::ProofCurve<F>>::VerifierVectorCommitment,
             >,
-            Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+            Option<ProverDebugInfo<F, H, PCS>>,
         ),
         jolt_verifier::VerifierError,
     >
@@ -610,9 +622,9 @@ impl<
 
     fn prove_batched_sumcheck(
         &mut self,
-        instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
+        instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
         F,
     ) {
@@ -641,8 +653,8 @@ impl<
 
     fn prove_uniskip(
         &mut self,
-        instance: &mut impl SumcheckInstanceProver<F, ProofTranscript>,
-    ) -> UniSkipFirstRoundProofVariant<F, C, ProofTranscript> {
+        instance: &mut impl SumcheckInstanceProver<F>,
+    ) -> UniSkipFirstRoundProofVariant<F, C> {
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
@@ -780,7 +792,7 @@ impl<
         // Append commitments to transcript
         for commitment in &commitments {
             self.transcript
-                .append_serializable(b"commitment", commitment);
+                .absorb(commitment);
         }
 
         (commitments, hint_map)
@@ -812,7 +824,7 @@ impl<
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
         self.transcript
-            .append_serializable(b"untrusted_advice", &commitment);
+            .absorb(&commitment);
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -837,10 +849,8 @@ impl<
 
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
         self.advice.trusted_advice_polynomial = Some(poly);
-        self.transcript.append_serializable(
-            b"trusted_advice",
-            self.advice.trusted_advice_commitment.as_ref().unwrap(),
-        );
+        self.transcript
+            .absorb(self.advice.trusted_advice_commitment.as_ref().unwrap());
     }
 
     /// Returns (uni_skip_proof, sumcheck_proof, challenges).
@@ -852,8 +862,8 @@ impl<
     fn prove_stage1(
         &mut self,
     ) -> (
-        UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        UniSkipFirstRoundProofVariant<F, C>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -879,7 +889,7 @@ impl<
             OuterRemainingStreamingSumcheck::new(shared, schedule);
 
         let (sumcheck_proof, r_stage1, _initial_claim) = self.prove_batched_sumcheck(vec![
-            &mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_, _>,
+            &mut spartan_outer_remaining as &mut dyn SumcheckInstanceProver<_>,
         ]);
 
         (first_round_proof, sumcheck_proof, r_stage1)
@@ -894,8 +904,8 @@ impl<
     fn prove_stage2(
         &mut self,
     ) -> (
-        UniSkipFirstRoundProofVariant<F, C, ProofTranscript>,
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        UniSkipFirstRoundProofVariant<F, C>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -982,7 +992,7 @@ impl<
             print_data_structure_heap_usage("OutputSumcheckProver", &ram_output_check);
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(ram_read_write_checking),
             Box::new(spartan_product_virtual_remainder),
             Box::new(instruction_claim_reduction),
@@ -1008,7 +1018,7 @@ impl<
     fn prove_stage3(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1056,7 +1066,7 @@ impl<
             );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(spartan_shift),
             Box::new(spartan_instruction_input),
             Box::new(spartan_registers_claim_reduction),
@@ -1078,7 +1088,7 @@ impl<
     fn prove_stage4(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1106,8 +1116,7 @@ impl<
             );
         }
         // Domain-separate the batching challenge.
-        self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
-        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
+        let ram_val_check_gamma: F = self.transcript.challenge_field();
         let ram_val_check_params = RamValCheckSumcheckParams::new_from_prover(
             &self.one_hot_params,
             &self.opening_accumulator,
@@ -1142,7 +1151,7 @@ impl<
             print_data_structure_heap_usage("RamValCheckSumcheckProver", &ram_val_check);
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(registers_read_write_checking),
             Box::new(ram_val_check),
         ];
@@ -1164,7 +1173,7 @@ impl<
     fn prove_stage5(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1212,7 +1221,7 @@ impl<
             );
         }
 
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_>>> = vec![
             Box::new(lookups_read_raf),
             Box::new(ram_ra_reduction),
             Box::new(registers_val_evaluation),
@@ -1235,7 +1244,7 @@ impl<
     fn prove_stage6a(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         BytecodeReadRafSumcheckParams<F>,
         BooleanityCycleInput<F>,
     ) {
@@ -1278,7 +1287,7 @@ impl<
             print_data_structure_heap_usage("BooleanityAddressSumcheckProver", &booleanity);
         }
 
-        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> =
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_>> =
             vec![&mut bytecode_read_raf, &mut booleanity];
 
         #[cfg(feature = "allocative")]
@@ -1307,7 +1316,7 @@ impl<
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
         booleanity_cycle_input: BooleanityCycleInput<F>,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1483,7 +1492,7 @@ impl<
         let mut bytecode_reduction = self.bytecode_reduction_prover.take();
         let mut program_image_reduction = self.program_image_reduction_prover.take();
 
-        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_, _>> = vec![
+        let mut instances: Vec<&mut dyn SumcheckInstanceProver<_>> = vec![
             &mut bytecode_read_raf,
             &mut booleanity,
             &mut ram_hamming_booleanity,
@@ -1975,7 +1984,7 @@ impl<
     fn prove_stage7(
         &mut self,
     ) -> (
-        SumcheckInstanceProof<F, C, ProofTranscript>,
+        SumcheckInstanceProof<F, C>,
         Vec<F::Challenge>,
     ) {
         // Create params and prover for HammingWeightClaimReduction
@@ -1997,7 +2006,7 @@ impl<
 
         // Run Stage 7 batched sumcheck (address rounds only).
         // Includes HammingWeightClaimReduction plus address phase of advice reduction instances (if needed).
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F, ProofTranscript>>> =
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F>>> =
             vec![Box::new(hw_prover)];
 
         if let Some(mut advice_reduction_prover_trusted) =
@@ -2255,8 +2264,8 @@ impl<
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
-        self.transcript.append_scalars(b"rlc_claims", &claims);
-        let gamma_powers: Vec<F> = self.transcript.challenge_scalar_powers(claims.len());
+        self.transcript.absorb(&claims);
+        let gamma_powers: Vec<F> = self.transcript.challenge_powers(claims.len());
         #[cfg(feature = "zk")]
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
@@ -2359,7 +2368,7 @@ pub struct JoltAdvice<F: JoltField, PCS: CommitmentScheme<Field = F>> {
 
 #[cfg(feature = "allocative")]
 fn write_boxed_instance_flamegraph_svg(
-    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField, impl Transcript>>],
+    instances: &[Box<dyn SumcheckInstanceProver<impl JoltField>>],
     path: impl AsRef<Path>,
 ) {
     let mut flamegraph = FlameGraphBuilder::default();
@@ -2371,7 +2380,7 @@ fn write_boxed_instance_flamegraph_svg(
 
 #[cfg(feature = "allocative")]
 fn write_instance_flamegraph_svg(
-    instances: &[&mut dyn SumcheckInstanceProver<impl JoltField, impl Transcript>],
+    instances: &[&mut dyn SumcheckInstanceProver<impl JoltField>],
     path: impl AsRef<Path>,
 ) {
     let mut flamegraph = FlameGraphBuilder::default();
@@ -3514,6 +3523,13 @@ mod tests {
         ) -> Vec<(RoundWitness<Fr>, usize)> {
             match proof {
                 SumcheckInstanceProof::Clear(std_proof) => {
+                    // ⚠️ ZK-MIGRATION NOTE: `ClearSumcheckProof.compressed_polys` was REMOVED —
+                    // under Option B the round polynomials live in the NARG, not in the struct
+                    // (the prover `write_slice`s them, the verifier `read_slice`s them). This
+                    // cfg(zk) test therefore does NOT compile until the zk path is migrated. When
+                    // you migrate it: source the round-poly coeffs from the NARG (replay it like
+                    // `BatchedSumcheck::verify` does), do NOT re-add the `compressed_polys` field.
+                    // See DEV-26/DEV-27 and the handoff "remaining work" notes.
                     // For Standard proofs, use actual polynomial coefficients
                     let compressed_polys = &std_proof.compressed_polys;
                     let num_rounds = compressed_polys.len();

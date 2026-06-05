@@ -56,8 +56,20 @@ where
 /// 128 bits. Either way the result is a 128-bit value embedded in [`Fr`], so
 /// downstream fast-multiplication paths are identical across sponges.
 pub trait OptimizedChallenge {
-    /// Squeezes a 128-bit-truncated challenge as an [`Fr`].
-    fn challenge_128(&mut self) -> Fr;
+    /// Squeezes a 128-bit verifier challenge as a raw `u128` — the uniform low
+    /// 128 bits of the sponge output.
+    ///
+    /// This is the primitive: callers that want the fast-multiply field
+    /// challenge wrapper (`JoltField::Challenge`, e.g. `MontU128Challenge`)
+    /// build it via `Challenge::from(u128)`, which preserves the 128-bit
+    /// fast-multiply path. [`challenge_128`](Self::challenge_128) is the
+    /// embedded-in-[`Fr`] convenience built on top of it.
+    fn challenge_u128(&mut self) -> u128;
+
+    /// Squeezes the same 128-bit challenge embedded in an [`Fr`].
+    fn challenge_128(&mut self) -> Fr {
+        Fr::from(self.challenge_u128())
+    }
 }
 
 #[cfg(feature = "transcript-blake2b")]
@@ -65,8 +77,8 @@ impl<R> OptimizedChallenge for ProverState<spongefish::instantiations::Blake2b51
 where
     R: RngCore + CryptoRng,
 {
-    fn challenge_128(&mut self) -> Fr {
-        Fr::from(ProverState::verifier_message::<u128>(self))
+    fn challenge_u128(&mut self) -> u128 {
+        ProverState::verifier_message::<u128>(self)
     }
 }
 
@@ -75,8 +87,8 @@ impl<R> OptimizedChallenge for ProverState<spongefish::instantiations::Keccak, R
 where
     R: RngCore + CryptoRng,
 {
-    fn challenge_128(&mut self) -> Fr {
-        Fr::from(ProverState::verifier_message::<u128>(self))
+    fn challenge_u128(&mut self) -> u128 {
+        ProverState::verifier_message::<u128>(self)
     }
 }
 
@@ -98,12 +110,10 @@ impl<R> OptimizedChallenge for ProverState<crate::PoseidonSponge, R>
 where
     R: RngCore + CryptoRng,
 {
-    fn challenge_128(&mut self) -> Fr {
+    fn challenge_u128(&mut self) -> u128 {
         // Field-native sponge: squeeze a full element (the raw ark type, which
         // spongefish can decode) and keep the uniform low 128 bits — its high
-        // bytes are modulus-bounded. `Fr::from(u128)` mirrors the byte-sponges.
-        Fr::from(crate::poseidon::low_128_bits(
-            ProverState::verifier_message::<ark_bn254::Fr>(self),
-        ))
+        // bytes are modulus-bounded.
+        crate::poseidon::low_128_bits(ProverState::verifier_message::<ark_bn254::Fr>(self))
     }
 }
