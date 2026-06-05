@@ -64,6 +64,8 @@ pub mod r1cs;
 pub mod ram;
 pub mod registers;
 pub mod spartan;
+#[cfg(all(test, feature = "host"))]
+mod trace_row_parity;
 pub mod transpilable_verifier;
 pub mod verifier;
 pub mod witness;

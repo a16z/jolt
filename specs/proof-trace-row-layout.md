@@ -4,8 +4,45 @@
 |-------------|-------|
 | Author(s)   | Quang Dao |
 | Created     | 2026-05-14 |
-| Status      | proposed |
+| Status      | in progress (foundation implemented) |
 | PR          | follow-up to [#1522](https://github.com/a16z/jolt/pull/1522) |
+
+> **Implementation status (foundation slice).** The accessor API, builder,
+> parity tests, and one default layout have landed; consumer cutover and the
+> performance gate are deferred follow-ups.
+>
+> The type lives in the new `crates/` (not the deprecating `jolt-core`):
+>
+> **Landed (Execution slices 1–3):**
+> - `crates/jolt-riscv/src/trace_row.rs`: `JoltTraceRow` with the **Option C
+>   balanced-packed 64-byte layout** (checked `size_of` assertion), private
+>   physical slots with memory-row aliasing, native `CircuitFlagSet`/
+>   `InstructionFlagSet`, and logical accessors for all columns. Checked newtype
+>   `BytecodeIndex(u64)` over `u32` storage; `u64` guest addresses;
+>   construction-time range checks for immediates and register ids; loud
+>   `TraceRowError` (a `thiserror` enum) on memory-row contract violations.
+>   `from_components` is the producer contract and depends only on `jolt-riscv`
+>   (no `jolt-core`, no `tracer`, no lookup tables).
+> - `crates/jolt-lookup-tables/src/traits.rs`: `InstructionLookupTable for
+>   JoltTraceRow`, delegating through the row's cached `instruction_kind()` (this
+>   crate owns `LookupTableKind`, so the accessor cannot live in `jolt-riscv`).
+> - `tracer/src/trace_row.rs`: `cycle_to_trace_row` / `build_trace_rows` — the
+>   `Cycle` → `JoltTraceRow` conversion (extracts logical values, rejects
+>   source-only cycles, computes the bytecode PC via `jolt-program`); errors via
+>   the `thiserror` enum `CycleConversionError`. The dependency now points
+>   `tracer -> jolt-riscv`.
+> - Tests: jolt-riscv per-class aliasing (non-memory / LD / SD), no-op/`Default`
+>   parity, size/overflow/rejection; and the layout guard — a `host`-gated **real
+>   fibonacci-trace** parity test in `jolt-core` comparing every accessor (built
+>   via the tracer conversion) against `R1CSCycleInputs::from_trace`.
+>
+> **Deferred (Execution slices 4–11):** the `jolt-eval`
+> `trace_row_accessor_parity` invariant; consumer cutover (R1CS inputs, Spartan
+> outer, RAM/register/instruction-lookup/bytecode phases);
+> `JoltTraceCycle::try_new` hot-path removal; `CompactBytecodeRow` co-design; and
+> the ≤2% end-to-end prover-time benchmark gate. The layout choice is documented
+> as the conservative default; it must be confirmed against that gate before the
+> hot-path cutover relies on it.
 
 ## Summary
 
