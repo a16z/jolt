@@ -1600,7 +1600,6 @@ where
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        transcript.append_label(b"BlindFold");
 
         verifier
             .verify(
