@@ -54,24 +54,17 @@ fn accessors_match_reference_on_real_trace() {
         );
         assert_eq!(row.imm(), reference.imm.to_i128(), "imm @ {t}");
 
-        // rd pre-value and register indices come straight from the cycle.
+        // rd pre-value comes from the cycle; register indices from operands.
         let rd = cycle.rd_write();
         assert_eq!(
             row.rd_pre_value(),
             rd.map_or(0, |(_, pre, _)| pre),
             "rd_pre @ {t}"
         );
-        assert_eq!(
-            row.rs1_index(),
-            cycle.rs1_read().map(|(i, _)| i),
-            "rs1_idx @ {t}"
-        );
-        assert_eq!(
-            row.rs2_index(),
-            cycle.rs2_read().map(|(i, _)| i),
-            "rs2_idx @ {t}"
-        );
-        assert_eq!(row.rd_index(), rd.map(|(i, _, _)| i), "rd_idx @ {t}");
+        let instruction = cycle.instruction().try_jolt_instruction_row().unwrap();
+        assert_eq!(row.rs1_index(), instruction.operands.rs1, "rs1_idx @ {t}");
+        assert_eq!(row.rs2_index(), instruction.operands.rs2, "rs2_idx @ {t}");
+        assert_eq!(row.rd_index(), instruction.operands.rd, "rd_idx @ {t}");
 
         saw_load |= row.is_load();
         saw_store |= row.is_store();

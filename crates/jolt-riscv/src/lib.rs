@@ -255,7 +255,9 @@ pub use profile::{
 pub use row::{JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceInstructionRow};
 pub use row_data::JoltInstructionRowData;
 pub use trace::JoltCycle;
-pub use trace_row::{JoltTraceRow, LogicalValues, TraceRowError};
+pub use trace_row::{
+    CapturedState, JoltTraceRow, LoadState, NonMemoryState, StoreState, TraceRowError,
+};
 pub use uncompress::uncompress_rv64_instruction;
 
 /// Declares a Jolt RISC-V instruction kind and (optionally) its `Flags` impl.
