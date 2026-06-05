@@ -110,12 +110,18 @@ members = [
   "examples/sig-recovery/guest",
   "zklean-extractor",
   "z3-verifier",
-  "transpiler",
   "jolt-eval",
   "jolt-eval/macros",
   "jolt-eval/guest-sandbox",
 ]
-exclude = ["jolt-eval/fuzz"]
+# `transpiler` is temporarily excluded: it generates the on-chain (gnark/Solidity)
+# verifier from jolt-core's symbolic verifier, which is built on the hand-rolled
+# `jolt_core::transcripts::Transcript` trait (implemented symbolically as
+# `impl Transcript for PoseidonAstTranscript`). That trait cannot be expressed over
+# spongefish's concrete `VerifierState`, so the crate cannot compile under the
+# transcript→spongefish migration. Its regeneration is a coordinated follow-up
+# (spec Non-Goal #2). Re-add here once that lands. See notes/DEV-21.
+exclude = ["jolt-eval/fuzz", "transpiler"]
 
 [features]
 host = ["jolt-sdk/host"]

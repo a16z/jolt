@@ -1,6 +1,5 @@
 //! Spongefish-native [`VerifierTranscript`] surface.
 
-use jolt_field::Fr;
 use spongefish::{
     Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, VerificationResult, VerifierState,
 };
@@ -58,15 +57,15 @@ where
 
 #[cfg(feature = "transcript-blake2b")]
 impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Blake2b512> {
-    fn challenge_128(&mut self) -> Fr {
-        Fr::from(VerifierState::verifier_message::<u128>(self))
+    fn challenge_u128(&mut self) -> u128 {
+        VerifierState::verifier_message::<u128>(self)
     }
 }
 
 #[cfg(feature = "transcript-keccak")]
 impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak> {
-    fn challenge_128(&mut self) -> Fr {
-        Fr::from(VerifierState::verifier_message::<u128>(self))
+    fn challenge_u128(&mut self) -> u128 {
+        VerifierState::verifier_message::<u128>(self)
     }
 }
 
@@ -75,10 +74,8 @@ impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak
 // challenges instead. Mirror of the prover impl.
 #[cfg(feature = "transcript-poseidon")]
 impl OptimizedChallenge for VerifierState<'_, crate::PoseidonSponge> {
-    fn challenge_128(&mut self) -> Fr {
+    fn challenge_u128(&mut self) -> u128 {
         // Mirror of the prover impl: squeeze a full element, keep the low 128 bits.
-        Fr::from(crate::poseidon::low_128_bits(
-            VerifierState::verifier_message::<ark_bn254::Fr>(self),
-        ))
+        crate::poseidon::low_128_bits(VerifierState::verifier_message::<ark_bn254::Fr>(self))
     }
 }

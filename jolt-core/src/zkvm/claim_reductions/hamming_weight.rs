@@ -110,7 +110,7 @@ use crate::subprotocols::blindfold::{
 #[cfg(feature = "prover")]
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::FsChallenge;
 #[cfg(feature = "prover")]
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::{
@@ -165,7 +165,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
     pub fn new(
         one_hot_params: &OneHotParams,
         accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let instruction_d = one_hot_params.instruction_d;
         let bytecode_d = one_hot_params.bytecode_d;
@@ -185,14 +185,8 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             polynomial_types.push(CommittedPolynomial::RamRa(i));
         }
 
-        // Sample batching challenge γ and compute powers (3 claims per ra_i)
-        let gamma: F = transcript.challenge_scalar();
-        let mut gamma_powers = Vec::with_capacity(3 * N);
-        let mut power = F::one();
-        for _ in 0..(3 * N) {
-            gamma_powers.push(power);
-            power *= gamma;
-        }
+        // Sample batching challenge γ and compute powers [1, γ, …, γ^(3N-1)] (3 claims per ra_i)
+        let gamma_powers = transcript.challenge_powers(3 * N);
 
         // Fetch r_addr_bool and r_cycle from Booleanity opening point.
         // The claims from Booleanity are at (ρ_addr, ρ_cycle) where both are sumcheck challenges.
@@ -483,7 +477,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
 }
 
 #[cfg(feature = "prover")]
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+impl<F: JoltField> SumcheckInstanceProver<F>
     for HammingWeightClaimReductionProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -594,7 +588,7 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     pub fn new(
         one_hot_params: &OneHotParams,
         accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params =
             HammingWeightClaimReductionParams::new(one_hot_params, accumulator, transcript);
@@ -602,8 +596,8 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for HammingWeightClaimReductionVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for HammingWeightClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

@@ -11,7 +11,6 @@ use crate::{
         OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
         BIG_ENDIAN,
     },
-    transcripts::Transcript,
     utils::errors::ProofVerifyError,
     zkvm::claim_reductions::AdviceKind,
 };
@@ -30,16 +29,20 @@ use crate::{
 ))]
 compile_error!("Cannot enable multiple transcript features simultaneously. Please choose exactly one of: 'transcript-poseidon', 'transcript-keccak', or 'transcript-blake2b'.");
 
+/// The spongefish sponge RV64IMAC's prover/verifier/proof are instantiated over
+/// (the phantom `H` of the proof). Cfg-selected, defaulting to Blake2b.
 #[cfg(any(
     feature = "transcript-blake2b",
     not(any(feature = "transcript-poseidon", feature = "transcript-keccak"))
 ))]
-use crate::transcripts::Blake2bTranscript;
+pub type RV64IMACSponge = jolt_transcript::Blake2b512;
 #[cfg(feature = "transcript-keccak")]
-use crate::transcripts::KeccakTranscript;
+pub type RV64IMACSponge = jolt_transcript::Keccak;
 #[cfg(feature = "transcript-poseidon")]
-use crate::transcripts::PoseidonTranscript;
+pub type RV64IMACSponge = jolt_transcript::PoseidonSponge;
 use ark_bn254::Fr;
+use jolt_transcript::DuplexSpongeInterface;
+use crate::transcript_msgs::AbsorbFs;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
 use proof_serialization::JoltProof;
@@ -64,6 +67,11 @@ pub mod r1cs;
 pub mod ram;
 pub mod registers;
 pub mod spartan;
+/// Symbolic verifier used to transpile the on-chain verifier (gated behind the
+/// `transpiler` feature). It relies on the removed `crate::transcripts::Transcript`
+/// trait and cannot be expressed over spongefish's concrete `VerifierState`, so it
+/// is disabled during the transcript→spongefish migration (spec Non-Goal #2 / DEV-21).
+#[cfg(feature = "transpiler")]
 pub mod transpilable_verifier;
 pub mod verifier;
 pub mod witness;
@@ -296,20 +304,25 @@ macro_rules! pprof_scope {
 }
 
 #[allow(dead_code)]
-pub struct ProverDebugInfo<F, ProofTranscript, PCS>
+pub struct ProverDebugInfo<F, H, PCS>
 where
     F: JoltField,
-    ProofTranscript: Transcript,
+    H: DuplexSpongeInterface,
     PCS: CommitmentScheme<Field = F>,
 {
-    pub(crate) transcript: ProofTranscript,
     pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
     pub(crate) prover_setup: PCS::ProverSetup,
+    pub(crate) _marker: std::marker::PhantomData<fn() -> H>,
 }
 
 /// Absorb public instance data into the transcript for Fiat-Shamir.
+///
+/// The statement is `absorb`'d (public_message) on both prover and verifier — it is
+/// recomputable by the verifier, so it is not shipped in the NARG. (Milestone: this
+/// scattered absorb is the binding; folding it into `instance = Blake2b(statement)`
+/// is a follow-up — see DEV-19.)
 #[allow(clippy::too_many_arguments)]
-pub fn fiat_shamir_preamble(
+pub fn fiat_shamir_preamble<F: JoltField>(
     program_io: &JoltDevice,
     ram_K: usize,
     trace_length: usize,
@@ -318,92 +331,36 @@ pub fn fiat_shamir_preamble(
     one_hot_config: &OneHotConfig,
     dory_layout: DoryLayout,
     preprocessing_digest: &[u8; 32],
-    transcript: &mut impl Transcript,
+    transcript: &mut impl AbsorbFs<F>,
 ) {
-    transcript.append_bytes(b"preprocessing_digest", preprocessing_digest);
-    transcript.append_u64(b"max_input_size", program_io.memory_layout.max_input_size);
-    transcript.append_u64(b"max_output_size", program_io.memory_layout.max_output_size);
-    transcript.append_u64(b"heap_size", program_io.memory_layout.heap_size);
-    transcript.append_bytes(b"inputs", &program_io.inputs);
-    transcript.append_bytes(b"outputs", &program_io.outputs);
-    transcript.append_u64(b"panic", program_io.panic as u64);
-    transcript.append_u64(b"ram_K", ram_K as u64);
-    transcript.append_u64(b"trace_length", trace_length as u64);
-    transcript.append_u64(b"entry_address", entry_address);
-    transcript.append_u64(
-        b"ram_rw_phase1_num_rounds",
-        rw_config.ram_rw_phase1_num_rounds as u64,
-    );
-    transcript.append_u64(
-        b"ram_rw_phase2_num_rounds",
-        rw_config.ram_rw_phase2_num_rounds as u64,
-    );
-    transcript.append_u64(
-        b"registers_rw_phase1_num_rounds",
-        rw_config.registers_rw_phase1_num_rounds as u64,
-    );
-    transcript.append_u64(
-        b"registers_rw_phase2_num_rounds",
-        rw_config.registers_rw_phase2_num_rounds as u64,
-    );
-    transcript.append_u64(b"log_k_chunk", one_hot_config.log_k_chunk as u64);
-    transcript.append_u64(
-        b"lookups_ra_virtual_log_k_chunk",
-        one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
-    );
-    transcript.append_u64(b"dory_layout", dory_layout as u64);
+    transcript.absorb(&preprocessing_digest.to_vec());
+    transcript.absorb(&program_io.memory_layout.max_input_size);
+    transcript.absorb(&program_io.memory_layout.max_output_size);
+    transcript.absorb(&program_io.memory_layout.heap_size);
+    transcript.absorb(&program_io.inputs);
+    transcript.absorb(&program_io.outputs);
+    transcript.absorb(&(program_io.panic as u64));
+    transcript.absorb(&(ram_K as u64));
+    transcript.absorb(&(trace_length as u64));
+    transcript.absorb(&entry_address);
+    transcript.absorb(&(rw_config.ram_rw_phase1_num_rounds as u64));
+    transcript.absorb(&(rw_config.ram_rw_phase2_num_rounds as u64));
+    transcript.absorb(&(rw_config.registers_rw_phase1_num_rounds as u64));
+    transcript.absorb(&(rw_config.registers_rw_phase2_num_rounds as u64));
+    transcript.absorb(&(one_hot_config.log_k_chunk as u64));
+    transcript.absorb(&(one_hot_config.lookups_ra_virtual_log_k_chunk as u64));
+    transcript.absorb(&(dory_layout as u64));
 }
 
-#[cfg(all(feature = "prover", feature = "transcript-poseidon"))]
+// The per-sponge variance lives entirely in `RV64IMACSponge` (cfg-gated above), so
+// these aliases are sponge-agnostic. `RV64IMACProver` needs the `prover` feature; the
+// verifier/proof are available in any build.
+#[cfg(feature = "prover")]
 pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
-#[cfg(feature = "transcript-poseidon")]
+    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, RV64IMACSponge>;
 pub type RV64IMACVerifier<'a> =
-    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
-#[cfg(feature = "transcript-poseidon")]
-pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, PoseidonTranscript>;
-
-#[cfg(all(feature = "prover", feature = "transcript-keccak"))]
-pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
-#[cfg(feature = "transcript-keccak")]
-pub type RV64IMACVerifier<'a> =
-    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
-#[cfg(feature = "transcript-keccak")]
-pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, KeccakTranscript>;
-
-#[cfg(all(
-    feature = "prover",
-    not(any(
-        feature = "transcript-poseidon",
-        feature = "transcript-keccak",
-        feature = "transcript-blake2b"
-    ))
-))]
-pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
-#[cfg(not(any(
-    feature = "transcript-poseidon",
-    feature = "transcript-keccak",
-    feature = "transcript-blake2b"
-)))]
-pub type RV64IMACVerifier<'a> =
-    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
-#[cfg(not(any(
-    feature = "transcript-poseidon",
-    feature = "transcript-keccak",
-    feature = "transcript-blake2b"
-)))]
-pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
-
-#[cfg(all(feature = "prover", feature = "transcript-blake2b"))]
-pub type RV64IMACProver<'a> =
-    JoltCpuProver<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
-#[cfg(feature = "transcript-blake2b")]
-pub type RV64IMACVerifier<'a> =
-    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
-#[cfg(feature = "transcript-blake2b")]
-pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
+    JoltVerifier<'a, Fr, Bn254Curve, DoryCommitmentScheme, RV64IMACSponge>;
+pub type RV64IMACProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, RV64IMACSponge>;
 
 pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Gets the byte size of the serialized data

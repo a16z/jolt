@@ -2,7 +2,7 @@ use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::opening_proof::AbstractVerifierOpeningAccumulator;
 use crate::subprotocols::univariate_skip::{UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant};
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::VerifierFs;
 use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::r1cs::constraints::{
     OUTER_FIRST_ROUND_POLY_NUM_COEFFS, OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
@@ -20,10 +20,10 @@ pub mod shift;
 pub fn verify_stage1_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
-    T: Transcript,
+    T: VerifierFs<F>,
     A: AbstractVerifierOpeningAccumulator<F>,
 >(
-    proof: &UniSkipFirstRoundProofVariant<F, C, T>,
+    proof: &UniSkipFirstRoundProofVariant<F, C>,
     key: &UniformSpartanKey<F>,
     opening_accumulator: &mut A,
     transcript: &mut T,
@@ -49,10 +49,10 @@ pub fn verify_stage1_uni_skip<
 pub fn verify_stage2_uni_skip<
     F: JoltField,
     C: JoltCurve<F = F>,
-    T: Transcript,
+    T: VerifierFs<F>,
     A: AbstractVerifierOpeningAccumulator<F>,
 >(
-    proof: &UniSkipFirstRoundProofVariant<F, C, T>,
+    proof: &UniSkipFirstRoundProofVariant<F, C>,
     opening_accumulator: &mut A,
     transcript: &mut T,
 ) -> Result<(ProductVirtualUniSkipParams<F>, F::Challenge), ProofVerifyError> {

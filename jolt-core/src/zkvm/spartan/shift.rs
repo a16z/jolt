@@ -29,7 +29,7 @@ use crate::subprotocols::sumcheck_claim::{
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::FsChallenge;
 use crate::zkvm::bytecode::BytecodePreprocessing;
 use crate::zkvm::instruction::{CircuitFlags, InstructionFlags};
 use crate::zkvm::r1cs::inputs::ShiftSumcheckCycleState;
@@ -66,9 +66,9 @@ impl<F: JoltField> ShiftSumcheckParams<F> {
     pub fn new(
         n_cycle_vars: usize,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
-        let gamma_powers = transcript.challenge_scalar_powers(5).try_into().unwrap();
+        let gamma_powers = transcript.challenge_powers(5).try_into().unwrap();
         let (outer_sumcheck_r, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
         let (r_outer, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
@@ -278,7 +278,7 @@ impl<F: JoltField> ShiftSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheckProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for ShiftSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -379,15 +379,15 @@ impl<F: JoltField> ShiftSumcheckVerifier<F> {
     pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         n_cycle_vars: usize,
         opening_accumulator: &A,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params = ShiftSumcheckParams::new(n_cycle_vars, opening_accumulator, transcript);
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for ShiftSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for ShiftSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);

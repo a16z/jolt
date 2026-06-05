@@ -13,7 +13,7 @@ use crate::{
         CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
-    transcripts::Transcript,
+    transcript_msgs::{AbsorbFs, ProverFs, VerifierFs},
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
 use ark_bn254::{G1Affine, G1Projective};
@@ -76,8 +76,8 @@ fn canonical_setup_log_n(max_num_vars: usize) -> usize {
     }
 }
 
-pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
-    transcript: &mut ProofTranscript,
+pub fn bind_opening_inputs<F: JoltField, T: AbsorbFs<F>>(
+    transcript: &mut T,
     opening_point: &[F::Challenge],
     opening: &F,
 ) {
@@ -86,14 +86,15 @@ pub fn bind_opening_inputs<F: JoltField, ProofTranscript: Transcript>(
         let scalar: F = (*point).into();
         point_scalars.push(scalar);
     }
-    transcript.append_scalars(b"dory_opening_point", &point_scalars);
-
-    transcript.append_scalar(b"dory_opening_eval", opening);
+    // Both the opening point (sumcheck challenges) and the claimed evaluation are
+    // shared: the verifier already holds them before reading the proof → `absorb`.
+    transcript.absorb(&point_scalars);
+    transcript.absorb(opening);
 }
 
 #[cfg(feature = "zk")]
-pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, ProofTranscript: Transcript>(
-    transcript: &mut ProofTranscript,
+pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, T: AbsorbFs<F>>(
+    transcript: &mut T,
     opening_point: &[F::Challenge],
     y_com: &C::G1,
 ) {
@@ -102,9 +103,9 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, ProofTranscript
         let scalar: F = (*point).into();
         point_scalars.push(scalar);
     }
-    transcript.append_scalars(b"dory_opening_point", &point_scalars);
+    transcript.absorb(&point_scalars);
 
-    transcript.append_commitment(b"dory_eval_commitment", y_com);
+    transcript.absorb(y_com);
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {
@@ -186,12 +187,12 @@ impl CommitmentScheme for DoryCommitmentScheme {
             .collect()
     }
 
-    fn prove<ProofTranscript: Transcript>(
+    fn prove<T: ProverFs<Self::Field>>(
         setup: &Self::ProverSetup,
         poly: &MultilinearPolynomial<ark_bn254::Fr>,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         hint: Option<Self::OpeningProofHint>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut T,
     ) -> (Self::Proof, Option<Self::Field>) {
         let _span = trace_span!("DoryCommitmentScheme::prove").entered();
 
@@ -216,7 +217,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             })
             .collect();
 
-        let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
+        let mut dory_transcript = JoltToDoryTranscript::<T>::new(transcript);
 
         #[cfg(feature = "zk")]
         type DoryMode = dory::ZK;
@@ -239,10 +240,10 @@ impl CommitmentScheme for DoryCommitmentScheme {
         (proof, y_blinding.map(|b| ark_to_jolt(&b)))
     }
 
-    fn verify<ProofTranscript: Transcript>(
+    fn verify<T: VerifierFs<Self::Field>>(
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut ProofTranscript,
+        transcript: &mut T,
         opening_point: &[<ark_bn254::Fr as JoltField>::Challenge],
         opening: &ark_bn254::Fr,
         commitment: &Self::Commitment,
@@ -260,7 +261,7 @@ impl CommitmentScheme for DoryCommitmentScheme {
             .collect();
         let ark_eval: ArkFr = jolt_to_ark(opening);
 
-        let mut dory_transcript = JoltToDoryTranscript::<ProofTranscript>::new(transcript);
+        let mut dory_transcript = JoltToDoryTranscript::<T>::new(transcript);
 
         #[cfg(not(feature = "zk"))]
         if proof.e2.is_some()

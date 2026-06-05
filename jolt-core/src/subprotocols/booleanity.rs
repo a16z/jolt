@@ -49,7 +49,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     utils::expanding_table::ExpandingTable,
     zkvm::{
         bytecode::BytecodePreprocessing,
@@ -93,7 +93,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         log_t: usize,
         one_hot_params: &OneHotParams,
         accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let log_k_chunk = one_hot_params.log_k_chunk;
         let instruction_d = one_hot_params.instruction_d;
@@ -127,7 +127,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             stage5_addr[stage5_addr.len() - log_k_chunk..].to_vec()
         } else {
             let mut r = stage5_addr;
-            let extra = transcript.challenge_vector_optimized::<F>(log_k_chunk - r.len());
+            let extra = transcript.challenge_optimized_vec(log_k_chunk - r.len());
             r.extend(extra);
             r
         };
@@ -146,7 +146,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         }
 
         // Sample a single batching challenge γ, and derive per-polynomial weights γ^{2i}.
-        let mut gamma = transcript.challenge_scalar_optimized::<F>();
+        let mut gamma = transcript.challenge_optimized();
         let mut gamma_f: F = gamma.into();
         // Avoid the degenerate gamma=0 case (vanishing weights + non-invertible scaling).
         if gamma_f.is_zero() {
@@ -267,7 +267,7 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+impl<F: JoltField> SumcheckInstanceProver<F>
     for BooleanityAddressSumcheckProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -429,7 +429,7 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+impl<F: JoltField> SumcheckInstanceProver<F>
     for BooleanityCycleSumcheckProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -516,8 +516,8 @@ impl<F: JoltField> BooleanityAddressSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for BooleanityAddressSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for BooleanityAddressSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -559,8 +559,8 @@ impl<F: JoltField> BooleanityCycleSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for BooleanityCycleSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for BooleanityCycleSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

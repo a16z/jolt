@@ -230,7 +230,7 @@ impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BlindFoldSpartanProver<'_, F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for BlindFoldSpartanProver<'_, F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -382,7 +382,7 @@ impl<'a, F: JoltField> BlindFoldSpartanVerifier<'a, F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T, VerifierOpeningAccumulator<F>>
+impl<F: JoltField> SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>
     for BlindFoldSpartanVerifier<'_, F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {

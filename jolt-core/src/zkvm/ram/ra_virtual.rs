@@ -74,7 +74,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     utils::math::Math,
 };
 use allocative::Allocative;
@@ -240,7 +240,7 @@ impl<F: JoltField> RamRaVirtualSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamRaVirtualSumcheckProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for RamRaVirtualSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -295,15 +295,15 @@ impl<F: JoltField> RamRaVirtualSumcheckVerifier<F> {
         trace_len: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &A,
-        _transcript: &mut impl Transcript,
+        _transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params = RamRaVirtualParams::new(trace_len, one_hot_params, opening_accumulator);
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for RamRaVirtualSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for RamRaVirtualSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

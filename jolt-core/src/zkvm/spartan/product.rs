@@ -26,7 +26,7 @@ use crate::subprotocols::blindfold::{
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::FsChallenge;
 use crate::utils::accumulation::FullAccumS;
 use crate::utils::math::Math;
 #[cfg(feature = "allocative")]
@@ -88,7 +88,7 @@ pub struct ProductVirtualUniSkipParams<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualUniSkipParams<F> {
-    pub fn new<T: Transcript>(
+    pub fn new<T: FsChallenge<F>>(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Self {
@@ -97,7 +97,7 @@ impl<F: JoltField> ProductVirtualUniSkipParams<F> {
             .get_virtual_polynomial_opening(VirtualPolynomial::Product, SumcheckId::SpartanOuter)
             .0
             .r;
-        let tau_high = transcript.challenge_scalar_optimized::<F>();
+        let tau_high = transcript.challenge_optimized();
         let mut tau = r_cycle;
         tau.push(tau_high);
 
@@ -275,7 +275,7 @@ impl<F: JoltField> ProductVirtualUniSkipProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ProductVirtualUniSkipProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for ProductVirtualUniSkipProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -334,7 +334,7 @@ pub struct ProductVirtualUniSkipVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
-    pub fn new<T: Transcript>(
+    pub fn new<T: FsChallenge<F>>(
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut T,
     ) -> Self {
@@ -343,8 +343,8 @@ impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for ProductVirtualUniSkipVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for ProductVirtualUniSkipVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -757,7 +757,7 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+impl<F: JoltField> SumcheckInstanceProver<F>
     for ProductVirtualRemainderProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -825,8 +825,8 @@ impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for ProductVirtualRemainderVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for ProductVirtualRemainderVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

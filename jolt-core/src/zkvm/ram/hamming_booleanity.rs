@@ -19,7 +19,6 @@ use crate::subprotocols::sumcheck_claim::{
 };
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
 use crate::zkvm::witness::VirtualPolynomial;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -153,7 +152,7 @@ impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+impl<F: JoltField> SumcheckInstanceProver<F>
     for HammingBooleanitySumcheckProver<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
@@ -215,8 +214,8 @@ impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for HammingBooleanitySumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
+    SumcheckInstanceVerifier<F, A> for HammingBooleanitySumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);
