@@ -194,16 +194,11 @@ impl BatchedSumcheck {
     ///
     /// Returns (proof, challenges, initial_batched_claim)
     #[cfg(feature = "zk")]
-    pub fn prove_zk<
-        F: JoltField,
-        C: JoltCurve<F = F>,
-        ProofTranscript: Transcript,
-        R: CryptoRngCore,
-    >(
+    pub fn prove_zk<F: JoltField, C: JoltCurve<F = F>, R: CryptoRngCore>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
-        transcript: &mut ProofTranscript,
+        transcript: &mut impl ProverFs<F>,
         pedersen_gens: &PedersenGenerators<C>,
         rng: &mut R,
     ) -> (
@@ -221,7 +216,7 @@ impl BatchedSumcheck {
 
         // In ZK mode, don't absorb cleartext claims — polynomial commitments provide binding.
         // Batching coefficients are still unpredictable (from transcript state after commitments).
-        let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
+        let batching_coeffs: Vec<F> = transcript.challenge_vec(sumcheck_instances.len());
 
         let mut individual_claims: Vec<F> = sumcheck_instances
             .iter()
@@ -281,9 +276,12 @@ impl BatchedSumcheck {
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
-            transcript.append_commitment(b"sumcheck_commitment", &commitment);
+            // Round commitments are prover-only but carried in the structured `ZkSumcheckProof`
+            // (hybrid: commitments stay structured proof fields), so both sides `absorb` them —
+            // matching `ZkSumcheckProof::verify_transcript_only`. They are NOT written to the NARG.
+            transcript.absorb(&commitment);
 
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            let r_j = transcript.challenge_optimized();
             r_sumcheck.push(r_j);
 
             individual_claims
@@ -335,7 +333,7 @@ impl BatchedSumcheck {
             .collect();
         let (output_claims_commitments, output_claims_blindings): (Vec<_>, Vec<_>) =
             oc_committed.into_iter().unzip();
-        transcript.append_commitments(b"output_claims_coms", &output_claims_commitments);
+        transcript.absorb(&output_claims_commitments);
 
         let output_constraints: Vec<_> = sumcheck_instances
             .iter()

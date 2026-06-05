@@ -20,7 +20,6 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
-use crate::transcripts::Transcript;
 use crate::utils::math::Math;
 
 use super::r1cs::VerifierR1CS;
@@ -532,18 +531,21 @@ mod tests {
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::{BakedPublicInputs, StageConfig};
-    use crate::transcripts::KeccakTranscript;
+    use crate::transcript_msgs::FsChallenge;
     use ark_bn254::Fr;
     use ark_std::{One, Zero};
+    use jolt_transcript::{prover_transcript, Blake2b512};
+
+    const TEST_INSTANCE: [u8; 32] = [0u8; 32];
 
     #[test]
     fn test_eq_polynomial_binding_vs_mle() {
         type F = Fr;
 
         // Generate tau and challenges from transcript (using proper Challenge type)
-        let mut transcript = KeccakTranscript::new(b"test_eq_binding");
-        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(3);
-        let challenges: Vec<_> = transcript.challenge_vector_optimized::<F>(3);
+        let mut transcript = prover_transcript(b"test_eq_binding", TEST_INSTANCE, Blake2b512::default());
+        let tau: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(&mut transcript, 3);
+        let challenges: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(&mut transcript, 3);
 
         // Convert tau to F for building eq table
         let tau_f: Vec<F> = tau.iter().map(|c| (*c).into()).collect();
@@ -606,9 +608,11 @@ mod tests {
 
         let e = vec![F::zero(); r1cs.num_constraints];
 
-        let mut transcript = KeccakTranscript::new(b"test_spartan");
-        let tau: Vec<_> = transcript
-            .challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
+        let mut transcript = prover_transcript(b"test_spartan", TEST_INSTANCE, Blake2b512::default());
+        let tau: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(
+            &mut transcript,
+            r1cs.num_constraints.next_power_of_two().log_2(),
+        );
 
         let mut prover = BlindFoldSpartanProver::new(&r1cs, F::one(), z.clone(), e, tau.clone());
 
@@ -621,7 +625,7 @@ mod tests {
             let sum = poly.evaluate(&F::zero()) + poly.evaluate(&F::one());
             assert_eq!(sum, claim, "Round {round}: p(0) + p(1) != claim");
 
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            let r_j = FsChallenge::<F>::challenge_optimized(&mut transcript);
             challenges.push(r_j);
             claim = poly.evaluate(&r_j);
             prover.bind_challenge(r_j);
@@ -701,9 +705,12 @@ mod tests {
             .collect();
 
         // Create transcript and derive τ
-        let mut transcript = KeccakTranscript::new(b"test_spartan_relaxed");
-        let tau: Vec<_> = transcript
-            .challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
+        let mut transcript =
+            prover_transcript(b"test_spartan_relaxed", TEST_INSTANCE, Blake2b512::default());
+        let tau: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(
+            &mut transcript,
+            r1cs.num_constraints.next_power_of_two().log_2(),
+        );
 
         // Create Spartan prover with relaxed instance
         let mut prover =
@@ -720,7 +727,7 @@ mod tests {
             let sum = poly.evaluate(&F::zero()) + poly.evaluate(&F::one());
             assert_eq!(sum, claim, "Round {round}: sum check failed");
 
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            let r_j = FsChallenge::<F>::challenge_optimized(&mut transcript);
             challenges.push(r_j);
             claim = poly.evaluate(&r_j);
             prover.bind_challenge(r_j);

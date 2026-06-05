@@ -631,7 +631,7 @@ where
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
-            BatchedSumcheck::prove_zk::<F, C, _, _>(
+            BatchedSumcheck::prove_zk::<F, C, _>(
                 instances,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,
@@ -658,7 +658,7 @@ where
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
-            let zk_proof = prove_uniskip_round_zk::<F, C, _, _, _>(
+            let zk_proof = prove_uniskip_round_zk::<F, C, _, _>(
                 instance,
                 &mut self.opening_accumulator,
                 &mut self.blindfold_accumulator,
@@ -1974,7 +1974,6 @@ where
         let eval_commitment_gens = PCS::eval_commitment_gens(&self.preprocessing.generators);
         let prover =
             BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        self.transcript.append_label(b"BlindFold");
 
         prover.prove(&real_instance, &real_witness, &z, &mut self.transcript)
     }
@@ -3512,60 +3511,27 @@ mod tests {
             VerifierR1CSBuilder,
         };
         use crate::subprotocols::sumcheck::SumcheckInstanceProof;
-        use crate::transcripts::{KeccakTranscript, Transcript};
+        use crate::transcript_msgs::VerifierFs;
+        use jolt_transcript::{verifier_transcript, Blake2b512};
         /// Helper to process a single stage's sumcheck proof.
         /// Returns a list of (RoundWitness, degree) for each round.
         /// For ZK proofs, creates synthetic witnesses with correct degrees to test R1CS structure.
-        fn process_stage<ProofTranscript: Transcript>(
-            _stage_name: &str,
-            proof: &SumcheckInstanceProof<Fr, Bn254Curve, ProofTranscript>,
-            transcript: &mut KeccakTranscript,
+        ///
+        /// `transcript` is a fresh, independent challenge generator (not the proof's transcript):
+        /// it is bound on `VerifierFs<Fr>`, which pins `Fr`, so the `absorb`/`challenge_optimized`
+        /// calls below need no fully-qualified turbofish.
+        fn process_stage(
+            proof: &SumcheckInstanceProof<Fr, Bn254Curve>,
+            transcript: &mut impl VerifierFs<Fr>,
         ) -> Vec<(RoundWitness<Fr>, usize)> {
             match proof {
-                SumcheckInstanceProof::Clear(std_proof) => {
-                    // ⚠️ ZK-MIGRATION NOTE: `ClearSumcheckProof.compressed_polys` was REMOVED —
-                    // under Option B the round polynomials live in the NARG, not in the struct
-                    // (the prover `write_slice`s them, the verifier `read_slice`s them). This
-                    // cfg(zk) test therefore does NOT compile until the zk path is migrated. When
-                    // you migrate it: source the round-poly coeffs from the NARG (replay it like
-                    // `BatchedSumcheck::verify` does), do NOT re-add the `compressed_polys` field.
-                    // See DEV-26/DEV-27 and the handoff "remaining work" notes.
-                    // For Standard proofs, use actual polynomial coefficients
-                    let compressed_polys = &std_proof.compressed_polys;
-                    let num_rounds = compressed_polys.len();
-
-                    if num_rounds == 0 {
-                        return vec![];
-                    }
-
-                    let mut rounds = Vec::with_capacity(num_rounds);
-
-                    for compressed_poly in compressed_polys.iter() {
-                        transcript.append_scalars(
-                            b"sumcheck_poly",
-                            &compressed_poly.coeffs_except_linear_term,
-                        );
-                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
-
-                        let compressed = &compressed_poly.coeffs_except_linear_term;
-                        let degree = compressed.len();
-
-                        let c0 = compressed[0];
-                        let sum_higher_coeffs: Fr = compressed[1..].iter().copied().sum();
-
-                        let claimed_sum = Fr::from(12345u64);
-                        let c1 = claimed_sum - c0 - c0 - sum_higher_coeffs;
-
-                        let mut coeffs = vec![c0, c1];
-                        coeffs.extend_from_slice(&compressed[1..]);
-
-                        let round_witness =
-                            RoundWitness::with_claimed_sum(coeffs, challenge, claimed_sum);
-
-                        rounds.push((round_witness, degree));
-                    }
-
-                    rounds
+                // Under `--features host,zk` the muldiv prover emits only `Zk` proofs
+                // (`prove_sumcheck`/`prove_uniskip` select the `prove_zk` path), so this arm is
+                // unreachable here. The `Clear` round polynomials live in the NARG, not the struct
+                // (DEV-27) — if ever needed, replay the NARG like `BatchedSumcheck::verify`; do NOT
+                // re-add a `compressed_polys` field.
+                SumcheckInstanceProof::Clear(_) => {
+                    unreachable!("muldiv in ZK mode produces only Zk sumcheck proofs")
                 }
                 SumcheckInstanceProof::Zk(zk_proof) => {
                     // For ZK proofs, create synthetic witnesses with correct degrees.
@@ -3579,8 +3545,8 @@ mod tests {
                     let mut rounds = Vec::with_capacity(num_rounds);
 
                     for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
-                        transcript.append_commitment(b"sumcheck_commitment", commitment);
-                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
+                        transcript.absorb(commitment);
+                        let challenge: Fr = transcript.challenge_optimized().into();
 
                         let degree = zk_proof.poly_degrees[round_idx];
 
@@ -3642,7 +3608,7 @@ mod tests {
         println!("\n=== BlindFold R1CS Satisfaction Test (All 7 Stages) ===\n");
 
         // Process all 7 stages and verify each one
-        let stage_proofs: Vec<(&str, &SumcheckInstanceProof<Fr, Bn254Curve, _>)> = vec![
+        let stage_proofs: Vec<(&str, &SumcheckInstanceProof<Fr, Bn254Curve>)> = vec![
             ("Stage 1 (Spartan Outer)", &jolt_proof.stage1_sumcheck_proof),
             (
                 "Stage 2 (Product Virtual)",
@@ -3665,10 +3631,13 @@ mod tests {
         let mut total_constraints = 0;
 
         for (stage_name, proof) in &stage_proofs {
-            // Create a fresh transcript for each stage (independent verification)
-            let mut stage_transcript = KeccakTranscript::new(b"BlindFoldStageTest");
+            // Create a fresh transcript for each stage (independent verification). BlindFold's
+            // R1CS-structure check only needs deterministic per-round challenges, so an empty-NARG
+            // verifier transcript (absorb + challenge only, no reads) suffices.
+            let mut stage_transcript =
+                verifier_transcript(b"BlindFoldStageTest", [0u8; 32], Blake2b512::default(), &[]);
 
-            let rounds = process_stage(stage_name, proof, &mut stage_transcript);
+            let rounds = process_stage(proof, &mut stage_transcript);
 
             if rounds.is_empty() {
                 println!("  {stage_name} - 0 rounds, skipping");
@@ -3883,7 +3852,7 @@ mod tests {
             BlindFoldWitness, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness,
             VerifierR1CSBuilder,
         };
-        use crate::transcripts::{KeccakTranscript, Transcript};
+        use jolt_transcript::Blake2b512;
         use rand::thread_rng;
 
         let mut rng = thread_rng();
@@ -3965,7 +3934,9 @@ mod tests {
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_E2E");
+        // BlindFold is absorb-only (no NARG writes), so the verifier replays over an empty NARG.
+        let mut prover_transcript =
+            jolt_transcript::prover_transcript(b"BlindFold_E2E", [0u8; 32], Blake2b512::default());
         let proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
 
         let verifier_input = BlindFoldVerifierInput {
@@ -3974,7 +3945,12 @@ mod tests {
             eval_commitments: real_instance.eval_commitments.clone(),
         };
 
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_E2E");
+        let mut verifier_transcript = jolt_transcript::verifier_transcript(
+            b"BlindFold_E2E",
+            [0u8; 32],
+            Blake2b512::default(),
+            &[],
+        );
         let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 
         assert!(

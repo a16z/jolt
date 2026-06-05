@@ -16,8 +16,6 @@ use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceVerifier;
 use crate::transcript_msgs::{ProverFs, VerifierFs};
-#[cfg(feature = "zk")]
-use crate::transcripts::Transcript;
 use crate::utils::errors::ProofVerifyError;
 
 /// Returns the interleaved symmetric univariate-skip target indices outside the base window.
@@ -156,14 +154,13 @@ pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
 pub fn prove_uniskip_round_zk<
     F: JoltField,
     C: JoltCurve<F = F>,
-    T: Transcript,
     I: SumcheckInstanceProver<F>,
     R: CryptoRngCore,
 >(
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     blindfold_accumulator: &mut crate::subprotocols::blindfold::BlindFoldAccumulator<F, C>,
-    transcript: &mut T,
+    transcript: &mut impl ProverFs<F>,
     pedersen_gens: &PedersenGenerators<C>,
     rng: &mut R,
 ) -> ZkUniSkipFirstRoundProof<F, C> {
@@ -176,9 +173,11 @@ pub fn prove_uniskip_round_zk<
     let blinding = F::random(rng);
     let commitment = pedersen_gens.commit(&uni_poly.coeffs, &blinding);
 
-    transcript.append_commitment(b"sumcheck_commitment", &commitment);
+    // Commitment is prover-only but carried in the structured `ZkUniSkipFirstRoundProof`
+    // (hybrid), so both sides `absorb` it — matching `ZkUniSkipFirstRoundProof::verify_transcript`.
+    transcript.absorb(&commitment);
 
-    let r0: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+    let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
 
     let output_claim_values = opening_accumulator.take_pending_claims();
@@ -190,7 +189,7 @@ pub fn prove_uniskip_round_zk<
         .collect();
     let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
     let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
-    transcript.append_commitments(b"output_claims_coms", &output_claims_commitments);
+    transcript.absorb(&output_claims_commitments);
 
     let input_constraint = instance.get_params().input_claim_constraint();
     let input_constraint_challenge_values = instance
