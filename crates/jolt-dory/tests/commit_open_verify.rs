@@ -147,12 +147,14 @@ fn streaming_zk_commitment_is_blinded_and_verifies() {
     );
 
     let mut pt = Blake2bTranscript::new(b"stream-zk");
-    let (proof, _eval_com, _blind) =
+    let (proof, eval_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     let mut vt = Blake2bTranscript::new(b"stream-zk");
-    DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
-        .expect("streaming ZK commitment must verify");
+    let verified_eval_com =
+        DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
+            .expect("streaming ZK commitment must verify");
+    assert_eq!(verified_eval_com, eval_com);
 }
 
 #[test]
@@ -354,12 +356,14 @@ fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, labe
         <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
     let mut pt = T::new(label);
-    let (proof, _eval_com, _blind) =
+    let (proof, eval_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
 
     let mut vt = T::new(label);
-    DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
-        .expect("ZK round-trip verification must succeed");
+    let verified_eval_com =
+        DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt)
+            .expect("ZK round-trip verification must succeed");
+    assert_eq!(verified_eval_com, eval_com);
 }
 
 #[test]
@@ -374,6 +378,33 @@ fn zk_round_trip_both_transcripts() {
     let num_vars = 4;
     zk_round_trip::<Blake2bTranscript>(num_vars, 1200, b"zk-blake2b-rt");
     zk_round_trip::<KeccakTranscript>(num_vars, 1200, b"zk-keccak-rt");
+}
+
+#[test]
+fn transparent_verify_rejects_zk_opening_proof() {
+    let num_vars = 4;
+    let mut rng = ChaCha20Rng::seed_from_u64(1301);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
+
+    let mut pt = Blake2bTranscript::new(b"zk-proof-transparent-verify");
+    let (proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt);
+
+    let mut vt = Blake2bTranscript::new(b"zk-proof-transparent-verify");
+    let result = DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt);
+    assert!(
+        result.is_err(),
+        "transparent verification must reject ZK opening proofs"
+    );
 }
 
 #[test]
@@ -474,7 +505,7 @@ fn zk_combined_commitment_and_hint_verify() {
     let eval = weighted_poly.evaluate(&point);
 
     let mut pt = Blake2bTranscript::new(b"zk-combined");
-    let (proof, _eval_com, _blind) = DoryScheme::open_zk(
+    let (proof, eval_com, _blind) = DoryScheme::open_zk(
         &weighted_poly,
         &point,
         eval,
@@ -484,7 +515,7 @@ fn zk_combined_commitment_and_hint_verify() {
     );
 
     let mut vt = Blake2bTranscript::new(b"zk-combined");
-    DoryScheme::verify_zk(
+    let verified_eval_com = DoryScheme::verify_zk(
         &combined_commitment,
         &point,
         &proof,
@@ -492,6 +523,7 @@ fn zk_combined_commitment_and_hint_verify() {
         &mut vt,
     )
     .expect("combined ZK commitment and hint must verify");
+    assert_eq!(verified_eval_com, eval_com);
 }
 
 #[test]

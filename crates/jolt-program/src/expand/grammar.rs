@@ -16,10 +16,22 @@ impl TempId {
     }
 }
 
+/// Symbolic inline-register placeholder, resolved to the inline virtual
+/// register pool during materialization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct InlineTempId(pub(super) u8);
+
+impl InlineTempId {
+    pub(super) const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RegisterOperand {
     Register(u8),
     Temp(TempId),
+    InlineTemp(InlineTempId),
 }
 
 pub(super) const fn reg(register: u8) -> RegisterOperand {
@@ -160,10 +172,17 @@ pub(super) enum ExpansionOp {
     Expand(SourceInstructionRowTemplate),
     Allocate(TempId),
     Release(TempId),
+    AllocateInline(InlineTempId),
+    ReleaseInline(InlineTempId),
 }
 
-/// A complete symbolic recipe: source instruction paired with the ops to materialize it.
-pub(super) struct ExpandedInstructionSequence {
+/// A complete symbolic recipe for one source instruction.
+///
+/// The sequence still contains unresolved symbolic registers and possibly
+/// source-only helper rows. It is not final bytecode until `ExpansionState`
+/// binds registers, recursively expands helper rows, validates target legality,
+/// and stamps sequence metadata.
+pub struct ExpandedInstructionSequence {
     pub(super) source: SourceInstructionRow,
     pub(super) ops: Vec<ExpansionOp>,
 }
@@ -237,6 +256,26 @@ impl ExpansionBuilder {
         imm: i128,
     ) {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
+    }
+
+    pub(super) fn emit_b(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rs1: RegisterOperand,
+        rs2: RegisterOperand,
+        imm: i128,
+    ) {
+        self.emit(RowTemplate::b(instruction_kind, rs1, rs2, imm));
+    }
+
+    pub(super) fn emit_s(
+        &mut self,
+        instruction_kind: JoltInstructionKind,
+        rs1: RegisterOperand,
+        rs2: RegisterOperand,
+        imm: i128,
+    ) {
+        self.emit(RowTemplate::s(instruction_kind, rs1, rs2, imm));
     }
 
     /// Record a source-only helper row that the provider-free materializer must
@@ -338,6 +377,14 @@ impl ExpansionBuilder {
 
     pub(super) fn release(&mut self, temp: TempId) {
         self.ops.push(ExpansionOp::Release(temp));
+    }
+
+    pub(super) fn allocate_inline(&mut self, temp: InlineTempId) {
+        self.ops.push(ExpansionOp::AllocateInline(temp));
+    }
+
+    pub(super) fn release_inline(&mut self, temp: InlineTempId) {
+        self.ops.push(ExpansionOp::ReleaseInline(temp));
     }
 
     pub(super) fn release_many<const N: usize>(&mut self, registers: [TempId; N]) {

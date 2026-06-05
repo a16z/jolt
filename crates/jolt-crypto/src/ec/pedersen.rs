@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::Fr;
 use serde::{Deserialize, Serialize};
 
 use super::group::JoltGroup;
@@ -13,7 +13,8 @@ const EMPTY_GENERATORS_MSG: &str = "Pedersen setup requires at least one message
 /// This provides a blanket `VectorCommitment` implementation for any group
 /// that implements `JoltGroup`, so concrete backends (BN254, etc.) inherit
 /// Pedersen commitments.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct Pedersen<G: JoltGroup> {
     _marker: std::marker::PhantomData<G>,
 }
@@ -66,6 +67,7 @@ impl<G: JoltGroup> Commitment for Pedersen<G> {
 }
 
 impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
+    type Field = Fr;
     type Setup = PedersenSetup<G>;
 
     #[inline]
@@ -85,7 +87,7 @@ impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
     /// # Panics
     ///
     /// Panics if `values.len() > Self::capacity(setup)`.
-    fn commit<F: Field>(setup: &Self::Setup, values: &[F], blinding: &F) -> G {
+    fn commit(setup: &Self::Setup, values: &[Fr], blinding: &Fr) -> G {
         assert!(
             values.len() <= setup.message_generators.len(),
             "values length ({}) exceeds generator count ({})",
@@ -97,7 +99,7 @@ impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
         msg + blind
     }
 
-    fn verify<F: Field>(setup: &Self::Setup, commitment: &G, values: &[F], blinding: &F) -> bool {
+    fn verify(setup: &Self::Setup, commitment: &G, values: &[Fr], blinding: &Fr) -> bool {
         *commitment == Self::commit(setup, values, blinding)
     }
 }

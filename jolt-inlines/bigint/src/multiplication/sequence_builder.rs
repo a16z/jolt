@@ -1,8 +1,7 @@
-use core::array;
-
 use jolt_inlines_sdk::host::{
     instruction::{add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU},
-    FormatInline, InlineOp, InstrAssembler, Instruction, VirtualRegisterGuard,
+    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
+    InlineRegister,
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -13,23 +12,26 @@ use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 /// - a4..a7: Second operand (4 u64 limbs)
 /// - s0..s7: Result accumulator (8 u64 limbs)
 /// - t0..t3: Temporary registers for multiplication and carry
-pub(crate) const NEEDED_REGISTERS: u8 = 20;
+pub(crate) const NEEDED_REGISTERS: usize = 20;
 
 /// Builds assembly sequence for 256-bit × 256-bit multiplication
 /// Expects first operand (4 u64 words) in RAM at location rs1
 /// Expects second operand (4 u64 words) in RAM at location rs2
 /// Output (8 u64 words) will be written to the memory rs3 points to
 struct BigIntMulSequenceBuilder {
-    asm: InstrAssembler,
+    asm: InlineExpansionBuilder,
     /// Virtual registers used by the sequence
-    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
-    operands: FormatInline,
+    vr: [InlineRegister; NEEDED_REGISTERS],
+    operands: InlineOperands,
 }
 
 impl BigIntMulSequenceBuilder {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        BigIntMulSequenceBuilder { asm, vr, operands }
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_inline_array::<NEEDED_REGISTERS>()?;
+        Ok(BigIntMulSequenceBuilder { asm, vr, operands })
     }
 
     /// Register indices for operands and temporaries
@@ -51,7 +53,7 @@ impl BigIntMulSequenceBuilder {
     }
 
     /// Builds the complete multiplication sequence
-    fn build(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         for i in 0..INPUT_LIMBS {
             self.asm
                 .emit_ld::<LD>(self.a(i), self.operands.rs1, i as i64 * 8);
@@ -79,8 +81,8 @@ impl BigIntMulSequenceBuilder {
                 .emit_s::<SD>(self.operands.rs3, self.s(i), i as i64 * 8);
         }
 
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release_many(self.vr);
+        self.asm.finalize()
     }
 
     /// Implements the MUL-ACC pattern: A[i] × B[j] → R[k] where k = i+j
@@ -151,7 +153,10 @@ impl InlineOp for BigintMul256 {
     const FUNCT7: u32 = crate::BIGINT256_MUL_FUNCT7;
     const NAME: &'static str = crate::BIGINT256_MUL_NAME;
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        BigIntMulSequenceBuilder::new(asm, operands).build()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        BigIntMulSequenceBuilder::new(asm, operands)?.build()
     }
 }

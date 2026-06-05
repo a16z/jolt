@@ -93,7 +93,7 @@ pub mod xor_rot;
 pub mod xor_rotw;
 
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
-    /// Evalautes the MLE for this prefix:
+    /// Evaluates the MLE for this prefix:
     /// - prefix(r, r_x, c, b)   if j is odd
     /// - prefix(r, c, b)        if j is even
     ///
@@ -221,7 +221,7 @@ impl<F> Index<Prefixes> for &[PrefixEval<F>] {
 }
 
 impl Prefixes {
-    /// Evalautes the MLE for this prefix:
+    /// Evaluates the MLE for this prefix:
     /// - prefix(r, r_x, c, b)   if j is odd
     /// - prefix(r, c, b)        if j is even
     ///

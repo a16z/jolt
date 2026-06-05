@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use jolt_crypto::Commitment;
 use jolt_field::Field;
 use jolt_poly::Polynomial;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use serde::{Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
@@ -13,7 +13,8 @@ use jolt_crypto::HomomorphicCommitment;
 use crate::error::OpeningsError;
 use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
 
 /// Stores the full evaluation table so `combine` is truly homomorphic.
@@ -23,7 +24,15 @@ pub struct MockCommitment<F: Field> {
     evaluations: Vec<F>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl<F: Field> Default for MockCommitment<F> {
+    fn default() -> Self {
+        Self {
+            evaluations: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockProof<F: Field> {
     evaluations: Vec<F>,
@@ -118,6 +127,10 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
 }
 
 impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
+    fn add(c1: &Self, c2: &Self) -> Self {
+        Self::linear_combine(c1, c2, &F::one())
+    }
+
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
         let len = c1.evaluations.len().max(c2.evaluations.len());
         let mut result = vec![F::zero(); len];
@@ -190,18 +203,37 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 
     fn verify_zk(
         commitment: &Self::Output,
-        _point: &[Self::Field],
+        point: &[Self::Field],
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(), OpeningsError> {
+    ) -> Result<Self::HidingCommitment, OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
                 expected: format!("len={}", commitment.evaluations.len()),
                 actual: format!("len={}", proof.evaluations.len()),
             });
         }
-        Ok(())
+        let poly = Polynomial::new(proof.evaluations.clone());
+        Ok(MockHidingCommitment {
+            eval: poly.evaluate(point),
+        })
+    }
+
+    fn bind_zk_opening_inputs(
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        point: &[Self::Field],
+        hiding_commitment: &Self::HidingCommitment,
+    ) {
+        transcript.append(&LabelWithCount(
+            b"mock_zk_opening_point",
+            point.len() as u64,
+        ));
+        for p in point {
+            p.append_to_transcript(transcript);
+        }
+        transcript.append(&Label(b"mock_zk_eval_commitment"));
+        hiding_commitment.append_to_transcript(transcript);
     }
 }
 
@@ -209,7 +241,9 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use crate::{reduce_prover, reduce_verifier, ProverClaim, VerifierClaim};
+    use crate::{
+        reduce_prover, reduce_verifier, EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim,
+    };
     use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
@@ -315,18 +349,16 @@ mod tests {
 
         for (i, (poly, point)) in prover_polys.iter().enumerate() {
             let eval = poly.evaluate(point);
-            prover_claims.push(ProverClaim {
+            prover_claims.push(ProverOpeningClaim {
                 polynomial: Polynomial::new(poly.evaluations().to_vec()),
-                point: point.clone(),
-                eval,
+                evaluation: EvaluationClaim::new(point.clone(), eval),
             });
 
             let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
-            verifier_claims.push(VerifierClaim {
+            verifier_claims.push(VerifierOpeningClaim {
                 commitment,
-                point: point.clone(),
-                eval: v_eval,
+                evaluation: EvaluationClaim::new(point.clone(), v_eval),
             });
         }
 
@@ -338,8 +370,8 @@ mod tests {
             .map(|claim| {
                 MockPCS::open(
                     &claim.polynomial,
-                    &claim.point,
-                    claim.eval,
+                    &claim.evaluation.point,
+                    claim.evaluation.value,
                     &(),
                     None,
                     &mut transcript_p,
@@ -356,8 +388,8 @@ mod tests {
         for (claim, proof) in reduced_verifier.iter().zip(proofs.iter()) {
             MockPCS::verify(
                 &claim.commitment,
-                &claim.point,
-                claim.eval,
+                &claim.evaluation.point,
+                claim.evaluation.value,
                 proof,
                 &(),
                 &mut transcript_v,
@@ -437,20 +469,17 @@ mod tests {
         let s: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
         let claims = vec![
-            ProverClaim {
+            ProverOpeningClaim {
                 polynomial: Polynomial::new(p1.evaluations().to_vec()),
-                point: r.clone(),
-                eval: p1.evaluate(&r),
+                evaluation: EvaluationClaim::new(r.clone(), p1.evaluate(&r)),
             },
-            ProverClaim {
+            ProverOpeningClaim {
                 polynomial: Polynomial::new(p2.evaluations().to_vec()),
-                point: r.clone(),
-                eval: p2.evaluate(&r),
+                evaluation: EvaluationClaim::new(r.clone(), p2.evaluate(&r)),
             },
-            ProverClaim {
+            ProverOpeningClaim {
                 polynomial: Polynomial::new(p3.evaluations().to_vec()),
-                point: s.clone(),
-                eval: p3.evaluate(&s),
+                evaluation: EvaluationClaim::new(s.clone(), p3.evaluate(&s)),
             },
         ];
 
@@ -472,9 +501,10 @@ mod tests {
         let (proof, eval_com, _blinding) =
             MockPCS::open_zk(&poly, &point, eval, &(), (), &mut transcript_p);
 
-        let _ = eval_com;
         let mut transcript_v = Blake2bTranscript::new(b"zk-test");
-        MockPCS::verify_zk(&commitment, &point, &proof, &(), &mut transcript_v)
-            .expect("valid ZK proof should verify");
+        let verified_eval_com =
+            MockPCS::verify_zk(&commitment, &point, &proof, &(), &mut transcript_v)
+                .expect("valid ZK proof should verify");
+        assert_eq!(verified_eval_com, eval_com);
     }
 }

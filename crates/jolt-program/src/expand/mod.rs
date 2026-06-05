@@ -11,12 +11,14 @@
 //! only supports RV64. RV32/ELF32 inputs are rejected before this module is
 //! called.
 
+pub mod error;
+
 pub mod allocator;
 mod arithmetic;
 mod control_flow;
 mod division;
-pub mod error;
 mod grammar;
+mod inline;
 mod materialize;
 mod memory;
 mod metadata;
@@ -27,6 +29,10 @@ mod tests;
 
 pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
+pub use grammar::ExpandedInstructionSequence;
+pub use inline::{
+    InlineExpansionBuilder, InlineInstruction, InlineOperands, InlineRegister, Value,
+};
 
 use allocator::{
     mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
@@ -35,29 +41,34 @@ use allocator::{
 use arithmetic::*;
 use control_flow::*;
 use division::*;
-use grammar::{reg, ExpandedInstructionSequence, ExpansionBuilder, RegisterOperand, TempId};
+use grammar::{reg, ExpansionBuilder, RegisterOperand, TempId};
 use jolt_riscv::{
     JoltInstruction, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow,
 };
 use materialize::ExpansionState;
 use memory::*;
-use metadata::stamp_inline_sequence;
 use operands::*;
 use shifts::*;
 
+/// Supplies symbolic recipes for registered inline source instructions.
+///
+/// Implementations are lookup/adaptation layers only. The caller owns the
+/// expansion allocator, `rd = x0` rewrite, recursive materialization, reset-row
+/// insertion, target-profile validation, and inline metadata stamping. This
+/// keeps static bytecode expansion deterministic and tracer-free while allowing
+/// the tracer crate to remain the registration and runtime-advice owner.
 pub trait InlineExpansionProvider {
-    /// Expands a registered inline row into final Jolt instructions.
+    /// Builds a registered inline row's symbolic expansion recipe.
     ///
-    /// Provider output intentionally stays outside the provider-free builder
-    /// core. The top-level entry point remaps `rd = x0` before calling this
-    /// hook, then validates target legality and stamps sequence metadata.
+    /// The top-level entry point remaps `rd = x0` before calling this hook,
+    /// then materializes the recipe, appends inline reset rows, validates
+    /// target legality, and stamps sequence metadata.
     fn expand_inline(
         &mut self,
         instruction: &SourceInstruction,
-        allocator: &mut ExpansionAllocator,
         profile: JoltInstructionProfile,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError>;
+    ) -> Result<ExpandedInstructionSequence, ExpansionError>;
 }
 
 #[derive(Debug, Default)]
@@ -67,13 +78,18 @@ impl InlineExpansionProvider for NoInlineExpansionProvider {
     fn expand_inline(
         &mut self,
         _instruction: &SourceInstruction,
-        _allocator: &mut ExpansionAllocator,
         _profile: JoltInstructionProfile,
-    ) -> Result<Vec<JoltInstruction>, ExpansionError> {
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         Err(ExpansionError::InlineProviderRequired)
     }
 }
 
+/// Expand one decoded source instruction into target-legal final Jolt
+/// instructions without supporting registered inline opcodes.
+///
+/// The supplied allocator is shared across source instructions so top-level
+/// `rd = x0` rewrites, recursive source-only helpers, and virtual-register
+/// reset bookkeeping remain consistent with whole-program expansion.
 pub fn expand_instruction(
     instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
@@ -87,6 +103,14 @@ pub fn expand_instruction(
     )
 }
 
+/// Expand one decoded source instruction, using `inline_provider` when the
+/// source kind is `Inline`.
+///
+/// Registered inline expansion follows the same central pipeline as built-in
+/// source-only instructions: provider recipe construction, materialization
+/// through `ExpansionState`, inline reset-row insertion, profile validation,
+/// and metadata stamping. Runtime advice values are not part of this static
+/// path; recipes may only expose advice row positions.
 pub fn expand_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     instruction: &SourceInstruction,
     allocator: &mut ExpansionAllocator,
@@ -110,10 +134,9 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         if instruction.kind().has_side_effects() {
             let virtual_register = allocator.allocate()?;
             allocated_rd_zero_register = Some(virtual_register);
-            rewritten_source = (*instruction).map_row(|mut row| {
-                row.operands.rd = Some(virtual_register);
-                row
-            });
+            let mut row = *instruction.row();
+            row.operands.rd = Some(virtual_register);
+            rewritten_source = SourceInstruction::new(instruction.kind(), row);
             &rewritten_source
         } else {
             return final_rows_to_instructions(vec![noop_for(*instruction.row())], profile);
@@ -121,14 +144,15 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
     } else {
         instruction
     };
-    let source = *instruction.row();
-
     let result = if instruction.kind() == SourceInstructionKind::Inline {
-        inline_provider
-            .expand_inline(instruction, allocator, profile)
-            .and_then(|instructions| {
-                finalize_inline_provider_instructions(source, allocator, instructions, profile)
-            })
+        let owned_allocator = std::mem::take(allocator);
+        let mut state = ExpansionState::new(owned_allocator, profile);
+        let result = inline_provider
+            .expand_inline(instruction, profile)
+            .and_then(|sequence| state.materialize_inline(sequence))
+            .and_then(|rows| final_rows_to_instructions(rows, profile));
+        *allocator = state.into_allocator();
+        result
     } else {
         let owned_allocator = std::mem::take(allocator);
         let mut state = ExpansionState::new(owned_allocator, profile);
@@ -142,37 +166,6 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         allocator.release(register)?;
     }
     result
-}
-
-fn finalize_inline_provider_instructions(
-    source: SourceInstructionRow,
-    allocator: &mut ExpansionAllocator,
-    instructions: Vec<JoltInstruction>,
-    profile: JoltInstructionProfile,
-) -> Result<Vec<JoltInstruction>, ExpansionError> {
-    let mut rows = instructions
-        .into_iter()
-        .map(JoltInstructionRow::from)
-        .collect::<Vec<_>>();
-    for register in allocator.take_registers_for_reset()? {
-        rows.push(JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::ADDI,
-            address: source.address,
-            operands: NormalizedOperands {
-                rd: Some(register),
-                rs1: Some(0),
-                rs2: None,
-                imm: 0,
-            },
-            virtual_sequence_remaining: Some(0),
-            is_first_in_sequence: false,
-            is_compressed: false,
-        });
-    }
-    final_rows_to_instructions(
-        stamp_inline_sequence(rows, source.is_compressed, profile)?,
-        profile,
-    )
 }
 
 fn final_rows_to_instructions(
@@ -274,6 +267,11 @@ fn expand_source_only_instruction(
     }
 }
 
+/// Expand a decoded program into final Jolt instructions without registered
+/// inline support.
+///
+/// This is the provider-free entry point used when source bytecode is expected
+/// to contain only built-in source-only instructions and target-legal rows.
 pub fn expand_program(
     instructions: &[SourceInstruction],
     profile: JoltInstructionProfile,
@@ -281,6 +279,12 @@ pub fn expand_program(
     expand_program_with_provider(instructions, &mut NoInlineExpansionProvider, profile)
 }
 
+/// Expand a decoded program into final Jolt instructions with registered inline
+/// support.
+///
+/// The allocator is intentionally shared for the whole program. That preserves
+/// deterministic virtual-register assignment across nested expansions and makes
+/// the bytecode rows produced here match rows later observed by runtime tracing.
 pub fn expand_program_with_provider<P: InlineExpansionProvider + ?Sized>(
     instructions: &[SourceInstruction],
     inline_provider: &mut P,

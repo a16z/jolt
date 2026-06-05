@@ -75,7 +75,9 @@ fn g2_msm_multiple_random() {
     let naive: Bn254G2 = points
         .iter()
         .zip(scalars.iter())
-        .fold(Bn254G2::identity(), |acc, (p, s)| acc + p.scalar_mul(s));
+        .fold(<Bn254G2 as JoltGroup>::identity(), |acc, (p, s)| {
+            acc + p.scalar_mul(s)
+        });
     assert_eq!(msm_result, naive);
 }
 
@@ -91,7 +93,7 @@ fn g2_associativity() {
 #[test]
 fn g2_neg() {
     let g = Bn254::g2_generator();
-    assert_eq!(g + (-g), Bn254G2::identity());
+    assert_eq!(g + (-g), <Bn254G2 as JoltGroup>::identity());
     assert!((-g + g).is_identity());
 }
 
@@ -123,7 +125,7 @@ fn gt_debug_format_contains_type_name() {
 
 #[test]
 fn gt_identity_is_identity() {
-    let id = Bn254GT::identity();
+    let id = <Bn254GT as JoltGroup>::identity();
     assert!(id.is_identity());
     assert!(!gt_element().is_identity());
 }
@@ -519,7 +521,7 @@ fn g2_scalar_mul_consistency_with_repeated_add() {
     let n = 7u64;
     let scalar = Fr::from_u64(n);
     let via_scalar_mul = g.scalar_mul(&scalar);
-    let mut via_add = Bn254G2::identity();
+    let mut via_add = <Bn254G2 as JoltGroup>::identity();
     for _ in 0..n {
         via_add += g;
     }
@@ -532,7 +534,7 @@ fn gt_scalar_mul_consistency_with_repeated_add() {
     let n = 5u64;
     let scalar = Fr::from_u64(n);
     let via_scalar_mul = e.scalar_mul(&scalar);
-    let mut via_add = Bn254GT::identity();
+    let mut via_add = <Bn254GT as JoltGroup>::identity();
     for _ in 0..n {
         via_add += e;
     }

@@ -1,15 +1,19 @@
 use std::fs::File;
 
-use crate::zkvm::config::{OneHotConfig, OneHotParams, ReadWriteConfig};
+use crate::zkvm::config::{OneHotConfig, OneHotParams, ProgramMode, ReadWriteConfig};
 use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     curve::Bn254Curve,
     field::JoltField,
     poly::commitment::commitment_scheme::CommitmentScheme,
     poly::commitment::dory::{DoryCommitmentScheme, DoryLayout},
-    poly::opening_proof::ProverOpeningAccumulator,
-    poly::opening_proof::{OpeningId, SumcheckId},
+    poly::opening_proof::{
+        OpeningAccumulator, OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+        BIG_ENDIAN,
+    },
     transcripts::Transcript,
+    utils::errors::ProofVerifyError,
+    zkvm::claim_reductions::AdviceKind,
 };
 
 // Compile-time error if multiple transcript features are enabled
@@ -52,6 +56,7 @@ pub mod config;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod lookup_table;
+pub mod program;
 pub mod proof_serialization;
 #[cfg(feature = "prover")]
 pub mod prover;
@@ -67,6 +72,8 @@ pub(crate) fn stage8_opening_ids(
     one_hot_params: &OneHotParams,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
+    program_mode: ProgramMode,
+    bytecode_chunk_count: usize,
 ) -> Vec<OpeningId> {
     let mut opening_ids = Vec::new();
 
@@ -104,8 +111,120 @@ pub(crate) fn stage8_opening_ids(
     if include_untrusted_advice {
         opening_ids.push(OpeningId::UntrustedAdvice(SumcheckId::AdviceClaimReduction));
     }
+    if program_mode == ProgramMode::Committed {
+        for i in 0..bytecode_chunk_count {
+            opening_ids.push(OpeningId::committed(
+                CommittedPolynomial::BytecodeChunk(i),
+                SumcheckId::BytecodeClaimReduction,
+            ));
+        }
+    }
+    if program_mode == ProgramMode::Committed {
+        opening_ids.push(OpeningId::committed(
+            CommittedPolynomial::ProgramImageInit,
+            SumcheckId::ProgramImageClaimReduction,
+        ));
+    }
 
     opening_ids
+}
+
+pub(crate) fn compute_final_opening_point<F: JoltField>(
+    opening_accumulator: &impl OpeningAccumulator<F>,
+    native_main_vars: usize,
+    log_k_chunk: usize,
+    layout: DoryLayout,
+    program_mode: ProgramMode,
+    bytecode_chunk_count: usize,
+) -> Result<OpeningPoint<BIG_ENDIAN, F>, ProofVerifyError> {
+    let mut opening_candidates: Vec<(String, OpeningPoint<BIG_ENDIAN, F>)> = Vec::new();
+    if let Some((point, _)) = opening_accumulator
+        .get_advice_opening(AdviceKind::Trusted, SumcheckId::AdviceClaimReduction)
+    {
+        opening_candidates.push(("trusted_advice".to_string(), point));
+    }
+    if let Some((point, _)) = opening_accumulator
+        .get_advice_opening(AdviceKind::Untrusted, SumcheckId::AdviceClaimReduction)
+    {
+        opening_candidates.push(("untrusted_advice".to_string(), point));
+    }
+    if program_mode == ProgramMode::Committed {
+        for chunk_idx in 0..bytecode_chunk_count {
+            let (point, _) = opening_accumulator.get_committed_polynomial_opening(
+                CommittedPolynomial::BytecodeChunk(chunk_idx),
+                SumcheckId::BytecodeClaimReduction,
+            );
+            opening_candidates.push((format!("bytecode_chunk[{chunk_idx}]"), point));
+        }
+    }
+    if program_mode == ProgramMode::Committed {
+        let (program_image_point, _) = opening_accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::ProgramImageInit,
+            SumcheckId::ProgramImageClaimReduction,
+        );
+        opening_candidates.push(("program_image".to_string(), program_image_point));
+    }
+
+    let (hamming_point, _) = opening_accumulator.get_committed_polynomial_opening(
+        CommittedPolynomial::InstructionRa(0),
+        SumcheckId::HammingWeightClaimReduction,
+    );
+    let (r_cycle_stage6, _) = opening_accumulator.get_committed_polynomial_opening(
+        CommittedPolynomial::RamInc,
+        SumcheckId::IncClaimReduction,
+    );
+
+    let max_len = opening_candidates
+        .iter()
+        .map(|(_, point)| point.r.len())
+        .max()
+        .unwrap_or(0);
+    if max_len > native_main_vars {
+        let dominant = opening_candidates
+            .iter()
+            .find(|(_, point)| point.r.len() == max_len)
+            .expect("at least one dominant precommitted candidate expected");
+        for (name, point) in opening_candidates
+            .iter()
+            .filter(|(_, point)| point.r.len() == max_len)
+        {
+            if point.r != dominant.1.r {
+                return Err(ProofVerifyError::DoryError(format!(
+                    "incompatible dominant precommitted anchors: {} and {} have equal dimensionality {} but different opening points",
+                    dominant.0, name, max_len
+                )));
+            }
+        }
+        Ok(OpeningPoint::<BIG_ENDIAN, F>::new(dominant.1.r.clone()))
+    } else {
+        let r_address_stage7 = hamming_point.r[..log_k_chunk].to_vec();
+
+        match layout {
+            DoryLayout::AddressMajor => Ok(OpeningPoint::<BIG_ENDIAN, F>::new(
+                [r_cycle_stage6.r.as_slice(), r_address_stage7.as_slice()].concat(),
+            )),
+            DoryLayout::CycleMajor => {
+                let native_cycle = &hamming_point.r[log_k_chunk..];
+                if r_cycle_stage6.r.len() < native_cycle.len() {
+                    return Err(ProofVerifyError::DoryError(
+                        "stage6 cycle challenges shorter than native cycle vars".to_string(),
+                    ));
+                }
+                if r_cycle_stage6.r[..native_cycle.len()] != *native_cycle {
+                    return Err(ProofVerifyError::DoryError(format!(
+                        "cycle-major Stage-8 expects stage6 cycle prefix to equal native cycle vars \
+                         (cycle_full_len={}, native_len={})",
+                        r_cycle_stage6.r.len(),
+                        native_cycle.len()
+                    )));
+                }
+                let cycle_extra = &r_cycle_stage6.r[native_cycle.len()..];
+                let cycle_extra_and_anchor =
+                    [cycle_extra, r_address_stage7.as_slice(), native_cycle].concat();
+                Ok(OpeningPoint::<BIG_ENDIAN, F>::new(cycle_extra_and_anchor))
+            }
+        }
+    }
 }
 
 // Scoped CPU profiler for performance analysis. Feature-gated by "pprof".

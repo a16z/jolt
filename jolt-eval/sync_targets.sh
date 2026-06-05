@@ -38,11 +38,12 @@ for file in "$EVAL_DIR"/src/invariant/*.rs; do
     [ -f "$file" ] || continue
     basename_rs=$(basename "$file" .rs)
     [ "$basename_rs" = "mod" ] && continue
+    [ "$basename_rs" = "macro_tests" ] && continue
 
     # Look for #[invariant(...Fuzz...)] annotations
     { grep -n 'invariant.*Fuzz' "$file" 2>/dev/null || true; } | while IFS=: read -r line _; do
         struct=$(sed -n "$((line+1)),$((line+5))p" "$file" \
-            | grep -o 'pub struct [A-Za-z_]*' | head -1 | awk '{print $3}')
+            | grep -o 'pub struct [A-Za-z_][A-Za-z0-9_]*' | head -1 | awk '{print $3}')
         [ -z "$struct" ] && continue
         snake=$(to_snake "$struct")
         echo "$snake invariant::${basename_rs}::${struct}"

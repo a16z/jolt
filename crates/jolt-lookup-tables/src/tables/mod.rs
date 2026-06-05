@@ -39,7 +39,6 @@ pub mod unsigned_less_than;
 pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
-pub mod valid_signed_remainder;
 pub mod valid_unsigned_remainder;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
@@ -78,7 +77,6 @@ use unsigned_less_than::UnsignedLessThanTable;
 use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
-use valid_signed_remainder::ValidSignedRemainderTable;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
 use virtual_change_divisor::VirtualChangeDivisorTable;
 use virtual_change_divisor_w::VirtualChangeDivisorWTable;
@@ -97,8 +95,22 @@ use xor::XorTable;
 /// Each variant carries the corresponding zero-sized table marker. Instructions
 /// declare which table they use via
 /// [`InstructionLookupTable::lookup_table`](crate::InstructionLookupTable::lookup_table).
+///
+/// Variant indices match `jolt-core::LookupTables` so lookup-table flags in
+/// core-produced proofs can be interpreted without an adapter.
 #[expect(clippy::unsafe_derive_deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumCount)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumCount,
+    strum::EnumIter,
+)]
 #[repr(u8)]
 pub enum LookupTableKind<const XLEN: usize> {
     RangeCheck(RangeCheckTable<XLEN>),
@@ -108,32 +120,31 @@ pub enum LookupTableKind<const XLEN: usize> {
     Or(OrTable<XLEN>),
     Xor(XorTable<XLEN>),
     Equal(EqualTable<XLEN>),
+    SignedGreaterThanEqual(SignedGreaterThanEqualTable<XLEN>),
+    UnsignedGreaterThanEqual(UnsignedGreaterThanEqualTable<XLEN>),
     NotEqual(NotEqualTable<XLEN>),
     SignedLessThan(SignedLessThanTable<XLEN>),
     UnsignedLessThan(UnsignedLessThanTable<XLEN>),
-    SignedGreaterThanEqual(SignedGreaterThanEqualTable<XLEN>),
-    UnsignedGreaterThanEqual(UnsignedGreaterThanEqualTable<XLEN>),
-    UnsignedLessThanEqual(UnsignedLessThanEqualTable<XLEN>),
+    SignMask(SignMaskTable<XLEN>),
     UpperWord(UpperWordTable<XLEN>),
+    UnsignedLessThanEqual(UnsignedLessThanEqualTable<XLEN>),
+    ValidUnsignedRemainder(ValidUnsignedRemainderTable<XLEN>),
+    ValidDiv0(ValidDiv0Table<XLEN>),
+    HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
+    WordAlignment(WordAlignmentTable<XLEN>),
     LowerHalfWord(LowerHalfWordTable<XLEN>),
     SignExtendHalfWord(SignExtendHalfWordTable<XLEN>),
-    SignMask(SignMaskTable<XLEN>),
     Pow2(Pow2Table<XLEN>),
     Pow2W(Pow2WTable<XLEN>),
     ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
+    VirtualRev8W(VirtualRev8WTable<XLEN>),
     VirtualSRL(VirtualSRLTable<XLEN>),
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualROTRTable<XLEN>),
     VirtualROTRW(VirtualROTRWTable<XLEN>),
-    ValidDiv0(ValidDiv0Table<XLEN>),
-    ValidUnsignedRemainder(ValidUnsignedRemainderTable<XLEN>),
-    ValidSignedRemainder(ValidSignedRemainderTable<XLEN>),
     VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
     VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
-    HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
-    WordAlignment(WordAlignmentTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
-    VirtualRev8W(VirtualRev8WTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
     VirtualXORROT16(VirtualXORROTTable<XLEN, 16>),
@@ -158,32 +169,31 @@ macro_rules! dispatch {
             Self::Or($t) => $expr,
             Self::Xor($t) => $expr,
             Self::Equal($t) => $expr,
+            Self::SignedGreaterThanEqual($t) => $expr,
+            Self::UnsignedGreaterThanEqual($t) => $expr,
             Self::NotEqual($t) => $expr,
             Self::SignedLessThan($t) => $expr,
             Self::UnsignedLessThan($t) => $expr,
-            Self::SignedGreaterThanEqual($t) => $expr,
-            Self::UnsignedGreaterThanEqual($t) => $expr,
-            Self::UnsignedLessThanEqual($t) => $expr,
+            Self::SignMask($t) => $expr,
             Self::UpperWord($t) => $expr,
+            Self::UnsignedLessThanEqual($t) => $expr,
+            Self::ValidUnsignedRemainder($t) => $expr,
+            Self::ValidDiv0($t) => $expr,
+            Self::HalfwordAlignment($t) => $expr,
+            Self::WordAlignment($t) => $expr,
             Self::LowerHalfWord($t) => $expr,
             Self::SignExtendHalfWord($t) => $expr,
-            Self::SignMask($t) => $expr,
             Self::Pow2($t) => $expr,
             Self::Pow2W($t) => $expr,
             Self::ShiftRightBitmask($t) => $expr,
+            Self::VirtualRev8W($t) => $expr,
             Self::VirtualSRL($t) => $expr,
             Self::VirtualSRA($t) => $expr,
             Self::VirtualROTR($t) => $expr,
             Self::VirtualROTRW($t) => $expr,
-            Self::ValidDiv0($t) => $expr,
-            Self::ValidUnsignedRemainder($t) => $expr,
-            Self::ValidSignedRemainder($t) => $expr,
             Self::VirtualChangeDivisor($t) => $expr,
             Self::VirtualChangeDivisorW($t) => $expr,
-            Self::HalfwordAlignment($t) => $expr,
-            Self::WordAlignment($t) => $expr,
             Self::MulUNoOverflow($t) => $expr,
-            Self::VirtualRev8W($t) => $expr,
             Self::VirtualXORROT32($t) => $expr,
             Self::VirtualXORROT24($t) => $expr,
             Self::VirtualXORROT16($t) => $expr,
@@ -197,6 +207,12 @@ macro_rules! dispatch {
 }
 
 impl<const XLEN: usize> LookupTableKind<XLEN> {
+    pub const COUNT: usize = <Self as strum::EnumCount>::COUNT;
+
+    pub fn iter() -> <Self as strum::IntoEnumIterator>::Iterator {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+
     /// Returns the discriminant as a `usize`, suitable for array indexing.
     #[inline]
     pub fn index(&self) -> usize {

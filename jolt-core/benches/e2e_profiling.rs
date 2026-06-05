@@ -1,5 +1,6 @@
 use ark_serialize::CanonicalSerialize;
 use jolt_core::host;
+use jolt_core::zkvm::program::ProgramPreprocessing;
 use jolt_core::zkvm::prover::JoltProverPreprocessing;
 use jolt_core::zkvm::verifier::{JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use jolt_core::zkvm::{RV64IMACProver, RV64IMACVerifier};
@@ -207,14 +208,13 @@ fn prove_example(
     drop(trace);
 
     let task = move || {
+        let program_data =
+            ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
         let shared_preprocessing = JoltSharedPreprocessing::new(
-            bytecode,
+            program_data,
             program_io.memory_layout.clone(),
-            init_memory_state,
             padded_trace_len,
-            e_entry,
-        )
-        .unwrap();
+        );
         let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
         let elf_contents_opt = program.get_elf_contents();
@@ -263,14 +263,13 @@ fn prove_example_with_trace(
         "Trace is longer than expected"
     );
 
+    let program_data =
+        ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
     let shared_preprocessing = JoltSharedPreprocessing::new(
-        bytecode.clone(),
+        program_data,
         program_io.memory_layout.clone(),
-        init_memory_state,
         trace.len().next_power_of_two(),
-        e_entry,
-    )
-    .unwrap();
+    );
     let preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
 
     let elf_contents_opt = program.get_elf_contents();
