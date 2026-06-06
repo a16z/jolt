@@ -68,7 +68,7 @@ ready.
 | `jolt-openings` | Opening plans, evaluation claims, RLC, PCS traits |
 | `jolt-dory` / PCS crates | Concrete PCS implementations and optimized commit/open/eval kernels |
 | `jolt-blindfold` | Generic BlindFold protocol from committed proofs |
-| `jolt-wrapper` | Selected-verifier R1CS and wrapper SNARKs |
+| `jolt-wrapper-verifier` | Selected-verifier R1CS and wrapper verification |
 
 ## Prover Flow
 
@@ -756,14 +756,15 @@ emitted.
 
 ## Wrapper Handoff
 
-`jolt-prover` exports witness inputs. `jolt-wrapper` owns R1CS assembly and
-wrapper proving.
+`jolt-prover` exports witness inputs. `jolt-wrapper-verifier` owns R1CS
+assembly and public wrapper verification; production wrapper proving is
+deferred to `jolt-wrapper-prover`.
 
 ```text
 prove_for_wrapper(...)
   -> JoltProof
   -> WrapperWitnessInputs
-  -> jolt-wrapper
+  -> jolt-wrapper-verifier / future jolt-wrapper-prover
 ```
 
 Wrapper inputs may include proof fields in verifier order, verifier stage

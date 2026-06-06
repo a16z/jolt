@@ -1,4 +1,4 @@
-# Spec: Wrapper Protocol And SNARK Backend
+# Spec: Wrapper Verifier Protocol
 
 | Field | Value |
 |-------|-------|
@@ -10,15 +10,17 @@
 ## Purpose
 
 The wrapper proves an R1CS encoding of the configured Jolt verifier computation.
-The first backend is zero-knowledge Spartan + HyperKZG. The backend consumes
-arbitrary R1CS; Jolt-specific protocol assembly happens before backend proving.
+The near-term implementation target is `jolt-wrapper-verifier`: a concrete
+wrapper verifier crate that owns relation construction and the Spartan +
+HyperKZG verifier-side protocol. The production prover crate is intentionally
+deferred until shared prover machinery lands.
 
 This spec owns the wrapper protocol axis:
 
 ```text
 configured verifier computation
   -> R1CS assembly
-  -> ZK Spartan + HyperKZG proof
+  -> Spartan + HyperKZG wrapper verification
 ```
 
 Field inline and Dory assist add checks to the configured linear verifier flow.
@@ -33,18 +35,22 @@ compile-time verifier config, and wrapper entry-point rules are specified in
 V1 scope:
 
 ```text
+jolt-wrapper-verifier crate structure
 generic configured-verifier R1CS builder
 transparent Jolt proof as private wrapper witness
 in-circuit transcript replay
 variable-challenge sumcheck R1CS
 claim lowering over constants and variables
 Hyrax R1CS integration when the configured verifier includes Dory assist
-zero-knowledge Spartan + HyperKZG backend over arbitrary R1CS
+concrete Spartan + HyperKZG verifier-side protocol
+integration-test fixtures for composed R1CS protocols
 ```
 
 Out of scope:
 
 ```text
+jolt-wrapper-prover production crate
+generic snark-backends abstraction
 making wrapper depend on BlindFold internals
 wrapping the BlindFold verifier as the primary v1 ZK composition
 folding / relaxed R1CS / row hiding
@@ -55,36 +61,47 @@ deleting the existing Groth16 transpiler path
 
 ## Design Intuition
 
-The wrapper is a compiler from verifier computation to R1CS plus a SNARK
-backend:
+`jolt-wrapper-verifier` is a concrete protocol verifier, not a generic backend
+registry. It mirrors `jolt-verifier`: typed statement inputs, explicit
+transcript flow, explicit protocol checks, and a small public `verify` API.
 
 ```text
 configured verifier computation
-  -> protocol-R1CS builder
+  -> wrapper relation builder
   -> transcript constraints
   -> sumcheck verifier constraints
   -> claim equation constraints
   -> opening/PCS verifier constraints
-  -> R1CS instance and witness
-  -> ZK Spartan + HyperKZG proof
+  -> canonical R1CS relation and public input layout
+  -> Spartan verifier checks
+  -> HyperKZG opening checks
+  -> wrapper verifier accepts
 ```
 
-The backend must remain boring and zero-knowledge:
+The verifier crate may expose test-gated slow fixture machinery that builds a
+witness and proof for integration tests, but that machinery is not the
+production prover API. The eventual `jolt-wrapper-prover` crate should consume
+the same relation semantics and shared prover infrastructure rather than
+duplicating protocol definitions.
+
+There is no `snark_backends/` abstraction in v1. If a future Groth16/gnark
+pipeline consumes the same R1CS relation, that adapter should be added after
+the verifier relation is stable.
+
+The relation/proof boundary remains simple:
 
 ```text
 input:
   ConstraintMatrices<F>
-  witness Vec<F>
   public inputs Vec<F>
 
 output:
-  wrapper proof
+  wrapper verifier decision
 ```
 
-It should not know about Jolt stages, field inline, Dory assist, BlindFold, or
-transcript ordering. It must hide the R1CS witness, which includes the inner
-transparent Jolt proof, clear opening claims, verifier intermediate values, and
-any auxiliary variables allocated during wrapper assembly.
+Spartan + HyperKZG proof objects should not know about Jolt stages, field
+inline, Dory assist, BlindFold, or transcript ordering. Those semantics are
+compiled into the canonical R1CS relation by `jolt-wrapper-verifier`.
 
 ## Statement
 
@@ -168,7 +185,7 @@ explicit protocol objects, not implicit casts between witness representations:
 ```text
 Fr-native:
   wrapper R1CS field
-  Spartan + HyperKZG backend field
+  Spartan + HyperKZG verifier field
   algebraic Poseidon wrapper transcript
   ordinary transparent Jolt verifier checks
 
@@ -183,10 +200,12 @@ Grumpkin native-coordinate constraints:
   scalar semantics remain Fq and must use the same non-native Fq representation
 ```
 
-The wrapper backend receives only `ConstraintMatrices<Fr>`, `witness Vec<Fr>`,
-and `public_inputs Vec<Fr>`. It must not know which entries encode native `Fr`
-values, non-native `Fq` limbs, Grumpkin coordinates, transcript state, or Jolt
-proof data.
+The wrapper verifier binds only the canonical relation identity and public
+inputs. Test fixtures and the eventual production prover may consume
+`ConstraintMatrices<Fr>`, `witness Vec<Fr>`, and `public_inputs Vec<Fr>`, but
+that proving machinery must not know which entries encode native `Fr` values,
+non-native `Fq` limbs, Grumpkin coordinates, transcript state, or Jolt proof
+data.
 
 The configured verifier R1CS assembly must make every field crossing explicit:
 
@@ -277,82 +296,182 @@ proof-data allocation
 component R1CS helpers
 ```
 
-## `jolt-wrapper` Layout
+## Crate Split
+
+The wrapper stack is split by role:
+
+```text
+jolt-wrapper-verifier:
+  owns relation construction, public wrapper verification, concrete
+  Spartan + HyperKZG verifier checks, and test-gated slow fixtures
+
+jolt-wrapper-prover:
+  deferred; later owns production witness/proof generation using shared prover
+  machinery
+
+jolt-claims:
+  owns wrapper-spartan-hyperkzg protocol semantics, statement shapes,
+  dimension facts, Spartan round/claim structure, and formula facts shared by
+  verifier/prover code
+```
+
+`jolt-wrapper-verifier` should be usable before the Dory-assist verifier is
+complete. It can assemble and test composed R1CS protocols over the reusable
+component gadgets already provided by `jolt-r1cs`, `jolt-poly`, `jolt-sumcheck`,
+`jolt-openings`, `jolt-crypto`, and `jolt-hyrax`.
+
+## `jolt-wrapper-verifier` Layout
 
 Target layout:
 
 ```text
-crates/jolt-wrapper/
+crates/jolt-wrapper-verifier/
   Cargo.toml
   src/
     lib.rs
-    builder.rs
+    config.rs
     error.rs
     proof.rs
-    protocol.rs
-    r1cs.rs
-    statements.rs
-    verify.rs
-    witness.rs
-    snark_backends/
+    r1cs_builder.rs
+    verifier.rs
+    stages/
       mod.rs
-      spartan_hyperkzg/
+      r1cs_relation/
         mod.rs
-        proof.rs
-        prover.rs
-        setup.rs
-        verifier.rs
-      gnark/
+        inputs.rs
+        outputs.rs
+        verify.rs
+      spartan/
         mod.rs
+        inputs.rs
+        outputs.rs
+        verify.rs
+      hyperkzg/
+        mod.rs
+        inputs.rs
+        outputs.rs
+        verify.rs
 ```
 
-The crate mirrors the useful `jolt-blindfold` top-level organization:
-`statements` describes the configured verifier object, `builder` assembles typed
-inputs and transcript state, `protocol` owns the built R1CS instance and layout,
-`r1cs` owns constraint appending, and `snark_backends` owns R1CS-to-proof
-orchestration. Reusable component encodings live in the crates that own those
-protocols.
+The crate should mirror the useful `jolt-verifier` organization, but with only
+the protocol phases the wrapper actually needs. `config`, `proof`, and
+`verifier` are top-level verifier concepts. `r1cs_builder` is the only
+test-facing relation-construction helper for now; it wraps `R1csBuilder`,
+tracks public-input layout, and exposes witness checking for integration tests.
+`verifier` owns the small public `verify(...)` entry point and threads the
+transcript in a linear order. `stages/*` own typed inputs, typed outputs, and
+phase-local checks.
 
-## Protocol Builder
+Do not add top-level `protocol`, `statement`, `witness`, `preprocessing`, or
+`test_support` modules until they carry real verifier-side responsibilities.
+Witness construction belongs to the future prover side; verifier inputs can
+stay as typed structs in `verifier.rs`.
 
-`jolt-wrapper::r1cs` owns a generic protocol builder for the configured verifier
-computation:
+The wrapper stages are intentionally coarse:
+
+```text
+r1cs_relation:
+  canonicalize/bind public wrapper inputs, R1CS dimensions, public input
+  layout, and relation identity using jolt-claims wrapper facts
+
+spartan:
+  verify the Spartan transcript, claims, and verifier equations for the
+  configured relation
+
+hyperkzg:
+  verify the HyperKZG opening checks required by the Spartan verifier
+```
+
+Do not add a wrapper-local `components/` directory for generic math. Reusable
+encodings for transcript, scalar arithmetic, sumcheck, opening reductions,
+Hyrax, curve groups, and commitments live in the crates that own those
+abstractions. `jolt-wrapper-verifier` sequences those APIs.
+
+The crate must not grow a generic backend registry. Spartan + HyperKZG is the
+concrete verifier path for v1.
+
+## Verifier Flow
+
+The top-level verifier should read like a smaller `jolt-verifier`:
 
 ```rust
-pub struct WrapperProtocolBuilder<F, Tr> {
+pub fn verify<F, PCS, T>(
+    config: &WrapperVerifierConfig,
+    inputs: WrapperVerifierInputs<'_, F>,
+    proof: &WrapperProof<PCS>,
+) -> Result<(), WrapperError>
+where
+    T: Transcript<Challenge = F>,
+{
+    validate_proof_config(config, proof)?;
+
+    let checked = validate_inputs(config, inputs)?;
+
+    let mut transcript = T::new(config.transcript_label);
+    absorb_public_inputs(&checked, inputs.public_inputs, &mut transcript);
+    absorb_wrapper_commitments(proof, &mut transcript);
+
+    let relation = stages::r1cs_relation::verify(
+        &checked,
+        &config.key.relation,
+        inputs.public_inputs,
+        proof,
+        &mut transcript,
+    )?;
+    let spartan = stages::spartan::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stages::spartan::deps(&relation),
+    )?;
+    stages::hyperkzg::verify(
+        &checked,
+        &config.key.hyperkzg,
+        proof,
+        &mut transcript,
+        stages::hyperkzg::deps(&relation, &spartan),
+    )?;
+
+    Ok(())
+}
+```
+
+The exact helper names can change during implementation, but the shape should
+not: validate first, bind public wrapper inputs, then advance protocol
+phases linearly through explicit typed outputs. There should be no hidden
+state object that accumulates implicit claims across phases.
+
+## R1CS Builder
+
+`jolt-wrapper-verifier::r1cs_builder` owns the thin wrapper around
+`jolt_r1cs::R1csBuilder` used while constructing the configured verifier
+r1cs_relation:
+
+```rust
+pub struct WrapperR1csBuilder<F, Tr> {
     pub builder: jolt_r1cs::R1csBuilder<F>,
     pub transcript: Tr,
-    pub sources: WrapperClaimSources<F>,
+    pub layout: WrapperR1csLayout,
+    pub public_inputs: Vec<F>,
 }
 ```
 
 The first implementation can use `R1csBuilder` directly. A separate assembly
 object is not required to encode verifier equations; it is only useful once the
 wrapper needs stable public-input ordering and a single export point for
-matrices, witness, and public inputs. `WrapperProtocolBuilder` adds
-wrapper-specific transcript state, verifier source maps, and proof artifact
-allocation.
+matrices, witness, and public inputs. `WrapperR1csBuilder` only adds
+wrapper-specific transcript state and public-input layout tracking. Public
+scalar allocation records the stable public-input slot and emits an equality
+row tying the committed witness slot to the public value; the wrapper verifier
+must never rely on an out-of-band layout table for that consistency.
 
 Helper shape:
 
 ```rust
-impl<F, Tr> WrapperProtocolBuilder<F, Tr> {
-    pub fn alloc_public(
-        &mut self,
-        id: WrapperPublicInputId,
-        value: F,
-    ) -> Variable;
-
-    pub fn alloc_witness(
-        &mut self,
-        id: WrapperWitnessId,
-        value: F,
-    ) -> Variable;
-
-    pub fn absorb_public(&mut self, variable: Variable);
-    pub fn absorb_witness(&mut self, variable: Variable);
-
-    pub fn challenge(&mut self, id: WrapperChallengeId) -> Variable;
+impl<F, Tr> WrapperR1csBuilder<F, Tr> {
+    pub fn alloc_public_scalar(&mut self, value: F) -> AssignedScalar<F>;
+    pub fn alloc_witness_scalar(&mut self, value: F) -> AssignedScalar<F>;
+    pub fn finish(self) -> Result<WrapperR1csProtocol<F>, WrapperError>;
 }
 ```
 
@@ -364,7 +483,7 @@ pub trait WrapperR1csStage<F> {
 
     fn append_r1cs<Tr>(
         &self,
-        builder: &mut WrapperProtocolBuilder<F, Tr>,
+        builder: &mut WrapperR1csBuilder<F, Tr>,
     ) -> Result<(), Self::Error>;
 }
 ```
@@ -405,8 +524,9 @@ constraints/:
   execution-relation constraints such as field-inline field_constraints
 ```
 
-When the wrapper reaches backend handoff, either `jolt-wrapper` or `jolt-r1cs`
-can add a small assembly/export helper:
+When the wrapper relation needs a single export point for test fixtures or a
+future prover, either `jolt-wrapper-verifier` or `jolt-r1cs` can add a small
+assembly/export helper:
 
 ```rust
 pub struct WrapperR1csAssembly<F> {
@@ -480,9 +600,10 @@ Wrapper:
 ```
 
 The existing `ClaimSourceTable` remains useful as the constant-source
-implementation. The wrapper provides `WrapperClaimSources`, backed by
-transcript-derived challenges, public inputs, opening variables, and stage-local
-aliases.
+implementation. The wrapper relation stage should provide explicit source
+tables backed by transcript-derived challenges, public inputs, opening
+variables, and stage-local aliases. Do not hide those behind a long-lived
+wrapper state object.
 
 ## Sumcheck R1CS
 
@@ -586,7 +707,7 @@ so wrapper assembly should absorb field elements and domain-separation words
 directly instead of routing through byte decomposition. Native verifier replay
 and wrapper assembly must share the same transcript order and scalar encoding.
 
-The Poseidon R1CS backend must match the Jolt proof transcript used by
+The Poseidon R1CS transcript gadget must match the Jolt proof transcript used by
 `jolt-core` under `transcript-poseidon`:
 
 ```text
@@ -652,6 +773,12 @@ Dory-assist verifier staging:
 
 Dory-assist protocol facts and packing:
   jolt-claims::protocols::dory_assist
+
+Wrapper Spartan + HyperKZG protocol semantics:
+  jolt-claims::protocols::wrapper_spartan_hyperkzg owns the wrapper statement
+  facts, canonical protocol/transcript labels, raw and padded R1CS dimension
+  facts, Spartan protocol shape, public-input layout, round/claim structure, and
+  formula semantics consumed by verifier/prover code
 ```
 
 Wrapper implementation should be foundation-first. Before adding bespoke
@@ -659,7 +786,7 @@ Dory-assist verifier R1CS wiring, each reusable component should expose a
 generic, crate-owned R1CS interface with local tests and at least one
 cross-crate composition test. The final configured-verifier assembly should be
 mostly sequencing typed component hooks, not reimplementing component math in
-`jolt-wrapper`.
+`jolt-wrapper-verifier`.
 
 The safe implementation rule is: when a wrapper check feels Dory-assist-specific
 but is really a generic algebraic, transcript, sumcheck, opening, or group
@@ -667,11 +794,11 @@ constraint, stop and upstream that piece to the crate that owns the abstraction.
 Only after the generic component has local soundness tests and a composed R1CS
 test should the configured verifier call it.
 
-`jolt-wrapper::r1cs::assembly` sequences these helpers according to the
-configured verifier flow exported by `jolt-verifier`. It should not implement
-component math directly. It allocates the proof and public-input witness,
-threads transcript state, records aliases and claim sources, and calls the R1CS
-hooks owned by the component crates.
+`jolt-wrapper-verifier::stages::r1cs_relation` sequences these helpers according to
+the configured verifier flow exported by `jolt-verifier`. It should not
+implement component math directly. It allocates the proof and public-input
+witness, threads transcript state, records aliases and claim sources, and calls
+the R1CS hooks owned by the component crates.
 
 ## Generic R1CS Building Blocks
 
@@ -858,11 +985,12 @@ Dory-assist final public pairing check:
 The `jolt-dory-assist-verifier` crate mirrors `jolt-verifier` in scope, but for
 the Dory-assist protocol only. It owns the stage ordering, proof payload
 structure, transcript order, native verification, wrapper-facing R1CS hook, and
-final acceptance condition for the selected assist proof. `jolt-wrapper` should
-not match on Dory-assist operation families or copy-edge internals. It receives
-a typed reduced opening statement from the base Jolt stage-8 assembly, passes it
-to the selected Dory-assist verifier hook, and constrains the returned
-acceptance condition as part of the configured verifier relation.
+final acceptance condition for the selected assist proof.
+`jolt-wrapper-verifier` should not match on Dory-assist operation families or
+copy-edge internals. It receives a typed reduced opening statement from the
+base Jolt stage-8 assembly, passes it to the selected Dory-assist verifier
+hook, and constrains the returned acceptance condition as part of the
+configured verifier relation.
 
 `jolt-hyrax::r1cs` should only lower the Hyrax opening verifier used by the
 assist proof and should mirror the native Hyrax genericity over vector
@@ -883,7 +1011,7 @@ MSMs, equality-polynomial evaluation, or scalar field arithmetic directly.
 Those are owned by `jolt-crypto::r1cs`, `jolt-poly::r1cs`, and `jolt-r1cs`
 respectively. The concrete BN254/Grumpkin wrapper path instantiates the generic
 Hyrax vector-commitment interface with Grumpkin-backed Pedersen, but Hyrax
-itself should not be specialized to that backend.
+itself should not be specialized to that commitment instantiation.
 
 For the BN254/Grumpkin recursion target, Dory assist uses Grumpkin-backed
 Pedersen row commitments. This is not only a wrapper convenience: Grumpkin's
@@ -929,58 +1057,92 @@ moved behind a dedicated Dory-assist final-exp PIOP component.
 ## Assembly API
 
 ```rust
-pub struct WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssist>
-where
-    PcsAssist: PcsProofAssist<PCS>,
-{
-    pub preprocessing: JoltVerifierPreprocessing<PCS, VC>,
-    pub public_io: JoltDevice,
-    pub proof: JoltProof<PCS, VC, ZkProof, PcsAssist>,
-    pub public_inputs: WrapperPublicInputs<F>,
-    pub witness_inputs: WrapperWitnessInputs<F>,
+pub struct WrapperVerifierConfig {
+    pub transcript_label: &'static [u8],
+    pub key: WrapperVerifierKey,
 }
 
-pub struct WrapperR1csInstance<F> {
-    pub matrices: ConstraintMatrices<F>,
-    pub witness: Vec<F>,
-    pub public_inputs: Vec<F>,
+pub struct WrapperVerifierKey<F, P> {
+    pub relation: ConstraintMatrices<F>,
+    pub relation_statement: R1csRelationStatement,
+    pub hyperkzg: HyperKZGVerifierSetup<P>,
 }
 
-pub fn assemble_configured_verifier_r1cs<
-    F,
-    PCS,
-    VC,
-    ZkProof,
-    PcsAssist,
->(
-    inputs: WrapperAssemblyInputs<F, PCS, VC, ZkProof, PcsAssist>,
-) -> Result<WrapperR1csInstance<F>, WrapperError>
-where
-    PcsAssist: PcsProofAssist<PCS>,
-{
-    /* assemble configured verifier R1CS */
+pub struct WrapperVerifierInputs<'a, F> {
+    pub public_inputs: &'a [F],
 }
 ```
 
-Wrapper assembly uses the same compile-time-derived `JOLT_VERIFIER_CONFIG` as
-the configured inner verifier. `WrapperAssemblyInputs` does not contain a
-runtime protocol selector; it validates `proof.protocol` against the configured
-inner verifier before assembling R1CS.
+`jolt-wrapper-verifier` uses the same compile-time-derived
+`JOLT_VERIFIER_CONFIG` as the configured inner verifier once full Jolt wrapping
+is wired. In the current arbitrary-R1CS scaffold, the verifier key owns the
+public R1CS relation, its canonical relation statement, and the HyperKZG
+verifier setup. Per-proof verifier inputs are intentionally only public wrapper
+inputs; richer proof/preprocessing objects should be introduced only when a
+verifier stage consumes them.
 
-Backend API:
+Verifier API:
 
 ```rust
-pub fn prove_spartan_hyperkzg<F, P>(
-    setup: &SpartanHyperKzgProverSetup<F, P>,
-    instance: WrapperR1csInstance<F>,
-) -> Result<WrapperProof<P>, WrapperError>;
-
-pub fn verify_spartan_hyperkzg<F, P>(
-    setup: &SpartanHyperKzgVerifierSetup<F, P>,
-    proof: &WrapperProof<P>,
-    public_inputs: &WrapperPublicInputs<F>,
+pub fn verify<F, Tr>(
+    config: &WrapperVerifierConfig,
+    inputs: WrapperVerifierInputs<'_, F>,
+    proof: &WrapperProof<F>,
 ) -> Result<(), WrapperError>;
 ```
+
+The public API verifies the concrete Spartan + HyperKZG wrapper proof. Internal
+modules may expose narrower helpers such as `verify_spartan` and
+`verify_hyperkzg`, but those helpers remain verifier-side and protocol-specific.
+They are not a generic backend interface.
+
+`r1cs_builder.rs` may expose test-facing relation construction and witness
+checking helpers. It should not become a prover abstraction; production witness
+construction belongs to the future `jolt-wrapper-prover`.
+
+## R1CS Protocol Test Harness
+
+Until the concrete Spartan + HyperKZG proof path is implemented, wrapper
+integration tests should use complete small R1CS protocol cases with the raw
+R1CS witness checker as the acceptance oracle. This keeps the target relation
+rigorous without leaking test-only prover machinery into the public verifier
+API.
+
+The harness should be manifest-style:
+
+```text
+named protocol case
+  -> explicit component coverage list
+  -> constructed WrapperR1csProtocol
+  -> named tamper targets
+```
+
+Each protocol case must first accept its valid witness, then reject every named
+tamper target after cloning and mutating the constructed protocol. Public input
+mutations are added uniformly: scalar mutation, truncation, extension, and
+public-input-layout corruption. Component-specific targets should cover every
+allocated value whose consistency is material to the protocol check.
+
+Current foundation cases:
+
+```text
+poseidon_public_arithmetic:
+  Poseidon-over-Fr transcript, byte absorption, Fr arithmetic, public outputs
+
+poseidon_fq_sumcheck_opening_reduction:
+  Poseidon-over-Fr transcript, Fr -> Fq challenge injection, non-native Fq
+  arithmetic, native and non-native sumcheck constraints, same-point opening
+  reduction
+
+poseidon_hyrax_pedersen_opening:
+  Poseidon-over-Fr transcript, Fr -> Fq challenge injection, Grumpkin/Pedersen
+  Hyrax opening verification
+```
+
+When the Spartan verifier lands, the same cases should be lifted from raw
+`verify_r1cs_witness` checks to test-gated Spartan + HyperKZG proof generation
+and verification. The tamper manifest should remain the source of truth for
+which protocol values must reject.
 
 ## Challenge Binding
 
@@ -1014,9 +1176,9 @@ Dory-assist Jolt wrapper:
 ```
 
 Do not force one parameterized circuit with runtime inactive rows in v1. The
-SNARK backend sees a fixed R1CS for each proof shape. If a future deployment
-needs one universal circuit, selector-gated inactive protocol components can be
-designed separately.
+Spartan + HyperKZG wrapper verifier sees a fixed R1CS identity for each proof
+shape. If a future deployment needs one universal circuit, selector-gated
+inactive protocol components can be designed separately.
 
 ## Relationship To Existing Groth16 Transpiler
 
@@ -1024,14 +1186,15 @@ The existing `transpiler/` path symbolically runs the current verifier for
 stages 1-7 and emits gnark code. It is useful reference infrastructure and a
 near-term Groth16 path, but it is not the target modular architecture.
 
-`jolt-wrapper` is the modular replacement path:
+`jolt-wrapper-verifier` is the modular replacement path:
 
 ```text
 current transpiler:
   jolt-core verifier execution -> MleAst -> gnark
 
 modular wrapper:
-  configured verifier computation -> component R1CS helpers -> generic SNARK backend
+  configured verifier computation -> component R1CS helpers
+  -> concrete Spartan + HyperKZG wrapper verifier
 ```
 
 The future `snarks/gnark` adapter may reuse lessons from the transpiler, but
@@ -1051,7 +1214,7 @@ inner proof:
 wrapper R1CS:
   proves the transparent configured verifier accepts that proof
 
-wrapper backend:
+wrapper verifier proof:
   zero-knowledge Spartan + HyperKZG hides the inner proof and all verifier
   witness data
 
@@ -1066,6 +1229,20 @@ This avoids encoding the BlindFold verifier in the first wrapper circuit. It is
 also the cleanest separation of concerns: transparent Jolt supplies a complete
 information-theoretic verifier relation, while the wrapper SNARK supplies the
 zero-knowledge hiding for the final proof.
+
+The implemented wrapper-ZK verifier path follows the same separation. Spartan
+sumcheck claims are carried as committed output-claim rows. The HyperKZG stage
+uses the PCS ZK opening verifier and returns a hidden evaluation commitment for
+`Z(ry)`. A small BlindFold statement then proves the committed Spartan claim
+relations and binds the hidden `Z(ry)` scalar to that hidden HyperKZG evaluation
+commitment. The verifier continues the same Fiat-Shamir transcript through
+Spartan, HyperKZG, and BlindFold; it does not start a detached BlindFold
+transcript.
+
+For this to compose, the wrapper VC setup used by BlindFold must be compatible
+with the ZK HyperKZG evaluation commitment basis: the single-value VC message
+generator and blinding generator must match the PCS basis used for the hidden
+evaluation commitment. Tests instantiate this with Grumpkin-backed Pedersen.
 
 The optional future composition remains:
 
@@ -1123,15 +1300,16 @@ Each step should be reviewed before continuing to the next.
    - Review gate: composed witness verifies and representative tampering across
      every module boundary rejects.
 
-6. Add wrapper protocol builder skeleton.
-   - Implement `WrapperProtocolBuilder`, `WrapperClaimSources`, and configured
-     stage hook traits over `R1csBuilder`.
+6. Add wrapper R1CS builder skeleton.
+   - Implement `WrapperR1csBuilder`, public-input layout tracking, and
+     configured stage hook traits over `R1csBuilder`.
    - Review gate: fixture stage lowers to satisfied R1CS without becoming part
      of the public wrapper API.
 
 7. Add wrapper instance export.
    - Track stable public-input ordering.
-   - Export matrices, witness, and publics for the backend.
+   - Export matrices, witness, and publics for test fixtures and the future
+     production prover.
    - Review gate: deterministic public-input order tests.
 
 8. Add scalar-gadget foundation helpers.
@@ -1277,13 +1455,193 @@ Each step should be reviewed before continuing to the next.
      `scaled_eq_evals`, `inner_product`, and `multilinear_eval`. Tests cover
      plain polynomial equivalence in `jolt-poly` and real native/non-native
      constraint composition plus tampering in `crates/jolt-r1cs/tests`.
+   - Status update: implemented the first `jolt-hyrax/r1cs` slice behind the
+     `r1cs` feature. The module exposes `HyraxOpeningR1csInput` and a generic
+     `verify_opening<VC>` hook over `jolt_crypto::r1cs::VectorCommitmentR1cs`.
+     It computes row eq weights with `jolt-poly::r1cs`, linearly combines row
+     commitments through the VC interface, verifies the combined-row vector
+     commitment opening, computes the entry-point inner product, and constrains
+     it to the claimed evaluation. Production code stays generic over VC and
+     does not mention Dory assist, Grumpkin formulas, or Pedersen internals.
+     Tests instantiate the hook with Grumpkin-backed Pedersen and non-native
+     `FqVar`, using nonzero row blindings. They cover valid openings,
+     row-commitment count mismatch, combined-row length mismatch, and tampering
+     of row commitments, row point, entry point, combined row, combined
+     blinding, and claimed evaluation.
 
-14. Assemble base configured verifier R1CS.
+14. Stand up `jolt-wrapper-verifier` and assemble the base relation.
+   - Migrate or replace the current wrapper scaffold so the verifier crate owns
+     `config`, `proof`, `r1cs_builder`, `verifier`, and coarse
+     `stages/{r1cs_relation,spartan,hyperkzg}` modules.
+   - Keep the top-level `verify(...)` flow aligned with `jolt-verifier`:
+     validate config and inputs, bind public wrapper inputs, then run
+     explicit typed stages in protocol order.
+   - Remove any `snark_backends/` abstraction from the near-term design.
    - Start with a narrow configured verifier computation before full Jolt.
    - Review gate: native verifier and wrapper R1CS agree on accept/reject for
      the same fixture.
+   - Status: migrated the scaffold from `jolt-wrapper` to
+     `jolt-wrapper-verifier`, removed the `snark_backends` directory, added the
+     verifier-style top-level modules and coarse `r1cs_relation`, `spartan`, and
+     `hyperkzg` stages, then slimmed the top-level surface down to
+     `config`, `proof`, `r1cs_builder`, `verifier`, and `stages`. The
+     `r1cs_relation` stage is wired to the new
+     `jolt-claims::protocols::wrapper_spartan_hyperkzg` dimension/fact module.
+     Slice 1 of the wrapper facts is complete: `jolt-claims` now exposes the
+     canonical wrapper protocol labels, transcript labels, raw relation
+     dimensions, padded/log Spartan dimensions, and contiguous public-input
+     layout with checked constructors; `jolt-wrapper-verifier` consumes those
+     facts instead of hard-coding labels locally. At this checkpoint the
+     Spartan and HyperKZG stages are explicit verifier placeholders; the
+     existing R1CS fixture path remains test-facing and passes under the new
+     crate name.
 
-15. Add Dory-assist verifier hook integration.
+15. Implement concrete Spartan + HyperKZG verifier checks in
+    `jolt-wrapper-verifier`.
+   - Bind the canonical wrapper statement, relation identity, and public
+     inputs into the wrapper transcript.
+   - Verify the Spartan proof for the configured wrapper relation.
+   - Verify the HyperKZG opening proofs required by Spartan.
+   - Keep helper modules protocol-specific rather than generic backend
+     abstractions.
+   - Review gate: test-gated fixture proofs verify, and mutating proof bytes,
+     public inputs, relation identity, Spartan messages, or HyperKZG openings
+     rejects.
+   - Status update: the first verifier slice is wired. `WrapperProof` now
+     has an explicit relation statement plus `spartan` and `hyperkzg` proof
+     payloads. The `r1cs_relation` stage derives canonical wrapper statement
+     facts from the verifier's public statement, checks that the proof's
+     relation statement matches those public facts, binds the protocol id, raw
+     relation dimensions, padded/log Spartan dimensions, public-input layout,
+     and public inputs into the transcript, then hands typed statement facts to
+     Spartan.
+   - Status update: the non-preprocessed Spartan verifier path is wired through
+     the HyperKZG opening boundary. `WrapperVerifierKey` now carries the public
+     `ConstraintMatrices<F>` relation rather than loose dimension integers,
+     and `r1cs_relation` derives the canonical relation dimensions from that
+     matrix object. `SpartanProof` carries the clear compressed outer sumcheck,
+     explicit outer evaluation claims `A(rx), B(rx), C(rx)`, the clear
+     compressed inner sumcheck, and the witness opening claim `Z(ry)`.
+     The Spartan stage derives `tau`, verifies the degree-3 outer sumcheck,
+     checks `final_claim == eq(tau, rx) * (A(rx) * B(rx) - C(rx))`, absorbs the
+     outer evaluation claims, samples inner batching coefficients, verifies the
+     degree-2 inner sumcheck, evaluates `A~(rx, ry), B~(rx, ry), C~(rx, ry)`
+     directly from the public R1CS matrices, and checks the inner final claim
+     against the claimed `Z(ry)`.
+     `A(rx), B(rx), C(rx)` and `Z(ry)` are prover claims, not trusted
+     verifier-computed values: the verifier discharges the former through the
+     inner sumcheck and public matrix MLE evaluations, and must discharge the
+     latter through the HyperKZG opening check before accepting.
+     Integration tests assert that a matching zero-matrix relation plus valid
+     Spartan transcript reaches the HyperKZG check, while relation mismatches,
+     unpaddable dimensions, malformed outer/inner round counts, Spartan
+     degree-bound violations, outer-claim mismatches, outer claims that satisfy
+     only the outer product relation, and `tau` transcript ordering regressions
+     are caught before HyperKZG.
+   - Status update: the wrapper verifier now calls the real HyperKZG opening
+     verifier. The witness commitment is transcript-bound immediately after
+     the public wrapper statement and before Spartan samples `tau`; the
+     HyperKZG stage binds `ry` and the claimed `Z(ry)` into the same transcript
+     and verifies the committed witness polynomial opening against the
+     configured verifier setup. `WrapperVerifierConfig` is now parameterized by
+     the pairing group and carries a typed `WrapperVerifierKey`, while
+     `WrapperVerifierInputs` is reduced to per-proof public inputs.
+   - Status update: the wrapper statement binding now includes the full public
+     R1CS matrices, not only their dimensions. Matrix rows are absorbed in the
+     canonical A/B/C order with explicit row lengths and column indices before
+     public inputs are bound. This makes the verifier transcript commit to the
+     exact relation being proven.
+   - Status update: the ZK wrapper verifier path is wired for the arbitrary
+     R1CS case. `WrapperZkProof` carries committed Spartan outer/inner
+     sumchecks, a ZK HyperKZG opening proof, and a native BlindFold proof.
+     Spartan verifies committed sumcheck consistency and committed output-row
+     shapes without revealing `A(rx), B(rx), C(rx)`, or `Z(ry)`. HyperKZG
+     verifies the hidden witness opening and binds the hidden evaluation
+     commitment into the transcript. The wrapper BlindFold statement then
+     enforces the two hidden Spartan claim equations and the final hidden
+     `Z(ry)` equality against the HyperKZG evaluation commitment. The verifier
+     uses one continuous transcript across all three stages.
+
+16. Add configured-verifier wrapper fixtures.
+   - Keep fixture relation construction in `r1cs_builder.rs` and integration
+     tests until the production `jolt-wrapper-prover` exists.
+   - Prove small composed R1CS protocols end to end in tests.
+   - Review gate: mutating transcript challenges, public inputs, sumcheck
+     claims, opening values, Spartan messages, or HyperKZG openings causes
+     wrapper verification failure.
+   - Status: added the first manifest-style R1CS protocol harness in
+     `jolt-wrapper-verifier` integration tests. It covers Poseidon-over-`Fr`
+     transcript replay, constrained byte absorption, public input layout,
+     `Fr -> Fq` challenge injection, non-native `Fq` arithmetic, native and
+     non-native sumcheck constraints, same-point opening reduction, and
+     Grumpkin/Pedersen Hyrax opening verification. The current oracle is
+     `verify_r1cs_witness`; once the Spartan + HyperKZG verifier path exists,
+     these same protocol cases should be proven and verified with the wrapper
+     proof path.
+   - Status update: added the gold-star wrapper mini protocol e2e fixture. The
+     fixture constructs an R1CS relation containing a Poseidon-over-`Fr`
+     transcript with scalar and byte absorption, native sumcheck constraints,
+     and a Grumpkin/Pedersen Hyrax opening over injected `Fq` values. A
+     test-gated prover commits the full witness polynomial with HyperKZG,
+     proves the Spartan outer and inner sumchecks, opens `Z(ry)`, and feeds the
+     native wrapper verifier. The prover uses an optimized sum-of-products
+     sumcheck helper: the outer Spartan polynomial is represented as
+     `eq_tau * A * B - eq_tau * C`, and the inner polynomial as
+     `combined_matrix * witness`, avoiding repeated sparse matrix evaluation
+     during proof generation.
+   - Status update: the mini protocol fixture is cached as a deterministic
+     artifact under the system temp directory, with regeneration controlled by
+     `JOLT_WRAPPER_REGENERATE_FIXTURES`. This mirrors the verifier fixture
+     pattern: the expensive honest proof/setup generation happens once, while
+     completeness and tampering reuse the cached proof. Tampering coverage
+     mutates public inputs, representative R1CS matrix coefficients, each
+     relation-statement dimension, the witness commitment, every Spartan outer
+     and inner round polynomial, each outer evaluation claim scalar, the
+     witness opening claim, every HyperKZG fold commitment, edge indices in
+     each clear HyperKZG evaluation vector, and every HyperKZG witness
+     commitment element. The fixture cache key is versioned with the transcript
+     binding format, so relation-binding changes force regeneration instead of
+     silently reusing stale proofs.
+   - Status update: added a focused public-input binding regression. It mutates
+     the committed witness slot for a public input while leaving the public
+     input vector unchanged, then checks the raw R1CS relation rejects. This
+     locks in the invariant that public-input consistency is enforced by
+     constraints, not only by wrapper-side layout bookkeeping.
+   - Status update: added the ZK mini protocol path with a test-gated prover
+     that produces committed Spartan sumchecks, a ZK HyperKZG opening proof, and
+     a BlindFold proof over the hidden wrapper equations. Completeness verifies
+     the honest ZK wrapper proof through `verify_zk`. Soundness tampering starts
+     from the real generated ZK proof and mutates public inputs, relation
+     coefficients and dimensions, the witness commitment, committed Spartan
+     round commitments, committed output-claim row commitments, ZK HyperKZG fold
+     and hidden-evaluation commitments, and BlindFold folding, opening, and
+     embedded sumcheck payloads. Each registered mutation is required to reject.
+     ZK fixtures are cached under the same system-temp fixture directory with a
+     separate versioned magic and per-seed file names, so the completeness,
+     soundness, and statistical tracks reuse deterministic proof artifacts while
+     still regenerating when `JOLT_WRAPPER_REGENERATE_FIXTURES` is set.
+   - Status update: added explicit ZK setup-compatibility hardening. Tests now
+     reject existing proofs under mutated VC message generators, VC blinding
+     generator, and VC capacity. A separate fixture generates committed
+     Spartan rows with the expected VC setup while using a different HyperKZG
+     hidden-evaluation basis, then checks that the final BlindFold binding
+     rejects the proof instead of accepting a hidden `Z(ry)` commitment that is
+     not openable under the wrapper VC setup.
+   - Status update: added an empirical independence check for the ZK wrapper
+     proof. It regenerates multiple proofs for the same public relation shape,
+     verifies each proof, and projects the witness commitment, hidden HyperKZG
+     evaluation commitment, BlindFold folding scalar, auxiliary commitment, and
+     witness opening into distribution and pairwise-correlation checks. The
+     default sample count is 32 and can be increased with
+     `JOLT_WRAPPER_ZK_STATISTICAL_SAMPLES`; the debug-mode run is intentionally
+     slow, so use release mode for this check during review.
+
+17. Add field-inline wrapper hooks.
+   - Include FR stages when the configured verifier includes field inline.
+   - Review gate: FR-off and FR-on configs produce distinct deterministic
+     R1CS shapes.
+
+18. Add Dory-assist verifier hook integration.
    - Compile the selected Dory-assist `PcsProofAssist` verifier path rather
      than the ordinary Dory stage-8 verifier path.
    - Treat the `jolt-dory-assist-verifier` crate as the owner of Dory-assist
@@ -1294,24 +1652,6 @@ Each step should be reviewed before continuing to the next.
    - Use only the generic R1CS building blocks above for transcript, Fq
      arithmetic, sumcheck, claim lowering, openings, Hyrax, and Grumpkin
      commitments.
-   - Review gate: Dory-assist configured computation produces satisfied
-     R1CS; tampering each Dory-assist stage payload rejects without adding
-     protocol math to `jolt-wrapper`.
-
-16. Add field-inline wrapper hooks.
-   - Include FR stages when the configured verifier includes field inline.
-   - Review gate: FR-off and FR-on configs produce distinct deterministic
-     R1CS shapes.
-
-17. Implement ZK `snark_backends/spartan_hyperkzg`.
-   - Consume arbitrary `WrapperR1csInstance`.
-   - Keep the backend independent from Jolt protocol types.
-   - Hide the R1CS witness, including transparent inner proof data.
-   - Review gate: arbitrary R1CS proof verifies and witness
-     randomization changes proof bytes for the same public statement.
-
-18. Add configured-verifier wrapper fixture.
-   - Prove a small transparent configured verifier computation end to end with
-     the transparent proof held as private wrapper witness.
-   - Review gate: mutating transcript challenges, public inputs, sumcheck
-     claims, or opening values causes wrapper verification failure.
+   - Review gate: Dory-assist configured computation produces satisfied R1CS;
+     tampering each Dory-assist stage payload rejects without adding protocol
+     math to `jolt-wrapper-verifier`.

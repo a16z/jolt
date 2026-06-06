@@ -622,11 +622,22 @@ PCS hiding/evaluation commitment, and then performs the same
 step remains owned by `jolt-verifier`; the assist implementation replaces only
 the expensive PCS verifier computation in that slot.
 
-For a Dory-assisted build, `PCS = DoryCommitmentScheme` and the selected assist
+The assist implementation may also absorb an assist-local checked-input
+preamble before its own stage challenges. For Dory assist that preamble includes
+the Dory verifier setup, the full `joint_opening_proof`, the reduced opening
+commitment/point, and the clear evaluation when present. This is not a
+Dory-specific responsibility in `jolt-verifier`; it is the selected assist's
+internal transcript binding for the auxiliary proof. The common
+`bind_joint_opening_inputs` / `bind_zk_opening_inputs` step still remains in
+the generic verifier flow so the surrounding Jolt opening-phase transcript
+shape stays uniform.
+
+For a Dory-assisted build, `PCS = DoryScheme` and the selected assist
 implementation is `jolt_dory_assist_verifier::DoryAssist`. Its proof payload is
 `jolt_dory_assist_verifier::DoryAssistProof`, and its implementation owns the
-three Dory-assist stages, Hyrax opening, Fr-to-Fq challenge injection, and
-native final pairing check. Dory-assist details are specified in
+three Dory-assist stages, checked input normalization, Hyrax opening,
+Fr-to-Fq challenge injection, and native final pairing check. Dory-assist
+details are specified in
 [dory-assist-protocol.md](dory-assist-protocol.md).
 
 ## Wrapper
@@ -691,7 +702,7 @@ Dory-assisted Jolt:
 
 ```text
 JOLT_VERIFIER_CONFIG:
-  PCS = DoryCommitmentScheme
+  PCS = DoryScheme
   pcs_assist = Some(DoryAssistConfig)
   PcsAssist = jolt_dory_assist_verifier::DoryAssist
   PcsAssist::Proof = jolt_dory_assist_verifier::DoryAssistProof

@@ -16,6 +16,7 @@ one protocol axis or the verifier integration layer.
 - [Dory Assist Protocol](dory-assist-protocol.md)
 - [Wrapper Protocol And SNARK Backend](wrapper-protocol.md)
 - [Selected Verifier Integration](selected-verifier-integration.md)
+- [ZK HyperKZG](hyperkzg-zk.md)
 
 ## Architecture Summary
 
@@ -32,8 +33,8 @@ jolt-verifier:
 component crates:
   reusable native and R1CS encodings for sumcheck, openings, Hyrax, BlindFold
 
-jolt-wrapper:
-  configured-verifier R1CS assembly and SNARK backend adapters
+jolt-wrapper-verifier:
+  configured-verifier R1CS assembly and concrete wrapper verification
 ```
 
 The protocol axes are orthogonal:
@@ -59,4 +60,5 @@ verifier computation.
 
 - [jolt-prover model crate spec](jolt-prover-model-crate.md)
 - [jolt-verifier model crate spec](jolt-verifier-model-crate.md)
+- [ZK HyperKZG](hyperkzg-zk.md)
 - Recursion paper repo: <https://github.com/markosg04/recursion-paper>
