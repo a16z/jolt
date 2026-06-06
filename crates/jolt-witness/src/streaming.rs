@@ -3,6 +3,7 @@ use crate::{WitnessError, WitnessNamespace};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolynomialChunkKind {
     Dense,
+    Zeros,
     U8,
     U16,
     U32,
@@ -15,6 +16,7 @@ pub enum PolynomialChunkKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PolynomialChunk<F> {
     Dense(Vec<F>),
+    Zeros(usize),
     U8(Vec<u8>),
     U16(Vec<u16>),
     U32(Vec<u32>),
@@ -28,6 +30,7 @@ impl<F> PolynomialChunk<F> {
     pub fn len(&self) -> usize {
         match self {
             Self::Dense(values) => values.len(),
+            Self::Zeros(rows) => *rows,
             Self::U8(values) => values.len(),
             Self::U16(values) => values.len(),
             Self::U32(values) => values.len(),
@@ -45,6 +48,7 @@ impl<F> PolynomialChunk<F> {
     pub const fn kind(&self) -> PolynomialChunkKind {
         match self {
             Self::Dense(_) => PolynomialChunkKind::Dense,
+            Self::Zeros(_) => PolynomialChunkKind::Zeros,
             Self::U8(_) => PolynomialChunkKind::U8,
             Self::U16(_) => PolynomialChunkKind::U16,
             Self::U32(_) => PolynomialChunkKind::U32,
@@ -93,6 +97,14 @@ mod tests {
 
         assert_eq!(chunk.len(), 3);
         assert!(!chunk.is_empty());
+    }
+
+    #[test]
+    fn zero_chunks_report_logical_row_count() {
+        let chunk = PolynomialChunk::<u64>::Zeros(5);
+
+        assert_eq!(chunk.len(), 5);
+        assert_eq!(chunk.kind(), PolynomialChunkKind::Zeros);
     }
 
     #[test]

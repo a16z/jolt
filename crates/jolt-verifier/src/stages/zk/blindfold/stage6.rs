@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage6<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage6<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -17,7 +17,7 @@ where
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.context.one_hot_config.committed_chunk_bits(),
     );
     let booleanity_claims = booleanity::booleanity::<PCS::Field>(booleanity_dimensions);
     let ram_hamming_claims = ram::hamming_booleanity::<PCS::Field>(trace_dimensions);
@@ -57,7 +57,7 @@ where
         let field_inc_opening_point = trace_dimensions
             .cycle_opening_point(&field_inc_point)
             .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?;
-        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
+        let field_log_k = input.context.protocol.field_inline.field_register_log_k;
         let field_read_write_cycle = input
             .stage4
             .field_registers_read_write_opening_point

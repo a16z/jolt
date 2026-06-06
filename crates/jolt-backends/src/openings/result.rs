@@ -46,3 +46,14 @@ impl<F: Field, Proof> OpeningResult<F, Proof> {
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpeningRlcMaterializationResult<F: Field> {
+    pub values: Vec<F>,
+}
+
+impl<F: Field> OpeningRlcMaterializationResult<F> {
+    pub const fn new(values: Vec<F>) -> Self {
+        Self { values }
+    }
+}

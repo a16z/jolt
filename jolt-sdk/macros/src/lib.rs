@@ -315,6 +315,7 @@ impl MacroBuilder {
         let set_std = self.make_set_std();
         let set_backtrace = self.make_set_backtrace();
         let set_profile = self.make_set_profile();
+        let enable_field_inline = self.make_enable_field_inline();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -347,6 +348,7 @@ impl MacroBuilder {
                 #set_std
                 #set_profile
                 #set_backtrace
+                #enable_field_inline
                 #set_mem_size
 
                 let mut input_bytes = vec![];
@@ -368,6 +370,7 @@ impl MacroBuilder {
         let set_std = self.make_set_std();
         let set_backtrace = self.make_set_backtrace();
         let set_profile = self.make_set_profile();
+        let enable_field_inline = self.make_enable_field_inline();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -414,6 +417,7 @@ impl MacroBuilder {
                 #set_std
                 #set_profile
                 #set_backtrace
+                #enable_field_inline
                 #set_mem_size
 
                 let mut input_bytes = vec![];
@@ -440,6 +444,7 @@ impl MacroBuilder {
         let set_std = self.make_set_std();
         let set_backtrace = self.make_set_backtrace();
         let set_profile = self.make_set_profile();
+        let enable_field_inline = self.make_enable_field_inline();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -472,6 +477,7 @@ impl MacroBuilder {
                 #set_std
                 #set_profile
                 #set_backtrace
+                #enable_field_inline
                 #set_mem_size
 
                 let mut input_bytes = vec![];
@@ -493,6 +499,7 @@ impl MacroBuilder {
         let set_std = self.make_set_std();
         let set_backtrace = self.make_set_backtrace();
         let set_profile = self.make_set_profile();
+        let enable_field_inline = self.make_enable_field_inline();
 
         let fn_name = self.get_func_name();
         let fn_name_str = fn_name.to_string();
@@ -507,6 +514,7 @@ impl MacroBuilder {
                 #set_std
                 #set_profile
                 #set_backtrace
+                #enable_field_inline
                 #set_mem_size
 
                 // Build the compute_advice version first
@@ -1126,6 +1134,15 @@ impl MacroBuilder {
             }
         } else {
             quote! {}
+        }
+    }
+
+    fn make_enable_field_inline(&self) -> TokenStream2 {
+        quote! {
+            #[cfg(feature = "field-inline")]
+            {
+                program.enable_field_inline();
+            }
         }
     }
 

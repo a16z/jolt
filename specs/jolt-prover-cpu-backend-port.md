@@ -35,6 +35,25 @@ Port the existing `jolt-core` CPU prover fast path into
 Jolt-specific and highly optimized internally, but is driven only by
 protocol-resolved backend requests constructed by `jolt-prover`.
 
+The porting order is performance-first:
+
+```text
+1. account for every cpu-backend optimization ID in the core inventory
+2. port the optimized algorithm into jolt-backends::cpu
+3. add and run focused correctness and microbench coverage for the kernel
+4. only then wire the corresponding jolt-prover stage/frontier
+5. certify verifier correctness and core performance parity before replacement
+```
+
+Do not land a stage by first building a slow modular implementation and hoping
+to optimize it later. The CPU backend is where core's hot algorithms are
+preserved. `jolt-prover` should be a transcript/protocol orchestrator that
+dispatches real optimized backend requests.
+
+Microbench first. If the isolated CPU kernel does not look plausible on time
+and analytical memory, fix the kernel before spending time debugging it through
+the longer `jolt-prover` transcript and verifier path.
+
 ## Core Principle
 
 ```text
@@ -238,6 +257,48 @@ modular CPU backend must preserve or intentionally replace with measured
 justification. The full accounting lives in
 [`Jolt Core Prover Optimization Inventory`](./jolt-core-prover-optimization-inventory.md);
 that inventory is the review checklist for specific optimization IDs.
+
+For goal-mode work, the inventory is binding. If an optimization's port target
+contains `cpu-backend`, it must appear in the harness backend-kernel ledger
+with core source locations, CPU entrypoints, and microbenchmarks. A prover
+frontier may use the optimization ID only after the ledger accounts for it, and
+it may replace core only after the status is parity-certified.
+`validate_global_cpu_backend_inventory_coverage` must pass so the ledger covers
+the entire CPU-backend optimization backlog, not only the currently selected
+frontier.
+
+Changing a kernel ledger entry to parity-certified must be accompanied by
+`KernelBenchmarkEvidence` that passes the frontier `PerfGate`: the benchmark
+name must be registered for that kernel, the optimization IDs must match the
+ledger entry exactly, the sample count must meet the gate, timing and peak RSS
+must be measured, the modular peak must fit the analytical memory budget, and
+the modular/core ratios must remain within the 15% failure threshold. The ledger
+entry must also list the JSON evidence files so
+`validate_parity_certified_kernel_evidence_files` can load and enforce them.
+Bench code should write evidence through
+`KernelBenchmarkEvidence::write_canonical_json` so later validation can load the
+same artifact without rerunning the benchmark.
+
+Generic sparse-product or materialized fallbacks are reference tools. They do
+not satisfy a port requirement when `jolt-core` has a specialized streaming,
+split-eq, one-hot, sparse-matrix, RA, RLC, or BlindFold algorithm for the same
+work.
+
+### Fast Iteration Order
+
+For backend CPU work, keep the inner loop local:
+
+1. Run harness static checks for inventory/ledger drift.
+2. Add a dense-reference or algebraic unit test for the backend request.
+3. Compile the focused benchmark with `--no-run`.
+4. Run the focused backend microbench and write canonical evidence.
+5. Wire the `jolt-prover` frontier only after the kernel looks plausible.
+6. Run the narrow frontier replay test.
+7. Run `sha2-chain-2^16` perf, then large confirmation only after it passes.
+
+Avoid broad prover E2E while still deciding the kernel algorithm, memory layout,
+or parallel schedule. Those questions are cheaper to answer in `jolt-backends`
+with direct fixtures and microbenches.
 
 ### Trace Shape And Sizing
 
@@ -497,6 +558,7 @@ Current behavior:
   commitments, and blindings;
 - output-claim row commitments from committed sumchecks are reused as Hyrax rows;
 - regular non-coefficient rows are committed in parallel;
+- folded witness/error row openings are produced after the folding challenge;
 - final PCS evaluation commitment is included in the BlindFold instance;
 - witness assignment and row layout are built after all sumcheck stages and
   Stage 8 data are available.
@@ -504,12 +566,15 @@ Current behavior:
 Port requirement:
 
 - `jolt-prover` and `jolt-blindfold` own BlindFold protocol metadata and R1CS
-  construction;
+  construction plus transcript scheduling;
 - CPU backend may provide private round/output/evaluation witness material by
   request slot;
-- preserve row commitment reuse and parallel non-coefficient row commitments;
+- preserve row commitment reuse, parallel non-coefficient row commitments,
+  relaxed-R1CS error-row materialization, post-challenge row/scalar folding,
+  and folded row-opening kernels behind transcript-free backend requests;
 - test committed-proof shape, output-claim row ordering, and BlindFold verifier
-  acceptance.
+  acceptance, with focused CPU reference tests for each backend-owned BlindFold
+  kernel before certification.
 
 ### Memory And Parallelism Policy
 
@@ -591,6 +656,9 @@ Port requirement:
 
 - Port committed-round witness material and output-claim row material.
 - Preserve row commitment reuse.
+- Route transcript-free row commitments, row openings, relaxed-R1CS error rows,
+  and folding arithmetic through `jolt-backends`; keep transcript mutation in
+  `jolt-prover`/`jolt-blindfold`.
 - Add deterministic-RNG tests where exact proof parity is useful; otherwise test
   accepted proof shape and verifier acceptance.
 

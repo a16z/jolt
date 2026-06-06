@@ -13,7 +13,7 @@ pub fn instruction_lookup_index<const XLEN: usize>(
     row: &TraceRow,
 ) -> Result<u128, LookupIndexError> {
     validate_xlen::<XLEN>()?;
-    let query = JoltLookupQuery::new(row.instruction.instruction_kind, *row);
+    let query = JoltLookupQuery::new(row.instruction.instruction_kind, row);
     Ok(LookupQuery::<XLEN>::to_lookup_index(&query))
 }
 

@@ -205,8 +205,8 @@ struct SourceValues<F: Field> {
     challenges: Vec<(VerifierChallengeId, F)>,
 }
 
-pub(crate) fn build<PCS, VC, ZkProof>(
-    input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub fn build<PCS, VC>(
+    input: BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<BlindFoldOutput<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -521,15 +521,15 @@ fn domain_spec(spec: JoltSumcheckSpec) -> SumcheckDomainSpec {
     }
 }
 
-fn formula_dimensions<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn formula_dimensions<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<JoltFormulaDimensions, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
-    JoltFormulaDimensions::try_from(input.proof.one_hot_config.dimensions(
+    JoltFormulaDimensions::try_from(input.context.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
         input.preprocessing.program.bytecode.code_size,
@@ -541,8 +541,8 @@ where
     })
 }
 
-fn ram_output_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_output_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     output_address_challenges: &[PCS::Field],
     ram_output_address: &[PCS::Field],
 ) -> Result<(PCS::Field, PCS::Field), VerifierError>
@@ -592,8 +592,8 @@ where
     Ok((eq_io_mask, -eq_io_mask * val_io))
 }
 
-fn ram_val_check_init<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_init<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<ram::RamValCheckInit<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -601,7 +601,7 @@ where
 {
     let r_address = ram_val_check_address(input)?;
     let mut advice_contributions = Vec::new();
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.context.untrusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
         advice_contributions.push(ram::RamValCheckAdviceContribution::untrusted(-selector.0));
     }
@@ -615,8 +615,8 @@ where
     ))
 }
 
-fn ram_val_check_address<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_address<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -635,8 +635,8 @@ where
         })
 }
 
-fn advice_selector<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_selector<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
     r_address: &[PCS::Field],
 ) -> Result<(PCS::Field, Vec<PCS::Field>), VerifierError>
@@ -677,8 +677,8 @@ where
     Ok((selector, opening_point))
 }
 
-fn advice_source_point<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_source_point<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
@@ -689,8 +689,8 @@ where
     advice_selector(input, kind, &r_address).map(|(_, point)| point)
 }
 
-fn advice_cycle_claim<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_cycle_claim<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
@@ -707,8 +707,8 @@ where
     (layout, claim)
 }
 
-fn advice_address_claim<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_address_claim<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
@@ -728,8 +728,8 @@ where
     (layout, claim)
 }
 
-fn advice_layout<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_layout<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Option<AdviceClaimReductionLayout>
 where
@@ -738,7 +738,7 @@ where
 {
     let present = match kind {
         JoltAdviceKind::Trusted => input.checked.trusted_advice_commitment_present,
-        JoltAdviceKind::Untrusted => input.proof.untrusted_advice_commitment.is_some(),
+        JoltAdviceKind::Untrusted => input.context.untrusted_advice_commitment_present,
     };
     present.then(|| {
         let log_t = input.checked.trace_length.ilog2() as usize;
@@ -759,9 +759,9 @@ where
             }
         };
         AdviceClaimReductionLayout::balanced(
-            input.proof.trace_polynomial_order,
+            input.context.trace_polynomial_order,
             log_t,
-            input.proof.one_hot_config.committed_chunk_bits(),
+            input.context.one_hot_config.committed_chunk_bits(),
             max_size,
         )
     })
@@ -771,8 +771,8 @@ where
     clippy::too_many_arguments,
     reason = "Stage 6 has several protocol components."
 )]
-fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_stage6_publics_and_challenges<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     bytecode_claims: &JoltRelationClaims<PCS::Field>,
     booleanity_claims: &JoltRelationClaims<PCS::Field>,
@@ -885,9 +885,23 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
+    #[cfg(feature = "field-inline")]
+    let base_bytecode_rows = input
+        .preprocessing
+        .program
+        .bytecode
+        .bytecode
+        .iter()
+        .map(field_bytecode::base_jolt_bytecode_row)
+        .collect::<Vec<_>>();
+    #[cfg(feature = "field-inline")]
+    let bytecode_rows = base_bytecode_rows.as_slice();
+    #[cfg(not(feature = "field-inline"))]
+    let bytecode_rows = input.preprocessing.program.bytecode.bytecode.as_slice();
+
     let bytecode_public_values =
         bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-            bytecode: &input.preprocessing.program.bytecode.bytecode,
+            bytecode: bytecode_rows,
             r_address: &bytecode_opening.r_address,
             r_cycle: &bytecode_opening.r_cycle,
             stage_cycle_points: [
@@ -920,7 +934,7 @@ where
                 stage: JoltRelationId::BytecodeReadRaf,
                 reason: "field-inline bytecode metadata is missing".to_string(),
             })?;
-        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
+        let field_log_k = input.context.protocol.field_inline.field_register_log_k;
         let field_read_write_opening = &input.stage4.field_registers_read_write_opening_point;
         let field_val_evaluation_opening = &input
             .stage5
@@ -1109,8 +1123,8 @@ where
     Ok(())
 }
 
-fn add_advice_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_cycle_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1120,6 +1134,10 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    if layout.dimensions().has_address_phase() {
+        return Ok(());
+    }
+
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
         .cycle_phase_final_output_scale(&source_point, &public.sumcheck_point)
@@ -1130,8 +1148,8 @@ where
     )
 }
 
-fn add_advice_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_address_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1162,8 +1180,8 @@ where
     )
 }
 
-fn stage6_virtualization_points<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn stage6_virtualization_points<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
 ) -> Result<Vec<Vec<PCS::Field>>, VerifierError>
 where

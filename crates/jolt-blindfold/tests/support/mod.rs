@@ -5,7 +5,7 @@
 )]
 
 use jolt_blindfold::{
-    r1cs, BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement,
+    r1cs, BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, BlindFoldWitness,
     CommittedClaimRows, FinalOpeningBinding, WitnessCoordinate,
 };
 use jolt_claims::{challenge, constant, opening, public, Expr};
@@ -758,6 +758,18 @@ struct SumcheckTrace {
 }
 
 pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTestProof {
+    let mut row_committer = jolt_blindfold::DirectBlindFoldRowCommitter;
+    prove_blindfold_protocol_pipeline_with_committer(rng, &mut row_committer)
+}
+
+pub fn prove_blindfold_protocol_pipeline_with_committer<R, C>(
+    rng: &mut R,
+    row_committer: &mut C,
+) -> BlindFoldTestProof
+where
+    R: RngCore,
+    C: jolt_blindfold::BlindFoldRowCommitter<F, VC>,
+{
     let setup = pedersen_setup(4);
     let transcript_label = b"protocol-backed-blindfold-proof";
     let statement1 = SumcheckStatement::new(3, 3);
@@ -849,13 +861,21 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
         &real_eval_blindings,
         rng,
     );
-    let witness = ProtocolWitness {
+    let witness = BlindFoldWitness {
         rows: &real_witness_rows,
         blindings: &real_witness_blindings,
         eval_outputs: &real_eval_outputs,
         eval_blindings: &real_eval_blindings,
     };
-    let proof = prove_from_protocol_witness(&setup, &protocol, &mut transcript, witness, rng);
+    let proof = jolt_blindfold::prove_with_row_committer::<F, VC, _, _, _>(
+        &setup,
+        &protocol,
+        &mut transcript,
+        witness,
+        rng,
+        row_committer,
+    )
+    .expect("protocol-backed BlindFold proof proves");
 
     BlindFoldTestProof {
         protocol,

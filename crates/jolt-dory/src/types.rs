@@ -121,6 +121,7 @@ impl DoryHint {
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
     pub row_commitments: Vec<Bn254G1>,
+    pub(crate) scalar_affine_bases: Option<Vec<ark_bn254::G1Affine>>,
 }
 
 fn canonical_serialize<T: CanonicalSerialize, S: Serializer>(

@@ -77,6 +77,8 @@ members = [
   "examples/sha3-ex/guest",
   "examples/sha2-chain",
   "examples/sha2-chain/guest",
+  "examples/field-inline-eq-poly",
+  "examples/field-inline-eq-poly/guest",
   "examples/sha3-chain",
   "examples/sha3-chain/guest",
   "examples/multi-function",
@@ -294,7 +296,7 @@ rand_core = { version = "0.6.4", default-features = false }
 rand_distr = "0.4.3"
 
 # Serialization
-serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0.108", default-features = false }
 rmp-serde = "1.3.0"
 bincode = { version = "2", features = ["serde"] }

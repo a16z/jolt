@@ -17,7 +17,7 @@ use jolt_riscv::{
 };
 use rayon::prelude::*;
 
-use super::{checked_pow2, TraceBackedJoltVmWitness};
+use super::{checked_pow2, eq_evals_msb, TraceBackedJoltVmWitness};
 use crate::{
     CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind,
     OracleRef, OracleViewRequest, PolynomialChunk, PolynomialEncoding, PolynomialStream,
@@ -42,6 +42,33 @@ impl WitnessNamespace for FieldInlineNamespace {
 
 #[derive(Clone, Debug, Default)]
 pub struct FieldInlineWitness;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FieldInlineRegisterReadRow<F: Field> {
+    pub register: u8,
+    pub value: F,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FieldInlineRegisterWriteRow<F: Field> {
+    pub register: u8,
+    pub pre_value: F,
+    pub post_value: F,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FieldInlineRegisterReadWriteRow<F: Field> {
+    pub rs1: Option<FieldInlineRegisterReadRow<F>>,
+    pub rs2: Option<FieldInlineRegisterReadRow<F>>,
+    pub rd: Option<FieldInlineRegisterWriteRow<F>>,
+    pub rd_increment: F,
+}
+
+pub trait FieldInlineRegisterReadWriteRows<F: Field> {
+    fn field_inline_register_read_write_rows(
+        &self,
+    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
+}
 
 pub struct TraceBackedFieldInlineWitness<'w, 'a, T: TraceSource> {
     parent: &'w TraceBackedJoltVmWitness<'a, T>,
@@ -157,7 +184,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
                 reason: "FR-enabled program is missing field-inline bytecode metadata".to_owned(),
             })?;
 
-        match (shape, row.field_inline) {
+        match (shape, row.field_inline.as_deref()) {
             (None, None) => Ok(()),
             (None, Some(_)) => Err(invalid_row(
                 index,
@@ -183,7 +210,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
                         "field-inline trace op does not match bytecode metadata",
                     ));
                 }
-                validate_trace_data(index, row, shape, data)
+                validate_trace_data(index, row, shape, *data)
             }
         }
     }
@@ -218,7 +245,10 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
                     let mut current = F::zero();
                     for (cycle, value) in values.iter_mut().take(trace_len).enumerate() {
                         *value = current;
-                        if let Some(write) = trace_rows[cycle].field_inline.and_then(|data| data.rd)
+                        if let Some(write) = trace_rows[cycle]
+                            .field_inline
+                            .as_deref()
+                            .and_then(|data| data.rd)
                         {
                             if usize::from(write.register) == register {
                                 current = decode_value(write.post_value);
@@ -231,7 +261,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
         }
 
         for (cycle, row) in self.trace_rows.iter().enumerate() {
-            let Some(data) = row.field_inline else {
+            let Some(data) = row.field_inline.as_deref() else {
                 continue;
             };
             let register = match id {
@@ -246,6 +276,104 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
         }
 
         Ok(values)
+    }
+
+    fn evaluate_field_rd_inc<F: Field>(&self, point: &[F]) -> Result<F, WitnessError> {
+        if point.len() != self.parent.config.log_t {
+            return Err(WitnessError::InvalidDimensions {
+                namespace: FIELD_INLINE_NAMESPACE.name,
+                reason: format!(
+                    "field-inline rd_inc point has {} variables, expected {}",
+                    point.len(),
+                    self.parent.config.log_t
+                ),
+            });
+        }
+        let eq = eq_evals_msb(point)?;
+        Ok((0..self.rows)
+            .map(|cycle| {
+                eq[cycle]
+                    * self
+                        .trace_rows
+                        .get(cycle)
+                        .map_or_else(F::zero, field_rd_inc)
+            })
+            .sum())
+    }
+
+    fn evaluate_register_virtual<F: Field>(
+        &self,
+        id: FieldInlineVirtualPolynomial,
+        point: &[F],
+    ) -> Result<F, WitnessError> {
+        if !is_register_domain_virtual(id) {
+            return Err(WitnessError::UnknownOracle {
+                namespace: FIELD_INLINE_NAMESPACE.name,
+            });
+        }
+        let expected_vars = FIELD_REGISTERS_LOG_K
+            .checked_add(self.parent.config.log_t)
+            .ok_or_else(|| WitnessError::InvalidDimensions {
+                namespace: FIELD_INLINE_NAMESPACE.name,
+                reason: "field-register point length overflow".to_owned(),
+            })?;
+        if point.len() != expected_vars {
+            return Err(WitnessError::InvalidDimensions {
+                namespace: FIELD_INLINE_NAMESPACE.name,
+                reason: format!(
+                    "field-register point has {} variables, expected {expected_vars}",
+                    point.len()
+                ),
+            });
+        }
+
+        let (register_point, cycle_point) = point.split_at(FIELD_REGISTERS_LOG_K);
+        let register_eq = eq_evals_msb(register_point)?;
+        let cycle_eq = eq_evals_msb(cycle_point)?;
+        let register_count = field_register_count();
+
+        if id == FieldInlineVirtualPolynomial::FieldRegistersVal {
+            let mut state = vec![F::zero(); register_count];
+            let mut state_eval = F::zero();
+            let mut result = F::zero();
+            for cycle in 0..self.rows {
+                result += cycle_eq[cycle] * state_eval;
+                let Some(row) = self.trace_rows.get(cycle) else {
+                    continue;
+                };
+                if let Some(write) = row.field_inline.as_deref().and_then(|data| data.rd) {
+                    let register = usize::from(write.register);
+                    if register >= register_count {
+                        return Err(invalid_row(cycle, "field register index is out of bounds"));
+                    }
+                    let next = decode_value(write.post_value);
+                    state_eval += register_eq[register] * (next - state[register]);
+                    state[register] = next;
+                }
+            }
+            return Ok(result);
+        }
+
+        let mut result = F::zero();
+        for (cycle, row) in self.trace_rows.iter().enumerate() {
+            let Some(data) = row.field_inline.as_deref() else {
+                continue;
+            };
+            let register = match id {
+                FieldInlineVirtualPolynomial::FieldRs1Ra => data.rs1.map(|read| read.register),
+                FieldInlineVirtualPolynomial::FieldRs2Ra => data.rs2.map(|read| read.register),
+                FieldInlineVirtualPolynomial::FieldRdWa => data.rd.map(|write| write.register),
+                _ => None,
+            };
+            if let Some(register) = register {
+                let register = usize::from(register);
+                if register >= register_count {
+                    return Err(invalid_row(cycle, "field register index is out of bounds"));
+                }
+                result += cycle_eq[cycle] * register_eq[register];
+            }
+        }
+        Ok(result)
     }
 
     fn describe_virtual(
@@ -314,6 +442,25 @@ impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
         Ok(PolynomialView::owned(descriptor, values))
     }
 
+    fn try_evaluate_oracle_view(
+        &self,
+        request: OracleViewRequest<FieldInlineNamespace>,
+        point: &[F],
+    ) -> Result<Option<F>, WitnessError> {
+        if request.requirement.encoding != PolynomialEncoding::Dense {
+            return Ok(None);
+        }
+        match request.oracle().kind {
+            OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
+                self.evaluate_field_rd_inc(point).map(Some)
+            }
+            OracleKind::Virtual(id) if is_register_domain_virtual(id) => {
+                self.evaluate_register_virtual(id, point).map(Some)
+            }
+            OracleKind::Virtual(_) => Ok(None),
+        }
+    }
+
     fn committed_stream<'b>(
         &'b self,
         id: FieldInlineCommittedPolynomial,
@@ -336,6 +483,12 @@ impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
                     emitted: 0,
                     rows: self.rows,
                     chunk_size,
+                    all_zero: self.trace_rows.iter().all(|row| {
+                        row.field_inline
+                            .as_deref()
+                            .and_then(|data| data.rd)
+                            .is_none()
+                    }),
                     _field: PhantomData,
                 }))
             }
@@ -351,12 +504,29 @@ impl<F: Field, T: TraceSource + Clone> CommittedWitnessProvider<F, FieldInlineNa
     }
 }
 
+impl<F: Field, T: TraceSource + Clone> FieldInlineRegisterReadWriteRows<F>
+    for TraceBackedFieldInlineWitness<'_, '_, T>
+{
+    fn field_inline_register_read_write_rows(
+        &self,
+    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
+        Ok((0..self.rows)
+            .map(|index| {
+                self.trace_rows
+                    .get(index)
+                    .map_or_else(FieldInlineRegisterReadWriteRow::default, field_register_row)
+            })
+            .collect())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FieldInlineCommittedStream<'a, F> {
     trace_rows: &'a [TraceRow],
     emitted: usize,
     rows: usize,
     chunk_size: usize,
+    all_zero: bool,
     _field: PhantomData<F>,
 }
 
@@ -364,6 +534,11 @@ impl<F: Field> PolynomialStream<F> for FieldInlineCommittedStream<'_, F> {
     fn next_chunk(&mut self) -> Result<Option<PolynomialChunk<F>>, WitnessError> {
         if self.emitted >= self.rows {
             return Ok(None);
+        }
+        if self.all_zero {
+            let rows = self.rows - self.emitted;
+            self.emitted = self.rows;
+            return Ok(Some(PolynomialChunk::Zeros(rows)));
         }
         let end = self.emitted.saturating_add(self.chunk_size).min(self.rows);
         let mut values = Vec::with_capacity(end - self.emitted);
@@ -388,14 +563,40 @@ fn materialize_field_rd_inc<F: Field>(trace_rows: &[TraceRow], rows: usize) -> V
 
 fn field_rd_inc<F: Field>(row: &TraceRow) -> F {
     row.field_inline
+        .as_deref()
         .and_then(|data| data.rd)
         .map_or_else(F::zero, |write| {
             decode_value::<F>(write.post_value) - decode_value::<F>(write.pre_value)
         })
 }
 
+fn field_register_row<F: Field>(row: &TraceRow) -> FieldInlineRegisterReadWriteRow<F> {
+    let Some(data) = row.field_inline.as_deref() else {
+        return FieldInlineRegisterReadWriteRow::default();
+    };
+    let rs1 = data.rs1.map(|read| FieldInlineRegisterReadRow {
+        register: read.register,
+        value: decode_value(read.value),
+    });
+    let rs2 = data.rs2.map(|read| FieldInlineRegisterReadRow {
+        register: read.register,
+        value: decode_value(read.value),
+    });
+    let rd = data.rd.map(|write| FieldInlineRegisterWriteRow {
+        register: write.register,
+        pre_value: decode_value(write.pre_value),
+        post_value: decode_value(write.post_value),
+    });
+    FieldInlineRegisterReadWriteRow {
+        rs1,
+        rs2,
+        rd,
+        rd_increment: field_rd_inc(row),
+    }
+}
+
 fn trace_virtual_value<F: Field>(row: &TraceRow, id: FieldInlineVirtualPolynomial) -> F {
-    let Some(data) = row.field_inline else {
+    let Some(data) = row.field_inline.as_deref() else {
         return F::zero();
     };
     match id {
@@ -409,10 +610,22 @@ fn trace_virtual_value<F: Field>(row: &TraceRow, id: FieldInlineVirtualPolynomia
             .rd
             .map_or_else(F::zero, |write| decode_value(write.post_value)),
         FieldInlineVirtualPolynomial::FieldProduct => {
-            data.product.map_or_else(F::zero, decode_value)
+            let rs1 = data
+                .rs1
+                .map_or_else(F::zero, |read| decode_value(read.value));
+            let rs2 = data
+                .rs2
+                .map_or_else(F::zero, |read| decode_value(read.value));
+            rs1 * rs2
         }
         FieldInlineVirtualPolynomial::FieldInvProduct => {
-            data.inv_product.map_or_else(F::zero, decode_value)
+            let rs1 = data
+                .rs1
+                .map_or_else(F::zero, |read| decode_value(read.value));
+            let rd = data
+                .rd
+                .map_or_else(F::zero, |write| decode_value(write.post_value));
+            rs1 * rd
         }
         FieldInlineVirtualPolynomial::FieldOpFlag(flag) => F::from_bool(data.op == Some(op(flag))),
         FieldInlineVirtualPolynomial::FieldRs1Ra
@@ -597,7 +810,7 @@ fn validate_bridge(
 fn validate_field_register_state(rows: &[TraceRow]) -> Result<(), WitnessError> {
     let mut state = vec![FieldEncodedValue::zero(); field_register_count()];
     for (index, row) in rows.iter().enumerate() {
-        let Some(data) = row.field_inline else {
+        let Some(data) = row.field_inline.as_deref() else {
             continue;
         };
         if let Some(read) = data.rs1 {
@@ -757,7 +970,7 @@ mod tests {
     fn row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
         TraceRow {
             instruction,
-            field_inline: Some(data),
+            field_inline: Some(data.into()),
             ..TraceRow::default()
         }
     }
@@ -836,20 +1049,23 @@ mod tests {
                 }),
                 ..RegisterState::default()
             },
-            field_inline: Some(FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToX),
-                rs1: Some(FieldRegisterRead {
-                    register: 1,
-                    value: enc(35),
-                }),
-                bridge: Some(FieldInlineBridge::StoreToX {
-                    field_register: 1,
-                    field_value: enc(35),
-                    x_register: 10,
-                    x_value: 35,
-                }),
-                ..FieldInlineTraceData::default()
-            }),
+            field_inline: Some(
+                FieldInlineTraceData {
+                    op: Some(FieldInlineOp::StoreToX),
+                    rs1: Some(FieldRegisterRead {
+                        register: 1,
+                        value: enc(35),
+                    }),
+                    bridge: Some(FieldInlineBridge::StoreToX {
+                        field_register: 1,
+                        field_value: enc(35),
+                        x_register: 10,
+                        x_value: 35,
+                    }),
+                    ..FieldInlineTraceData::default()
+                }
+                .into(),
+            ),
             ..TraceRow::default()
         };
         (
@@ -1111,20 +1327,23 @@ mod tests {
                 }),
                 ..RegisterState::default()
             },
-            field_inline: Some(FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadFromX),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(11),
-                }),
-                bridge: Some(FieldInlineBridge::LoadFromX {
-                    x_register: 5,
-                    x_value: 11,
-                    field_value: enc(11),
-                }),
-                ..FieldInlineTraceData::default()
-            }),
+            field_inline: Some(
+                FieldInlineTraceData {
+                    op: Some(FieldInlineOp::LoadFromX),
+                    rd: Some(FieldRegisterWrite {
+                        register: 1,
+                        pre_value: enc(0),
+                        post_value: enc(11),
+                    }),
+                    bridge: Some(FieldInlineBridge::LoadFromX {
+                        x_register: 5,
+                        x_value: 11,
+                        field_value: enc(11),
+                    }),
+                    ..FieldInlineTraceData::default()
+                }
+                .into(),
+            ),
             ..TraceRow::default()
         };
         let store = instruction(
@@ -1145,20 +1364,23 @@ mod tests {
                 }),
                 ..RegisterState::default()
             },
-            field_inline: Some(FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToX),
-                rs1: Some(FieldRegisterRead {
-                    register: 1,
-                    value: enc(11),
-                }),
-                bridge: Some(FieldInlineBridge::StoreToX {
-                    field_register: 1,
-                    field_value: enc(11),
-                    x_register: 6,
-                    x_value: 11,
-                }),
-                ..FieldInlineTraceData::default()
-            }),
+            field_inline: Some(
+                FieldInlineTraceData {
+                    op: Some(FieldInlineOp::StoreToX),
+                    rs1: Some(FieldRegisterRead {
+                        register: 1,
+                        value: enc(11),
+                    }),
+                    bridge: Some(FieldInlineBridge::StoreToX {
+                        field_register: 1,
+                        field_value: enc(11),
+                        x_register: 6,
+                        x_value: 11,
+                    }),
+                    ..FieldInlineTraceData::default()
+                }
+                .into(),
+            ),
             ..TraceRow::default()
         };
 
@@ -1211,7 +1433,7 @@ mod tests {
         let Some(data) = bad_rows[2].field_inline.as_mut() else {
             return;
         };
-        data.rs1 = Some(FieldRegisterRead {
+        std::sync::Arc::make_mut(data).rs1 = Some(FieldRegisterRead {
             register: 2,
             value: enc(6),
         });

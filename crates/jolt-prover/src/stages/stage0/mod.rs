@@ -5,9 +5,9 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-pub use input::CommitmentStageConfig;
-pub use output::CommitmentStageOutput;
 #[cfg(feature = "field-inline")]
-pub use output::FieldInlineCommittedPolynomialOutput;
-pub use prove::{commit_witness, prove_jolt_vm_commitments};
+pub use input::FieldInlineCommitmentWitness;
+pub use input::{CommitmentStageConfig, CommitmentStageInput};
+pub use output::{CommitmentStageOutput, CommitmentStageProverState};
+pub use prove::{prove, CommitmentStageBackend};
 pub use request::build_commitment_request;

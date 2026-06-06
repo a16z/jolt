@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{FeatureMode, HarnessResult};
 
-#[cfg(not(feature = "core-fixtures"))]
+#[cfg(any(
+    not(feature = "core-fixtures"),
+    all(feature = "core-fixtures", feature = "field-inline")
+))]
 use crate::HarnessError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -75,7 +78,7 @@ impl FixtureProvider for StaticFixtureProvider {
             request.feature_mode,
             FixtureSource::ModularSynthetic,
         )
-        .with_note("static harness fixture placeholder"))
+        .with_note("static harness typed artifact; not valid for frontier acceptance"))
     }
 }
 
@@ -83,15 +86,47 @@ impl FixtureProvider for StaticFixtureProvider {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CoreFixtureProvider;
 
-#[cfg(feature = "core-fixtures")]
+#[cfg(all(
+    feature = "core-fixtures",
+    not(feature = "field-inline"),
+    not(feature = "zk")
+))]
 impl FixtureProvider for CoreFixtureProvider {
     fn load(&self, request: &FixtureRequest) -> HarnessResult<FixtureArtifacts> {
+        let _fixture = crate::core_fixture::load_core_verifier_fixture(request)?;
         Ok(FixtureArtifacts::new(
             request.kind,
             request.feature_mode,
             FixtureSource::CoreCompatibility,
         )
-        .with_note("core fixture provider shell; concrete fixture loading lands per frontier"))
+        .with_note("converted core proof verified by the modular verifier"))
+    }
+}
+
+#[cfg(all(
+    feature = "core-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
+impl FixtureProvider for CoreFixtureProvider {
+    fn load(&self, request: &FixtureRequest) -> HarnessResult<FixtureArtifacts> {
+        let _fixture = crate::core_zk_fixture::load_zk_core_verifier_fixture(request)?;
+        Ok(FixtureArtifacts::new(
+            request.kind,
+            request.feature_mode,
+            FixtureSource::CoreCompatibility,
+        )
+        .with_note("converted ZK core proof verified by the modular verifier"))
+    }
+}
+
+#[cfg(all(feature = "core-fixtures", feature = "field-inline"))]
+impl FixtureProvider for CoreFixtureProvider {
+    fn load(&self, request: &FixtureRequest) -> HarnessResult<FixtureArtifacts> {
+        Err(HarnessError::FixtureUnavailable {
+            fixture: request.kind,
+            context: "core verifier fixtures are not available for this feature combination yet",
+        })
     }
 }
 

@@ -13,6 +13,7 @@ use jolt_crypto::HomomorphicCommitment;
 use crate::error::OpeningsError;
 use crate::schemes::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
+    ZkStreamingCommitment,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,13 +25,21 @@ pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
 #[serde(bound = "")]
 pub struct MockCommitment<F: Field> {
     evaluations: Vec<F>,
+    zk: bool,
 }
 
 impl<F: Field> Default for MockCommitment<F> {
     fn default() -> Self {
         Self {
             evaluations: Vec::new(),
+            zk: false,
         }
+    }
+}
+
+impl<F: Field> MockCommitment<F> {
+    pub const fn is_zk(&self) -> bool {
+        self.zk
     }
 }
 
@@ -49,6 +58,7 @@ impl<F: Field> AppendToTranscript for MockCommitment<F> {
             e.to_bytes_le(&mut buf[start..]);
         }
         buf.reverse();
+        buf.push(u8::from(self.zk));
         transcript.append_bytes(&buf);
     }
 }
@@ -80,7 +90,13 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         poly.for_each_row(poly.num_vars(), &mut |_, row| {
             evaluations.extend_from_slice(row);
         });
-        (MockCommitment { evaluations }, ())
+        (
+            MockCommitment {
+                evaluations,
+                zk: false,
+            },
+            (),
+        )
     }
 
     fn open(
@@ -143,6 +159,7 @@ impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
         }
         MockCommitment {
             evaluations: result,
+            zk: c1.zk || c2.zk,
         }
     }
 }
@@ -161,12 +178,15 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
 
         MockCommitment {
             evaluations: result,
+            zk: commitments.iter().any(|commitment| commitment.zk),
         }
     }
 }
 
 impl<F: Field> StreamingCommitment for MockCommitmentScheme<F> {
     type PartialCommitment = Vec<F>;
+    type OneHotChunkCommitment = Vec<Vec<F>>;
+    type OneHotStreamContext = ();
 
     fn begin(_setup: &Self::ProverSetup) -> Self::PartialCommitment {
         Vec::new()
@@ -180,14 +200,93 @@ impl<F: Field> StreamingCommitment for MockCommitmentScheme<F> {
         partial.extend_from_slice(chunk);
     }
 
+    fn begin_one_hot_column_major_stream(
+        _setup: &Self::ProverSetup,
+        _row_width: usize,
+    ) -> Self::OneHotStreamContext {
+    }
+
+    fn process_one_hot_chunk(
+        _context: &mut Self::OneHotStreamContext,
+        _setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunk: &[Option<usize>],
+    ) -> Self::OneHotChunkCommitment {
+        let mut rows = vec![vec![F::zero(); chunk.len()]; one_hot_k];
+        for (column, hot_row) in chunk.iter().copied().enumerate() {
+            if let Some(hot_row) = hot_row {
+                rows[hot_row][column] = F::one();
+            }
+        }
+        rows
+    }
+
     fn finish(partial: Self::PartialCommitment, _setup: &Self::ProverSetup) -> Self::Output {
         MockCommitment {
             evaluations: partial,
+            zk: false,
         }
+    }
+
+    fn finish_one_hot_column_major_chunks(
+        _setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Self::OneHotChunkCommitment],
+    ) -> (Self::Output, Self::OpeningHint) {
+        (
+            MockCommitment {
+                evaluations: flatten_one_hot_chunks(one_hot_k, chunks),
+                zk: false,
+            },
+            (),
+        )
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+impl<F: Field> ZkStreamingCommitment for MockCommitmentScheme<F> {
+    fn finish_zk_with_hint(
+        partial: Self::PartialCommitment,
+        _setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        (
+            MockCommitment {
+                evaluations: partial,
+                zk: true,
+            },
+            (),
+        )
+    }
+
+    fn finish_zk_one_hot_column_major_chunks(
+        _setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Self::OneHotChunkCommitment],
+    ) -> (Self::Output, Self::OpeningHint) {
+        (
+            MockCommitment {
+                evaluations: flatten_one_hot_chunks(one_hot_k, chunks),
+                zk: true,
+            },
+            (),
+        )
+    }
+}
+
+fn flatten_one_hot_chunks<F: Field>(one_hot_k: usize, chunks: &[Vec<Vec<F>>]) -> Vec<F> {
+    let chunk_width = chunks
+        .first()
+        .and_then(|chunk| chunk.first())
+        .map_or(0, Vec::len);
+    let mut evaluations = Vec::with_capacity(one_hot_k * chunks.len() * chunk_width);
+    for row in 0..one_hot_k {
+        for chunk in chunks {
+            evaluations.extend_from_slice(&chunk[row]);
+        }
+    }
+    evaluations
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MockHidingCommitment<F: Field> {
     pub eval: F,
@@ -207,7 +306,9 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        Self::commit(poly, setup)
+        let (mut commitment, hint) = Self::commit(poly, setup);
+        commitment.zk = true;
+        (commitment, hint)
     }
 
     fn open_zk(

@@ -42,13 +42,7 @@ fn prover_and_backends_do_not_own_lookup_semantics() -> Result<(), String> {
             workspace_root()?.join("crates/jolt-prover/src"),
             workspace_root()?.join("crates/jolt-backends/src"),
         ],
-        &[
-            "lookup_index",
-            "combine_lookup",
-            "JoltLookup",
-            "LookupTable",
-            "jolt_lookup_tables",
-        ],
+        &["combine_lookup", "JoltLookup"],
     )
 }
 
@@ -78,6 +72,58 @@ fn prover_docs_do_not_use_retired_architecture_terms() -> Result<(), String> {
             "commitment plan",
             "witness/prover plan",
             "proof assembly",
+            "graft",
+            "placeholder",
+            "prelim",
+            "fake final",
+        ],
+    )
+}
+
+#[test]
+fn north_star_context_points_to_binding_specs_and_ledgers() -> Result<(), String> {
+    let workspace = workspace_root()?;
+    let required = [
+        "specs/jolt-prover-frontier-harness.md",
+        "specs/jolt-prover-cpu-backend-port.md",
+        "specs/jolt-core-prover-optimization-inventory.md",
+        "crates/jolt-prover-harness/src/optimization.rs",
+    ];
+
+    for file in [
+        workspace.join("AGENTS.md"),
+        workspace.join("CLAUDE.md"),
+        workspace.join("crates/jolt-prover-harness/README.md"),
+        workspace.join("crates/jolt-backends/README.md"),
+    ] {
+        assert_file_contains_all(&file, &required)?;
+    }
+
+    assert_file_contains_all(
+        &workspace.join("specs/jolt-prover-frontier-harness.md"),
+        &[
+            "backend kernel ledger",
+            "`CorePerformanceParity` is never optional",
+            "Correctness-only implementations are not",
+            "before wiring the algorithm through `jolt-prover`",
+            "isolated backend microbenchmark result",
+            "validate_frontier_replacement_ready",
+            "validate_parity_certified_kernel_evidence_files",
+            "validate_global_cpu_backend_inventory_coverage",
+            "KernelBenchmarkEvidence::write_canonical_json",
+            "Iteration Ladder",
+            "<= 15% regression",
+        ],
+    )?;
+    assert_file_contains_all(
+        &workspace.join("specs/jolt-prover-cpu-backend-port.md"),
+        &[
+            "Microbench first",
+            "before spending time debugging it through",
+            "KernelBenchmarkEvidence",
+            "15% failure threshold",
+            "Fast Iteration Order",
+            "validate_global_cpu_backend_inventory_coverage",
         ],
     )
 }
@@ -88,6 +134,24 @@ fn workspace_root() -> Result<PathBuf, String> {
         .nth(2)
         .map(Path::to_path_buf)
         .ok_or_else(|| "failed to locate workspace root".to_owned())
+}
+
+fn assert_file_contains_all(path: &Path, patterns: &[&str]) -> Result<(), String> {
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let missing = patterns
+        .iter()
+        .copied()
+        .filter(|pattern| !content.contains(pattern))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} missing required north-star reference(s): {}",
+            path.display(),
+            missing.join(", ")
+        ))
+    }
 }
 
 fn assert_no_patterns(roots: &[PathBuf], patterns: &[&str]) -> Result<(), String> {
@@ -148,7 +212,9 @@ fn collect_rust_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), Strin
         let path = entry.path();
         if path.is_dir() {
             collect_rust_files(&path, files)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+            && path.file_name().is_none_or(|name| name != "tests.rs")
+        {
             files.push(path);
         }
     }

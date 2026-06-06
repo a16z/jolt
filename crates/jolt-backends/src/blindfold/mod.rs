@@ -1,5 +1,14 @@
 mod request;
 mod result;
 
-pub use request::{BlindFoldRequest, BlindFoldRoundRequest, BlindFoldSlot};
-pub use result::{BlindFoldPrivateOpening, BlindFoldResult};
+pub use request::{
+    BlindFoldCrossTermErrorRowsRequest, BlindFoldErrorRowsRequest, BlindFoldFoldErrorRowsRequest,
+    BlindFoldFoldErrorScalarsRequest, BlindFoldFoldRowsRequest, BlindFoldFoldScalarsRequest,
+    BlindFoldRequest, BlindFoldRoundRequest, BlindFoldRowCommitmentRequest,
+    BlindFoldRowOpeningRequest, BlindFoldSlot,
+};
+pub use result::{
+    BlindFoldErrorRowsResult, BlindFoldFoldRowsResult, BlindFoldFoldScalarsResult,
+    BlindFoldPrivateOpening, BlindFoldResult, BlindFoldRowCommitmentResult,
+    BlindFoldRowOpeningResult,
+};

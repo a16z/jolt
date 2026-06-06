@@ -748,6 +748,9 @@ macro_rules! define_rv64imac_enums {
                 if let Instruction::INLINE(inline) = self {
                     return inline.inline_sequence(allocator);
                 }
+                if self.is_field_inline() {
+                    return vec![self.clone()];
+                }
                 let mut expansion_allocator = jolt_program::expand::ExpansionAllocator::new();
                 jolt_program::expand::expand_instruction(
                     &self.source_instruction(),

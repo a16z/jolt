@@ -3,6 +3,17 @@ use crate::{
     PolynomialStream, PolynomialView, ViewRequirement, WitnessError, WitnessNamespace,
 };
 
+pub const RA_FAMILY_MAX_INSTRUCTION_CHUNKS: usize = 32;
+pub const RA_FAMILY_MAX_BYTECODE_CHUNKS: usize = 6;
+pub const RA_FAMILY_MAX_RAM_CHUNKS: usize = 8;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RaFamilyCycleIndices {
+    pub instruction: [u8; RA_FAMILY_MAX_INSTRUCTION_CHUNKS],
+    pub bytecode: [u8; RA_FAMILY_MAX_BYTECODE_CHUNKS],
+    pub ram: [Option<u8>; RA_FAMILY_MAX_RAM_CHUNKS],
+}
+
 pub trait WitnessProvider<F, N: WitnessNamespace> {
     fn namespace(&self) -> crate::NamespaceId {
         N::ID
@@ -19,6 +30,20 @@ pub trait WitnessProvider<F, N: WitnessNamespace> {
         &self,
         request: OracleViewRequest<N>,
     ) -> Result<PolynomialView<'_, F, N>, WitnessError>;
+
+    /// Optionally evaluates a requested oracle view without materializing it.
+    ///
+    /// Providers should return `Ok(None)` when they do not have a direct path
+    /// for the requested view, leaving callers to fall back to `oracle_view`.
+    fn try_evaluate_oracle_view(
+        &self,
+        request: OracleViewRequest<N>,
+        point: &[F],
+    ) -> Result<Option<F>, WitnessError> {
+        let _ = request;
+        let _ = point;
+        Ok(None)
+    }
 
     fn committed_stream<'a>(
         &'a self,
@@ -53,6 +78,17 @@ pub trait WitnessProvider<F, N: WitnessNamespace> {
             ids: ids.to_vec(),
             streams,
         }))
+    }
+
+    fn try_collect_ra_family_cycle_indices(
+        &self,
+        _instruction_ids: &[N::CommittedId],
+        _bytecode_ids: &[N::CommittedId],
+        _ram_ids: &[N::CommittedId],
+        _log_k_chunk: usize,
+        _log_t: usize,
+    ) -> Result<Option<Vec<RaFamilyCycleIndices>>, WitnessError> {
+        Ok(None)
     }
 }
 

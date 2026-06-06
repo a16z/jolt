@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage4<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage4<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -14,12 +14,12 @@ where
     let log_k = input.checked.ram_K.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let register_dimensions = input
-        .proof
+        .context
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
     #[cfg(feature = "field-inline")]
     let field_register_dimensions = input
-        .proof
+        .context
         .protocol
         .field_inline
         .read_write_dimensions(log_t);
@@ -116,7 +116,7 @@ where
     )?;
 
     let mut output_ids = Vec::new();
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.context.untrusted_advice_commitment_present {
         output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
             JoltAdviceKind::Untrusted,
         )));

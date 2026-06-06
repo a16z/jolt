@@ -13,7 +13,11 @@ use crate::{
     proof::JoltProof,
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
-        zk::{blindfold, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
+        zk::{
+            blindfold,
+            inputs::{BlindFoldInputs, BlindFoldProofContext},
+            outputs::zk_stage_outputs,
+        },
     },
     verifier::{absorb_commitments, absorb_preamble, validate_inputs, validate_proof_consistency},
     VerifierError,
@@ -138,8 +142,8 @@ where
     )?;
     let blindfold = blindfold::build(BlindFoldInputs {
         checked: &checked,
+        context: BlindFoldProofContext::from_proof(proof),
         preprocessing,
-        proof,
         stage1: zk_stages.stage1,
         stage2: zk_stages.stage2,
         stage3: zk_stages.stage3,

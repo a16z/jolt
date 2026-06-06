@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage7<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage7<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -13,7 +13,7 @@ where
     let formula_dimensions = formula_dimensions(input)?;
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.context.one_hot_config.committed_chunk_bits(),
     );
     let hamming_claims = hamming_weight::claim_reduction::<PCS::Field>(hamming_dimensions);
     let (trusted_layout, trusted_claims) = advice_address_claim(input, JoltAdviceKind::Trusted);

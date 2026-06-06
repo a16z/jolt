@@ -6,8 +6,9 @@
 use crate::{
     AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
     FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
-    NaiveAccumulator, RandomSampling, ReducingBytes, RingCore, TranscriptChallenge,
-    WithAccumulator,
+    NaiveAccumulator, NaiveSignedProductAccumulator, NaiveSignedScalarAccumulator, RandomSampling,
+    ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator,
+    WithSmallScalarAccumulator,
 };
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
@@ -422,6 +423,14 @@ impl FromPrimitiveInt for Fq {
 
 impl WithAccumulator for Fq {
     type Accumulator = NaiveAccumulator<Fq>;
+}
+
+impl WithSmallScalarAccumulator for Fq {
+    type SmallScalarAccumulator = NaiveSignedScalarAccumulator<Fq>;
+}
+
+impl WithSignedProductAccumulator for Fq {
+    type SignedProductAccumulator = NaiveSignedProductAccumulator<Fq>;
 }
 
 impl crate::MulPow2 for Fq {}

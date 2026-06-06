@@ -15,15 +15,27 @@ workspace = true
 default = ["cpu"]
 cpu = []
 field-inline = []
-zk = []
+frontier-harness = []
+zk = ["dep:jolt-crypto", "dep:jolt-r1cs"]
 
 [dependencies]
+jolt-claims.workspace = true
+jolt-crypto = { workspace = true, optional = true }
 jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
+jolt-r1cs = { workspace = true, optional = true }
 jolt-witness.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true }
 jolt-field.workspace = true
 jolt-openings = { workspace = true, features = ["test-utils"] }
+jolt-r1cs.workspace = true
+
+[[bench]]
+name = "sumcheck_kernels"
+harness = false

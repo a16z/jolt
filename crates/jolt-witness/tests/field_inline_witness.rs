@@ -113,7 +113,7 @@ fn fr(value: u64) -> Fr {
 fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
     TraceRow {
         instruction,
-        field_inline: Some(data),
+        field_inline: Some(data.into()),
         ..TraceRow::default()
     }
 }
@@ -336,20 +336,23 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
             }),
             ..RegisterState::default()
         },
-        field_inline: Some(FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadFromX),
-            rd: Some(FieldRegisterWrite {
-                register: 1,
-                pre_value: enc(0),
-                post_value: enc(19),
-            }),
-            bridge: Some(FieldInlineBridge::LoadFromX {
-                x_register: 5,
-                x_value: 19,
-                field_value: enc(19),
-            }),
-            ..FieldInlineTraceData::default()
-        }),
+        field_inline: Some(
+            FieldInlineTraceData {
+                op: Some(FieldInlineOp::LoadFromX),
+                rd: Some(FieldRegisterWrite {
+                    register: 1,
+                    pre_value: enc(0),
+                    post_value: enc(19),
+                }),
+                bridge: Some(FieldInlineBridge::LoadFromX {
+                    x_register: 5,
+                    x_value: 19,
+                    field_value: enc(19),
+                }),
+                ..FieldInlineTraceData::default()
+            }
+            .into(),
+        ),
         ..TraceRow::default()
     };
 
@@ -371,20 +374,23 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
             }),
             ..RegisterState::default()
         },
-        field_inline: Some(FieldInlineTraceData {
-            op: Some(FieldInlineOp::StoreToX),
-            rs1: Some(FieldRegisterRead {
-                register: 1,
-                value: enc(19),
-            }),
-            bridge: Some(FieldInlineBridge::StoreToX {
-                field_register: 1,
-                field_value: enc(19),
-                x_register: 6,
-                x_value: 19,
-            }),
-            ..FieldInlineTraceData::default()
-        }),
+        field_inline: Some(
+            FieldInlineTraceData {
+                op: Some(FieldInlineOp::StoreToX),
+                rs1: Some(FieldRegisterRead {
+                    register: 1,
+                    value: enc(19),
+                }),
+                bridge: Some(FieldInlineBridge::StoreToX {
+                    field_register: 1,
+                    field_value: enc(19),
+                    x_register: 6,
+                    x_value: 19,
+                }),
+                ..FieldInlineTraceData::default()
+            }
+            .into(),
+        ),
         ..TraceRow::default()
     };
 

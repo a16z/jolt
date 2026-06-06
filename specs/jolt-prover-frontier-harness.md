@@ -9,25 +9,62 @@
 
 ## Summary
 
-This spec defines the correctness, parity, and performance harness required to
-finish the modular `jolt-prover` migration without losing confidence or CPU
-fast-path performance. The harness is intentionally built before the remaining
-prover stages are ported.
+This spec defines the correctness and performance harness required to finish
+the modular `jolt-prover` migration without losing CPU fast-path performance.
+The harness is intentionally built around replayable fixtures and backend CPU
+optimization ports, not around slow full-flow correctness experiments.
 
-The goal is incremental proof migration:
+The goal is a two-phase additive proof migration:
 
 ```text
-one verifier-visible prover frontier at a time
-  -> modular implementation
-  -> verifier acceptance
-  -> jolt-core parity where meaningful
-  -> CPU performance parity
+phase 1: backend kernel inventory completion
+  -> account for every jolt-core prover optimization ID that targets cpu-backend
+  -> port the real optimized core algorithms into jolt-backends::cpu
+  -> add focused microbenchmarks and analytical memory budgets
+  -> certify backend results against replay fixtures and core measurements
+
+phase 2: prover frontier migration
+  -> one verifier-visible prover frontier at a time
+  -> jolt-prover drives Fiat-Shamir and dispatches optimized backend requests
+  -> pass jolt-verifier correctness using native jolt-verifier types and flows
+  -> pass core performance parity on every relevant measured axis
+  -> promote the frontier so later stages use modular outputs instead of fixtures
   -> next frontier
 ```
 
-The harness is not production proving code. It exists to compare modular output
-against verifier expectations and `jolt-core` compatibility artifacts while the
-modular stack becomes sovereign.
+The harness is not production proving code. It exists to make the migration
+fast to iterate: fixtures let us replay a narrow slice without regenerating a
+large proof, and performance gates ensure optimized backend kernels are ported
+before prover frontiers are accepted. Correctness-only implementations are not
+acceptable migration output.
+
+No frontier may be considered done by relying on fixture-only proof fragments,
+ad hoc proof splicing, temporary comparison scaffolding, or generic fallback
+code when the core algorithm has an optimized CPU path. Those artifacts may
+help inspect state during development, but they are not acceptance rails.
+
+## Goal-Mode Algorithm
+
+The next prover goal mode should follow this order:
+
+1. Build and certify the backend kernel inventory first.
+2. For every optimization in
+   [`Jolt Core Prover Optimization Inventory`](./jolt-core-prover-optimization-inventory.md)
+   whose port target includes `cpu-backend`, either port the optimized
+   algorithm into `jolt-backends::cpu` or record a measured replacement that is
+   at least as fast on the canonical hardware.
+3. Add or extend focused backend microbenchmarks, run them, and inspect the
+   time/memory shape before wiring the algorithm through `jolt-prover`.
+4. Only after the required backend kernel is `Ported` should the corresponding
+   `jolt-prover` frontier be implemented.
+5. Only after verifier correctness and measured core performance parity pass
+   should a frontier be treated as replacing its `jolt-core` slice.
+
+The harness exposes a backend kernel ledger. A frontier that names an
+optimization ID requiring a CPU backend port must have a matching ledger entry.
+Goal-mode acceptance should raise the required status from `Required` to
+`Ported`, then to `ParityCertified`, before promoting a frontier to production
+replacement status.
 
 ## Sunset Rule
 
@@ -46,9 +83,12 @@ The crate should be removed once:
 
 - Make every implemented prover frontier testable through `jolt-verifier`.
 - Prevent stages from landing with only unit tests or compile-only validation.
-- Compare modular output with `jolt-core` where deterministic or structurally
-  comparable.
-- Measure CPU time and memory before accepting a performance-sensitive slice.
+- Save canonical fixture inputs, outputs, transcript state, and challenge data
+  so each stage can be replayed without re-running a long core proof.
+- Port the optimized `jolt-core` CPU closure or algorithm for the frontier into
+  `jolt-backends::cpu` before accepting the frontier.
+- Measure CPU time, memory, and other relevant performance axes against
+  `jolt-core` before accepting any slice.
 - Keep `jolt-core` and tracer internals out of production `jolt-prover`,
   `jolt-witness`, and `jolt-backends` paths.
 - Reuse one harness for transparent, BlindFold, advice, and field-inline
@@ -61,10 +101,11 @@ The crate should be removed once:
 - No production dependency from `jolt-prover` to `jolt-core`.
 - No permanent mixed proof format.
 - No synthetic-only benchmark suite.
-- No acceptance of verifier-invisible parity as a substitute for verifier
-  acceptance.
+- No acceptance of verifier-invisible comparisons as a substitute for
+  `jolt-verifier` correctness.
 - No exact proof-byte equality requirement for randomized/ZK paths unless a
   deterministic RNG fixture is explicitly selected.
+- No slow full-flow correctness testing as the primary local iteration loop.
 
 ## Frontier Definition
 
@@ -77,101 +118,68 @@ Each frontier has:
 - required feature modes;
 - input fixture shape;
 - modular output type;
-- verifier acceptance target;
-- `jolt-core` parity target where applicable;
+- correctness gate through `jolt-verifier`;
+- performance gate against `jolt-core`;
 - optimization-inventory IDs touched;
 - performance metrics to collect;
 - required tests and benchmark commands.
 
 Representative frontiers:
 
-| Frontier | Modular Owner | Acceptance Target |
-|----------|---------------|-------------------|
-| preprocessing shape | `jolt-program`, `jolt-witness`, `jolt-prover` config | parity with verifier/core preprocessing facts |
-| stage0 commitments | `jolt-prover::stages::stage0`, `jolt_backends::cpu::commitments` | grafted `JoltCommitments` accepted by verifier |
-| advice commitments | stage0 + witness advice providers + CPU Dory contexts | advice fixture accepted by verifier |
-| stage1-2 | `jolt-prover::stages::{stage1,stage2}` + CPU sumcheck kernels | verifier stage acceptance / full proof graft |
-| stage3-7 | remaining relation stages | verifier stage acceptance / full proof graft |
-| stage8 openings | `jolt-prover::stages::stage8` + CPU opening kernels | final PCS proof verifies |
-| BlindFold | committed sumchecks + `jolt-blindfold` witness material | full ZK verifier acceptance |
-| field-inline | gated witness/stage/CPU extensions | transparent and ZK verifier acceptance |
+| Frontier | Modular Owner | Required Gates |
+|----------|---------------|----------------|
+| preprocessing shape | `jolt-program`, `jolt-witness`, `jolt-prover` config | verifier correctness |
+| stage0 commitments | `jolt-prover::stages::stage0`, `jolt_backends::cpu::commitments` | verifier correctness + core performance parity |
+| advice commitments | stage0 + witness advice providers + CPU Dory contexts | verifier correctness + core performance parity |
+| stage1-2 | `jolt-prover::stages::{stage1,stage2}` + CPU sumcheck kernels | verifier correctness + core performance parity |
+| stage3-7 | remaining relation stages | verifier correctness + core performance parity for sumcheck/opening work |
+| stage8 openings | `jolt-prover::stages::stage8` + CPU opening kernels | verifier correctness + core performance parity |
+| BlindFold | committed sumchecks + `jolt-blindfold` witness material | ZK verifier correctness + core performance parity |
+| field-inline | gated witness/stage/CPU extensions | transparent/ZK verifier correctness + core performance parity |
 
-## Acceptance Modes
+## Gates
 
-### Full-Proof Graft Mode
+The harness has only two gates:
 
-Use this when a modular frontier produces verifier-visible data that can replace
-the corresponding data inside a `jolt-core`-derived fixture proof without
-invalidating later transcript-dependent fields.
+- `VerifierCorrectness`: `jolt-verifier` accepts the modular frontier output,
+  using the narrowest replay fixture that exercises the verifier-visible
+  surface.
+- `CorePerformanceParity`: the modular prover plus selected `jolt-backends::cpu`
+  implementation matches `jolt-core` on the relevant time, memory, proof-size,
+  and allocation axes for the frontier.
 
-Flow:
+Both gates are mandatory for every frontier.
 
-```text
-core fixture proof
-  -> convert to jolt-verifier proof
-  -> replace frontier payload with modular output
-  -> run jolt-verifier::verify
-```
+`CorePerformanceParity` is never optional. A missing required timing or memory
+measurement is a gate failure, not a pass. If a metric cannot be measured on a
+platform, the frontier is not parity-certified on that platform.
 
-Examples:
+Core fixture comparisons, transcript checkpoints, proof-shape comparisons, and
+backend reference checks are tools for implementing those gates. They are not
+separate gates and should not appear in the frontier manifest.
 
-- commitment payloads when transcript-compatible;
-- proof metadata/config fields;
-- deterministic stage outputs where later proof material remains valid.
+Replay fixture equality is not a substitute for a real modular prover path.
+Fixture replay can prove that a slice is understood, but replacement requires
+`jolt-prover` to produce the verifier-visible object by dispatching optimized
+`jolt-backends::cpu` requests through the real transcript lifecycle.
 
-Required checks:
+## Replay Fixtures
 
-- the grafted proof verifies;
-- proof-shape fields match the target `JoltProtocolConfig`;
-- no backend vector order is used to select verifier fields;
-- tampering the grafted modular payload is rejected when the verifier surface
-  already binds that payload.
+Canonical fixtures are generated from the canonical SHA-chain workload and from
+small smoke workloads. A saved fixture slice records enough data to replay one
+frontier without running a long core proof:
 
-### Prefix/Checkpoint Mode
+- normalized prover inputs;
+- prior frontier outputs needed by the slice;
+- transcript prefix/state and challenge values owned by `jolt-prover`;
+- backend request inputs and expected backend outputs;
+- verifier-visible output claims, proof payloads, and opening facts;
+- core timing/memory measurements for the matching optimization inventory IDs.
 
-Use this when replacing a frontier changes transcript challenges or later proof
-payloads, so full grafting would invalidate the rest of a core proof.
-
-Flow:
-
-```text
-same fixture input
-  -> core compatibility run to checkpoint
-  -> modular run to checkpoint
-  -> compare transcript-visible facts, output claims, opening events, and
-     verifier-stage acceptance for the implemented prefix
-```
-
-Examples:
-
-- stages whose output challenges feed later stages;
-- committed/BlindFold sumchecks with RNG-dependent commitments;
-- stage8 joint-opening construction before full sovereign proof exists.
-
-Required checks:
-
-- all checkpoint facts named in the frontier manifest match or are accepted by
-  the corresponding verifier-stage routine;
-- randomized values use deterministic RNG fixtures for exact comparison, or
-  compare verifier acceptance and shape instead of bytes;
-- every unmatched value is recorded as intentionally random, backend-private,
-  or not yet ported.
-
-### Sovereign Mode
-
-Use this once all dependencies for a proof path are modular.
-
-Flow:
-
-```text
-jolt-program execution artifact
-  -> jolt-witness provider
-  -> jolt-prover + selected backend
-  -> jolt-verifier::verify
-```
-
-This is the final state for transparent, BlindFold, advice, and field-inline
-proofs.
+The replay frontier grows additively. Until a prior stage is accepted, the
+harness may feed the current stage from saved core fixture outputs. Once that
+prior stage is accepted, later stages should consume the modular output by
+default and use the core fixture only as an oracle/reference artifact.
 
 ## Harness Crate/Layout
 
@@ -184,8 +192,8 @@ crates/jolt-prover-harness/
     lib.rs
     fixtures.rs
     frontier.rs
-    graft.rs
-    parity.rs
+    replay.rs
+    compare.rs
     metrics.rs
     perf.rs
     field_inline.rs
@@ -210,7 +218,7 @@ Rules:
   feature;
 - the harness may depend on `jolt_backends::cpu` to instantiate the canonical
   backend;
-- fixture generation and graft helpers live in the harness, not in
+- fixture generation and replay helpers live in the harness, not in
   `jolt-prover`;
 - perf code lives in `benches/` or harness modules, not stage orchestration.
 - fixture ingestion must adapt every source, including `jolt-core` compatibility
@@ -239,23 +247,86 @@ Every implemented frontier should add a manifest entry:
 ```rust
 pub struct FrontierSpec {
     pub name: &'static str,
-    pub mode: AcceptanceMode,
     pub fixtures: &'static [FixtureKind],
     pub features: &'static [FeatureMode],
-    pub parity: &'static [ParityTarget],
+    pub gates: &'static [FrontierGate],
     pub perf: Option<PerfGate>,
     pub optimization_ids: &'static [&'static str],
+    pub backend_kernel_ports: &'static [&'static str],
 }
 ```
 
 The manifest is review material. A slice is incomplete if it adds prover code
-without naming its frontier and gate.
+without naming its frontier and gates. `VerifierCorrectness` and
+`CorePerformanceParity` are mandatory for every frontier.
 
 Optimization IDs must be present in
-[`Jolt Core Prover Optimization Inventory`](./jolt-core-prover-optimization-inventory.md),
-unless the frontier is explicitly non-performance-sensitive and uses the
-reserved `NON-PERF` marker. The harness parses the inventory and rejects
-unknown IDs.
+[`Jolt Core Prover Optimization Inventory`](./jolt-core-prover-optimization-inventory.md).
+Every frontier must name concrete optimization IDs and include a `PerfGate`.
+The harness parses the inventory and rejects unknown IDs.
+
+For optimization IDs whose inventory port target includes `cpu-backend`, the
+harness also requires backend-kernel accounting:
+
+```rust
+pub struct BackendKernelPortSpec {
+    pub name: &'static str,
+    pub family: BackendKernelFamily,
+    pub optimization_ids: &'static [&'static str],
+    pub source_locations: &'static [&'static str],
+    pub cpu_entrypoints: &'static [&'static str],
+    pub microbenchmarks: &'static [&'static str],
+    pub certification_evidence_files: &'static [&'static str],
+    pub status: KernelPortStatus,
+}
+```
+
+Status semantics:
+
+```text
+Required         inventory item is known and must be ported before prover replacement
+Ported           optimized CPU algorithm exists behind a backend request
+ParityCertified  backend and prover frontier pass correctness and core perf parity
+```
+
+`Required` is accounting, not acceptance. A prover frontier that is intended to
+replace core must require `Ported` at implementation time and
+`ParityCertified` before completion.
+
+The frontier's `backend_kernel_ports` list must cover every named optimization
+ID whose inventory port target includes `cpu-backend`. This prevents a frontier
+from getting accidental credit from an unrelated kernel that shares a broad
+optimization ID such as `OPT-SC-007` or `OPT-EQ-004`.
+
+The registered backend kernel ledger must also cover every optimization ID in
+the global inventory whose port target includes `cpu-backend`.
+`validate_global_cpu_backend_inventory_coverage` is the backlog guard: new
+inventory rows cannot be added without an explicit kernel ledger owner.
+
+Goal-mode completion must call `validate_frontier_replacement_ready`, not only
+manifest validation. That check requires `ParityCertified` kernel accounting and
+passing `KernelBenchmarkEvidence` for the relevant backend ports.
+
+`Ported` requires an isolated backend microbenchmark result. A kernel should
+not be integrated through a `jolt-prover` stage until the microbench suggests
+the shape is plausibly competitive with core on the target hardware. This keeps
+iteration local to `jolt-backends` while algorithmic mistakes are still cheap
+to diagnose.
+
+`ParityCertified` additionally requires machine-readable benchmark evidence for
+the registered kernel. The evidence must name the kernel, benchmark, sample
+count, optimization IDs, core metrics, modular metrics, and an analytical memory
+budget. Harness validation rejects certification when the benchmark name is not
+registered, the optimization IDs do not match exactly, sample count is below the
+frontier gate, a required axis is missing, the modular peak exceeds the
+analytical budget, or time/RSS exceed the core ratio threshold. Certified
+ledger entries must name the JSON evidence files in
+`certification_evidence_files`, and
+`validate_parity_certified_kernel_evidence_files` must pass against those files.
+Bench code should emit evidence through the canonical helper:
+`KernelBenchmarkEvidence::write_canonical_json`, which writes under
+`target/frontier-metrics/kernel-evidence/<kernel>/<benchmark>.json` with path
+components sanitized by the harness.
 
 Required fixture dimensions:
 
@@ -337,7 +408,11 @@ objects.
 
 ## Correctness Gates
 
-Every frontier must pass:
+Every frontier must have a `VerifierCorrectness` gate. For local iteration,
+run the narrowest replay test for the frontier and avoid regenerating large
+core fixtures unless the fixture snapshot itself is being updated.
+
+Baseline commands:
 
 ```bash
 cargo fmt -q
@@ -359,18 +434,41 @@ cargo nextest run -p jolt-prover --cargo-quiet --features zk,field-inline
 Harness gates:
 
 ```bash
-cargo nextest run -p jolt-prover-harness frontier_ --cargo-quiet --features core-fixtures
-cargo nextest run -p jolt-prover-harness frontier_ --cargo-quiet --features core-fixtures,zk
-cargo nextest run -p jolt-prover-harness frontier_ --cargo-quiet --features core-fixtures,field-inline
+cargo nextest run -p jolt-prover-harness <frontier_replay_test> --cargo-quiet --features core-fixtures
+cargo nextest run -p jolt-prover-harness <frontier_replay_test> --cargo-quiet --features core-fixtures,zk
+cargo nextest run -p jolt-prover-harness <frontier_replay_test> --cargo-quiet --features core-fixtures,field-inline
 ```
 
-Use exact test filters per frontier once the tests exist. Do not require full
-workspace E2E on every local edit, but each integrated frontier should run the
-matching harness gate.
+Use exact test filters per frontier. Broad fixture sweeps and full workspace
+E2E runs are regression/acceptance checks, not the default inner loop.
+
+## Iteration Ladder
+
+Use the cheapest gate that can falsify the current change before moving to a
+more expensive one:
+
+1. Static ledger and drift checks:
+   `cargo nextest run -p jolt-prover-harness optimization_inventory source_drift --cargo-quiet`.
+2. Backend unit/reference tests for the touched request family:
+   `cargo nextest run -p jolt-backends <kernel_or_request_filter> --cargo-quiet`.
+3. Benchmark compile check:
+   `cargo bench -p jolt-backends --bench sumcheck_kernels --no-run`.
+4. Focused backend microbench on the touched kernel, producing
+   `KernelBenchmarkEvidence` through `write_canonical_json`.
+5. Narrow frontier replay test for the single stage/fixture.
+6. Canonical perf run on `sha2-chain-2^16`, then one confirmation run on
+   `sha2-chain-2^20` only after the smaller run passes.
+7. Full workspace or broad feature matrix only for regression confidence after
+   the local gates pass.
+
+Do not start with broad prover E2E for a kernel algorithm question. If a kernel
+fails the unit/reference test or isolated microbench, fix it in `jolt-backends`
+before spending prover-path time.
 
 ## Performance Gates
 
-Performance gates apply to any frontier that touches:
+Every frontier must have a `CorePerformanceParity` gate. The metric axes are
+chosen according to what the frontier touches:
 
 - witness generation;
 - commitments;
@@ -378,7 +476,8 @@ Performance gates apply to any frontier that touches:
 - sumcheck kernels;
 - RA/one-hot/shared-eq paths;
 - sparse read/write matrices;
-- BlindFold private witness construction;
+- BlindFold private witness construction, row commitments/openings, and folding
+  kernels;
 - memory retention/drop policy.
 
 Canonical benchmark policy:
@@ -388,7 +487,7 @@ workload: sha2-chain
 size:     2^16
 samples:  3
 compare:  jolt-core same branch/config vs modular frontier
-gate:     <= 10% regression in frontier time and peak RSS
+gate:     <= 15% regression in frontier time and peak RSS
 warn:     > 5% unexplained regression
 confirm:  if 2^16 passes, run 2^20 once
 ```
@@ -397,13 +496,21 @@ Required metrics:
 
 - total prove time when available;
 - frontier time;
+- backend kernel time for the optimized request;
 - committed witness time;
 - per-stage time for stage frontiers;
 - stage8 opening time;
 - BlindFold time for ZK frontiers;
 - peak RSS;
+- allocation count/bytes when available;
 - proof size where the frontier changes proof payload;
 - qualitative core saturation when available.
+
+For every frontier, timing and peak RSS are required unless a narrower
+frontier-specific `PerfGate` explicitly justifies another axis. Proof-size is
+required when the frontier changes verifier-visible proof payload. Allocation
+count/bytes are required for memory-representation, RA, sparse-matrix, and
+Stage 8 work.
 
 Suggested command shape:
 
@@ -561,12 +668,23 @@ docs and the retired-term list together.
 
 Before a frontier lands:
 
-- The frontier manifest entry names fixtures, modes, parity targets, and
+- The frontier manifest entry names fixtures, feature modes, gates, and
   optimization IDs.
-- `jolt-verifier` accepts the implemented frontier through full-proof graft,
-  prefix/checkpoint, or sovereign mode.
-- `jolt-core` parity is checked where deterministic or structurally
-  comparable.
+- The frontier includes `VerifierCorrectness`.
+- The frontier includes `CorePerformanceParity`, concrete optimization IDs, and
+  a `PerfGate`.
+- Every CPU-backend optimization ID named by the frontier has a backend kernel
+  ledger entry with the required status.
+- For production replacement, every named CPU-backend optimization ID is
+  `ParityCertified`.
+- `jolt-verifier` accepts the implemented frontier using the narrowest replay
+  fixture that exercises the verifier-visible surface.
+- The real optimized core CPU closure/algorithm for the slice is ported into
+  `jolt-backends::cpu`; generic fallbacks do not satisfy the gate when core has
+  a specialized algorithm.
+- Saved replay fixtures include the inputs, outputs, transcript state, and
+  backend request/result facts needed to rerun the frontier without a long core
+  proof.
 - Randomized/ZK fields are compared with deterministic RNG or explicitly marked
   as shape/acceptance-only.
 - Backend outputs are slot-keyed; stage output construction is logical-ID
@@ -586,8 +704,9 @@ Before a frontier lands:
 - `jolt-prover` feature flags forward to matching `jolt-backends` capability
   flags; feature-specific code stays in typed input/request/output or named
   backend capability modules.
-- Performance-sensitive changes include a benchmark summary or a documented
-  reason why the frontier is not performance-sensitive.
+- Every frontier includes a benchmark summary for the relevant axes.
+- No frontier is accepted as a fixture-only, ad hoc spliced, or
+  correctness-only implementation.
 
 ## References
 

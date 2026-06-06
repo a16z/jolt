@@ -1,7 +1,7 @@
 use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
-use jolt_riscv::NUM_CIRCUIT_FLAGS;
+use jolt_riscv::{JoltInstructionRow, NUM_CIRCUIT_FLAGS};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -28,6 +28,12 @@ pub const FIELD_INLINE_BYTECODE_STAGE1_GAMMA_COUNT: usize =
     2 + NUM_CIRCUIT_FLAGS + FIELD_INLINE_BYTECODE_STAGE1_FLAGS.len();
 pub const FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT: usize = 6;
 pub const FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS: usize = 1;
+
+const FIELD_ADD_TAG: u16 = 0x0100;
+const FIELD_ASSERT_EQ_TAG: u16 = 0x0104;
+const FIELD_LOAD_FROM_X_TAG: u16 = 0x0105;
+const FIELD_STORE_TO_X_TAG: u16 = 0x0106;
+const FIELD_LOAD_IMM_TAG: u16 = 0x0107;
 
 pub type FieldInlineBytecodeExpr<F> = Expr<F, FieldInlineOpeningId, (), JoltChallengeId>;
 
@@ -204,6 +210,29 @@ where
     stage1_claim() + gamma.clone().pow(3) * stage4_claim() + gamma.pow(4) * stage5_claim::<F>()
 }
 
+pub fn base_jolt_bytecode_row(row: &JoltInstructionRow) -> JoltInstructionRow {
+    let mut row = *row;
+    // Keep this helper usable by verifier-only field-inline builds that do not
+    // enable the field-inline `jolt-riscv` enum variants.
+    match row.instruction_kind.tag().0 {
+        FIELD_LOAD_FROM_X_TAG => {
+            row.operands.rd = None;
+            row.operands.rs2 = None;
+        }
+        FIELD_STORE_TO_X_TAG => {
+            row.operands.rs1 = None;
+            row.operands.rs2 = None;
+        }
+        FIELD_ADD_TAG..=FIELD_ASSERT_EQ_TAG | FIELD_LOAD_IMM_TAG => {
+            row.operands.rd = None;
+            row.operands.rs1 = None;
+            row.operands.rs2 = None;
+        }
+        _ => {}
+    }
+    row
+}
+
 pub fn read_raf_public_values<F>(
     inputs: FieldInlineBytecodeReadRafEvaluationInputs<'_, F>,
 ) -> Result<FieldInlineBytecodeReadRafPublicValues<F>, FieldInlineBytecodeReadRafError>
@@ -319,7 +348,7 @@ where
     beta.pow(2 + LookupTableKind::<XLEN>::COUNT) * opening(field_rd_wa_val_evaluation())
 }
 
-fn read_raf_row_values<F>(
+pub fn read_raf_row_values<F>(
     row: &FieldInlineBytecodeRow,
     field_read_write_eq: &[F],
     field_val_evaluation_eq: &[F],

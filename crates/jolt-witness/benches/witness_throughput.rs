@@ -283,7 +283,6 @@ impl Rv64Fixture {
                     pre_value: index as u64,
                     post_value: index as u64 + 1,
                 }),
-                #[cfg(feature = "field-inline")]
                 field_inline: None,
             })
             .collect();

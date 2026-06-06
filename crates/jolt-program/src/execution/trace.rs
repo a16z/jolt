@@ -223,7 +223,8 @@ pub struct MemoryImage {
     pub bytes: Vec<(u64, u8)>,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(feature = "field-inline"), derive(Copy))]
 #[cfg_attr(
     feature = "serialization",
     derive(serde::Serialize, serde::Deserialize)
@@ -233,10 +234,62 @@ pub struct TraceRow {
     pub registers: RegisterState,
     pub ram_access: RamAccess,
     #[cfg(feature = "field-inline")]
-    pub field_inline: Option<FieldInlineTraceData>,
+    pub field_inline: Option<Arc<FieldInlineTraceData>>,
 }
 
 impl JoltCycle for TraceRow {
+    type Instruction = JoltInstructionRow;
+
+    #[inline]
+    fn instruction(&self) -> Self::Instruction {
+        self.instruction
+    }
+
+    #[inline]
+    fn rs1_val(&self) -> Option<u64> {
+        self.registers.rs1.map(|read| read.value)
+    }
+
+    #[inline]
+    fn rs2_val(&self) -> Option<u64> {
+        self.registers.rs2.map(|read| read.value)
+    }
+
+    #[inline]
+    fn rd_vals(&self) -> Option<(u64, u64)> {
+        self.registers
+            .rd
+            .map(|write| (write.pre_value, write.post_value))
+    }
+
+    #[inline]
+    fn ram_access_address(&self) -> Option<u64> {
+        match self.ram_access {
+            RamAccess::Read(read) => Some(read.address),
+            RamAccess::Write(write) => Some(write.address),
+            RamAccess::NoOp => None,
+        }
+    }
+
+    #[inline]
+    fn ram_read_value(&self) -> Option<u64> {
+        match self.ram_access {
+            RamAccess::Read(read) => Some(read.value),
+            RamAccess::Write(write) => Some(write.pre_value),
+            RamAccess::NoOp => None,
+        }
+    }
+
+    #[inline]
+    fn ram_write_value(&self) -> Option<u64> {
+        match self.ram_access {
+            RamAccess::Write(write) => Some(write.post_value),
+            RamAccess::Read(_) | RamAccess::NoOp => None,
+        }
+    }
+}
+
+impl JoltCycle for &TraceRow {
     type Instruction = JoltInstructionRow;
 
     #[inline]
@@ -339,8 +392,12 @@ impl From<Vec<TraceRow>> for OwnedTrace {
 
 impl TraceSource for OwnedTrace {
     fn next_row(&mut self) -> Option<TraceRow> {
-        let row = self.rows.get(self.next).copied();
+        let row = self.rows.get(self.next).cloned();
         self.next += usize::from(row.is_some());
         row
+    }
+
+    fn rows(&self) -> Option<&[TraceRow]> {
+        Some(OwnedTrace::rows(self))
     }
 }

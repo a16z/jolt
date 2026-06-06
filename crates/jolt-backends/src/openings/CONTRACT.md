@@ -26,7 +26,8 @@ not choose final opening order or transcript binding.
 
 ## Optimization IDs
 
-Primary IDs: `OPT-OPEN-001`, `OPT-OPEN-003`, `OPT-OPEN-006`, `OPT-OPEN-007`.
+Primary IDs: `OPT-OPEN-001`, `OPT-OPEN-003`, `OPT-OPEN-006`, `OPT-OPEN-007`,
+`OPT-OPEN-008`.
 
 ## Feature Behavior
 

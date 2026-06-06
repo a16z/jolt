@@ -12,30 +12,70 @@ workspace = true
 
 [features]
 default = []
-core-fixtures = ["dep:jolt-core", "jolt-core/host", "jolt-verifier/core-fixtures"]
+core-fixtures = [
+  "dep:jolt-core",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "dep:jolt-inlines-sha2",
+  "dep:jolt-sumcheck",
+  "dep:jolt-transcript",
+  "dep:tracing",
+  "dep:tracing-subscriber",
+  "dep:postcard",
+  "dep:tracer",
+  "jolt-core/host",
+  "jolt-prover/frontier-harness",
+  "jolt-verifier/core-fixtures",
+]
 field-inline = [
+  "dep:jolt-crypto",
+  "dep:jolt-sumcheck",
+  "dep:jolt-transcript",
   "jolt-core?/field-inline",
   "jolt-prover/field-inline",
   "jolt-verifier/field-inline",
   "jolt-witness/field-inline",
 ]
 perf = ["dep:memory-stats"]
-zk = ["jolt-core?/zk", "jolt-prover/zk", "jolt-verifier/zk"]
+zk = ["dep:jolt-blindfold", "jolt-core?/zk", "jolt-prover/zk", "jolt-verifier/zk"]
 
 [dependencies]
+common.workspace = true
 jolt-backends.workspace = true
+jolt-blindfold = { workspace = true, optional = true }
+jolt-claims.workspace = true
 jolt-core = { workspace = true, features = ["minimal"], optional = true }
+jolt-crypto = { workspace = true, optional = true }
+jolt-dory = { path = "../jolt-dory", optional = true }
+jolt-field.workspace = true
+jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
+jolt-program.workspace = true
 jolt-prover.workspace = true
+jolt-r1cs.workspace = true
+jolt-riscv.workspace = true
+jolt-sumcheck = { workspace = true, optional = true }
+jolt-transcript = { workspace = true, optional = true }
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 memory-stats = { workspace = true, optional = true }
+postcard = { workspace = true, features = ["use-std"], optional = true }
+rayon = { workspace = true }
 serde.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 thiserror.workspace = true
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+tracer = { workspace = true, default-features = false, features = ["std"], optional = true }
 
 [dev-dependencies]
+jolt-openings = { workspace = true, features = ["test-utils"] }
+jolt-poly.workspace = true
 toml_edit.workspace = true
 
 [[bench]]
 name = "frontier_perf"
+harness = false
+
+[[bench]]
+name = "e2e_outlook"
 harness = false

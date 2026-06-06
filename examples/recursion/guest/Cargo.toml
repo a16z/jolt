@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 guest = []
+field-inline = ["jolt_sdk/field-inline"]
 
 [dependencies]
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [

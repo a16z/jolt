@@ -1403,7 +1403,7 @@ require the corresponding verifier stage/frontier to accept it. `jolt-core`
 remains useful for fixture generation and parity checks, but it is not the
 primary oracle for the modular prover.
 
-The concrete frontier acceptance, graft/checkpoint modes, fixture matrix, and
+The concrete frontier acceptance, checkpoint modes, fixture matrix, and
 performance gates are specified in
 [`jolt-prover` Frontier Harness](./jolt-prover-frontier-harness.md). Each
 frontier should land with a harness manifest entry before substantial stage or

@@ -12,6 +12,45 @@ This worktree owns the prover-side modular migration: `jolt-prover`, `jolt-witne
 
 The sibling checkout `/Users/markos/jolt` may be used as a read-only reference for in-progress protocol, verifier, and field-inline work, typically on `refactor/crates`. Cherry-pick from it only when the change is reviewed and needed for prover-side integration. These worktrees will be consolidated later, so avoid clobbering verifier-side or protocol-side work from the sibling tree.
 
+## Prover Migration North Star
+
+When working on the modular prover replacement, follow this order:
+
+1. Port the real optimized `jolt-core` CPU algorithms into `jolt-backends::cpu`.
+2. Add and run focused backend microbenchmarks with analytical memory accounting before integrating through `jolt-prover`.
+3. Record touched optimization IDs in the harness backend kernel ledger.
+4. Wire `jolt-prover` stages through those optimized backend requests.
+5. Accept a frontier only after `jolt-verifier` correctness and core performance parity both pass.
+
+Do not land correctness-only prover stages with a plan to optimize later. Do not use fixture-only replay, ad hoc proof splicing, or generic fallback kernels as replacement criteria when core has a specialized algorithm. Do not spend long prover-path iterations on an unbenchmarked kernel; first prove the isolated CPU kernel has plausible core-parity performance. Performance parity is mandatory on timing and memory unless the frontier spec explicitly requires a narrower measured axis.
+
+The default parity failure threshold is 15% on required timing and peak-memory
+axes. A kernel is not replacement-ready until `validate_frontier_replacement_ready`
+passes with `ParityCertified` ledger status and measured `KernelBenchmarkEvidence`
+loaded from the ledger's JSON evidence files.
+`validate_global_cpu_backend_inventory_coverage` must also pass so every
+`cpu-backend` optimization inventory row has a backend kernel ledger owner.
+
+Fast iteration order:
+
+1. Run harness static checks for inventory, ledger, and source drift.
+2. Run focused `jolt-backends` unit/reference tests for the touched kernel.
+3. Compile the focused benchmark with `--no-run`.
+4. Run the focused microbench and emit canonical `KernelBenchmarkEvidence`.
+5. Wire the narrow `jolt-prover` frontier and replay one fixture.
+6. Run canonical `sha2-chain-2^16` perf, then the large confirmation only after
+   the smaller run passes.
+
+Do not start with broad prover E2E for backend algorithm questions.
+
+Mandatory context before any prover frontier work:
+
+- `specs/jolt-prover-frontier-harness.md` defines the two-phase backend-first then prover-frontier workflow and acceptance gates.
+- `specs/jolt-prover-cpu-backend-port.md` defines the protocol/backend ownership boundary.
+- `specs/jolt-core-prover-optimization-inventory.md` is the binding optimization ledger.
+- `crates/jolt-prover-harness/src/optimization.rs` is the mechanical backend kernel ledger used by tests.
+- `crates/jolt-prover-harness/README.md` and `crates/jolt-backends/README.md` summarize local rails for harness/backend work.
+
 ## Essential Commands
 
 ### Linting and Formatting

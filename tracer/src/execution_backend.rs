@@ -68,7 +68,7 @@ fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
         registers: register_state(&cycle),
         ram_access: cycle.ram_access().into(),
         #[cfg(feature = "field-inline")]
-        field_inline: cycle.field_inline_trace(),
+        field_inline: cycle.field_inline_trace().map(Into::into),
     })
 }
 

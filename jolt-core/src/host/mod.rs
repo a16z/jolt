@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use jolt_riscv::JoltInstructionProfile;
+
 #[cfg(feature = "host")]
 pub mod analyze;
 #[cfg(feature = "host")]
@@ -49,6 +51,8 @@ pub struct Program {
     guest: String,
     func: Option<String>,
     profile: Option<String>,
+    instruction_profile: JoltInstructionProfile,
+    guest_features: Vec<String>,
     heap_size: u64,
     stack_size: u64,
     max_input_size: u64,

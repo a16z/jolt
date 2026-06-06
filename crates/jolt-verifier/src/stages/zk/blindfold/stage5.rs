@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage5<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage5<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -144,7 +144,7 @@ where
         let field_registers_cycle = trace_dimensions
             .cycle_opening_point(&field_registers_point)
             .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
-        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
+        let field_log_k = input.context.protocol.field_inline.field_register_log_k;
         let field_registers_read_write_cycle = input
             .stage4
             .field_registers_read_write_opening_point

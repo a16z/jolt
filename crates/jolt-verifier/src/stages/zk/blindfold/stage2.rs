@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage2<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage2<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     mut builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -13,7 +13,7 @@ where
     let log_t = input.checked.trace_length.ilog2() as usize;
     let log_k = input.checked.ram_K.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
-    let read_write_dimensions = input.proof.rw_config.ram_dimensions(log_t, log_k);
+    let read_write_dimensions = input.context.rw_config.ram_dimensions(log_t, log_k);
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
         ram::RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {

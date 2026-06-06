@@ -2107,6 +2107,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "field-inline-eq-poly"
+version = "0.1.0"
+dependencies = [
+ "field-inline-eq-poly-guest",
+ "jolt-sdk",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "field-inline-eq-poly-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2709,10 +2726,16 @@ dependencies = [
 name = "jolt-backends"
 version = "0.1.0"
 dependencies = [
+ "criterion",
+ "jolt-claims",
+ "jolt-crypto",
  "jolt-field",
+ "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-witness",
+ "rayon",
  "thiserror 2.0.18",
 ]
 
@@ -2729,6 +2752,7 @@ dependencies = [
  "jolt-transcript",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -2828,6 +2852,8 @@ dependencies = [
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
  "ark-serialize 0.5.0",
  "criterion",
  "dory-pcs",
@@ -3149,14 +3175,24 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
+ "common",
  "jolt-backends",
+ "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",
  "jolt-field",
+ "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-sumcheck",
+ "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "rand_core 0.6.4",
+ "rayon",
  "thiserror 2.0.18",
 ]
 
@@ -3164,16 +3200,35 @@ dependencies = [
 name = "jolt-prover-harness"
 version = "0.1.0"
 dependencies = [
+ "common",
  "jolt-backends",
+ "jolt-blindfold",
+ "jolt-claims",
  "jolt-core",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-inlines-sha2",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
  "jolt-prover",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-sumcheck",
+ "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
  "memory-stats",
+ "postcard",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml_edit",
+ "tracer",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3301,6 +3356,8 @@ dependencies = [
  "criterion",
  "jolt-claims",
  "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-poly",
  "jolt-program",
  "jolt-riscv",
  "rayon",

@@ -2,7 +2,16 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{NamedValue, ParityTarget};
+use crate::NamedValue;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ComparisonTarget {
+    CoreCommitments,
+    CoreStageOutput,
+    CoreOpeningClaims,
+    CoreProofShape,
+    BackendReference,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParityMismatch {
@@ -13,12 +22,12 @@ pub struct ParityMismatch {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParityReport {
-    pub target: ParityTarget,
+    pub target: ComparisonTarget,
     pub mismatches: Vec<ParityMismatch>,
 }
 
 impl ParityReport {
-    pub fn success(target: ParityTarget) -> Self {
+    pub fn success(target: ComparisonTarget) -> Self {
         Self {
             target,
             mismatches: Vec::new(),
@@ -31,7 +40,7 @@ impl ParityReport {
 }
 
 pub fn compare_named_values(
-    target: ParityTarget,
+    target: ComparisonTarget,
     expected: &[NamedValue],
     actual: &[NamedValue],
 ) -> ParityReport {

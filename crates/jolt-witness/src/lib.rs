@@ -26,7 +26,10 @@ pub use polynomial::{
     MaterializationPolicy, OracleDescriptor, OracleViewRequest, PolynomialView, RetentionHint,
     ViewRequirement,
 };
-pub use provider::{CommittedWitnessProvider, WitnessProvider};
+pub use provider::{
+    CommittedWitnessProvider, RaFamilyCycleIndices, WitnessProvider, RA_FAMILY_MAX_BYTECODE_CHUNKS,
+    RA_FAMILY_MAX_INSTRUCTION_CHUNKS, RA_FAMILY_MAX_RAM_CHUNKS,
+};
 pub use public::PublicValue;
 pub use streaming::{
     PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialChunkKind,

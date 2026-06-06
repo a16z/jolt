@@ -18,10 +18,20 @@ use crate::{
     proof::JoltProof,
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
-        zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
+        zk::{
+            blindfold, committed,
+            inputs::{BlindFoldInputs, BlindFoldProofContext},
+            outputs::zk_stage_outputs,
+        },
     },
     VerifierError,
 };
+
+#[derive(Debug)]
+pub struct PreStage1VerifierState<T> {
+    pub checked: CheckedInputs,
+    pub transcript: T,
+}
 
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -40,21 +50,16 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let config = JoltProtocolConfig::for_zk(zk);
-    validate_proof_config(&config, proof)?;
-
-    let checked = validate_inputs(
+    let PreStage1VerifierState {
+        checked,
+        mut transcript,
+    } = verify_until_stage1::<PCS, VC, T, _>(
         preprocessing,
         public_io,
         proof,
-        trusted_advice_commitment.is_some(),
+        trusted_advice_commitment,
         zk,
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
-
-    let mut transcript = T::new(b"Jolt");
-    absorb_preamble(&checked, proof, &mut transcript);
-    absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
     let stage2 = stage2::verify(
@@ -114,8 +119,8 @@ where
         )?;
         let blindfold = blindfold::build(BlindFoldInputs {
             checked: &checked,
+            context: BlindFoldProofContext::from_proof(proof),
             preprocessing,
-            proof,
             stage1: zk_stages.stage1,
             stage2: zk_stages.stage2,
             stage3: zk_stages.stage3,
@@ -147,6 +152,41 @@ where
     };
 
     Ok(())
+}
+
+pub fn verify_until_stage1<PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    zk: bool,
+) -> Result<PreStage1VerifierState<T>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let config = JoltProtocolConfig::for_zk(zk);
+    validate_proof_config(&config, proof)?;
+
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        zk,
+    )?;
+    validate_proof_consistency(proof, checked.zk)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
+
+    Ok(PreStage1VerifierState {
+        checked,
+        transcript,
+    })
 }
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]

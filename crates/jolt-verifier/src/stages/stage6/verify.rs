@@ -1165,9 +1165,22 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
+    #[cfg(feature = "field-inline")]
+    let base_bytecode_rows = preprocessing
+        .program
+        .bytecode
+        .bytecode
+        .iter()
+        .map(field_bytecode::base_jolt_bytecode_row)
+        .collect::<Vec<_>>();
+    #[cfg(feature = "field-inline")]
+    let bytecode_rows = base_bytecode_rows.as_slice();
+    #[cfg(not(feature = "field-inline"))]
+    let bytecode_rows = preprocessing.program.bytecode.bytecode.as_slice();
+
     let bytecode_public_values =
         bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-            bytecode: &preprocessing.program.bytecode.bytecode,
+            bytecode: bytecode_rows,
             r_address: &bytecode_opening_point.r_address,
             r_cycle: &bytecode_opening_point.r_cycle,
             stage_cycle_points: [

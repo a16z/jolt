@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage1<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage1<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     mut builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
