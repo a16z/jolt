@@ -74,6 +74,19 @@ impl<VC: VectorCommitment> HyraxVerifierSetup<VC> {
             vc_setup,
         })
     }
+
+    pub fn derive_from<Source>(
+        source: &Source,
+        dimensions: HyraxDimensions,
+    ) -> Result<Self, HyraxError>
+    where
+        VC::Setup: DeriveSetup<Source>,
+    {
+        dimensions.validate()?;
+        let row_len = dimensions.row_len()?;
+        let vc_setup = VC::Setup::derive(source, row_len);
+        Self::new(dimensions, vc_setup)
+    }
 }
 
 impl<VC: VectorCommitment> From<&HyraxProverSetup<VC>> for HyraxVerifierSetup<VC> {

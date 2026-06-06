@@ -8,6 +8,8 @@ mod commitment;
 mod dimensions;
 mod error;
 mod proof;
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
 mod scheme;
 mod setup;
 

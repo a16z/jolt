@@ -8,11 +8,15 @@ description = "Hyrax multilinear polynomial commitment adapter for Jolt"
 [lints]
 workspace = true
 
+[features]
+r1cs = ["dep:jolt-r1cs", "jolt-crypto/r1cs", "jolt-poly/r1cs"]
+
 [dependencies]
 jolt-crypto = { workspace = true }
 jolt-field = { workspace = true }
 jolt-openings = { workspace = true }
 jolt-poly = { workspace = true }
+jolt-r1cs = { workspace = true, optional = true }
 jolt-transcript = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
