@@ -304,30 +304,17 @@ where
         };
 
         #[cfg(feature = "pcs-assist")]
-        let hiding_evaluation_commitment = {
-            let assist_config = config
-                .pcs_assist
-                .as_ref()
-                .ok_or(VerifierError::MissingPcsAssistConfig)?;
-            let assist_proof = proof
-                .pcs_assist
-                .as_ref()
-                .ok_or(VerifierError::MissingPcsAssistProof)?;
-            PcsAssist::verify_zk(
-                assist_config,
-                PcsAssistZkInput {
-                    setup: &preprocessing.pcs_setup,
-                    pcs_proof: &proof.joint_opening_proof,
-                    commitment: &joint_commitment,
-                    point: opening_point.as_slice(),
-                },
-                assist_proof,
-                transcript,
-            )
-            .map_err(|error| VerifierError::PcsAssistVerificationFailed {
-                reason: error.to_string(),
-            })?
-        };
+        let hiding_evaluation_commitment = verify_zk_pcs_assist::<PCS, T, PcsAssist>(
+            config,
+            proof.pcs_assist.as_ref(),
+            PcsAssistZkInput {
+                setup: &preprocessing.pcs_setup,
+                pcs_proof: &proof.joint_opening_proof,
+                commitment: &joint_commitment,
+                point: opening_point.as_slice(),
+            },
+            transcript,
+        )?;
         PCS::bind_zk_opening_inputs(
             transcript,
             common_point.as_slice(),
@@ -558,31 +545,18 @@ where
     }
 
     #[cfg(feature = "pcs-assist")]
-    {
-        let assist_config = config
-            .pcs_assist
-            .as_ref()
-            .ok_or(VerifierError::MissingPcsAssistConfig)?;
-        let assist_proof = proof
-            .pcs_assist
-            .as_ref()
-            .ok_or(VerifierError::MissingPcsAssistProof)?;
-        PcsAssist::verify_clear(
-            assist_config,
-            PcsAssistClearInput {
-                setup: &preprocessing.pcs_setup,
-                pcs_proof: &proof.joint_opening_proof,
-                commitment: &joint_commitment,
-                point: pcs_opening_point.as_slice(),
-                eval: joint_claim,
-            },
-            assist_proof,
-            transcript,
-        )
-        .map_err(|error| VerifierError::PcsAssistVerificationFailed {
-            reason: error.to_string(),
-        })?;
-    }
+    verify_clear_pcs_assist::<PCS, T, PcsAssist>(
+        config,
+        proof.pcs_assist.as_ref(),
+        PcsAssistClearInput {
+            setup: &preprocessing.pcs_setup,
+            pcs_proof: &proof.joint_opening_proof,
+            commitment: &joint_commitment,
+            point: pcs_opening_point.as_slice(),
+            eval: joint_claim,
+        },
+        transcript,
+    )?;
     PCS::bind_opening_inputs(transcript, common_point.as_slice(), &joint_claim);
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
@@ -594,6 +568,54 @@ where
         joint_claim,
         joint_commitment,
     }))
+}
+
+#[cfg(feature = "pcs-assist")]
+fn verify_clear_pcs_assist<PCS, T, PcsAssist>(
+    config: &JoltProtocolConfig<PcsAssist::Config>,
+    assist_proof: Option<&PcsAssist::Proof>,
+    input: PcsAssistClearInput<'_, PCS>,
+    transcript: &mut T,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    PcsAssist: PcsProofAssist<PCS>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let assist_config = config
+        .pcs_assist
+        .as_ref()
+        .ok_or(VerifierError::MissingPcsAssistConfig)?;
+    let assist_proof = assist_proof.ok_or(VerifierError::MissingPcsAssistProof)?;
+    PcsAssist::verify_clear(assist_config, input, assist_proof, transcript).map_err(|error| {
+        VerifierError::PcsAssistVerificationFailed {
+            reason: error.to_string(),
+        }
+    })
+}
+
+#[cfg(feature = "pcs-assist")]
+fn verify_zk_pcs_assist<PCS, T, PcsAssist>(
+    config: &JoltProtocolConfig<PcsAssist::Config>,
+    assist_proof: Option<&PcsAssist::Proof>,
+    input: PcsAssistZkInput<'_, PCS>,
+    transcript: &mut T,
+) -> Result<<PCS as ZkOpeningScheme>::HidingCommitment, VerifierError>
+where
+    PCS: ZkOpeningScheme,
+    PcsAssist: PcsProofAssist<PCS>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let assist_config = config
+        .pcs_assist
+        .as_ref()
+        .ok_or(VerifierError::MissingPcsAssistConfig)?;
+    let assist_proof = assist_proof.ok_or(VerifierError::MissingPcsAssistProof)?;
+    PcsAssist::verify_zk(assist_config, input, assist_proof, transcript).map_err(|error| {
+        VerifierError::PcsAssistVerificationFailed {
+            reason: error.to_string(),
+        }
+    })
 }
 
 fn require_commitment_layout<C>(
@@ -786,5 +808,515 @@ where
                 point: verified.opening_point.clone(),
             })
         }
+    }
+}
+
+#[cfg(all(test, feature = "pcs-assist"))]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert successful verifier results"
+)]
+mod tests {
+    use std::fmt;
+
+    use super::*;
+    use jolt_crypto::Commitment;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_openings::OpeningsError;
+    use jolt_poly::{MultilinearPoly, Polynomial};
+    use jolt_transcript::U64Word;
+    use num_traits::Zero;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestPcs;
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestCommitment(u64);
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestPcsProof(u64);
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestSetup(u64);
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestHidingCommitment(u64);
+
+    impl Commitment for TestPcs {
+        type Output = TestCommitment;
+    }
+
+    impl CommitmentScheme for TestPcs {
+        type Field = Fr;
+        type Proof = TestPcsProof;
+        type ProverSetup = ();
+        type VerifierSetup = TestSetup;
+        type Polynomial = Polynomial<Fr>;
+        type OpeningHint = ();
+        type SetupParams = ();
+
+        fn setup(_params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
+            ((), TestSetup::default())
+        }
+
+        fn verifier_setup(_prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
+            TestSetup::default()
+        }
+
+        fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
+            _poly: &P,
+            _setup: &Self::ProverSetup,
+        ) -> (Self::Output, Self::OpeningHint) {
+            (TestCommitment::default(), ())
+        }
+
+        fn open(
+            _poly: &Self::Polynomial,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _setup: &Self::ProverSetup,
+            _hint: Option<Self::OpeningHint>,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Self::Proof {
+            TestPcsProof::default()
+        }
+
+        fn verify(
+            _commitment: &Self::Output,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _proof: &Self::Proof,
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Result<(), OpeningsError> {
+            Ok(())
+        }
+
+        fn bind_opening_inputs(
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _point: &[Self::Field],
+            _eval: &Self::Field,
+        ) {
+        }
+    }
+
+    impl ZkOpeningScheme for TestPcs {
+        type HidingCommitment = TestHidingCommitment;
+        type Blind = ();
+
+        fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+            poly: &P,
+            setup: &Self::ProverSetup,
+        ) -> (Self::Output, Self::OpeningHint) {
+            Self::commit(poly, setup)
+        }
+
+        fn open_zk(
+            _poly: &Self::Polynomial,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _setup: &Self::ProverSetup,
+            _hint: Self::OpeningHint,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
+            (TestPcsProof::default(), TestHidingCommitment::default(), ())
+        }
+
+        fn verify_zk(
+            _commitment: &Self::Output,
+            _point: &[Self::Field],
+            _proof: &Self::Proof,
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Result<Self::HidingCommitment, OpeningsError> {
+            Ok(TestHidingCommitment::default())
+        }
+
+        fn bind_zk_opening_inputs(
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _point: &[Self::Field],
+            _hiding_commitment: &Self::HidingCommitment,
+        ) {
+        }
+    }
+
+    impl AppendToTranscript for TestHidingCommitment {
+        fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+            transcript.append(&U64Word(self.0));
+        }
+
+        fn transcript_payload_len(&self) -> Option<u64> {
+            Some(32)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestAssistConfig {
+        version: u64,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    enum TestAssistProof {
+        Clear {
+            config: TestAssistConfig,
+            setup: TestSetup,
+            pcs_proof: TestPcsProof,
+            commitment: TestCommitment,
+            point: Vec<Fr>,
+            eval: Fr,
+        },
+        Zk {
+            config: TestAssistConfig,
+            setup: TestSetup,
+            pcs_proof: TestPcsProof,
+            commitment: TestCommitment,
+            point: Vec<Fr>,
+            hiding_commitment: TestHidingCommitment,
+        },
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestAssist;
+
+    #[derive(Debug)]
+    struct TestAssistError(String);
+
+    impl fmt::Display for TestAssistError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl std::error::Error for TestAssistError {}
+
+    impl PcsProofAssist<TestPcs> for TestAssist {
+        type Proof = TestAssistProof;
+        type Config = TestAssistConfig;
+        type Error = TestAssistError;
+
+        fn selected_config() -> Self::Config {
+            selected_assist_config()
+        }
+
+        fn verify_clear<T>(
+            config: &Self::Config,
+            input: PcsAssistClearInput<'_, TestPcs>,
+            proof: &Self::Proof,
+            transcript: &mut T,
+        ) -> Result<(), Self::Error>
+        where
+            T: Transcript<Challenge = Fr>,
+        {
+            let TestAssistProof::Clear {
+                config: expected_config,
+                setup,
+                pcs_proof,
+                commitment,
+                point,
+                eval,
+            } = proof
+            else {
+                return Err(TestAssistError("expected clear assist proof".to_string()));
+            };
+
+            verify_common_inputs(
+                CommonAssistInput {
+                    config,
+                    setup: input.setup,
+                    pcs_proof: input.pcs_proof,
+                    commitment: input.commitment,
+                    point: input.point,
+                },
+                CommonAssistInput {
+                    config: expected_config,
+                    setup,
+                    pcs_proof,
+                    commitment,
+                    point,
+                },
+            )?;
+            if input.eval != *eval {
+                return Err(TestAssistError("clear eval mismatch".to_string()));
+            }
+            transcript.append(&U64Word(11));
+            Ok(())
+        }
+
+        fn verify_zk<T>(
+            config: &Self::Config,
+            input: PcsAssistZkInput<'_, TestPcs>,
+            proof: &Self::Proof,
+            transcript: &mut T,
+        ) -> Result<TestHidingCommitment, Self::Error>
+        where
+            T: Transcript<Challenge = Fr>,
+        {
+            let TestAssistProof::Zk {
+                config: expected_config,
+                setup,
+                pcs_proof,
+                commitment,
+                point,
+                hiding_commitment,
+            } = proof
+            else {
+                return Err(TestAssistError("expected zk assist proof".to_string()));
+            };
+
+            verify_common_inputs(
+                CommonAssistInput {
+                    config,
+                    setup: input.setup,
+                    pcs_proof: input.pcs_proof,
+                    commitment: input.commitment,
+                    point: input.point,
+                },
+                CommonAssistInput {
+                    config: expected_config,
+                    setup,
+                    pcs_proof,
+                    commitment,
+                    point,
+                },
+            )?;
+            transcript.append(&U64Word(22));
+            Ok(*hiding_commitment)
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingTranscript {
+        chunks: Vec<Vec<u8>>,
+        state: [u8; 32],
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(_label: &'static [u8]) -> Self {
+            Self::default()
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.chunks.push(bytes.to_vec());
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::zero()
+        }
+
+        fn state(&self) -> &[u8; 32] {
+            &self.state
+        }
+    }
+
+    #[test]
+    fn pcs_assist_clear_dispatch_passes_final_opening_inputs() {
+        let config = protocol_config();
+        let setup = TestSetup(3);
+        let pcs_proof = TestPcsProof(5);
+        let commitment = TestCommitment(8);
+        let point = vec![fr(1), fr(2), fr(3)];
+        let eval = fr(13);
+        let assist_proof = TestAssistProof::Clear {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            eval,
+        };
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-clear");
+
+        let result = verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+            &config,
+            Some(&assist_proof),
+            PcsAssistClearInput {
+                setup: &setup,
+                pcs_proof: &pcs_proof,
+                commitment: &commitment,
+                point: point.as_slice(),
+                eval,
+            },
+            &mut transcript,
+        );
+
+        assert!(result.is_ok());
+        assert!(transcript_contains_word(&transcript, 11));
+    }
+
+    #[test]
+    fn pcs_assist_zk_dispatch_passes_final_opening_inputs() {
+        let config = protocol_config();
+        let setup = TestSetup(4);
+        let pcs_proof = TestPcsProof(6);
+        let commitment = TestCommitment(9);
+        let point = vec![fr(21), fr(34)];
+        let hiding_commitment = TestHidingCommitment(55);
+        let assist_proof = TestAssistProof::Zk {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            hiding_commitment,
+        };
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-zk");
+
+        let result = verify_zk_pcs_assist::<TestPcs, _, TestAssist>(
+            &config,
+            Some(&assist_proof),
+            PcsAssistZkInput {
+                setup: &setup,
+                pcs_proof: &pcs_proof,
+                commitment: &commitment,
+                point: point.as_slice(),
+            },
+            &mut transcript,
+        )
+        .unwrap();
+
+        assert_eq!(result, hiding_commitment);
+        assert!(transcript_contains_word(&transcript, 22));
+    }
+
+    #[test]
+    fn pcs_assist_dispatch_rejects_missing_config_or_proof() {
+        let setup = TestSetup(3);
+        let pcs_proof = TestPcsProof(5);
+        let commitment = TestCommitment(8);
+        let point = vec![fr(1)];
+        let eval = fr(2);
+        let assist_proof = TestAssistProof::Clear {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            eval,
+        };
+        let mut missing_config = protocol_config();
+        missing_config.pcs_assist = None;
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-missing-config");
+
+        assert!(matches!(
+            verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+                &missing_config,
+                Some(&assist_proof),
+                PcsAssistClearInput {
+                    setup: &setup,
+                    pcs_proof: &pcs_proof,
+                    commitment: &commitment,
+                    point: point.as_slice(),
+                    eval,
+                },
+                &mut transcript,
+            ),
+            Err(VerifierError::MissingPcsAssistConfig)
+        ));
+
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-missing-proof");
+        assert!(matches!(
+            verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+                &protocol_config(),
+                None,
+                PcsAssistClearInput {
+                    setup: &setup,
+                    pcs_proof: &pcs_proof,
+                    commitment: &commitment,
+                    point: point.as_slice(),
+                    eval,
+                },
+                &mut transcript,
+            ),
+            Err(VerifierError::MissingPcsAssistProof)
+        ));
+    }
+
+    #[test]
+    fn pcs_assist_dispatch_surfaces_assist_rejection() {
+        let config = protocol_config();
+        let setup = TestSetup(3);
+        let pcs_proof = TestPcsProof(5);
+        let commitment = TestCommitment(8);
+        let point = vec![fr(1), fr(2)];
+        let assist_proof = TestAssistProof::Clear {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            eval: fr(13),
+        };
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-reject");
+
+        let result = verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+            &config,
+            Some(&assist_proof),
+            PcsAssistClearInput {
+                setup: &setup,
+                pcs_proof: &pcs_proof,
+                commitment: &commitment,
+                point: point.as_slice(),
+                eval: fr(99),
+            },
+            &mut transcript,
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::PcsAssistVerificationFailed { .. })
+        ));
+    }
+
+    struct CommonAssistInput<'a> {
+        config: &'a TestAssistConfig,
+        setup: &'a TestSetup,
+        pcs_proof: &'a TestPcsProof,
+        commitment: &'a TestCommitment,
+        point: &'a [Fr],
+    }
+
+    fn verify_common_inputs(
+        actual: CommonAssistInput<'_>,
+        expected: CommonAssistInput<'_>,
+    ) -> Result<(), TestAssistError> {
+        if actual.config != expected.config {
+            return Err(TestAssistError("assist config mismatch".to_string()));
+        }
+        if actual.setup != expected.setup {
+            return Err(TestAssistError("setup mismatch".to_string()));
+        }
+        if actual.pcs_proof != expected.pcs_proof {
+            return Err(TestAssistError("PCS proof mismatch".to_string()));
+        }
+        if actual.commitment != expected.commitment {
+            return Err(TestAssistError("commitment mismatch".to_string()));
+        }
+        if actual.point != expected.point {
+            return Err(TestAssistError("point mismatch".to_string()));
+        }
+        Ok(())
+    }
+
+    fn selected_assist_config() -> TestAssistConfig {
+        TestAssistConfig { version: 7 }
+    }
+
+    fn protocol_config() -> JoltProtocolConfig<TestAssistConfig> {
+        JoltProtocolConfig::selected_for_zk::<TestPcs, TestAssist>(false)
+    }
+
+    fn fr(value: u64) -> Fr {
+        <Fr as FromPrimitiveInt>::from_u64(value)
+    }
+
+    fn transcript_contains_word(transcript: &RecordingTranscript, word: u64) -> bool {
+        let suffix = word.to_be_bytes();
+        transcript
+            .chunks
+            .iter()
+            .any(|chunk| chunk.ends_with(&suffix))
     }
 }
