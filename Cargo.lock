@@ -2799,6 +2799,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "bincode 2.0.1",
+ "blake2 0.11.0-rc.6",
  "criterion",
  "jolt-field",
  "jolt-poly",
@@ -2833,6 +2834,24 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "jolt-dory-assist-verifier"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-hyrax",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2897,12 +2916,14 @@ dependencies = [
 name = "jolt-hyperkzg"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "criterion",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
+ "memory-stats",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -2922,6 +2943,7 @@ dependencies = [
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-transcript",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
@@ -3145,7 +3167,7 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
- "jolt-wrapper",
+ "jolt-wrapper-verifier",
  "num-bigint",
  "num-traits",
  "rand_chacha 0.3.1",
@@ -3258,12 +3280,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-wrapper"
+name = "jolt-wrapper-verifier"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
+ "jolt-blindfold",
+ "jolt-claims",
+ "jolt-crypto",
  "jolt-field",
+ "jolt-hyperkzg",
+ "jolt-hyrax",
+ "jolt-openings",
+ "jolt-poly",
  "jolt-r1cs",
+ "jolt-sumcheck",
  "jolt-transcript",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]
