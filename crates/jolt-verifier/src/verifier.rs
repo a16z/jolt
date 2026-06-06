@@ -24,6 +24,12 @@ use crate::{
     VerifierError,
 };
 
+#[derive(Debug)]
+pub struct PreStage1VerifierState<T> {
+    pub checked: CheckedInputs,
+    pub transcript: T,
+}
+
 pub fn verify<F, PCS, VC, T, PcsAssist>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -156,6 +162,42 @@ where
     };
 
     Ok(())
+}
+
+pub fn verify_until_stage1<PCS, VC, T, ZkProof, PcsAssist>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    zk: bool,
+) -> Result<PreStage1VerifierState<T>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let config = JoltProtocolConfig::selected_for_zk::<PCS, PcsAssist>(zk);
+    validate_proof_config(&config, proof)?;
+
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        zk,
+    )?;
+    validate_proof_consistency(proof, checked.zk)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
+
+    Ok(PreStage1VerifierState {
+        checked,
+        transcript,
+    })
 }
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]

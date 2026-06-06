@@ -23,7 +23,7 @@ pub(crate) struct CommittedOutputClaimInputs<'a, F: Field, C> {
     pub stage: JoltRelationId,
 }
 
-pub(crate) struct BlindFoldInputs<'a, PCS, VC, ZkProof, PcsAssist>
+pub struct BlindFoldInputs<'a, PCS, VC, ZkProof, PcsAssist>
 where
     PCS: CommitmentScheme,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,

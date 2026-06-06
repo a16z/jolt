@@ -208,7 +208,7 @@ struct SourceValues<F: Field> {
     challenges: Vec<(VerifierChallengeId, F)>,
 }
 
-pub(crate) fn build<PCS, VC, ZkProof, PcsAssist>(
+pub fn build<PCS, VC, ZkProof, PcsAssist>(
     input: BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
 ) -> Result<BlindFoldOutput<PCS::Field, VC::Output>, VerifierError>
 where
