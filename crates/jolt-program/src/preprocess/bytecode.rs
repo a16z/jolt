@@ -3,6 +3,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow};
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldInlineBytecodeMetadata;
 use crate::preprocess::PreprocessingError;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -21,6 +23,8 @@ pub struct BytecodePreprocessing {
     /// Maps each unexpanded instruction address to its virtual bytecode index.
     pub pc_map: BytecodePCMapper,
     pub entry_address: u64,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: Option<FieldInlineBytecodeMetadata>,
 }
 
 impl BytecodePreprocessing {
@@ -41,12 +45,23 @@ impl BytecodePreprocessing {
 
         let code_size = bytecode.len().next_power_of_two().max(2);
         bytecode.resize(code_size, noop_instruction());
+        #[cfg(feature = "field-inline")]
+        let field_inline = if profile.supports_field_inline() {
+            Some(FieldInlineBytecodeMetadata::from_bytecode(
+                &bytecode,
+                profile.fingerprint(),
+            )?)
+        } else {
+            None
+        };
 
         Ok(Self {
             code_size,
             bytecode,
             pc_map,
             entry_address,
+            #[cfg(feature = "field-inline")]
+            field_inline,
         })
     }
 
@@ -334,5 +349,93 @@ mod tests {
             err,
             PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::MUL)
         );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn fr_off_preprocessing_rejects_field_inline_rows() {
+        let mut row = instruction(0x8000_0000, None);
+        row.instruction_kind = JoltInstructionKind::FIELD_MUL;
+        row.operands = NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        };
+
+        let err =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
+        assert_eq!(
+            err,
+            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::FIELD_MUL)
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn fr_on_preprocessing_builds_clean_metadata_for_field_rows() {
+        let mut row = instruction(0x8000_0000, None);
+        row.instruction_kind = JoltInstructionKind::FIELD_MUL;
+        row.operands = NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        };
+
+        let preprocessing = BytecodePreprocessing::preprocess(
+            vec![row],
+            0x8000_0000,
+            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap();
+        let metadata = preprocessing.field_inline.as_ref().unwrap();
+
+        assert_eq!(metadata.rows.len(), preprocessing.bytecode.len());
+        assert!(!metadata.rows[0].active);
+        assert!(metadata.rows[1].active);
+        assert_eq!(metadata.rows[1].op, Some(jolt_riscv::FieldInlineOp::Mul));
+        assert_eq!(
+            metadata.rows[1].rd.map(jolt_riscv::FieldRegister::index),
+            Some(1)
+        );
+        assert_eq!(
+            metadata.rows[1].rs1.map(jolt_riscv::FieldRegister::index),
+            Some(2)
+        );
+        assert_eq!(
+            metadata.rows[1].rs2.map(jolt_riscv::FieldRegister::index),
+            Some(3)
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_metadata_rejects_out_of_bounds_field_registers() {
+        let mut row = instruction(0x8000_0000, None);
+        row.instruction_kind = JoltInstructionKind::FIELD_ADD;
+        row.operands = NormalizedOperands {
+            rd: Some(jolt_riscv::FIELD_REGISTER_COUNT),
+            rs1: Some(1),
+            rs2: Some(2),
+            imm: 0,
+        };
+
+        let err = BytecodePreprocessing::preprocess(
+            vec![row],
+            0x8000_0000,
+            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            PreprocessingError::InvalidFieldInlineMetadata(
+                crate::field_inline::FieldInlineMetadataError::InvalidFieldRegister {
+                    operand: "rd",
+                    register
+                }
+            ) if register == jolt_riscv::FIELD_REGISTER_COUNT
+        ));
     }
 }

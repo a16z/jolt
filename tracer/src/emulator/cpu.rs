@@ -93,11 +93,44 @@ use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
 use jolt_platform::{
     JOLT_CYCLE_MARKER_END, JOLT_CYCLE_MARKER_START, JOLT_PRINT_LINE, JOLT_PRINT_STRING,
 };
+#[cfg(feature = "field-inline")]
+use jolt_program::field_inline::FieldEncodedValue;
 #[cfg(feature = "std")]
 use std::collections::VecDeque;
 
 const CSR_CAPACITY: usize = 4096;
 const MAX_CALL_STACK_DEPTH: usize = 32;
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug)]
+pub struct FieldRegisterFile {
+    registers: [FieldEncodedValue; jolt_riscv::FIELD_REGISTER_COUNT as usize],
+}
+
+#[cfg(feature = "field-inline")]
+impl Default for FieldRegisterFile {
+    fn default() -> Self {
+        Self {
+            registers: [FieldEncodedValue::zero(); jolt_riscv::FIELD_REGISTER_COUNT as usize],
+        }
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl FieldRegisterFile {
+    pub fn read(&self, register: u8) -> FieldEncodedValue {
+        self.registers
+            .get(register as usize)
+            .copied()
+            .unwrap_or_else(FieldEncodedValue::zero)
+    }
+
+    pub fn write(&mut self, register: u8, value: FieldEncodedValue) {
+        if let Some(slot) = self.registers.get_mut(register as usize) {
+            *slot = value;
+        }
+    }
+}
 
 const CSR_USTATUS_ADDRESS: u16 = 0x000;
 const CSR_FFLAGS_ADDRESS: u16 = 0x001;
@@ -183,6 +216,8 @@ pub struct Cpu {
     call_stack: VecDeque<CallFrame>,
     /// Advice tape for runtime advice system
     pub advice_tape: AdviceTape,
+    #[cfg(feature = "field-inline")]
+    pub field_registers: FieldRegisterFile,
 }
 
 /// Width of an LR/SC reservation set. Ordered `Word < Doubleword` so
@@ -348,6 +383,8 @@ impl Cpu {
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
             advice_tape: AdviceTape::new(),
+            #[cfg(feature = "field-inline")]
+            field_registers: FieldRegisterFile::default(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -1139,6 +1176,8 @@ impl Cpu {
             vr_allocator: self.vr_allocator.clone(),
             call_stack: self.call_stack.clone(),
             advice_tape: self.advice_tape.clone(),
+            #[cfg(feature = "field-inline")]
+            field_registers: self.field_registers.clone(),
         }
     }
 }

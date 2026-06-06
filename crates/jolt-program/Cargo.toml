@@ -16,10 +16,12 @@ default = ["std", "serialization"]
 serialization = ["dep:ark-serialize", "dep:serde", "jolt-riscv/serialization"]
 std = ["common/std"]
 image = ["dep:object"]
+field-inline = ["jolt-riscv/field-inline", "jolt-lookup-tables/field-inline"]
 
 [dependencies]
 ark-serialize = { workspace = true, optional = true }
 common = { workspace = true, default-features = false }
+jolt-lookup-tables = { workspace = true }
 jolt-riscv = { workspace = true, default-features = false }
 object = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
