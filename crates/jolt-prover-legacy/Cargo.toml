@@ -58,7 +58,13 @@ field-inline = [
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
-transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
+# D5b (DEV-43): decoupled from `challenge-254-bit` now that the legacy
+# `transcripts/poseidon.rs` (whose `transmute_copy` hard-assumed the 32-byte
+# `Mont254BitChallenge`) is deleted. Poseidon now uses the uniform 16-byte
+# `MontU128Challenge` like Blake2b/Keccak; the spongefish path squeezes a
+# 128-bit Poseidon challenge via `low_128_bits` regardless of the field's
+# `Challenge` width.
+transcript-poseidon = ["dep:light-poseidon"]
 transcript-keccak = []
 transcript-blake2b = []
 # Gates `zkvm::transpilable_verifier` (the symbolic on-chain-verifier generator

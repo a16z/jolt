@@ -336,10 +336,12 @@ where
     reason = "Fiat-Shamir preamble mirrors protocol inputs"
 )]
 ///
-/// The statement is `absorb`'d (public_message) on both prover and verifier — it is
-/// recomputable by the verifier, so it is not shipped in the NARG. (Milestone: this
-/// scattered absorb is the binding; folding it into `instance = Blake2b(statement)`
-/// is a follow-up — see DEV-19.)
+/// **No longer on the production prove/verify path.** The public statement is now
+/// bound via [`fiat_shamir_instance`] (`instance = Blake2b(statement)`, used as the
+/// spongefish domain-separator instance) — see DEV-38. This scatter-absorb helper is
+/// retained as a direct-transcript binding helper. Its fields and order mirror
+/// [`fiat_shamir_instance`] exactly, so the two
+/// stay interchangeable bindings of the same statement.
 pub fn fiat_shamir_preamble<F: JoltField>(
     program_io: &JoltDevice,
     ram_K: usize,
@@ -368,6 +370,67 @@ pub fn fiat_shamir_preamble<F: JoltField>(
     transcript.absorb(&(one_hot_config.log_k_chunk as u64));
     transcript.absorb(&(one_hot_config.lookups_ra_virtual_log_k_chunk as u64));
     transcript.absorb(&(dory_layout as u64));
+}
+
+/// The 32-byte Fiat-Shamir `instance` binding the public statement
+/// (`Blake2b(CanonicalSerialize(statement))`, per @mmaker's #1455 mandate).
+///
+/// The transcript is constructed with this digest as its spongefish `instance`,
+/// which **replaces** the per-param [`fiat_shamir_preamble`] absorbs: binding the
+/// statement once at the domain-separator boundary instead of scattering it.
+///
+/// **O1 (soundness-critical):** the digest must be byte-identical on prover and
+/// verifier. Both sides call this one helper over the same statement params (the
+/// verifier recomputes them from the proof's public tail), serialized in a fixed
+/// order — mirroring [`fiat_shamir_preamble`]'s order exactly.
+#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::expect_used,
+    reason = "CanonicalSerialize into a Vec is infallible"
+)]
+pub fn fiat_shamir_instance(
+    program_io: &JoltDevice,
+    ram_K: usize,
+    trace_length: usize,
+    entry_address: u64,
+    rw_config: &ReadWriteConfig,
+    one_hot_config: &OneHotConfig,
+    dory_layout: DoryLayout,
+    preprocessing_digest: &[u8; 32],
+) -> [u8; 32] {
+    use ark_serialize::CanonicalSerialize;
+    use blake2::digest::consts::U32;
+    use blake2::{Blake2b, Digest};
+
+    fn push<T: CanonicalSerialize>(buf: &mut Vec<u8>, value: &T) {
+        value
+            .serialize_compressed(buf)
+            .expect("CanonicalSerialize into a Vec is infallible");
+    }
+
+    let mut buf = Vec::new();
+    push(&mut buf, &preprocessing_digest.to_vec());
+    push(&mut buf, &program_io.memory_layout.max_input_size);
+    push(&mut buf, &program_io.memory_layout.max_output_size);
+    push(&mut buf, &program_io.memory_layout.heap_size);
+    push(&mut buf, &program_io.inputs);
+    push(&mut buf, &program_io.outputs);
+    push(&mut buf, &(program_io.panic as u64));
+    push(&mut buf, &(ram_K as u64));
+    push(&mut buf, &(trace_length as u64));
+    push(&mut buf, &entry_address);
+    push(&mut buf, &(rw_config.ram_rw_phase1_num_rounds as u64));
+    push(&mut buf, &(rw_config.ram_rw_phase2_num_rounds as u64));
+    push(&mut buf, &(rw_config.registers_rw_phase1_num_rounds as u64));
+    push(&mut buf, &(rw_config.registers_rw_phase2_num_rounds as u64));
+    push(&mut buf, &(one_hot_config.log_k_chunk as u64));
+    push(
+        &mut buf,
+        &(one_hot_config.lookups_ra_virtual_log_k_chunk as u64),
+    );
+    push(&mut buf, &(dory_layout as u64));
+
+    Blake2b::<U32>::digest(&buf).into()
 }
 
 // The per-sponge variance lives entirely in `RV64IMACSponge` (cfg-gated above), so
