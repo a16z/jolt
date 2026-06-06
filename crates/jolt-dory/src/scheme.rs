@@ -29,6 +29,7 @@ use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVer
 
 pub(crate) type ArkFr = dory::backends::arkworks::ArkFr;
 pub(crate) type ArkG1 = dory::backends::arkworks::ArkG1;
+pub(crate) type ArkG2 = dory::backends::arkworks::ArkG2;
 pub(crate) type ArkGT = dory::backends::arkworks::ArkGT;
 type InnerBN254 = dory::backends::arkworks::BN254;
 
@@ -75,6 +76,12 @@ pub(crate) fn ark_to_jolt_g1_vec(v: Vec<ArkG1>) -> Vec<Bn254G1> {
 #[inline]
 pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     // SAFETY: Bn254G1 and ArkG1 are both repr(transparent) over G1Projective.
+    unsafe { std::mem::transmute(ark) }
+}
+
+#[inline]
+pub(crate) fn ark_to_jolt_g2(ark: ArkG2) -> jolt_crypto::Bn254G2 {
+    // SAFETY: Bn254G2 and ArkG2 are both repr(transparent) over G2Projective.
     unsafe { std::mem::transmute(ark) }
 }
 
