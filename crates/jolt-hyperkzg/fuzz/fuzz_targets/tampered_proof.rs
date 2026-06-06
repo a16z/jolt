@@ -35,7 +35,7 @@ fuzz_target!(|data: &[u8]| {
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
 
-    let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+    let (commitment, _) = TestScheme::commit(poly.evaluations(), &pk);
 
     let mut pt = Blake2bTranscript::new(b"fuzz-tamper");
     let proof =
@@ -46,13 +46,19 @@ fuzz_target!(|data: &[u8]| {
     match data[0] % 3 {
         0 => {
             // Tamper evaluation entries (exercises folding consistency checks)
-            let tamper_row = (data[1] as usize) % tampered.v.len();
-            let tamper_col = (data[2] as usize) % tampered.v[tamper_row].len();
+            let Some(v) = tampered.clear_evaluations_mut() else {
+                return;
+            };
+            let proof_v = proof
+                .clear_evaluations()
+                .expect("transparent proof must have clear evaluations");
+            let tamper_row = (data[1] as usize) % v.len();
+            let tamper_col = (data[2] as usize) % v[tamper_row].len();
             let tamper_val = Fr::from_bytes(&data[3..]);
-            if tamper_val == proof.v[tamper_row][tamper_col] {
+            if tamper_val == proof_v[tamper_row][tamper_col] {
                 return;
             }
-            tampered.v[tamper_row][tamper_col] = tamper_val;
+            v[tamper_row][tamper_col] = tamper_val;
         }
         1 => {
             // Tamper intermediate commitments (exercises pairing check)

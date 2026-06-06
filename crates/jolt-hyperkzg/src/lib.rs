@@ -18,11 +18,24 @@
 //!    - Phase 3: Batch KZG opening of all intermediate polynomials at three points.
 //! 3. **Verify**: Check evaluation consistency across the three evaluation vectors,
 //!    then batch KZG pairing check.
+//!
+//! # SRS handling
+//!
+//! HyperKZG uses a structured reference string with a KZG trapdoor `beta`.
+//! Production runtimes should import ceremony-generated files named
+//! `hyperkzg_{k}.srs`, where `k` is the exponent for `2^k` supported
+//! evaluations. `setup` and `setup_from_secret` are for tests or trusted setup
+//! tooling; live proving/verifying code should use `read_srs_file` or
+//! `read_srs_from_dir` so it never observes `beta`.
 
 pub mod error;
 pub mod kzg;
 pub mod scheme;
+mod setup;
 pub mod types;
 
 pub use scheme::HyperKZGScheme;
-pub use types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup};
+pub use types::{
+    HyperKZGCommitment, HyperKZGOpeningHint, HyperKZGProof, HyperKZGProofKind,
+    HyperKZGProofPayload, HyperKZGProverSetup, HyperKZGSrsKind, HyperKZGVerifierSetup,
+};

@@ -40,7 +40,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+    let (commitment, _) = TestScheme::commit(poly.evaluations(), &pk);
 
     let mut pt = Blake2bTranscript::new(b"fuzz-wrong-eval");
     let proof =
