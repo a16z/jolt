@@ -6,6 +6,7 @@
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 
 use dory::backends::arkworks::ArkG1;
+use jolt_crypto::{Bn254G1, DeriveSetup, Pedersen, PedersenSetup, VectorCommitment};
 use jolt_dory::DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_openings::{
@@ -378,6 +379,31 @@ fn zk_round_trip_both_transcripts() {
     let num_vars = 4;
     zk_round_trip::<Blake2bTranscript>(num_vars, 1200, b"zk-blake2b-rt");
     zk_round_trip::<KeccakTranscript>(num_vars, 1200, b"zk-keccak-rt");
+}
+
+#[test]
+fn zk_opening_eval_commitment_opens_with_returned_blinding() {
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(904);
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (_commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
+    let mut transcript = Blake2bTranscript::new(b"zk-eval-commitment");
+    let (_proof, eval_commitment, blinding) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut transcript);
+    let vc_setup = <PedersenSetup<Bn254G1> as DeriveSetup<_>>::derive(&prover_setup, 1);
+
+    assert!(Pedersen::<Bn254G1>::verify(
+        &vc_setup,
+        &eval_commitment,
+        &[eval],
+        &blinding
+    ));
 }
 
 #[test]

@@ -4,11 +4,12 @@
 //! - [`AdditivelyHomomorphic`] — linear combination of commitments.
 //! - [`StreamingCommitment`] — chunked commitment without full materialization.
 //! - [`ZkOpeningScheme`] — zero-knowledge commitments and opening proofs.
+//! - [`ZkStreamingCommitment`] — chunked zero-knowledge commitments.
 
 use std::fmt::Debug;
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::Field;
+use jolt_field::{Field, FromPrimitiveInt};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
@@ -47,6 +48,20 @@ pub trait CommitmentScheme: Commitment {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof;
 
+    fn open_poly<P: MultilinearPoly<Self::Field>>(
+        poly: &P,
+        point: &[Self::Field],
+        eval: Self::Field,
+        setup: &Self::ProverSetup,
+        hint: Option<Self::OpeningHint>,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> Self::Proof {
+        let mut evals = Vec::with_capacity(1usize << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| evals.extend_from_slice(row));
+        let dense = Self::Polynomial::from(evals);
+        Self::open(&dense, point, eval, setup, hint, transcript)
+    }
+
     fn verify(
         commitment: &Self::Output,
         point: &[Self::Field],
@@ -81,6 +96,8 @@ where
 /// Incremental commitment without full materialization.
 pub trait StreamingCommitment: CommitmentScheme {
     type PartialCommitment: Clone + Send + Sync;
+    type OneHotChunkCommitment: Clone + Send + Sync;
+    type OneHotStreamContext: Send + Sync;
 
     fn begin(setup: &Self::ProverSetup) -> Self::PartialCommitment;
 
@@ -90,7 +107,80 @@ pub trait StreamingCommitment: CommitmentScheme {
         setup: &Self::ProverSetup,
     );
 
+    fn feed_zeros(
+        partial: &mut Self::PartialCommitment,
+        row_width: usize,
+        rows: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        if rows == 0 {
+            return;
+        }
+        let row = vec![Self::Field::from_u64(0); row_width];
+        for _ in 0..rows {
+            Self::feed(partial, &row, setup);
+        }
+    }
+
+    fn feed_u64(partial: &mut Self::PartialCommitment, chunk: &[u64], setup: &Self::ProverSetup) {
+        let values: Vec<Self::Field> = chunk
+            .iter()
+            .copied()
+            .map(<Self::Field as FromPrimitiveInt>::from_u64)
+            .collect();
+        Self::feed(partial, &values, setup);
+    }
+
+    fn feed_i128(partial: &mut Self::PartialCommitment, chunk: &[i128], setup: &Self::ProverSetup) {
+        let values: Vec<Self::Field> = chunk
+            .iter()
+            .copied()
+            .map(<Self::Field as FromPrimitiveInt>::from_i128)
+            .collect();
+        Self::feed(partial, &values, setup);
+    }
+
+    fn begin_one_hot_column_major_stream(
+        setup: &Self::ProverSetup,
+        row_width: usize,
+    ) -> Self::OneHotStreamContext;
+
+    fn process_one_hot_chunk(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunk: &[Option<usize>],
+    ) -> Self::OneHotChunkCommitment;
+
     fn finish(partial: Self::PartialCommitment, setup: &Self::ProverSetup) -> Self::Output;
+
+    fn finish_with_hint(
+        partial: Self::PartialCommitment,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint) {
+        (Self::finish(partial, setup), Self::OpeningHint::default())
+    }
+
+    fn finish_one_hot_column_major_chunks(
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Self::OneHotChunkCommitment],
+    ) -> (Self::Output, Self::OpeningHint);
+}
+
+/// Incremental commitment support for schemes whose hiding/ZK commitment mode
+/// is distinct from the transparent streaming path.
+pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
+    fn finish_zk_with_hint(
+        partial: Self::PartialCommitment,
+        setup: &Self::ProverSetup,
+    ) -> (Self::Output, Self::OpeningHint);
+
+    fn finish_zk_one_hot_column_major_chunks(
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Self::OneHotChunkCommitment],
+    ) -> (Self::Output, Self::OpeningHint);
 }
 
 /// Opening proofs that hide the evaluation behind a commitment.
@@ -123,6 +213,20 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
+
+    fn open_zk_poly<P: MultilinearPoly<Self::Field>>(
+        poly: &P,
+        point: &[Self::Field],
+        eval: Self::Field,
+        setup: &Self::ProverSetup,
+        hint: Self::OpeningHint,
+        transcript: &mut impl Transcript<Challenge = Self::Field>,
+    ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
+        let mut evals = Vec::with_capacity(1usize << poly.num_vars());
+        poly.for_each_row(poly.num_vars(), &mut |_, row| evals.extend_from_slice(row));
+        let dense = Self::Polynomial::from(evals);
+        Self::open_zk(&dense, point, eval, setup, hint, transcript)
+    }
 
     /// Verify a ZK opening proof and return the hiding commitment to the
     /// evaluation that the proof binds internally.

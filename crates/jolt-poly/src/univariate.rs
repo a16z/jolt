@@ -186,7 +186,9 @@ impl<F: Field> UnivariatePoly<F> {
             self.coefficients.len() >= 2,
             "cannot compress a polynomial of degree < 1"
         );
-        let coeffs = [&self.coefficients[..1], &self.coefficients[2..]].concat();
+        let mut coeffs = Vec::with_capacity(self.coefficients.len() - 1);
+        coeffs.push(self.coefficients[0]);
+        coeffs.extend_from_slice(&self.coefficients[2..]);
         debug_assert_eq!(coeffs.len() + 1, self.coefficients.len());
         crate::CompressedPoly::new(coeffs)
     }
@@ -195,8 +197,12 @@ impl<F: Field> UnivariatePoly<F> {
     /// on the Vandermonde system. Equivalent to `interpolate_over_integers` but uses a
     /// direct matrix solve instead of the Lagrange formula.
     pub fn from_evals(evals: &[F]) -> Self {
-        Self {
-            coefficients: gaussian_elimination_vandermonde(evals),
+        match evals.len() {
+            3 => Self::from_evals_degree2(evals[0], evals[1], evals[2]),
+            4 => Self::from_evals_degree3(evals[0], evals[1], evals[2], evals[3]),
+            _ => Self {
+                coefficients: gaussian_elimination_vandermonde(evals),
+            },
         }
     }
 
@@ -204,10 +210,52 @@ impl<F: Field> UnivariatePoly<F> {
     ///
     /// Recovers `p(1) = hint - p(0)` and then interpolates over the full set `{0, 1, ..., n-1}`.
     pub fn from_evals_and_hint(hint: F, evals: &[F]) -> Self {
-        let mut full = evals.to_vec();
-        let eval_at_1 = hint - full[0];
-        full.insert(1, eval_at_1);
-        Self::from_evals(&full)
+        match evals.len() {
+            2 => {
+                let e0 = evals[0];
+                let e1 = hint - e0;
+                let e2 = evals[1];
+                Self::from_evals_degree2(e0, e1, e2)
+            }
+            3 => {
+                let e0 = evals[0];
+                let e1 = hint - e0;
+                let e2 = evals[1];
+                let e3 = evals[2];
+                Self::from_evals_degree3(e0, e1, e2, e3)
+            }
+            _ => {
+                let mut full = Vec::with_capacity(evals.len() + 1);
+                full.push(evals[0]);
+                full.push(hint - evals[0]);
+                full.extend_from_slice(&evals[1..]);
+                Self::from_evals(&full)
+            }
+        }
+    }
+
+    #[expect(clippy::expect_used)]
+    fn from_evals_degree2(e0: F, e1: F, e2: F) -> Self {
+        let two_inv = F::from_u64(2).inverse().expect("2 is invertible");
+        let c0 = e0;
+        let c2 = (e0 - e1 - e1 + e2) * two_inv;
+        let c1 = e1 - e0 - c2;
+        Self {
+            coefficients: vec![c0, c1, c2],
+        }
+    }
+
+    #[expect(clippy::expect_used)]
+    fn from_evals_degree3(e0: F, e1: F, e2: F, e3: F) -> Self {
+        let two_inv = F::from_u64(2).inverse().expect("2 is invertible");
+        let six_inv = F::from_u64(6).inverse().expect("6 is invertible");
+        let c0 = e0;
+        let c3 = (e3 - e0 + (e1 - e2) * F::from_u64(3)) * six_inv;
+        let c2 = (e0 - e1 - e1 + e2) * two_inv - c3 - c3 - c3;
+        let c1 = e1 - e0 - c2 - c3;
+        Self {
+            coefficients: vec![c0, c1, c2, c3],
+        }
     }
 
     /// Interpolates from evaluations at `[0, 1, ..., degree-1, ∞]`.

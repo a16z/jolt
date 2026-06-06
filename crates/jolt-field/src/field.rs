@@ -8,7 +8,7 @@ use std::ops::Mul;
 use crate::{
     CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize, FixedBytes,
     FromPrimitiveInt, MulPow2, MulPrimitiveInt, RandomSampling, ReducingBytes, RingCore,
-    TranscriptChallenge, WithAccumulator,
+    TranscriptChallenge, WithAccumulator, WithSignedProductAccumulator, WithSmallScalarAccumulator,
 };
 
 /// Prime field element abstraction used throughout Jolt.
@@ -41,6 +41,8 @@ pub trait Field:
     + CanonicalU64
     + RandomSampling
     + WithAccumulator
+    + WithSmallScalarAccumulator
+    + WithSignedProductAccumulator
     + MulPow2
     + MulPrimitiveInt
     + Serialize

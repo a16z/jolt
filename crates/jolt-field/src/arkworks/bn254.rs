@@ -6,6 +6,7 @@ use crate::{
     AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
     FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
     RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
+    WithSignedProductAccumulator, WithSmallScalarAccumulator,
 };
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
@@ -444,6 +445,14 @@ impl FromPrimitiveInt for Fr {
 
 impl WithAccumulator for Fr {
     type Accumulator = super::wide_accumulator::WideAccumulator;
+}
+
+impl WithSmallScalarAccumulator for Fr {
+    type SmallScalarAccumulator = super::small_scalar_accumulator::FrSmallScalarAccumulator;
+}
+
+impl WithSignedProductAccumulator for Fr {
+    type SignedProductAccumulator = super::signed_product_accumulator::FrSignedProductAccumulator;
 }
 
 impl crate::MulPow2 for Fr {}

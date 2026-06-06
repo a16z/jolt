@@ -124,6 +124,23 @@ pub trait MultilinearPoly<F: Field>: Send + Sync {
         false
     }
 
+    /// Returns the one-hot address-space size `K` when this polynomial exposes
+    /// its sparse row representation.
+    fn one_hot_k(&self) -> Option<usize> {
+        None
+    }
+
+    /// Returns one optional hot column per cycle row when this polynomial
+    /// exposes its sparse row representation.
+    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
+        None
+    }
+
+    /// Returns the coefficient order used by the sparse one-hot representation.
+    fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
+        None
+    }
+
     /// Iterates over positions whose value is exactly `F::one()`.
     ///
     /// Only implementations that return true from [`is_one_hot`](Self::is_one_hot)

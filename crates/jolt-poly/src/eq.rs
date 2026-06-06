@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::math::Math;
 use crate::mle::MleError;
-use crate::thread::unsafe_allocate_zero_vec;
 
 /// Equality polynomial $\widetilde{eq}(x, r) = \prod_{i=1}^{n}(r_i x_i + (1-r_i)(1-x_i))$.
 ///
@@ -18,6 +17,10 @@ use crate::thread::unsafe_allocate_zero_vec;
 /// This polynomial is fundamental to sumcheck-based protocols where it selects
 /// a single evaluation from a multilinear polynomial:
 /// $$f(r) = \sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, r)$$
+#[expect(
+    clippy::unsafe_derive_deserialize,
+    reason = "unsafe helpers are allocation-only and do not affect deserialized invariants"
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct EqPolynomial<F: Field> {
@@ -188,11 +191,73 @@ impl<F: Field> EqPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: Mul<C, Output = F> + SubAssign<F>,
     {
-        if r.len() <= 16 {
+        if r.len() < 16 {
             Self::evals_serial(r, scaling_factor)
         } else {
             Self::evals_parallel(r, scaling_factor)
         }
+    }
+
+    /// Computes `eq(r, k)` over an aligned power-of-two block of Boolean indices.
+    ///
+    /// Returns values for `k = start_index..start_index + block_size` using the
+    /// same big-endian index convention as [`Self::evals`], but only
+    /// materializes the suffix table needed for the aligned block.
+    pub fn evals_for_aligned_block<C>(r: &[C], start_index: usize, block_size: usize) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        assert!(block_size.is_power_of_two());
+        assert_ne!(block_size, 0);
+        assert_eq!(start_index % block_size, 0);
+
+        let total_vars = r.len();
+        let block_vars = block_size.log_2();
+        assert!(block_vars <= total_vars);
+
+        let prefix_len = total_vars - block_vars;
+        let prefix_value = start_index >> block_vars;
+        let mut prefix_scale = F::one();
+        for (index, r_i) in r.iter().take(prefix_len).enumerate() {
+            let bit = (prefix_value >> (prefix_len - 1 - index)) & 1;
+            let r_i = (*r_i).into();
+            prefix_scale *= if bit == 1 { r_i } else { F::one() - r_i };
+        }
+
+        Self::evals(&r[prefix_len..], Some(prefix_scale))
+    }
+
+    /// Chooses the largest aligned power-of-two block fitting the remaining range.
+    ///
+    /// Returns the block length and its eq table. This covers contiguous ranges
+    /// with a small sequence of aligned-block tables without building the full
+    /// domain table.
+    pub fn evals_for_max_aligned_block<C>(
+        r: &[C],
+        start_index: usize,
+        remaining_len: usize,
+    ) -> (usize, Vec<F>)
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        assert!(remaining_len > 0);
+        let max_len_pow = if remaining_len.is_power_of_two() {
+            remaining_len
+        } else {
+            remaining_len.next_power_of_two() >> 1
+        };
+        let align_pow = if start_index == 0 {
+            1usize << r.len()
+        } else {
+            1usize << start_index.trailing_zeros()
+        };
+        let block_size = max_len_pow.min(align_pow);
+        (
+            block_size,
+            Self::evals_for_aligned_block(r, start_index, block_size),
+        )
     }
 
     /// Serial eq table construction with optional scaling.
@@ -225,17 +290,41 @@ impl<F: Field> EqPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: Mul<C, Output = F> + SubAssign<F>,
     {
-        let mut evals: Vec<Vec<F>> = (0..=r.len())
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
+        let mut evals = Vec::with_capacity(r.len() + 1);
+        evals.push(vec![scaling_factor.unwrap_or(F::one())]);
         let mut size = 1;
         for j in 0..r.len() {
-            size *= 2;
-            for i in (0..size).rev().step_by(2) {
-                let scalar = evals[j][i / 2];
-                evals[j + 1][i] = scalar * r[j];
-                evals[j + 1][i - 1] = scalar - evals[j + 1][i];
+            let next_size = size * 2;
+            let mut next = uninit_field_vec(next_size);
+            #[cfg(feature = "parallel")]
+            {
+                if size >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    next.par_chunks_mut(2)
+                        .zip(evals[j].par_iter())
+                        .for_each(|(pair, &scalar)| {
+                            pair[1] = scalar * r[j];
+                            pair[0] = scalar - pair[1];
+                        });
+                } else {
+                    for i in (0..next_size).rev().step_by(2) {
+                        let scalar = evals[j][i / 2];
+                        next[i] = scalar * r[j];
+                        next[i - 1] = scalar - next[i];
+                    }
+                }
             }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                for i in (0..next_size).rev().step_by(2) {
+                    let scalar = evals[j][i / 2];
+                    next[i] = scalar * r[j];
+                    next[i - 1] = scalar - next[i];
+                }
+            }
+            evals.push(next);
+            size = next_size;
         }
         evals
     }
@@ -249,19 +338,45 @@ impl<F: Field> EqPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: Mul<C, Output = F>,
     {
-        let rev_r: Vec<_> = r.iter().rev().collect();
-        let mut evals: Vec<Vec<F>> = (0..=r.len())
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
+        let rev_r = r.iter().rev().copied().collect::<Vec<_>>();
+        let mut evals = Vec::with_capacity(r.len() + 1);
+        evals.push(vec![scaling_factor.unwrap_or(F::one())]);
         let mut size = 1;
         for j in 0..r.len() {
-            for i in 0..size {
-                let scalar = evals[j][i];
-                let multiple = 1 << j;
-                evals[j + 1][i + multiple] = scalar * *rev_r[j];
-                evals[j + 1][i] = scalar - evals[j + 1][i + multiple];
+            let next_size = size * 2;
+            let mut next = uninit_field_vec(next_size);
+            let (next_left, next_right) = next.split_at_mut(size);
+            #[cfg(feature = "parallel")]
+            {
+                if size >= PAR_THRESHOLD {
+                    use rayon::prelude::*;
+                    next_left
+                        .par_iter_mut()
+                        .zip(next_right.par_iter_mut())
+                        .zip(evals[j].par_iter())
+                        .for_each(|((left, right), &scalar)| {
+                            *right = scalar * rev_r[j];
+                            *left = scalar - *right;
+                        });
+                } else {
+                    for i in 0..size {
+                        let scalar = evals[j][i];
+                        next_right[i] = scalar * rev_r[j];
+                        next_left[i] = scalar - next_right[i];
+                    }
+                }
             }
-            size *= 2;
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                for i in 0..size {
+                    let scalar = evals[j][i];
+                    next_right[i] = scalar * rev_r[j];
+                    next_left[i] = scalar - next_right[i];
+                }
+            }
+            evals.push(next);
+            size = next_size;
         }
         evals
     }
@@ -278,7 +393,12 @@ impl<F: Field> EqPolynomial<F> {
         F: Mul<C, Output = F> + SubAssign<F>,
     {
         let final_size = r.len().pow2();
-        let mut evals: Vec<F> = unsafe_allocate_zero_vec(final_size);
+        let mut evals = Vec::with_capacity(final_size);
+        // SAFETY: `F` is `Copy` and the butterfly writes every position before
+        // any uninitialized element is read.
+        unsafe {
+            evals.set_len(final_size);
+        }
         let mut size = 1;
         evals[0] = scaling_factor.unwrap_or(F::one());
         let mut i = r.len();
@@ -294,7 +414,7 @@ impl<F: Field> EqPolynomial<F> {
             let (q3, _) = rest.split_at_mut(size);
 
             #[cfg(feature = "parallel")]
-            {
+            if size >= PAR_THRESHOLD {
                 use rayon::prelude::*;
                 q0.par_iter_mut()
                     .zip(q1.par_iter_mut())
@@ -309,10 +429,7 @@ impl<F: Field> EqPolynomial<F> {
                         *q3_out = with_lo * r_hi;
                         *q1_out = with_lo - *q3_out;
                     });
-            }
-
-            #[cfg(not(feature = "parallel"))]
-            {
+            } else {
                 for j in 0..size {
                     let x_val = q0[j];
                     let with_lo = x_val * r_lo;
@@ -325,6 +442,18 @@ impl<F: Field> EqPolynomial<F> {
                 }
             }
 
+            #[cfg(not(feature = "parallel"))]
+            for j in 0..size {
+                let x_val = q0[j];
+                let with_lo = x_val * r_lo;
+                let without_lo = x_val - with_lo;
+
+                q2[j] = without_lo * r_hi;
+                q0[j] = without_lo - q2[j];
+                q3[j] = with_lo * r_hi;
+                q1[j] = with_lo - q3[j];
+            }
+
             size *= 4;
         }
 
@@ -333,7 +462,7 @@ impl<F: Field> EqPolynomial<F> {
             let (evals_right, _) = evals_right.split_at_mut(size);
 
             #[cfg(feature = "parallel")]
-            {
+            if size >= PAR_THRESHOLD {
                 use rayon::prelude::*;
                 evals_left
                     .par_iter_mut()
@@ -342,14 +471,17 @@ impl<F: Field> EqPolynomial<F> {
                         *y = *x * *r;
                         *x -= *y;
                     });
-            }
-
-            #[cfg(not(feature = "parallel"))]
-            {
+            } else {
                 for i in 0..size {
                     evals_right[i] = evals_left[i] * *r;
                     evals_left[i] -= evals_right[i];
                 }
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            for i in 0..size {
+                evals_right[i] = evals_left[i] * *r;
+                evals_left[i] -= evals_right[i];
             }
 
             size *= 2;
@@ -357,6 +489,19 @@ impl<F: Field> EqPolynomial<F> {
 
         evals
     }
+}
+
+#[expect(
+    clippy::uninit_vec,
+    reason = "callers write every field element before exposing the vector"
+)]
+fn uninit_field_vec<F: Field>(len: usize) -> Vec<F> {
+    let mut values = Vec::with_capacity(len);
+    // SAFETY: callers fill every element before any element can be read.
+    unsafe {
+        values.set_len(len);
+    }
+    values
 }
 
 impl<F: Field> crate::MultilinearEvaluation<F> for EqPolynomial<F> {

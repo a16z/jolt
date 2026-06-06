@@ -47,6 +47,8 @@ mod mul_primitive_int;
 mod random_sampling;
 mod reducing_bytes;
 mod ring_core;
+mod signed_product_accumulator;
+mod small_scalar_accumulator;
 mod transcript_challenge;
 mod with_accumulator;
 
@@ -67,6 +69,12 @@ pub use mul_primitive_int::MulPrimitiveInt;
 pub use random_sampling::RandomSampling;
 pub use reducing_bytes::ReducingBytes;
 pub use ring_core::RingCore;
+pub use signed_product_accumulator::{
+    NaiveSignedProductAccumulator, SignedProductAccumulator, WithSignedProductAccumulator,
+};
+pub use small_scalar_accumulator::{
+    NaiveSignedScalarAccumulator, SignedScalarAccumulator, WithSmallScalarAccumulator,
+};
 pub use transcript_challenge::TranscriptChallenge;
 pub use with_accumulator::WithAccumulator;
 
@@ -81,5 +89,9 @@ pub mod arkworks;
 pub use arkworks::bn254::Fr;
 #[cfg(feature = "bn254")]
 pub use arkworks::bn254_fq::Fq;
+#[cfg(feature = "bn254")]
+pub use arkworks::signed_product_accumulator::FrSignedProductAccumulator;
+#[cfg(feature = "bn254")]
+pub use arkworks::small_scalar_accumulator::FrSmallScalarAccumulator;
 #[cfg(feature = "bn254")]
 pub use arkworks::wide_accumulator::WideAccumulator;
