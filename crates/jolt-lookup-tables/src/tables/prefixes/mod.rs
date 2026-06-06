@@ -5,10 +5,10 @@
 //! binary points to materialize a dense polynomial, which is then bound
 //! using standard polynomial operations during sumcheck rounds.
 //!
-//! Checkpoints accumulate prefix values across phases. They are initialized
-//! via [`SparseDensePrefix::default_checkpoint`] and updated by the consumer
-//! at phase boundaries (the bound polynomial's final scalar becomes the new
-//! checkpoint).
+//! Checkpoints accumulate prefix values across address-binding rounds. They are
+//! initialized via [`SparseDensePrefix::default_checkpoint`] and can either be
+//! materialized as binary-evaluated prefix polynomials or updated directly every
+//! two sumcheck rounds.
 
 pub mod and;
 pub mod andn;
@@ -70,11 +70,36 @@ pub trait SparseDensePrefix<F: Field>: 'static + Sync {
     /// Evaluate this prefix at binary point `b`, given accumulated checkpoints
     /// from previous phases and the number of remaining suffix variables.
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F;
+
+    /// Evaluate this prefix's multilinear extension during an address-round
+    /// prover message.
+    fn prefix_mle(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> F;
+
+    /// Update this prefix checkpoint after binding an `(x, y)` address-bit pair.
+    fn update_prefix_checkpoint(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+        suffix_len: usize,
+    ) -> PrefixCheckpoint<F>;
 }
 
 /// Wrapper for prefix polynomial evaluations, used for type safety.
 #[derive(Clone, Copy)]
 pub struct PrefixEval<F>(pub(crate) F);
+
+/// Optional prefix evaluation cached after each address-bit pair.
+pub type PrefixCheckpoint<F> = PrefixEval<Option<F>>;
+
+/// Full RV64 instruction lookup address width.
+pub const LOG_K: usize = 2 * crate::XLEN;
 
 impl<F: Display> Display for PrefixEval<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -85,6 +110,19 @@ impl<F: Display> Display for PrefixEval<F> {
 impl<F> From<F> for PrefixEval<F> {
     fn from(value: F) -> Self {
         Self(value)
+    }
+}
+
+impl<F: Copy> PrefixEval<F> {
+    /// Returns the underlying field evaluation.
+    pub fn value(self) -> F {
+        self.0
+    }
+}
+
+impl<F: Copy> PrefixEval<Option<F>> {
+    pub fn unwrap(self) -> PrefixEval<F> {
+        self.0.unwrap().into()
     }
 }
 
@@ -227,5 +265,58 @@ impl Prefixes {
         suffix_len: usize,
     ) -> PrefixEval<F> {
         PrefixEval(dispatch_prefix!(self, evaluate, checkpoints, b, suffix_len))
+    }
+
+    pub fn prefix_mle<F: Field>(
+        &self,
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        b: LookupBits,
+        j: usize,
+    ) -> PrefixEval<F> {
+        PrefixEval(dispatch_prefix!(
+            self,
+            prefix_mle,
+            checkpoints,
+            r_x,
+            c,
+            b,
+            j
+        ))
+    }
+
+    pub fn update_checkpoints<F: Field>(
+        checkpoints: &mut [PrefixCheckpoint<F>],
+        active_prefix_indices: &[usize],
+        r_x: F,
+        r_y: F,
+        j: usize,
+        suffix_len: usize,
+    ) {
+        let previous = checkpoints.to_vec();
+        for &index in active_prefix_indices {
+            checkpoints[index] =
+                ALL_PREFIXES[index].update_prefix_checkpoint(&previous, r_x, r_y, j, suffix_len);
+        }
+    }
+
+    pub fn update_prefix_checkpoint<F: Field>(
+        &self,
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+        suffix_len: usize,
+    ) -> PrefixCheckpoint<F> {
+        dispatch_prefix!(
+            self,
+            update_prefix_checkpoint,
+            checkpoints,
+            r_x,
+            r_y,
+            j,
+            suffix_len
+        )
     }
 }

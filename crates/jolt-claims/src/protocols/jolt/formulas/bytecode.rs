@@ -1,6 +1,6 @@
 use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
-use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
+use jolt_poly::{eq_index_msb, EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{
     instructions::Noop, CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker,
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
@@ -225,6 +225,21 @@ pub struct BytecodeReadRafEvaluationInputs<'a, F> {
     pub stage5_gammas: &'a [F],
 }
 
+pub struct BytecodeReadRafBooleanEvaluationInputs<'a, F> {
+    pub bytecode: &'a [JoltInstructionRow],
+    pub r_address: &'a [F],
+    pub r_cycle: &'a [F],
+    pub stage_cycle_points: [&'a [F]; 5],
+    pub register_read_write_point: &'a [F],
+    pub register_val_evaluation_point: &'a [F],
+    pub entry_bytecode_index: usize,
+    pub stage1_gammas: &'a [F],
+    pub stage2_gammas: &'a [F],
+    pub stage3_gammas: &'a [F],
+    pub stage4_gammas: &'a [F],
+    pub stage5_gammas: &'a [F],
+}
+
 pub fn read_raf_public_values<F>(
     inputs: BytecodeReadRafEvaluationInputs<'_, F>,
 ) -> Result<BytecodeReadRafPublicValues<F>, JoltFormulaPointError>
@@ -299,11 +314,76 @@ where
     })
 }
 
+pub fn read_raf_public_values_at_boolean_point<F>(
+    inputs: BytecodeReadRafBooleanEvaluationInputs<'_, F>,
+) -> Result<Option<BytecodeReadRafPublicValues<F>>, JoltFormulaPointError>
+where
+    F: Field,
+{
+    require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
+    require_len(inputs.stage2_gammas, 4)?;
+    require_len(inputs.stage3_gammas, 9)?;
+    require_len(inputs.stage4_gammas, 3)?;
+    require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
+
+    let expected_domain = 1usize << inputs.r_address.len();
+    if inputs.bytecode.len() != expected_domain {
+        return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+            expected: expected_domain,
+            got: inputs.bytecode.len(),
+        });
+    }
+
+    let Some(address_index) = boolean_index_msb(inputs.r_address) else {
+        return Ok(None);
+    };
+    let Some(cycle_index) = boolean_index_msb(inputs.r_cycle) else {
+        return Ok(None);
+    };
+
+    let register_read_write_eq = EqPolynomial::<F>::evals(inputs.register_read_write_point, None);
+    let register_val_evaluation_eq =
+        EqPolynomial::<F>::evals(inputs.register_val_evaluation_point, None);
+    let mut stage_values = read_raf_row_values::<F>(
+        &inputs.bytecode[address_index],
+        &register_read_write_eq,
+        &register_val_evaluation_eq,
+        inputs.stage1_gammas,
+        inputs.stage2_gammas,
+        inputs.stage3_gammas,
+        inputs.stage4_gammas,
+        inputs.stage5_gammas,
+    );
+
+    for (stage_value, stage_cycle_point) in stage_values
+        .iter_mut()
+        .zip(inputs.stage_cycle_points.into_iter())
+    {
+        *stage_value *= eq_index_msb(stage_cycle_point, cycle_index);
+    }
+
+    let identity = IdentityPolynomial::new(inputs.r_address.len()).evaluate(inputs.r_address);
+    let spartan_outer_raf = identity * eq_index_msb(inputs.stage_cycle_points[0], cycle_index);
+    let spartan_shift_raf = identity * eq_index_msb(inputs.stage_cycle_points[2], cycle_index);
+    let entry = if address_index == inputs.entry_bytecode_index && cycle_index == 0 {
+        F::one()
+    } else {
+        F::zero()
+    };
+
+    Ok(Some(BytecodeReadRafPublicValues {
+        stage_values,
+        spartan_outer_raf,
+        spartan_shift_raf,
+        entry,
+    }))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Each gamma slice corresponds to one protocol subexpression."
 )]
-fn read_raf_row_values<F>(
+pub fn read_raf_row_values<F>(
     instruction: &JoltInstructionRow,
     register_read_write_eq: &[F],
     register_val_evaluation_eq: &[F],
@@ -397,6 +477,19 @@ fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointE
         });
     }
     Ok(())
+}
+
+fn boolean_index_msb<F: Field>(bits: &[F]) -> Option<usize> {
+    let mut index = 0usize;
+    for bit in bits {
+        index = index.checked_shl(1)?;
+        if *bit == F::one() {
+            index |= 1;
+        } else if *bit != F::zero() {
+            return None;
+        }
+    }
+    Some(index)
 }
 
 pub fn read_raf_input_openings() -> BytecodeReadRafInputOpenings {
@@ -843,6 +936,53 @@ mod tests {
         assert_eq!(public_values.spartan_outer_raf, zero);
         assert_eq!(public_values.spartan_shift_raf, zero);
         assert_eq!(public_values.entry, one);
+
+        let direct =
+            read_raf_public_values_at_boolean_point::<Fr>(BytecodeReadRafBooleanEvaluationInputs {
+                bytecode: &bytecode,
+                r_address: &r_address,
+                r_cycle: &r_cycle,
+                stage_cycle_points,
+                register_read_write_point: &[],
+                register_val_evaluation_point: &[],
+                entry_bytecode_index: 0,
+                stage1_gammas: &stage1_gammas,
+                stage2_gammas: &[one; 4],
+                stage3_gammas: &[one; 9],
+                stage4_gammas: &[one; 3],
+                stage5_gammas: &stage5_gammas,
+            })
+            .unwrap_or_else(|error| panic!("boolean point helper should evaluate: {error}"));
+
+        assert_eq!(direct, Some(public_values));
+    }
+
+    #[test]
+    fn read_raf_boolean_public_values_skip_non_boolean_points() {
+        let one = Fr::from_u64(1);
+        let two = Fr::from_u64(2);
+        let zero = Fr::from_u64(0);
+        let bytecode = vec![JoltInstructionRow::default(), JoltInstructionRow::default()];
+        let stage1_gammas = vec![one; 2 + NUM_CIRCUIT_FLAGS];
+        let stage5_gammas = vec![one; 2 + LookupTableKind::<XLEN>::COUNT];
+        let direct =
+            read_raf_public_values_at_boolean_point::<Fr>(BytecodeReadRafBooleanEvaluationInputs {
+                bytecode: &bytecode,
+                r_address: &[two],
+                r_cycle: &[zero],
+                stage_cycle_points: [&[zero][..]; 5],
+                register_read_write_point: &[],
+                register_val_evaluation_point: &[],
+                entry_bytecode_index: 0,
+                stage1_gammas: &stage1_gammas,
+                stage2_gammas: &[one; 4],
+                stage3_gammas: &[one; 9],
+                stage4_gammas: &[one; 3],
+                stage5_gammas: &stage5_gammas,
+            })
+            .unwrap_or_else(|error| panic!("boolean point helper should evaluate: {error}"));
+
+        assert_eq!(direct, None);
     }
 
     #[test]

@@ -1,3 +1,5 @@
+#![cfg(not(feature = "field-inline"))]
+
 use jolt_core::zkvm::lookup_table::LookupTables as CoreLookupTables;
 use jolt_lookup_tables::tables::LookupTableKind;
 use strum::EnumCount;

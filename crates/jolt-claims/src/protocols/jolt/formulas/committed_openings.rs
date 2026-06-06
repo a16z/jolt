@@ -1,4 +1,4 @@
-//! Jolt committed-polynomial opening order used by the final PCS check.
+//! Jolt committed-polynomial proof and final-opening orders.
 
 use jolt_field::Field;
 
@@ -6,7 +6,13 @@ use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::ra::JoltRaPolynomialLayout;
 
 pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommittedPolynomial> {
-    final_opening_polynomial_order(layout, false, false)
+    let mut polynomials = Vec::with_capacity(2 + layout.total());
+    polynomials.push(JoltCommittedPolynomial::RdInc);
+    polynomials.push(JoltCommittedPolynomial::RamInc);
+    polynomials.extend((0..layout.instruction()).map(JoltCommittedPolynomial::InstructionRa));
+    polynomials.extend((0..layout.ram()).map(JoltCommittedPolynomial::RamRa));
+    polynomials.extend((0..layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
+    polynomials
 }
 
 pub fn final_opening_polynomial_order(
@@ -100,17 +106,17 @@ mod tests {
     }
 
     #[test]
-    fn proof_commitment_order_reuses_final_opening_order() {
+    fn proof_commitment_order_matches_proof_payload_order() {
         assert_eq!(
             proof_commitment_order(layout()),
             vec![
-                JoltCommittedPolynomial::RamInc,
                 JoltCommittedPolynomial::RdInc,
+                JoltCommittedPolynomial::RamInc,
                 JoltCommittedPolynomial::InstructionRa(0),
                 JoltCommittedPolynomial::InstructionRa(1),
-                JoltCommittedPolynomial::BytecodeRa(0),
                 JoltCommittedPolynomial::RamRa(0),
                 JoltCommittedPolynomial::RamRa(1),
+                JoltCommittedPolynomial::BytecodeRa(0),
             ]
         );
     }

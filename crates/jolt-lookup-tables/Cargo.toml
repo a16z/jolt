@@ -11,6 +11,10 @@ categories = ["cryptography"]
 [lints]
 workspace = true
 
+[features]
+core-abi-tests = []
+field-inline = ["jolt-core/field-inline", "jolt-riscv/field-inline", "tracer/field-inline"]
+
 [dependencies]
 jolt-field = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
@@ -22,3 +26,8 @@ jolt-core = { workspace = true, default-features = false, features = ["minimal"]
 jolt-riscv = { workspace = true, features = ["serialization", "test-utils"] }
 rand = { workspace = true }
 tracer = { workspace = true, features = ["std", "test-utils"] }
+
+[[test]]
+name = "core_lookup_table_abi"
+path = "tests/core_lookup_table_abi.rs"
+required-features = ["core-abi-tests"]
