@@ -2,9 +2,9 @@ use jolt_field::{FromPrimitiveInt, RingCore};
 
 use super::super::{DoryAssistProtocolClaims, DoryAssistRelationId};
 use super::dimensions::DoryAssistDimensions;
-use super::{composition, g1, g2, gt, miller_loop, wiring};
+use super::{composition, dory_reduce, g1, g2, gt, miller_loop, wiring};
 
-pub const CANONICAL_RELATION_ORDER: [DoryAssistRelationId; 24] = [
+pub const CANONICAL_RELATION_ORDER: [DoryAssistRelationId; 30] = [
     DoryAssistRelationId::GtExponentiation,
     DoryAssistRelationId::GtExponentiationDigitSelector,
     DoryAssistRelationId::GtExponentiationBasePower,
@@ -25,6 +25,12 @@ pub const CANONICAL_RELATION_ORDER: [DoryAssistRelationId; 24] = [
     DoryAssistRelationId::MillerLoopPairProduct,
     DoryAssistRelationId::MillerLoopAccumulator,
     DoryAssistRelationId::MillerLoopBoundary,
+    DoryAssistRelationId::DoryReduceGtTransition,
+    DoryAssistRelationId::DoryReduceG1Transition,
+    DoryAssistRelationId::DoryReduceG2Transition,
+    DoryAssistRelationId::DoryReduceScalarFold,
+    DoryAssistRelationId::DoryReduceStateChain,
+    DoryAssistRelationId::DoryReduceBoundary,
     DoryAssistRelationId::WiringGt,
     DoryAssistRelationId::WiringG1,
     DoryAssistRelationId::WiringG2,
@@ -58,6 +64,12 @@ where
         miller_loop::pair_product(dimensions.miller_loop),
         miller_loop::accumulator(dimensions.miller_loop),
         miller_loop::boundary(dimensions.miller_loop),
+        dory_reduce::gt_transition(dimensions.dory_reduce),
+        dory_reduce::g1_transition(dimensions.dory_reduce),
+        dory_reduce::g2_transition(dimensions.dory_reduce),
+        dory_reduce::scalar_fold(dimensions.dory_reduce),
+        dory_reduce::state_chain(dimensions.dory_reduce),
+        dory_reduce::boundary(dimensions.dory_reduce),
         wiring::gt_wiring(dimensions.wiring),
         wiring::g1_wiring(dimensions.wiring),
         wiring::g2_wiring(dimensions.wiring),
@@ -80,8 +92,8 @@ mod tests {
     use super::super::super::{DoryAssistOpeningId, DoryAssistPublicId, DoryAssistValueRef};
     use super::super::composition;
     use super::super::dimensions::{
-        G1Dimensions, G2Dimensions, GtDimensions, MillerLoopDimensions, PrefixPackingDimensions,
-        WiringDimensions,
+        DoryReduceDimensions, G1Dimensions, G2Dimensions, GtDimensions, MillerLoopDimensions,
+        PrefixPackingDimensions, WiringDimensions,
     };
     use super::super::packing;
     use super::*;
@@ -92,6 +104,7 @@ mod tests {
             G1Dimensions::new(8, 2, 3),
             G2Dimensions::new(8, 2, 3),
             MillerLoopDimensions::new(7, 2, 8),
+            DoryReduceDimensions::new(2, 1),
             WiringDimensions::new(6),
             PrefixPackingDimensions::new(0, 0, 0).unwrap(),
         );
@@ -104,6 +117,7 @@ mod tests {
             unpacked.g1,
             unpacked.g2,
             unpacked.miller_loop,
+            unpacked.dory_reduce,
             unpacked.wiring,
             packing,
         )

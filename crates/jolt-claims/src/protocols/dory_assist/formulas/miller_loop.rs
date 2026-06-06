@@ -71,6 +71,7 @@ where
     .with_input_challenges([DoryAssistChallengeId::from(
         MillerLoopChallenge::PairProductBatch,
     )])
+    .with_auxiliary_openings(pair_product_quotient_openings())
 }
 
 pub fn accumulator<F>(dimensions: MillerLoopDimensions) -> DoryAssistRelationClaims<F>
@@ -87,6 +88,7 @@ where
         * combine_coefficients(gamma, (0..MILLER_LOOP_GT_COEFFS).map(accumulator_opening));
 
     DoryAssistRelationClaims::new(relation, accumulator_sumcheck(dimensions), input, output)
+        .with_auxiliary_openings(accumulator_quotient_openings())
 }
 
 pub fn boundary<F>(dimensions: MillerLoopDimensions) -> DoryAssistRelationClaims<F>
@@ -164,6 +166,12 @@ pub fn pair_product_output_openings() -> Vec<DoryAssistOpeningId> {
     openings
 }
 
+pub fn pair_product_quotient_openings() -> Vec<DoryAssistOpeningId> {
+    (0..MILLER_LOOP_GT_COEFFS)
+        .map(pair_product_quotient_opening)
+        .collect()
+}
+
 pub fn accumulator_input_openings() -> Vec<DoryAssistOpeningId> {
     (0..MILLER_LOOP_GT_COEFFS)
         .map(accumulator_shifted_opening)
@@ -173,6 +181,12 @@ pub fn accumulator_input_openings() -> Vec<DoryAssistOpeningId> {
 pub fn accumulator_output_openings() -> Vec<DoryAssistOpeningId> {
     (0..MILLER_LOOP_GT_COEFFS)
         .map(accumulator_opening)
+        .collect()
+}
+
+pub fn accumulator_quotient_openings() -> Vec<DoryAssistOpeningId> {
+    (0..MILLER_LOOP_GT_COEFFS)
+        .map(accumulator_quotient_opening)
         .collect()
 }
 
@@ -830,6 +844,13 @@ fn pair_line_product_opening(component: usize) -> DoryAssistOpeningId {
     )
 }
 
+fn pair_product_quotient_opening(component: usize) -> DoryAssistOpeningId {
+    miller_loop_opening(
+        MillerLoopPolynomial::PairProductQuotientCoeff(component),
+        DoryAssistRelationId::MillerLoopPairProduct,
+    )
+}
+
 fn accumulator_opening(component: usize) -> DoryAssistOpeningId {
     miller_loop_opening(
         MillerLoopPolynomial::AccumulatorCoeff(component),
@@ -840,6 +861,13 @@ fn accumulator_opening(component: usize) -> DoryAssistOpeningId {
 fn accumulator_shifted_opening(component: usize) -> DoryAssistOpeningId {
     miller_loop_opening(
         MillerLoopPolynomial::ShiftedAccumulatorCoeff(component),
+        DoryAssistRelationId::MillerLoopAccumulator,
+    )
+}
+
+fn accumulator_quotient_opening(component: usize) -> DoryAssistOpeningId {
+    miller_loop_opening(
+        MillerLoopPolynomial::AccumulatorQuotientCoeff(component),
         DoryAssistRelationId::MillerLoopAccumulator,
     )
 }
@@ -1115,6 +1143,10 @@ mod tests {
             &claims.output.required_openings,
             &pair_product_output_openings(),
         );
+        assert_openings_include(
+            &claims.output.required_openings,
+            &pair_product_quotient_openings(),
+        );
         assert!(claims
             .required_publics()
             .contains(&DoryAssistPublicId::MillerLoopShiftEqKernel(
@@ -1168,9 +1200,13 @@ mod tests {
         assert_eq!(claims.id, DoryAssistRelationId::MillerLoopAccumulator);
         assert_eq!(claims.sumcheck, accumulator_sumcheck(dimensions()));
         assert_eq!(claims.input.required_openings, accumulator_input_openings());
-        assert_eq!(
-            claims.output.required_openings,
-            accumulator_output_openings()
+        assert_openings_include(
+            &claims.output.required_openings,
+            &accumulator_output_openings(),
+        );
+        assert_openings_include(
+            &claims.output.required_openings,
+            &accumulator_quotient_openings(),
         );
         assert_eq!(
             claims.required_challenges(),

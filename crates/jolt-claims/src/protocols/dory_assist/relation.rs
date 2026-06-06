@@ -67,6 +67,18 @@ impl<F> DoryAssistRelationClaims<F> {
         self
     }
 
+    pub fn with_auxiliary_openings<I>(mut self, openings: I) -> Self
+    where
+        I: IntoIterator<Item = DoryAssistOpeningId>,
+    {
+        for opening in openings {
+            if !self.output.required_openings.contains(&opening) {
+                self.output.required_openings.push(opening);
+            }
+        }
+        self
+    }
+
     pub fn required_openings(&self) -> Vec<DoryAssistOpeningId> {
         let mut openings = self.input.required_openings.clone();
         extend_unique(&mut openings, &self.output.required_openings);
@@ -241,6 +253,24 @@ mod tests {
             Some(0)
         );
         assert_eq!(relation.num_challenges(), 2);
+    }
+
+    #[test]
+    fn relation_claims_can_record_auxiliary_openings_for_later_wiring() {
+        let dense = DoryAssistOpeningId::dense_witness(DoryAssistRelationId::PrefixPacking);
+        let gt_accumulator = DoryAssistOpeningId::virtual_polynomial(
+            DoryAssistVirtualPolynomial::Gt(GtPolynomial::ExpAccumulator),
+            DoryAssistRelationId::GtExponentiation,
+        );
+        let relation: DoryAssistRelationClaims<Fr> = DoryAssistRelationClaims::new(
+            DoryAssistRelationId::GtExponentiation,
+            DoryAssistSumcheckSpec::boolean(4, 2),
+            opening(gt_accumulator),
+            opening(gt_accumulator),
+        )
+        .with_auxiliary_openings([dense, gt_accumulator]);
+
+        assert_eq!(relation.required_openings(), vec![gt_accumulator, dense]);
     }
 
     #[test]

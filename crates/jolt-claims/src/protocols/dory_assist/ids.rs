@@ -23,6 +23,12 @@ pub enum DoryAssistRelationId {
     MillerLoopPairProduct,
     MillerLoopAccumulator,
     MillerLoopBoundary,
+    DoryReduceGtTransition,
+    DoryReduceG1Transition,
+    DoryReduceG2Transition,
+    DoryReduceScalarFold,
+    DoryReduceStateChain,
+    DoryReduceBoundary,
     WiringGt,
     WiringG1,
     WiringG2,
@@ -85,6 +91,16 @@ pub enum PackingChallenge {
     PrefixPoint,
 }
 
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryReduceChallenge {
+    GtTransitionBatch,
+    G1TransitionBatch,
+    G2TransitionBatch,
+    ScalarFoldBatch,
+    StateChainBatch,
+    BoundaryPoint,
+}
+
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
@@ -95,6 +111,7 @@ pub enum DoryAssistChallengeId {
     MillerLoop(MillerLoopChallenge),
     Wiring(WiringChallenge),
     Packing(PackingChallenge),
+    DoryReduce(DoryReduceChallenge),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -236,6 +253,79 @@ pub enum PackingPolynomial {
     PrefixSelector,
 }
 
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryReducePolynomial {
+    CurrentC(usize),
+    CurrentD1(usize),
+    CurrentD2(usize),
+    NextC(usize),
+    NextD1(usize),
+    NextD2(usize),
+    MessageD1Left(usize),
+    MessageD1Right(usize),
+    MessageD2Left(usize),
+    MessageD2Right(usize),
+    MessageCPlus(usize),
+    MessageCMinus(usize),
+    SetupChi(usize),
+    SetupDelta1L(usize),
+    SetupDelta1R(usize),
+    SetupDelta2L(usize),
+    SetupDelta2R(usize),
+    CurrentE1X,
+    CurrentE1Y,
+    CurrentE1Infinity,
+    NextE1X,
+    NextE1Y,
+    NextE1Infinity,
+    MessageE1BetaX,
+    MessageE1BetaY,
+    MessageE1BetaInfinity,
+    MessageE1PlusX,
+    MessageE1PlusY,
+    MessageE1PlusInfinity,
+    MessageE1MinusX,
+    MessageE1MinusY,
+    MessageE1MinusInfinity,
+    CurrentE2X0,
+    CurrentE2X1,
+    CurrentE2Y0,
+    CurrentE2Y1,
+    CurrentE2Infinity,
+    NextE2X0,
+    NextE2X1,
+    NextE2Y0,
+    NextE2Y1,
+    NextE2Infinity,
+    MessageE2BetaX0,
+    MessageE2BetaX1,
+    MessageE2BetaY0,
+    MessageE2BetaY1,
+    MessageE2BetaInfinity,
+    MessageE2PlusX0,
+    MessageE2PlusX1,
+    MessageE2PlusY0,
+    MessageE2PlusY1,
+    MessageE2PlusInfinity,
+    MessageE2MinusX0,
+    MessageE2MinusX1,
+    MessageE2MinusY0,
+    MessageE2MinusY1,
+    MessageE2MinusInfinity,
+    Beta,
+    BetaInverse,
+    Alpha,
+    AlphaInverse,
+    AlphaBeta,
+    AlphaInverseBetaInverse,
+    S1Accumulator,
+    S1NextAccumulator,
+    S1FoldFactor,
+    S2Accumulator,
+    S2NextAccumulator,
+    S2FoldFactor,
+}
+
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
@@ -244,6 +334,7 @@ pub enum DoryAssistVirtualPolynomial {
     G1(G1Polynomial),
     G2(G2Polynomial),
     MillerLoop(MillerLoopPolynomial),
+    DoryReduce(DoryReducePolynomial),
     Wiring(WiringPolynomial),
     Packing(PackingPolynomial),
 }
@@ -298,6 +389,7 @@ impl DoryAssistOpeningId {
 pub enum DoryAssistPublicId {
     DoryProofArtifact(usize),
     VerifierSetupDigest,
+    VerifierSetupArtifact(usize),
     JoltEvaluationClaim(usize),
     JoltCommitment(usize),
     TranscriptScalar(usize),
@@ -317,6 +409,8 @@ pub enum DoryAssistPublicId {
     },
     MillerLoopConstant(MillerLoopConstant),
     MillerLoopShiftEqKernel(DoryAssistRelationId),
+    DoryReduceShiftEqKernel,
+    DoryReduceInitialE2(usize),
     WiringEnabledMask(DoryAssistRelationId),
     PrefixPackingWeight(usize),
     MillerLoopOutputGt(usize),

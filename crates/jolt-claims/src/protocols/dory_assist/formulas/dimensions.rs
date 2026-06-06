@@ -42,6 +42,7 @@ pub struct DoryAssistDimensions {
     pub g1: G1Dimensions,
     pub g2: G2Dimensions,
     pub miller_loop: MillerLoopDimensions,
+    pub dory_reduce: DoryReduceDimensions,
     pub wiring: WiringDimensions,
     pub packing: PrefixPackingDimensions,
 }
@@ -52,6 +53,7 @@ impl DoryAssistDimensions {
         g1: G1Dimensions,
         g2: G2Dimensions,
         miller_loop: MillerLoopDimensions,
+        dory_reduce: DoryReduceDimensions,
         wiring: WiringDimensions,
         packing: PrefixPackingDimensions,
     ) -> Self {
@@ -60,6 +62,7 @@ impl DoryAssistDimensions {
             g1,
             g2,
             miller_loop,
+            dory_reduce,
             wiring,
             packing,
         }
@@ -359,6 +362,51 @@ impl Default for MillerLoopDimensions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoryReduceDimensions {
+    point_len: usize,
+    reduce_rounds: usize,
+}
+
+impl DoryReduceDimensions {
+    pub const fn new(point_len: usize, reduce_rounds: usize) -> Self {
+        Self {
+            point_len,
+            reduce_rounds,
+        }
+    }
+
+    pub const fn point_len(self) -> usize {
+        self.point_len
+    }
+
+    pub const fn reduce_rounds(self) -> usize {
+        self.reduce_rounds
+    }
+
+    pub const fn reduce_round_vars(self) -> usize {
+        ceil_log2_usize(self.reduce_rounds)
+    }
+
+    pub const fn scalar_fold_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.reduce_round_vars(), 2)
+    }
+
+    pub const fn state_chain_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.reduce_round_vars(), 2)
+    }
+
+    pub const fn boundary_sumcheck(self) -> DoryAssistSumcheckSpec {
+        DoryAssistSumcheckSpec::boolean(self.reduce_round_vars(), 2)
+    }
+}
+
+impl Default for DoryReduceDimensions {
+    fn default() -> Self {
+        Self::new(0, 0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WiringDimensions {
     log_edges: usize,
 }
@@ -456,6 +504,14 @@ impl PrefixPackingDimensions {
 pub struct PrefixPackingOpeningPoint<F: Field> {
     pub prefix: Vec<F>,
     pub suffix: Vec<F>,
+}
+
+const fn ceil_log2_usize(value: usize) -> usize {
+    if value <= 1 {
+        0
+    } else {
+        usize::BITS as usize - (value - 1).leading_zeros() as usize
+    }
 }
 
 #[cfg(test)]
