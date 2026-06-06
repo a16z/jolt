@@ -10,10 +10,10 @@
 //! or the native codec for concrete `Fr`) is the cleaner design and a deliberate follow-up.
 //!
 //! Challenges come from the 128-bit [`OptimizedChallenge::challenge_u128`] primitive
-//! (the legacy `challenge_scalar` likewise squeezed 16 bytes). NB this 128-bit
-//! description is the Blake2b/Keccak default: `transcript-poseidon` forces
-//! `challenge-254-bit`, so under Poseidon `F::Challenge` is full-field (the open D5b
-//! coupling), and Poseidon's `challenge_u128` impl is correspondingly flagged optional.
+//! (the legacy `challenge_scalar` likewise squeezed 16 bytes), uniformly across all
+//! three sponges — Blake2b, Keccak, AND Poseidon (D5b decoupled `transcript-poseidon`
+//! from `challenge-254-bit`, so Poseidon now uses the same `MontU128Challenge` width).
+//! `challenge-254-bit`, if enabled explicitly, still widens `F::Challenge` to full-field.
 //!
 //! **What actually crosses the NARG (host "hybrid" milestone):** *only* prover-only
 //! payload — the sumcheck/uniskip round polynomials — is `write`/`read` through the NARG.

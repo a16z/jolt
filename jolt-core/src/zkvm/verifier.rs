@@ -49,7 +49,7 @@ use crate::zkvm::{
         PrecommittedClaimReduction, PrecommittedParams, ProgramImageClaimReductionParams,
         ProgramImageClaimReductionVerifier, RamRaClaimReductionSumcheckVerifier,
     },
-    compute_final_opening_point, fiat_shamir_preamble,
+    compute_final_opening_point, fiat_shamir_instance,
     instruction_lookups::{
         ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
         read_raf_checking::InstructionReadRafSumcheckVerifier,
@@ -177,10 +177,7 @@ impl<F: JoltField> StageVerifyResult<F> {
 }
 
 #[cfg(feature = "zk")]
-fn batch_output_constraints<
-    F: JoltField,
-    A: AbstractVerifierOpeningAccumulator<F>,
->(
+fn batch_output_constraints<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
     instances: &[&dyn SumcheckInstanceVerifier<F, A>],
 ) -> Option<OutputClaimConstraint> {
     let constraints: Vec<Option<OutputClaimConstraint>> = instances
@@ -191,10 +188,7 @@ fn batch_output_constraints<
 }
 
 #[cfg(feature = "zk")]
-fn batch_input_constraints<
-    F: JoltField,
-    A: AbstractVerifierOpeningAccumulator<F>,
->(
+fn batch_input_constraints<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
     instances: &[&dyn SumcheckInstanceVerifier<F, A>],
 ) -> InputClaimConstraint {
     let constraints: Vec<InputClaimConstraint> = instances
@@ -205,10 +199,7 @@ fn batch_input_constraints<
 }
 
 #[cfg(feature = "zk")]
-fn scale_batching_coefficients<
-    F: JoltField,
-    A: AbstractVerifierOpeningAccumulator<F>,
->(
+fn scale_batching_coefficients<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
     batching_coefficients: &[F],
     instances: &[&dyn SumcheckInstanceVerifier<F, A>],
 ) -> Vec<F> {
@@ -222,9 +213,9 @@ fn scale_batching_coefficients<
         })
         .collect()
 }
-use jolt_transcript::{verifier_transcript, DuplexSpongeInterface, VerifierState};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
+use jolt_transcript::{verifier_transcript, DuplexSpongeInterface, VerifierState};
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -432,14 +423,11 @@ where
         let _pprof_verify = pprof_scope!("verify");
         let zk_mode = self.opening_accumulator.zk_mode;
 
-        // Build the verifier transcript locally over the proof's NARG (D3). Milestone:
-        // a fixed instance + the absorbed preamble bind the statement (see DEV-19).
-        let narg = std::mem::take(&mut self.proof.narg);
-        let mut ts = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &narg);
-        let transcript = &mut ts;
-
+        // Build the verifier transcript locally over the proof's NARG (D3). A.1: the
+        // public statement is bound into the `instance` digest (`Blake2b(statement)`),
+        // recomputed from the proof's public tail — byte-identical to the prover (O1).
         let preprocessing_digest = self.preprocessing.shared.digest();
-        fiat_shamir_preamble(
+        let instance = fiat_shamir_instance(
             &self.program_io,
             self.proof.ram_K,
             self.proof.trace_length,
@@ -448,8 +436,10 @@ where
             &self.proof.one_hot_config,
             self.proof.dory_layout,
             &preprocessing_digest,
-            transcript,
         );
+        let narg = std::mem::take(&mut self.proof.narg);
+        let mut ts = verifier_transcript(b"Jolt", instance, H::default(), &narg);
+        let transcript = &mut ts;
 
         // Initialize DoryGlobals with the layout from the proof
         // This ensures the verifier uses the same layout as the prover
@@ -623,7 +613,10 @@ where
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage1(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
+    fn verify_stage1(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
             &self.proof.stage1_uni_skip_first_round_proof,
             &self.spartan_key,
@@ -642,9 +635,8 @@ where
             &self.opening_accumulator,
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![&spartan_outer_remaining];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&spartan_outer_remaining];
 
         let (batching_coefficients, r_stage1) = BatchedSumcheck::verify(
             &self.proof.stage1_sumcheck_proof,
@@ -721,7 +713,10 @@ where
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage2(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
+    fn verify_stage2(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
         let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
             &self.proof.stage2_uni_skip_first_round_proof,
             &mut self.opening_accumulator,
@@ -767,9 +762,7 @@ where
             &self.proof.rw_config,
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &ram_read_write_checking,
             &spartan_product_virtual_remainder,
             &instruction_claim_reduction,
@@ -843,7 +836,10 @@ where
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage3(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage3(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
@@ -857,9 +853,7 @@ where
             transcript,
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &spartan_shift,
             &spartan_instruction_input,
             &spartan_registers_claim_reduction,
@@ -912,7 +906,10 @@ where
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage4(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage4(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
@@ -966,9 +963,8 @@ where
             self.preprocessing.shared.program.is_committed(),
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![&registers_read_write_checking, &ram_val_check];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&registers_read_write_checking, &ram_val_check];
 
         let (batching_coefficients, r_stage4) = BatchedSumcheck::verify(
             &self.proof.stage4_sumcheck_proof,
@@ -1017,7 +1013,10 @@ where
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage5(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage5(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
 
         let lookups_read_raf = InstructionReadRafSumcheckVerifier::new(
@@ -1035,9 +1034,7 @@ where
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &lookups_read_raf,
             &ram_ra_reduction,
             &registers_val_evaluation,
@@ -1102,11 +1099,15 @@ where
         );
         let (bytecode_read_raf_params, booleanity_params, stage6a_result) =
             self.verify_stage6a(transcript)?;
-        let stage6b_result = self.verify_stage6b(transcript, bytecode_read_raf_params, booleanity_params)?;
+        let stage6b_result =
+            self.verify_stage6b(transcript, bytecode_read_raf_params, booleanity_params)?;
         Ok((stage6a_result, stage6b_result))
     }
 
-    fn verify_stage6a(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<Stage6aVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage6a(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<Stage6aVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             &self.preprocessing.shared.program,
@@ -1121,9 +1122,8 @@ where
             &self.opening_accumulator,
             transcript,
         ));
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![&bytecode_read_raf, &booleanity];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&bytecode_read_raf, &booleanity];
         let (_batching_coefficients, r_stage6a) = BatchedSumcheck::verify(
             &self.proof.stage6a_sumcheck_proof,
             instances.clone(),
@@ -1273,9 +1273,7 @@ where
             &self.opening_accumulator,
         );
 
-        let mut instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &bytecode_read_raf,
             &booleanity,
             &ram_hamming_booleanity,
@@ -1602,11 +1600,7 @@ where
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
 
         verifier
-            .verify(
-                &self.proof.blindfold_proof,
-                &verifier_input,
-                transcript,
-            )
+            .verify(&self.proof.blindfold_proof, &verifier_input, transcript)
             .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 
         tracing::debug!(
@@ -1618,7 +1612,10 @@ where
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage7(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage7(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
@@ -1627,9 +1624,8 @@ where
             transcript,
         );
 
-        let mut instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>,
-        > = vec![&hw_verifier];
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&hw_verifier];
         if let Some(advice_reduction_verifier_trusted) =
             self.advice_reduction_verifier_trusted.as_mut()
         {
@@ -1737,7 +1733,10 @@ where
         })
     }
 
-    fn verify_stage8(&mut self, transcript: &mut impl VerifierFs<F>) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
+    fn verify_stage8(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
         let native_main_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
         let opening_point = compute_final_opening_point(
             &self.opening_accumulator,

@@ -115,7 +115,7 @@ use crate::{
         bytecode::read_raf_checking::{
             BytecodeReadRafAddressSumcheckProver, BytecodeReadRafCycleSumcheckProver,
         },
-        compute_final_opening_point, fiat_shamir_preamble,
+        compute_final_opening_point, fiat_shamir_instance,
         instruction_lookups::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::InstructionReadRafSumcheckProver,
@@ -371,9 +371,8 @@ where
             )
             .next_power_of_two() as usize;
 
-        // Milestone: a fixed instance + the `fiat_shamir_preamble` absorbed below binds the
-        // public statement. Folding the preamble into `instance = Blake2b(statement)` is a
-        // follow-up cleanup (see DEV-19).
+        // Placeholder transcript: it is never used before `prove()` rebuilds it with the
+        // real `instance = Blake2b(statement)` (A.1), once the dory layout is known.
         let transcript = prover_transcript(b"Jolt", [0u8; 32], H::default());
         let opening_accumulator = ProverOpeningAccumulator::new(trace.len().log_2());
 
@@ -433,18 +432,18 @@ where
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all)]
-    pub fn prove(
-        mut self,
-    ) -> (
-        JoltProof<F, C, PCS, H>,
-        Option<ProverDebugInfo<F, H, PCS>>,
-    ) {
+    pub fn prove(mut self) -> (JoltProof<F, C, PCS, H>, Option<ProverDebugInfo<F, H, PCS>>) {
         let _pprof_prove = pprof_scope!("prove");
 
         #[cfg(not(target_arch = "wasm32"))]
         let start = Instant::now();
+        // A.1: bind the public statement into the transcript `instance`
+        // (`Blake2b(statement)`, @mmaker's #1455 mandate) rather than scatter-absorbing it.
+        // The placeholder transcript built in `gen_from_trace` is unused before this point,
+        // so rebuilding it here — now that the dory layout is known — is sound. The verifier
+        // recomputes the identical instance from the proof's public tail (O1).
         let preprocessing_digest = self.preprocessing.shared.digest();
-        fiat_shamir_preamble(
+        let instance = fiat_shamir_instance(
             &self.program_io,
             self.one_hot_params.ram_k,
             self.trace.len(),
@@ -453,8 +452,8 @@ where
             &self.one_hot_params.to_config(),
             DoryGlobals::get_layout(),
             &preprocessing_digest,
-            &mut self.transcript,
         );
+        self.transcript = prover_transcript(b"Jolt", instance, H::default());
 
         tracing::info!(
             "bytecode size: {}",
@@ -486,8 +485,7 @@ where
         if let Some(bytecode_commitments) = self.preprocessing.shared.program.bytecode_commitments()
         {
             for commitment in &bytecode_commitments.commitments {
-                self.transcript
-                    .absorb(commitment);
+                self.transcript.absorb(commitment);
             }
         }
         if let Some(program_commitments) = self.preprocessing.shared.program.program_commitments() {
@@ -590,11 +588,7 @@ where
     fn prove_batched_sumcheck(
         &mut self,
         instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
-    ) -> (
-        SumcheckInstanceProof<F, C>,
-        Vec<F::Challenge>,
-        F,
-    ) {
+    ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>, F) {
         #[cfg(feature = "zk")]
         {
             let mut rng = rand::thread_rng();
@@ -758,8 +752,7 @@ where
 
         // Append commitments to transcript
         for commitment in &commitments {
-            self.transcript
-                .absorb(commitment);
+            self.transcript.absorb(commitment);
         }
 
         (commitments, hint_map)
@@ -790,8 +783,7 @@ where
             DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript
-            .absorb(&commitment);
+        self.transcript.absorb(&commitment);
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -976,12 +968,7 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage3(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage3(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 3 baseline");
 
@@ -1046,12 +1033,7 @@ where
         (sumcheck_proof, r_stage3)
     }
     #[tracing::instrument(skip_all)]
-    fn prove_stage4(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage4(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 4 baseline");
 
@@ -1131,12 +1113,7 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage5(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage5(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 5 baseline");
         // Initialization params (same order as batch)
@@ -1276,10 +1253,7 @@ where
         &mut self,
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
         booleanity_cycle_input: BooleanityCycleInput<F>,
-    ) -> (
-        SumcheckInstanceProof<F, C>,
-        Vec<F::Challenge>,
-    ) {
+    ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6b baseline");
 
@@ -1941,12 +1915,7 @@ where
 
     /// Stage 7: HammingWeight + ClaimReduction sumcheck (only log_k_chunk rounds).
     #[tracing::instrument(skip_all)]
-    fn prove_stage7(
-        &mut self,
-    ) -> (
-        SumcheckInstanceProof<F, C>,
-        Vec<F::Challenge>,
-    ) {
+    fn prove_stage7(&mut self) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>) {
         // Create params and prover for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_params = HammingWeightClaimReductionParams::new(
@@ -1966,8 +1935,7 @@ where
 
         // Run Stage 7 batched sumcheck (address rounds only).
         // Includes HammingWeightClaimReduction plus address phase of advice reduction instances (if needed).
-        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F>>> =
-            vec![Box::new(hw_prover)];
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<F>>> = vec![Box::new(hw_prover)];
 
         if let Some(mut advice_reduction_prover_trusted) =
             self.advice_reduction_prover_trusted.take()
