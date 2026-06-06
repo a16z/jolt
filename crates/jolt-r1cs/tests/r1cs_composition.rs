@@ -9,11 +9,11 @@ use jolt_sumcheck::{
 use jolt_transcript::r1cs::{
     PoseidonR1csTranscript, R1csJoltByteTranscript, R1csJoltTranscript, R1csTranscript,
 };
-use jolt_wrapper::{verify_r1cs_witness, WrapperProtocol, WrapperProtocolBuilder};
+use jolt_wrapper_verifier::{verify_r1cs_witness, WrapperR1csBuilder, WrapperR1csProtocol};
 
 #[derive(Clone, Debug)]
 struct ComposedProtocol {
-    protocol: WrapperProtocol<Fr>,
+    protocol: WrapperR1csProtocol<Fr>,
     tamper_targets: Vec<(&'static str, usize)>,
 }
 
@@ -56,8 +56,7 @@ fn composed_wrapper_transcript_nonnative_and_sumcheck_constraints_reject_tamperi
 }
 
 fn build_composed_protocol() -> ComposedProtocol {
-    let mut protocol =
-        WrapperProtocolBuilder::<Fr, PoseidonR1csTranscript>::new(b"R1csComposition");
+    let mut protocol = WrapperR1csBuilder::<Fr, PoseidonR1csTranscript>::new(b"R1csComposition");
 
     let public_scalar = protocol.alloc_public_scalar(Fr::from_u64(42));
     let witness_scalar = protocol.alloc_witness_scalar(Fr::from_u64(99));
