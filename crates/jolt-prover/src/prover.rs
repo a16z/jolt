@@ -462,15 +462,15 @@ where
         + Sync,
     FI: FieldInlineProverWitness<PCS::Field>,
 {
-    validate_config(config)?;
-    let mut assembly = ProofAssembly::<PCS, VC>::new(config, public_io);
+    validate_config(&config)?;
+    let mut assembly = ProofAssembly::<PCS, VC>::new(config.clone(), public_io);
     let stage0 = timed_stage("stage0", || {
         prove_stage0(
             preprocessing,
             public_io,
             witness,
             field_inline_witness,
-            config,
+            &config,
             backend,
         )
     })?;
@@ -483,7 +483,7 @@ where
             public_io,
             witness,
             field_inline_witness,
-            config,
+            &config,
             backend,
             &mut assembly,
         )?;
@@ -501,7 +501,7 @@ where
         public_io,
         witness,
         field_inline_witness,
-        config,
+        &config,
         backend,
         &mut assembly,
     )?;
@@ -520,7 +520,7 @@ where
     })
 }
 
-fn validate_config(config: ProverConfig) -> Result<(), ProverError> {
+fn validate_config(config: &ProverConfig) -> Result<(), ProverError> {
     if config.features != ProverFeatureSet::COMPILED {
         return Err(ProverError::InvalidProverConfig {
             reason: format!(
@@ -531,7 +531,7 @@ fn validate_config(config: ProverConfig) -> Result<(), ProverError> {
         });
     }
 
-    let protocol_features = ProverFeatureSet::from_protocol(config.protocol);
+    let protocol_features = ProverFeatureSet::from_protocol(&config.protocol);
     if protocol_features != config.features {
         return Err(ProverError::InvalidProverConfig {
             reason: format!(
@@ -578,7 +578,7 @@ fn prove_zk_stages<PCS, VC, B, W, FI>(
     public_io: &JoltDevice,
     witness: &W,
     field_inline_witness: &FI,
-    config: ProverConfig,
+    config: &ProverConfig,
     backend: &mut B,
     assembly: &mut ProofAssembly<PCS, VC>,
 ) -> Result<jolt_blindfold::BlindFoldProof<PCS::Field, VC::Output>, ProverError>
@@ -992,7 +992,7 @@ fn prove_clear_stages<PCS, VC, B, W, FI>(
     public_io: &JoltDevice,
     witness: &W,
     field_inline_witness: &FI,
-    config: ProverConfig,
+    config: &ProverConfig,
     backend: &mut B,
     assembly: &mut ProofAssembly<PCS, VC>,
 ) -> Result<(), ProverError>
@@ -1481,7 +1481,7 @@ fn advice_words_le(bytes: &[u8]) -> Vec<u64> {
 fn clear_checked_inputs<PCS, VC>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    config: ProverConfig,
+    config: &ProverConfig,
 ) -> Result<jolt_verifier::CheckedInputs, ProverError>
 where
     PCS: CommitmentScheme,
@@ -1570,7 +1570,7 @@ where
 fn zk_checked_inputs<PCS, VC>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    config: ProverConfig,
+    config: &ProverConfig,
 ) -> Result<jolt_verifier::CheckedInputs, ProverError>
 where
     PCS: CommitmentScheme,
@@ -1600,7 +1600,7 @@ fn prove_stage0<PCS, VC, B, W, FI>(
     public_io: &JoltDevice,
     witness: &W,
     field_inline_witness: &FI,
-    config: ProverConfig,
+    config: &ProverConfig,
     backend: &mut B,
 ) -> Result<CommitmentStageOutput<PCS>, ProverError>
 where
@@ -1619,7 +1619,7 @@ where
             witness,
             &preprocessing.pcs_setup,
             stage0_config,
-            config.protocol,
+            config.protocol.clone(),
             #[cfg(feature = "field-inline")]
             field_inline_witness,
         ),
@@ -1627,7 +1627,7 @@ where
     )
 }
 
-fn required_proof_shape(config: ProverConfig) -> Result<ProverProofShape, ProverError> {
+fn required_proof_shape(config: &ProverConfig) -> Result<ProverProofShape, ProverError> {
     config
         .proof_shape
         .ok_or_else(|| ProverError::InvalidProverConfig {
@@ -1638,7 +1638,7 @@ fn required_proof_shape(config: ProverConfig) -> Result<ProverProofShape, Prover
 fn stage0_config<PCS, VC>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    config: ProverConfig,
+    config: &ProverConfig,
 ) -> Result<CommitmentStageConfig, ProverError>
 where
     PCS: CommitmentScheme,

@@ -27,6 +27,10 @@ fn record_instruction_timing(label: &'static str, start: std::time::Instant) {
 }
 
 #[cfg(not(feature = "frontier-harness"))]
+#[expect(
+    dead_code,
+    reason = "fallback timing hook is unused without frontier-harness"
+)]
 const fn record_instruction_timing(_label: &'static str, _start: ()) {}
 
 pub struct InstructionReadRafState<F: Field> {

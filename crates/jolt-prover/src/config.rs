@@ -13,7 +13,7 @@ impl ProverFeatureSet {
         field_inline: cfg!(feature = "field-inline"),
     };
 
-    pub const fn from_protocol(protocol: JoltProtocolConfig) -> Self {
+    pub fn from_protocol(protocol: &JoltProtocolConfig) -> Self {
         Self {
             zk: matches!(protocol.zk, ZkConfig::BlindFold),
             field_inline: protocol.field_inline.enabled,
@@ -21,7 +21,7 @@ impl ProverFeatureSet {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProverConfig {
     pub protocol: JoltProtocolConfig,
     pub features: ProverFeatureSet,

@@ -59,7 +59,7 @@ impl CommitmentStageConfig {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct CommitmentStageInput<'a, W, PCS: CommitmentScheme> {
     pub witness: &'a W,
     pub setup: &'a PCS::ProverSetup,

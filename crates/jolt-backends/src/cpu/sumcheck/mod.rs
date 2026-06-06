@@ -61,6 +61,10 @@ fn record_sumcheck_timing(label: &'static str, start: std::time::Instant) {
 }
 
 #[cfg(not(feature = "frontier-harness"))]
+#[expect(
+    dead_code,
+    reason = "fallback timing hook is unused without frontier-harness"
+)]
 const fn record_sumcheck_timing(_label: &'static str, _start: ()) {}
 
 const RESOLUTION_TASK: &str = "sumcheck view resolution";

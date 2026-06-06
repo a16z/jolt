@@ -610,7 +610,12 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    proof.claims = JoltProofClaims::Clear(empty_clear_claims(proof.trace_length));
+    proof.claims = JoltProofClaims::Clear(empty_clear_opening_claims(proof.trace_length));
+}
+
+#[doc(hidden)]
+pub fn empty_clear_opening_claims<F: Field>(trace_length: usize) -> ClearProofClaims<F> {
+    empty_clear_claims(trace_length)
 }
 
 fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {

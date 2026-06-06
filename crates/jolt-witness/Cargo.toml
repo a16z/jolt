@@ -34,7 +34,3 @@ thiserror.workspace = true
 [dev-dependencies]
 common.workspace = true
 criterion.workspace = true
-
-[[bench]]
-name = "witness_throughput"
-harness = false

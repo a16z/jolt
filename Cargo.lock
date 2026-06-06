@@ -2706,6 +2706,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-backends"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-witness",
+ "rayon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
@@ -2718,6 +2735,7 @@ dependencies = [
  "jolt-transcript",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -2820,6 +2838,8 @@ dependencies = [
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
  "ark-serialize 0.5.0",
  "criterion",
  "dory-pcs",
@@ -3150,11 +3170,37 @@ dependencies = [
  "ark-serialize 0.5.0",
  "common",
  "hex",
+ "jolt-lookup-tables",
  "jolt-riscv",
  "object 0.39.1",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-prover"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-backends",
+ "jolt-blindfold",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "rand_core 0.6.4",
+ "rayon",
  "thiserror 2.0.18",
 ]
 
@@ -3276,6 +3322,23 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-witness"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "criterion",
+ "jolt-claims",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-riscv",
+ "rayon",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -5909,6 +5972,7 @@ dependencies = [
  "fnv",
  "inventory",
  "itertools 0.14.0",
+ "jolt-field",
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",

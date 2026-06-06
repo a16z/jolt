@@ -1391,7 +1391,7 @@ where
     }
 
     pub(crate) fn next_frontier(&self) -> &'static str {
-        let _protocol = self.config.protocol;
+        let _protocol = &self.config.protocol;
         let _public_io = &self.public_io;
         let _trusted_advice_present = self.trusted_advice_commitment.is_some();
         let _untrusted_advice_present = self.untrusted_advice_commitment.is_some();
