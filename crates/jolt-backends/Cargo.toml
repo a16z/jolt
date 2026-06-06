@@ -1,0 +1,41 @@
+[package]
+name = "jolt-backends"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Backend compute implementations for modular Jolt proving"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "prover"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["cpu"]
+cpu = []
+field-inline = []
+frontier-harness = []
+zk = ["dep:jolt-crypto", "dep:jolt-r1cs"]
+
+[dependencies]
+jolt-claims.workspace = true
+jolt-crypto = { workspace = true, optional = true }
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-r1cs = { workspace = true, optional = true }
+jolt-witness.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+jolt-field.workspace = true
+jolt-openings = { workspace = true, features = ["test-utils"] }
+jolt-r1cs.workspace = true
+
+[[bench]]
+name = "sumcheck_kernels"
+harness = false
