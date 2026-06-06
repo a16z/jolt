@@ -37,6 +37,7 @@ grumpkin = [
   "dep:ark-ff",
   "dep:ark-serialize",
   "dep:ark-std",
+  "dep:blake2",
   "dep:num-bigint",
   "dep:num-traits",
   "jolt-field/bn254",
@@ -53,6 +54,7 @@ jolt-transcript = { path = "../jolt-transcript" }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 thiserror = { workspace = true, optional = true }
+blake2 = { workspace = true, optional = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }

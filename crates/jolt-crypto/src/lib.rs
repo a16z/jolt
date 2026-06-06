@@ -18,6 +18,6 @@ pub use commitment::{
 pub mod r1cs;
 
 #[cfg(feature = "bn254")]
-pub use ec::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};
+pub use ec::bn254::{Bn254, Bn254Fq12, Bn254G1, Bn254G2, Bn254GT};
 #[cfg(feature = "grumpkin")]
-pub use ec::grumpkin::{Grumpkin, GrumpkinPoint};
+pub use ec::grumpkin::{Grumpkin, GrumpkinPedersenSetupSeed, GrumpkinPoint};

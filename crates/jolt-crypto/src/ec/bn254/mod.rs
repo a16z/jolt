@@ -182,6 +182,7 @@ macro_rules! impl_jolt_group_wrapper {
 
 pub(crate) use impl_jolt_group_wrapper;
 
+mod fq12;
 mod g1;
 mod g2;
 mod gt;
@@ -191,6 +192,7 @@ pub mod batch_addition;
 #[doc(hidden)]
 pub mod glv;
 
+pub use fq12::Bn254Fq12;
 pub use g1::Bn254G1;
 pub use g2::Bn254G2;
 pub use gt::Bn254GT;
@@ -199,7 +201,7 @@ use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
-use jolt_field::{CanonicalBytes, FixedByteSize, Fr};
+use jolt_field::{CanonicalBytes, FixedByteSize, Fq, Fr};
 
 use crate::PairingGroup;
 
@@ -224,6 +226,20 @@ impl Bn254 {
     pub fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Bn254G1 {
         use ark_std::UniformRand;
         Bn254G1(ark_bn254::G1Projective::rand(rng))
+    }
+
+    /// Computes the raw product of BN254 Miller loops without final exponentiation.
+    pub fn multi_miller_loop(g1s: &[Bn254G1], g2s: &[Bn254G2]) -> Bn254Fq12 {
+        debug_assert_eq!(g1s.len(), g2s.len());
+        let g1_projs: Vec<ark_bn254::G1Projective> = g1s.iter().map(|g| g.0).collect();
+        let g2_projs: Vec<ark_bn254::G2Projective> = g2s.iter().map(|g| g.0).collect();
+        let g1_affines = ark_bn254::G1Projective::normalize_batch(&g1_projs);
+        let g2_affines = ark_bn254::G2Projective::normalize_batch(&g2_projs);
+        let g1_prepared: Vec<<ArkBn254 as Pairing>::G1Prepared> =
+            g1_affines.into_iter().map(Into::into).collect();
+        let g2_prepared: Vec<<ArkBn254 as Pairing>::G2Prepared> =
+            g2_affines.into_iter().map(Into::into).collect();
+        Bn254Fq12(ArkBn254::multi_miller_loop(g1_prepared, g2_prepared).0)
     }
 }
 
@@ -273,6 +289,20 @@ pub(crate) fn field_to_fr(f: &Fr) -> ark_bn254::Fr {
         );
     }
     ark_bn254::Fr::from_le_bytes_mod_order(&bytes)
+}
+
+#[inline]
+#[expect(
+    clippy::expect_used,
+    reason = "jolt_field::Fq canonical serialization is already a valid BN254 Fq encoding"
+)]
+pub(crate) fn fq_to_field(f: &Fq) -> ark_bn254::Fq {
+    use ark_serialize::CanonicalDeserialize;
+
+    let mut bytes = vec![0u8; Fq::NUM_BYTES];
+    f.to_bytes_le(&mut bytes);
+    ark_bn254::Fq::deserialize_compressed(&bytes[..])
+        .expect("jolt_field::Fq serializes as a canonical BN254 Fq element")
 }
 
 #[cfg(test)]

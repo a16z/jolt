@@ -5,7 +5,13 @@
 
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand, Zero};
+use blake2::{
+    digest::{consts::U32, Digest},
+    Blake2b,
+};
 use jolt_field::{CanonicalBytes, FixedByteSize, Fq};
+
+use super::JoltGroup;
 
 /// Grumpkin prime-order group element.
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
@@ -168,6 +174,72 @@ impl Grumpkin {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GrumpkinPedersenSetupSeed<'a> {
+    pub domain: &'a [u8],
+    pub seed: &'a [u8],
+}
+
+impl<'a> GrumpkinPedersenSetupSeed<'a> {
+    pub const fn new(domain: &'a [u8], seed: &'a [u8]) -> Self {
+        Self { domain, seed }
+    }
+}
+
+impl crate::DeriveSetup<GrumpkinPedersenSetupSeed<'_>> for super::PedersenSetup<GrumpkinPoint> {
+    fn derive(source: &GrumpkinPedersenSetupSeed<'_>, capacity: usize) -> Self {
+        let mut message_generators = Vec::with_capacity(capacity);
+        for index in 0..capacity {
+            message_generators.push(derive_grumpkin_pedersen_point(source, b"message", index));
+        }
+        let blinding_generator = derive_grumpkin_pedersen_point(source, b"blinding", 0);
+        Self::new(message_generators, blinding_generator)
+    }
+}
+
+fn derive_grumpkin_pedersen_point(
+    source: &GrumpkinPedersenSetupSeed<'_>,
+    role: &[u8],
+    index: usize,
+) -> GrumpkinPoint {
+    let mut attempt = 0_u64;
+    loop {
+        let bytes = hash_grumpkin_pedersen_candidate(source, role, index, attempt);
+        let x = ark_grumpkin::Fq::from_le_bytes_mod_order(&bytes);
+        let greatest = bytes[31] & 1 == 1;
+        if let Some(affine) = ark_grumpkin::Affine::get_point_from_x_unchecked(x, greatest) {
+            if affine.is_in_correct_subgroup_assuming_on_curve() {
+                let point = GrumpkinPoint(affine.into_group());
+                if !point.is_identity() {
+                    return point;
+                }
+            }
+        }
+        attempt = attempt.wrapping_add(1);
+    }
+}
+
+fn hash_grumpkin_pedersen_candidate(
+    source: &GrumpkinPedersenSetupSeed<'_>,
+    role: &[u8],
+    index: usize,
+    attempt: u64,
+) -> [u8; 32] {
+    let mut hasher = Blake2b::<U32>::new();
+    hash_len_prefixed(&mut hasher, b"JoltGrumpkinPedersenSetupV1");
+    hash_len_prefixed(&mut hasher, source.domain);
+    hash_len_prefixed(&mut hasher, source.seed);
+    hash_len_prefixed(&mut hasher, role);
+    hasher.update((index as u64).to_le_bytes());
+    hasher.update(attempt.to_le_bytes());
+    hasher.finalize().into()
+}
+
+fn hash_len_prefixed(hasher: &mut Blake2b<U32>, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
 #[inline]
 pub(crate) fn fq_to_grumpkin_fr(f: &Fq) -> ark_grumpkin::Fr {
     let mut bytes = vec![0u8; Fq::NUM_BYTES];
@@ -190,7 +262,7 @@ mod tests {
     use jolt_field::{Fq, FromPrimitiveInt};
 
     use super::*;
-    use crate::{JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
+    use crate::{DeriveSetup, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
 
     #[test]
     fn scalar_mul_and_msm_match() {
@@ -218,6 +290,50 @@ mod tests {
         );
         let values = [Fq::from_u64(4), Fq::from_u64(5), Fq::from_u64(6)];
         let opening_scalar = Fq::from_u64(7);
+        let commitment = VC::commit(&setup, &values, &opening_scalar);
+
+        assert!(VC::verify(&setup, &commitment, &values, &opening_scalar));
+        assert!(!VC::verify(
+            &setup,
+            &commitment,
+            &values,
+            &(opening_scalar + Fq::from_u64(1)),
+        ));
+    }
+
+    #[test]
+    fn seed_derived_pedersen_setup_is_deterministic() {
+        let seed = GrumpkinPedersenSetupSeed::new(b"dory-assist-hyrax", b"v1");
+        let left = PedersenSetup::<GrumpkinPoint>::derive(&seed, 4);
+        let right = PedersenSetup::<GrumpkinPoint>::derive(&seed, 4);
+
+        assert_eq!(left, right);
+        assert_eq!(left.message_generators.len(), 4);
+        assert!(left
+            .message_generators
+            .iter()
+            .all(|point| !point.is_identity()));
+        assert!(!left.blinding_generator.is_identity());
+    }
+
+    #[test]
+    fn seed_derived_pedersen_setup_changes_with_seed() {
+        let left_seed = GrumpkinPedersenSetupSeed::new(b"dory-assist-hyrax", b"v1");
+        let right_seed = GrumpkinPedersenSetupSeed::new(b"dory-assist-hyrax", b"v2");
+        let left = PedersenSetup::<GrumpkinPoint>::derive(&left_seed, 2);
+        let right = PedersenSetup::<GrumpkinPoint>::derive(&right_seed, 2);
+
+        assert_ne!(left, right);
+    }
+
+    #[test]
+    fn seed_derived_pedersen_setup_works_for_commitments() {
+        type VC = Pedersen<GrumpkinPoint>;
+
+        let seed = GrumpkinPedersenSetupSeed::new(b"dory-assist-hyrax", b"v1");
+        let setup = PedersenSetup::<GrumpkinPoint>::derive(&seed, 3);
+        let values = [Fq::from_u64(5), Fq::from_u64(8), Fq::from_u64(13)];
+        let opening_scalar = Fq::from_u64(21);
         let commitment = VC::commit(&setup, &values, &opening_scalar);
 
         assert!(VC::verify(&setup, &commitment, &values, &opening_scalar));

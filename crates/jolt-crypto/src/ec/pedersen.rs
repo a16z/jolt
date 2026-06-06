@@ -20,7 +20,7 @@ pub struct Pedersen<G: JoltGroup> {
 
 /// Setup parameters for Pedersen commitments: a vector of message generators
 /// and a separate blinding generator.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(bound = "")]
 pub struct PedersenSetup<G: JoltGroup> {
     pub message_generators: Vec<G>,
