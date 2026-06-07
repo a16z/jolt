@@ -1208,6 +1208,21 @@ mod test_mmu {
     }
 
     #[test]
+    fn guest_word_store_to_upper_half_of_panic_word_sets_public_panic_bit() {
+        let mut mmu = setup_mmu();
+        let panic_upper_word = mmu.jolt_device.as_ref().unwrap().memory_layout.panic + 4;
+
+        mmu.store_word(panic_upper_word, 1).unwrap();
+
+        let device = mmu.jolt_device.as_ref().unwrap();
+        assert!(
+            device.panic,
+            "guest word store to panic+4 must set the public panic bit"
+        );
+        assert_eq!(device.load(device.memory_layout.panic), 1);
+    }
+
+    #[test]
     fn test_mprv_uses_mpp_machine_fast_path() {
         let mut mmu = setup_mmu();
 

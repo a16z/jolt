@@ -107,10 +107,10 @@ impl JoltDevice {
     }
 
     pub fn store(&mut self, address: u64, value: u8) {
-        if address == self.memory_layout.panic {
+        if self.is_panic(address) {
             self.panic = true;
             return;
-        } else if self.is_panic(address) || self.is_termination(address) {
+        } else if self.is_termination(address) {
             return;
         }
 
@@ -246,7 +246,10 @@ pub struct MemoryLayout {
     pub stack_end: u64,
     pub heap_size: u64,
     pub heap_end: u64,
+    /// Start of the 8-byte panic word. Stores to any byte in this word set
+    /// [`JoltDevice::panic`].
     pub panic: u64,
+    /// Start of the 8-byte termination word.
     pub termination: u64,
     /// End of the memory region containing inputs, outputs, the panic bit,
     /// and the termination bit.
@@ -498,6 +501,29 @@ mod tests {
 
         assert_eq!(device.input_words_le(), vec![0x0807_0605_0403_0201, 9]);
         assert_eq!(device.output_words_le(), vec![0xbbaa]);
+    }
+
+    #[test]
+    fn writes_to_any_byte_of_panic_word_set_the_panic_bit() {
+        for byte_offset in 0..8 {
+            let mut device = JoltDevice::new(&MemoryConfig {
+                program_size: Some(1024),
+                ..Default::default()
+            });
+            let panic_byte = device.memory_layout.panic + byte_offset;
+
+            device.store(panic_byte, 1);
+
+            assert!(
+                device.panic,
+                "write to panic byte offset {byte_offset} must set the public panic bit"
+            );
+            assert_eq!(
+                device.load(device.memory_layout.panic),
+                1,
+                "panic word must read as set after write to byte offset {byte_offset}"
+            );
+        }
     }
 
     #[test]
