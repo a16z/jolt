@@ -8,7 +8,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
     SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use super::inputs::Stage6Claims;
 use crate::{
@@ -48,7 +48,7 @@ pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let address_statements = vec![
         SumcheckStatement::new(
@@ -123,7 +123,7 @@ pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let address_sumcheck_claims = vec![
         SumcheckClaim::new(
@@ -214,8 +214,8 @@ where
 pub(super) fn append_opening_claims<F, T>(transcript: &mut T, claims: &Stage6Claims<F>)
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.bytecode_read_raf);
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.booleanity);
+    transcript.absorb_field(&claims.address_phase.bytecode_read_raf);
+    transcript.absorb_field(&claims.address_phase.booleanity);
 }

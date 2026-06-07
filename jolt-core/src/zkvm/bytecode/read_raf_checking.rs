@@ -334,9 +334,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for BytecodeReadRafAddressSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for BytecodeReadRafAddressSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -633,9 +631,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for BytecodeReadRafCycleSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for BytecodeReadRafCycleSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -842,8 +838,8 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for BytecodeReadRafAddressSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for BytecodeReadRafAddressSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -911,8 +907,8 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for BytecodeReadRafCycleSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for BytecodeReadRafCycleSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

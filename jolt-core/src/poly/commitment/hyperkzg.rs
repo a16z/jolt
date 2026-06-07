@@ -19,7 +19,7 @@ use crate::zkvm::witness::CommittedPolynomial;
 use crate::{
     msm::VariableBaseMSM,
     poly::{commitment::kzg::SRS, dense_mlpoly::DensePolynomial, unipoly::UniPoly},
-    transcript_msgs::{AbsorbFs, FsChallenge, ProverFs, VerifierFs},
+    transcript_msgs::{FsAbsorb, FsChallenge, ProverFs, VerifierFs},
     utils::{errors::ProofVerifyError, small_scalar::SmallScalar},
 };
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
@@ -127,10 +127,7 @@ where
     h
 }
 
-fn absorb_hyperkzg_witness_commitments<
-    P: Pairing,
-    T: AbsorbFs<P::ScalarField> + FsChallenge<P::ScalarField>,
->(
+fn absorb_hyperkzg_witness_commitments<P: Pairing, T: FsAbsorb + FsChallenge<P::ScalarField>>(
     transcript: &mut T,
     witness_commitments: &[P::G1Affine],
 ) -> P::ScalarField
@@ -160,7 +157,7 @@ where
     Ok(())
 }
 
-fn kzg_open_batch<P: Pairing, T: AbsorbFs<P::ScalarField> + FsChallenge<P::ScalarField>>(
+fn kzg_open_batch<P: Pairing, T: FsAbsorb + FsChallenge<P::ScalarField>>(
     f: &[MultilinearPolynomial<P::ScalarField>],
     u: &[P::ScalarField],
     pk: &HyperKZGProverKey<P>,
@@ -212,14 +209,13 @@ where
 
     // The prover and verifier must absorb the witness commitments identically
     // so they derive the same Fiat-Shamir challenge.
-    let _d_0: P::ScalarField =
-        absorb_hyperkzg_witness_commitments::<P, T>(transcript, &w);
+    let _d_0: P::ScalarField = absorb_hyperkzg_witness_commitments::<P, T>(transcript, &w);
 
     (w, v)
 }
 
 // vk is hashed in transcript already, so we do not add it here
-fn kzg_verify_batch<P: Pairing, T: AbsorbFs<P::ScalarField> + FsChallenge<P::ScalarField>>(
+fn kzg_verify_batch<P: Pairing, T: FsAbsorb + FsChallenge<P::ScalarField>>(
     vk: &HyperKZGVerifierKey<P>,
     C: &[P::G1Affine],
     W: &[P::G1Affine],
@@ -329,7 +325,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HyperKZG::open")]
-    pub fn open<T: AbsorbFs<P::ScalarField> + FsChallenge<P::ScalarField>>(
+    pub fn open<T: FsAbsorb + FsChallenge<P::ScalarField>>(
         pk: &HyperKZGProverKey<P>,
         poly: &MultilinearPolynomial<P::ScalarField>,
         point: &[<P::ScalarField as JoltField>::Challenge],
@@ -377,7 +373,7 @@ where
     }
 
     /// A method to verify purported evaluations of a batch of polynomials
-    pub fn verify<T: AbsorbFs<P::ScalarField> + FsChallenge<P::ScalarField>>(
+    pub fn verify<T: FsAbsorb + FsChallenge<P::ScalarField>>(
         vk: &HyperKZGVerifierKey<P>,
         C: &HyperKZGCommitment<P>,
         point: &[<P::ScalarField as JoltField>::Challenge],
@@ -572,11 +568,11 @@ where
 mod tests {
     use super::*;
     use crate::transcript_msgs::FsChallenge;
-    use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512};
     use ark_bn254::{Bn254, Fq};
     use ark_ec::AffineRepr;
     use ark_std::UniformRand;
     use ark_std::Zero;
+    use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512};
     use rand::Rng;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -735,14 +731,16 @@ mod tests {
             let mut bad_proof = proof.clone();
             let v1 = bad_proof.v[1].clone();
             bad_proof.v[0].clone_from(&v1);
-            let mut verifier_tr2 = verifier_transcript(b"TestEval", [0u8; 32], Blake2b512::default(), &[]);
+            let mut verifier_tr2 =
+                verifier_transcript(b"TestEval", [0u8; 32], Blake2b512::default(), &[]);
             assert!(
                 HyperKZG::verify(&vk, &C, &point, &eval, &bad_proof, &mut verifier_tr2,).is_err()
             );
 
             let mut bad_identity_commitment = C.clone();
             bad_identity_commitment.0 = <Bn254 as Pairing>::G1Affine::zero();
-            let mut verifier_tr3 = verifier_transcript(b"TestEval", [0u8; 32], Blake2b512::default(), &[]);
+            let mut verifier_tr3 =
+                verifier_transcript(b"TestEval", [0u8; 32], Blake2b512::default(), &[]);
             assert!(HyperKZG::verify(
                 &vk,
                 &bad_identity_commitment,
@@ -756,7 +754,8 @@ mod tests {
             let mut bad_offcurve_proof = proof.clone();
             bad_offcurve_proof.w[0] =
                 <Bn254 as Pairing>::G1Affine::new_unchecked(Fq::zero(), Fq::zero());
-            let mut verifier_tr4 = verifier_transcript(b"TestEval", [0u8; 32], Blake2b512::default(), &[]);
+            let mut verifier_tr4 =
+                verifier_transcript(b"TestEval", [0u8; 32], Blake2b512::default(), &[]);
             assert!(HyperKZG::verify(
                 &vk,
                 &C,

@@ -1,11 +1,14 @@
 //! Compatibility audits for imported `jolt-core` ZK proof artifacts.
 
+use ark_serialize::CanonicalSerialize;
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{
+    verifier_transcript, DuplexSpongeInterface, OptimizedChallenge, VerifierState,
+};
 
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
@@ -49,21 +52,22 @@ impl ZkBlindFoldProtocolShape {
     }
 }
 
-pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, T, ZkProof>(
+pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, H, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<ZkBlindFoldProtocolShape, VerifierError>
 where
-    F: Field + AppendToTranscript,
+    F: Field,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: CanonicalSerialize + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
+    H: DuplexSpongeInterface<U = u8> + Default,
+    for<'a> VerifierState<'a, H>: OptimizedChallenge,
 {
     let config = JoltProtocolConfig::for_zk(true);
     validate_proof_config(&config, proof)?;
@@ -77,7 +81,7 @@ where
     )?;
     validate_proof_consistency(proof, true)?;
 
-    let mut transcript = T::new(b"Jolt");
+    let mut transcript = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &[]);
     absorb_preamble(&checked, proof, &mut transcript);
     absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
 

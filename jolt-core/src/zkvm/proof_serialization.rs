@@ -75,8 +75,12 @@ pub struct JoltProof<
     pub _marker: PhantomData<fn() -> H>,
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, H: DuplexSpongeInterface>
-    JoltProof<F, C, PCS, H>
+impl<
+        F: JoltField,
+        C: JoltCurve<F = F>,
+        PCS: CommitmentScheme<Field = F>,
+        H: DuplexSpongeInterface,
+    > JoltProof<F, C, PCS, H>
 {
     /// Verifies all sumcheck and uniskip proofs use the same ZK variant.
     /// Returns the ZK mode if consistent, or an error if any stage disagrees.

@@ -2,7 +2,7 @@
 
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::FsTranscript;
 
 use crate::claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 use crate::error::OpeningsError;
@@ -11,7 +11,7 @@ use jolt_crypto::HomomorphicCommitment;
 
 /// Groups claims by point, draws ρ per group, combines: p = Σ ρ^i · p_i.
 #[tracing::instrument(skip_all, name = "reduce_prover")]
-pub fn reduce_prover<F: Field, T: Transcript<Challenge = F>>(
+pub fn reduce_prover<F: Field, T: FsTranscript<F>>(
     claims: Vec<ProverOpeningClaim<F>>,
     transcript: &mut T,
 ) -> Vec<ProverOpeningClaim<F>> {
@@ -19,9 +19,8 @@ pub fn reduce_prover<F: Field, T: Transcript<Challenge = F>>(
         return Vec::new();
     }
 
-    transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
     for claim in &claims {
-        claim.evaluation.value.append_to_transcript(transcript);
+        transcript.absorb_field(&claim.evaluation.value);
     }
 
     let groups = group_prover_claims_by_point(claims);
@@ -61,15 +60,14 @@ pub fn reduce_verifier<PCS, T>(
 where
     PCS: AdditivelyHomomorphic,
     PCS::Output: HomomorphicCommitment<PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     if claims.is_empty() {
         return Ok(Vec::new());
     }
 
-    transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
     for claim in &claims {
-        claim.evaluation.value.append_to_transcript(transcript);
+        transcript.absorb_field(&claim.evaluation.value);
     }
 
     let groups = group_verifier_claims_by_point(claims);

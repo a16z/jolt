@@ -7,10 +7,11 @@
 
 use std::fmt::Debug;
 
+use ark_serialize::CanonicalSerialize;
 use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::FsTranscript;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::OpeningsError;
@@ -44,7 +45,7 @@ pub trait CommitmentScheme: Commitment {
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Self::Proof;
 
     fn verify(
@@ -53,11 +54,11 @@ pub trait CommitmentScheme: Commitment {
         eval: Self::Field,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Result<(), OpeningsError>;
 
     fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
         point: &[Self::Field],
         eval: &Self::Field,
     );
@@ -103,7 +104,7 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         + 'static
         + Serialize
         + DeserializeOwned
-        + AppendToTranscript;
+        + CanonicalSerialize;
 
     type Blind: Clone + Send + Sync;
 
@@ -121,7 +122,7 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind);
 
     /// Verify a ZK opening proof and return the hiding commitment to the
@@ -131,11 +132,11 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         point: &[Self::Field],
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError>;
 
     fn bind_zk_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
         point: &[Self::Field],
         hiding_commitment: &Self::HidingCommitment,
     );

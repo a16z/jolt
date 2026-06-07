@@ -110,9 +110,7 @@ impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for RamRaClaimReductionSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for RamRaClaimReductionSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -732,8 +730,8 @@ impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for RamRaClaimReductionSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RamRaClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

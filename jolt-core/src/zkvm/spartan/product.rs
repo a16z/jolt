@@ -343,8 +343,8 @@ impl<F: JoltField> ProductVirtualUniSkipVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for ProductVirtualUniSkipVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for ProductVirtualUniSkipVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -757,9 +757,7 @@ impl<F: JoltField> ProductVirtualRemainderProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for ProductVirtualRemainderProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for ProductVirtualRemainderProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -825,8 +823,8 @@ impl<F: JoltField> ProductVirtualRemainderVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for ProductVirtualRemainderVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for ProductVirtualRemainderVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

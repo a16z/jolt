@@ -17,7 +17,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb, try_eq_mle, LtPolynomial};
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::{LabelWithCount, Transcript};
+use jolt_transcript::{FsAbsorb, FsTranscript};
 
 use super::{
     inputs::{Deps, Stage4Claims},
@@ -64,7 +64,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
@@ -758,7 +758,7 @@ fn append_stage4_opening_claims<F, T>(
 ) -> Result<(), VerifierError>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     if untrusted_advice_commitment_present {
         let id = ram::val_check_advice_opening(JoltAdviceKind::Untrusted);
@@ -766,7 +766,7 @@ where
             .advice
             .untrusted
             .ok_or(VerifierError::MissingOpeningClaim { id })?;
-        transcript.append_labeled(b"opening_claim", &opening_claim);
+        transcript.absorb_field(&opening_claim);
     }
     if trusted_advice_commitment_present {
         let id = ram::val_check_advice_opening(JoltAdviceKind::Trusted);
@@ -774,33 +774,36 @@ where
             .advice
             .trusted
             .ok_or(VerifierError::MissingOpeningClaim { id })?;
-        transcript.append_labeled(b"opening_claim", &opening_claim);
+        transcript.absorb_field(&opening_claim);
     }
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.registers_val);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rs1_ra);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rs2_ra);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rd_wa);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rd_inc);
+    transcript.absorb_field(&claims.registers_read_write.registers_val);
+    transcript.absorb_field(&claims.registers_read_write.rs1_ra);
+    transcript.absorb_field(&claims.registers_read_write.rs2_ra);
+    transcript.absorb_field(&claims.registers_read_write.rd_wa);
+    transcript.absorb_field(&claims.registers_read_write.rd_inc);
     #[cfg(feature = "field-inline")]
     {
         let field_claims = &claims.field_inline.field_registers_read_write;
-        transcript.append_labeled(b"opening_claim", &field_claims.field_registers_val);
-        transcript.append_labeled(b"opening_claim", &field_claims.field_rs1_ra);
-        transcript.append_labeled(b"opening_claim", &field_claims.field_rs2_ra);
-        transcript.append_labeled(b"opening_claim", &field_claims.field_rd_wa);
-        transcript.append_labeled(b"opening_claim", &field_claims.field_rd_inc);
+        transcript.absorb_field(&field_claims.field_registers_val);
+        transcript.absorb_field(&field_claims.field_rs1_ra);
+        transcript.absorb_field(&field_claims.field_rs2_ra);
+        transcript.absorb_field(&field_claims.field_rd_wa);
+        transcript.absorb_field(&field_claims.field_rd_inc);
     }
-    transcript.append_labeled(b"opening_claim", &claims.ram_val_check.ram_ra);
-    transcript.append_labeled(b"opening_claim", &claims.ram_val_check.ram_inc);
+    transcript.absorb_field(&claims.ram_val_check.ram_ra);
+    transcript.absorb_field(&claims.ram_val_check.ram_inc);
     Ok(())
 }
 
-fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
-    transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
-    transcript.append_bytes(&[]);
+fn append_ram_val_check_gamma_domain_separator<T: FsAbsorb>(transcript: &mut T) {
+    transcript.absorb_bytes(&[]);
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test recording transcript serializes into an in-memory Vec, which is infallible"
+)]
 mod tests {
     use super::*;
 
@@ -812,38 +815,49 @@ mod tests {
         RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
         RegistersReadWriteOutputOpeningClaims,
     };
-    use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
+    use ark_serialize::CanonicalSerialize;
+    use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
+    use jolt_transcript::{FsAbsorb, FsChallenge};
 
     #[derive(Clone, Default)]
     struct RecordingTranscript {
         chunks: Vec<Vec<u8>>,
-        state: [u8; 32],
     }
 
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
+    impl FsAbsorb for RecordingTranscript {
+        fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
+            let mut buf = Vec::with_capacity(value.compressed_size());
+            value.serialize_compressed(&mut buf).unwrap();
+            self.chunks.push(buf);
         }
 
-        fn append_bytes(&mut self, bytes: &[u8]) {
+        fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
+            let mut buf = Vec::new();
+            for v in values {
+                v.serialize_compressed(&mut buf).unwrap();
+            }
+            self.chunks.push(buf);
+        }
+
+        fn absorb_bytes(&mut self, bytes: &[u8]) {
             self.chunks.push(bytes.to_vec());
         }
+    }
 
-        fn challenge(&mut self) -> Self::Challenge {
+    impl FsChallenge<Fr> for RecordingTranscript {
+        fn challenge(&mut self) -> Fr {
             Fr::from_u64(0)
         }
 
-        fn state(&self) -> [u8; 32] {
-            self.state
+        fn challenge_scalar(&mut self) -> Fr {
+            Fr::from_u64(0)
         }
     }
 
     #[test]
     fn opening_claim_appends_follow_core_order_without_advice() {
         let claims = test_claims();
-        let mut transcript = RecordingTranscript::new(b"stage4-openings");
+        let mut transcript = RecordingTranscript::default();
 
         let result = append_stage4_opening_claims(&mut transcript, false, false, &claims);
         assert!(result.is_ok(), "stage 4 openings should append: {result:?}");
@@ -876,15 +890,13 @@ mod tests {
 
     #[test]
     fn ram_val_check_gamma_domain_separator_matches_core_empty_bytes_append() {
-        let mut transcript = RecordingTranscript::new(b"stage4-gamma");
+        let mut transcript = RecordingTranscript::default();
 
         append_ram_val_check_gamma_domain_separator(&mut transcript);
 
-        assert_eq!(transcript.chunks.len(), 2);
-        let mut packed = vec![0; 32];
-        packed[..b"ram_val_check_gamma".len()].copy_from_slice(b"ram_val_check_gamma");
-        assert_eq!(transcript.chunks[0], packed);
-        assert!(transcript.chunks[1].is_empty());
+        // Like jolt-core: no label, just the empty-bytes domain separator.
+        assert_eq!(transcript.chunks.len(), 1);
+        assert!(transcript.chunks[0].is_empty());
     }
 
     fn test_claims() -> Stage4Claims<Fr> {
@@ -918,27 +930,14 @@ mod tests {
     }
 
     fn assert_opening_claim_payloads(transcript: &RecordingTranscript, expected: &[Fr]) {
-        assert_eq!(transcript.chunks.len(), expected.len() * 2);
-        let label = opening_claim_label();
+        // Like jolt-core: each opening claim is absorbed as just its value (no label).
+        assert_eq!(transcript.chunks.len(), expected.len());
         for (index, expected_payload) in expected.iter().copied().enumerate() {
-            assert_eq!(transcript.chunks[2 * index], label);
-            assert_eq!(
-                transcript.chunks[2 * index + 1],
-                scalar_bytes(expected_payload)
-            );
+            assert_eq!(transcript.chunks[index], scalar_bytes(expected_payload));
         }
     }
 
-    fn opening_claim_label() -> Vec<u8> {
-        let mut label = vec![0; 32];
-        label[..b"opening_claim".len()].copy_from_slice(b"opening_claim");
-        label
-    }
-
     fn scalar_bytes(value: Fr) -> Vec<u8> {
-        let mut bytes = vec![0; Fr::NUM_BYTES];
-        value.to_bytes_le(&mut bytes);
-        bytes.reverse();
-        bytes
+        value.to_bytes_le_vec()
     }
 }

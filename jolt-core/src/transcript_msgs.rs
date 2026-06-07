@@ -16,28 +16,34 @@
 //! `challenge-254-bit`, if enabled explicitly, still widens `F::Challenge` to full-field.
 //!
 //! **What actually crosses the NARG (host "hybrid" milestone):** *only* prover-only
-//! payload — the sumcheck/uniskip round polynomials — is `write`/`read` through the NARG.
-//! *Shared* values (the public statement, flushed opening claims) are `absorb`'d
-//! ([`public_message`]); commitments and the dory opening proof stay **structured proof
-//! fields** and are also `absorb`'d, NOT written to the NARG. (Pushing commitments into
-//! the NARG — full Option-B — is a follow-up.)
+//! payload — the sumcheck/uniskip round polynomials — is `write_slice`/`read_slice`
+//! through the NARG. *Shared* values (the public statement, flushed opening claims) are
+//! `absorb`'d ([`public_message`]); commitments and the dory opening proof stay
+//! **structured proof fields** and are also `absorb`'d, NOT written to the NARG.
+//! (Pushing commitments into the NARG — full Option-B — is a follow-up.)
 //!
 //! Three concerns, three traits:
 //! - [`FsChallenge`] — squeezed verifier randomness; blanket-implemented for any
 //!   transcript with [`OptimizedChallenge`], so prover and verifier share it.
 //! - [`ProverFs`] — `absorb` shared values ([`public_message`], not shipped) and
-//!   `write` prover-only payload ([`prover_message`], into the NARG).
-//! - [`VerifierFs`] — `absorb` the same shared values, and `read` the prover payload
-//!   back from the NARG in order.
+//!   `write_slice` prover-only payload ([`prover_message`], into the NARG).
+//! - [`VerifierFs`] — `absorb` the same shared values, and `read_slice` the prover
+//!   payload back from the NARG in order.
 //!
 //! [`public_message`]: spongefish::ProverState::public_message
 //! [`prover_message`]: spongefish::ProverState::prover_message
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_transcript::{
-    BytesMsg, DuplexSpongeInterface, OptimizedChallenge, ProverState, VerificationError,
-    VerificationResult, VerifierState,
+    serialize_slice, BytesMsg, DuplexSpongeInterface, OptimizedChallenge, ProverState,
+    VerificationError, VerificationResult, VerifierState,
 };
+
+/// Absorbing shared values is the field-agnostic [`jolt_transcript::FsAbsorb`] surface
+/// (`absorb` = spongefish `public_message`); jolt-core re-exports it so the whole
+/// transcript vocabulary lives behind `crate::transcript_msgs`, and there is a *single*
+/// absorb implementation shared with the modular crates (no hand-kept second copy).
+pub use jolt_transcript::FsAbsorb;
 use rand::{CryptoRng, RngCore};
 
 use crate::field::JoltField;
@@ -71,23 +77,39 @@ use crate::field::JoltField;
 // reader); otherwise keep `BytesMsg`. See DEV-16 (the collapse) + DEV-25 (this decision).
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 
-/// Single-value [`slice_to_bytes`]: compressed serialization, no length prefix.
-fn to_bytes<T: CanonicalSerialize>(value: &T) -> Vec<u8> {
-    slice_to_bytes(std::slice::from_ref(value))
-}
-
 /// Squeezed field challenges, shared by both transcript roles.
 ///
 /// Blanket-implemented for any state exposing [`OptimizedChallenge`] (i.e. every
 /// `ProverState`/`VerifierState` over a supported sponge), so the prover and
 /// verifier derive challenges identically.
+///
+/// ## Plain vs optimized — the #1 silent Fiat–Shamir hazard
+///
+/// Both methods draw the *same* 128-bit value ([`OptimizedChallenge::challenge_u128`]),
+/// but they produce **different field elements** — they are NOT interchangeable:
+/// - [`challenge_field`](Self::challenge_field) → the plain element `v` (`from_u128`),
+///   all 128 bits.
+/// - [`challenge_optimized`](Self::challenge_optimized) → the fast-multiply
+///   [`MontU128Challenge`](crate::field::challenge::MontU128Challenge) form, which
+///   **masks the top 3 bits** (125-bit) and represents the element `v_masked · 2¹²⁸`.
+///   So it differs from `challenge_field` in *value*, not merely in the returned type.
+///
+/// Soundness therefore requires the prover and verifier to call the *same* method at a
+/// given transcript position; mixing them silently diverges the challenge. This mirrors
+/// the modular [`jolt_transcript::FsChallenge`], but **the names are inverted** there:
+/// jolt-core's `challenge_field`/`challenge_optimized` map to that trait's
+/// `challenge_scalar` (plain) / `challenge` (optimized) — and jolt-core's optimized form
+/// additionally returns the distinct `F::Challenge` type, not `F`. Map by *semantics*,
+/// never by like name.
 pub trait FsChallenge<F: JoltField> {
-    /// Squeeze a full-width field challenge. Per jolt's design this is the
-    /// 128-bit challenge embedded in the field (the optimized and full forms
-    /// squeeze the same 128 bits; they differ only in the returned type).
+    /// Squeeze the **plain** field challenge `v` (`from_u128`), keeping all 128 bits.
+    /// See the trait docs for why this is not interchangeable with
+    /// [`challenge_optimized`](Self::challenge_optimized).
     fn challenge_field(&mut self) -> F;
 
-    /// Squeeze the fast-multiply [`JoltField::Challenge`] form.
+    /// Squeeze the fast-multiply [`JoltField::Challenge`] form (125-bit, embedded as
+    /// `v_masked · 2¹²⁸`). A *different* field element than
+    /// [`challenge_field`](Self::challenge_field) for the same squeeze.
     fn challenge_optimized(&mut self) -> F::Challenge;
 
     /// `n` independent field challenges.
@@ -123,28 +145,16 @@ impl<F: JoltField, S: OptimizedChallenge> FsChallenge<F> for S {
     }
 }
 
-#[expect(clippy::expect_used)]
-fn slice_to_bytes<T: CanonicalSerialize>(values: &[T]) -> Vec<u8> {
-    // Reserve the exact serialized size up front: `write_slice` runs once per
-    // sumcheck round on the prover hot path, so the default-grow reallocations
-    // are pure churn. The byte output is unchanged.
-    let mut buf = Vec::with_capacity(values.iter().map(|v| v.compressed_size()).sum());
-    for v in values {
-        v.serialize_compressed(&mut buf)
-            .expect("CanonicalSerialize into a Vec is infallible");
-    }
-    buf
-}
-
 /// Decode every `T` in a single self-delimiting frame.
 ///
 /// The frame body length (carried by [`BytesMsg`]'s prefix, which the sponge already
 /// bounds to the remaining NARG) determines the count — so a sequence is read back
 /// without shipping or trusting a separate length, and the per-round element count
-/// may vary. This is also why we never `read::<Vec<T>>()`: `CanonicalDeserialize` for
-/// `Vec` reads its OWN length prefix from the NARG and pre-allocates from it, so an
-/// adversarial proof could capacity-overflow panic / OOM. Here every allocation is
-/// bounded by the actual frame bytes, which are bounded by the actual proof.
+/// may vary. This is also why we never deserialize a `Vec<T>` directly:
+/// `CanonicalDeserialize` for `Vec` reads its OWN length prefix from the NARG and
+/// pre-allocates from it, so an adversarial proof could capacity-overflow panic / OOM.
+/// Here every allocation is bounded by the actual frame bytes, which are bounded by the
+/// actual proof.
 fn read_all<T: CanonicalDeserialize>(body: &[u8]) -> VerificationResult<Vec<T>> {
     let mut cursor = body;
     let mut out = Vec::new();
@@ -154,45 +164,11 @@ fn read_all<T: CanonicalDeserialize>(body: &[u8]) -> VerificationResult<Vec<T>> 
     Ok(out)
 }
 
-/// Absorbing shared values, common to both transcript roles.
-///
-/// A value both sides recompute is `absorb`'d (spongefish `public_message`): it
-/// is mixed into the sponge but NOT shipped in the NARG. Shared by `ProverFs` /
-/// `VerifierFs` so role-agnostic code (e.g. `fiat_shamir_preamble`) can absorb
-/// the public statement on either side.
-pub trait AbsorbFs<F: JoltField> {
-    /// Absorb a shared value both sides recompute (emits no NARG bytes).
-    fn absorb<T: CanonicalSerialize>(&mut self, value: &T);
-}
-
-impl<F, H, R> AbsorbFs<F> for ProverState<H, R>
-where
-    F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
-    R: RngCore + CryptoRng,
-{
-    fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
-        self.public_message(&BytesMsg(to_bytes(value)));
-    }
-}
-
-impl<F, H> AbsorbFs<F> for VerifierState<'_, H>
-where
-    F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
-{
-    fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
-        self.public_message(&BytesMsg(to_bytes(value)));
-    }
-}
-
 /// Prover-side message vocabulary over the spongefish NARG.
-pub trait ProverFs<F: JoltField>: FsChallenge<F> + AbsorbFs<F> {
-    /// Write a fixed-size prover-only value into the NARG.
-    fn write<T: CanonicalSerialize>(&mut self, value: &T);
-
-    /// Write a sequence whose length the verifier already knows from the protocol
-    /// (read back with [`VerifierFs::read_vec`]). No length prefix is shipped.
+pub trait ProverFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
+    /// Write a sequence of prover-only values as one self-delimiting frame
+    /// (read back with [`VerifierFs::read_slice`]). No length prefix is shipped; the
+    /// frame is bounded by the NARG, so the per-round element count may vary.
     fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]);
 }
 
@@ -203,34 +179,17 @@ where
     R: RngCore + CryptoRng,
     Self: OptimizedChallenge,
 {
-    fn write<T: CanonicalSerialize>(&mut self, value: &T) {
-        self.prover_message(&BytesMsg(to_bytes(value)));
-    }
-
     fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
-        self.prover_message(&BytesMsg(slice_to_bytes(values)));
+        self.prover_message(&BytesMsg(serialize_slice(values)));
     }
 }
 
 /// Verifier-side message vocabulary over the spongefish NARG.
-pub trait VerifierFs<F: JoltField>: FsChallenge<F> + AbsorbFs<F> {
-    /// Read the next fixed-size prover-only value back from the NARG, in order.
-    fn read<T: CanonicalDeserialize>(&mut self) -> VerificationResult<T>;
-
+pub trait VerifierFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
     /// Read every value in the next frame written by [`ProverFs::write_slice`]; the
     /// count is the frame's (self-delimiting, so a varying per-round length is fine).
     /// Bounded allocation — see [`read_all`].
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>>;
-
-    /// Like [`read_slice`](Self::read_slice) but assert the frame holds exactly `n`
-    /// values (use when the count is protocol-fixed, for defense in depth).
-    fn read_vec<T: CanonicalDeserialize>(&mut self, n: usize) -> VerificationResult<Vec<T>> {
-        let values = self.read_slice()?;
-        if values.len() != n {
-            return Err(VerificationError);
-        }
-        Ok(values)
-    }
 }
 
 impl<F, H> VerifierFs<F> for VerifierState<'_, H>
@@ -239,16 +198,6 @@ where
     H: DuplexSpongeInterface<U = u8>,
     Self: OptimizedChallenge,
 {
-    fn read<T: CanonicalDeserialize>(&mut self) -> VerificationResult<T> {
-        let bytes = self.prover_message::<BytesMsg>()?;
-        let mut cursor = &bytes.0[..];
-        let value = T::deserialize_compressed(&mut cursor).map_err(|_| VerificationError)?;
-        if !cursor.is_empty() {
-            return Err(VerificationError);
-        }
-        Ok(value)
-    }
-
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
         let bytes = self.prover_message::<BytesMsg>()?;
         read_all(&bytes.0)
@@ -266,7 +215,7 @@ mod tests {
     const SESSION: &[u8] = b"jolt-transcript-msgs-test/v1";
     type Bl = Blake2b512;
 
-    /// A single value round-trips through the NARG and `check_eof` succeeds.
+    /// A frame of values round-trips through the NARG and `check_eof` succeeds.
     #[test]
     fn write_then_read_round_trips() {
         let mut r = test_rng();
@@ -274,16 +223,12 @@ mod tests {
 
         let instance = [7u8; 32];
         let mut p = prover_transcript(SESSION, instance, Bl::default());
-        for s in &scalars {
-            ProverFs::<Fr>::write(&mut p, s);
-        }
+        ProverFs::<Fr>::write_slice(&mut p, &scalars);
         let narg = p.narg_string().to_vec();
 
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
-        for s in &scalars {
-            let read: Fr = VerifierFs::<Fr>::read(&mut v).unwrap();
-            assert_eq!(read, *s);
-        }
+        let read: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
+        assert_eq!(read, scalars);
         VerifierTranscript::<Bl>::check_eof(v).unwrap();
     }
 
@@ -308,7 +253,7 @@ mod tests {
 
         let mut p = prover_transcript(SESSION, instance, Bl::default());
         for c in &input_claims {
-            AbsorbFs::<Fr>::absorb(&mut p, c);
+            FsAbsorb::absorb(&mut p, c);
         }
         let p_batching = FsChallenge::<Fr>::challenge_vec(&mut p, n_instances);
         let mut p_round_challenges = Vec::with_capacity(n_rounds);
@@ -319,13 +264,13 @@ mod tests {
         // Flushed opening claims are SHARED (both sides hold them) → `absorb`, matching
         // the real `flush_to_transcript` (opening_proof.rs); they are NOT in the NARG.
         for c in &flushed_claims {
-            AbsorbFs::<Fr>::absorb(&mut p, c);
+            FsAbsorb::absorb(&mut p, c);
         }
         let narg = p.narg_string().to_vec();
 
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
         for c in &input_claims {
-            AbsorbFs::<Fr>::absorb(&mut v, c);
+            FsAbsorb::absorb(&mut v, c);
         }
         let v_batching = FsChallenge::<Fr>::challenge_vec(&mut v, n_instances);
         let mut v_round_challenges = Vec::with_capacity(n_rounds);
@@ -337,7 +282,7 @@ mod tests {
         }
         // Verifier absorbs the same shared flushed claims (not read from the NARG).
         for c in &flushed_claims {
-            AbsorbFs::<Fr>::absorb(&mut v, c);
+            FsAbsorb::absorb(&mut v, c);
         }
         VerifierTranscript::<Bl>::check_eof(v).unwrap();
 
@@ -353,38 +298,36 @@ mod tests {
     fn trailing_garbage_is_rejected_by_check_eof() {
         let instance = [1u8; 32];
         let mut p = prover_transcript(SESSION, instance, Bl::default());
-        ProverFs::<Fr>::write(&mut p, &Fr::from(42u64));
+        ProverFs::<Fr>::write_slice(&mut p, &[Fr::from(42u64)]);
         let mut narg = p.narg_string().to_vec();
         narg.push(0xFF);
 
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
-        let _: Fr = VerifierFs::<Fr>::read(&mut v).unwrap();
+        let _: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
         assert!(VerifierTranscript::<Bl>::check_eof(v).is_err());
     }
 
-    /// Reading in the wrong order cannot silently pass: a scalar's bytes read as a
-    /// `Vec<F>` either errors or fails `check_eof` — never a clean accept.
+    /// Reading fewer frames than the prover wrote cannot silently pass: the unconsumed
+    /// frame is caught by `check_eof`, so a desynced/short read order is rejected.
     #[test]
-    fn wrong_read_order_does_not_silently_pass() {
+    fn under_reading_narg_is_rejected_by_check_eof() {
         let mut r = test_rng();
-        let scalar = Fr::random(&mut r);
-        let vec_msg: Vec<Fr> = (0..4).map(|_| Fr::random(&mut r)).collect();
+        let frame_a: Vec<Fr> = vec![Fr::random(&mut r)];
+        let frame_b: Vec<Fr> = (0..4).map(|_| Fr::random(&mut r)).collect();
         let instance = [0x0D; 32];
 
         let mut p = prover_transcript(SESSION, instance, Bl::default());
-        ProverFs::<Fr>::write(&mut p, &scalar);
-        ProverFs::<Fr>::write_slice(&mut p, &vec_msg);
+        ProverFs::<Fr>::write_slice(&mut p, &frame_a);
+        ProverFs::<Fr>::write_slice(&mut p, &frame_b);
         let narg = p.narg_string().to_vec();
 
-        // Verifier reads the slice first (wrong order): it consumes the scalar's
-        // frame and tries to decode `vec_msg.len()` field elements from it — which
-        // cannot succeed (and must NOT panic, even on adversarial bytes).
+        // Verifier reads only the first frame, leaving frame_b unconsumed.
         let mut v = verifier_transcript(SESSION, instance, Bl::default(), &narg);
-        let first: VerificationResult<Vec<Fr>> = VerifierFs::<Fr>::read_vec(&mut v, vec_msg.len());
-        let silently_ok = match first {
-            Err(_) => false,
-            Ok(read) => read == vec_msg && VerifierTranscript::<Bl>::check_eof(v).is_ok(),
-        };
-        assert!(!silently_ok, "wrong read order silently accepted");
+        let read_a: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
+        assert_eq!(read_a, frame_a);
+        assert!(
+            VerifierTranscript::<Bl>::check_eof(v).is_err(),
+            "an unconsumed NARG frame must be rejected"
+        );
     }
 }

@@ -13,7 +13,7 @@ use crate::{
         CommitmentScheme, StreamingCommitmentScheme, ZkEvalCommitment,
     },
     poly::multilinear_polynomial::MultilinearPolynomial,
-    transcript_msgs::{AbsorbFs, ProverFs, VerifierFs},
+    transcript_msgs::{FsAbsorb, ProverFs, VerifierFs},
     utils::{errors::ProofVerifyError, math::Math, small_scalar::SmallScalar},
 };
 use ark_bn254::{G1Affine, G1Projective};
@@ -76,7 +76,7 @@ fn canonical_setup_log_n(max_num_vars: usize) -> usize {
     }
 }
 
-pub fn bind_opening_inputs<F: JoltField, T: AbsorbFs<F>>(
+pub fn bind_opening_inputs<F: JoltField, T: FsAbsorb>(
     transcript: &mut T,
     opening_point: &[F::Challenge],
     opening: &F,
@@ -93,7 +93,7 @@ pub fn bind_opening_inputs<F: JoltField, T: AbsorbFs<F>>(
 }
 
 #[cfg(feature = "zk")]
-pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, T: AbsorbFs<F>>(
+pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, T: FsAbsorb>(
     transcript: &mut T,
     opening_point: &[F::Challenge],
     y_com: &C::G1,

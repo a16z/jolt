@@ -49,9 +49,9 @@ challenge-254-bit = []
 # `MontU128Challenge` like Blake2b/Keccak; the spongefish path squeezes a
 # 128-bit Poseidon challenge via `low_128_bits` regardless of the field's
 # `Challenge` width.
-transcript-poseidon = ["dep:light-poseidon"]
-transcript-keccak = []
-transcript-blake2b = []
+transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
+transcript-keccak = ["jolt-transcript/transcript-keccak"]
+transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 # Gates `zkvm::transpilable_verifier` (the symbolic on-chain-verifier generator
 # consumed by the `transpiler` crate). It is built on the now-removed hand-rolled
 # `crate::transcripts::Transcript` trait — which the `transpiler` implements
@@ -82,7 +82,6 @@ rayon = { workspace = true, optional = true }
 serde = { workspace = true, default-features = false }
 sha3.workspace = true
 blake2.workspace = true
-light-poseidon = { version = "0.4.0", optional = true }
 chrono.workspace = true
 strum.workspace = true
 strum_macros.workspace = true

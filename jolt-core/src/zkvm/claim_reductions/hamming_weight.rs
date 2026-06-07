@@ -477,9 +477,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
 }
 
 #[cfg(feature = "prover")]
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for HammingWeightClaimReductionProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for HammingWeightClaimReductionProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -596,8 +594,8 @@ impl<F: JoltField> HammingWeightClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for HammingWeightClaimReductionVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for HammingWeightClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

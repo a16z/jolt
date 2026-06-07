@@ -1,15 +1,13 @@
 //! Committed sumcheck round messages.
 
+use ark_serialize::CanonicalSerialize;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{FsAbsorb, FsTranscript};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SumcheckError;
-use crate::round_proof::RoundMessage;
-
-const SUMCHECK_COMMITMENT_LABEL: &[u8] = b"sumcheck_commitment";
-const OUTPUT_CLAIMS_LABEL: &[u8] = b"output_claims_coms";
+use crate::round_proof::{RoundDegree, RoundMessage};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedRound<C> {
@@ -17,14 +15,15 @@ pub struct CommittedRound<C> {
     pub degree: usize,
 }
 
-impl<C: AppendToTranscript> RoundMessage for CommittedRound<C> {
+impl<C> RoundDegree for CommittedRound<C> {
     fn degree(&self) -> usize {
         self.degree
     }
+}
 
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(SUMCHECK_COMMITMENT_LABEL));
-        self.commitment.append_to_transcript(transcript);
+impl<C: CanonicalSerialize, F: Field> RoundMessage<F> for CommittedRound<C> {
+    fn append_to_transcript<T: FsTranscript<F>>(&self, transcript: &mut T) {
+        transcript.absorb(&self.commitment);
     }
 }
 
@@ -33,15 +32,11 @@ pub struct CommittedOutputClaims<C> {
     pub commitments: Vec<C>,
 }
 
-impl<C: AppendToTranscript> AppendToTranscript for CommittedOutputClaims<C> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            OUTPUT_CLAIMS_LABEL,
-            self.commitments.len() as u64,
-        ));
-        for commitment in &self.commitments {
-            commitment.append_to_transcript(transcript);
-        }
+impl<C: CanonicalSerialize> CommittedOutputClaims<C> {
+    /// Absorbs the committed output-claim commitments into `transcript` as a single
+    /// message, like jolt-core (`absorb(&output_claims_commitments)`).
+    pub fn append_to_transcript<T: FsAbsorb>(&self, transcript: &mut T) {
+        transcript.absorb(&self.commitments);
     }
 }
 

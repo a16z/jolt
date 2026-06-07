@@ -409,8 +409,7 @@ impl<
             &self.opening_accumulator,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> =
-            vec![&spartan_outer_remaining];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![&spartan_outer_remaining];
 
         let _r_stage1 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
             extract_clear_proof(&self.proof.stage1_sumcheck_proof),
@@ -805,8 +804,7 @@ impl<
             &mut self.transcript,
         );
 
-        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> =
-            vec![&hw_verifier];
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![&hw_verifier];
 
         // Phase transition: CycleVariables -> AddressVariables for advice verifiers.
         // The advice verifiers were created in stage 6 with phase = CycleVariables.

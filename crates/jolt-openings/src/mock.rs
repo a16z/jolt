@@ -2,10 +2,11 @@
 
 use std::marker::PhantomData;
 
+use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
 use jolt_crypto::Commitment;
 use jolt_field::Field;
 use jolt_poly::Polynomial;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::FsTranscript;
 use serde::{Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
@@ -36,19 +37,6 @@ impl<F: Field> Default for MockCommitment<F> {
 #[serde(bound = "")]
 pub struct MockProof<F: Field> {
     evaluations: Vec<F>,
-}
-
-impl<F: Field> AppendToTranscript for MockCommitment<F> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let mut buf = Vec::with_capacity(self.evaluations.len() * F::NUM_BYTES);
-        for e in &self.evaluations {
-            let start = buf.len();
-            buf.resize(start + F::NUM_BYTES, 0);
-            e.to_bytes_le(&mut buf[start..]);
-        }
-        buf.reverse();
-        transcript.append_bytes(&buf);
-    }
 }
 
 impl<F: Field> Commitment for MockCommitmentScheme<F> {
@@ -87,7 +75,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Option<()>,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Self::Proof {
         MockProof {
             evaluations: poly.evaluations().to_vec(),
@@ -100,7 +88,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
         eval: Self::Field,
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
@@ -119,7 +107,7 @@ impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
     }
 
     fn bind_opening_inputs(
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FsTranscript<Self::Field>,
         _point: &[Self::Field],
         _eval: &Self::Field,
     ) {
@@ -169,9 +157,21 @@ pub struct MockHidingCommitment<F: Field> {
     pub eval: F,
 }
 
-impl<F: Field> AppendToTranscript for MockHidingCommitment<F> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.eval.append_to_transcript(transcript);
+// `F: Field` is jolt's field newtype, which does not implement ark's
+// `CanonicalSerialize`, so it is hand-rolled here as the little-endian field
+// bytes (= `serialize_compressed` for BN254 `Fr`).
+impl<F: Field> CanonicalSerialize for MockHidingCommitment<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
+        writer.write_all(&self.eval.to_bytes_le_vec())?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        F::NUM_BYTES
     }
 }
 
@@ -192,7 +192,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
         eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Self::OpeningHint,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FsTranscript<Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let proof = MockProof {
             evaluations: poly.evaluations().to_vec(),
@@ -206,7 +206,7 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
         point: &[Self::Field],
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::CommitmentMismatch {
@@ -221,19 +221,12 @@ impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
     }
 
     fn bind_zk_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
         point: &[Self::Field],
         hiding_commitment: &Self::HidingCommitment,
     ) {
-        transcript.append(&LabelWithCount(
-            b"mock_zk_opening_point",
-            point.len() as u64,
-        ));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"mock_zk_eval_commitment"));
-        hiding_commitment.append_to_transcript(transcript);
+        transcript.absorb_field_slice(point);
+        transcript.absorb(hiding_commitment);
     }
 }
 
@@ -246,7 +239,7 @@ mod tests {
     };
     use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Blake2b512};
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
@@ -261,10 +254,10 @@ mod tests {
 
         let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
 
-        let mut transcript_p = Blake2bTranscript::new(b"test");
+        let mut transcript_p = prover_transcript(b"test", [0u8; 32], Blake2b512::default());
         let proof = MockPCS::open(&poly, &point, eval, &(), None, &mut transcript_p);
 
-        let mut transcript_v = Blake2bTranscript::new(b"test");
+        let mut transcript_v = prover_transcript(b"test", [0u8; 32], Blake2b512::default());
         MockPCS::verify(&commitment, &point, eval, &proof, &(), &mut transcript_v)
             .expect("valid proof should verify");
     }
@@ -279,10 +272,10 @@ mod tests {
 
         let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
 
-        let mut transcript_p = Blake2bTranscript::new(b"test");
+        let mut transcript_p = prover_transcript(b"test", [0u8; 32], Blake2b512::default());
         let proof = MockPCS::open(&poly, &point, eval, &(), None, &mut transcript_p);
 
-        let mut transcript_v = Blake2bTranscript::new(b"test");
+        let mut transcript_v = prover_transcript(b"test", [0u8; 32], Blake2b512::default());
         let result = MockPCS::verify(
             &commitment,
             &point,
@@ -304,10 +297,10 @@ mod tests {
         let (wrong_commitment, ()) = MockPCS::commit(poly2.evaluations(), &());
         let eval = poly1.evaluate(&point);
 
-        let mut transcript_p = Blake2bTranscript::new(b"test");
+        let mut transcript_p = prover_transcript(b"test", [0u8; 32], Blake2b512::default());
         let proof = MockPCS::open(&poly1, &point, eval, &(), None, &mut transcript_p);
 
-        let mut transcript_v = Blake2bTranscript::new(b"test");
+        let mut transcript_v = prover_transcript(b"test", [0u8; 32], Blake2b512::default());
         let result = MockPCS::verify(
             &wrong_commitment,
             &point,
@@ -363,7 +356,7 @@ mod tests {
         }
 
         // Prover: reduce + open
-        let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
+        let mut transcript_p = prover_transcript(b"e2e-test", [0u8; 32], Blake2b512::default());
         let reduced_prover = reduce_prover(prover_claims, &mut transcript_p);
         let proofs: Vec<_> = reduced_prover
             .iter()
@@ -380,7 +373,7 @@ mod tests {
             .collect();
 
         // Verifier: reduce + verify
-        let mut transcript_v = Blake2bTranscript::new(b"e2e-test");
+        let mut transcript_v = prover_transcript(b"e2e-test", [0u8; 32], Blake2b512::default());
         let reduced_verifier = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)?;
 
         assert_eq!(reduced_verifier.len(), proofs.len());
@@ -483,7 +476,7 @@ mod tests {
             },
         ];
 
-        let mut transcript = Blake2bTranscript::new(b"grouping");
+        let mut transcript = prover_transcript(b"grouping", [0u8; 32], Blake2b512::default());
         let reduced = reduce_prover(claims, &mut transcript);
         assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
     }
@@ -497,11 +490,11 @@ mod tests {
 
         let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
 
-        let mut transcript_p = Blake2bTranscript::new(b"zk-test");
+        let mut transcript_p = prover_transcript(b"zk-test", [0u8; 32], Blake2b512::default());
         let (proof, eval_com, _blinding) =
             MockPCS::open_zk(&poly, &point, eval, &(), (), &mut transcript_p);
 
-        let mut transcript_v = Blake2bTranscript::new(b"zk-test");
+        let mut transcript_v = prover_transcript(b"zk-test", [0u8; 32], Blake2b512::default());
         let verified_eval_com =
             MockPCS::verify_zk(&commitment, &point, &proof, &(), &mut transcript_v)
                 .expect("valid ZK proof should verify");

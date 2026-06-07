@@ -380,8 +380,8 @@ impl<F: JoltField> RafEvaluationSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for RafEvaluationSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RafEvaluationSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);

@@ -2,21 +2,28 @@
 
 use jolt_field::Field;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::FsTranscript;
 
 use crate::error::SumcheckError;
-use crate::scalar::SumcheckScalar;
-use crate::{SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL};
 
-/// Common interface for one sumcheck round message.
-pub trait RoundMessage {
+/// Degree of a sumcheck round message.
+///
+/// Field-agnostic supertrait of [`RoundMessage`]: commitment-backed round
+/// messages report a degree without pinning a challenge field, which keeps
+/// `degree()` unambiguous when the message type implements `RoundMessage<F>`
+/// for more than one `F`.
+pub trait RoundDegree {
     fn degree(&self) -> usize;
+}
 
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
+/// Common interface for one sumcheck round message that absorbs into a
+/// Fiat-Shamir transcript over challenge field `F`.
+pub trait RoundMessage<F: Field>: RoundDegree {
+    fn append_to_transcript<T: FsTranscript<F>>(&self, transcript: &mut T);
 }
 
 /// A round message whose polynomial is available to the verifier.
-pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
+pub trait ClearRound<F: Field>: RoundMessage<F> {
     fn evaluate(&self, challenge: F) -> F;
 
     fn coefficient_linear_combination(&self, coefficients: &[F]) -> F;
@@ -26,15 +33,15 @@ pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
     }
 }
 
-impl<F: Field> RoundMessage for UnivariatePoly<F> {
+impl<F: Field> RoundDegree for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         UnivariatePolynomial::degree(self)
     }
+}
 
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        for coeff in self.coefficients() {
-            coeff.append_to_transcript(transcript);
-        }
+impl<F: Field> RoundMessage<F> for UnivariatePoly<F> {
+    fn append_to_transcript<T: FsTranscript<F>>(&self, transcript: &mut T) {
+        transcript.absorb_field_slice(self.coefficients());
     }
 }
 
@@ -52,37 +59,28 @@ impl<F: Field> ClearRound<F> for UnivariatePoly<F> {
     }
 }
 
-/// Round polynomial paired with a Fiat-Shamir domain-separation label.
+/// Borrowed round-polynomial wrapper. Rounds are domain-separated positionally
+/// (and by the transcript's one-time `DomainSeparator`/instance), matching
+/// jolt-core — no per-round label is absorbed.
 pub struct LabeledRoundPoly<'a, F: Field> {
     poly: &'a UnivariatePoly<F>,
-    label: &'static [u8],
 }
 
 impl<'a, F: Field> LabeledRoundPoly<'a, F> {
-    pub fn new(poly: &'a UnivariatePoly<F>, label: &'static [u8]) -> Self {
-        Self { poly, label }
-    }
-
-    pub fn sumcheck(poly: &'a UnivariatePoly<F>) -> Self {
-        Self::new(poly, SUMCHECK_ROUND_TRANSCRIPT_LABEL)
-    }
-
-    pub fn uniskip(poly: &'a UnivariatePoly<F>) -> Self {
-        Self::new(poly, UNISKIP_ROUND_TRANSCRIPT_LABEL)
+    pub fn new(poly: &'a UnivariatePoly<F>) -> Self {
+        Self { poly }
     }
 }
 
-impl<F: Field> RoundMessage for LabeledRoundPoly<'_, F> {
+impl<F: Field> RoundDegree for LabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
-        <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
+        <UnivariatePoly<F> as RoundDegree>::degree(self.poly)
     }
+}
 
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let coeffs = self.poly.coefficients();
-        transcript.append(&LabelWithCount(self.label, coeffs.len() as u64));
-        for coeff in coeffs {
-            coeff.append_to_transcript(transcript);
-        }
+impl<F: Field> RoundMessage<F> for LabeledRoundPoly<'_, F> {
+    fn append_to_transcript<T: FsTranscript<F>>(&self, transcript: &mut T) {
+        transcript.absorb_field_slice(self.poly.coefficients());
     }
 }
 
@@ -104,35 +102,29 @@ impl<F: Field> ClearRound<F> for LabeledRoundPoly<'_, F> {
 /// `running_sum = s(0) + s(1) = 2·c_0 + c_1 + c_2 + … + c_d`.
 pub struct CompressedLabeledRoundPoly<'a, F: Field> {
     poly: &'a UnivariatePoly<F>,
-    label: &'static [u8],
 }
 
 impl<'a, F: Field> CompressedLabeledRoundPoly<'a, F> {
-    pub fn new(poly: &'a UnivariatePoly<F>, label: &'static [u8]) -> Self {
-        Self { poly, label }
-    }
-
-    pub fn sumcheck(poly: &'a UnivariatePoly<F>) -> Self {
-        Self::new(poly, SUMCHECK_ROUND_TRANSCRIPT_LABEL)
-    }
-
-    pub fn uniskip(poly: &'a UnivariatePoly<F>) -> Self {
-        Self::new(poly, UNISKIP_ROUND_TRANSCRIPT_LABEL)
+    pub fn new(poly: &'a UnivariatePoly<F>) -> Self {
+        Self { poly }
     }
 }
 
-impl<F: Field> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field> RoundDegree for CompressedLabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
-        <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
+        <UnivariatePoly<F> as RoundDegree>::degree(self.poly)
     }
+}
 
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+impl<F: Field> RoundMessage<F> for CompressedLabeledRoundPoly<'_, F> {
+    fn append_to_transcript<T: FsTranscript<F>>(&self, transcript: &mut T) {
+        // Absorb the compressed coefficients (linear term c1 omitted) as ONE message,
+        // matching the verifier's `absorb_field_slice(coeffs_except_linear_term)`.
         let coeffs = self.poly.coefficients();
-        transcript.append(&LabelWithCount(self.label, (coeffs.len() - 1) as u64));
-        coeffs[0].append_to_transcript(transcript);
-        for c in coeffs.iter().skip(2) {
-            c.append_to_transcript(transcript);
-        }
+        let mut compressed = Vec::with_capacity(coeffs.len().saturating_sub(1));
+        compressed.push(coeffs[0]);
+        compressed.extend_from_slice(&coeffs[2..]);
+        transcript.absorb_field_slice(&compressed);
     }
 }
 

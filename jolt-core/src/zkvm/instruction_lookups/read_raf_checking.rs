@@ -841,9 +841,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for InstructionReadRafSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for InstructionReadRafSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -1316,8 +1314,8 @@ impl<F: JoltField> InstructionReadRafSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for InstructionReadRafSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for InstructionReadRafSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -1435,8 +1433,8 @@ mod tests {
     use crate::subprotocols::sumcheck::BatchedSumcheck;
     use crate::transcript_msgs::FsChallenge;
     use ark_bn254::Fr;
-    use jolt_transcript::Blake2b512;
     use ark_std::Zero;
+    use jolt_transcript::Blake2b512;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
     use strum::IntoEnumIterator;
     use tracer::instruction::Cycle;

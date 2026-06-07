@@ -89,7 +89,7 @@ use crate::{
         },
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
-    transcript_msgs::{AbsorbFs, VerifierFs},
+    transcript_msgs::{FsAbsorb, VerifierFs},
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::CommittedPolynomial,
 };

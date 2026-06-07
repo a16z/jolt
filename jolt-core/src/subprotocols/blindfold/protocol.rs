@@ -14,7 +14,7 @@ use crate::poly::commitment::hyrax::{self as hyrax, HyraxOpeningProof};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::unipoly::CompressedUniPoly;
-use crate::transcript_msgs::{AbsorbFs, ProverFs, VerifierFs};
+use crate::transcript_msgs::{FsAbsorb, ProverFs, VerifierFs};
 use crate::utils::math::Math;
 
 use super::folding::{commit_cross_term_rows, compute_cross_term, sample_random_satisfying_pair};
@@ -296,7 +296,7 @@ fn open_witness_variable<F: JoltField>(
 }
 
 fn absorb_hyrax_opening<F: JoltField>(
-    transcript: &mut impl AbsorbFs<F>,
+    transcript: &mut impl FsAbsorb,
     opening: &HyraxOpeningProof<F>,
 ) {
     transcript.absorb(&opening.combined_row);
@@ -636,7 +636,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
 fn absorb_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
     instance: &RelaxedR1CSInstance<F, C>,
     r1cs: &VerifierR1CS<F>,
-    transcript: &mut impl AbsorbFs<F>,
+    transcript: &mut impl FsAbsorb,
 ) -> Result<(), BlindFoldVerifyError> {
     let witness_row_commitments =
         instance.all_w_row_commitments(r1cs.hyrax.R_coeff, r1cs.hyrax.R_prime)?;

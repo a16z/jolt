@@ -6,7 +6,7 @@ use crate::{
         commitment::dory::{DoryContext, DoryGlobals, DoryLayout},
         multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     },
-    transcript_msgs::{AbsorbFs, FsChallenge},
+    transcript_msgs::{FsAbsorb, FsChallenge},
 };
 use ark_bn254::Fr;
 use ark_ec::CurveGroup;
@@ -412,11 +412,11 @@ where
 
 /// Wrapper to bridge Jolt transcripts to Dory transcript trait
 #[derive(Default)]
-pub struct JoltToDoryTranscript<'a, T: AbsorbFs<Fr> + FsChallenge<Fr>> {
+pub struct JoltToDoryTranscript<'a, T: FsAbsorb + FsChallenge<Fr>> {
     transcript: Option<&'a mut T>,
 }
 
-impl<'a, T: AbsorbFs<Fr> + FsChallenge<Fr>> JoltToDoryTranscript<'a, T> {
+impl<'a, T: FsAbsorb + FsChallenge<Fr>> JoltToDoryTranscript<'a, T> {
     pub fn new(transcript: &'a mut T) -> Self {
         Self {
             transcript: Some(transcript),
@@ -424,7 +424,7 @@ impl<'a, T: AbsorbFs<Fr> + FsChallenge<Fr>> JoltToDoryTranscript<'a, T> {
     }
 }
 
-impl<'a, T: AbsorbFs<Fr> + FsChallenge<Fr>> DoryTranscript for JoltToDoryTranscript<'a, T> {
+impl<'a, T: FsAbsorb + FsChallenge<Fr>> DoryTranscript for JoltToDoryTranscript<'a, T> {
     type Curve = BN254;
 
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {

@@ -2799,6 +2799,7 @@ dependencies = [
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "jolt-claims",
  "jolt-crypto",
  "jolt-field",
@@ -2854,7 +2855,6 @@ dependencies = [
  "jolt-program",
  "jolt-riscv",
  "jolt-transcript",
- "light-poseidon",
  "memory-stats",
  "num",
  "num-derive 0.4.2",
@@ -2915,6 +2915,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
+ "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
@@ -3121,6 +3122,7 @@ dependencies = [
 name = "jolt-openings"
 version = "0.1.0"
 dependencies = [
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "criterion",
  "jolt-crypto",
  "jolt-field",
@@ -3267,14 +3269,14 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
- "num-traits",
- "rand_core 0.6.4",
+ "rand 0.8.5",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -3286,10 +3288,9 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "criterion",
+ "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "jolt-field",
  "light-poseidon",
- "num-traits",
  "rand 0.8.5",
  "spongefish",
 ]

@@ -543,7 +543,8 @@ mod tests {
         type F = Fr;
 
         // Generate tau and challenges from transcript (using proper Challenge type)
-        let mut transcript = prover_transcript(b"test_eq_binding", TEST_INSTANCE, Blake2b512::default());
+        let mut transcript =
+            prover_transcript(b"test_eq_binding", TEST_INSTANCE, Blake2b512::default());
         let tau: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(&mut transcript, 3);
         let challenges: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(&mut transcript, 3);
 
@@ -608,7 +609,8 @@ mod tests {
 
         let e = vec![F::zero(); r1cs.num_constraints];
 
-        let mut transcript = prover_transcript(b"test_spartan", TEST_INSTANCE, Blake2b512::default());
+        let mut transcript =
+            prover_transcript(b"test_spartan", TEST_INSTANCE, Blake2b512::default());
         let tau: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(
             &mut transcript,
             r1cs.num_constraints.next_power_of_two().log_2(),
@@ -705,8 +707,11 @@ mod tests {
             .collect();
 
         // Create transcript and derive τ
-        let mut transcript =
-            prover_transcript(b"test_spartan_relaxed", TEST_INSTANCE, Blake2b512::default());
+        let mut transcript = prover_transcript(
+            b"test_spartan_relaxed",
+            TEST_INSTANCE,
+            Blake2b512::default(),
+        );
         let tau: Vec<_> = FsChallenge::<F>::challenge_optimized_vec(
             &mut transcript,
             r1cs.num_constraints.next_power_of_two().log_2(),

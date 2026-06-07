@@ -20,18 +20,28 @@ use jolt_openings::{
     VerifierOpeningClaim,
 };
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, Blake2b512, DuplexSpongeInterface, Keccak,
+    OptimizedChallenge, ProverState, VerifierState,
+};
+use rand::rngs::StdRng;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
-/// Full reduce → open → verify pipeline.
-fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
-    polys: &[Polynomial<Fr>],
-    points: &[Vec<Fr>],
-    label: &'static [u8],
-) {
+const INSTANCE: [u8; 32] = [0u8; 32];
+
+/// Full reduce → open → verify pipeline. Generic over the spongefish sponge:
+/// the modular crates are symmetric (both sides `absorb`; no NARG), so the
+/// prover uses a `ProverState` and the verifier an independently-built
+/// `VerifierState` over an empty NARG, and they derive identical challenges.
+fn reduce_open_verify<H>(polys: &[Polynomial<Fr>], points: &[Vec<Fr>], label: &'static [u8])
+where
+    H: DuplexSpongeInterface<U = u8> + Default,
+    ProverState<H, StdRng>: OptimizedChallenge,
+    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+{
     assert_eq!(polys.len(), points.len());
 
     let mut prover_claims = Vec::new();
@@ -51,7 +61,7 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
     }
 
     // Prover side
-    let mut transcript_p = T::new(label);
+    let mut transcript_p = prover_transcript(label, INSTANCE, H::default());
     let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
@@ -68,7 +78,7 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
         .collect();
 
     // Verifier side
-    let mut transcript_v = T::new(label);
+    let mut transcript_v = verifier_transcript(label, INSTANCE, H::default(), &[]);
     let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
         .expect("reduction should succeed");
 
@@ -91,7 +101,7 @@ fn single_claim_blake2b() {
     let mut rng = ChaCha20Rng::seed_from_u64(1000);
     let poly = Polynomial::<Fr>::random(4, &mut rng);
     let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-    reduce_open_verify::<Blake2bTranscript>(&[poly], &[point], b"single-blake2b");
+    reduce_open_verify::<Blake2b512>(&[poly], &[point], b"single-blake2b");
 }
 
 #[test]
@@ -99,7 +109,7 @@ fn single_claim_keccak() {
     let mut rng = ChaCha20Rng::seed_from_u64(1001);
     let poly = Polynomial::<Fr>::random(4, &mut rng);
     let point: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-    reduce_open_verify::<KeccakTranscript>(&[poly], &[point], b"single-keccak");
+    reduce_open_verify::<Keccak>(&[poly], &[point], b"single-keccak");
 }
 
 #[test]
@@ -113,7 +123,7 @@ fn multiple_claims_shared_point() {
         .collect();
     let points: Vec<_> = (0..5).map(|_| point.clone()).collect();
 
-    reduce_open_verify::<Blake2bTranscript>(&polys, &points, b"shared-point");
+    reduce_open_verify::<Blake2b512>(&polys, &points, b"shared-point");
 }
 
 #[test]
@@ -128,7 +138,7 @@ fn multiple_claims_distinct_points() {
         .map(|_| (0..nv).map(|_| Fr::random(&mut rng)).collect())
         .collect();
 
-    reduce_open_verify::<Blake2bTranscript>(&polys, &points, b"distinct-points");
+    reduce_open_verify::<Blake2b512>(&polys, &points, b"distinct-points");
 }
 
 #[test]
@@ -151,16 +161,16 @@ fn mixed_shared_and_distinct_points() {
         other_point,
     ];
 
-    reduce_open_verify::<Blake2bTranscript>(&polys, &points, b"mixed-points");
+    reduce_open_verify::<Blake2b512>(&polys, &points, b"mixed-points");
 }
 
 #[test]
 fn empty_claims_is_noop() {
-    let mut transcript_p = Blake2bTranscript::new(b"empty");
+    let mut transcript_p = prover_transcript(b"empty", INSTANCE, Blake2b512::default());
     let reduced = reduce_prover::<Fr, _>(Vec::new(), &mut transcript_p);
     assert!(reduced.is_empty());
 
-    let mut transcript_v = Blake2bTranscript::new(b"empty");
+    let mut transcript_v = verifier_transcript(b"empty", INSTANCE, Blake2b512::default(), &[]);
     let reduced_v = reduce_verifier::<MockPCS, _>(Vec::new(), &mut transcript_v).unwrap();
     assert!(reduced_v.is_empty());
 }
@@ -201,7 +211,7 @@ fn tampered_eval_detected() {
         },
     ];
 
-    let mut transcript_p = Blake2bTranscript::new(b"tampered");
+    let mut transcript_p = prover_transcript(b"tampered", INSTANCE, Blake2b512::default());
     let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
@@ -217,7 +227,7 @@ fn tampered_eval_detected() {
         })
         .collect();
 
-    let mut transcript_v = Blake2bTranscript::new(b"tampered");
+    let mut transcript_v = verifier_transcript(b"tampered", INSTANCE, Blake2b512::default(), &[]);
     let reduced_v = reduce_verifier::<MockPCS, _>(verifier_claims, &mut transcript_v)
         .expect("reduction itself should succeed");
 
@@ -262,6 +272,6 @@ fn property_random_claims_always_verify() {
             .map(|i| points[i % num_points].clone())
             .collect();
 
-        reduce_open_verify::<Blake2bTranscript>(&polys, &claim_points, b"property");
+        reduce_open_verify::<Blake2b512>(&polys, &claim_points, b"property");
     }
 }

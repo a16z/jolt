@@ -10,12 +10,14 @@ use jolt_field::{Field, Fr};
 use jolt_hyperkzg::HyperKZGScheme;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type TestScheme = HyperKZGScheme<Bn254>;
+
+const INSTANCE: [u8; 32] = [0u8; 32];
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 10 {
@@ -37,7 +39,7 @@ fuzz_target!(|data: &[u8]| {
 
     let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
 
-    let mut pt = Blake2bTranscript::new(b"fuzz-tamper");
+    let mut pt = prover_transcript(b"fuzz-tamper", INSTANCE, Blake2b512::default());
     let proof =
         <TestScheme as CommitmentScheme>::open(&poly, &point, eval, &pk, None, &mut pt);
 
@@ -77,7 +79,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mut vt = Blake2bTranscript::new(b"fuzz-tamper");
+    let mut vt = verifier_transcript(b"fuzz-tamper", INSTANCE, Blake2b512::default(), &[]);
     let result = <TestScheme as CommitmentScheme>::verify(
         &commitment,
         &point,

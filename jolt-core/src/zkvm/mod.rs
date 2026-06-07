@@ -16,7 +16,7 @@ use crate::{
 };
 
 // Compile-time error if multiple transcript features are enabled
-// When none of the transcript features are enabled, Jolt defaults to `Blake2bTranscript`
+// When none of the transcript features are enabled, Jolt defaults to the Blake2b512 sponge
 #[cfg(any(
     all(feature = "transcript-poseidon", feature = "transcript-keccak"),
     all(feature = "transcript-poseidon", feature = "transcript-blake2b"),
@@ -40,7 +40,7 @@ pub type RV64IMACSponge = jolt_transcript::Blake2b512;
 pub type RV64IMACSponge = jolt_transcript::Keccak;
 #[cfg(feature = "transcript-poseidon")]
 pub type RV64IMACSponge = jolt_transcript::PoseidonSponge;
-use crate::transcript_msgs::AbsorbFs;
+use crate::transcript_msgs::FsAbsorb;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
@@ -317,14 +317,15 @@ where
 
 /// Absorb public instance data into the transcript for Fiat-Shamir.
 ///
-/// **No longer on the production prove/verify path.** The public statement is now
-/// bound via [`fiat_shamir_instance`] (`instance = Blake2b(statement)`, used as the
-/// spongefish domain-separator instance) — see DEV-38. This scatter-absorb helper is
-/// retained only for the cfg-gated `transpilable_verifier`, which drives a transcript
-/// directly. Its fields and order mirror [`fiat_shamir_instance`] exactly, so the two
-/// stay interchangeable bindings of the same statement.
-#[allow(clippy::too_many_arguments)]
-pub fn fiat_shamir_preamble<F: JoltField>(
+/// **Legacy — no longer on the production prove/verify path.** The public statement is
+/// now bound via [`fiat_shamir_instance`] (`instance = Blake2b(statement)`, the
+/// spongefish domain-separator instance) — see DEV-38. This per-field scatter-absorb is
+/// the *old* hand-rolled style, retained only for the cfg-gated (and currently disabled)
+/// `transpilable_verifier`; it will be deleted or regenerated when the on-chain verifier
+/// is revived (Non-Goal #2). While it exists, its field set and order MUST stay identical
+/// to [`fiat_shamir_instance`] below.
+#[expect(clippy::too_many_arguments)]
+pub fn fiat_shamir_preamble(
     program_io: &JoltDevice,
     ram_K: usize,
     trace_length: usize,
@@ -333,7 +334,7 @@ pub fn fiat_shamir_preamble<F: JoltField>(
     one_hot_config: &OneHotConfig,
     dory_layout: DoryLayout,
     preprocessing_digest: &[u8; 32],
-    transcript: &mut impl AbsorbFs<F>,
+    transcript: &mut impl FsAbsorb,
 ) {
     transcript.absorb(&preprocessing_digest.to_vec());
     transcript.absorb(&program_io.memory_layout.max_input_size);
@@ -364,7 +365,7 @@ pub fn fiat_shamir_preamble<F: JoltField>(
 /// **O1 (soundness-critical):** the digest must be byte-identical on prover and
 /// verifier. Both sides call this one helper over the same statement params (the
 /// verifier recomputes them from the proof's public tail), serialized in a fixed
-/// order — mirroring [`fiat_shamir_preamble`]'s order exactly.
+/// order — the same field set and order [`fiat_shamir_preamble`] absorbs.
 #[expect(clippy::too_many_arguments)]
 #[expect(
     clippy::expect_used,

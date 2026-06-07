@@ -7,11 +7,13 @@ use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type KzgPCS = HyperKZGScheme<Bn254>;
+
+const INSTANCE: [u8; 32] = [0u8; 32];
 
 fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
     let mut rng = ChaCha20Rng::seed_from_u64(0xdead_beef);
@@ -32,10 +34,10 @@ fn commit_open_verify(
     let eval = poly.evaluate(point);
     let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), pk);
 
-    let mut t_p = Blake2bTranscript::new(label);
+    let mut t_p = prover_transcript(label, INSTANCE, Blake2b512::default());
     let proof = <KzgPCS as CommitmentScheme>::open(poly, point, eval, pk, None, &mut t_p);
 
-    let mut t_v = Blake2bTranscript::new(label);
+    let mut t_v = verifier_transcript(label, INSTANCE, Blake2b512::default(), &[]);
     <KzgPCS as CommitmentScheme>::verify(&commitment, point, eval, &proof, vk, &mut t_v)
         .expect("verification should succeed");
 }
@@ -102,12 +104,12 @@ fn wrong_eval_rejected() {
     let (commitment, ()) = <KzgPCS as CommitmentScheme>::commit(poly.evaluations(), &pk);
 
     // Prover opens with correct eval
-    let mut t_p = Blake2bTranscript::new(b"kzg-wrong");
+    let mut t_p = prover_transcript(b"kzg-wrong", INSTANCE, Blake2b512::default());
     let proof =
         <KzgPCS as CommitmentScheme>::open(&poly, &point, correct_eval, &pk, None, &mut t_p);
 
     // Verifier checks with wrong eval
-    let mut t_v = Blake2bTranscript::new(b"kzg-wrong");
+    let mut t_v = verifier_transcript(b"kzg-wrong", INSTANCE, Blake2b512::default(), &[]);
     let result = <KzgPCS as CommitmentScheme>::verify(
         &commitment,
         &point,
@@ -141,10 +143,10 @@ fn homomorphic_sum() {
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
     let eval = sum_poly.evaluate(&point);
 
-    let mut t_p = Blake2bTranscript::new(b"kzg-homo");
+    let mut t_p = prover_transcript(b"kzg-homo", INSTANCE, Blake2b512::default());
     let proof = <KzgPCS as CommitmentScheme>::open(&sum_poly, &point, eval, &pk, None, &mut t_p);
 
-    let mut t_v = Blake2bTranscript::new(b"kzg-homo");
+    let mut t_v = verifier_transcript(b"kzg-homo", INSTANCE, Blake2b512::default(), &[]);
     <KzgPCS as CommitmentScheme>::verify(&combined_com, &point, eval, &proof, &vk, &mut t_v)
         .expect("homomorphic sum must verify");
 }
@@ -168,11 +170,11 @@ fn homomorphic_weighted_combination() {
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
     let eval = weighted_poly.evaluate(&point);
 
-    let mut t_p = Blake2bTranscript::new(b"kzg-weighted");
+    let mut t_p = prover_transcript(b"kzg-weighted", INSTANCE, Blake2b512::default());
     let proof =
         <KzgPCS as CommitmentScheme>::open(&weighted_poly, &point, eval, &pk, None, &mut t_p);
 
-    let mut t_v = Blake2bTranscript::new(b"kzg-weighted");
+    let mut t_v = verifier_transcript(b"kzg-weighted", INSTANCE, Blake2b512::default(), &[]);
     <KzgPCS as CommitmentScheme>::verify(&combined_com, &point, eval, &proof, &vk, &mut t_v)
         .expect("weighted combination must verify");
 }
@@ -202,9 +204,9 @@ fn deterministic_setup_from_secret() {
     // Verify with either setup
     let point = vec![Fr::from_u64(7)];
     let eval = poly.evaluate(&point);
-    let mut t = Blake2bTranscript::new(b"det-setup");
+    let mut t = prover_transcript(b"det-setup", INSTANCE, Blake2b512::default());
     let proof = <KzgPCS as CommitmentScheme>::open(&poly, &point, eval, &pk1, None, &mut t);
-    let mut t = Blake2bTranscript::new(b"det-setup");
+    let mut t = verifier_transcript(b"det-setup", INSTANCE, Blake2b512::default(), &[]);
     <KzgPCS as CommitmentScheme>::verify(&com1, &point, eval, &proof, &vk2, &mut t)
         .expect("cross-setup verification must work");
 }

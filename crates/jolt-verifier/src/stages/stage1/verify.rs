@@ -10,9 +10,8 @@ use jolt_r1cs::constraints::jolt::{
 };
 use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
-    UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use super::inputs::spartan_outer_opening_order;
 use super::outputs::{
@@ -33,7 +32,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let stage = JoltRelationId::SpartanOuter;
 
@@ -100,7 +99,6 @@ where
                     uniskip_input_claim,
                 ),
                 CenteredIntegerDomain::new(domain_size),
-                UNISKIP_ROUND_TRANSCRIPT_LABEL,
                 transcript,
             )
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -119,7 +117,7 @@ where
 
         // Core absorbs the uni-skip output as an opening claim before deriving
         // the batching challenge for the remainder sumcheck.
-        transcript.append_labeled(b"opening_claim", &uniskip.expected_output_claim);
+        transcript.absorb_field(&uniskip.expected_output_claim);
 
         let [uniskip_challenge] = uniskip.sumcheck_point.as_slice() else {
             return Err(VerifierError::StageClaimSumcheckFailed {
@@ -243,7 +241,7 @@ where
             expected_output_claim: expected_remainder_output_claim,
         };
         for opening_claim in &r1cs_input_claims {
-            transcript.append_labeled(b"opening_claim", opening_claim);
+            transcript.absorb_field(opening_claim);
         }
 
         let remainder_challenges = remainder.sumcheck_point.as_slice().to_vec();
