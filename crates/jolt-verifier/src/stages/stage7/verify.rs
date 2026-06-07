@@ -18,7 +18,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
     SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use super::advice_address_phase::{
     AdviceAddressPhase, AdviceAddressPhaseInputClaims, AdviceAddressPhaseOutputClaims,
@@ -62,7 +62,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,

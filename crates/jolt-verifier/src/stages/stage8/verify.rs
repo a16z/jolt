@@ -30,7 +30,7 @@ use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim, ZkOpeningScheme,
 };
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::FsTranscript;
 
 struct Stage8BatchEntry<'a, F: Field, C> {
     id: Stage8OpeningId,
@@ -63,7 +63,7 @@ where
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
     PCS::Output: Clone + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
@@ -178,9 +178,8 @@ where
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    transcript.append(&LabelWithCount(b"rlc_claims", opening_claims.len() as u64));
     for claim in &opening_claims {
-        claim.evaluation.value.append_to_transcript(transcript);
+        transcript.absorb_field(&claim.evaluation.value);
     }
     let gamma_powers = transcript.challenge_scalar_powers(opening_claims.len());
 

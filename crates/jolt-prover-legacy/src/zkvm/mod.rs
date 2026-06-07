@@ -26,7 +26,7 @@ use crate::{
 };
 
 // Compile-time error if multiple transcript features are enabled
-// When none of the transcript features are enabled, Jolt defaults to `Blake2bTranscript`
+// When none of the transcript features are enabled, Jolt defaults to the Blake2b512 sponge
 #[cfg(any(
     all(feature = "transcript-poseidon", feature = "transcript-keccak"),
     all(feature = "transcript-poseidon", feature = "transcript-blake2b"),
@@ -351,7 +351,7 @@ pub fn fiat_shamir_preamble<F: JoltField>(
     one_hot_config: &OneHotConfig,
     dory_layout: DoryLayout,
     preprocessing_digest: &[u8; 32],
-    transcript: &mut impl AbsorbFs<F>,
+    transcript: &mut impl FsAbsorb,
 ) {
     transcript.absorb(&preprocessing_digest.to_vec());
     transcript.absorb(&program_io.memory_layout.max_input_size);
@@ -382,7 +382,7 @@ pub fn fiat_shamir_preamble<F: JoltField>(
 /// **O1 (soundness-critical):** the digest must be byte-identical on prover and
 /// verifier. Both sides call this one helper over the same statement params (the
 /// verifier recomputes them from the proof's public tail), serialized in a fixed
-/// order — mirroring [`fiat_shamir_preamble`]'s order exactly.
+/// order — the same field set and order [`fiat_shamir_preamble`] absorbs.
 #[expect(clippy::too_many_arguments)]
 #[expect(
     clippy::expect_used,

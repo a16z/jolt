@@ -337,9 +337,7 @@ impl<F: JoltField> ProgramImageClaimReductionProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for ProgramImageClaimReductionProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for ProgramImageClaimReductionProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         self.core.params()
     }
@@ -398,8 +396,8 @@ impl<F: JoltField> ProgramImageClaimReductionVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for ProgramImageClaimReductionVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for ProgramImageClaimReductionVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

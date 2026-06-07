@@ -1,19 +1,24 @@
 //! `transcript_prover_verifier_consistency` — for each spongefish sponge,
 //! a `ProverState` / `VerifierState` pair driven by the same operation
 //! sequence must round-trip every prover message and produce the same
-//! verifier challenges.
+//! verifier challenges. The same ops under a different instance digest must
+//! also derive different challenges, confirming the instance is bound into
+//! the sponge (a symmetric instance-drop the symmetry check alone can't see).
 
 use arbitrary::{Arbitrary, Unstructured};
 use ark_bn254::Fr as ArkFr;
 use jolt_field::Fr as JFr;
+use rand::rngs::StdRng;
 use spongefish::instantiations::{Blake2b512, Keccak};
 
-use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, BytesMsg, OptimizedChallenge, PoseidonSponge,
+    ProverState, VerifierState,
+};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
 const SESSION: &[u8] = b"jolt-eval/transcript-symmetry/v1";
-const INSTANCE_DIGEST: [u8; 32] = [0u8; 32];
 
 /// One operation in the prover/verifier sequence.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -28,30 +33,39 @@ pub enum Op {
     ProverScalar(#[schemars(with = "[u8; 32]")] JFr),
     /// Both sides squeeze a verifier challenge.
     Challenge,
+    /// Both sides squeeze a 128-bit optimized challenge (`challenge_128`).
+    OptimizedChallenge,
 }
 
 /// Sequence of operations replayed in lockstep by both sides.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct Input {
+    /// 32-byte instance digest — the per-statement `DomainSeparator` binding.
+    /// Varied (not fixed to zero) so the corpus/fuzzer exercises instance
+    /// binding: an all-zeros-only fixture would mask a one-sided instance drop,
+    /// since `prover(0)` and `verifier(0-or-ignored)` agree regardless.
+    pub instance: [u8; 32],
     /// Operations to apply in order.
     pub ops: Vec<Op>,
 }
 
 impl<'a> Arbitrary<'a> for Input {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let instance: [u8; 32] = u.arbitrary()?;
         let n = u.int_in_range(0u8..=20)? as usize;
         let mut ops = Vec::with_capacity(n);
         for _ in 0..n {
-            let tag = u.int_in_range(0u8..=4)?;
+            let tag = u.int_in_range(0u8..=5)?;
             ops.push(match tag {
                 0 => Op::PublicBytes(arb_bytes(u)?),
                 1 => Op::PublicScalar(arb_scalar(u)?),
                 2 => Op::ProverBytes(arb_bytes(u)?),
                 3 => Op::ProverScalar(arb_scalar(u)?),
-                _ => Op::Challenge,
+                4 => Op::Challenge,
+                _ => Op::OptimizedChallenge,
             });
         }
-        Ok(Self { ops })
+        Ok(Self { instance, ops })
     }
 }
 
@@ -65,13 +79,19 @@ fn arb_scalar(u: &mut Unstructured<'_>) -> arbitrary::Result<JFr> {
     Ok(JFr::from_le_bytes_mod_order(&bytes))
 }
 
-fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
+/// Runs the prover side over `input.ops` under `instance`, returning the NARG
+/// byte-string and the challenges squeezed in order.
+fn prover_run<H>(
+    input: &Input,
+    instance: [u8; 32],
+    build_sponge: &impl Fn() -> H,
+) -> (Vec<u8>, Vec<JFr>)
 where
     H: spongefish::DuplexSpongeInterface<U = u8>,
+    ProverState<H, StdRng>: OptimizedChallenge,
 {
-    let mut prover = prover_transcript(SESSION, INSTANCE_DIGEST, build_sponge());
-    let mut prover_challenges: Vec<JFr> = Vec::new();
-
+    let mut prover = prover_transcript(SESSION, instance, build_sponge());
+    let mut challenges: Vec<JFr> = Vec::new();
     for op in &input.ops {
         match op {
             Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
@@ -80,13 +100,24 @@ where
             Op::ProverScalar(f) => prover.prover_message(&ArkFr::from(*f)),
             Op::Challenge => {
                 let c: ArkFr = prover.verifier_message();
-                prover_challenges.push(JFr::from(c));
+                challenges.push(JFr::from(c));
+            }
+            Op::OptimizedChallenge => {
+                challenges.push(prover.challenge_128());
             }
         }
     }
+    (prover.narg_string().to_vec(), challenges)
+}
 
-    let narg: Vec<u8> = prover.narg_string().to_vec();
-    let mut verifier = verifier_transcript(SESSION, INSTANCE_DIGEST, build_sponge(), &narg);
+fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
+where
+    H: spongefish::DuplexSpongeInterface<U = u8>,
+    ProverState<H, StdRng>: OptimizedChallenge,
+    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+{
+    let (narg, prover_challenges) = prover_run(input, input.instance, &build_sponge);
+    let mut verifier = verifier_transcript(SESSION, input.instance, build_sponge(), &narg);
     let mut challenge_idx = 0usize;
 
     for (op_idx, op) in input.ops.iter().enumerate() {
@@ -116,12 +147,36 @@ where
                 }
                 challenge_idx += 1;
             }
+            Op::OptimizedChallenge => {
+                if verifier.challenge_128() != prover_challenges[challenge_idx] {
+                    return Err(mismatch("OptimizedChallenge", op_idx));
+                }
+                challenge_idx += 1;
+            }
         }
     }
 
     verifier
         .check_eof()
         .map_err(|e| violation("check_eof", input.ops.len(), e))?;
+
+    // Domain separation: the same ops under a *different* instance digest must
+    // derive *different* challenges — otherwise the instance isn't bound into
+    // the sponge. The symmetry check above can't see a *symmetric* instance
+    // drop: if both sides ignored the instance they would still agree.
+    // (Skipped when the ops squeeze no challenges — nothing to compare.)
+    if !prover_challenges.is_empty() {
+        let mut other_instance = input.instance;
+        other_instance[0] ^= 0xFF;
+        let (_, other_challenges) = prover_run(input, other_instance, &build_sponge);
+        if other_challenges == prover_challenges {
+            return Err(CheckError::Violation(InvariantViolation::with_details(
+                "instance digest not bound — distinct instances derive identical challenges"
+                    .to_string(),
+                "domain separation violated: prove(instance) == prove(instance ^ 0xFF)".to_string(),
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -143,55 +198,59 @@ fn seed_corpus_shared() -> Vec<Input> {
     let scalar = JFr::from_le_bytes_mod_order(&[0xABu8; 32]);
     let mut mixed_1k = Vec::with_capacity(1000);
     for i in 0..1000u64 {
-        mixed_1k.push(match i % 5 {
+        mixed_1k.push(match i % 6 {
             0 => Op::PublicBytes(vec![i as u8; (i % 13) as usize]),
             1 => Op::PublicScalar(JFr::from(i)),
             2 => Op::ProverBytes(vec![(i ^ 0x5A) as u8; (i % 11) as usize]),
             3 => Op::ProverScalar(JFr::from(i.wrapping_mul(2_654_435_761))),
-            _ => Op::Challenge,
+            4 => Op::Challenge,
+            _ => Op::OptimizedChallenge,
         });
     }
 
-    vec![
-        Input { ops: vec![] },
-        Input {
-            ops: vec![Op::Challenge],
-        },
-        Input {
-            ops: vec![Op::PublicBytes(b"hello".to_vec())],
-        },
-        Input {
-            ops: vec![Op::PublicScalar(scalar)],
-        },
-        Input {
-            ops: vec![Op::ProverBytes(b"prover-data".to_vec())],
-        },
-        Input {
-            ops: vec![Op::ProverScalar(scalar)],
-        },
-        Input {
-            ops: vec![
-                Op::PublicBytes(b"setup".to_vec()),
-                Op::ProverScalar(scalar),
-                Op::Challenge,
-                Op::ProverBytes(vec![1, 2, 3, 4, 5]),
-                Op::Challenge,
-                Op::PublicScalar(scalar),
-                Op::Challenge,
-                Op::ProverScalar(JFr::from(42u64)),
-                Op::Challenge,
-                Op::PublicBytes(vec![]),
-            ],
-        },
-        Input { ops: mixed_1k },
-    ]
+    let op_sequences: Vec<Vec<Op>> = vec![
+        vec![],
+        vec![Op::Challenge],
+        vec![Op::PublicBytes(b"hello".to_vec())],
+        vec![Op::PublicScalar(scalar)],
+        vec![Op::ProverBytes(b"prover-data".to_vec())],
+        vec![Op::ProverScalar(scalar)],
+        vec![Op::OptimizedChallenge],
+        vec![
+            Op::PublicBytes(b"setup".to_vec()),
+            Op::ProverScalar(scalar),
+            Op::Challenge,
+            Op::ProverBytes(vec![1, 2, 3, 4, 5]),
+            Op::OptimizedChallenge,
+            Op::PublicScalar(scalar),
+            Op::Challenge,
+            Op::ProverScalar(JFr::from(42u64)),
+            Op::OptimizedChallenge,
+            Op::PublicBytes(vec![]),
+        ],
+        mixed_1k,
+    ];
+
+    // Pair each op-sequence with a distinct instance digest: index 0 keeps the
+    // degenerate all-zeros case; the rest are non-zero so the corpus exercises
+    // instance binding (a zero-only fixture would mask a one-sided instance drop).
+    op_sequences
+        .into_iter()
+        .enumerate()
+        .map(|(i, ops)| Input {
+            instance: [i as u8; 32],
+            ops,
+        })
+        .collect()
 }
 
 fn description_for(label: &str) -> String {
     format!(
         "spongefish ProverState/VerifierState pair ({label} sponge) replaying \
          the same operation sequence must round-trip every prover message \
-         and agree on every challenge."
+         and agree on every challenge; and the same ops under a different \
+         instance digest must derive different challenges (the instance is \
+         bound into the sponge)."
     )
 }
 

@@ -170,9 +170,7 @@ impl<F: JoltField> RegistersClaimReductionSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for RegistersClaimReductionSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for RegistersClaimReductionSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -490,8 +488,8 @@ impl<F: JoltField> RegistersClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for RegistersClaimReductionSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RegistersClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

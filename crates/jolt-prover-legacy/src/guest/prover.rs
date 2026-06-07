@@ -65,7 +65,7 @@ pub fn prove<
         Option<ProverDebugInfo<F, H, PCS>>,
     ),
     crate::zkvm::proof::VerifierError,
-)
+>
 where
     ProverState<H, StdRng>: ProverFs<F>,
 {

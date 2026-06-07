@@ -785,9 +785,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for RegistersReadWriteCheckingProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for RegistersReadWriteCheckingProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -911,8 +909,8 @@ impl<F: JoltField> RegistersReadWriteCheckingVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for RegistersReadWriteCheckingVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RegistersReadWriteCheckingVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);

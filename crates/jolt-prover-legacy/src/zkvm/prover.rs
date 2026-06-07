@@ -61,7 +61,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         univariate_skip::UniSkipFirstRoundProofVariant,
     },
-    transcript_msgs::{AbsorbFs, FsChallenge, ProverFs},
+    transcript_msgs::{FsAbsorb, FsChallenge, ProverFs},
     utils::{math::Math, thread::drop_in_background_thread},
     zkvm::{
         bytecode::{
@@ -2695,7 +2695,7 @@ mod tests {
             jolt_field::Fr,
             jolt_dory::DoryScheme,
             jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-            jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+            jolt_transcript::Blake2b512,
         >(
             &preprocessing,
             &public_io,

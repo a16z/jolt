@@ -19,7 +19,7 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::Blake2b512;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
 use jolt_prover_legacy::{
@@ -152,7 +152,7 @@ pub struct VerifierFixtureCase {
 #[cfg(not(feature = "zk"))]
 impl VerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -173,7 +173,7 @@ pub struct ZkVerifierFixtureCase {
 #[cfg(feature = "zk")]
 impl ZkVerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -522,7 +522,7 @@ fn assert_verifier_accepts(
     proof: VerifierFixtureProof,
     public_io: JoltDevice,
 ) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
         &fixture.preprocessing,
         &public_io,
         &proof,
@@ -541,7 +541,7 @@ fn assert_verifier_rejects(
     proof: VerifierFixtureProof,
     public_io: JoltDevice,
 ) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
         &fixture.preprocessing,
         &public_io,
         &proof,

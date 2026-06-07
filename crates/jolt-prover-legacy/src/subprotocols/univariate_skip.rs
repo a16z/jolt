@@ -284,7 +284,8 @@ impl<F: JoltField> UniSkipFirstRoundProof<F> {
 
         // Check symmetric-domain sum equals zero (initial claim), and compute next claim s1(r0)
         let input_claim = sumcheck_instance.input_claim(opening_accumulator);
-        let input_claim_ok = uni_poly.check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
+        let input_claim_ok =
+            uni_poly.check_sum_evals::<N, FIRST_ROUND_POLY_NUM_COEFFS>(input_claim);
 
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
         let expected_output = uni_poly.evaluate(&r0);
@@ -358,9 +359,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> ZkUniSkipFirstRoundProof<F, C> {
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize
-    for ZkUniSkipFirstRoundProof<F, C>
-{
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for ZkUniSkipFirstRoundProof<F, C> {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
         mut writer: W,
@@ -380,9 +379,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize
-    for ZkUniSkipFirstRoundProof<F, C>
-{
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize for ZkUniSkipFirstRoundProof<F, C> {
     fn deserialize_with_mode<R: std::io::Read>(
         mut reader: R,
         compress: ark_serialize::Compress,
@@ -400,9 +397,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid
-    for ZkUniSkipFirstRoundProof<F, C>
-{
+impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid for ZkUniSkipFirstRoundProof<F, C> {
     fn check(&self) -> Result<(), ark_serialize::SerializationError> {
         self.commitment.check()?;
         self.output_claims_commitments.check()
@@ -437,9 +432,7 @@ impl<F: JoltField, C: JoltCurve<F = F>> UniSkipFirstRoundProofVariant<F, C> {
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize
-    for UniSkipFirstRoundProofVariant<F, C>
-{
+impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for UniSkipFirstRoundProofVariant<F, C> {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
         mut writer: W,

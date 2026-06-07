@@ -282,9 +282,7 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for BooleanityAddressSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for BooleanityAddressSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -443,9 +441,7 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for BooleanityCycleSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for BooleanityCycleSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -530,8 +526,8 @@ impl<F: JoltField> BooleanityAddressSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for BooleanityAddressSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for BooleanityAddressSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -572,8 +568,8 @@ impl<F: JoltField> BooleanityCycleSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for BooleanityCycleSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for BooleanityCycleSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

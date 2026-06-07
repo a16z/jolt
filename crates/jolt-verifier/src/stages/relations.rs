@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::{
     JoltSumcheckDomain,
 };
 use jolt_field::Field;
-use jolt_transcript::Transcript;
+use jolt_transcript::{FsAbsorb, FsChallenge};
 
 use crate::VerifierError;
 
@@ -52,10 +52,10 @@ pub trait OutputClaims<F: Field> {
     /// computed without allocating.
     fn opening_count(&self) -> usize;
 
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label. This is the Fiat-Shamir order and
-    /// MUST match the order in which the prover commits the openings.
-    fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T);
+    /// Append every produced opening to the transcript in canonical order. This
+    /// is the Fiat-Shamir order and MUST match the order in which the prover
+    /// commits the openings.
+    fn append_openings<T: FsAbsorb>(&self, transcript: &mut T);
 
     /// Resolve a produced opening's value by id, for evaluating the relation's
     /// output `Expr`. Returns `None` for ids this struct does not carry (callers
@@ -235,6 +235,7 @@ where
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -257,30 +258,44 @@ mod tests {
         JoltOpeningId::committed(polynomial, relation)
     }
 
-    /// A minimal `Transcript` double that records each appended byte chunk, so
-    /// that append order can be compared without depending on the digest.
+    /// A minimal transcript double that records each absorbed byte chunk, so
+    /// that append order can be compared without depending on the sponge.
     #[derive(Clone, Default)]
     struct RecordingTranscript {
         chunks: Vec<Vec<u8>>,
     }
 
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
+    impl FsAbsorb for RecordingTranscript {
+        fn absorb<T: ark_serialize::CanonicalSerialize>(&mut self, value: &T) {
+            let mut bytes = Vec::new();
+            value
+                .serialize_compressed(&mut bytes)
+                .expect("canonical serialization into Vec succeeds");
+            self.chunks.push(bytes);
         }
 
-        fn append_bytes(&mut self, bytes: &[u8]) {
+        fn absorb_slice<T: ark_serialize::CanonicalSerialize>(&mut self, values: &[T]) {
+            let mut bytes = Vec::new();
+            for value in values {
+                value
+                    .serialize_compressed(&mut bytes)
+                    .expect("canonical serialization into Vec succeeds");
+            }
+            self.chunks.push(bytes);
+        }
+
+        fn absorb_bytes(&mut self, bytes: &[u8]) {
             self.chunks.push(bytes.to_vec());
         }
+    }
 
-        fn challenge(&mut self) -> Self::Challenge {
+    impl FsChallenge<Fr> for RecordingTranscript {
+        fn challenge(&mut self) -> Fr {
             Fr::from_u64(0)
         }
 
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
+        fn challenge_scalar(&mut self) -> Fr {
+            Fr::from_u64(0)
         }
     }
 
@@ -292,7 +307,7 @@ mod tests {
 
         let mut via_values = RecordingTranscript::default();
         for value in claims.opening_values() {
-            via_values.append_labeled(b"opening_claim", &value);
+            via_values.absorb_field(&value);
         }
 
         assert_eq!(via_append.chunks, via_values.chunks);

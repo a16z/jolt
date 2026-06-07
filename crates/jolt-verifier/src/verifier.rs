@@ -1,5 +1,6 @@
 //! Top-level verifier entry point.
 
+use ark_serialize::CanonicalSerialize;
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::{
     JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
@@ -9,7 +10,10 @@ use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{
+    verifier_transcript, DuplexSpongeInterface, FsAbsorb, FsTranscript, OptimizedChallenge,
+    VerifierState,
+};
 
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
@@ -48,7 +52,7 @@ impl ProofTranscriptConfig {
     }
 }
 
-pub fn verify<F, PCS, VC, T>(
+pub fn verify<F, PCS, VC, H>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC>,
@@ -56,14 +60,15 @@ pub fn verify<F, PCS, VC, T>(
     zk: bool,
 ) -> Result<(), VerifierError>
 where
-    F: Field + AppendToTranscript,
+    F: Field,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: CanonicalSerialize + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
+    H: DuplexSpongeInterface<U = u8> + Default,
+    for<'a> VerifierState<'a, H>: OptimizedChallenge,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let checked = validate_inputs(
@@ -76,7 +81,10 @@ where
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
 
-    let mut transcript = T::new(b"Jolt");
+    // Option-A symmetric model: no NARG. Construct the transcript with a zero
+    // instance digest and absorb the public preamble explicitly afterwards,
+    // preserving the model's self-consistency.
+    let mut transcript = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &[]);
     absorb_preamble(&checked, proof, &mut transcript);
     absorb_commitments(
         preprocessing,
@@ -166,10 +174,9 @@ where
             .vc_setup
             .as_ref()
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-        transcript.append(&Label(b"BlindFold"));
         blindfold
             .protocol
-            .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
+            .verify::<VC, _>(proof.blindfold_proof()?, vc_setup, &mut transcript)
             .map_err(|error| VerifierError::BlindFoldVerificationFailed {
                 reason: error.to_string(),
             })?;
@@ -197,19 +204,20 @@ pub struct PreStage1VerifierState<T> {
 /// config checks, then preamble + commitment absorption — and returns the
 /// pre-stage-1 state. WARNING: the absorption order here must stay identical to
 /// [`verify`] or the prover and verifier transcripts diverge.
-pub fn verify_until_stage1<PCS, VC, T, ZkProof>(
+pub fn verify_until_stage1<PCS, VC, H, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
-) -> Result<PreStage1VerifierState<T>, VerifierError>
+) -> Result<PreStage1VerifierState<VerifierState<'static, H>>, VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: CanonicalSerialize,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: AppendToTranscript,
-    T: Transcript<Challenge = PCS::Field>,
+    VC::Output: CanonicalSerialize,
+    H: DuplexSpongeInterface<U = u8> + Default,
+    for<'a> VerifierState<'a, H>: OptimizedChallenge,
 {
     let checked = validate_inputs(
         preprocessing,
@@ -221,7 +229,7 @@ where
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
 
-    let mut transcript = T::new(b"Jolt");
+    let mut transcript = verifier_transcript(b"Jolt", [0u8; 32], H::default(), &[]);
     absorb_preamble(&checked, proof, &mut transcript);
     absorb_commitments(
         preprocessing,
@@ -450,7 +458,7 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
 ) where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     absorb_transcript_preamble(
         checked,
@@ -473,64 +481,36 @@ pub fn absorb_transcript_preamble<T>(
     config: ProofTranscriptConfig,
     transcript: &mut T,
 ) where
-    T: Transcript,
+    T: FsAbsorb,
 {
     let public_io = &checked.public_io;
-    absorb_labeled_bytes(
+    transcript.absorb_bytes(&checked.preprocessing_digest);
+    absorb_u64(transcript, public_io.memory_layout.max_input_size);
+    absorb_u64(transcript, public_io.memory_layout.max_output_size);
+    absorb_u64(transcript, public_io.memory_layout.heap_size);
+    transcript.absorb_bytes(&public_io.inputs);
+    transcript.absorb_bytes(&public_io.outputs);
+    absorb_u64(transcript, public_io.panic as u64);
+    absorb_u64(transcript, checked.ram_K as u64);
+    absorb_u64(transcript, checked.trace_length as u64);
+    absorb_u64(transcript, checked.entry_address);
+    absorb_u64(transcript, config.rw_config.ram_rw_phase1_num_rounds as u64);
+    absorb_u64(transcript, config.rw_config.ram_rw_phase2_num_rounds as u64);
+    absorb_u64(
         transcript,
-        b"preprocessing_digest",
-        &checked.preprocessing_digest,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_input_size",
-        public_io.memory_layout.max_input_size,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_output_size",
-        public_io.memory_layout.max_output_size,
-    );
-    absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
-    absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
-    absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", public_io.panic as u64);
-    absorb_labeled_u64(transcript, b"ram_K", checked.ram_K as u64);
-    absorb_labeled_u64(transcript, b"trace_length", checked.trace_length as u64);
-    absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase1_num_rounds",
-        config.rw_config.ram_rw_phase1_num_rounds as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase2_num_rounds",
-        config.rw_config.ram_rw_phase2_num_rounds as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase1_num_rounds",
         config.rw_config.registers_rw_phase1_num_rounds as u64,
     );
-    absorb_labeled_u64(
+    absorb_u64(
         transcript,
-        b"registers_rw_phase2_num_rounds",
         config.rw_config.registers_rw_phase2_num_rounds as u64,
     );
-    absorb_labeled_u64(
+    absorb_u64(transcript, config.one_hot_config.log_k_chunk as u64);
+    absorb_u64(
         transcript,
-        b"log_k_chunk",
-        config.one_hot_config.log_k_chunk as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lookups_ra_virtual_log_k_chunk",
         config.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
     );
-    absorb_labeled_u64(
+    absorb_u64(
         transcript,
-        b"dory_layout",
         config.trace_polynomial_order.transcript_scalar(),
     );
 }
@@ -542,9 +522,9 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     transcript: &mut T,
 ) where
     PCS: CommitmentScheme,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: CanonicalSerialize,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     absorb_transcript_commitments(
         &proof.commitments,
@@ -554,15 +534,9 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     );
     if let Some(committed) = preprocessing.program.committed() {
         for commitment in &committed.bytecode_chunk_commitments {
-            append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-            transcript.append(commitment);
+            transcript.absorb(commitment);
         }
-        append_payload_label(
-            transcript,
-            b"program_image_commitment",
-            &committed.program_image_commitment,
-        );
-        transcript.append(&committed.program_image_commitment);
+        transcript.absorb(&committed.program_image_commitment);
     }
 }
 
@@ -577,12 +551,11 @@ pub fn absorb_transcript_commitments<C, T>(
     trusted_advice_commitment: Option<&C>,
     transcript: &mut T,
 ) where
-    C: AppendToTranscript,
-    T: Transcript,
+    C: CanonicalSerialize,
+    T: FsAbsorb,
 {
     let mut absorb_commitment = |commitment: &C| {
-        append_payload_label(transcript, b"commitment", commitment);
-        transcript.append(commitment);
+        transcript.absorb(commitment);
     };
     absorb_commitment(&commitments.rd_inc);
     absorb_commitment(&commitments.ram_inc);
@@ -596,35 +569,18 @@ pub fn absorb_transcript_commitments<C, T>(
         absorb_commitment(commitment);
     }
     if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
-        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
-        transcript.append(untrusted_advice_commitment);
+        transcript.absorb(untrusted_advice_commitment);
     }
     if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
-        transcript.append(trusted_advice_commitment);
+        transcript.absorb(trusted_advice_commitment);
     }
 }
 
-fn append_payload_label<T, A>(transcript: &mut T, label: &'static [u8], payload: &A)
-where
-    T: Transcript,
-    A: AppendToTranscript,
-{
-    if let Some(len) = payload.transcript_payload_len() {
-        transcript.append(&LabelWithCount(label, len));
-    } else {
-        transcript.append(&Label(label));
-    }
-}
-
-fn absorb_labeled_bytes<T: Transcript>(transcript: &mut T, label: &'static [u8], bytes: &[u8]) {
-    transcript.append(&LabelWithCount(label, bytes.len() as u64));
-    transcript.append_bytes(bytes);
-}
-
-fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], value: u64) {
-    transcript.append(&Label(label));
-    transcript.append(&U64Word(value));
+/// Absorbs a `u64` statement field as raw little-endian bytes. Like jolt-core,
+/// no domain-separation label is absorbed — statement fields are separated
+/// positionally and by the transcript's one-time `DomainSeparator`/instance.
+fn absorb_u64<T: FsAbsorb>(transcript: &mut T, value: u64) {
+    transcript.absorb_bytes(&value.to_le_bytes());
 }
 
 pub fn validate_proof_consistency<PCS, VC, ZkProof>(
@@ -722,6 +678,9 @@ where
 mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    use ark_serialize::{
+        CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+    };
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
@@ -734,8 +693,9 @@ mod tests {
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
-    use jolt_transcript::Transcript;
+    use jolt_transcript::FsTranscript;
     use num_traits::Zero;
+    use std::io::{Read, Write};
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -775,7 +735,7 @@ mod tests {
             _eval: Self::Field,
             _setup: &Self::ProverSetup,
             _hint: Option<Self::OpeningHint>,
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _transcript: &mut impl FsTranscript<Self::Field>,
         ) -> Self::Proof {
         }
 
@@ -785,21 +745,47 @@ mod tests {
             _eval: Self::Field,
             _proof: &Self::Proof,
             _setup: &Self::VerifierSetup,
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _transcript: &mut impl FsTranscript<Self::Field>,
         ) -> Result<(), OpeningsError> {
             Ok(())
         }
 
         fn bind_opening_inputs(
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _transcript: &mut impl FsTranscript<Self::Field>,
             _point: &[Self::Field],
             _eval: &Self::Field,
         ) {
         }
     }
 
-    impl jolt_transcript::AppendToTranscript for TestCommitment {
-        fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
+    impl CanonicalSerialize for TestCommitment {
+        fn serialize_with_mode<W: Write>(
+            &self,
+            _writer: W,
+            _compress: Compress,
+        ) -> Result<(), SerializationError> {
+            Ok(())
+        }
+
+        fn serialized_size(&self, _compress: Compress) -> usize {
+            0
+        }
+    }
+
+    impl Valid for TestCommitment {
+        fn check(&self) -> Result<(), SerializationError> {
+            Ok(())
+        }
+    }
+
+    impl CanonicalDeserialize for TestCommitment {
+        fn deserialize_with_mode<R: Read>(
+            _reader: R,
+            _compress: Compress,
+            _validate: Validate,
+        ) -> Result<Self, SerializationError> {
+            Ok(TestCommitment)
+        }
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;

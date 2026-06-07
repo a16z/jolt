@@ -1,9 +1,10 @@
+use ark_serialize::CanonicalSerialize;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
-use jolt_sumcheck::{CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_sumcheck::CompressedSumcheckProof;
+use jolt_transcript::{FsAbsorb, FsTranscript};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
@@ -11,7 +12,6 @@ use crate::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
 const INNER_SUMCHECK_DEGREE: usize = 2;
-const INNER_SUMCHECK_LABEL: &[u8] = b"inner_sumcheck_poly";
 
 #[derive(Clone, Copy, Debug)]
 pub struct BlindFoldWitness<'a, F: Field> {
@@ -161,10 +161,10 @@ pub fn prove<F, VC, T, R>(
     rng: &mut R,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: Field,
     VC: VectorCommitment<Field = F>,
-    VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: HomomorphicCommitment<F>,
+    T: FsTranscript<F>,
     R: RngCore,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
@@ -188,10 +188,10 @@ pub fn prove_with_row_committer<F, VC, T, R, C>(
     row_committer: &mut C,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: Field,
     VC: VectorCommitment<Field = F>,
-    VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: HomomorphicCommitment<F>,
+    T: FsTranscript<F>,
     R: RngCore,
     C: BlindFoldRowCommitter<F, VC>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
@@ -353,12 +353,6 @@ where
 
     append_relaxed_instance(
         transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_committed_u",
-            witness: b"bf_committed_w",
-            error: b"bf_committed_e",
-            eval: b"bf_committed_eval",
-        },
         committed.u,
         &committed.witness_row_commitments,
         &committed.error_row_commitments,
@@ -366,18 +360,12 @@ where
     );
     append_relaxed_instance(
         transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_random_u",
-            witness: b"bf_random_w",
-            error: b"bf_random_e",
-            eval: b"bf_random_eval",
-        },
         random_u,
         &random_instance.witness_row_commitments,
         &random_instance.error_row_commitments,
         &random_instance.eval_commitments,
     );
-    append_values(transcript, b"bf_cross_e", &cross_term_error_row_commitments);
+    transcript.absorb(&cross_term_error_row_commitments);
     let folding_challenge = transcript.challenge();
 
     let folded_u = F::one() + folding_challenge * random_u;
@@ -483,7 +471,6 @@ where
         );
     }
 
-    transcript.append(&Label(b"bf_spartan"));
     let outer_num_vars = log2_power_of_two("error row count", protocol.dimensions.error.row_count)?
         + log2_power_of_two("error row length", protocol.dimensions.error.row_len)?;
     if outer_num_vars == 0 {
@@ -520,7 +507,7 @@ where
         "folded error row opening",
     )?;
 
-    append_values(transcript, b"bf_az_bz_cz", &[az_rx, bz_rx, cz_rx]);
+    transcript.absorb_field_slice(&[az_rx, bz_rx, cz_rx]);
     append_vector_opening(
         transcript,
         b"bf_error_opening",
@@ -754,8 +741,8 @@ fn prove_outer_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    F: Field,
+    T: FsTranscript<F>,
 {
     let num_vars = log2_power_of_two("outer folded R1CS sumcheck", error_values.len())?;
     ensure_len("outer challenge vector", num_vars, tau.len())?;
@@ -824,11 +811,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        append_values(
-            transcript,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-            compressed.coeffs_except_linear_term(),
-        );
+        transcript.absorb_field_slice(compressed.coeffs_except_linear_term());
         let challenge = transcript.challenge();
         running_sum = round_poly.evaluate(challenge);
         az.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -863,8 +846,8 @@ fn prove_inner_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    F: Field,
+    T: FsTranscript<F>,
 {
     let witness_values = flatten(witness_rows);
     let num_vars = log2_power_of_two("inner folded R1CS sumcheck", witness_values.len())?;
@@ -905,11 +888,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        append_values(
-            transcript,
-            INNER_SUMCHECK_LABEL,
-            compressed.coeffs_except_linear_term(),
-        );
+        transcript.absorb_field_slice(compressed.coeffs_except_linear_term());
         let challenge = transcript.challenge();
         running_sum = round_poly.evaluate(challenge);
         l_w.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -1052,56 +1031,38 @@ where
     )
 }
 
-#[derive(Clone, Copy, Debug)]
-struct RelaxedInstanceLabels {
-    u: &'static [u8],
-    witness: &'static [u8],
-    error: &'static [u8],
-    eval: &'static [u8],
-}
-
+#[expect(
+    clippy::ptr_arg,
+    reason = "matches verifier-side CanonicalSerialize Vec absorption exactly"
+)]
 fn append_relaxed_instance<F, C, T>(
     transcript: &mut T,
-    labels: RelaxedInstanceLabels,
     u: F,
-    witness_commitments: &[C],
-    error_commitments: &[C],
-    eval_commitments: &[C],
+    witness_commitments: &Vec<C>,
+    error_commitments: &Vec<C>,
+    eval_commitments: &Vec<C>,
 ) where
-    F: AppendToTranscript,
-    C: AppendToTranscript,
-    T: Transcript,
+    F: Field,
+    C: CanonicalSerialize,
+    T: FsAbsorb,
 {
-    transcript.append(&Label(labels.u));
-    u.append_to_transcript(transcript);
-    append_values(transcript, labels.witness, witness_commitments);
-    append_values(transcript, labels.error, error_commitments);
-    append_values(transcript, labels.eval, eval_commitments);
-}
-
-fn append_values<A, T>(transcript: &mut T, label: &'static [u8], values: &[A])
-where
-    A: AppendToTranscript,
-    T: Transcript,
-{
-    transcript.append(&LabelWithCount(label, values.len() as u64));
-    for value in values {
-        value.append_to_transcript(transcript);
-    }
+    transcript.absorb_field(&u);
+    transcript.absorb(witness_commitments);
+    transcript.absorb(error_commitments);
+    transcript.absorb(eval_commitments);
 }
 
 fn append_vector_opening<F, T>(
     transcript: &mut T,
-    row_label: &'static [u8],
-    blinding_label: &'static [u8],
+    _row_label: &'static [u8],
+    _blinding_label: &'static [u8],
     opening: &VectorCommitmentOpening<F>,
 ) where
-    F: AppendToTranscript,
-    T: Transcript,
+    F: Field,
+    T: FsAbsorb,
 {
-    append_values(transcript, row_label, &opening.combined_vector);
-    transcript.append(&Label(blinding_label));
-    opening.combined_blinding.append_to_transcript(transcript);
+    transcript.absorb_field_slice(&opening.combined_vector);
+    transcript.absorb_field(&opening.combined_blinding);
 }
 
 fn random_rows<F, R>(row_count: usize, row_len: usize, rng: &mut R) -> Vec<Vec<F>>

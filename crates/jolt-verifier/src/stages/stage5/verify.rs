@@ -6,7 +6,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use super::{
     instruction_read_raf::{InstructionReadRaf, InstructionReadRafInputClaims},
@@ -85,7 +85,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = formula_dimensions.trace;
@@ -313,7 +313,7 @@ where
         });
     }
 
-    claims.append_to_transcript(transcript);
+    append_stage5_opening_claims(transcript, claims);
 
     let instruction_r_address = output_claims.instruction_r_address();
     Ok(Stage5Output::Clear(Stage5ClearOutput {
@@ -321,4 +321,14 @@ where
         output_claims,
         instruction_r_address,
     }))
+}
+
+fn append_stage5_opening_claims<F, T>(transcript: &mut T, claims: &Stage5OutputClaims<F>)
+where
+    F: Field,
+    T: FsTranscript<F>,
+{
+    for opening_claim in claims.opening_values() {
+        transcript.absorb_field(&opening_claim);
+    }
 }

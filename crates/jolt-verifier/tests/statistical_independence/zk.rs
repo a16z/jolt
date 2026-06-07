@@ -18,10 +18,7 @@ use jolt_field::{FixedBytes, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_transcript::{
-    AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript, Transcript,
-};
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_transcript::{prover_transcript, Blake2b512, FsAbsorb, FsChallenge};
 use jolt_verifier::JoltProofClaims;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -353,7 +350,7 @@ fn collect_sumcheck_statistics<C>(
     proof: &SumcheckProof<Fr, C>,
     tracker: &mut BucketTracker,
 ) where
-    C: AppendToTranscript,
+    C: CanonicalSerialize,
 {
     let proof = proof
         .as_committed()
@@ -502,15 +499,18 @@ impl BucketTracker {
         Self::default()
     }
 
-    fn record_append<A: AppendToTranscript>(&mut self, name: impl Into<String>, value: &A) {
+    fn record_append<A: CanonicalSerialize>(&mut self, name: impl Into<String>, value: &A) {
         let name = name.into();
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"jolt-zk-stat");
-        transcript.append_bytes(name.as_bytes());
-        value.append_to_transcript(&mut transcript);
-        self.record_projected(name, field_low_u64(transcript.challenge()));
+        let mut transcript = prover_transcript(b"jolt-zk-stat", [0u8; 32], Blake2b512::default());
+        transcript.absorb_bytes(name.as_bytes());
+        transcript.absorb(value);
+        self.record_projected(
+            name,
+            field_low_u64(FsChallenge::<Fr>::challenge(&mut transcript)),
+        );
     }
 
-    fn record_append_positions<A: AppendToTranscript>(&mut self, prefix: &str, values: &[A]) {
+    fn record_append_positions<A: CanonicalSerialize>(&mut self, prefix: &str, values: &[A]) {
         for index in selected_positions(values.len()) {
             self.record_append(format!("{prefix}.{index}"), &values[index]);
         }
@@ -553,10 +553,13 @@ impl BucketTracker {
     }
 
     fn record_bytes(&mut self, name: String, bytes: &[u8]) {
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"jolt-zk-stat");
-        transcript.append_bytes(name.as_bytes());
-        transcript.append_bytes(bytes);
-        self.record_projected(name, field_low_u64(transcript.challenge()));
+        let mut transcript = prover_transcript(b"jolt-zk-stat", [0u8; 32], Blake2b512::default());
+        transcript.absorb_bytes(name.as_bytes());
+        transcript.absorb_bytes(bytes);
+        self.record_projected(
+            name,
+            field_low_u64(FsChallenge::<Fr>::challenge(&mut transcript)),
+        );
     }
 
     fn record_projected(&mut self, name: String, value: u64) {

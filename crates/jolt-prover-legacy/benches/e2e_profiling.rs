@@ -239,7 +239,7 @@ fn prove_example(
             jolt_field::Fr,
             jolt_dory::DoryScheme,
             jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-            jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+            jolt_transcript::Blake2b512,
         >(
             &verifier_preprocessing,
             &program_io,
@@ -312,7 +312,7 @@ fn prove_example_with_trace(
         jolt_field::Fr,
         jolt_dory::DoryScheme,
         jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-        jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+        jolt_transcript::Blake2b512,
     >(
         &verifier_preprocessing,
         &program_io,

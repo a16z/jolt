@@ -9,6 +9,7 @@ description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 workspace = true
 
 [dependencies]
+ark-serialize.workspace = true
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true

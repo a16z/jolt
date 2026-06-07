@@ -152,9 +152,7 @@ impl<F: JoltField> HammingBooleanitySumcheckProver<F> {
     }
 }
 
-impl<F: JoltField> SumcheckInstanceProver<F>
-    for HammingBooleanitySumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for HammingBooleanitySumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -214,8 +212,8 @@ impl<F: JoltField> HammingBooleanitySumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, A> for HammingBooleanitySumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for HammingBooleanitySumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);

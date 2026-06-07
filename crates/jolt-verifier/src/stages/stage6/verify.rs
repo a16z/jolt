@@ -24,7 +24,7 @@ use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 use num_traits::{One, Zero};
 
 use super::{
@@ -90,7 +90,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let log_t = formula_dimensions.trace.log_t();
     let log_k = checked.ram_K.ilog2() as usize;
@@ -1110,7 +1110,6 @@ where
     }))
 }
 
-// ============================================================================
 // Stage 6 prover/verifier shared helpers.
 //
 // The functions and types below are the public, prover-facing Stage 6 API
@@ -1130,7 +1129,6 @@ where
 // non-reduction instances that the public batch shares with `verify()`; the
 // reductions are appended last by `verify()` itself, after every shared
 // instance, preserving the shared prefix order.
-// ============================================================================
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6BatchInputClaims<F: Field> {
@@ -1461,7 +1459,7 @@ fn stage6_booleanity_reference<F, T>(
 ) -> Stage6BooleanityReference<F>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let mut address = instruction_address.to_vec();
     address.reverse();
@@ -1507,7 +1505,7 @@ pub fn stage6_pre_address_transcript_challenges<F, T>(
 ) -> Stage6PreAddressChallenges<F>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let bytecode_gamma_powers = transcript.challenge_scalar_powers(stage6_bytecode_gamma_count());
     let stage1_gammas = transcript.challenge_scalar_powers(stage6_stage1_gamma_count());
@@ -1544,7 +1542,7 @@ pub fn stage6_post_address_transcript_challenges<F, T>(
 ) -> Stage6PostAddressChallenges<F>
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     let instruction_ra_gamma_powers =
         transcript.challenge_scalar_powers(instruction_ra_dimensions.num_virtual_ra_polys());
@@ -1804,7 +1802,7 @@ pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let address_statements = vec![
         SumcheckStatement::new(
@@ -1881,7 +1879,7 @@ pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
     let bytecode_read_raf_input = bytecode_relation.input_claim(bytecode_inputs)?;
@@ -1993,15 +1991,15 @@ pub(super) fn append_address_phase_opening_claims<F, T>(
     claims: &Stage6OutputClaims<F>,
 ) where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.bytecode_read_raf);
+    transcript.absorb_field(&claims.address_phase.bytecode_read_raf);
     if let Some(stage_claims) = &claims.address_phase.bytecode_val_stages {
         for opening_claim in stage_claims {
-            transcript.append_labeled(b"opening_claim", opening_claim);
+            transcript.absorb_field(opening_claim);
         }
     }
-    transcript.append_labeled(b"opening_claim", &claims.address_phase.booleanity);
+    transcript.absorb_field(&claims.address_phase.booleanity);
 }
 pub(super) fn aliased_booleanity_bytecode_openings<F: Field>(
     bytecode_ra_opening_points: &[Vec<F>],
@@ -2273,7 +2271,7 @@ pub(super) fn append_opening_claims<F, T>(
     booleanity_point: &[F],
 ) where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     // Full relations delegate to their derived `append_openings`, single-sourcing
     // the per-field Fiat-Shamir order from the `OutputClaims` derive. `booleanity`
@@ -2281,7 +2279,7 @@ pub(super) fn append_opening_claims<F, T>(
     // against the bytecode-read-RAF points.
     claims.bytecode_read_raf.append_openings(transcript);
     for opening_claim in &claims.booleanity.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
         if bytecode_read_raf_points
@@ -2290,10 +2288,10 @@ pub(super) fn append_opening_claims<F, T>(
         {
             continue;
         }
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims.booleanity.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     claims.ram_hamming_booleanity.append_openings(transcript);
     claims.ram_ra_virtualization.append_openings(transcript);
@@ -2302,32 +2300,35 @@ pub(super) fn append_opening_claims<F, T>(
         .append_openings(transcript);
     claims.inc_claim_reduction.append_openings(transcript);
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
     if let Some(opening_claim) = &claims.advice_cycle_phase.untrusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
     if let Some(output_claims) = &claims.bytecode_claim_reduction {
         match output_claims {
             BytecodeCyclePhaseOutputClaims::Intermediate(opening_claim) => {
-                transcript.append_labeled(b"opening_claim", opening_claim);
+                transcript.absorb_field(opening_claim);
             }
             BytecodeCyclePhaseOutputClaims::Chunks(chunks) => {
                 for opening_claim in chunks {
-                    transcript.append_labeled(b"opening_claim", opening_claim);
+                    transcript.absorb_field(opening_claim);
                 }
             }
         }
     }
     if let Some(output_claim) = &claims.program_image_claim_reduction {
-        transcript.append_labeled(b"opening_claim", &output_claim.opening_claim);
+        transcript.absorb_field(&output_claim.opening_claim);
     }
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used)]
 mod tests {
     use super::*;
+    use ark_serialize::CanonicalSerialize;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_transcript::{FsAbsorb, FsChallenge};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -2338,19 +2339,37 @@ mod tests {
         chunks: Vec<Vec<u8>>,
     }
 
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
+    impl FsAbsorb for RecordingTranscript {
+        fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
+            let mut bytes = Vec::new();
+            value
+                .serialize_compressed(&mut bytes)
+                .expect("canonical serialization into Vec succeeds");
+            self.chunks.push(bytes);
         }
-        fn append_bytes(&mut self, bytes: &[u8]) {
+
+        fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
+            let mut bytes = Vec::new();
+            for value in values {
+                value
+                    .serialize_compressed(&mut bytes)
+                    .expect("canonical serialization into Vec succeeds");
+            }
+            self.chunks.push(bytes);
+        }
+
+        fn absorb_bytes(&mut self, bytes: &[u8]) {
             self.chunks.push(bytes.to_vec());
         }
-        fn challenge(&mut self) -> Self::Challenge {
+    }
+
+    impl FsChallenge<Fr> for RecordingTranscript {
+        fn challenge(&mut self) -> Fr {
             Fr::from_u64(0)
         }
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
+
+        fn challenge_scalar(&mut self) -> Fr {
+            Fr::from_u64(0)
         }
     }
 
@@ -2402,7 +2421,7 @@ mod tests {
 
         let mut want = RecordingTranscript::default();
         for value in (1..=10).map(fr) {
-            want.append_labeled(b"opening_claim", &value);
+            want.absorb_field(&value);
         }
 
         assert_eq!(got.chunks, want.chunks);
