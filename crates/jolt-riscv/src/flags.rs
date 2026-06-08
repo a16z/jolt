@@ -118,6 +118,11 @@ impl CircuitFlagSet {
     pub fn bits(self) -> u16 {
         self.0
     }
+
+    #[inline]
+    pub const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
 }
 
 impl Index<CircuitFlags> for CircuitFlagSet {
@@ -150,6 +155,11 @@ impl InstructionFlagSet {
     #[inline]
     pub fn bits(self) -> u8 {
         self.0
+    }
+
+    #[inline]
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
     }
 }
 

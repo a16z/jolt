@@ -32,20 +32,23 @@
 
 use crate::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags, JoltInstruction,
-    JoltInstructionKind, JoltInstructionRow, JoltInstructionTag, NormalizedOperands,
+    JoltInstructionKind, JoltInstructionRow, JoltInstructionTag,
 };
 
-/// Largest register id storable in `register_pack`. `0xFF` is reserved as the
+/// Largest register id storable in a register-id byte. `0xFF` is reserved as the
 /// `None` sentinel, so ids must be `<= 254`. Jolt's register file
 /// (`REGISTER_COUNT = 128`) sits well within this bound; the limit is a
 /// storage-format detail, not a protocol fact.
 const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 
-/// Sentinel stored in `register_pack` for an absent (`None`) register operand.
+/// Sentinel stored in a register-id byte for an absent (`None`) operand.
 const REGISTER_NONE: u8 = u8::MAX;
 
-/// Cached register-pack value for a row with no register operands.
-const NO_REGISTERS: u32 = u32::from_le_bytes([REGISTER_NONE, REGISTER_NONE, REGISTER_NONE, 0]);
+/// `meta` bit layout: `circuit_flags` occupy the low 16 bits; instruction flags
+/// the next 6; the immediate sign one more; the top 9 bits are spare.
+const META_INSTRUCTION_FLAGS_SHIFT: u32 = 16;
+const META_INSTRUCTION_FLAGS_MASK: u32 = (1u32 << (crate::NUM_INSTRUCTION_FLAGS as u32)) - 1;
+const META_IMM_NEGATIVE_SHIFT: u32 = 22;
 
 /// Witness values for a non-memory row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -194,21 +197,22 @@ pub struct JoltTraceRow {
     values: TraceValueSlots,
     /// Source RV64 instruction address (guest architectural address).
     unexpanded_pc: u64,
-    /// Magnitude of the immediate; sign in `imm_is_negative`.
+    /// Magnitude of the immediate; sign is bit `META_IMM_NEGATIVE_SHIFT` of `meta`.
     imm_abs: u64,
     /// Compact local bytecode index (expanded "PC"); see [`JoltTraceRow::pc`].
     bytecode_pc: u32,
-    /// `rs1 | rs2 << 8 | rd << 16`, each byte a register id or `0xFF` (None).
-    register_pack: u32,
+    /// Packed flags + immediate sign: circuit flags in bits `0..16`, instruction
+    /// flags in bits `16..22`, immediate sign in bit `22`, top 9 bits spare.
+    meta: u32,
     /// Final Jolt instruction tag (stable identity, not a dense index). The
     /// lookup-table routing is derived from this in `jolt-lookup-tables`.
     jolt_tag: u16,
-    /// Cached circuit flags. Also the row-class discriminant: the `Load`/`Store`
-    /// bits decide how the value slots are interpreted.
-    circuit_flags: CircuitFlagSet,
-    /// Cached instruction flags.
-    instruction_flags: InstructionFlagSet,
-    imm_is_negative: bool,
+    /// `rs1`/`rs2`/`rd` register ids, or `0xFF` (None).
+    rs1_id: u8,
+    rs2_id: u8,
+    rd_id: u8,
+    /// Reserved layout slots (kept zero).
+    _reserved: [u8; 3],
 }
 
 const _: () = assert!(
@@ -234,11 +238,12 @@ impl JoltTraceRow {
             unexpanded_pc: 0,
             imm_abs: 0,
             bytecode_pc: 0,
-            register_pack: NO_REGISTERS,
+            meta: pack_meta(circuit_flags, instruction_flags, false),
             jolt_tag: instruction.instruction_kind.tag().0,
-            circuit_flags,
-            instruction_flags,
-            imm_is_negative: false,
+            rs1_id: REGISTER_NONE,
+            rs2_id: REGISTER_NONE,
+            rd_id: REGISTER_NONE,
+            _reserved: [0; 3],
         }
     }
 
@@ -273,11 +278,12 @@ impl JoltTraceRow {
             unexpanded_pc: instruction.address as u64,
             imm_abs: imm_magnitude as u64,
             bytecode_pc,
-            register_pack: pack_register_ids(&instruction.operands)?,
+            meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
             jolt_tag: kind.tag().0,
-            circuit_flags,
-            instruction_flags,
-            imm_is_negative: imm < 0,
+            rs1_id: checked_register_id(instruction.operands.rs1)?,
+            rs2_id: checked_register_id(instruction.operands.rs2)?,
+            rd_id: checked_register_id(instruction.operands.rd)?,
+            _reserved: [0; 3],
         })
     }
 
@@ -388,7 +394,7 @@ impl JoltTraceRow {
     #[inline(always)]
     pub fn imm(&self) -> i128 {
         let magnitude = self.imm_abs as i128;
-        if self.imm_is_negative {
+        if self.meta & (1 << META_IMM_NEGATIVE_SHIFT) != 0 {
             -magnitude
         } else {
             magnitude
@@ -397,42 +403,44 @@ impl JoltTraceRow {
 
     #[inline(always)]
     pub fn rs1_index(&self) -> Option<u8> {
-        unpack_register_id(self.register_pack.to_le_bytes()[0])
+        register_index(self.rs1_id)
     }
 
     #[inline(always)]
     pub fn rs2_index(&self) -> Option<u8> {
-        unpack_register_id(self.register_pack.to_le_bytes()[1])
+        register_index(self.rs2_id)
     }
 
     #[inline(always)]
     pub fn rd_index(&self) -> Option<u8> {
-        unpack_register_id(self.register_pack.to_le_bytes()[2])
+        register_index(self.rd_id)
     }
 
     #[inline(always)]
     pub fn circuit_flags(&self) -> CircuitFlagSet {
-        self.circuit_flags
+        CircuitFlagSet::from_bits(self.meta as u16)
     }
 
     #[inline(always)]
     pub fn instruction_flags(&self) -> InstructionFlagSet {
-        self.instruction_flags
+        InstructionFlagSet::from_bits(
+            ((self.meta >> META_INSTRUCTION_FLAGS_SHIFT) & META_INSTRUCTION_FLAGS_MASK) as u8,
+        )
     }
 
     #[inline(always)]
     pub fn is_load(&self) -> bool {
-        self.circuit_flags.get(CircuitFlags::Load)
+        self.meta & (1 << CircuitFlags::Load as u32) != 0
     }
 
     #[inline(always)]
     pub fn is_store(&self) -> bool {
-        self.circuit_flags.get(CircuitFlags::Store)
+        self.meta & (1 << CircuitFlags::Store as u32) != 0
     }
 
     #[inline(always)]
     pub fn is_noop(&self) -> bool {
-        self.instruction_flags.get(InstructionFlags::IsNoop)
+        self.meta & (1 << (META_INSTRUCTION_FLAGS_SHIFT + InstructionFlags::IsNoop as u32)) != 0
     }
 
     /// Stable final-row identity, reconstructed from the cached tag.
@@ -454,6 +462,17 @@ fn row_flags(instruction: &JoltInstructionRow) -> (CircuitFlagSet, InstructionFl
 }
 
 #[inline]
+fn pack_meta(
+    circuit_flags: CircuitFlagSet,
+    instruction_flags: InstructionFlagSet,
+    imm_negative: bool,
+) -> u32 {
+    (circuit_flags.bits() as u32)
+        | ((instruction_flags.bits() as u32) << META_INSTRUCTION_FLAGS_SHIFT)
+        | ((imm_negative as u32) << META_IMM_NEGATIVE_SHIFT)
+}
+
+#[inline]
 fn class_mismatch(kind: JoltInstructionKind, detail: &'static str) -> TraceRowError {
     TraceRowError::StateClassMismatch { kind, detail }
 }
@@ -468,24 +487,15 @@ fn checked_register_id(id: Option<u8>) -> Result<u8, TraceRowError> {
 }
 
 #[inline(always)]
-fn pack_register_ids(operands: &NormalizedOperands) -> Result<u32, TraceRowError> {
-    Ok(u32::from_le_bytes([
-        checked_register_id(operands.rs1)?,
-        checked_register_id(operands.rs2)?,
-        checked_register_id(operands.rd)?,
-        0,
-    ]))
-}
-
-#[inline(always)]
-fn unpack_register_id(byte: u8) -> Option<u8> {
-    (byte != REGISTER_NONE).then_some(byte)
+fn register_index(id: u8) -> Option<u8> {
+    (id != REGISTER_NONE).then_some(id)
 }
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests may unwrap freely")]
 mod tests {
     use super::*;
+    use crate::NormalizedOperands;
 
     fn row(kind: JoltInstructionKind, operands: NormalizedOperands) -> JoltInstructionRow {
         JoltInstructionRow {
@@ -518,6 +528,7 @@ mod tests {
         assert_eq!(default.pc(), 0);
         assert_eq!(default.unexpanded_pc(), 0);
         assert_eq!(default.imm(), 0);
+        assert_eq!(default.rs1_index(), None);
         assert!(default.is_noop());
         assert!(!default.is_load() && !default.is_store());
         assert_eq!(
@@ -673,5 +684,24 @@ mod tests {
         let err =
             JoltTraceRow::from_components(CapturedState::default(), &instruction, 0).unwrap_err();
         assert!(matches!(err, TraceRowError::RegisterIdTooWide { .. }));
+    }
+
+    #[test]
+    fn flags_round_trip_through_meta() {
+        // Distinct circuit + instruction flags must survive the meta packing.
+        let instruction = row(
+            JoltInstructionKind::SD,
+            NormalizedOperands {
+                rs1: Some(1),
+                rs2: Some(2),
+                rd: None,
+                imm: 0,
+            },
+        );
+        let (circuit_flags, instruction_flags) = row_flags(&instruction);
+        let state = CapturedState::Store(StoreState::default());
+        let r = JoltTraceRow::from_components(state, &instruction, 0).unwrap();
+        assert_eq!(r.circuit_flags(), circuit_flags);
+        assert_eq!(r.instruction_flags(), instruction_flags);
     }
 }
