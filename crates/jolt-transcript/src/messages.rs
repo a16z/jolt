@@ -41,6 +41,13 @@
 //! jolt-core at the optimized sites (sumcheck round challenges, uni-skip `r0`,
 //! Spartan `tau`, opening-RLC `rho`, …).
 //!
+//! **Byte sponges only (Poseidon caveat).** This 128-bit `MontU128` vocabulary matches
+//! jolt-core's `challenge_optimized` for the byte sponges (Blake2b/Keccak) — the only ones
+//! modular consumers instantiate. It routes through [`OptimizedChallenge::challenge_u128`],
+//! which is `unimplemented!()` for Poseidon (#1586 reviewer — Poseidon uses full-field
+//! `challenge-254-bit`), so a Poseidon-backed state would panic; no modular consumer does.
+//! A full-field model verifier for Poseidon is the deferred gnark/on-chain follow-up.
+//!
 //! [`from_challenge_bytes`]: jolt_field::TranscriptChallenge::from_challenge_bytes
 //! [`from_u128`]: jolt_field::FromPrimitiveInt::from_u128
 

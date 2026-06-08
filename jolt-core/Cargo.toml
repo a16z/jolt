@@ -43,13 +43,13 @@ monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
-# D5b (DEV-43): decoupled from `challenge-254-bit` now that the legacy
-# `transcripts/poseidon.rs` (whose `transmute_copy` hard-assumed the 32-byte
-# `Mont254BitChallenge`) is deleted. Poseidon now uses the uniform 16-byte
-# `MontU128Challenge` like Blake2b/Keccak; the spongefish path squeezes a
-# 128-bit Poseidon challenge via `low_128_bits` regardless of the field's
-# `Challenge` width.
-transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
+# D5b (#1586 reviewer): `transcript-poseidon` forces `challenge-254-bit`, so
+# under Poseidon `F::Challenge` is the full-field `Mont254BitChallenge`. Poseidon
+# deliberately has NO 128-bit optimized challenge (`challenge_128` is
+# `unimplemented!` for the Poseidon sponge): for recursion the 128-bit truncation
+# is costly and defeats the purpose of using Poseidon in the first place, so the
+# Poseidon configuration keeps genuine full-field challenges.
+transcript-poseidon = ["jolt-transcript/transcript-poseidon", "challenge-254-bit"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 # Gates `zkvm::transpilable_verifier` (the symbolic on-chain-verifier generator

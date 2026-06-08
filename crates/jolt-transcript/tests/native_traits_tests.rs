@@ -3,11 +3,9 @@
 //! `transcript_tests!` macro exercises only the `legacy::Transcript`
 //! facade.
 
-#![cfg(any(
-    feature = "transcript-blake2b",
-    feature = "transcript-keccak",
-    feature = "transcript-poseidon"
-))]
+// Poseidon has no `OptimizedChallenge` (128-bit) tests — it uses full-field
+// `challenge-254-bit` (#1586 reviewer) — so this file only covers the byte sponges.
+#![cfg(any(feature = "transcript-blake2b", feature = "transcript-keccak"))]
 #![expect(clippy::expect_used, reason = "tests")]
 
 use jolt_field::Fr;
@@ -101,52 +99,6 @@ mod keccak {
     }
 }
 
-#[cfg(feature = "transcript-poseidon")]
-mod poseidon {
-    use super::*;
-    use jolt_transcript::PoseidonSponge;
-
-    /// Prover and verifier squeeze the SAME `challenge_128` at the same
-    /// transcript position — the field-native Poseidon sponge agreement.
-    #[test]
-    fn prover_verifier_round_trip_and_challenge_agree() {
-        let mut prover = prover_transcript(SESSION, INSTANCE, PoseidonSponge::default());
-        prover.public_message(&BytesMsg(b"pub".to_vec()));
-        prover.prover_message(&BytesMsg(b"private".to_vec()));
-        let c_prover: Fr = prover.challenge_128();
-        let narg = prover.narg_string().to_vec();
-
-        let mut verifier = verifier_transcript(SESSION, INSTANCE, PoseidonSponge::default(), &narg);
-        verifier.public_message(&BytesMsg(b"pub".to_vec()));
-        let got: BytesMsg = verifier
-            .prover_message()
-            .expect("prover_message must deserialize");
-        assert_eq!(got.as_slice(), b"private");
-        let c_verifier: Fr = verifier.challenge_128();
-        verifier.check_eof().expect("eof");
-
-        assert_eq!(
-            c_prover, c_verifier,
-            "Poseidon challenge_128 must agree between prover and verifier",
-        );
-    }
-
-    /// Poseidon's `challenge_128` keeps only the low 128 bits of the field
-    /// squeeze (the D5b decision), so the high two limbs are zero.
-    #[test]
-    fn optimized_challenge_is_128_bit_truncated() {
-        use ark_ff::PrimeField;
-        let mut prover = prover_transcript(SESSION, INSTANCE, PoseidonSponge::default());
-        let c: Fr = prover.challenge_128();
-        let ark_c: ark_bn254::Fr = c.into();
-        let bigint = ark_c.into_bigint().0;
-        assert_eq!(
-            bigint[2], 0,
-            "limb 2 leaked — challenge_128 exceeds 128 bits"
-        );
-        assert_eq!(
-            bigint[3], 0,
-            "limb 3 leaked — challenge_128 exceeds 128 bits"
-        );
-    }
-}
+// No Poseidon `OptimizedChallenge` tests: `challenge_128` is `unimplemented!()` for
+// the Poseidon sponge (#1586 reviewer — `transcript-poseidon` uses full-field
+// `challenge-254-bit`; 128-bit truncation defeats Poseidon's recursion purpose).
