@@ -92,19 +92,19 @@ where
     }
 }
 
-// OPTIONAL (remove if not needed) — this impl is NOT required by the transcript
-// migration. Poseidon's optimized challenge was historically a FULL 254-bit field
-// element (`transcript-poseidon` forces `challenge-254-bit`; legacy jolt-core's
-// `challenge_scalar_128_bits` for Poseidon is `unimplemented!`). The migration can
-// preserve that by mapping Poseidon's `challenge_scalar_optimized` to
-// `verifier_message::<Fr>()` (full field), in which case `challenge_128` is never
-// called on Poseidon and this impl is dead code. It exists only to OPTIONALLY give
-// Poseidon the same 128-bit fast-multiply path as Blake2b/Keccak, which requires
-// decoupling `transcript-poseidon` from `challenge-254-bit` (decision D5b). Since
-// `PoseidonSponge` is itself slated for a DSFS rewrite (see the TODO above the
-// struct), prefer NOT to pin a 128-bit Poseidon challenge format unless D5b is
-// deliberately taken in Phase 3. Decision point: jolt-core wiring of
-// `challenge_scalar_optimized` for the Poseidon config.
+// Poseidon `OptimizedChallenge` — LIVE, required code (decision D5b / DEV-43 has
+// landed). The legacy `transcripts/poseidon.rs` `transmute_copy` that hard-pinned a
+// 32-byte 254-bit challenge is deleted, so `transcript-poseidon` no longer forces
+// `challenge-254-bit`: wherever `transcript-poseidon` is enabled (it is in this
+// crate's default features, and jolt-eval turns it on) `F::Challenge` is the uniform
+// 128-bit `MontU128Challenge`, and every `challenge_optimized`/`challenge_field`
+// squeeze for Poseidon routes through this impl. It is exercised by jolt-eval's
+// `TranscriptConsistencyPoseidon` invariant. Do NOT delete it — that breaks the
+// `transcript-poseidon` build and that invariant. (A future on-chain/recursion config
+// wanting genuine full-field Poseidon challenges is the separate `challenge-254-bit`
+// decision tracked with the parked transpiler, not a reason to remove this.)
+// `PoseidonSponge` is still slated for a DSFS rewrite — see the TODO above the
+// struct — which may re-pin this 128-bit format.
 #[cfg(feature = "transcript-poseidon")]
 impl<R> OptimizedChallenge for ProverState<crate::PoseidonSponge, R>
 where

@@ -253,7 +253,7 @@ impl<F: JoltField> UniSkipFirstRoundProof<F> {
         const FIRST_ROUND_POLY_NUM_COEFFS: usize,
         A: AbstractVerifierOpeningAccumulator<F>,
     >(
-        _proof: &Self,
+        &self,
         sumcheck_instance: &dyn SumcheckInstanceVerifier<F, A>,
         opening_accumulator: &mut A,
         transcript: &mut impl VerifierFs<F>,
