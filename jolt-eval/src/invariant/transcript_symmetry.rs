@@ -34,6 +34,10 @@ pub enum Op {
     /// Both sides squeeze a verifier challenge.
     Challenge,
     /// Both sides squeeze a 128-bit optimized challenge (`challenge_128`).
+    ///
+    /// Only the byte sponges (Blake2b/Keccak) implement this; the Poseidon
+    /// invariant filters it out (Poseidon uses full-field `challenge-254-bit`
+    /// and leaves `challenge_128` `unimplemented!()` — #1586 reviewer).
     OptimizedChallenge,
 }
 
@@ -330,6 +334,21 @@ impl Invariant for TranscriptConsistencyPoseidonInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
+        // Poseidon has no 128-bit `challenge_128` (it's `unimplemented!()`); its optimized
+        // challenge IS the full-field one. Map `OptimizedChallenge -> Challenge` (don't drop
+        // it) so the op still squeezes — keeping the domain-separation check alive.
+        let ops = input
+            .ops
+            .into_iter()
+            .map(|op| match op {
+                Op::OptimizedChallenge => Op::Challenge,
+                other => other,
+            })
+            .collect();
+        let input = Input {
+            instance: input.instance,
+            ops,
+        };
         run_check::<PoseidonSponge>(&input, PoseidonSponge::new)
     }
 

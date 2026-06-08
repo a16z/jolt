@@ -69,15 +69,18 @@ impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak
     }
 }
 
-// Poseidon `OptimizedChallenge` (verifier side) — LIVE, required; mirror of the
-// prover impl. D5b/DEV-43 has landed, so under `transcript-poseidon` this is the live
-// 128-bit challenge path (exercised by jolt-eval's Poseidon transcript invariant).
-// See the fuller note above the prover-side Poseidon impl in `prover.rs`. Do NOT
-// delete it.
+// Poseidon `OptimizedChallenge` (verifier side) — deliberately UNIMPLEMENTED, mirror of the
+// prover impl (#1586 reviewer / D5b). See the fuller note in `prover.rs`.
 #[cfg(feature = "transcript-poseidon")]
 impl OptimizedChallenge for VerifierState<'_, crate::PoseidonSponge> {
+    #[expect(
+        clippy::unimplemented,
+        reason = "Poseidon uses full-field challenge-254-bit; 128-bit truncation is unsupported (#1586 reviewer)"
+    )]
     fn challenge_u128(&mut self) -> u128 {
-        // Mirror of the prover impl: squeeze a full element, keep the low 128 bits.
-        crate::poseidon::low_128_bits(VerifierState::verifier_message::<ark_bn254::Fr>(self))
+        unimplemented!(
+            "128-bit optimized challenges are unsupported for the Poseidon sponge; \
+             transcript-poseidon uses full-field challenge-254-bit"
+        )
     }
 }
