@@ -69,9 +69,11 @@ impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak
     }
 }
 
-// OPTIONAL (remove if not needed) — see the note above the prover-side Poseidon
-// impl in `prover.rs`. Not required by the migration; Poseidon may keep full-field
-// challenges instead. Mirror of the prover impl.
+// Poseidon `OptimizedChallenge` (verifier side) — LIVE, required; mirror of the
+// prover impl. D5b/DEV-43 has landed, so under `transcript-poseidon` this is the live
+// 128-bit challenge path (exercised by jolt-eval's Poseidon transcript invariant).
+// See the fuller note above the prover-side Poseidon impl in `prover.rs`. Do NOT
+// delete it.
 #[cfg(feature = "transcript-poseidon")]
 impl OptimizedChallenge for VerifierState<'_, crate::PoseidonSponge> {
     fn challenge_u128(&mut self) -> u128 {

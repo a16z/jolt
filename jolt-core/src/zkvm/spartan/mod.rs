@@ -1,7 +1,7 @@
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::opening_proof::AbstractVerifierOpeningAccumulator;
-use crate::subprotocols::univariate_skip::{UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant};
+use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
 use crate::transcript_msgs::VerifierFs;
 use crate::utils::errors::ProofVerifyError;
 use crate::zkvm::r1cs::constraints::{
@@ -31,13 +31,12 @@ pub fn verify_stage1_uni_skip<
     let verifier = OuterUniSkipVerifier::new(key, transcript);
 
     let challenge = match proof {
-        UniSkipFirstRoundProofVariant::Standard(std_proof) => {
-            UniSkipFirstRoundProof::verify::<
-                OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE,
-                OUTER_FIRST_ROUND_POLY_NUM_COEFFS,
-                A,
-            >(std_proof, &verifier, opening_accumulator, transcript)?
-        }
+        UniSkipFirstRoundProofVariant::Standard(std_proof) => std_proof
+            .verify::<OUTER_UNIVARIATE_SKIP_DOMAIN_SIZE, OUTER_FIRST_ROUND_POLY_NUM_COEFFS, A>(
+            &verifier,
+            opening_accumulator,
+            transcript,
+        )?,
         UniSkipFirstRoundProofVariant::Zk(zk_proof) => {
             zk_proof.verify_transcript(&verifier, opening_accumulator, transcript)?
         }
@@ -60,11 +59,11 @@ pub fn verify_stage2_uni_skip<
 
     let challenge = match proof {
         UniSkipFirstRoundProofVariant::Standard(std_proof) => {
-            UniSkipFirstRoundProof::verify::<
+            std_proof.verify::<
                 PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE,
                 PRODUCT_VIRTUAL_FIRST_ROUND_POLY_NUM_COEFFS,
                 A,
-            >(std_proof, &verifier, opening_accumulator, transcript)?
+            >(&verifier, opening_accumulator, transcript)?
         }
         UniSkipFirstRoundProofVariant::Zk(zk_proof) => {
             zk_proof.verify_transcript(&verifier, opening_accumulator, transcript)?
