@@ -48,7 +48,8 @@ const REGISTER_NONE: u8 = u8::MAX;
 /// the next 6; the immediate sign one more; the top 9 bits are spare.
 const META_INSTRUCTION_FLAGS_SHIFT: u32 = 16;
 const META_INSTRUCTION_FLAGS_MASK: u32 = (1u32 << (crate::NUM_INSTRUCTION_FLAGS as u32)) - 1;
-const META_IMM_NEGATIVE_SHIFT: u32 = 22;
+const META_IMM_NEGATIVE_SHIFT: u32 =
+    META_INSTRUCTION_FLAGS_SHIFT + crate::NUM_INSTRUCTION_FLAGS as u32;
 
 /// Witness values for a non-memory row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
