@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780681786299,
+  "lastUpdate": 1780957098109,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -110758,6 +110758,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861536,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "quang.dao@layerzerolabs.org",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "19661596e8447b09386425d51eb68d496722c13a",
+          "message": "feat(trace): proof trace row layout spec + JoltTraceRow foundation (#1532)\n\n* docs(spec): add source jolt split plan\n\n* docs(spec): record source split pr\n\n* docs(spec): add expansion readability contract\n\n* docs(spec): add extraction friendliness contract\n\n* docs(spec): refine catalog profile names\n\n* docs(spec): make catalog profiles required\n\n* docs(spec): use HostIO target extension\n\n* docs(spec): clarify catalog-generated kinds\n\n* docs(spec): align instruction split architecture\n\nRevise the source/Jolt instruction split spec around a minimal shared registry plus crate-local decorations. Clarify that decode and expansion stay in jolt-program, execution stays in tracer, and lookup/proving metadata stays out of jolt-riscv.\n\n* docs(spec): adopt marker-carrying row enums\n\nRevise the instruction split spec around SourceInstruction<T = SourceRow> and JoltInstruction<T = JoltRow> enums whose variants carry marker structs. Treat profiles as MLIR-style legality layers over a stable operation universe rather than profile-specific enum generation.\n\n* docs(spec): stabilize instruction identities\n\n* refactor(jolt-riscv): split source and final rows\n\nIntroduce SourceRow and JoltRow payloads, move row conversion traits to JoltRowData, and make SourceInstruction carry source identity independently from row payload data. Add stable instruction tags and canonical operation names for source and final kind serialization.\n\n* refactor(jolt-program): expand from source rows\n\nCut decode and expansion APIs over to SourceInstruction inputs while keeping expanded bytecode as JoltRow output. Move inline dispatch metadata into SourceRow and keep expansion recipes/materialization operating over final Jolt rows.\n\n* refactor(consumers): use JoltRow downstream\n\nUpdate lookup-table tests, tracer conversions, jolt-core bytecode/proof plumbing, and extraction helpers to consume final JoltRow data and JoltRowData traits after the source/final row split.\n\n* docs(spec): update source row split status\n\nRecord the implemented SourceInstruction boundary, SourceRow identity cleanup, direct source tag serialization, and remaining marker-payload/profile follow-up work.\n\n* refactor(jolt-riscv): type source instruction rows\n\n* feat(jolt-riscv): split instruction catalog phases\n\nAdd typed source and final instruction views, shipped profile presets, profile-local dense indexes, and catalog fingerprints for the source/Jolt instruction split.\n\n* feat(jolt-program): expand from source rows\n\nCut decode and expansion APIs over to SourceInstruction input and typed JoltInstruction output. Validate final rows against the default profile at expansion and preprocessing boundaries.\n\n* refactor(tracer): separate source conversion\n\nBuild SourceInstruction values directly for decode/source paths and keep final row conversion from accepting source-only inline rows.\n\n* test(jolt-eval): guard source expansion parity\n\nAdd the source_to_jolt_expansion_equivalence invariant and update the implementation specs to reflect the completed source/final boundary and remaining risk areas.\n\n* feat(instructions): thread selected profiles\n\nPass JoltInstructionProfile through decode, expansion, stamping, preprocessing, and verifier-facing bytecode preprocessing boundaries.\n\nRequire registered inline providers to declare an InlineExtension and reject registered inline keys when the selected profile does not enable that extension.\n\n* docs(spec): record explicit profile flow\n\nUpdate the implementation specs to describe explicit profile threading through decode, expansion, stamping, and preprocessing.\n\nDocument inline registration extension metadata and selected-profile rejection for disabled inline packages.\n\n* refactor(jolt-program): use source rows in recipes\n\nThread SourceRow through source-only expansion recipes so recipe builders no longer need synthetic JoltRow inputs for operand/address metadata.\n\nUpdate the specs to narrow the remaining bare-tag caveat to row serialization and tracer bridge APIs.\n\n* fix(bytecode): harden final row boundaries\n\nFix entry PC mapping for expanded instruction sequences, reject Unimpl and invalid bytecode addresses before preprocessing, remove implicit SourceInstruction-to-JoltRow materialization, and require explicit inline profiles at the host boundary.\n\nAlso record profile fingerprints in preprocessing artifacts and align the specs with the implemented expansion-equivalence invariant.\n\n* refactor(instructions): rename row payload types\n\nRename SourceRow/JoltRow to SourceInstructionRow/JoltInstructionRow, SourceInline to SourceInlineKey, and JoltRowData to JoltInstructionRowData across the codebase.\n\nReplace the SourceInstruction try_jolt_row helper with TryFrom<&SourceInstruction> for JoltInstructionRow so direct source-to-final materialization uses the standard conversion boundary.\n\n* refactor(instructions): split final kind universe\n\n* refactor(tracer): make final row conversion fallible\n\n* fix(jolt-core): skip source-only final row flags\n\n* refactor(zkvm): require final rows for metadata\n\n* docs(zkvm): document trace cycle boundary\n\n* docs(inlines): spec expansion grammar follow-up\n\n* fix(instruction-split): address review cleanups\n\nFix inline-provider error cleanup for rd=x0 temporaries and make provider-backed ELF decode use the selected profile. Remove the unused preprocessing profile fingerprint field while keeping fingerprint binding as a spec follow-up.\n\nAlso make final-row flag conversion fail loudly, remove the lookup-table wildcard, and strengthen profile fingerprints with a schema byte plus final-row canonical names.\n\n* docs(expand): document lowering sequences\n\n* docs(trace): add proof trace row layout spec\n\n* docs(trace): cover compact bytecode layout\n\n* docs(trace): clarify bytecode and source pc widths\n\n* docs(trace): make bytecode index storage width-agile\n\n* docs(trace): target main for trace row spec\n\n* docs(trace): resolve layout spec questions\n\n* docs(trace): clarify trace row construction\n\n* feat(trace): materialize proof-facing JoltTraceRow in jolt-riscv\n\nIntroduce JoltTraceRow, a compact 64-byte Copy row built once from a\ntrace, replacing repeated prover-side adaptation of the tracer Cycle\nenum. Logical proof columns are exposed via accessors while the physical\nstorage stays private and aliases equal/mutually-exclusive values for\nfinal memory rows (Option C balanced-packed layout).\n\n- crates/jolt-riscv: JoltTraceRow core, logical accessors, from_components\n  producer contract, checked BytecodeIndex/register/immediate encodings,\n  TraceRowError (thiserror). Depends only on jolt-riscv.\n- crates/jolt-lookup-tables: InstructionLookupTable for JoltTraceRow,\n  delegating through the cached instruction_kind().\n- tracer: Cycle -> JoltTraceRow conversion (cycle_to_trace_row /\n  build_trace_rows), CycleConversionError (thiserror); flips the edge to\n  tracer -> jolt-riscv.\n- jolt-core: host-gated real-trace parity test vs R1CSCycleInputs (the\n  layout guard); old jolt-core trace_row module removed.\n- specs: implementation-status note.\n\nFoundation slice only: not yet wired into the prover; consumer cutover,\nthe jolt-eval parity invariant, and the perf gate are deferred.\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\n\n* refactor(trace): represent trace-row values as a typed CapturedState\n\nReplace LogicalValues with a CapturedState enum (NonMemory/Load/Store),\nwhere each variant names only the columns independent for its class, so\nthe memory-row aliasing is enforced by the type rather than runtime\nvalue-equality checks. Register indices now come from the instruction\noperands instead of being duplicated in both the value bundle and the\ninstruction. The row stores values flat and derives the class from the\ncached Load/Store circuit flags, so it stays 64 bytes (no row_class byte,\nno enum discriminant).\n\n- jolt-riscv: CapturedState + per-class structs; from_components takes it;\n  captured_state() accessor. Drop the BytecodeIndex newtype (pc() returns\n  u64 directly). Tidy row_flags (unwrap_or_default), pc (delegates), and\n  CapturedState::into_value_slots (packing + class check on the type).\n- tracer: build CapturedState from a cycle; the memory-row contract\n  equality checks live here, the last place the raw cycle values are still\n  separate.\n- jolt-core: real-trace parity test compares register indices against the\n  instruction operands.\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\n\n* refactor(trace): tighten JoltTraceRow physical layout per review\n\nApply Quang's review feedback on the 64-byte row layout (PR #1532):\n\n- Register indices are explicit `rs1_id`/`rs2_id`/`rd_id: u8` (0xFF = None)\n  instead of a packed `register_pack: u32` with a dead byte and opaque\n  `to_le_bytes()` indexing; drops the pack/unpack helpers.\n- Circuit flags, instruction flags, and the immediate sign pack into one\n  `meta: u32` (circuit 0..16, instruction 16..22, imm-sign bit 22, 9 spare);\n  `jolt_tag` stays a separate u16. `is_load`/`is_store`/`is_noop` become single\n  masked bit-tests. Adds `CircuitFlagSet`/`InstructionFlagSet::from_bits`.\n- Keeps `imm_abs: u64` and `bytecode_pc: u32` (no narrowing), per review.\n\nDeviation: the suggested cached `lookup_table_id` byte is left reserved.\n`jolt-riscv` and `tracer` both sit below `jolt-lookup-tables`, so the builder\ncannot compute a lookup-table id without a circular/new dependency; the table is\nstill derived on demand from `jolt_tag`. Wiring the cache belongs with the\nconsumer cutover.\n\nRow stays 64 bytes (checked). clippy clean (host + host,zk); muldiv passes both\nmodes; jolt-riscv trace_row + jolt-core real-trace parity tests pass.\n\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\n\n* address Claude review comment\n\n---------\n\nCo-authored-by: Michael Zhu <8365992+moodlezoup@users.noreply.github.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-06-08T14:16:29-07:00",
+          "tree_id": "a264456a2a29fe319748428db80bd762c9b7a38c",
+          "url": "https://github.com/a16z/jolt/commit/19661596e8447b09386425d51eb68d496722c13a"
+        },
+        "date": 1780957094310,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.307,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4145,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.759,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.626,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.3684,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.4045,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 190664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.6119,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5876,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 508992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.48,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 502768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 23.7472,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.2041,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 509240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.1515,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1052864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.7746,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 667788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 110.8432,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2127336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.59,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 507092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6502,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 509320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.0045,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 868648,
             "unit": "KB",
             "extra": ""
           }
