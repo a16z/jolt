@@ -685,6 +685,18 @@ fn convert_sumcheck_id(id: core_opening::SumcheckId) -> verifier_ids::SumcheckId
         core_opening::SumcheckId::AdviceClaimReduction => {
             verifier_ids::SumcheckId::AdviceClaimReduction
         }
+        core_opening::SumcheckId::BytecodeClaimReductionCyclePhase => {
+            verifier_ids::SumcheckId::BytecodeClaimReductionCyclePhase
+        }
+        core_opening::SumcheckId::BytecodeClaimReduction => {
+            verifier_ids::SumcheckId::BytecodeClaimReduction
+        }
+        core_opening::SumcheckId::ProgramImageClaimReductionCyclePhase => {
+            verifier_ids::SumcheckId::ProgramImageClaimReductionCyclePhase
+        }
+        core_opening::SumcheckId::ProgramImageClaimReduction => {
+            verifier_ids::SumcheckId::ProgramImageClaimReduction
+        }
         core_opening::SumcheckId::IncClaimReduction => verifier_ids::SumcheckId::IncClaimReduction,
         core_opening::SumcheckId::HammingWeightClaimReduction => {
             verifier_ids::SumcheckId::HammingWeightClaimReduction
@@ -705,6 +717,9 @@ fn convert_committed_polynomial(
         core_witness::CommittedPolynomial::BytecodeRa(index) => {
             verifier_ids::CommittedPolynomial::BytecodeRa(index)
         }
+        core_witness::CommittedPolynomial::BytecodeChunk(index) => {
+            verifier_ids::CommittedPolynomial::BytecodeChunk(index)
+        }
         core_witness::CommittedPolynomial::RamRa(index) => {
             verifier_ids::CommittedPolynomial::RamRa(index)
         }
@@ -713,6 +728,9 @@ fn convert_committed_polynomial(
         }
         core_witness::CommittedPolynomial::UntrustedAdvice => {
             verifier_ids::CommittedPolynomial::UntrustedAdvice
+        }
+        core_witness::CommittedPolynomial::ProgramImageInit => {
+            verifier_ids::CommittedPolynomial::ProgramImageInit
         }
     }
 }
@@ -807,11 +825,20 @@ fn convert_virtual_polynomial(
         core_witness::VirtualPolynomial::LookupTableFlag(index) => {
             verifier_ids::VirtualPolynomial::LookupTableFlag(index)
         }
+        core_witness::VirtualPolynomial::BytecodeValStage(stage) => {
+            verifier_ids::VirtualPolynomial::BytecodeValStage(stage)
+        }
         core_witness::VirtualPolynomial::BytecodeReadRafAddrClaim => {
             verifier_ids::VirtualPolynomial::BytecodeReadRafAddrClaim
         }
         core_witness::VirtualPolynomial::BooleanityAddrClaim => {
             verifier_ids::VirtualPolynomial::BooleanityAddrClaim
+        }
+        core_witness::VirtualPolynomial::BytecodeClaimReductionIntermediate => {
+            verifier_ids::VirtualPolynomial::BytecodeClaimReductionIntermediate
+        }
+        core_witness::VirtualPolynomial::ProgramImageInitContributionRw => {
+            verifier_ids::VirtualPolynomial::ProgramImageInitContributionRw
         }
     }
 }

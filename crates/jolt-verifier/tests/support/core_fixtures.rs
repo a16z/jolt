@@ -64,6 +64,7 @@ use jolt_core::{
     transcripts::Transcript as CoreTranscript,
     zkvm::{
         instruction::{CircuitFlags as CoreCircuitFlags, InstructionFlags as CoreInstructionFlags},
+        program::ProgramPreprocessing,
         prover::JoltProverPreprocessing,
         verifier::{
             JoltSharedPreprocessing, JoltVerifierPreprocessing as CoreVerifierPreprocessing,
@@ -1004,9 +1005,13 @@ fn core_committed_polynomial(id: JoltCommittedPolynomial) -> CoreCommittedPolyno
             CoreCommittedPolynomial::InstructionRa(index)
         }
         JoltCommittedPolynomial::BytecodeRa(index) => CoreCommittedPolynomial::BytecodeRa(index),
+        JoltCommittedPolynomial::BytecodeChunk(index) => {
+            CoreCommittedPolynomial::BytecodeChunk(index)
+        }
         JoltCommittedPolynomial::RamRa(index) => CoreCommittedPolynomial::RamRa(index),
         JoltCommittedPolynomial::TrustedAdvice => CoreCommittedPolynomial::TrustedAdvice,
         JoltCommittedPolynomial::UntrustedAdvice => CoreCommittedPolynomial::UntrustedAdvice,
+        JoltCommittedPolynomial::ProgramImageInit => CoreCommittedPolynomial::ProgramImageInit,
     }
 }
 
@@ -1060,10 +1065,19 @@ fn core_virtual_polynomial(id: JoltVirtualPolynomial) -> CoreVirtualPolynomial {
         JoltVirtualPolynomial::LookupTableFlag(index) => {
             CoreVirtualPolynomial::LookupTableFlag(index)
         }
+        JoltVirtualPolynomial::BytecodeValStage(index) => {
+            CoreVirtualPolynomial::BytecodeValStage(index)
+        }
         JoltVirtualPolynomial::BytecodeReadRafAddrClaim => {
             CoreVirtualPolynomial::BytecodeReadRafAddrClaim
         }
         JoltVirtualPolynomial::BooleanityAddrClaim => CoreVirtualPolynomial::BooleanityAddrClaim,
+        JoltVirtualPolynomial::BytecodeClaimReductionIntermediate => {
+            CoreVirtualPolynomial::BytecodeClaimReductionIntermediate
+        }
+        JoltVirtualPolynomial::ProgramImageInitContributionRw => {
+            CoreVirtualPolynomial::ProgramImageInitContributionRw
+        }
     }
 }
 
@@ -1097,6 +1111,14 @@ fn core_sumcheck_id(id: JoltRelationId) -> CoreSumcheckId {
             CoreSumcheckId::AdviceClaimReductionCyclePhase
         }
         JoltRelationId::AdviceClaimReduction => CoreSumcheckId::AdviceClaimReduction,
+        JoltRelationId::BytecodeClaimReductionCyclePhase => {
+            CoreSumcheckId::BytecodeClaimReductionCyclePhase
+        }
+        JoltRelationId::BytecodeClaimReduction => CoreSumcheckId::BytecodeClaimReduction,
+        JoltRelationId::ProgramImageClaimReductionCyclePhase => {
+            CoreSumcheckId::ProgramImageClaimReductionCyclePhase
+        }
+        JoltRelationId::ProgramImageClaimReduction => CoreSumcheckId::ProgramImageClaimReduction,
         JoltRelationId::IncClaimReduction => CoreSumcheckId::IncClaimReduction,
         JoltRelationId::HammingWeightClaimReduction => CoreSumcheckId::HammingWeightClaimReduction,
     }
@@ -1246,14 +1268,14 @@ fn generate_core_fixture(
     let (bytecode, init_memory_state, _, entry_address) = program.decode();
     let (_, _, _, public_io) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
+    let program_preprocessing =
+        ProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
+            .expect("preprocess core fixture");
     let shared_preprocessing = JoltSharedPreprocessing::new(
-        bytecode,
+        program_preprocessing,
         public_io.memory_layout.clone(),
-        init_memory_state,
         1 << 16,
-        entry_address,
-    )
-    .expect("preprocess core fixture");
+    );
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
     let elf_contents = program
         .get_elf_contents()
@@ -1312,10 +1334,16 @@ fn commit_trusted_advice_preprocessing_only(
 fn convert_preprocessing(
     preprocessing: &CoreVerifierPreprocessing<CoreField, Bn254Curve, DoryCommitmentScheme>,
 ) -> ConvertedPreprocessing {
+    let program = match &preprocessing.shared.program {
+        ProgramPreprocessing::Full(full) => full,
+        ProgramPreprocessing::Committed(_) => {
+            panic!("core fixtures are generated with full program preprocessing")
+        }
+    };
     JoltVerifierPreprocessing::new(
         JoltProgramPreprocessing {
-            bytecode: preprocessing.shared.bytecode.as_ref().clone(),
-            ram: preprocessing.shared.ram.clone(),
+            bytecode: program.bytecode.as_ref().clone(),
+            ram: program.ram.clone(),
             memory_layout: preprocessing.shared.memory_layout.clone(),
             max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
         },
