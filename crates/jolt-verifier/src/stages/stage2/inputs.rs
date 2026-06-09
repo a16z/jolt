@@ -3,7 +3,10 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
+use jolt_claims::protocols::jolt::JoltRelationId;
+
 use crate::stages::stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput};
+use crate::VerifierError;
 
 #[derive(Clone, Copy)]
 pub enum Deps<'a, F: Field, C> {
@@ -15,6 +18,77 @@ pub fn deps<F: Field, C>(stage1: &Stage1Output<F, C>) -> Deps<'_, F, C> {
     match stage1 {
         Stage1Output::Clear(stage1) => Deps::Clear { stage1 },
         Stage1Output::Zk(stage1) => Deps::Zk { stage1 },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stage2ProductUniSkipInputValues<F: Field> {
+    pub product: F,
+    pub should_branch: F,
+    pub should_jump: F,
+    #[cfg(feature = "field-inline")]
+    pub field_product: F,
+    #[cfg(feature = "field-inline")]
+    pub field_inv_product: F,
+}
+
+impl<F: Field> Stage2ProductUniSkipInputValues<F> {
+    pub fn from_stage1(stage1: &Stage1ClearOutput<F>) -> Self {
+        Self {
+            product: stage1.outer.product,
+            should_branch: stage1.outer.should_branch,
+            should_jump: stage1.outer.should_jump,
+            #[cfg(feature = "field-inline")]
+            field_product: stage1.field_inline.field_product,
+            #[cfg(feature = "field-inline")]
+            field_inv_product: stage1.field_inline.field_inv_product,
+        }
+    }
+}
+
+pub fn product_uniskip_input_claim<F: Field>(
+    values: Stage2ProductUniSkipInputValues<F>,
+    weights: &[F],
+) -> Result<F, VerifierError> {
+    let [product, should_branch, should_jump, rest @ ..] = weights else {
+        return Err(stage2_product_public_input_failed(format!(
+            "Stage 2 product uni-skip expected at least 3 weights, got {}",
+            weights.len()
+        )));
+    };
+    let claim = *product * values.product
+        + *should_branch * values.should_branch
+        + *should_jump * values.should_jump;
+
+    #[cfg(feature = "field-inline")]
+    {
+        let [field_product, field_inv_product] = rest else {
+            return Err(stage2_product_public_input_failed(format!(
+                "Stage 2 field-inline product uni-skip expected 5 weights, got {}",
+                weights.len()
+            )));
+        };
+        Ok(claim
+            + *field_product * values.field_product
+            + *field_inv_product * values.field_inv_product)
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    {
+        if !rest.is_empty() {
+            return Err(stage2_product_public_input_failed(format!(
+                "Stage 2 product uni-skip expected 3 weights, got {}",
+                weights.len()
+            )));
+        }
+        Ok(claim)
+    }
+}
+
+fn stage2_product_public_input_failed(reason: String) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::SpartanProductVirtualization,
+        reason,
     }
 }
 
