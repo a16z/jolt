@@ -11,21 +11,34 @@ categories = ["cryptography", "no-std"]
 [lints]
 workspace = true
 
-[features]
-default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
-transcript-blake2b = ["spongefish/blake2"]
-transcript-keccak = ["spongefish/keccak"]
-transcript-poseidon = ["dep:light-poseidon"]
-
 [dependencies]
-ark-bn254.workspace = true
-ark-ff.workspace = true
+blake2.workspace = true
+digest.workspace = true
+sha3.workspace = true
+ark-bn254 = { workspace = true, optional = true }
+ark-ff = { workspace = true, optional = true }
+ark-serialize = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
-spongefish = { workspace = true, features = ["ark-ff"] }
-jolt-field = { path = "../jolt-field", features = ["bn254"] }
-rand.workspace = true
+jolt-field = { path = "../jolt-field", default-features = false }
+jolt-r1cs = { path = "../jolt-r1cs", optional = true }
+
+[features]
+default = ["poseidon"]
+transcript-blake2b = []
+transcript-keccak = []
+transcript-poseidon = ["poseidon"]
+poseidon = [
+  "dep:ark-bn254",
+  "dep:ark-ff",
+  "dep:ark-serialize",
+  "dep:light-poseidon",
+  "jolt-field/bn254",
+]
+r1cs = ["dep:jolt-r1cs"]
+poseidon-r1cs = ["poseidon", "r1cs"]
 
 [dev-dependencies]
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
 num-traits = { workspace = true }
 criterion = { workspace = true }
 

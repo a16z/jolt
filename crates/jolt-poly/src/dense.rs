@@ -6,7 +6,7 @@ use jolt_field::Field;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::eq::EqPolynomial;
+use crate::eq::{boolean_index_msb, EqPolynomial};
 
 /// Minimum number of evaluations before parallelizing bind/evaluate.
 ///
@@ -23,6 +23,10 @@ const PAR_THRESHOLD: usize = 1024;
 ///   [`evaluate`](Polynomial::evaluate), and arithmetic operators.
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
 ///   [`bind_to_field`](Polynomial::bind_to_field) for on-demand field promotion.
+#[expect(
+    clippy::unsafe_derive_deserialize,
+    reason = "deserialization goes through PolynomialRaw and validates the polynomial dimensions"
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>"),
@@ -258,6 +262,46 @@ impl<F: Field> Polynomial<F> {
         self.num_vars -= 1;
     }
 
+    /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
+    ///
+    /// This has the same semantics as `bind_with_order(scalar, BindingOrder::LowToHigh)`,
+    /// but avoids allocating a fresh output vector on every large parallel bind.
+    #[inline]
+    pub fn bind_low_to_high_reusing_scratch(&mut self, scalar: F, scratch: &mut Vec<F>) {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
+        let half = self.evals.len() / 2;
+        scratch.clear();
+        if scratch.capacity() < half {
+            scratch.reserve(half - scratch.capacity());
+        }
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                let coeffs = &self.evals;
+                let spare = &mut scratch.spare_capacity_mut()[..half];
+                (spare, coeffs.par_chunks_exact(2))
+                    .into_par_iter()
+                    .with_min_len(PAR_THRESHOLD)
+                    .for_each(|(dest, pair)| {
+                        let _ = dest.write(pair[0] + scalar * (pair[1] - pair[0]));
+                    });
+                // SAFETY: every spare slot in `0..half` is written exactly once above.
+                unsafe { scratch.set_len(half) };
+                std::mem::swap(&mut self.evals, scratch);
+                self.num_vars -= 1;
+                return;
+            }
+        }
+
+        for pair in self.evals.chunks_exact(2) {
+            scratch.push(pair[0] + scalar * (pair[1] - pair[0]));
+        }
+        std::mem::swap(&mut self.evals, scratch);
+        self.num_vars -= 1;
+    }
+
     /// Returns the `(lo, hi)` pair for the given index and binding order.
     ///
     /// For sumcheck round polynomial evaluation at index `j`:
@@ -272,6 +316,27 @@ impl<F: Field> Polynomial<F> {
             }
             crate::BindingOrder::LowToHigh => (self.evals[2 * index], self.evals[2 * index + 1]),
         }
+    }
+
+    /// Evaluates the univariate restriction for one sumcheck round at `point`.
+    ///
+    /// Equivalent to `sumcheck_round_eval_with_order(index, point, BindingOrder::HighToLow)`.
+    #[inline]
+    pub fn sumcheck_round_eval(&self, index: usize, point: F) -> F {
+        self.sumcheck_round_eval_with_order(index, point, crate::BindingOrder::HighToLow)
+    }
+
+    /// Evaluates the univariate restriction for one sumcheck round at `point`
+    /// using the selected variable binding order.
+    #[inline]
+    pub fn sumcheck_round_eval_with_order(
+        &self,
+        index: usize,
+        point: F,
+        order: crate::BindingOrder,
+    ) -> F {
+        let (lo, hi) = self.sumcheck_eval_pair(index, order);
+        lo + point * (hi - lo)
     }
 
     /// Evaluates the polynomial at `point` using the multilinear extension formula:
@@ -302,6 +367,24 @@ impl<F: Field> Polynomial<F> {
             .zip(eq_evals.iter())
             .map(|(&f, &e)| f * e)
             .sum()
+    }
+
+    /// Evaluates the polynomial, using direct table lookup for MSB-ordered Boolean points.
+    ///
+    /// This has the same result as [`Self::evaluate`], but avoids materializing
+    /// an equality table when every point coordinate is either zero or one.
+    pub fn evaluate_with_msb_boolean_fast_path(&self, point: &[F]) -> F {
+        assert_eq!(
+            point.len(),
+            self.num_vars,
+            "point dimension must match num_vars"
+        );
+        if let Some(index) = boolean_index_msb(point) {
+            if let Some(value) = self.evals.get(index) {
+                return *value;
+            }
+        }
+        self.evaluate(point)
     }
 
     /// Evaluates by sequentially binding each variable, consuming `self`.
@@ -564,6 +647,21 @@ mod tests {
     }
 
     #[test]
+    fn sumcheck_round_eval_interpolates_selected_binding_pair() {
+        let poly = Polynomial::new((0..8).map(Fr::from_u64).collect::<Vec<_>>());
+        let point = Fr::from_u64(11);
+
+        assert_eq!(
+            poly.sumcheck_round_eval(2, point),
+            Fr::from_u64(2) + point * (Fr::from_u64(6) - Fr::from_u64(2))
+        );
+        assert_eq!(
+            poly.sumcheck_round_eval_with_order(2, point, crate::BindingOrder::LowToHigh),
+            Fr::from_u64(4) + point * (Fr::from_u64(5) - Fr::from_u64(4))
+        );
+    }
+
+    #[test]
     fn evaluate_and_consume_matches_evaluate() {
         let mut rng = ChaCha20Rng::seed_from_u64(4);
         let n = 4;
@@ -573,6 +671,26 @@ mod tests {
         let expected = poly.evaluate(&point);
         let consumed = poly.clone().evaluate_and_consume(&point);
         assert_eq!(expected, consumed);
+    }
+
+    #[test]
+    fn evaluate_with_msb_boolean_fast_path_matches_table_and_mle() {
+        let mut rng = ChaCha20Rng::seed_from_u64(41);
+        let n = 4;
+        let poly = Polynomial::<Fr>::random(n, &mut rng);
+        for index in 0..(1usize << n) {
+            let point = crate::boolean_point_msb::<Fr>(n, index);
+            assert_eq!(
+                poly.evaluate_with_msb_boolean_fast_path(&point),
+                poly.evals()[index]
+            );
+        }
+
+        let point = (0..n).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
+        assert_eq!(
+            poly.evaluate_with_msb_boolean_fast_path(&point),
+            poly.evaluate(&point)
+        );
     }
 
     #[test]
@@ -1054,5 +1172,13 @@ mod tests {
         }
         assert_eq!(lo_to_hi.len(), 1);
         assert_eq!(lo_to_hi.evaluations()[0], poly.evaluate(&point));
+
+        let mut scratch_bound = poly.clone();
+        let mut scratch = Vec::new();
+        for &r in point.iter().rev() {
+            scratch_bound.bind_low_to_high_reusing_scratch(r, &mut scratch);
+        }
+        assert_eq!(scratch_bound.len(), 1);
+        assert_eq!(scratch_bound.evaluations()[0], poly.evaluate(&point));
     }
 }

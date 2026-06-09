@@ -388,22 +388,7 @@ impl JoltOneHotConfig {
     }
 
     pub fn committed_address_chunks<F: Field>(self, r_address: &[F]) -> Vec<Vec<F>> {
-        let chunk_bits = self.committed_chunk_bits();
-        if chunk_bits == 0 {
-            return Vec::new();
-        }
-
-        let padding = r_address
-            .len()
-            .next_multiple_of(chunk_bits)
-            .saturating_sub(r_address.len());
-        let mut padded = Vec::with_capacity(r_address.len() + padding);
-        padded.extend((0..padding).map(|_| F::zero()));
-        padded.extend_from_slice(r_address);
-        padded
-            .chunks(chunk_bits)
-            .map(<[F]>::to_vec)
-            .collect::<Vec<_>>()
+        committed_address_chunks(r_address, self.committed_chunk_bits())
     }
 
     pub const fn dimensions(
@@ -422,6 +407,24 @@ impl JoltOneHotConfig {
             lookup_virtual_chunk_bits: self.lookup_virtual_chunk_bits(),
         }
     }
+}
+
+pub fn committed_address_chunks<F: Field>(r_address: &[F], chunk_bits: usize) -> Vec<Vec<F>> {
+    if chunk_bits == 0 {
+        return Vec::new();
+    }
+
+    let padding = r_address
+        .len()
+        .next_multiple_of(chunk_bits)
+        .saturating_sub(r_address.len());
+    let mut padded = Vec::with_capacity(r_address.len() + padding);
+    padded.extend((0..padding).map(|_| F::zero()));
+    padded.extend_from_slice(r_address);
+    padded
+        .chunks(chunk_bits)
+        .map(<[F]>::to_vec)
+        .collect::<Vec<_>>()
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

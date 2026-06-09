@@ -1,4 +1,5 @@
 use jolt_field::{Field, RingCore};
+use jolt_poly::{EqPolynomial, Polynomial};
 
 use crate::{challenge, constant, opening, public};
 
@@ -234,6 +235,10 @@ pub fn output_check_output_openings() -> [JoltOpeningId; 1] {
     [ram_val_final()]
 }
 
+pub fn stage2_terminal_output_openings() -> [JoltOpeningId; 2] {
+    [ram_ra_raf_evaluation(), ram_val_final()]
+}
+
 pub fn val_check_input_openings() -> [JoltOpeningId; 2] {
     [ram_val(), ram_val_final()]
 }
@@ -340,6 +345,45 @@ where
     )
 }
 
+pub fn ra_virtualization_eq_cycle_polynomial<F>(ram_reduced_cycle: &[F]) -> Polynomial<F>
+where
+    F: Field,
+{
+    let eq_point = ram_reduced_cycle.iter().rev().copied().collect::<Vec<_>>();
+    Polynomial::new(EqPolynomial::<F>::evals(&eq_point, None))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamRaVirtualizationRelationState<F: Field> {
+    eq_cycle: Polynomial<F>,
+    ram_ra: Vec<Polynomial<F>>,
+}
+
+impl<F: Field> RamRaVirtualizationRelationState<F> {
+    pub fn new(eq_cycle: Polynomial<F>, ram_ra: Vec<Polynomial<F>>) -> Self {
+        Self { eq_cycle, ram_ra }
+    }
+
+    pub fn bind(&mut self, challenge: F) {
+        self.eq_cycle.bind(challenge);
+        for polynomial in &mut self.ram_ra {
+            polynomial.bind(challenge);
+        }
+    }
+
+    pub fn round_rows(&self) -> usize {
+        self.eq_cycle.len() / 2
+    }
+
+    pub fn round_eval(&self, index: usize, point: F) -> F {
+        let eq = self.eq_cycle.sumcheck_round_eval(index, point);
+        let product = self.ram_ra.iter().fold(F::one(), |acc, polynomial| {
+            acc * polynomial.sumcheck_round_eval(index, point)
+        });
+        eq * product
+    }
+}
+
 pub fn hamming_booleanity<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
@@ -354,6 +398,43 @@ where
         JoltExpr::zero(),
         output,
     )
+}
+
+pub fn hamming_booleanity_eq_cycle_polynomial<F>(stage1_cycle_binding: &[F]) -> Polynomial<F>
+where
+    F: Field,
+{
+    Polynomial::new(EqPolynomial::<F>::evals(stage1_cycle_binding, None))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamHammingBooleanityRelationState<F: Field> {
+    eq_cycle: Polynomial<F>,
+    hamming_weight: Polynomial<F>,
+}
+
+impl<F: Field> RamHammingBooleanityRelationState<F> {
+    pub fn new(eq_cycle: Polynomial<F>, hamming_weight: Polynomial<F>) -> Self {
+        Self {
+            eq_cycle,
+            hamming_weight,
+        }
+    }
+
+    pub fn bind(&mut self, challenge: F) {
+        self.eq_cycle.bind(challenge);
+        self.hamming_weight.bind(challenge);
+    }
+
+    pub fn round_rows(&self) -> usize {
+        self.eq_cycle.len() / 2
+    }
+
+    pub fn round_eval(&self, index: usize, point: F) -> F {
+        let eq = self.eq_cycle.sumcheck_round_eval(index, point);
+        let hamming = self.hamming_weight.sumcheck_round_eval(index, point);
+        eq * (hamming * hamming - hamming)
+    }
 }
 
 pub fn ra_virtualization_input_openings() -> [JoltOpeningId; 1] {
@@ -570,6 +651,7 @@ fn ram_hamming_weight() -> JoltOpeningId {
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::EqPolynomial;
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)
@@ -858,6 +940,17 @@ mod tests {
     }
 
     #[test]
+    fn stage2_terminal_openings_are_ram_raf_then_output_check() {
+        assert_eq!(
+            stage2_terminal_output_openings(),
+            [
+                raf_evaluation_output_openings()[0],
+                output_check_output_openings()[0]
+            ]
+        );
+    }
+
+    #[test]
     fn ra_claim_reduction_exposes_expected_dependencies() {
         let claims = ra_claim_reduction::<Fr>(trace_dimensions());
 
@@ -1073,6 +1166,63 @@ mod tests {
     }
 
     #[test]
+    fn ra_virtualization_eq_cycle_polynomial_reverses_reduced_cycle() {
+        let reduced_cycle = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let eq_point = vec![Fr::from_u64(5), Fr::from_u64(3), Fr::from_u64(2)];
+
+        assert_eq!(
+            ra_virtualization_eq_cycle_polynomial(&reduced_cycle).evals(),
+            EqPolynomial::<Fr>::evals(&eq_point, None)
+        );
+    }
+
+    #[test]
+    fn ra_virtualization_relation_state_evaluates_eq_weighted_ra_product() {
+        let point = Fr::from_u64(7);
+        let eq_cycle = Polynomial::new(vec![Fr::from_u64(2), Fr::from_u64(3)]);
+        let ram_ra = vec![
+            Polynomial::new(vec![Fr::from_u64(5), Fr::from_u64(11)]),
+            Polynomial::new(vec![Fr::from_u64(13), Fr::from_u64(17)]),
+        ];
+        let expected = eq_cycle.sumcheck_round_eval(0, point)
+            * ram_ra.iter().fold(Fr::from_u64(1), |acc, polynomial| {
+                acc * polynomial.sumcheck_round_eval(0, point)
+            });
+
+        let state = RamRaVirtualizationRelationState::new(eq_cycle, ram_ra);
+
+        assert_eq!(state.round_rows(), 1);
+        assert_eq!(state.round_eval(0, point), expected);
+    }
+
+    #[test]
+    fn ra_virtualization_relation_state_binds_all_polynomials() {
+        let challenge = Fr::from_u64(19);
+        let mut eq_cycle =
+            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 2)).collect());
+        let mut ram_ra = vec![
+            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 7)).collect()),
+            Polynomial::new(
+                (0..4)
+                    .map(|value| Fr::from_u64(value as u64 + 13))
+                    .collect(),
+            ),
+        ];
+        let mut state = RamRaVirtualizationRelationState::new(eq_cycle.clone(), ram_ra.clone());
+
+        state.bind(challenge);
+        eq_cycle.bind(challenge);
+        for polynomial in &mut ram_ra {
+            polynomial.bind(challenge);
+        }
+
+        assert_eq!(
+            state,
+            RamRaVirtualizationRelationState::new(eq_cycle, ram_ra)
+        );
+    }
+
+    #[test]
     fn hamming_booleanity_exposes_expected_dependencies() {
         let claims = hamming_booleanity::<Fr>(trace_dimensions());
 
@@ -1127,6 +1277,50 @@ mod tests {
 
         assert_eq!(input, zero);
         assert_eq!(output, eq_cycle * (h * h - h));
+    }
+
+    #[test]
+    fn hamming_booleanity_eq_cycle_polynomial_uses_stage1_cycle_binding() {
+        let cycle_binding = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+
+        assert_eq!(
+            hamming_booleanity_eq_cycle_polynomial(&cycle_binding).evals(),
+            EqPolynomial::<Fr>::evals(&cycle_binding, None)
+        );
+    }
+
+    #[test]
+    fn hamming_booleanity_relation_state_evaluates_eq_weighted_bitness_term() {
+        let point = Fr::from_u64(7);
+        let eq_cycle = Polynomial::new(vec![Fr::from_u64(2), Fr::from_u64(3)]);
+        let hamming_weight = Polynomial::new(vec![Fr::from_u64(5), Fr::from_u64(11)]);
+        let hamming = hamming_weight.sumcheck_round_eval(0, point);
+        let expected = eq_cycle.sumcheck_round_eval(0, point) * (hamming * hamming - hamming);
+
+        let state = RamHammingBooleanityRelationState::new(eq_cycle, hamming_weight);
+
+        assert_eq!(state.round_rows(), 1);
+        assert_eq!(state.round_eval(0, point), expected);
+    }
+
+    #[test]
+    fn hamming_booleanity_relation_state_binds_all_polynomials() {
+        let challenge = Fr::from_u64(19);
+        let mut eq_cycle =
+            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 2)).collect());
+        let mut hamming_weight =
+            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 7)).collect());
+        let mut state =
+            RamHammingBooleanityRelationState::new(eq_cycle.clone(), hamming_weight.clone());
+
+        state.bind(challenge);
+        eq_cycle.bind(challenge);
+        hamming_weight.bind(challenge);
+
+        assert_eq!(
+            state,
+            RamHammingBooleanityRelationState::new(eq_cycle, hamming_weight)
+        );
     }
 
     #[test]

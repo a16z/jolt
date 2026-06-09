@@ -3,13 +3,6 @@
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-pub use super::inputs_a::Stage6AddressPhaseClaims;
-pub use super::inputs_b::{
-    AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims, BytecodeReadRafOutputOpeningClaims,
-    IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
-    RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
-    Stage6AdviceCyclePhaseClaims,
-};
 use crate::stages::{
     stage1::{Stage1ClearOutput, Stage1Output},
     stage2::{Stage2ClearOutput, Stage2Output},
@@ -72,12 +65,79 @@ pub fn deps<'a, F: Field, C>(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Stage6Claims<F: Field> {
-    pub address_phase: Stage6AddressPhaseClaims<F>,
     pub bytecode_read_raf: BytecodeReadRafOutputOpeningClaims<F>,
     pub booleanity: BooleanityOutputOpeningClaims<F>,
     pub ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims<F>,
     pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
     pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage6Claims<F>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct BytecodeReadRafOutputOpeningClaims<F: Field> {
+    pub bytecode_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct BooleanityOutputOpeningClaims<F: Field> {
+    pub instruction_ra: Vec<F>,
+    pub bytecode_ra: Vec<F>,
+    pub ram_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct RamHammingBooleanityOutputOpeningClaims<F: Field> {
+    pub ram_hamming_weight: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct RamRaVirtualizationOutputOpeningClaims<F: Field> {
+    pub ram_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct InstructionRaVirtualizationOutputOpeningClaims<F: Field> {
+    pub committed_instruction_ra: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct IncClaimReductionOutputOpeningClaims<F: Field> {
+    pub ram_inc: F,
+    pub rd_inc: F,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldInlineStage6Claims<F: Field> {
+    pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputOpeningClaims<F>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldRegistersIncClaimReductionOutputOpeningClaims<F: Field> {
+    pub field_rd_inc: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Stage6AdviceCyclePhaseClaims<F: Field> {
+    pub trusted: Option<AdviceCyclePhaseOutputClaim<F>>,
+    pub untrusted: Option<AdviceCyclePhaseOutputClaim<F>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct AdviceCyclePhaseOutputClaim<F: Field> {
+    pub opening_claim: F,
 }

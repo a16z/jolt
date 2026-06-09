@@ -10,6 +10,8 @@ pub enum SourceExtension {
     RvPrivileged,
     JoltCustom,
     JoltInline,
+    #[cfg(feature = "field-inline")]
+    FieldInline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -24,6 +26,8 @@ pub enum JoltTargetExtension {
     VirtualArithmetic,
     VirtualShifts,
     BitManipulation,
+    #[cfg(feature = "field-inline")]
+    FieldInline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -87,6 +91,22 @@ pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionPro
     ],
 };
 
+#[cfg(feature = "field-inline")]
+pub const RV64IMAC_JOLT_FIELD_INLINE: JoltInstructionProfile = JoltInstructionProfile {
+    source_extensions: &[
+        SourceExtension::Rv64I,
+        SourceExtension::Rv64M,
+        SourceExtension::Rv64A,
+        SourceExtension::Rv64C,
+        SourceExtension::Zicsr,
+        SourceExtension::RvPrivileged,
+        SourceExtension::JoltCustom,
+        SourceExtension::JoltInline,
+        SourceExtension::FieldInline,
+    ],
+    inline_extensions: RV64IMAC_JOLT_ALL_INLINES.inline_extensions,
+};
+
 impl JoltInstructionProfile {
     pub fn supports_source(self, kind: SourceInstructionKind) -> bool {
         match source_extension(kind) {
@@ -104,6 +124,12 @@ impl JoltInstructionProfile {
 
     pub fn supports_inline(self, extension: InlineExtension) -> bool {
         self.inline_extensions.contains(&extension)
+    }
+
+    #[cfg(feature = "field-inline")]
+    pub fn supports_field_inline(self) -> bool {
+        self.source_extensions
+            .contains(&SourceExtension::FieldInline)
     }
 
     pub fn source_dense_index(
@@ -177,6 +203,8 @@ impl JoltInstructionProfile {
                     .contains(&SourceExtension::JoltCustom)
                     || !self.inline_extensions.is_empty()
             }
+            #[cfg(feature = "field-inline")]
+            JoltTargetExtension::FieldInline => self.supports_field_inline(),
         }
     }
 }
@@ -241,6 +269,8 @@ const fn source_extension_code(extension: SourceExtension) -> u8 {
         SourceExtension::RvPrivileged => 5,
         SourceExtension::JoltCustom => 6,
         SourceExtension::JoltInline => 7,
+        #[cfg(feature = "field-inline")]
+        SourceExtension::FieldInline => 8,
     }
 }
 
@@ -258,6 +288,7 @@ const fn inline_extension_code(extension: InlineExtension) -> u8 {
 }
 
 #[cfg(test)]
+#[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
     use super::*;
 
@@ -318,6 +349,74 @@ mod tests {
         assert_ne!(
             RV64IMAC_JOLT.fingerprint(),
             RV64IMAC_JOLT_ALL_INLINES.fingerprint()
+        );
+    }
+
+    #[test]
+    fn default_profiles_do_not_include_field_inline_rows() {
+        #[cfg(feature = "field-inline")]
+        {
+            assert!(!RV64IMAC_JOLT.supports_source(SourceInstructionKind::FIELD_ADD));
+            assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::FIELD_ADD));
+        }
+        #[cfg(not(feature = "field-inline"))]
+        {
+            assert!(SourceInstructionKind::ALL
+                .iter()
+                .all(|kind| !kind.canonical_name().starts_with("field.")));
+            assert!(JoltInstructionKind::ALL
+                .iter()
+                .all(|kind| !kind.canonical_name().starts_with("field.")));
+            assert_eq!(
+                JoltInstructionKind::from_tag(JoltInstructionTag(0x0100)),
+                None
+            );
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_profile_enables_field_rows_without_changing_fr_off() {
+        assert!(!RV64IMAC_JOLT.supports_source(SourceInstructionKind::FIELD_ADD));
+        assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::FIELD_ADD));
+        assert!(RV64IMAC_JOLT_FIELD_INLINE.supports_source(SourceInstructionKind::FIELD_ADD));
+        assert!(RV64IMAC_JOLT_FIELD_INLINE.supports_jolt(JoltInstructionKind::FIELD_ADD));
+        assert_ne!(
+            RV64IMAC_JOLT.fingerprint(),
+            RV64IMAC_JOLT_FIELD_INLINE.fingerprint()
+        );
+        assert_eq!(
+            JoltInstructionKind::from_tag(JoltInstructionTag(0x0100)),
+            Some(JoltInstructionKind::FIELD_ADD)
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_operand_shapes_match_bridge_and_product_roles() {
+        let mul = crate::field_inline_operand_shape(JoltInstructionKind::FIELD_MUL).unwrap();
+        assert!(mul.reads_fr_rs1);
+        assert!(mul.reads_fr_rs2);
+        assert!(mul.writes_fr_rd);
+        assert!(mul.requires_product_payload());
+        assert_eq!(mul.bridge_x_register_role, None);
+
+        let load =
+            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_LOAD_FROM_X).unwrap();
+        assert!(!load.reads_fr_rs1);
+        assert!(load.writes_fr_rd);
+        assert_eq!(
+            load.bridge_x_register_role,
+            Some(crate::FieldInlineXRegisterRole::ReadRs1)
+        );
+
+        let store =
+            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_STORE_TO_X).unwrap();
+        assert!(store.reads_fr_rs1);
+        assert!(!store.writes_fr_rd);
+        assert_eq!(
+            store.bridge_x_register_role,
+            Some(crate::FieldInlineXRegisterRole::WriteRd)
         );
     }
 }

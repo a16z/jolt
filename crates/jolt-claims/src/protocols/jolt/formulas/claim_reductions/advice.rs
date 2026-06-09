@@ -1,7 +1,7 @@
 use std::{cmp::min, ops::Range};
 
 use jolt_field::{Field, RingCore};
-use jolt_poly::EqPolynomial;
+use jolt_poly::{eq_index_msb, BindingOrder, EqPolynomial, Polynomial};
 
 use crate::{opening, public};
 
@@ -10,7 +10,7 @@ use super::super::super::{
     JoltRelationId,
 };
 use super::super::dimensions::{CommitmentMatrixShape, JoltSumcheckSpec, TracePolynomialOrder};
-use super::super::error::JoltFormulaPointError;
+use super::super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdviceClaimReductionLayout {
@@ -118,6 +118,23 @@ impl AdviceClaimReductionLayout {
         Ok(advice_var_challenges)
     }
 
+    pub fn cycle_phase_binding_challenges<F: Field>(
+        &self,
+        opening_point: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        let expected = self.active_cycle_phase_rounds();
+        if opening_point.len() != expected {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected,
+                got: opening_point.len(),
+            });
+        }
+
+        let mut binding_challenges = opening_point.to_vec();
+        binding_challenges.reverse();
+        Ok(binding_challenges)
+    }
+
     pub fn cycle_phase_variable_challenges<F: Field>(
         &self,
         challenges: &[F],
@@ -197,19 +214,214 @@ impl AdviceClaimReductionLayout {
 
         Ok(
             EqPolynomial::<F>::mle(opening_point, reference_opening_point)
-                * self.dummy_cycle_phase_scale::<F>(),
+                * self.cycle_phase_dummy_scale::<F>(),
         )
     }
 
-    fn dummy_cycle_phase_scale<F: Field>(&self) -> F {
-        let two_inv = F::from_u64(2).inv_or_zero();
-        (0..self.dummy_cycle_phase_rounds()).fold(F::one(), |scale, _| scale * two_inv)
+    pub fn cycle_phase_dummy_scale<F: Field>(&self) -> F {
+        advice_cycle_phase_dummy_scale(self.dummy_cycle_phase_rounds())
     }
 
     pub fn dummy_cycle_phase_rounds(&self) -> usize {
         self.cycle_phase_rounds()
             .saturating_sub(self.active_cycle_phase_rounds())
     }
+
+    pub fn cycle_phase_batch_offset(
+        &self,
+        max_num_vars: usize,
+    ) -> Result<usize, JoltFormulaDimensionsError> {
+        let trace_rounds = self.log_k_chunk.checked_add(self.log_t).ok_or(
+            JoltFormulaDimensionsError::Overflow {
+                name: "advice cycle-phase trace rounds",
+            },
+        )?;
+        let trace_offset = max_num_vars.checked_sub(trace_rounds).ok_or(
+            JoltFormulaDimensionsError::Underflow {
+                name: "advice cycle-phase batch offset",
+            },
+        )?;
+        trace_offset
+            .checked_add(self.log_k_chunk)
+            .ok_or(JoltFormulaDimensionsError::Overflow {
+                name: "advice cycle-phase batch offset",
+            })
+    }
+
+    pub fn advice_index_to_address_cycle(&self, index: usize) -> (usize, usize) {
+        advice_index_to_address_cycle(
+            self.trace_order,
+            self.log_t,
+            self.log_k_chunk,
+            self.main_shape.column_vars(),
+            self.advice_shape.column_vars(),
+            index,
+        )
+    }
+
+    pub fn cycle_phase_coefficients<F, T>(
+        &self,
+        reference_opening_point: &[F],
+        values: Vec<T>,
+    ) -> Result<(Vec<T>, Vec<F>), JoltFormulaPointError>
+    where
+        F: Field,
+    {
+        let advice_vars = self.advice_shape.total_vars();
+        if reference_opening_point.len() != advice_vars {
+            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+                expected: advice_vars,
+                got: reference_opening_point.len(),
+            });
+        }
+        let expected_domain = 1usize << advice_vars;
+        if values.len() != expected_domain {
+            return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+                expected: expected_domain,
+                got: values.len(),
+            });
+        }
+
+        let mut permuted = values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                (
+                    self.advice_index_to_address_cycle(index),
+                    value,
+                    eq_index_msb(reference_opening_point, index),
+                )
+            })
+            .collect::<Vec<_>>();
+        permuted.sort_by_key(|(key, _, _)| *key);
+        Ok(permuted
+            .into_iter()
+            .map(|(_, value, eq_value)| (value, eq_value))
+            .unzip())
+    }
+
+    pub fn cycle_phase_polynomials<F>(
+        &self,
+        reference_opening_point: &[F],
+        values: Vec<F>,
+    ) -> Result<(Polynomial<F>, Polynomial<F>), JoltFormulaPointError>
+    where
+        F: Field,
+    {
+        let (advice_coeffs, eq_coeffs) =
+            self.cycle_phase_coefficients(reference_opening_point, values)?;
+        Ok((Polynomial::new(advice_coeffs), Polynomial::new(eq_coeffs)))
+    }
+
+    pub fn cycle_phase_opening_claim<F>(
+        &self,
+        reference_opening_point: &[F],
+        values: Vec<F>,
+        opening_point: &[F],
+    ) -> Result<F, JoltFormulaPointError>
+    where
+        F: Field,
+    {
+        let (mut advice_poly, mut eq_poly) =
+            self.cycle_phase_polynomials(reference_opening_point, values)?;
+        for challenge in self.cycle_phase_binding_challenges(opening_point)? {
+            advice_poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+            eq_poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+        }
+        Ok(advice_poly
+            .evals()
+            .iter()
+            .zip(eq_poly.evals())
+            .map(|(&advice, &eq)| advice * eq)
+            .sum::<F>()
+            * self.cycle_phase_dummy_scale::<F>())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdviceCyclePhaseRelationState<F: Field> {
+    advice: Polynomial<F>,
+    eq: Polynomial<F>,
+    col_rounds: Range<usize>,
+    row_rounds: Range<usize>,
+    scale: F,
+}
+
+impl<F: Field> AdviceCyclePhaseRelationState<F> {
+    pub fn new(
+        advice: Polynomial<F>,
+        eq: Polynomial<F>,
+        col_rounds: Range<usize>,
+        row_rounds: Range<usize>,
+    ) -> Self {
+        Self {
+            advice,
+            eq,
+            col_rounds,
+            row_rounds,
+            scale: F::one(),
+        }
+    }
+
+    pub fn bind(&mut self, local_round: usize, challenge: F) {
+        if self.is_active_round(local_round) {
+            self.advice
+                .bind_with_order(challenge, BindingOrder::LowToHigh);
+            self.eq.bind_with_order(challenge, BindingOrder::LowToHigh);
+        } else {
+            self.scale *= F::from_u64(2).inv_or_zero();
+        }
+    }
+
+    pub fn round_rows(&self, local_round: usize) -> usize {
+        if self.is_active_round(local_round) {
+            self.advice.len() / 2
+        } else {
+            self.advice.len()
+        }
+    }
+
+    pub fn round_eval(&self, local_round: usize, index: usize, point: F) -> F {
+        if self.is_active_round(local_round) {
+            self.scale
+                * self
+                    .advice
+                    .sumcheck_round_eval_with_order(index, point, BindingOrder::LowToHigh)
+                * self
+                    .eq
+                    .sumcheck_round_eval_with_order(index, point, BindingOrder::LowToHigh)
+        } else {
+            self.scale
+                * self.advice.evals()[index]
+                * self.eq.evals()[index]
+                * F::from_u64(2).inv_or_zero()
+        }
+    }
+
+    fn is_active_round(&self, local_round: usize) -> bool {
+        self.col_rounds.contains(&local_round) || self.row_rounds.contains(&local_round)
+    }
+}
+
+pub fn advice_index_to_address_cycle(
+    trace_order: TracePolynomialOrder,
+    log_t: usize,
+    log_k_chunk: usize,
+    main_column_vars: usize,
+    advice_column_vars: usize,
+    index: usize,
+) -> (usize, usize) {
+    let advice_cols = 1usize << advice_column_vars;
+    let row = index / advice_cols;
+    let col = index % advice_cols;
+    let main_cols = 1usize << main_column_vars;
+    let global_index = row * main_cols + col;
+    trace_order.index_to_address_cycle(global_index, 1usize << log_k_chunk, 1usize << log_t)
+}
+
+pub fn advice_cycle_phase_dummy_scale<F: Field>(dummy_rounds: usize) -> F {
+    let two_inv = F::from_u64(2).inv_or_zero();
+    (0..dummy_rounds).fold(F::one(), |scale, _| scale * two_inv)
 }
 
 fn cycle_phase_round_schedule(
@@ -317,6 +529,10 @@ where
     )
 }
 
+pub fn cycle_phase_input_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [ram_val_check_advice_opening(kind)]
+}
+
 pub fn cycle_phase_output_openings(
     kind: JoltAdviceKind,
     dimensions: AdviceClaimReductionDimensions,
@@ -326,6 +542,14 @@ pub fn cycle_phase_output_openings(
     } else {
         vec![final_advice_opening(kind)]
     }
+}
+
+pub fn address_phase_input_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [cycle_phase_advice_opening(kind)]
+}
+
+pub fn address_phase_output_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [final_advice_opening(kind)]
 }
 
 pub fn ram_val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
@@ -350,7 +574,7 @@ fn advice_opening(kind: JoltAdviceKind, relation: JoltRelationId) -> JoltOpening
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
 
     fn with_address_phase() -> AdviceClaimReductionDimensions {
         AdviceClaimReductionDimensions::new(4, 3)
@@ -361,6 +585,216 @@ mod tests {
     }
 
     #[test]
+    fn advice_index_to_address_cycle_embeds_advice_matrix_in_main_trace_order() {
+        let main_shape = CommitmentMatrixShape::new(3, 2);
+        let advice_shape = CommitmentMatrixShape::new(1, 2);
+        let cycle_major = AdviceClaimReductionLayout::new(
+            TracePolynomialOrder::CycleMajor,
+            2,
+            3,
+            main_shape,
+            advice_shape,
+        );
+        let address_major = AdviceClaimReductionLayout::new(
+            TracePolynomialOrder::AddressMajor,
+            2,
+            3,
+            main_shape,
+            advice_shape,
+        );
+
+        assert_eq!(cycle_major.advice_index_to_address_cycle(5), (4, 1));
+        assert_eq!(address_major.advice_index_to_address_cycle(5), (1, 2));
+        assert_eq!(
+            advice_index_to_address_cycle(TracePolynomialOrder::CycleMajor, 2, 3, 3, 1, 5),
+            (4, 1)
+        );
+        assert_eq!(
+            advice_index_to_address_cycle(TracePolynomialOrder::AddressMajor, 2, 3, 3, 1, 5),
+            (1, 2)
+        );
+    }
+
+    #[test]
+    fn cycle_phase_binding_helpers_follow_layout_schedule() {
+        let layout =
+            AdviceClaimReductionLayout::balanced(TracePolynomialOrder::CycleMajor, 8, 4, 64);
+        let opening_point = vec![Fr::from_u64(7), Fr::from_u64(2), Fr::from_u64(1)];
+        let two_inv = Fr::from_u64(2).inv_or_zero();
+
+        assert_eq!(
+            layout
+                .cycle_phase_binding_challenges(&opening_point)
+                .map_err(|error| error.to_string()),
+            Ok(vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(7)])
+        );
+        assert_eq!(
+            layout.cycle_phase_dummy_scale::<Fr>(),
+            two_inv * two_inv * two_inv * two_inv
+        );
+        assert_eq!(
+            advice_cycle_phase_dummy_scale::<Fr>(layout.dummy_cycle_phase_rounds()),
+            layout.cycle_phase_dummy_scale::<Fr>()
+        );
+    }
+
+    #[test]
+    fn cycle_phase_batch_offset_aligns_cycle_rounds_inside_padded_batch() {
+        let layout = AdviceClaimReductionLayout::new(
+            TracePolynomialOrder::AddressMajor,
+            2,
+            3,
+            CommitmentMatrixShape::new(3, 2),
+            CommitmentMatrixShape::new(1, 2),
+        );
+
+        assert_eq!(layout.cycle_phase_batch_offset(8), Ok(6));
+        assert_eq!(
+            layout.cycle_phase_batch_offset(4),
+            Err(JoltFormulaDimensionsError::Underflow {
+                name: "advice cycle-phase batch offset",
+            })
+        );
+    }
+
+    #[test]
+    fn cycle_phase_coefficients_sort_by_address_cycle_order() {
+        let layout = AdviceClaimReductionLayout::new(
+            TracePolynomialOrder::AddressMajor,
+            2,
+            3,
+            CommitmentMatrixShape::new(3, 2),
+            CommitmentMatrixShape::new(1, 2),
+        );
+        let values = (0..8).collect::<Vec<_>>();
+        let zero = Fr::from_u64(0);
+        let point = vec![zero, zero, zero];
+
+        let coefficients = layout
+            .cycle_phase_coefficients(&point, values)
+            .map_err(|error| error.to_string());
+
+        assert_eq!(
+            coefficients,
+            Ok((
+                vec![0, 2, 4, 6, 1, 3, 5, 7],
+                vec![Fr::from_u64(1), zero, zero, zero, zero, zero, zero, zero,],
+            ))
+        );
+    }
+
+    #[test]
+    fn cycle_phase_polynomials_wrap_sorted_coefficients() {
+        let layout = AdviceClaimReductionLayout::new(
+            TracePolynomialOrder::AddressMajor,
+            2,
+            3,
+            CommitmentMatrixShape::new(3, 2),
+            CommitmentMatrixShape::new(1, 2),
+        );
+        let values = (0..8).map(Fr::from_u64).collect::<Vec<_>>();
+        let zero = Fr::from_u64(0);
+        let point = vec![zero, zero, zero];
+
+        let polynomials = layout
+            .cycle_phase_polynomials(&point, values)
+            .map(|(advice, eq)| (advice.evals().to_vec(), eq.evals().to_vec()))
+            .map_err(|error| error.to_string());
+
+        assert_eq!(
+            polynomials,
+            Ok((
+                vec![
+                    Fr::from_u64(0),
+                    Fr::from_u64(2),
+                    Fr::from_u64(4),
+                    Fr::from_u64(6),
+                    Fr::from_u64(1),
+                    Fr::from_u64(3),
+                    Fr::from_u64(5),
+                    Fr::from_u64(7),
+                ],
+                vec![Fr::from_u64(1), zero, zero, zero, zero, zero, zero, zero],
+            )),
+        );
+    }
+
+    #[test]
+    fn cycle_phase_opening_claim_binds_sorted_coefficients() {
+        let layout = AdviceClaimReductionLayout::new(
+            TracePolynomialOrder::AddressMajor,
+            2,
+            3,
+            CommitmentMatrixShape::new(3, 2),
+            CommitmentMatrixShape::new(1, 2),
+        );
+        let values = (10..18).map(Fr::from_u64).collect::<Vec<_>>();
+        let point = vec![Fr::from_u64(0), Fr::from_u64(0), Fr::from_u64(0)];
+        let opening_point = vec![Fr::from_u64(0), Fr::from_u64(0)];
+
+        assert_eq!(
+            layout
+                .cycle_phase_opening_claim(&point, values, &opening_point)
+                .map_err(|error| error.to_string()),
+            Ok(Fr::from_u64(10))
+        );
+    }
+
+    #[test]
+    fn cycle_phase_relation_state_evaluates_active_and_dummy_rounds() {
+        let advice = Polynomial::new(vec![
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+        ]);
+        let eq = Polynomial::new(vec![
+            Fr::from_u64(11),
+            Fr::from_u64(13),
+            Fr::from_u64(17),
+            Fr::from_u64(19),
+        ]);
+        let point = Fr::from_u64(23);
+        let state = AdviceCyclePhaseRelationState::new(advice.clone(), eq.clone(), 0..1, 2..3);
+        let two_inv = Fr::from_u64(2).inv_or_zero();
+
+        assert_eq!(state.round_rows(0), 2);
+        assert_eq!(
+            state.round_eval(0, 0, point),
+            advice.sumcheck_round_eval_with_order(0, point, BindingOrder::LowToHigh)
+                * eq.sumcheck_round_eval_with_order(0, point, BindingOrder::LowToHigh)
+        );
+        assert_eq!(state.round_rows(1), 4);
+        assert_eq!(
+            state.round_eval(1, 2, point),
+            advice.evals()[2] * eq.evals()[2] * two_inv
+        );
+    }
+
+    #[test]
+    fn cycle_phase_relation_state_binds_active_rounds_and_scales_dummy_rounds() {
+        let challenge = Fr::from_u64(29);
+        let dummy_challenge = Fr::from_u64(31);
+        let mut advice =
+            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 2)).collect());
+        let mut eq = Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 7)).collect());
+        let two_inv = Fr::from_u64(2).inv_or_zero();
+        let mut state = AdviceCyclePhaseRelationState::new(advice.clone(), eq.clone(), 0..1, 2..3);
+
+        state.bind(0, challenge);
+        advice.bind_with_order(challenge, BindingOrder::LowToHigh);
+        eq.bind_with_order(challenge, BindingOrder::LowToHigh);
+        assert_eq!(state.advice, advice);
+        assert_eq!(state.eq, eq);
+        assert_eq!(state.scale, Fr::from_u64(1));
+
+        state.bind(1, dummy_challenge);
+        assert_eq!(state.advice, advice);
+        assert_eq!(state.eq, eq);
+        assert_eq!(state.scale, two_inv);
+    }
+
+    #[test]
     fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
         let claims = cycle_phase::<Fr>(JoltAdviceKind::Trusted, with_address_phase());
 
@@ -368,7 +802,7 @@ mod tests {
         assert_eq!(claims.sumcheck, with_address_phase().cycle_sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![ram_val_check_advice_opening(JoltAdviceKind::Trusted)]
+            cycle_phase_input_openings(JoltAdviceKind::Trusted).to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
@@ -381,7 +815,7 @@ mod tests {
     #[test]
     fn cycle_phase_without_address_phase_exposes_final_scale() {
         let claims = cycle_phase::<Fr>(JoltAdviceKind::Untrusted, without_address_phase());
-        let mut expected_openings = vec![ram_val_check_advice_opening(JoltAdviceKind::Untrusted)];
+        let mut expected_openings = cycle_phase_input_openings(JoltAdviceKind::Untrusted).to_vec();
         expected_openings.extend(cycle_phase_output_openings(
             JoltAdviceKind::Untrusted,
             without_address_phase(),
@@ -405,11 +839,11 @@ mod tests {
         assert_eq!(claims.sumcheck, with_address_phase().address_sumcheck());
         assert_eq!(
             claims.input.required_openings,
-            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
+            address_phase_input_openings(JoltAdviceKind::Trusted).to_vec()
         );
         assert_eq!(
             claims.output.required_openings,
-            vec![final_advice_opening(JoltAdviceKind::Trusted)]
+            address_phase_output_openings(JoltAdviceKind::Trusted).to_vec()
         );
         assert_eq!(
             claims.required_publics(),

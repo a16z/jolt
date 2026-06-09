@@ -1,15 +1,16 @@
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::formulas::registers as field_registers;
+use jolt_claims::protocols::field_inline::{
+    formulas::registers as field_registers, FieldRegistersReadWriteDimensions,
+};
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::registers as registers_claim_reduction,
-        dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
+        dimensions::{ReadWriteDimensions, TraceDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram,
         ram::{RamValCheckAdviceContribution as FormulaAdviceContribution, RamValCheckInit},
         registers,
     },
-    JoltAdviceKind, JoltChallengeId, JoltRelationId, JoltSumcheckDomain, RamValCheckChallenge,
-    RegistersReadWriteChallenge,
+    JoltAdviceKind, JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -28,24 +29,82 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
+    pcs_assist::PcsProofAssist,
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::{
+        stage2::outputs::Stage2ClearOutput, stage3::outputs::Stage3ClearOutput, zk::committed,
+    },
+    verifier::CheckedInputs,
+    VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage4BatchInputClaims<F: Field> {
-    registers_read_write: F,
+pub struct Stage4InputClaims<F: Field> {
+    pub registers_read_write: F,
     #[cfg(feature = "field-inline")]
-    field_registers_read_write: F,
-    ram_val_check: F,
+    pub field_registers_read_write: F,
+    pub ram_val_check: F,
+}
+
+pub struct Stage4InputClaimRequest<'a, F: Field> {
+    pub stage2: &'a Stage2ClearOutput<F>,
+    pub stage3: &'a Stage3ClearOutput<F>,
+    pub ram_val_check_initial_eval: F,
+    pub registers_gamma: F,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_gamma: F,
+    pub ram_val_check_gamma: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage4BatchExpectedOutputClaims<F: Field> {
-    registers_read_write: F,
+pub struct Stage4ExpectedOutputClaims<F: Field> {
+    pub registers_read_write: F,
     #[cfg(feature = "field-inline")]
-    field_registers_read_write: F,
-    ram_val_check: F,
+    pub field_registers_read_write: F,
+    pub ram_val_check: F,
+}
+
+pub struct Stage4ExpectedOutputRequest<'a, F: Field> {
+    pub fixed_register_cycle_point: &'a [F],
+    pub registers_read_write_opening_point: &'a [F],
+    #[cfg(feature = "field-inline")]
+    pub fixed_field_register_cycle_point: &'a [F],
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write_cycle_point: &'a [F],
+    pub fixed_ram_cycle_point: &'a [F],
+    pub ram_val_check_cycle_point: &'a [F],
+    pub registers_gamma: F,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_gamma: F,
+    pub ram_val_check_gamma: F,
+    pub claims: &'a Stage4Claims<F>,
+}
+
+pub struct Stage4OpeningPointRequest<'a, F: Field> {
+    pub register_dimensions: ReadWriteDimensions,
+    #[cfg(feature = "field-inline")]
+    pub field_register_dimensions: FieldRegistersReadWriteDimensions,
+    pub registers_read_write_sumcheck_point: &'a [F],
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write_sumcheck_point: &'a [F],
+    pub ram_val_check_sumcheck_point: &'a [F],
+    pub fixed_ram_address_point: &'a [F],
+    pub fixed_ram_cycle_point: &'a [F],
+}
+
+pub struct Stage4OpeningPoints<F: Field> {
+    pub registers_read_write_sumcheck_point: Vec<F>,
+    pub registers_read_write_opening_point: Vec<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write_sumcheck_point: Vec<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write_opening_point: Vec<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write_cycle_point: Vec<F>,
+    pub ram_val_check_sumcheck_point: Vec<F>,
+    pub ram_val_check_cycle_point: Vec<F>,
+    pub ram_val_check_opening_point: Vec<F>,
 }
 
 const STAGE4_BATCH_BASE_OUTPUT_CLAIMS: usize = 7;
@@ -54,16 +113,221 @@ const STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS: usize = 5;
 #[cfg(not(feature = "field-inline"))]
 const STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS: usize = 0;
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn stage4_input_claims<F: Field>(
+    request: Stage4InputClaimRequest<'_, F>,
+) -> Stage4InputClaims<F> {
+    let registers_gamma2 = request.registers_gamma * request.registers_gamma;
+    #[cfg(feature = "field-inline")]
+    let field_registers_gamma2 = request.field_registers_gamma * request.field_registers_gamma;
+
+    Stage4InputClaims {
+        registers_read_write: request
+            .stage3
+            .output_claims
+            .registers_claim_reduction
+            .rd_write_value
+            + request.registers_gamma
+                * request
+                    .stage3
+                    .output_claims
+                    .registers_claim_reduction
+                    .rs1_value
+            + registers_gamma2
+                * request
+                    .stage3
+                    .output_claims
+                    .registers_claim_reduction
+                    .rs2_value,
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write: {
+            let field_values = &request.stage2.output_claims.field_inline.product;
+            field_values.field_rd_value
+                + request.field_registers_gamma * field_values.field_rs1_value
+                + field_registers_gamma2 * field_values.field_rs2_value
+        },
+        ram_val_check: request.stage2.output_claims.ram_read_write.val
+            + request.ram_val_check_gamma * request.stage2.output_claims.ram_output_check
+            - (F::one() + request.ram_val_check_gamma) * request.ram_val_check_initial_eval,
+    }
+}
+
+pub fn stage4_expected_output_claims<F: Field>(
+    request: Stage4ExpectedOutputRequest<'_, F>,
+) -> Result<Stage4ExpectedOutputClaims<F>, VerifierError> {
+    if request.registers_read_write_opening_point.len() < REGISTER_ADDRESS_BITS {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RegistersReadWriteChecking,
+            reason: format!(
+                "register read-write opening point has {} variables, expected at least {REGISTER_ADDRESS_BITS}",
+                request.registers_read_write_opening_point.len()
+            ),
+        });
+    }
+    let (_, registers_cycle_point) = request
+        .registers_read_write_opening_point
+        .split_at(REGISTER_ADDRESS_BITS);
+    let eq_cycle =
+        try_eq_mle(request.fixed_register_cycle_point, registers_cycle_point).map_err(|error| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::RegistersReadWriteChecking,
+                reason: error.to_string(),
+            }
+        })?;
+    let registers = &request.claims.registers_read_write;
+    let registers_read_write = eq_cycle
+        * (registers.rd_wa * (registers.rd_inc + registers.registers_val)
+            + request.registers_gamma * registers.rs1_ra * registers.registers_val
+            + request.registers_gamma
+                * request.registers_gamma
+                * registers.rs2_ra
+                * registers.registers_val);
+
+    #[cfg(feature = "field-inline")]
+    let field_registers_read_write = {
+        let field_claims = &request.claims.field_inline.field_registers_read_write;
+        let field_eq_cycle = try_eq_mle(
+            request.fixed_field_register_cycle_point,
+            request.field_registers_read_write_cycle_point,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RegistersReadWriteChecking,
+            reason: error.to_string(),
+        })?;
+        field_eq_cycle
+            * (field_claims.field_rd_wa
+                * (field_claims.field_rd_inc + field_claims.field_registers_val)
+                + request.field_registers_gamma
+                    * field_claims.field_rs1_ra
+                    * field_claims.field_registers_val
+                + request.field_registers_gamma
+                    * request.field_registers_gamma
+                    * field_claims.field_rs2_ra
+                    * field_claims.field_registers_val)
+    };
+
+    let ram_lt = LtPolynomial::evaluate(
+        request.ram_val_check_cycle_point,
+        request.fixed_ram_cycle_point,
+    );
+    let ram_val_check = (ram_lt + request.ram_val_check_gamma)
+        * request.claims.ram_val_check.ram_inc
+        * request.claims.ram_val_check.ram_ra;
+
+    Ok(Stage4ExpectedOutputClaims {
+        registers_read_write,
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write,
+        ram_val_check,
+    })
+}
+
+pub fn stage4_expected_final_claim<F: Field>(
+    coefficients: &[F],
+    expected_outputs: &Stage4ExpectedOutputClaims<F>,
+) -> Result<F, VerifierError> {
+    #[cfg(not(feature = "field-inline"))]
+    {
+        let [registers_coefficient, ram_val_coefficient] = coefficients else {
+            return Err(VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::RegistersReadWriteChecking,
+                reason: "Stage 4 batch verifier returned the wrong number of coefficients"
+                    .to_string(),
+            });
+        };
+        Ok(
+            *registers_coefficient * expected_outputs.registers_read_write
+                + *ram_val_coefficient * expected_outputs.ram_val_check,
+        )
+    }
+    #[cfg(feature = "field-inline")]
+    {
+        let [registers_coefficient, field_registers_coefficient, ram_val_coefficient] =
+            coefficients
+        else {
+            return Err(VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::RegistersReadWriteChecking,
+                reason: "Stage 4 batch verifier returned the wrong number of coefficients"
+                    .to_string(),
+            });
+        };
+        Ok(
+            *registers_coefficient * expected_outputs.registers_read_write
+                + *field_registers_coefficient * expected_outputs.field_registers_read_write
+                + *ram_val_coefficient * expected_outputs.ram_val_check,
+        )
+    }
+}
+
+pub fn stage4_opening_points<F: Field>(
+    request: Stage4OpeningPointRequest<'_, F>,
+) -> Result<Stage4OpeningPoints<F>, VerifierError> {
+    let registers_read_write_opening = request
+        .register_dimensions
+        .read_write_opening_point(request.registers_read_write_sumcheck_point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RegistersReadWriteChecking,
+            reason: error.to_string(),
+        })?;
+
+    #[cfg(feature = "field-inline")]
+    let field_registers_read_write_opening = request
+        .field_register_dimensions
+        .read_write_opening_point(request.field_registers_read_write_sumcheck_point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RegistersReadWriteChecking,
+            reason: error.to_string(),
+        })?;
+
+    let ram_val_check_cycle_point = request
+        .ram_val_check_sumcheck_point
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    if ram_val_check_cycle_point.len() != request.fixed_ram_cycle_point.len() {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamValCheck,
+            reason: format!(
+                "RAM value cycle point length mismatch: expected {}, got {}",
+                request.fixed_ram_cycle_point.len(),
+                ram_val_check_cycle_point.len()
+            ),
+        });
+    }
+    let ram_val_check_opening_point = [
+        request.fixed_ram_address_point,
+        ram_val_check_cycle_point.as_slice(),
+    ]
+    .concat();
+
+    Ok(Stage4OpeningPoints {
+        registers_read_write_sumcheck_point: request.registers_read_write_sumcheck_point.to_vec(),
+        registers_read_write_opening_point: registers_read_write_opening.opening_point,
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write_sumcheck_point: request
+            .field_registers_read_write_sumcheck_point
+            .to_vec(),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write_opening_point: field_registers_read_write_opening.opening_point,
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write_cycle_point: field_registers_read_write_opening.r_cycle,
+        ram_val_check_sumcheck_point: request.ram_val_check_sumcheck_point.to_vec(),
+        ram_val_check_cycle_point,
+        ram_val_check_opening_point,
+    })
+}
+
+pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
@@ -210,46 +474,30 @@ where
                 stage: JoltRelationId::RegistersReadWriteChecking,
                 reason: error.to_string(),
             })?;
-        let registers_opening_point = register_dimensions
-            .read_write_opening_point(&registers_point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+        #[cfg(feature = "field-inline")]
+        let field_registers_point = consistency
+            .try_instance_point(field_registers_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RegistersReadWriteChecking,
                 reason: error.to_string(),
             })?;
-        #[cfg(feature = "field-inline")]
-        let field_registers_read_write_opening_point = {
-            let field_registers_point = consistency
-                .try_instance_point(field_registers_claims.sumcheck.rounds)
-                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltRelationId::RegistersReadWriteChecking,
-                    reason: error.to_string(),
-                })?;
-            field_register_dimensions
-                .read_write_opening_point(&field_registers_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RegistersReadWriteChecking,
-                    reason: error.to_string(),
-                })?
-                .opening_point
-        };
         let ram_val_point = consistency
             .try_instance_point(ram_val_check_sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RamValCheck,
                 reason: error.to_string(),
             })?;
-        let r_cycle_prime = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
-        if r_cycle_prime.len() != r_cycle.len() {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamValCheck,
-                reason: format!(
-                    "RAM value cycle point length mismatch: expected {}, got {}",
-                    r_cycle.len(),
-                    r_cycle_prime.len()
-                ),
-            });
-        }
-        let ram_val_opening_point = [r_address, r_cycle_prime.as_slice()].concat();
+        let opening_points = stage4_opening_points(Stage4OpeningPointRequest {
+            register_dimensions,
+            #[cfg(feature = "field-inline")]
+            field_register_dimensions,
+            registers_read_write_sumcheck_point: &registers_point,
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write_sumcheck_point: &field_registers_point,
+            ram_val_check_sumcheck_point: &ram_val_point,
+            fixed_ram_address_point: r_address,
+            fixed_ram_cycle_point: r_cycle,
+        })?;
 
         return Ok(Stage4Output::Zk(Stage4ZkOutput {
             public: public(
@@ -259,10 +507,11 @@ where
             batch_consistency: consistency,
             batch_output_claims,
             ram_val_check_public_eval,
-            registers_read_write_opening_point: registers_opening_point.opening_point,
+            registers_read_write_opening_point: opening_points.registers_read_write_opening_point,
             #[cfg(feature = "field-inline")]
-            field_registers_read_write_opening_point,
-            ram_val_check_opening_point: ram_val_opening_point,
+            field_registers_read_write_opening_point: opening_points
+                .field_registers_read_write_opening_point,
+            ram_val_check_opening_point: opening_points.ram_val_check_opening_point,
         }));
     }
 
@@ -320,61 +569,15 @@ where
         });
     }
 
-    let [rd_write_value, rs1_value, rs2_value] = registers::read_write_checking_input_openings();
-    let [ram_val, ram_val_final] = ram::val_check_input_openings();
-    let input_claims = Stage4BatchInputClaims {
-        registers_read_write: registers_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == rd_write_value => Ok(stage3
-                    .output_claims
-                    .registers_claim_reduction
-                    .rd_write_value),
-                id if id == rs1_value => {
-                    Ok(stage3.output_claims.registers_claim_reduction.rs1_value)
-                }
-                id if id == rs2_value => {
-                    Ok(stage3.output_claims.registers_claim_reduction.rs2_value)
-                }
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => {
-                    Ok(registers_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
+    let input_claims = stage4_input_claims(Stage4InputClaimRequest {
+        stage2,
+        stage3,
+        ram_val_check_initial_eval: ram_val_check_init.full_eval,
+        registers_gamma,
         #[cfg(feature = "field-inline")]
-        field_registers_read_write: {
-            let field_values = &stage2.output_claims.field_inline.product;
-            field_values.field_rd_value
-                + field_registers_gamma * field_values.field_rs1_value
-                + field_registers_gamma * field_registers_gamma * field_values.field_rs2_value
-        },
-        ram_val_check: ram_val_check_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == ram_val => Ok(stage2.output_claims.ram_read_write.val),
-                id if id == ram_val_final => Ok(stage2.output_claims.ram_output_check),
-                id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => claims
-                    .advice
-                    .untrusted
-                    .ok_or(VerifierError::MissingOpeningClaim { id }),
-                id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => claims
-                    .advice
-                    .trusted
-                    .ok_or(VerifierError::MissingOpeningClaim { id }),
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::RamValCheck(RamValCheckChallenge::Gamma) => {
-                    Ok(ram_val_check_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-    };
+        field_registers_gamma,
+        ram_val_check_gamma,
+    });
 
     let mut sumcheck_claims = vec![SumcheckClaim::new(
         registers_claims.sumcheck.rounds,
@@ -408,82 +611,14 @@ where
             stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
-    let registers_opening_point = register_dimensions
-        .read_write_opening_point(registers_point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RegistersReadWriteChecking,
-            reason: error.to_string(),
-        })?;
-    let eq_cycle = try_eq_mle(
-        &stage3.batch.registers_claim_reduction.opening_point,
-        &registers_opening_point.r_cycle,
-    )
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::RegistersReadWriteChecking,
-        reason: error.to_string(),
-    })?;
-    let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
-        registers::read_write_checking_output_openings();
-    let registers_output = registers_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == registers_val => Ok(claims.registers_read_write.registers_val),
-            id if id == rs1_ra => Ok(claims.registers_read_write.rs1_ra),
-            id if id == rs2_ra => Ok(claims.registers_read_write.rs2_ra),
-            id if id == rd_wa => Ok(claims.registers_read_write.rd_wa),
-            id if id == rd_inc => Ok(claims.registers_read_write.rd_inc),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| match id {
-            JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => {
-                Ok(registers_gamma)
-            }
-            JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::EqCycle) => {
-                Ok(eq_cycle)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-    )?;
 
     #[cfg(feature = "field-inline")]
-    let (field_registers_point, field_registers_opening_point, field_registers_output) = {
-        let field_registers_point = batch
-            .try_instance_point(field_registers_claims.sumcheck.rounds)
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RegistersReadWriteChecking,
-                reason: error.to_string(),
-            })?;
-        let field_registers_opening_point = field_register_dimensions
-            .read_write_opening_point(field_registers_point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RegistersReadWriteChecking,
-                reason: error.to_string(),
-            })?;
-        let eq_cycle = try_eq_mle(
-            &stage2.batch.field_registers_claim_reduction.opening_point,
-            &field_registers_opening_point.r_cycle,
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+    let field_registers_point = batch
+        .try_instance_point(field_registers_claims.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
-        let field_claims = &claims.field_inline.field_registers_read_write;
-        let output = eq_cycle
-            * (field_claims.field_rd_wa
-                * (field_claims.field_rd_inc + field_claims.field_registers_val)
-                + field_registers_gamma
-                    * field_claims.field_rs1_ra
-                    * field_claims.field_registers_val
-                + field_registers_gamma
-                    * field_registers_gamma
-                    * field_claims.field_rs2_ra
-                    * field_claims.field_registers_val);
-        (
-            field_registers_point.to_vec(),
-            field_registers_opening_point.opening_point,
-            output,
-        )
-    };
 
     let ram_val_point = batch
         .try_instance_point(ram_val_check_claims.sumcheck.rounds)
@@ -491,69 +626,39 @@ where
             stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
         })?;
-    let r_cycle_prime = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
-    if r_cycle_prime.len() != r_cycle.len() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: format!(
-                "RAM value cycle point length mismatch: expected {}, got {}",
-                r_cycle.len(),
-                r_cycle_prime.len()
-            ),
-        });
-    }
-    let ram_val_opening_point = [r_address, r_cycle_prime.as_slice()].concat();
-    let lt_cycle = LtPolynomial::evaluate(&r_cycle_prime, r_cycle);
-    let [ram_ra, ram_inc] = ram::val_check_output_openings();
-    let ram_val_output = ram_val_check_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == ram_ra => Ok(claims.ram_val_check.ram_ra),
-            id if id == ram_inc => Ok(claims.ram_val_check.ram_inc),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| match id {
-            JoltChallengeId::RamValCheck(RamValCheckChallenge::LtCyclePlusGamma) => {
-                Ok(lt_cycle + ram_val_check_gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-    )?;
-
-    let expected_outputs = Stage4BatchExpectedOutputClaims {
-        registers_read_write: registers_output,
+    let opening_points = stage4_opening_points(Stage4OpeningPointRequest {
+        register_dimensions,
         #[cfg(feature = "field-inline")]
-        field_registers_read_write: field_registers_output,
-        ram_val_check: ram_val_output,
-    };
-    let coefficients = batch.batching_coefficients.as_slice();
-    #[cfg(not(feature = "field-inline"))]
-    let expected_final_claim = {
-        let [registers_coefficient, ram_val_coefficient] = coefficients else {
-            return Err(VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RegistersReadWriteChecking,
-                reason: "Stage 4 batch verifier returned the wrong number of coefficients"
-                    .to_string(),
-            });
-        };
-        *registers_coefficient * expected_outputs.registers_read_write
-            + *ram_val_coefficient * expected_outputs.ram_val_check
-    };
-    #[cfg(feature = "field-inline")]
-    let expected_final_claim = {
-        let [registers_coefficient, field_registers_coefficient, ram_val_coefficient] =
-            coefficients
-        else {
-            return Err(VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RegistersReadWriteChecking,
-                reason: "Stage 4 batch verifier returned the wrong number of coefficients"
-                    .to_string(),
-            });
-        };
-        *registers_coefficient * expected_outputs.registers_read_write
-            + *field_registers_coefficient * expected_outputs.field_registers_read_write
-            + *ram_val_coefficient * expected_outputs.ram_val_check
-    };
+        field_register_dimensions,
+        registers_read_write_sumcheck_point: registers_point,
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write_sumcheck_point: field_registers_point,
+        ram_val_check_sumcheck_point: ram_val_point,
+        fixed_ram_address_point: r_address,
+        fixed_ram_cycle_point: r_cycle,
+    })?;
+
+    let expected_outputs = stage4_expected_output_claims(Stage4ExpectedOutputRequest {
+        fixed_register_cycle_point: &stage3.batch.registers_claim_reduction.opening_point,
+        registers_read_write_opening_point: &opening_points.registers_read_write_opening_point,
+        #[cfg(feature = "field-inline")]
+        fixed_field_register_cycle_point: &stage2
+            .batch
+            .field_registers_claim_reduction
+            .opening_point,
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write_cycle_point: &opening_points
+            .field_registers_read_write_cycle_point,
+        fixed_ram_cycle_point: r_cycle,
+        ram_val_check_cycle_point: &opening_points.ram_val_check_cycle_point,
+        registers_gamma,
+        #[cfg(feature = "field-inline")]
+        field_registers_gamma,
+        ram_val_check_gamma,
+        claims,
+    })?;
+    let expected_final_claim =
+        stage4_expected_final_claim(&batch.batching_coefficients, &expected_outputs)?;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: JoltRelationId::RegistersReadWriteChecking,
@@ -581,30 +686,30 @@ where
             expected_final_claim,
             registers_read_write: VerifiedStage4Sumcheck {
                 input_claim: input_claims.registers_read_write,
-                sumcheck_point: registers_point.to_vec(),
-                opening_point: registers_opening_point.opening_point,
+                sumcheck_point: opening_points.registers_read_write_sumcheck_point,
+                opening_point: opening_points.registers_read_write_opening_point,
                 expected_output_claim: expected_outputs.registers_read_write,
             },
             #[cfg(feature = "field-inline")]
             field_registers_read_write: VerifiedStage4Sumcheck {
                 input_claim: input_claims.field_registers_read_write,
-                sumcheck_point: field_registers_point,
-                opening_point: field_registers_opening_point,
+                sumcheck_point: opening_points.field_registers_read_write_sumcheck_point,
+                opening_point: opening_points.field_registers_read_write_opening_point,
                 expected_output_claim: expected_outputs.field_registers_read_write,
             },
             ram_val_check: VerifiedStage4Sumcheck {
                 input_claim: input_claims.ram_val_check,
-                sumcheck_point: ram_val_point.to_vec(),
-                opening_point: ram_val_opening_point,
+                sumcheck_point: opening_points.ram_val_check_sumcheck_point,
+                opening_point: opening_points.ram_val_check_opening_point,
                 expected_output_claim: expected_outputs.ram_val_check,
             },
         },
     }))
 }
 
-fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
+fn ram_val_check_initial_evaluation<PCS, VC, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     claims: &Stage4Claims<PCS::Field>,
     r_address: &[PCS::Field],
     public_eval: PCS::Field,
@@ -612,6 +717,7 @@ fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let mut full_eval = public_eval;
     let mut advice_contributions = Vec::new();
@@ -678,13 +784,14 @@ where
     ))
 }
 
-fn stage4_committed_output_claims<PCS, VC, ZkProof>(
+fn stage4_committed_output_claims<PCS, VC, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
 ) -> usize
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     STAGE4_BATCH_BASE_OUTPUT_CLAIMS
         + STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS
@@ -739,6 +846,16 @@ fn collect_advice_contribution<F: Field>(
                 reason: error.to_string(),
             }
         })?;
+    if advice_num_vars > r_address.len() {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamValCheck,
+            reason: format!(
+                "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
+                r_address.len()
+            ),
+        });
+    }
+
     let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
     *full_eval += selector * opening_claim;
     contributions.push(VerifiedRamValCheckAdviceContribution {
@@ -750,7 +867,7 @@ fn collect_advice_contribution<F: Field>(
     Ok(())
 }
 
-fn append_stage4_opening_claims<F, T>(
+pub fn append_stage4_opening_claims<F, T>(
     transcript: &mut T,
     untrusted_advice_commitment_present: bool,
     trusted_advice_commitment_present: bool,
@@ -795,7 +912,39 @@ where
     Ok(())
 }
 
-fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
+pub fn stage4_output_claim_values<F: Field>(claims: &Stage4Claims<F>) -> Vec<F> {
+    let mut values = Vec::with_capacity(
+        STAGE4_BATCH_BASE_OUTPUT_CLAIMS
+            + STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS
+            + usize::from(claims.advice.untrusted.is_some())
+            + usize::from(claims.advice.trusted.is_some()),
+    );
+    if let Some(opening_claim) = claims.advice.untrusted {
+        values.push(opening_claim);
+    }
+    if let Some(opening_claim) = claims.advice.trusted {
+        values.push(opening_claim);
+    }
+    values.push(claims.registers_read_write.registers_val);
+    values.push(claims.registers_read_write.rs1_ra);
+    values.push(claims.registers_read_write.rs2_ra);
+    values.push(claims.registers_read_write.rd_wa);
+    values.push(claims.registers_read_write.rd_inc);
+    #[cfg(feature = "field-inline")]
+    {
+        let field_claims = &claims.field_inline.field_registers_read_write;
+        values.push(field_claims.field_registers_val);
+        values.push(field_claims.field_rs1_ra);
+        values.push(field_claims.field_rs2_ra);
+        values.push(field_claims.field_rd_wa);
+        values.push(field_claims.field_rd_inc);
+    }
+    values.push(claims.ram_val_check.ram_ra);
+    values.push(claims.ram_val_check.ram_inc);
+    values
+}
+
+pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
     transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
     transcript.append_bytes(&[]);
 }
@@ -835,8 +984,8 @@ mod tests {
             Fr::from_u64(0)
         }
 
-        fn state(&self) -> [u8; 32] {
-            self.state
+        fn state(&self) -> &[u8; 32] {
+            &self.state
         }
     }
 

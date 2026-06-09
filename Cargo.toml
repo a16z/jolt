@@ -34,8 +34,14 @@ members = [
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
   "crates/jolt-verifier",
+  "crates/jolt-prover",
+  "crates/jolt-witness",
+  "crates/jolt-backends",
   "crates/jolt-dory",
+  "crates/jolt-dory-assist-verifier",
+  "crates/jolt-hyrax",
   "crates/jolt-hyperkzg",
+  "crates/jolt-wrapper-verifier",
   "crates/jolt-riscv",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
@@ -167,12 +173,12 @@ lto = "fat"
 strip = false
 codegen-units = 1
 
-[replace]
-"ark-bn254:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-ff:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"allocative:0.3.4" = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -388,8 +394,15 @@ jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
+jolt-hyrax = { path = "./crates/jolt-hyrax" }
+jolt-dory-assist-verifier = { path = "./crates/jolt-dory-assist-verifier" }
+jolt-wrapper-verifier = { path = "./crates/jolt-wrapper-verifier" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
+jolt-prover = { path = "./crates/jolt-prover" }
+jolt-witness = { path = "./crates/jolt-witness" }
+jolt-backends = { path = "./crates/jolt-backends" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }

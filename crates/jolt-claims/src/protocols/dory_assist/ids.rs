@@ -1,0 +1,503 @@
+use derive_more::From;
+use serde::{Deserialize, Serialize};
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistRelationId {
+    GtExponentiation,
+    GtExponentiationDigitSelector,
+    GtExponentiationBasePower,
+    GtExponentiationDigitBitness,
+    GtExponentiationShift,
+    GtExponentiationBoundary,
+    GtMultiplication,
+    G1ScalarMultiplication,
+    G1ScalarMultiplicationShift,
+    G1ScalarMultiplicationBoundary,
+    G1Addition,
+    G2ScalarMultiplication,
+    G2ScalarMultiplicationShift,
+    G2ScalarMultiplicationBoundary,
+    G2Addition,
+    MillerLoopLineStep,
+    MillerLoopLineEvaluation,
+    MillerLoopPairProduct,
+    MillerLoopAccumulator,
+    MillerLoopBoundary,
+    DoryReduceGtTransition,
+    DoryReduceG1Transition,
+    DoryReduceG2Transition,
+    DoryReduceScalarFold,
+    DoryReduceStateChain,
+    DoryReduceBoundary,
+    WiringGt,
+    WiringG1,
+    WiringG2,
+    PrefixPacking,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum GtChallenge {
+    InstanceBatch,
+    ConstraintBatch,
+    ShiftGamma,
+    BoundaryPoint,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum G1Challenge {
+    ConstraintBatch,
+    ShiftGamma,
+    BoundaryPoint,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum G2Challenge {
+    ConstraintBatch,
+    ShiftGamma,
+    BoundaryPoint,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MillerLoopChallenge {
+    LineStepBatch,
+    LineEvaluationBatch,
+    PairProductBatch,
+    AccumulatorBatch,
+    BoundaryPoint,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MillerLoopSelector {
+    LineDouble,
+    LineAdd,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MillerLoopConstant {
+    TwoInverse,
+    TwistB0,
+    TwistB1,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum WiringChallenge {
+    CopyPoint,
+    EdgeBatch,
+    TupleCompression,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PackingChallenge {
+    PrefixPoint,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryReduceChallenge {
+    GtTransitionBatch,
+    G1TransitionBatch,
+    G2TransitionBatch,
+    ScalarFoldBatch,
+    StateChainBatch,
+    BoundaryPoint,
+}
+
+#[derive(
+    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
+)]
+pub enum DoryAssistChallengeId {
+    Gt(GtChallenge),
+    G1(G1Challenge),
+    G2(G2Challenge),
+    MillerLoop(MillerLoopChallenge),
+    Wiring(WiringChallenge),
+    Packing(PackingChallenge),
+    DoryReduce(DoryReduceChallenge),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistCommittedPolynomial {
+    DenseWitness,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum GtPolynomial {
+    ExpAccumulator,
+    ExpShiftedAccumulator,
+    ExpQuotient,
+    ExpDigitSelector,
+    ExpDigitBit(usize),
+    ExpBasePower(usize),
+    ExpBasePowerQuotient(usize),
+    Modulus,
+    MulLeft,
+    MulRight,
+    MulOutput,
+    MulQuotient,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum G1Polynomial {
+    ScalarMulAccumulatorX,
+    ScalarMulAccumulatorY,
+    ScalarMulAccumulatorInfinity,
+    ScalarMulDoubledX,
+    ScalarMulDoubledY,
+    ScalarMulDoubledInfinity,
+    ScalarMulShiftedAccumulatorX,
+    ScalarMulShiftedAccumulatorY,
+    ScalarMulBit,
+    ScalarMulBaseX,
+    ScalarMulBaseY,
+    AddInputLeftX,
+    AddInputLeftY,
+    AddInputLeftInfinity,
+    AddInputRightX,
+    AddInputRightY,
+    AddInputRightInfinity,
+    AddOutputX,
+    AddOutputY,
+    AddOutputInfinity,
+    AddSlope,
+    AddInverse,
+    AddBranchSelector(usize),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum G2Polynomial {
+    ScalarMulAccumulatorX0,
+    ScalarMulAccumulatorX1,
+    ScalarMulAccumulatorY0,
+    ScalarMulAccumulatorY1,
+    ScalarMulAccumulatorInfinity,
+    ScalarMulDoubledX0,
+    ScalarMulDoubledX1,
+    ScalarMulDoubledY0,
+    ScalarMulDoubledY1,
+    ScalarMulDoubledInfinity,
+    ScalarMulShiftedAccumulatorX0,
+    ScalarMulShiftedAccumulatorX1,
+    ScalarMulShiftedAccumulatorY0,
+    ScalarMulShiftedAccumulatorY1,
+    ScalarMulBit,
+    ScalarMulBaseX0,
+    ScalarMulBaseX1,
+    ScalarMulBaseY0,
+    ScalarMulBaseY1,
+    AddInputLeftX0,
+    AddInputLeftX1,
+    AddInputLeftY0,
+    AddInputLeftY1,
+    AddInputLeftInfinity,
+    AddInputRightX0,
+    AddInputRightX1,
+    AddInputRightY0,
+    AddInputRightY1,
+    AddInputRightInfinity,
+    AddOutputX0,
+    AddOutputX1,
+    AddOutputY0,
+    AddOutputY1,
+    AddOutputInfinity,
+    AddSlope0,
+    AddSlope1,
+    AddInverse0,
+    AddInverse1,
+    AddAuxiliary(usize),
+    AddBranchSelector(usize),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MillerLoopPolynomial {
+    G1PointX,
+    G1PointY,
+    G2LineStateX0,
+    G2LineStateX1,
+    G2LineStateY0,
+    G2LineStateY1,
+    G2LineStateZ0,
+    G2LineStateZ1,
+    G2LineAddendX0,
+    G2LineAddendX1,
+    G2LineAddendY0,
+    G2LineAddendY1,
+    G2LineShiftedStateX0,
+    G2LineShiftedStateX1,
+    G2LineShiftedStateY0,
+    G2LineShiftedStateY1,
+    G2LineShiftedStateZ0,
+    G2LineShiftedStateZ1,
+    LineCoefficient {
+        coefficient: usize,
+        component: usize,
+    },
+    LineEvaluationCoeff(usize),
+    PairProductAccumulatorCoeff(usize),
+    PairProductShiftedAccumulatorCoeff(usize),
+    PairProductQuotientCoeff(usize),
+    PairLineProductCoeff(usize),
+    AccumulatorCoeff(usize),
+    ShiftedAccumulatorCoeff(usize),
+    AccumulatorQuotientCoeff(usize),
+    OutputCoeff(usize),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum WiringPolynomial {
+    Source,
+    Destination,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PackingPolynomial {
+    DenseWitness,
+    PrefixSelector,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryReducePolynomial {
+    CurrentC(usize),
+    CurrentD1(usize),
+    CurrentD2(usize),
+    NextC(usize),
+    NextD1(usize),
+    NextD2(usize),
+    MessageD1Left(usize),
+    MessageD1Right(usize),
+    MessageD2Left(usize),
+    MessageD2Right(usize),
+    MessageCPlus(usize),
+    MessageCMinus(usize),
+    SetupChi(usize),
+    SetupDelta1L(usize),
+    SetupDelta1R(usize),
+    SetupDelta2L(usize),
+    SetupDelta2R(usize),
+    CurrentE1X,
+    CurrentE1Y,
+    CurrentE1Infinity,
+    NextE1X,
+    NextE1Y,
+    NextE1Infinity,
+    MessageE1BetaX,
+    MessageE1BetaY,
+    MessageE1BetaInfinity,
+    MessageE1PlusX,
+    MessageE1PlusY,
+    MessageE1PlusInfinity,
+    MessageE1MinusX,
+    MessageE1MinusY,
+    MessageE1MinusInfinity,
+    CurrentE2X0,
+    CurrentE2X1,
+    CurrentE2Y0,
+    CurrentE2Y1,
+    CurrentE2Infinity,
+    NextE2X0,
+    NextE2X1,
+    NextE2Y0,
+    NextE2Y1,
+    NextE2Infinity,
+    MessageE2BetaX0,
+    MessageE2BetaX1,
+    MessageE2BetaY0,
+    MessageE2BetaY1,
+    MessageE2BetaInfinity,
+    MessageE2PlusX0,
+    MessageE2PlusX1,
+    MessageE2PlusY0,
+    MessageE2PlusY1,
+    MessageE2PlusInfinity,
+    MessageE2MinusX0,
+    MessageE2MinusX1,
+    MessageE2MinusY0,
+    MessageE2MinusY1,
+    MessageE2MinusInfinity,
+    Beta,
+    BetaInverse,
+    Alpha,
+    AlphaInverse,
+    AlphaBeta,
+    AlphaInverseBetaInverse,
+    S1Accumulator,
+    S1NextAccumulator,
+    S1FoldFactor,
+    S2Accumulator,
+    S2NextAccumulator,
+    S2FoldFactor,
+}
+
+#[derive(
+    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
+)]
+pub enum DoryAssistVirtualPolynomial {
+    Gt(GtPolynomial),
+    G1(G1Polynomial),
+    G2(G2Polynomial),
+    MillerLoop(MillerLoopPolynomial),
+    DoryReduce(DoryReducePolynomial),
+    Wiring(WiringPolynomial),
+    Packing(PackingPolynomial),
+}
+
+#[derive(
+    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
+)]
+pub enum DoryAssistPolynomialId {
+    Committed(DoryAssistCommittedPolynomial),
+    Virtual(DoryAssistVirtualPolynomial),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistOpeningId {
+    Polynomial {
+        polynomial: DoryAssistPolynomialId,
+        relation: DoryAssistRelationId,
+    },
+}
+
+impl DoryAssistOpeningId {
+    pub fn polynomial(
+        polynomial: impl Into<DoryAssistPolynomialId>,
+        relation: DoryAssistRelationId,
+    ) -> Self {
+        Self::Polynomial {
+            polynomial: polynomial.into(),
+            relation,
+        }
+    }
+
+    pub fn committed(
+        polynomial: DoryAssistCommittedPolynomial,
+        relation: DoryAssistRelationId,
+    ) -> Self {
+        Self::polynomial(polynomial, relation)
+    }
+
+    pub fn virtual_polynomial(
+        polynomial: impl Into<DoryAssistVirtualPolynomial>,
+        relation: DoryAssistRelationId,
+    ) -> Self {
+        Self::polynomial(polynomial.into(), relation)
+    }
+
+    pub fn dense_witness(relation: DoryAssistRelationId) -> Self {
+        Self::committed(DoryAssistCommittedPolynomial::DenseWitness, relation)
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistPublicId {
+    DoryProofArtifact(usize),
+    VerifierSetupDigest,
+    VerifierSetupArtifact(usize),
+    JoltEvaluationClaim(usize),
+    JoltCommitment(usize),
+    TranscriptScalar(usize),
+    BoundarySelector {
+        relation: DoryAssistRelationId,
+        endpoint: DoryAssistBoundaryEndpoint,
+    },
+    BoundaryValue {
+        relation: DoryAssistRelationId,
+        endpoint: DoryAssistBoundaryEndpoint,
+        component: usize,
+    },
+    GtShiftEqKernel,
+    MillerLoopSelector {
+        relation: DoryAssistRelationId,
+        selector: MillerLoopSelector,
+    },
+    MillerLoopConstant(MillerLoopConstant),
+    MillerLoopShiftEqKernel(DoryAssistRelationId),
+    DoryReduceShiftEqKernel,
+    DoryReduceInitialE2(usize),
+    WiringEnabledMask(DoryAssistRelationId),
+    PrefixPackingWeight(usize),
+    MillerLoopOutputGt(usize),
+    NativeFinalCheckInput(usize),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistBoundaryEndpoint {
+    Initial,
+    Final,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistValueType {
+    Scalar,
+    Fq2,
+    G1,
+    G2,
+    Gt,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DoryAssistValueRef {
+    Witness {
+        relation: DoryAssistRelationId,
+        polynomial: DoryAssistVirtualPolynomial,
+        row: usize,
+        component: usize,
+    },
+    Public {
+        id: DoryAssistPublicId,
+        component: usize,
+    },
+    Challenge(DoryAssistChallengeId),
+    Constant(usize),
+}
+
+impl DoryAssistValueRef {
+    pub const fn witness(
+        relation: DoryAssistRelationId,
+        polynomial: DoryAssistVirtualPolynomial,
+        row: usize,
+        component: usize,
+    ) -> Self {
+        Self::Witness {
+            relation,
+            polynomial,
+            row,
+            component,
+        }
+    }
+
+    pub const fn public(id: DoryAssistPublicId, component: usize) -> Self {
+        Self::Public { id, component }
+    }
+
+    pub fn witness_opening(self) -> Option<DoryAssistOpeningId> {
+        match self {
+            Self::Witness {
+                relation,
+                polynomial,
+                ..
+            } => Some(DoryAssistOpeningId::virtual_polynomial(
+                polynomial, relation,
+            )),
+            Self::Public { .. } | Self::Challenge(_) | Self::Constant(_) => None,
+        }
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DoryAssistCopyConstraint {
+    pub value_type: DoryAssistValueType,
+    pub source: DoryAssistValueRef,
+    pub target: DoryAssistValueRef,
+}
+
+impl DoryAssistCopyConstraint {
+    pub const fn new(
+        value_type: DoryAssistValueType,
+        source: DoryAssistValueRef,
+        target: DoryAssistValueRef,
+    ) -> Self {
+        Self {
+            value_type,
+            source,
+            target,
+        }
+    }
+}

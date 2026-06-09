@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage3<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage3<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -9,6 +9,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: Clone,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     let dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);

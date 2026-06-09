@@ -12,4 +12,8 @@ pub trait ExecutionBackend {
 
 pub trait TraceSource {
     fn next_row(&mut self) -> Option<TraceRow>;
+
+    fn rows(&self) -> Option<&[TraceRow]> {
+        None
+    }
 }

@@ -20,6 +20,126 @@ pub const FUNCT3_ADVICE_LD: u32 = 0b110; // Load doubleword from advice tape
 #[doc(hidden)]
 pub const FUNCT3_ADVICE_LEN: u32 = 0b111; // Get number of remaining bytes in advice tape
 
+#[doc(hidden)]
+pub const FIELD_INLINE_OPCODE: u32 = 0x7b;
+#[doc(hidden)]
+pub const FIELD_INLINE_ADD: u32 = 0;
+#[doc(hidden)]
+pub const FIELD_INLINE_SUB: u32 = 1;
+#[doc(hidden)]
+pub const FIELD_INLINE_MUL: u32 = 2;
+#[doc(hidden)]
+pub const FIELD_INLINE_INV: u32 = 3;
+#[doc(hidden)]
+pub const FIELD_INLINE_ASSERT_EQ: u32 = 4;
+#[doc(hidden)]
+pub const FIELD_INLINE_LOAD_FROM_X: u32 = 5;
+#[doc(hidden)]
+pub const FIELD_INLINE_STORE_TO_X: u32 = 6;
+#[doc(hidden)]
+pub const FIELD_INLINE_LOAD_IMM: u32 = 7;
+
+#[doc(hidden)]
+pub const fn field_inline_word(funct3: u32, rd: u32, rs1: u32, rs2_or_imm: u32) -> u32 {
+    FIELD_INLINE_OPCODE
+        | ((rd & 0x1f) << 7)
+        | ((funct3 & 0x7) << 12)
+        | ((rs1 & 0x1f) << 15)
+        | ((rs2_or_imm & 0xfff) << 20)
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __field_inline_word {
+    ($word:expr) => {{
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        {
+            const WORD: u32 = $word;
+            // SAFETY: this emits a fixed custom Jolt instruction word for the
+            // tracer; operands are encoded constants, and no Rust memory is touched.
+            unsafe {
+                core::arch::asm!(".word {word}", word = const WORD, options(nostack));
+            }
+        }
+        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+        {
+            let _ = $word;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! field_load_imm {
+    ($rd:literal, $imm:literal) => {
+        $crate::__field_inline_word!($crate::field_inline_word(
+            $crate::FIELD_INLINE_LOAD_IMM,
+            $rd,
+            0,
+            $imm
+        ))
+    };
+}
+
+#[macro_export]
+macro_rules! field_add {
+    ($rd:literal, $rs1:literal, $rs2:literal) => {
+        $crate::__field_inline_word!($crate::field_inline_word(
+            $crate::FIELD_INLINE_ADD,
+            $rd,
+            $rs1,
+            $rs2
+        ))
+    };
+}
+
+#[macro_export]
+macro_rules! field_sub {
+    ($rd:literal, $rs1:literal, $rs2:literal) => {
+        $crate::__field_inline_word!($crate::field_inline_word(
+            $crate::FIELD_INLINE_SUB,
+            $rd,
+            $rs1,
+            $rs2
+        ))
+    };
+}
+
+#[macro_export]
+macro_rules! field_mul {
+    ($rd:literal, $rs1:literal, $rs2:literal) => {
+        $crate::__field_inline_word!($crate::field_inline_word(
+            $crate::FIELD_INLINE_MUL,
+            $rd,
+            $rs1,
+            $rs2
+        ))
+    };
+}
+
+#[macro_export]
+macro_rules! field_inv {
+    ($rd:literal, $rs1:literal) => {
+        $crate::__field_inline_word!($crate::field_inline_word(
+            $crate::FIELD_INLINE_INV,
+            $rd,
+            $rs1,
+            0
+        ))
+    };
+}
+
+#[macro_export]
+macro_rules! field_assert_eq {
+    ($rs1:literal, $rs2:literal) => {
+        $crate::__field_inline_word!($crate::field_inline_word(
+            $crate::FIELD_INLINE_ASSERT_EQ,
+            0,
+            $rs1,
+            $rs2
+        ))
+    };
+}
+
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub mod host_utils;
 

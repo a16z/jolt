@@ -6,8 +6,11 @@
 pub mod error;
 pub mod execution;
 pub mod expand;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 #[cfg(feature = "image")]
 pub mod image;
+pub mod lookup;
 pub mod preprocess;
 
 pub use error::ProgramError;

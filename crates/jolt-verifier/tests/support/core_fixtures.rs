@@ -193,8 +193,7 @@ pub enum LegacyProofStageTarget {
     Stage3Batch,
     Stage4Batch,
     Stage5Batch,
-    Stage6AddressPhase,
-    Stage6CyclePhase,
+    Stage6Batch,
     Stage7Batch,
 }
 
@@ -291,11 +290,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_sumcheck_round_count(&self.proof.stage5_sumcheck_proof)
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_sumcheck_round_count(&self.proof.stage6a_sumcheck_proof)
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_sumcheck_round_count(&self.proof.stage6b_sumcheck_proof)
+            LegacyProofStageTarget::Stage6Batch => {
+                core_sumcheck_round_count(&self.proof.stage6_sumcheck_proof)
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_sumcheck_round_count(&self.proof.stage7_sumcheck_proof)
@@ -328,11 +324,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_mutate_sumcheck_round(&mut self.proof.stage5_sumcheck_proof, round_index);
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_mutate_sumcheck_round(&mut self.proof.stage6a_sumcheck_proof, round_index);
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_mutate_sumcheck_round(&mut self.proof.stage6b_sumcheck_proof, round_index);
+            LegacyProofStageTarget::Stage6Batch => {
+                core_mutate_sumcheck_round(&mut self.proof.stage6_sumcheck_proof, round_index);
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_mutate_sumcheck_round(&mut self.proof.stage7_sumcheck_proof, round_index);
@@ -363,11 +356,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_pop_sumcheck_round(&mut self.proof.stage5_sumcheck_proof);
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_pop_sumcheck_round(&mut self.proof.stage6a_sumcheck_proof);
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_pop_sumcheck_round(&mut self.proof.stage6b_sumcheck_proof);
+            LegacyProofStageTarget::Stage6Batch => {
+                core_pop_sumcheck_round(&mut self.proof.stage6_sumcheck_proof);
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_pop_sumcheck_round(&mut self.proof.stage7_sumcheck_proof);
@@ -398,11 +388,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_push_sumcheck_round(&mut self.proof.stage5_sumcheck_proof);
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_push_sumcheck_round(&mut self.proof.stage6a_sumcheck_proof);
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_push_sumcheck_round(&mut self.proof.stage6b_sumcheck_proof);
+            LegacyProofStageTarget::Stage6Batch => {
+                core_push_sumcheck_round(&mut self.proof.stage6_sumcheck_proof);
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_push_sumcheck_round(&mut self.proof.stage7_sumcheck_proof);
@@ -954,10 +941,7 @@ fn core_opening_id(id: JoltOpeningId) -> CoreOpeningId {
         JoltOpeningId::Polynomial {
             polynomial,
             relation,
-        } => CoreOpeningId::Polynomial(
-            core_polynomial_id(polynomial),
-            core_sumcheck_id_for_opening(polynomial, relation),
-        ),
+        } => CoreOpeningId::Polynomial(core_polynomial_id(polynomial), core_sumcheck_id(relation)),
         JoltOpeningId::UntrustedAdvice { relation } => {
             CoreOpeningId::UntrustedAdvice(core_sumcheck_id(relation))
         }
@@ -976,22 +960,6 @@ fn core_polynomial_id(id: JoltPolynomialId) -> CorePolynomialId {
         JoltPolynomialId::Virtual(polynomial) => {
             CorePolynomialId::Virtual(core_virtual_polynomial(polynomial))
         }
-    }
-}
-
-#[cfg(not(feature = "zk"))]
-fn core_sumcheck_id_for_opening(
-    polynomial: JoltPolynomialId,
-    relation: JoltRelationId,
-) -> CoreSumcheckId {
-    match polynomial {
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::BytecodeReadRafAddrClaim) => {
-            CoreSumcheckId::BytecodeReadRafAddressPhase
-        }
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::BooleanityAddrClaim) => {
-            CoreSumcheckId::BooleanityAddressPhase
-        }
-        _ => core_sumcheck_id(relation),
     }
 }
 
@@ -1060,10 +1028,6 @@ fn core_virtual_polynomial(id: JoltVirtualPolynomial) -> CoreVirtualPolynomial {
         JoltVirtualPolynomial::LookupTableFlag(index) => {
             CoreVirtualPolynomial::LookupTableFlag(index)
         }
-        JoltVirtualPolynomial::BytecodeReadRafAddrClaim => {
-            CoreVirtualPolynomial::BytecodeReadRafAddrClaim
-        }
-        JoltVirtualPolynomial::BooleanityAddrClaim => CoreVirtualPolynomial::BooleanityAddrClaim,
     }
 }
 

@@ -1,0 +1,69 @@
+[package]
+name = "jolt-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Protocol orchestration for modular Jolt proving"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "prover"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+prover-harness = ["jolt-backends/prover-harness"]
+field-inline = [
+  "jolt-backends/field-inline",
+  "jolt-claims/field-inline",
+  "jolt-program/field-inline",
+  "jolt-r1cs/field-inline",
+  "jolt-riscv/field-inline",
+  "jolt-sdk/field-inline",
+  "jolt-verifier/field-inline",
+  "jolt-witness/field-inline",
+  "muldiv-guest/field-inline",
+  "sha2-chain-guest/field-inline",
+  "tracer/field-inline",
+]
+zk = ["jolt-backends/zk", "jolt-verifier/zk"]
+
+[dependencies]
+common.workspace = true
+jolt-backends.workspace = true
+jolt-blindfold.workspace = true
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-program.workspace = true
+jolt-r1cs.workspace = true
+jolt-riscv.workspace = true
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+jolt-verifier.workspace = true
+jolt-witness.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+rayon.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bincode.workspace = true
+blake2.workspace = true
+jolt-core = { workspace = true, features = ["host"] }
+jolt-dory = { path = "../jolt-dory" }
+jolt-field.workspace = true
+jolt-openings = { workspace = true, features = ["test-utils"] }
+jolt-program = { workspace = true, features = ["image"] }
+jolt-sdk = { workspace = true, features = ["host"] }
+muldiv-guest = { path = "../../examples/muldiv/guest" }
+serde = { workspace = true, features = ["std"] }
+sha2-chain-guest = { path = "../../examples/sha2-chain/guest" }
+tracer = { workspace = true, features = ["std"] }
+
+[[bench]]
+name = "e2e_micro"
+harness = false

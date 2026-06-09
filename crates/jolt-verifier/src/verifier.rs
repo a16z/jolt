@@ -1,28 +1,66 @@
 //! Top-level verifier entry point.
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::{
+    field_inline::formulas::bytecode as field_bytecode, jolt::JoltRelationId,
+};
+
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
+    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
-    proof::JoltProof,
+    proof::{JoltCommitments, JoltProof},
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
-        zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
+        zk::{blindfold, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
     },
     VerifierError,
 };
 
-pub fn verify<F, PCS, VC, T>(
+#[derive(Debug)]
+pub struct PreStage1VerifierState<T> {
+    pub checked: CheckedInputs,
+    pub transcript: T,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProofTranscriptConfig {
+    pub rw_config: JoltReadWriteConfig,
+    pub one_hot_config: JoltOneHotConfig,
+    pub trace_polynomial_order: TracePolynomialOrder,
+}
+
+impl ProofTranscriptConfig {
+    pub const fn new(
+        rw_config: JoltReadWriteConfig,
+        one_hot_config: JoltOneHotConfig,
+        trace_polynomial_order: TracePolynomialOrder,
+    ) -> Self {
+        Self {
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
+        }
+    }
+}
+
+pub fn verify<F, PCS, VC, T, PcsAssist>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC>,
+    proof: &JoltProof<
+        PCS,
+        VC,
+        jolt_blindfold::BlindFoldProof<F, <VC as jolt_crypto::Commitment>::Output>,
+        PcsAssist,
+    >,
     trusted_advice_commitment: Option<&PCS::Output>,
     zk: bool,
 ) -> Result<(), VerifierError>
@@ -34,9 +72,13 @@ where
     PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
+    let config = JoltProtocolConfig::selected_for_zk::<PCS, PcsAssist>(zk);
+    validate_proof_config(&config, proof)?;
+
     let checked = validate_inputs(
         preprocessing,
         public_io,
@@ -45,7 +87,6 @@ where
         zk,
     )?;
     validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -96,6 +137,7 @@ where
     )?;
     let stage8 = stage8::verify(
         &checked,
+        &config,
         preprocessing,
         proof,
         trusted_advice_commitment,
@@ -125,12 +167,15 @@ where
             .as_ref()
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
         transcript.append(&Label(b"BlindFold"));
-        blindfold
-            .protocol
-            .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
-            .map_err(|error| VerifierError::BlindFoldVerificationFailed {
-                reason: error.to_string(),
-            })?;
+        jolt_blindfold::verify::<F, VC, T>(
+            &blindfold.protocol,
+            proof.blindfold_proof()?,
+            vc_setup,
+            &mut transcript,
+        )
+        .map_err(|error| VerifierError::BlindFoldVerificationFailed {
+            reason: error.to_string(),
+        })?;
         return Ok(());
     }
 
@@ -139,6 +184,42 @@ where
     };
 
     Ok(())
+}
+
+pub fn verify_until_stage1<PCS, VC, T, ZkProof, PcsAssist>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    zk: bool,
+) -> Result<PreStage1VerifierState<T>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let config = JoltProtocolConfig::selected_for_zk::<PCS, PcsAssist>(zk);
+    validate_proof_config(&config, proof)?;
+
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        zk,
+    )?;
+    validate_proof_consistency(proof, checked.zk)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
+
+    Ok(PreStage1VerifierState {
+        checked,
+        transcript,
+    })
 }
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
@@ -152,12 +233,39 @@ pub struct CheckedInputs {
     pub preprocessing_digest: [u8; 32],
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline_bytecode_transcript: Vec<u8>,
 }
 
-pub fn validate_inputs<PCS, VC, ZkProof>(
+pub fn validate_inputs<PCS, VC, ZkProof, PcsAssist>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
+    trusted_advice_commitment_present: bool,
+    zk: bool,
+) -> Result<CheckedInputs, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
+{
+    validate_inputs_from_parts(
+        preprocessing,
+        public_io,
+        &proof.protocol,
+        proof.trace_length,
+        proof.ram_K,
+        trusted_advice_commitment_present,
+        zk,
+    )
+}
+
+pub fn validate_inputs_from_parts<PCS, VC, PcsAssistConfig>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    protocol: &JoltProtocolConfig<PcsAssistConfig>,
+    trace_length: usize,
+    ram_k: usize,
     trusted_advice_commitment_present: bool,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
@@ -185,33 +293,17 @@ where
         });
     }
 
-    if !proof.trace_length.is_power_of_two()
-        || proof.trace_length > preprocessing.program.max_padded_trace_length
+    if !trace_length.is_power_of_two()
+        || trace_length > preprocessing.program.max_padded_trace_length
     {
         return Err(VerifierError::InvalidTraceLength {
-            got: proof.trace_length,
+            got: trace_length,
             max: preprocessing.program.max_padded_trace_length,
         });
     }
 
-    let min_ram_k = compute_min_ram_k(
-        &preprocessing.program.ram,
-        &preprocessing.program.memory_layout,
-    )
-    .map_err(|error| VerifierError::InvalidMemoryLayout {
-        reason: error.to_string(),
-    })?;
-    let max_ram_k = compute_max_ram_k(&preprocessing.program.memory_layout).map_err(|error| {
-        VerifierError::InvalidMemoryLayout {
-            reason: error.to_string(),
-        }
-    })?;
-    if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_k || proof.ram_K > max_ram_k {
-        return Err(VerifierError::InvalidRamK {
-            got: proof.ram_K,
-            min: min_ram_k,
-            max: max_ram_k,
-        });
+    if !ram_k.is_power_of_two() {
+        return Err(VerifierError::InvalidRamK { got: ram_k });
     }
 
     let vc_capacity = if zk {
@@ -221,6 +313,33 @@ where
     } else {
         None
     };
+
+    #[cfg(feature = "field-inline")]
+    let field_inline_bytecode_transcript = {
+        let field_inline_bytecode =
+            preprocessing
+                .field_inline_bytecode
+                .as_deref()
+                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: "field-inline bytecode metadata is missing".to_string(),
+                })?;
+        field_bytecode::validate_bytecode_rows(
+            field_inline_bytecode,
+            preprocessing.program.bytecode.code_size,
+            protocol.field_inline.field_register_log_k,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
+        field_bytecode::bytecode_transcript_bytes(
+            field_inline_bytecode,
+            protocol.field_inline.field_register_log_k,
+        )
+    };
+    #[cfg(not(feature = "field-inline"))]
+    let _ = protocol;
 
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(
@@ -234,12 +353,14 @@ where
     Ok(CheckedInputs {
         public_io: normalized_public_io,
         zk,
-        trace_length: proof.trace_length,
-        ram_K: proof.ram_K,
+        trace_length,
+        ram_K: ram_k,
         entry_address: preprocessing.program.bytecode.entry_address,
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
         vc_capacity,
+        #[cfg(feature = "field-inline")]
+        field_inline_bytecode_transcript,
     })
 }
 
@@ -254,7 +375,7 @@ where
         .vc_setup
         .as_ref()
         .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-    let required = committed::zk_vector_commitment_capacity_requirement();
+    let required = crate::config::zk_vector_commitment_capacity_requirement();
     let got = VC::capacity(setup);
     if got < required {
         return Err(VerifierError::InvalidVectorCommitmentCapacity { required, got });
@@ -263,20 +384,45 @@ where
     Ok(got)
 }
 
-pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
+pub(crate) fn absorb_preamble<PCS, VC, ZkProof, PcsAssist, T>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
 ) where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
+{
+    absorb_transcript_preamble(
+        checked,
+        ProofTranscriptConfig::new(
+            proof.rw_config,
+            proof.one_hot_config,
+            proof.trace_polynomial_order,
+        ),
+        transcript,
+    );
+}
+
+pub fn absorb_transcript_preamble<T>(
+    checked: &CheckedInputs,
+    config: ProofTranscriptConfig,
+    transcript: &mut T,
+) where
+    T: Transcript,
 {
     let public_io = &checked.public_io;
     absorb_labeled_bytes(
         transcript,
         b"preprocessing_digest",
         &checked.preprocessing_digest,
+    );
+    #[cfg(feature = "field-inline")]
+    absorb_labeled_bytes(
+        transcript,
+        b"field_inline_bytecode",
+        &checked.field_inline_bytecode_transcript,
     );
     absorb_labeled_u64(
         transcript,
@@ -298,66 +444,88 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase1_num_rounds",
-        proof.rw_config.ram_rw_phase1_num_rounds as u64,
+        config.rw_config.ram_rw_phase1_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase2_num_rounds",
-        proof.rw_config.ram_rw_phase2_num_rounds as u64,
+        config.rw_config.ram_rw_phase2_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase1_num_rounds",
-        proof.rw_config.registers_rw_phase1_num_rounds as u64,
+        config.rw_config.registers_rw_phase1_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase2_num_rounds",
-        proof.rw_config.registers_rw_phase2_num_rounds as u64,
+        config.rw_config.registers_rw_phase2_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"log_k_chunk",
-        proof.one_hot_config.log_k_chunk as u64,
+        config.one_hot_config.log_k_chunk as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"lookups_ra_virtual_log_k_chunk",
-        proof.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
+        config.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"dory_layout",
-        proof.trace_polynomial_order.transcript_scalar(),
+        config.trace_polynomial_order.transcript_scalar(),
     );
 }
 
-pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub(crate) fn absorb_commitments<PCS, VC, ZkProof, PcsAssist, T>(
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
 ) where
     PCS: CommitmentScheme,
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let mut absorb_commitment = |commitment: &PCS::Output| {
+    absorb_transcript_commitments(
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+        transcript,
+    );
+}
+
+pub fn absorb_transcript_commitments<C, T>(
+    commitments: &JoltCommitments<C>,
+    untrusted_advice_commitment: Option<&C>,
+    trusted_advice_commitment: Option<&C>,
+    transcript: &mut T,
+) where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    let mut absorb_commitment = |commitment: &C| {
         append_payload_label(transcript, b"commitment", commitment);
         transcript.append(commitment);
     };
-    absorb_commitment(&proof.commitments.rd_inc);
-    absorb_commitment(&proof.commitments.ram_inc);
-    for commitment in &proof.commitments.ra.instruction {
+    absorb_commitment(&commitments.rd_inc);
+    absorb_commitment(&commitments.ram_inc);
+    for commitment in &commitments.ra.instruction {
         absorb_commitment(commitment);
     }
-    for commitment in &proof.commitments.ra.ram {
+    for commitment in &commitments.ra.ram {
         absorb_commitment(commitment);
     }
-    for commitment in &proof.commitments.ra.bytecode {
+    for commitment in &commitments.ra.bytecode {
         absorb_commitment(commitment);
     }
-    if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
+    #[cfg(feature = "field-inline")]
+    {
+        absorb_commitment(&commitments.field_inline.field_registers.rd_inc);
+    }
+    if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
         append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
         transcript.append(untrusted_advice_commitment);
     }
@@ -389,13 +557,14 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     transcript.append(&U64Word(value));
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn validate_proof_consistency<PCS, VC, ZkProof, PcsAssist>(
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     zk: bool,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     validate_sumcheck_representation(
         &proof.stages.stage1_uni_skip_first_round_proof,
@@ -433,13 +602,8 @@ where
         zk,
     )?;
     validate_sumcheck_representation(
-        &proof.stages.stage6a_sumcheck_proof,
-        "stage6a_sumcheck_proof",
-        zk,
-    )?;
-    validate_sumcheck_representation(
-        &proof.stages.stage6b_sumcheck_proof,
-        "stage6b_sumcheck_proof",
+        &proof.stages.stage6_sumcheck_proof,
+        "stage6_sumcheck_proof",
         zk,
     )?;
     validate_sumcheck_representation(
@@ -483,8 +647,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pcs_assist::{NoPcsAssist, NoPcsAssistProof};
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
-    use common::jolt_device::{JoltDevice, MemoryConfig};
+    #[cfg(feature = "field-inline")]
+    use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
+    use common::jolt_device::{JoltDevice, MemoryLayout};
+    use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::Fr;
@@ -496,14 +664,14 @@ mod tests {
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
-    use jolt_transcript::Transcript;
+    use jolt_transcript::{Transcript, U64Word};
     use num_traits::Zero;
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    struct TestCommitment;
+    struct TestCommitment(u64);
 
     impl Commitment for TestPcs {
         type Output = TestCommitment;
@@ -528,7 +696,7 @@ mod tests {
             _poly: &P,
             _setup: &Self::ProverSetup,
         ) -> (Self::Output, Self::OpeningHint) {
-            (TestCommitment, ())
+            (TestCommitment::default(), ())
         }
 
         fn open(
@@ -561,7 +729,39 @@ mod tests {
     }
 
     impl jolt_transcript::AppendToTranscript for TestCommitment {
-        fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
+        fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+            transcript.append(&U64Word(self.0));
+        }
+
+        fn transcript_payload_len(&self) -> Option<u64> {
+            Some(32)
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingTranscript {
+        chunks: Vec<Vec<u8>>,
+        state: [u8; 32],
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(_label: &'static [u8]) -> Self {
+            Self::default()
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.chunks.push(bytes.to_vec());
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::zero()
+        }
+
+        fn state(&self) -> &[u8; 32] {
+            &self.state
+        }
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
@@ -639,6 +839,80 @@ mod tests {
     }
 
     #[test]
+    fn validate_proof_config_accepts_default_disabled_field_inline() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::disabled());
+        proof.protocol = config.clone();
+        set_selected_pcs_assist_payload(&mut proof);
+
+        assert!(validate_proof_config(&config, &proof).is_ok());
+    }
+
+    #[test]
+    fn validate_proof_config_rejects_protocol_mismatch() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.protocol = JoltProtocolConfig::for_zk(true);
+
+        assert!(matches!(
+            validate_proof_config(&JoltProtocolConfig::for_zk(false), &proof),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_proof_config_accepts_enabled_field_inline_config() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::native_v1());
+        proof.protocol = config.clone();
+        set_selected_pcs_assist_payload(&mut proof);
+
+        assert!(validate_proof_config(&config, &proof).is_ok());
+    }
+
+    #[test]
+    fn validate_proof_config_rejects_field_inline_config_mismatch() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::native_v1());
+        proof.protocol = config;
+        set_selected_pcs_assist_payload(&mut proof);
+
+        assert!(matches!(
+            validate_proof_config(
+                &protocol_config(false, FieldInlineConfig::disabled()),
+                &proof
+            ),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    #[cfg(not(feature = "pcs-assist"))]
+    #[test]
+    fn validate_proof_config_rejects_unexpected_pcs_assist_payload() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::disabled());
+        proof.protocol = config.clone();
+        proof.pcs_assist = Some(NoPcsAssistProof);
+
+        assert!(matches!(
+            validate_proof_config(&config, &proof),
+            Err(VerifierError::UnexpectedPcsAssistProof)
+        ));
+    }
+
+    #[cfg(feature = "pcs-assist")]
+    #[test]
+    fn validate_proof_config_rejects_missing_required_pcs_assist_payload() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        let config = protocol_config(false, FieldInlineConfig::disabled());
+        proof.protocol = config.clone();
+
+        assert!(matches!(
+            validate_proof_config(&config, &proof),
+            Err(VerifierError::MissingPcsAssistProof)
+        ));
+    }
+
+    #[test]
     fn validate_inputs_normalizes_public_output() {
         let preprocessing = test_preprocessing();
         let mut public_io = JoltDevice {
@@ -681,39 +955,50 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "field-inline")]
     #[test]
-    fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
-        let preprocessing = test_preprocessing();
+    fn validate_inputs_rejects_missing_field_inline_bytecode() {
+        let mut preprocessing = test_preprocessing();
+        preprocessing.field_inline_bytecode = None;
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout.clone(),
             ..JoltDevice::default()
         };
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.ram_K = 2;
+        let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false, false),
-            Err(VerifierError::InvalidRamK { got: 2, min: 4, .. })
+            Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                ..
+            })
         ));
     }
 
+    #[cfg(feature = "field-inline")]
     #[test]
-    fn validate_inputs_rejects_ram_domain_above_layout_maximum() {
-        let preprocessing = test_preprocessing();
+    fn validate_inputs_rejects_malformed_field_inline_bytecode() {
+        let mut preprocessing = test_preprocessing();
+        preprocessing.program.bytecode.code_size = 1;
+        preprocessing.field_inline_bytecode = Some(vec![field_bytecode::FieldInlineBytecodeRow {
+            flags: field_bytecode::FieldInlineBytecodeFlags {
+                mul: true,
+                ..field_bytecode::FieldInlineBytecodeFlags::default()
+            },
+            ..field_bytecode::FieldInlineBytecodeRow::default()
+        }]);
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout.clone(),
             ..JoltDevice::default()
         };
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.ram_K = 1 << 20;
+        let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false, false),
-            Err(VerifierError::InvalidRamK {
-                got,
-                min: 4,
-                max,
-            }) if got == 1 << 20 && max < got
+            Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                ..
+            })
         ));
     }
 
@@ -751,11 +1036,53 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn absorb_commitments_follows_selected_commitment_order() {
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.commitments = selected_commitments(
+            TestCommitment(1),
+            TestCommitment(2),
+            crate::proof::JoltRaCommitments::new(
+                vec![TestCommitment(3), TestCommitment(4)],
+                vec![TestCommitment(5)],
+                vec![TestCommitment(6)],
+            ),
+        );
+        proof.untrusted_advice_commitment = Some(TestCommitment(10));
+
+        let trusted_advice_commitment = TestCommitment(11);
+        let mut transcript = RecordingTranscript::new(b"commitments");
+        absorb_commitments(&proof, Some(&trusted_advice_commitment), &mut transcript);
+
+        let mut expected = vec![1, 2, 3, 4, 5, 6];
+        #[cfg(feature = "field-inline")]
+        expected.push(7);
+        expected.extend([10, 11]);
+        assert_eq!(commitment_payload_values(&transcript), expected);
+    }
+
+    fn commitment_payload_values(transcript: &RecordingTranscript) -> Vec<u64> {
+        transcript
+            .chunks
+            .iter()
+            .filter_map(|chunk| {
+                let (prefix, suffix) = chunk.split_at(24);
+                if prefix.iter().all(|byte| *byte == 0) {
+                    let mut bytes = [0u8; 8];
+                    bytes.copy_from_slice(suffix);
+                    Some(u64::from_be_bytes(bytes))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
-            crate::proof::JoltCommitments::new(
-                TestCommitment,
-                TestCommitment,
+            selected_commitments(
+                TestCommitment::default(),
+                TestCommitment::default(),
                 crate::proof::JoltRaCommitments::new(
                     Vec::<TestCommitment>::new(),
                     Vec::<TestCommitment>::new(),
@@ -767,7 +1094,7 @@ mod tests {
             None,
             claims,
             1,
-            4,
+            1,
             JoltReadWriteConfig {
                 ram_rw_phase1_num_rounds: 0,
                 ram_rw_phase2_num_rounds: 0,
@@ -782,6 +1109,43 @@ mod tests {
         )
     }
 
+    #[cfg(not(feature = "field-inline"))]
+    fn selected_commitments(
+        rd_inc: TestCommitment,
+        ram_inc: TestCommitment,
+        ra: crate::proof::JoltRaCommitments<TestCommitment>,
+    ) -> crate::proof::JoltCommitments<TestCommitment> {
+        crate::proof::JoltCommitments::new(rd_inc, ram_inc, ra)
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn selected_commitments(
+        rd_inc: TestCommitment,
+        ram_inc: TestCommitment,
+        ra: crate::proof::JoltRaCommitments<TestCommitment>,
+    ) -> crate::proof::JoltCommitments<TestCommitment> {
+        crate::proof::JoltCommitments::new(
+            rd_inc,
+            ram_inc,
+            ra,
+            FieldInlineCommitments::new(FieldRegistersCommitments::new(TestCommitment(7))),
+        )
+    }
+
+    fn protocol_config(zk: bool, field_inline: FieldInlineConfig) -> JoltProtocolConfig {
+        let mut config = JoltProtocolConfig::selected_for_zk::<TestPcs, NoPcsAssist>(zk);
+        config.field_inline = field_inline;
+        config
+    }
+
+    #[cfg(feature = "pcs-assist")]
+    fn set_selected_pcs_assist_payload(proof: &mut TestProof) {
+        proof.pcs_assist = Some(NoPcsAssistProof);
+    }
+
+    #[cfg(not(feature = "pcs-assist"))]
+    fn set_selected_pcs_assist_payload(_proof: &mut TestProof) {}
+
     fn clear_claims() -> TestClaims {
         let zero = Fr::zero();
 
@@ -789,6 +1153,8 @@ mod tests {
             stage1: stage1::inputs::Stage1Claims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
+                #[cfg(feature = "field-inline")]
+                field_inline: stage1::inputs::FieldInlineStage1Claims::zero(),
             },
             stage2: stage2::inputs::Stage2Claims {
                 product_uniskip_output_claim: zero,
@@ -807,6 +1173,14 @@ mod tests {
                         branch_flag: zero,
                         next_is_noop: zero,
                         virtual_instruction: zero,
+                    },
+                    #[cfg(feature = "field-inline")]
+                    field_inline: stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+                        product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                            field_rs1_value: zero,
+                            field_rs2_value: zero,
+                            field_rd_value: zero,
+                        },
                     },
                     instruction_claim_reduction:
                         stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
@@ -857,6 +1231,17 @@ mod tests {
                     rd_wa: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage4::inputs::FieldInlineStage4Claims {
+                    field_registers_read_write:
+                        stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                            field_registers_val: zero,
+                            field_rs1_ra: zero,
+                            field_rs2_ra: zero,
+                            field_rd_wa: zero,
+                            field_rd_inc: zero,
+                        },
+                },
                 ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                     ram_ra: zero,
                     ram_inc: zero,
@@ -876,12 +1261,16 @@ mod tests {
                         rd_inc: zero,
                         rd_wa: zero,
                     },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage5::inputs::FieldInlineStage5Claims {
+                    field_registers_val_evaluation:
+                        stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                            field_rd_inc: zero,
+                            field_rd_wa: zero,
+                        },
+                },
             },
             stage6: stage6::inputs::Stage6Claims {
-                address_phase: stage6::inputs::Stage6AddressPhaseClaims {
-                    bytecode_read_raf: zero,
-                    booleanity: zero,
-                },
                 bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
                     bytecode_ra: Vec::new(),
                 },
@@ -903,6 +1292,13 @@ mod tests {
                 inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
                     ram_inc: zero,
                     rd_inc: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage6::inputs::FieldInlineStage6Claims {
+                    field_registers_inc_claim_reduction:
+                        stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                            field_rd_inc: zero,
+                        },
                 },
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
@@ -1013,8 +1409,7 @@ mod tests {
             stage3_sumcheck_proof: sumcheck_proof(is_zk),
             stage4_sumcheck_proof: sumcheck_proof(is_zk),
             stage5_sumcheck_proof: sumcheck_proof(is_zk),
-            stage6a_sumcheck_proof: sumcheck_proof(is_zk),
-            stage6b_sumcheck_proof: sumcheck_proof(is_zk),
+            stage6_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
         }
     }
@@ -1036,16 +1431,13 @@ mod tests {
     }
 
     fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
-            program_size: Some(1024),
-            max_trusted_advice_size: 0,
-            max_untrusted_advice_size: 0,
+        let memory_layout = MemoryLayout {
             max_input_size: 8,
             max_output_size: 8,
-            stack_size: 8,
             heap_size: 8,
-        });
-        JoltVerifierPreprocessing::new(
+            ..MemoryLayout::default()
+        };
+        let preprocessing = JoltVerifierPreprocessing::new(
             JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),
                 ram: RAMPreprocessing::default(),
@@ -1055,6 +1447,9 @@ mod tests {
             [7; 32],
             (),
             None,
-        )
+        );
+        #[cfg(feature = "field-inline")]
+        let preprocessing = preprocessing.with_field_inline_bytecode(Vec::new());
+        preprocessing
     }
 }
