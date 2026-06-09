@@ -1,6 +1,7 @@
 //! Sparse per-cycle R1CS constraint matrices.
 
 use jolt_field::Field;
+use jolt_poly::EqPolynomial;
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
@@ -9,12 +10,21 @@ pub type SparseRow<F> = Vec<(usize, F)>;
 
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
 pub enum ConstraintMatrixEvalError {
+    #[error("row point length mismatch: expected {expected}, got {actual}")]
+    RowPointLengthMismatch { expected: usize, actual: usize },
+    #[error("column point length mismatch: expected {expected}, got {actual}")]
+    ColumnPointLengthMismatch { expected: usize, actual: usize },
     #[error("row weights length mismatch: expected at least {expected}, got {actual}")]
     RowWeightsLengthMismatch { expected: usize, actual: usize },
     #[error("column weights length mismatch: expected {expected}, got {actual}")]
     ColumnWeightsLengthMismatch { expected: usize, actual: usize },
     #[error("column {column} out of bounds for {num_vars} variables")]
     ColumnOutOfBounds { column: usize, num_vars: usize },
+    #[error("matrix {dimension} dimension {value} cannot be padded to a power of two")]
+    PaddedDimensionOverflow {
+        dimension: &'static str,
+        value: usize,
+    },
     #[error("matrix column range overflow: start {start}, count {count}")]
     ColumnRangeOverflow { start: usize, count: usize },
 }
@@ -216,6 +226,55 @@ impl<F: Field> ConstraintMatrices<F> {
         Ok(weighted)
     }
 
+    pub fn evaluate_matrix_mles(
+        &self,
+        row_point: &[F],
+        column_point: &[F],
+    ) -> Result<MatrixColumnContributions<F>, ConstraintMatrixEvalError> {
+        let expected_row_vars = log_padded_dimension("rows", self.num_constraints)?;
+        if row_point.len() != expected_row_vars {
+            return Err(ConstraintMatrixEvalError::RowPointLengthMismatch {
+                expected: expected_row_vars,
+                actual: row_point.len(),
+            });
+        }
+
+        let expected_column_vars = log_padded_dimension("columns", self.num_vars)?;
+        if column_point.len() != expected_column_vars {
+            return Err(ConstraintMatrixEvalError::ColumnPointLengthMismatch {
+                expected: expected_column_vars,
+                actual: column_point.len(),
+            });
+        }
+
+        let row_eq = EqPolynomial::new(row_point.to_vec()).evaluations();
+        let column_eq = EqPolynomial::new(column_point.to_vec()).evaluations();
+
+        Ok(MatrixColumnContributions {
+            a: matrix_bilinear_eval_columns(
+                &self.a,
+                &row_eq,
+                &column_eq[..self.num_vars],
+                0,
+                self.num_vars,
+            )?,
+            b: matrix_bilinear_eval_columns(
+                &self.b,
+                &row_eq,
+                &column_eq[..self.num_vars],
+                0,
+                self.num_vars,
+            )?,
+            c: matrix_bilinear_eval_columns(
+                &self.c,
+                &row_eq,
+                &column_eq[..self.num_vars],
+                0,
+                self.num_vars,
+            )?,
+        })
+    }
+
     pub fn linear_form_bilinear_eval(
         &self,
         row_weights: &[F],
@@ -247,6 +306,19 @@ impl<F: Field> ConstraintMatrices<F> {
         )?;
         Ok(weights[0] * a + weights[1] * b + weights[2] * c)
     }
+}
+
+fn log_padded_dimension(
+    dimension: &'static str,
+    raw: usize,
+) -> Result<usize, ConstraintMatrixEvalError> {
+    let padded = raw.max(1).checked_next_power_of_two().ok_or(
+        ConstraintMatrixEvalError::PaddedDimensionOverflow {
+            dimension,
+            value: raw,
+        },
+    )?;
+    Ok(padded.trailing_zeros() as usize)
 }
 
 #[inline]
@@ -350,6 +422,70 @@ mod tests {
         );
         let w = vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(10)];
         assert_eq!(m.check_witness(&w), Err(0));
+    }
+
+    #[test]
+    fn matrix_mles_evaluate_sparse_entries() {
+        let m = ConstraintMatrices::new(
+            2,
+            3,
+            vec![vec![(1, Fr::from_u64(2))], vec![(2, Fr::from_u64(3))]],
+            vec![vec![(0, Fr::from_u64(5))], vec![]],
+            vec![vec![], vec![(1, Fr::from_u64(7))]],
+        );
+
+        let row_point = [Fr::from_u64(11)];
+        let column_point = [Fr::from_u64(13), Fr::from_u64(17)];
+        let evals = m
+            .evaluate_matrix_mles(&row_point, &column_point)
+            .expect("matrix MLE evaluation should accept matching point sizes");
+
+        let row_0 = Fr::from_u64(1) - row_point[0];
+        let row_1 = row_point[0];
+        let col_0 = (Fr::from_u64(1) - column_point[0]) * (Fr::from_u64(1) - column_point[1]);
+        let col_1 = (Fr::from_u64(1) - column_point[0]) * column_point[1];
+        let col_2 = column_point[0] * (Fr::from_u64(1) - column_point[1]);
+
+        assert_eq!(
+            evals.a,
+            row_0 * col_1 * Fr::from_u64(2) + row_1 * col_2 * Fr::from_u64(3)
+        );
+        assert_eq!(evals.b, row_0 * col_0 * Fr::from_u64(5));
+        assert_eq!(evals.c, row_1 * col_1 * Fr::from_u64(7));
+    }
+
+    #[test]
+    fn matrix_mles_reject_wrong_point_lengths() {
+        let m = ConstraintMatrices::new(2, 3, vec![vec![]; 2], vec![vec![]; 2], vec![vec![]; 2]);
+
+        assert_eq!(
+            m.evaluate_matrix_mles(&[], &[Fr::from_u64(1), Fr::from_u64(2)]),
+            Err(ConstraintMatrixEvalError::RowPointLengthMismatch {
+                expected: 1,
+                actual: 0
+            })
+        );
+        assert_eq!(
+            m.evaluate_matrix_mles(&[Fr::from_u64(1)], &[Fr::from_u64(2)]),
+            Err(ConstraintMatrixEvalError::ColumnPointLengthMismatch {
+                expected: 2,
+                actual: 1
+            })
+        );
+    }
+
+    #[test]
+    fn matrix_mles_reject_unpaddable_dimensions() {
+        let m: ConstraintMatrices<Fr> =
+            ConstraintMatrices::new(1, usize::MAX, vec![vec![]], vec![vec![]], vec![vec![]]);
+
+        assert_eq!(
+            m.evaluate_matrix_mles(&[], &[]),
+            Err(ConstraintMatrixEvalError::PaddedDimensionOverflow {
+                dimension: "columns",
+                value: usize::MAX
+            })
+        );
     }
 
     #[test]

@@ -25,6 +25,8 @@ mod poseidon;
 mod prover;
 mod setup;
 mod verifier;
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
 
 pub use codec::BytesMsg;
 pub use digest::DigestTranscript;

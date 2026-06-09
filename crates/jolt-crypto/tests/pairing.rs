@@ -1,7 +1,7 @@
 //! Pairing bilinearity and consistency tests for BN254.
 
-use jolt_crypto::{Bn254, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_crypto::{Bn254, Bn254Fq12, Bn254G1, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
+use jolt_field::{Fq, Fr, FromPrimitiveInt, RandomSampling};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -194,4 +194,88 @@ fn gt_msm_matches_naive() {
 #[test]
 fn gt_default_is_identity() {
     assert_eq!(Bn254GT::default(), Bn254GT::identity());
+}
+
+#[test]
+fn gt_fq12_coefficients_expose_identity_layout() {
+    let coeffs = Bn254GT::identity().fq12_coefficients();
+
+    assert_eq!(coeffs[0], Fq::from_u64(1));
+    assert!(coeffs[1..]
+        .iter()
+        .all(|coefficient| *coefficient == Fq::default()));
+}
+
+#[test]
+fn gt_fq12_coefficients_are_deterministic() {
+    let value = Bn254::pairing(&Bn254::g1_generator(), &Bn254::g2_generator());
+
+    assert_eq!(value.fq12_coefficients(), value.fq12_coefficients());
+}
+
+#[test]
+fn g1_affine_coordinates_roundtrip() {
+    let value = Bn254::g1_generator().scalar_mul(&Fr::from_u64(42));
+    let coordinates = value.affine_coordinates_with_infinity();
+
+    assert_eq!(
+        Bn254G1::from_affine_coordinates_with_infinity(coordinates),
+        Some(value)
+    );
+}
+
+#[test]
+fn g2_affine_coordinates_roundtrip() {
+    let value = Bn254::g2_generator().scalar_mul(&Fr::from_u64(42));
+    let coordinates = value.affine_coordinates_with_infinity();
+
+    assert_eq!(
+        Bn254G2::from_affine_coordinates_with_infinity(coordinates),
+        Some(value)
+    );
+}
+
+#[test]
+fn gt_fq12_coefficients_roundtrip() {
+    let value = Bn254::pairing(&Bn254::g1_generator(), &Bn254::g2_generator());
+    let coefficients = value.fq12_coefficients();
+
+    assert_eq!(Bn254GT::from_fq12_coefficients(coefficients), Some(value));
+}
+
+#[test]
+fn fq12_from_gt_preserves_coefficients() {
+    let value = Bn254::pairing(&Bn254::g1_generator(), &Bn254::g2_generator());
+    let raw = Bn254Fq12::from(value);
+
+    assert_eq!(raw.coefficients(), value.fq12_coefficients());
+}
+
+#[test]
+fn fq12_final_exponentiation_accepts_identity() {
+    assert_eq!(
+        Bn254Fq12::default().final_exponentiation(),
+        Some(Bn254GT::identity())
+    );
+}
+
+#[test]
+fn raw_multi_miller_loop_final_exponentiation_matches_pairing() {
+    let g1 = Bn254::g1_generator();
+    let g2 = Bn254::g2_generator();
+    let raw = Bn254::multi_miller_loop(&[g1], &[g2]);
+
+    assert_eq!(raw.final_exponentiation(), Some(Bn254::pairing(&g1, &g2)));
+}
+
+#[test]
+fn raw_multi_miller_loop_batches_pairings() {
+    let g1 = Bn254::g1_generator();
+    let g2 = Bn254::g2_generator();
+    let two = Fr::from_u64(2);
+    let g1_twice = g1.scalar_mul(&two);
+    let raw = Bn254::multi_miller_loop(&[g1, g1_twice], &[g2, g2]);
+    let expected = Bn254::multi_pairing(&[g1, g1_twice], &[g2, g2]);
+
+    assert_eq!(raw.final_exponentiation(), Some(expected));
 }

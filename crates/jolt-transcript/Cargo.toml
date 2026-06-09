@@ -16,6 +16,8 @@ default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 transcript-blake2b = ["spongefish/blake2", "dep:blake2"]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["dep:light-poseidon"]
+r1cs = ["dep:jolt-r1cs"]
+poseidon-r1cs = ["transcript-poseidon", "r1cs"]
 
 [dependencies]
 ark-bn254.workspace = true
@@ -25,6 +27,7 @@ spongefish = { workspace = true, features = ["ark-ff"] }
 blake2 = { workspace = true, optional = true }
 digest = { workspace = true }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-r1cs = { path = "../jolt-r1cs", optional = true }
 rand.workspace = true
 
 [dev-dependencies]

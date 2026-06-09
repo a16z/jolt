@@ -2,7 +2,7 @@
 
 mod support;
 
-use jolt_blindfold::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows};
+use jolt_blindfold::{r1cs, BlindFoldStage, BlindFoldStatement, CommittedClaimRows};
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{booleanity, BooleanityDimensions},
@@ -159,12 +159,8 @@ fn build_jolt_stage_relation(
         sources.insert_public(id, value);
     }
 
-    let layout = statement
-        .allocate_layout(&mut builder)
-        .expect("layout allocates");
-    statement
-        .append(&mut builder, &layout, &mut sources)
-        .expect("constraints append");
+    let layout = r1cs::allocate_layout(&mut builder, &statement).expect("layout allocates");
+    r1cs::append(&mut builder, &statement, &layout, &mut sources).expect("constraints append");
     assign_generated_stage(&mut builder, &layout.stages[0].sumcheck, generated);
 
     let witness = builder.witness().expect("all witnesses assigned");
@@ -283,12 +279,8 @@ fn jolt_claims_pipeline_lowers_booleanity_relation() {
         sources.insert_public(public_id, f(11));
     }
 
-    let r1cs_layout = statement
-        .allocate_layout(&mut builder)
-        .expect("layout allocates");
-    statement
-        .append(&mut builder, &r1cs_layout, &mut sources)
-        .expect("constraints append");
+    let r1cs_layout = r1cs::allocate_layout(&mut builder, &statement).expect("layout allocates");
+    r1cs::append(&mut builder, &statement, &r1cs_layout, &mut sources).expect("constraints append");
     assign_generated_stage(&mut builder, &r1cs_layout.stages[0].sumcheck, &generated);
 
     let witness = builder.witness().expect("all witnesses assigned");

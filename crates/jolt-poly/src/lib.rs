@@ -20,6 +20,7 @@
 //! - [`EqPolynomial`]: Equality polynomial `eq(x, r)`, materialized via bottom-up doubling
 //! - [`EqPlusOnePolynomial`]: Successor polynomial `eq+1(x, y)` evaluating to 1 when `y = x + 1`
 //! - [`EqPlusOnePrefixSuffix`]: Prefix-suffix decomposition of `eq+1` for sqrt-sized sumcheck buffers
+//! - [`TensorEqTable`] and [`GruenSplitEqPolynomial`]: Split eq tables for sqrt-memory sumcheck kernels
 //! - [`LtPolynomial`]: Less-than polynomial `LT(x, r)` with split optimization for sqrt-sized buffers
 //! - [`IdentityPolynomial`]: Maps hypercube points to their integer index
 //! - [`UnivariatePoly`]: Coefficient-form univariate with Lagrange interpolation and compression
@@ -56,6 +57,9 @@ mod mle;
 mod multilinear;
 mod one_hot;
 mod point;
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
+mod split_eq;
 pub mod thread;
 mod univariate;
 
@@ -70,6 +74,7 @@ pub use mle::{
     block_selector_mle_msb, range_mask_mle_msb, sparse_mle_msb, sparse_segments_mle_msb, MleError,
 };
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
-pub use one_hot::OneHotPolynomial;
+pub use one_hot::{OneHotIndexOrder, OneHotPolynomial};
 pub use point::{Endianness, Point, HIGH_TO_LOW, LOW_TO_HIGH};
+pub use split_eq::{GruenSplitEqPolynomial, TensorEqTable};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};
