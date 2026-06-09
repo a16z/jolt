@@ -64,7 +64,10 @@ field-inline = [
 # `unimplemented!` for the Poseidon sponge): for recursion the 128-bit truncation
 # is costly and defeats the purpose of using Poseidon in the first place, so the
 # Poseidon configuration keeps genuine full-field challenges.
-transcript-poseidon = ["jolt-transcript/transcript-poseidon", "challenge-254-bit"]
+transcript-poseidon = [
+  "jolt-transcript/transcript-poseidon",
+  "challenge-254-bit",
+]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 # Gates `zkvm::transpilable_verifier` (the symbolic on-chain-verifier generator

@@ -22,6 +22,3 @@ jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-rand.workspace = true
