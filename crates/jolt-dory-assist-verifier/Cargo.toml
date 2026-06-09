@@ -1,0 +1,23 @@
+[package]
+name = "jolt-dory-assist-verifier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Dory-assist verifier implementation for Jolt PCS assist"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-crypto = { workspace = true, features = ["grumpkin"] }
+jolt-claims = { workspace = true }
+jolt-dory = { path = "../jolt-dory" }
+jolt-field = { workspace = true }
+jolt-hyrax = { workspace = true }
+jolt-openings = { workspace = true }
+jolt-poly = { workspace = true }
+jolt-sumcheck = { workspace = true }
+jolt-transcript = { workspace = true }
+jolt-verifier = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
