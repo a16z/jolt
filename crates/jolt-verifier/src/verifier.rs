@@ -751,6 +751,45 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn proof_roundtrips_through_canonical_bytes() {
+        let proof = proof_with_zk(false, clear_claims());
+        let bytes = proof.to_canonical_bytes();
+        assert!(bytes.is_ok(), "proof must encode");
+        let Ok(bytes) = bytes else { return };
+        let decoded = TestProof::from_canonical_bytes(&bytes);
+        assert!(decoded.is_ok(), "proof must decode");
+        let Ok(decoded) = decoded else { return };
+        assert_eq!(decoded, proof);
+    }
+
+    #[test]
+    fn from_canonical_bytes_rejects_trailing_bytes() {
+        let proof = proof_with_zk(false, clear_claims());
+        let bytes = proof.to_canonical_bytes();
+        assert!(bytes.is_ok(), "proof must encode");
+        let Ok(mut bytes) = bytes else { return };
+        bytes.push(0);
+        assert!(matches!(
+            TestProof::from_canonical_bytes(&bytes),
+            Err(VerifierError::TrailingProofBytes { .. })
+        ));
+    }
+
+    #[test]
+    fn from_canonical_bytes_rejects_oversized_input() {
+        let proof = proof_with_zk(false, clear_claims());
+        let bytes = proof.to_canonical_bytes();
+        assert!(bytes.is_ok(), "proof must encode");
+        let Ok(bytes) = bytes else { return };
+        let max = bytes.len().saturating_sub(1);
+        assert!(matches!(
+            TestProof::from_canonical_bytes_bounded(&bytes, max),
+            Err(VerifierError::ProofTooLarge { got, max: bound })
+                if got == bytes.len() && bound == max
+        ));
+    }
+
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
             crate::proof::JoltCommitments::new(

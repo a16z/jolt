@@ -2,6 +2,7 @@
 
 pub mod compat;
 pub mod config;
+pub mod decode;
 pub mod error;
 pub mod preprocessing;
 pub mod proof;
@@ -12,6 +13,7 @@ pub use config::{
     validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG,
     SELECTED_FIELD_INLINE_CONFIG,
 };
+pub use decode::MAX_PROOF_BYTES;
 pub use error::VerifierError;
 pub use preprocessing::JoltVerifierPreprocessing;
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
