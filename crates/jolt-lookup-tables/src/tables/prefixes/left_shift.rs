@@ -3,7 +3,7 @@ use jolt_field::Field;
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
 
-use super::{PrefixEval, Prefixes, SparseDensePrefix};
+use super::{PrefixCheckpoint, PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum LeftShiftPrefix {}
 
@@ -36,5 +36,53 @@ impl<F: Field> SparseDensePrefix<F> for LeftShiftPrefix {
         }
 
         result
+    }
+
+    fn prefix_mle(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        mut b: LookupBits,
+        j: usize,
+    ) -> F {
+        let _ = (checkpoints, r_x, c, b, j);
+        let mut result = checkpoints[Prefixes::LeftShift].unwrap_or(F::zero());
+        let mut prod_one_plus_y = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
+
+        if let Some(r_x) = r_x {
+            result += r_x
+                * (F::one() - F::from_u8(c as u8))
+                * prod_one_plus_y
+                * F::from_u64(1 << (XLEN - 1 - j / 2));
+            prod_one_plus_y *= F::from_u8(1 + c as u8);
+        } else {
+            let y_msb = b.pop_msb();
+            result += F::from_u8(c as u8 * (1 - y_msb))
+                * prod_one_plus_y
+                * F::from_u64(1 << (XLEN - 1 - j / 2));
+            prod_one_plus_y *= F::from_u8(1 + y_msb);
+        }
+
+        let (x, y) = b.uninterleave();
+        let (x, y_u) = (u64::from(x), u64::from(y));
+        let x = x & !y_u;
+        let shift = (y.leading_ones() as usize + XLEN - 1 - j / 2 - y.len()) as u32;
+        result += F::from_u64(x.unbounded_shl(shift)) * prod_one_plus_y;
+
+        result
+    }
+
+    fn update_prefix_checkpoint(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+        suffix_len: usize,
+    ) -> PrefixCheckpoint<F> {
+        let _ = (checkpoints, r_x, r_y, j, suffix_len);
+        let mut updated = checkpoints[Prefixes::LeftShift].unwrap_or(F::zero());
+        let prod_one_plus_y = checkpoints[Prefixes::LeftShiftHelper].unwrap_or(F::one());
+        updated += r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (XLEN - 1 - j / 2));
+        Some(updated).into()
     }
 }

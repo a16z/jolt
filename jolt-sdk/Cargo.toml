@@ -18,6 +18,11 @@ edition = "2021"
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
 zk = ["jolt-core?/zk"]
+field-inline = [
+  "jolt-core?/field-inline",
+  "jolt-program?/field-inline",
+  "tracer?/field-inline",
+]
 
 host = [
   "jolt-core/default",

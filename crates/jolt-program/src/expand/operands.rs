@@ -56,5 +56,23 @@ pub(super) const fn handles_rd_zero_internally(instruction_kind: SourceInstructi
             | SourceInstructionKind::EBREAK
             | SourceInstructionKind::CSRRW
             | SourceInstructionKind::CSRRS
+    ) || field_inline_handles_rd_zero(instruction_kind)
+}
+
+#[cfg(feature = "field-inline")]
+const fn field_inline_handles_rd_zero(instruction_kind: SourceInstructionKind) -> bool {
+    matches!(
+        instruction_kind,
+        SourceInstructionKind::FIELD_ADD
+            | SourceInstructionKind::FIELD_SUB
+            | SourceInstructionKind::FIELD_MUL
+            | SourceInstructionKind::FIELD_INV
+            | SourceInstructionKind::FIELD_LOAD_FROM_X
+            | SourceInstructionKind::FIELD_LOAD_IMM
     )
+}
+
+#[cfg(not(feature = "field-inline"))]
+const fn field_inline_handles_rd_zero(_instruction_kind: SourceInstructionKind) -> bool {
+    false
 }
