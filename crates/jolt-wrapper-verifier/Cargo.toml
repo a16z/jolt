@@ -1,0 +1,37 @@
+[package]
+name = "jolt-wrapper-verifier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Verifier-side wrapper protocol for configured Jolt verifier R1CS"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+zk = ["jolt-hyperkzg/zk"]
+
+[dependencies]
+jolt-blindfold.workspace = true
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
+jolt-field.workspace = true
+jolt-hyperkzg.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-r1cs.workspace = true
+jolt-sumcheck.workspace = true
+jolt-transcript = { workspace = true, features = ["poseidon-r1cs"] }
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+bincode.workspace = true
+jolt-crypto = { workspace = true, features = ["r1cs"] }
+jolt-hyrax = { workspace = true, features = ["r1cs"] }
+jolt-openings = { workspace = true, features = ["r1cs"] }
+jolt-sumcheck = { workspace = true, features = ["r1cs"] }
+rand_chacha.workspace = true
+rand_core.workspace = true
+rayon.workspace = true
