@@ -4,15 +4,26 @@ Dory is the [polynomial commitment scheme](./appendix/pcs.md) used in Jolt. It i
 
 ## Background: AFGHO commitments
 
-Dory builds on the AFGHO inner-product commitment scheme ([Aftuck-Fuchsbauer-Ghosh-Hofheinz-Oechsner, 2016](https://eprint.iacr.org/2016/457)). Given a bilinear group $(G_1, G_2, G_T, e)$ and public generators $\Gamma_1 = (g_1^{(1)}, \dots, g_1^{(n)}) \in G_1^n$, $\Gamma_2 = (g_2^{(1)}, \dots, g_2^{(n)}) \in G_2^n$, a vector $\mathbf{v} \in \mathbb{F}^n$ is committed as a pair:
+Dory uses a pairing-inner-product commitment to vectors of group elements, based on the structure-preserving commitment scheme of [Abe-Fuchsbauer-Groth-Haralambiev-Ohkubo, 2010](https://doi.org/10.1007/978-3-642-14623-7_12) (AFGHO).
+
+Work over bilinear groups $(G_1, G_2, G_T, e)$, and write the group operations additively. Given a vector of source-group elements $\mathbf{x} = (x_1, \dots, x_n) \in G_1^n$ and public generators $\Gamma_2 = (g_2^{(1)}, \dots, g_2^{(n)}) \in G_2^n$, the core commitment is the pairing inner product:
 
 $$
-C_1 = \sum_{i=1}^{n} v_i \cdot g_1^{(i)} \in G_1, \qquad C_2 = \sum_{i=1}^{n} v_i \cdot g_2^{(i)} \in G_2
+C = \langle \mathbf{x}, \Gamma_2 \rangle
+  = \sum_{i=1}^{n} e\!\left(x_i,\; g_2^{(i)}\right) \in G_T
 $$
 
-The commitment is the pairing $C = e(C_1, C_2) \in G_T$.
+The construction is symmetric: vectors in $G_2^n$ can be committed with generators in $G_1^n$. A hiding version additionally adds a random multiple of a fixed target-group element, for example $r \cdot e(H_1, H_2)$.
 
-AFGHO commitments are **additively homomorphic**: given commitments to two vectors, a commitment to any linear combination of them can be computed from the individual commitments without access to the underlying vectors. This property is critical for [batched openings](./optimizations/batched-openings.md) in Jolt.
+The important property for Dory is **additive homomorphism**. Since pairing is bilinear, commitments to source-group vectors can be linearly combined in $G_T$:
+
+$$
+\langle a\mathbf{x} + b\mathbf{y}, \Gamma_2 \rangle
+  = a \cdot \langle \mathbf{x}, \Gamma_2 \rangle
+  + b \cdot \langle \mathbf{y}, \Gamma_2 \rangle
+$$
+
+For scalar polynomial coefficients, Dory first commits each row of coefficients into a $G_1$ element. Those row commitments then form the source-group vector that is committed with the AFGHO pairing-inner-product commitment. This is the two-tier structure that gives Dory both small commitments and efficient [batched openings](./optimizations/batched-openings.md).
 
 ## How Dory works
 
