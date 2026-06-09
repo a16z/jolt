@@ -367,7 +367,7 @@ mod tests {
         for expected in &round_polys {
             // round-poly counts vary, so read the self-delimiting frame (like real sumcheck)
             let read: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
-            assert_eq!(&read, expected, "round poly mis-reconstructed from NARG");
+            assert_eq!(&read, expected, "round poly reconstructed incorrectly from NARG");
             v_round_challenges.push(FsChallenge::<Fr>::challenge_optimized(&mut v));
         }
         // Verifier absorbs the same shared flushed claims (not read from the NARG).

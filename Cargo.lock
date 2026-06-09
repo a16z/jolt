@@ -3276,7 +3276,6 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
- "rand 0.8.5",
  "serde",
  "thiserror 2.0.18",
  "tracing",
