@@ -49,15 +49,29 @@ pub enum FieldInlineCommittedPolynomial {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FieldInlineOpFlag {
+    Add,
+    Sub,
+    Mul,
+    Inv,
+    AssertEq,
+    LoadFromX,
+    StoreToX,
+    LoadImm,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineVirtualPolynomial {
     FieldRs1Value,
     FieldRs2Value,
     FieldRdValue,
     FieldProduct,
+    FieldInvProduct,
     FieldRs1Ra,
     FieldRs2Ra,
     FieldRdWa,
     FieldRegistersVal,
+    FieldOpFlag(FieldInlineOpFlag),
 }
 
 #[derive(

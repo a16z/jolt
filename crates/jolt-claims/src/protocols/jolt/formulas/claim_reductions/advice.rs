@@ -155,6 +155,10 @@ where
     )
 }
 
+pub fn cycle_phase_input_openings(kind: JoltAdviceKind) -> [JoltOpeningId; 1] {
+    [ram_val_check_advice_opening(kind)]
+}
+
 pub fn cycle_phase_output_openings(
     kind: JoltAdviceKind,
     dimensions: PrecommittedReductionDimensions,
