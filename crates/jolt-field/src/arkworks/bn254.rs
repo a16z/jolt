@@ -6,6 +6,7 @@ use crate::{
     AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
     FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
     RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
+    WithSignedProductAccumulator, WithSmallScalarAccumulator,
 };
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
@@ -363,7 +364,6 @@ impl TranscriptChallenge for Fr {
         buf[..len].copy_from_slice(&bytes[..len]);
         let value = u128::from_le_bytes(buf);
         let low = value as u64;
-        // Top 3 bits of high limb are zeroed to ensure value < BN254 modulus.
         let high = ((value >> 64) as u64) & (u64::MAX >> 3);
         let Some(inner) = InnerFr::from_bigint_unchecked(ark_ff::BigInt::new([0, 0, low, high]))
         else {
@@ -445,6 +445,14 @@ impl FromPrimitiveInt for Fr {
 
 impl WithAccumulator for Fr {
     type Accumulator = super::wide_accumulator::WideAccumulator;
+}
+
+impl WithSmallScalarAccumulator for Fr {
+    type SmallScalarAccumulator = super::small_scalar_accumulator::FrSmallScalarAccumulator;
+}
+
+impl WithSignedProductAccumulator for Fr {
+    type SignedProductAccumulator = super::signed_product_accumulator::FrSignedProductAccumulator;
 }
 
 impl crate::MulPow2 for Fr {}

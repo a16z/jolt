@@ -2,8 +2,12 @@
 
 mod support;
 
-use jolt_blindfold::VerificationError;
+use jolt_blindfold::{
+    verify, BlindFoldRowCommitter, DirectBlindFoldRowCommitter, ProverError, VerificationError,
+};
+use jolt_crypto::VectorCommitmentOpening;
 use jolt_poly::CompressedPoly;
+use jolt_r1cs::ConstraintMatrices;
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -14,8 +18,178 @@ fn verify_blindfold_protocol_pipeline(
 ) -> Result<(), VerificationError<F>> {
     let mut transcript = Blake2bTranscript::<F>::new(b"protocol-backed-blindfold-proof");
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
-    full.protocol
-        .verify::<VC, _>(&full.proof, &full.setup, &mut transcript)
+    verify::<F, VC, _>(&full.protocol, &full.proof, &full.setup, &mut transcript)
+}
+
+#[derive(Debug, Default)]
+struct CountingRowCommitter {
+    inner: DirectBlindFoldRowCommitter,
+    row_commitments: usize,
+    error_rows: usize,
+    cross_term_error_rows: usize,
+    row_folds: usize,
+    scalar_folds: usize,
+    error_row_folds: usize,
+    error_scalar_folds: usize,
+    row_openings: usize,
+}
+
+impl BlindFoldRowCommitter<F, VC> for CountingRowCommitter {
+    fn commit_rows(
+        &mut self,
+        setup: &<VC as jolt_crypto::VectorCommitment>::Setup,
+        rows: &[Vec<F>],
+        blindings: &[F],
+        name: &'static str,
+    ) -> Result<Vec<<VC as jolt_crypto::Commitment>::Output>, ProverError<F>> {
+        self.row_commitments += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::commit_rows(
+            &mut self.inner,
+            setup,
+            rows,
+            blindings,
+            name,
+        )
+    }
+
+    fn compute_error_rows(
+        &mut self,
+        r1cs: &ConstraintMatrices<F>,
+        u: F,
+        witness: &[F],
+        row_count: usize,
+        row_len: usize,
+        name: &'static str,
+    ) -> Result<Vec<Vec<F>>, ProverError<F>> {
+        self.error_rows += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::compute_error_rows(
+            &mut self.inner,
+            r1cs,
+            u,
+            witness,
+            row_count,
+            row_len,
+            name,
+        )
+    }
+
+    fn compute_cross_term_error_rows(
+        &mut self,
+        r1cs: &ConstraintMatrices<F>,
+        real_u: F,
+        real_witness: &[F],
+        random_u: F,
+        random_witness: &[F],
+        row_count: usize,
+        row_len: usize,
+        name: &'static str,
+    ) -> Result<Vec<Vec<F>>, ProverError<F>> {
+        self.cross_term_error_rows += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::compute_cross_term_error_rows(
+            &mut self.inner,
+            r1cs,
+            real_u,
+            real_witness,
+            random_u,
+            random_witness,
+            row_count,
+            row_len,
+            name,
+        )
+    }
+
+    fn fold_rows(
+        &mut self,
+        real: &[Vec<F>],
+        random: &[Vec<F>],
+        challenge: F,
+        name: &'static str,
+    ) -> Result<Vec<Vec<F>>, ProverError<F>> {
+        self.row_folds += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::fold_rows(
+            &mut self.inner,
+            real,
+            random,
+            challenge,
+            name,
+        )
+    }
+
+    fn fold_scalars(
+        &mut self,
+        real: &[F],
+        random: &[F],
+        challenge: F,
+        name: &'static str,
+    ) -> Result<Vec<F>, ProverError<F>> {
+        self.scalar_folds += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::fold_scalars(
+            &mut self.inner,
+            real,
+            random,
+            challenge,
+            name,
+        )
+    }
+
+    fn fold_error_rows(
+        &mut self,
+        real: &[Vec<F>],
+        cross: &[Vec<F>],
+        random: &[Vec<F>],
+        challenge: F,
+        name: &'static str,
+    ) -> Result<Vec<Vec<F>>, ProverError<F>> {
+        self.error_row_folds += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::fold_error_rows(
+            &mut self.inner,
+            real,
+            cross,
+            random,
+            challenge,
+            name,
+        )
+    }
+
+    fn fold_error_scalars(
+        &mut self,
+        real: &[F],
+        cross: &[F],
+        random: &[F],
+        challenge: F,
+        name: &'static str,
+    ) -> Result<Vec<F>, ProverError<F>> {
+        self.error_scalar_folds += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::fold_error_scalars(
+            &mut self.inner,
+            real,
+            cross,
+            random,
+            challenge,
+            name,
+        )
+    }
+
+    fn open_rows(
+        &mut self,
+        setup: &<VC as jolt_crypto::VectorCommitment>::Setup,
+        rows: &[Vec<F>],
+        blindings: &[F],
+        row_point: &[F],
+        entry_point: &[F],
+        name: &'static str,
+    ) -> Result<(VectorCommitmentOpening<F>, F), ProverError<F>> {
+        self.row_openings += 1;
+        <DirectBlindFoldRowCommitter as BlindFoldRowCommitter<F, VC>>::open_rows(
+            &mut self.inner,
+            setup,
+            rows,
+            blindings,
+            row_point,
+            entry_point,
+            name,
+        )
+    }
 }
 
 #[test]
@@ -28,6 +202,23 @@ fn blindfold_protocol_pipeline_verifies_committed_sumcheck_outputs_and_eval_comm
     assert!(full.protocol.dimensions.auxiliary_rows > 0);
     assert!(!full.protocol.eval_commitments.is_empty());
     verify_blindfold_protocol_pipeline(&full).expect("protocol-backed BlindFold proof verifies");
+}
+
+#[test]
+fn blindfold_protocol_pipeline_uses_row_committer_hooks() {
+    let mut rng = ChaCha20Rng::from_seed([89; 32]);
+    let mut row_committer = CountingRowCommitter::default();
+    let full = prove_blindfold_protocol_pipeline_with_committer(&mut rng, &mut row_committer);
+
+    verify_blindfold_protocol_pipeline(&full).expect("protocol-backed BlindFold proof verifies");
+    assert!(row_committer.row_commitments > 0);
+    assert_eq!(row_committer.error_rows, 1);
+    assert_eq!(row_committer.cross_term_error_rows, 1);
+    assert_eq!(row_committer.row_folds, 1);
+    assert!(row_committer.scalar_folds >= 3);
+    assert_eq!(row_committer.error_row_folds, 1);
+    assert_eq!(row_committer.error_scalar_folds, 1);
+    assert!(row_committer.row_openings >= 4);
 }
 
 #[test]
@@ -147,10 +338,7 @@ fn blindfold_protocol_pipeline_rejects_wrong_transcript() {
     let mut transcript = Blake2bTranscript::<F>::new(b"wrong-transcript");
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
 
-    assert!(full
-        .protocol
-        .verify::<VC, _>(&full.proof, &full.setup, &mut transcript)
-        .is_err());
+    assert!(verify::<F, VC, _>(&full.protocol, &full.proof, &full.setup, &mut transcript).is_err());
 }
 
 #[test]
