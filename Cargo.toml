@@ -34,9 +34,14 @@ members = [
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
   "crates/jolt-verifier",
+  "crates/jolt-prover",
+  "crates/jolt-witness",
+  "crates/jolt-backends",
   "crates/jolt-dory",
+  "crates/jolt-dory-assist-verifier",
   "crates/jolt-hyrax",
   "crates/jolt-hyperkzg",
+  "crates/jolt-wrapper-verifier",
   "crates/jolt-riscv",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
@@ -389,9 +394,15 @@ jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-hyrax = { path = "./crates/jolt-hyrax" }
+jolt-dory-assist-verifier = { path = "./crates/jolt-dory-assist-verifier" }
+jolt-wrapper-verifier = { path = "./crates/jolt-wrapper-verifier" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
+jolt-prover = { path = "./crates/jolt-prover" }
+jolt-witness = { path = "./crates/jolt-witness" }
+jolt-backends = { path = "./crates/jolt-backends" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
