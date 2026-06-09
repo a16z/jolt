@@ -2,15 +2,16 @@ use std::num::NonZeroUsize;
 
 use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
+use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_riscv::InstructionFlags;
 
-use crate::{challenge, opening};
+use crate::{challenge, opening, SameEvaluationAs};
 
 use super::super::InstructionRaVirtualizationChallenge;
 use super::super::{
     InstructionInputChallenge, InstructionReadRafChallenge, JoltChallengeId,
-    JoltCommittedPolynomial, JoltConsistencyClaim, JoltExpr, JoltOpeningId, JoltRelationClaims,
-    JoltRelationId, JoltVirtualPolynomial,
+    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationClaims, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use super::dimensions::{
     JoltFormulaDimensionsError, JoltFormulaPointError, JoltSumcheckSpec, TraceDimensions,
@@ -24,6 +25,22 @@ pub struct InstructionReadRafDimensions {
     log_t: usize,
     instruction_address_bits: usize,
     num_virtual_ra_polys: NonZeroUsize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct InstructionReadRafAddressLayout {
+    address_bits: usize,
+    virtual_ra_chunk_bits: usize,
+}
+
+impl InstructionReadRafAddressLayout {
+    pub const fn address_bits(self) -> usize {
+        self.address_bits
+    }
+
+    pub const fn virtual_ra_chunk_bits(self) -> usize {
+        self.virtual_ra_chunk_bits
+    }
 }
 
 impl InstructionReadRafDimensions {
@@ -49,6 +66,42 @@ impl InstructionReadRafDimensions {
 
     pub fn num_virtual_ra_polys(self) -> usize {
         self.num_virtual_ra_polys.get()
+    }
+
+    pub fn address_layout(
+        self,
+    ) -> Result<InstructionReadRafAddressLayout, JoltFormulaDimensionsError> {
+        let virtual_ra_count = self.num_virtual_ra_polys();
+        if !self
+            .instruction_address_bits
+            .is_multiple_of(virtual_ra_count)
+        {
+            return Err(JoltFormulaDimensionsError::NotDivisible {
+                value_name: "instruction_address_bits",
+                value: self.instruction_address_bits,
+                divisor_name: "instruction virtual RA polynomial count",
+                divisor: virtual_ra_count,
+            });
+        }
+        Ok(InstructionReadRafAddressLayout {
+            address_bits: self.instruction_address_bits,
+            virtual_ra_chunk_bits: self.instruction_address_bits / virtual_ra_count,
+        })
+    }
+
+    pub fn u128_address_layout(
+        self,
+    ) -> Result<InstructionReadRafAddressLayout, JoltFormulaDimensionsError> {
+        let layout = self.address_layout()?;
+        if layout.address_bits > u128::BITS as usize {
+            return Err(JoltFormulaDimensionsError::Exceeds {
+                value_name: "instruction_address_bits",
+                value: layout.address_bits,
+                max_name: "u128::BITS",
+                max: u128::BITS as usize,
+            });
+        }
+        Ok(layout)
     }
 
     pub fn sumcheck(self) -> JoltSumcheckSpec {
@@ -214,14 +267,8 @@ where
         output,
     )
     .with_consistency([
-        JoltConsistencyClaim::same_evaluation(
-            left_instruction_input_reduced(),
-            left_instruction_input_product(),
-        ),
-        JoltConsistencyClaim::same_evaluation(
-            right_instruction_input_reduced(),
-            right_instruction_input_product(),
-        ),
+        left_instruction_input_reduced().same_evaluation_as(left_instruction_input_product()),
+        right_instruction_input_reduced().same_evaluation_as(right_instruction_input_product()),
     ])
 }
 
@@ -289,10 +336,7 @@ where
         input,
         output,
     )
-    .with_consistency([JoltConsistencyClaim::same_evaluation(
-        lookup_output_reduced(),
-        lookup_output_product(),
-    )])
+    .with_consistency([lookup_output_reduced().same_evaluation_as(lookup_output_product())])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -367,6 +411,69 @@ where
     .with_input_challenges([JoltChallengeId::from(
         InstructionRaVirtualizationChallenge::Gamma,
     )])
+}
+
+pub fn ra_virtualization_eq_cycle_polynomial<F>(instruction_read_raf_cycle: &[F]) -> Polynomial<F>
+where
+    F: Field,
+{
+    let eq_point = instruction_read_raf_cycle
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    Polynomial::new(EqPolynomial::<F>::evals(&eq_point, None))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstructionRaVirtualizationRelationState<F: Field> {
+    eq_cycle: Polynomial<F>,
+    gamma_powers: Vec<F>,
+    committed_instruction_ra_by_virtual: Vec<Vec<Polynomial<F>>>,
+}
+
+impl<F: Field> InstructionRaVirtualizationRelationState<F> {
+    pub fn new(
+        eq_cycle: Polynomial<F>,
+        gamma_powers: Vec<F>,
+        committed_instruction_ra_by_virtual: Vec<Vec<Polynomial<F>>>,
+    ) -> Self {
+        Self {
+            eq_cycle,
+            gamma_powers,
+            committed_instruction_ra_by_virtual,
+        }
+    }
+
+    pub fn bind(&mut self, challenge: F) {
+        self.eq_cycle.bind(challenge);
+        for group in &mut self.committed_instruction_ra_by_virtual {
+            for polynomial in group {
+                polynomial.bind(challenge);
+            }
+        }
+    }
+
+    pub fn round_rows(&self) -> usize {
+        self.eq_cycle.len() / 2
+    }
+
+    pub fn round_eval(&self, index: usize, point: F) -> F {
+        let eq = self.eq_cycle.sumcheck_round_eval(index, point);
+        let mut output = F::zero();
+        for (gamma, group) in self
+            .gamma_powers
+            .iter()
+            .copied()
+            .zip(&self.committed_instruction_ra_by_virtual)
+        {
+            let product = group.iter().fold(F::one(), |acc, polynomial| {
+                acc * polynomial.sumcheck_round_eval(index, point)
+            });
+            output += gamma * product;
+        }
+        eq * output
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -628,6 +735,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltConsistencyClaim, JoltPolynomialId};
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::EqPolynomial;
 
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))
@@ -827,6 +935,43 @@ mod tests {
     fn read_raf_rejects_empty_dimensions() {
         assert!(InstructionReadRafDimensions::try_from((5, 128, 0)).is_err());
         assert!(InstructionReadRafDimensions::try_from((5, 0, 1)).is_err());
+    }
+
+    #[test]
+    fn read_raf_address_layout_derives_virtual_ra_chunk_bits() {
+        let layout = InstructionReadRafDimensions::try_from((5, 128, 4))
+            .unwrap_or_else(|err| panic!("test read-RAF dimensions should be valid: {err}"))
+            .address_layout()
+            .unwrap_or_else(|err| panic!("address layout should derive: {err}"));
+
+        assert_eq!(layout.address_bits(), 128);
+        assert_eq!(layout.virtual_ra_chunk_bits(), 32);
+    }
+
+    #[test]
+    fn read_raf_address_layout_rejects_invalid_widths() {
+        assert_eq!(
+            InstructionReadRafDimensions::try_from((5, 130, 4))
+                .unwrap_or_else(|err| panic!("test read-RAF dimensions should be valid: {err}"))
+                .address_layout(),
+            Err(JoltFormulaDimensionsError::NotDivisible {
+                value_name: "instruction_address_bits",
+                value: 130,
+                divisor_name: "instruction virtual RA polynomial count",
+                divisor: 4,
+            })
+        );
+        assert_eq!(
+            InstructionReadRafDimensions::try_from((5, 192, 4))
+                .unwrap_or_else(|err| panic!("test read-RAF dimensions should be valid: {err}"))
+                .u128_address_layout(),
+            Err(JoltFormulaDimensionsError::Exceeds {
+                value_name: "instruction_address_bits",
+                value: 192,
+                max_name: "u128::BITS",
+                max: 128,
+            })
+        );
     }
 
     #[test]
@@ -1255,6 +1400,103 @@ mod tests {
                 * (committed_ra[0] * committed_ra[1]
                     + gamma * committed_ra[2] * committed_ra[3]
                     + gamma * gamma * committed_ra[4] * committed_ra[5])
+        );
+    }
+
+    #[test]
+    fn ra_virtualization_eq_cycle_polynomial_reverses_read_raf_cycle() {
+        let read_raf_cycle = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let eq_point = vec![Fr::from_u64(5), Fr::from_u64(3), Fr::from_u64(2)];
+
+        assert_eq!(
+            ra_virtualization_eq_cycle_polynomial(&read_raf_cycle).evals(),
+            EqPolynomial::<Fr>::evals(&eq_point, None)
+        );
+    }
+
+    #[test]
+    fn ra_virtualization_relation_state_evaluates_eq_weighted_virtual_products() {
+        let point = Fr::from_u64(7);
+        let eq_cycle = Polynomial::new(vec![Fr::from_u64(2), Fr::from_u64(3)]);
+        let gamma_powers = vec![Fr::from_u64(1), Fr::from_u64(11), Fr::from_u64(121)];
+        let groups = vec![
+            vec![
+                Polynomial::new(vec![Fr::from_u64(5), Fr::from_u64(13)]),
+                Polynomial::new(vec![Fr::from_u64(17), Fr::from_u64(19)]),
+            ],
+            vec![
+                Polynomial::new(vec![Fr::from_u64(23), Fr::from_u64(29)]),
+                Polynomial::new(vec![Fr::from_u64(31), Fr::from_u64(37)]),
+            ],
+            vec![
+                Polynomial::new(vec![Fr::from_u64(41), Fr::from_u64(43)]),
+                Polynomial::new(vec![Fr::from_u64(47), Fr::from_u64(53)]),
+            ],
+        ];
+        let expected = eq_cycle.sumcheck_round_eval(0, point)
+            * gamma_powers
+                .iter()
+                .copied()
+                .zip(&groups)
+                .map(|(gamma, group)| {
+                    gamma
+                        * group.iter().fold(Fr::from_u64(1), |acc, polynomial| {
+                            acc * polynomial.sumcheck_round_eval(0, point)
+                        })
+                })
+                .sum::<Fr>();
+
+        let state = InstructionRaVirtualizationRelationState::new(eq_cycle, gamma_powers, groups);
+
+        assert_eq!(state.round_rows(), 1);
+        assert_eq!(state.round_eval(0, point), expected);
+    }
+
+    #[test]
+    fn ra_virtualization_relation_state_binds_all_polynomials() {
+        let challenge = Fr::from_u64(19);
+        let mut eq_cycle =
+            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 2)).collect());
+        let gamma_powers = vec![Fr::from_u64(1), Fr::from_u64(11)];
+        let mut groups = vec![
+            vec![
+                Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 7)).collect()),
+                Polynomial::new(
+                    (0..4)
+                        .map(|value| Fr::from_u64(value as u64 + 13))
+                        .collect(),
+                ),
+            ],
+            vec![
+                Polynomial::new(
+                    (0..4)
+                        .map(|value| Fr::from_u64(value as u64 + 17))
+                        .collect(),
+                ),
+                Polynomial::new(
+                    (0..4)
+                        .map(|value| Fr::from_u64(value as u64 + 23))
+                        .collect(),
+                ),
+            ],
+        ];
+        let mut state = InstructionRaVirtualizationRelationState::new(
+            eq_cycle.clone(),
+            gamma_powers.clone(),
+            groups.clone(),
+        );
+
+        state.bind(challenge);
+        eq_cycle.bind(challenge);
+        for group in &mut groups {
+            for polynomial in group {
+                polynomial.bind(challenge);
+            }
+        }
+
+        assert_eq!(
+            state,
+            InstructionRaVirtualizationRelationState::new(eq_cycle, gamma_powers, groups)
         );
     }
 }

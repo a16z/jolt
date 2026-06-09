@@ -47,6 +47,8 @@ pub enum JoltFormulaPointError {
         bytecode_len: usize,
         chunk_count: usize,
     },
+    #[error("evaluation domain size overflow for {num_vars} variables")]
+    EvaluationDomainSizeOverflow { num_vars: usize },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
@@ -62,12 +64,21 @@ pub enum JoltFormulaDimensionsError {
         committed_chunk_bits: usize,
         lookup_virtual_chunk_bits: usize,
     },
+    #[error("{name} underflowed")]
+    Underflow { name: &'static str },
     #[error("{value_name} ({value}) must be divisible by {divisor_name} ({divisor})")]
     NotDivisible {
         value_name: &'static str,
         value: usize,
         divisor_name: &'static str,
         divisor: usize,
+    },
+    #[error("{value_name} ({value}) must be at most {max_name} ({max})")]
+    Exceeds {
+        value_name: &'static str,
+        value: usize,
+        max_name: &'static str,
+        max: usize,
     },
     #[error("phase1_num_rounds ({phase1_num_rounds}) must be <= log_t ({log_t})")]
     InvalidPhaseRounds {
