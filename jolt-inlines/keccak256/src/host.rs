@@ -13,9 +13,11 @@ mod tests {
     use std::path::Path;
 
     use jolt_inlines_sdk::host::InlineOp;
+    use tracer::instruction::inline::INLINE;
     use tracer::utils::inline_sequence_writer::{
         DEFAULT_RAM_START_ADDRESS, DEFAULT_RS1, DEFAULT_RS2, DEFAULT_RS3,
     };
+    use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
     use crate::sequence_builder::Keccak256Permutation;
 
@@ -26,8 +28,17 @@ mod tests {
         };
 
         let inputs = SequenceInputs::default();
-        let generated_instructions =
-            Keccak256Permutation::build_sequence((&inputs).into(), (&inputs).into());
+        let inline = INLINE {
+            opcode: Keccak256Permutation::OPCODE,
+            funct3: Keccak256Permutation::FUNCT3,
+            funct7: Keccak256Permutation::FUNCT7,
+            address: inputs.address,
+            operands: (&inputs).into(),
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: inputs.is_compressed,
+        };
+        let generated_instructions = inline.inline_sequence(&VirtualRegisterAllocator::default());
 
         let test_file_name = format!("keccak256_trace_test_{}.joltinline", std::process::id());
         let trace_file_path = Path::new(&test_file_name);

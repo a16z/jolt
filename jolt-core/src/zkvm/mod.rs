@@ -67,10 +67,12 @@ pub mod r1cs;
 pub mod ram;
 pub mod registers;
 pub mod spartan;
+#[cfg(all(test, feature = "host"))]
+mod trace_row_parity;
 /// Symbolic verifier used to transpile the on-chain verifier (gated behind the
 /// `transpiler` feature). It relies on the removed `crate::transcripts::Transcript`
 /// trait and cannot be expressed over spongefish's concrete `VerifierState`, so it
-/// is disabled during the transcript→spongefish migration (spec Non-Goal #2 / DEV-21).
+/// is disabled during the transcript→spongefish migration (spec Non-Goal #2).
 #[cfg(feature = "transpiler")]
 pub mod transpilable_verifier;
 pub mod verifier;

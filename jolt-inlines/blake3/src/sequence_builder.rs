@@ -7,8 +7,6 @@
 //!   - "Round" = single application of G function mixing to the working state
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
-use core::array;
-
 use crate::{
     CHAINING_VALUE_LEN, COUNTER_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT,
     IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
@@ -22,40 +20,18 @@ use jolt_inlines_sdk::host::{
         virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
         virtual_zero_extend_word::VirtualZeroExtendWord,
     },
-    FormatInline, InlineOp, InstrAssembler, InstrAssemblerExt, Instruction,
+    ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
+    InlineOp, InlineOperands, InlineRegister,
     Value::{Imm, Reg},
-    VirtualRegisterGuard,
 };
 
 /// Number of virtual registers needed for the general compression builder.
 /// Layout: v[0..15] + m[0..15] + h[0..7] + counter[0..1] + block_len + flags + temp
-pub const NEEDED_REGISTERS: u8 = 45;
+pub const NEEDED_REGISTERS: usize = 45;
 
 /// Number of virtual registers needed for the keyed64 builder (smaller footprint).
 /// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs).
-pub const NEEDED_REGISTERS_KEYED64: u8 = 32;
-
-/// Apply the BLAKE3 round schedule for a given round index by calling `g` 8 times
-/// in the exact order required by the spec.
-#[inline]
-fn blake3_apply_round_schedule<F>(round: u8, mut g: F)
-where
-    F: FnMut(usize, usize, usize, usize, usize, usize),
-{
-    let msg_schedule_round = &MSG_SCHEDULE[round as usize];
-
-    // Column step: apply G function to columns
-    g(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
-    g(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
-    g(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
-    g(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
-
-    // Diagonal step: apply G function to diagonals
-    g(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
-    g(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
-    g(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
-    g(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
-}
+pub const NEEDED_REGISTERS_KEYED64: usize = 32;
 
 /// Virtual register layout:
 /// - vr[0..15]:  Internal state `v`
@@ -75,10 +51,10 @@ const FLAG_VR: usize = 43;
 const TEMP_VR: usize = 44;
 
 struct Blake3SequenceBuilder {
-    asm: InstrAssembler,
+    asm: InlineExpansionBuilder,
     round: u8,
-    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
-    operands: FormatInline,
+    vr: [InlineRegister; NEEDED_REGISTERS],
+    operands: InlineOperands,
 }
 
 /// Keyed64-only sequence builder with a smaller VR footprint.
@@ -92,24 +68,27 @@ struct Blake3SequenceBuilder {
 /// - vr[0..15]:  Internal state `v`
 /// - vr[16..31]: Message block `m` (left||right)
 struct Blake3Keyed64SequenceBuilder {
-    asm: InstrAssembler,
+    asm: InlineExpansionBuilder,
     round: u8,
-    vr: [VirtualRegisterGuard; NEEDED_REGISTERS_KEYED64 as usize],
-    operands: FormatInline,
+    vr: [InlineRegister; NEEDED_REGISTERS_KEYED64],
+    operands: InlineOperands,
 }
 
 impl Blake3SequenceBuilder {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        Blake3SequenceBuilder {
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_inline_array::<NEEDED_REGISTERS>()?;
+        Ok(Blake3SequenceBuilder {
             asm,
             round: 0,
             vr,
             operands,
-        }
+        })
     }
 
-    fn build(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         // Compression mode:
         // - Load chaining value (key) from rs1
         // - Load message from rs2
@@ -132,8 +111,8 @@ impl Blake3SequenceBuilder {
         // Store state
         self.store_state();
 
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release_many(self.vr);
+        self.asm.finalize()
     }
 
     fn initialize_internal_state(&mut self) {
@@ -177,8 +156,19 @@ impl Blake3SequenceBuilder {
 
     /// Execute one round of BLAKE3 compression
     fn blake3_round(&mut self) {
-        let round = self.round;
-        blake3_apply_round_schedule(round, |a, b, c, d, x, y| self.g_function(a, b, c, d, x, y));
+        let msg_schedule_round = &MSG_SCHEDULE[self.round as usize];
+
+        // Column step: apply G function to columns
+        self.g_function(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
+        self.g_function(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
+        self.g_function(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
+        self.g_function(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
+
+        // Diagonal step: apply G function to diagonals
+        self.g_function(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
+        self.g_function(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
+        self.g_function(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
+        self.g_function(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
     }
 
     fn g_function(&mut self, a: usize, b: usize, c: usize, d: usize, x: usize, y: usize) {
@@ -313,17 +303,20 @@ impl Blake3SequenceBuilder {
 }
 
 impl Blake3Keyed64SequenceBuilder {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        Self {
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_inline_array::<NEEDED_REGISTERS_KEYED64>()?;
+        Ok(Self {
             asm,
             round: 0,
             vr,
             operands,
-        }
+        })
     }
 
-    fn build(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         // Load key from rs3/rd directly into v[0..7]
         self.load_data_range_paired(self.operands.rs3, 0, INTERNAL_STATE_VR_START, 8);
         // Load left (32 bytes) from rs1 as message[0..7]
@@ -354,8 +347,8 @@ impl Blake3Keyed64SequenceBuilder {
             );
         }
 
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release_many(self.vr);
+        self.asm.finalize()
     }
 
     fn initialize_internal_state(&mut self) {
@@ -382,8 +375,19 @@ impl Blake3Keyed64SequenceBuilder {
 
     /// Execute one round of BLAKE3 compression
     fn blake3_round(&mut self) {
-        let round = self.round;
-        blake3_apply_round_schedule(round, |a, b, c, d, x, y| self.g_function(a, b, c, d, x, y));
+        let msg_schedule_round = &MSG_SCHEDULE[self.round as usize];
+
+        // Column step: apply G function to columns
+        self.g_function(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
+        self.g_function(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
+        self.g_function(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
+        self.g_function(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
+
+        // Diagonal step: apply G function to diagonals
+        self.g_function(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
+        self.g_function(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
+        self.g_function(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
+        self.g_function(3, 4, 9, 14, msg_schedule_round[14], msg_schedule_round[15]);
     }
 
     #[inline]
@@ -465,8 +469,11 @@ impl InlineOp for Blake3Compression {
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_NAME;
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        Blake3SequenceBuilder::new(asm, operands).build()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Blake3SequenceBuilder::new(asm, operands)?.build()
     }
 }
 
@@ -478,8 +485,11 @@ impl InlineOp for Blake3Keyed64Compression {
     const FUNCT7: u32 = crate::BLAKE3_FUNCT7;
     const NAME: &'static str = crate::BLAKE3_KEYED64_NAME;
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        Blake3Keyed64SequenceBuilder::new(asm, operands).build()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Blake3Keyed64SequenceBuilder::new(asm, operands)?.build()
     }
 }
 

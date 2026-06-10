@@ -47,6 +47,7 @@ members = [
   "jolt-sdk",
   "jolt-sdk/macros",
   "jolt-inlines/sdk",
+  "jolt-inlines/fixtures",
   "jolt-inlines/sha2",
   "jolt-inlines/keccak256",
   "jolt-inlines/blake2",
@@ -363,7 +364,7 @@ spinners = { version = "4.2.0", default-features = false }
 # Testing
 criterion = { version = "0.8.2", features = ["html_reports"] }
 iai-callgrind = "0.16.1"
-serial_test = "3.4.0"
+serial_test = "3.5.0"
 
 # Logging
 log = { version = "0.4" }

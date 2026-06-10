@@ -7,8 +7,6 @@
 //!   - "Round" = single application of G function mixing to the working state
 //!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
-use core::array;
-
 use crate::{IV, SIGMA};
 use jolt_inlines_sdk::host::{
     instruction::{
@@ -18,12 +16,12 @@ use jolt_inlines_sdk::host::{
         sub::SUB,
         virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     },
-    FormatInline, InlineOp, InstrAssembler, Instruction,
+    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
+    InlineRegister,
     Value::{Imm, Reg},
-    VirtualRegisterGuard,
 };
 
-pub const NEEDED_REGISTERS: u8 = 43;
+pub const NEEDED_REGISTERS: usize = 43;
 
 /// Virtual register layout:
 /// - `vr[0..15]`:  Working state `v` (16 words)
@@ -43,24 +41,27 @@ const VR_TEMP: usize = 42;
 const BLAKE2_NUM_ROUNDS: u8 = 12;
 
 struct Blake2SequenceBuilder {
-    asm: InstrAssembler,
+    asm: InlineExpansionBuilder,
     round: u8,
-    vr: [VirtualRegisterGuard; NEEDED_REGISTERS as usize],
-    operands: FormatInline,
+    vr: [InlineRegister; NEEDED_REGISTERS],
+    operands: InlineOperands,
 }
 
 impl Blake2SequenceBuilder {
-    fn new(asm: InstrAssembler, operands: FormatInline) -> Self {
-        let vr = array::from_fn(|_| asm.allocator.allocate_for_inline());
-        Blake2SequenceBuilder {
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_inline_array::<NEEDED_REGISTERS>()?;
+        Ok(Blake2SequenceBuilder {
             asm,
             round: 0,
             vr,
             operands,
-        }
+        })
     }
 
-    fn build(mut self) -> Vec<Instruction> {
+    fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.load_hash_state();
         self.load_message_blocks();
         self.load_counter_and_is_final();
@@ -74,8 +75,8 @@ impl Blake2SequenceBuilder {
 
         self.finalize_state();
         self.store_state();
-        drop(self.vr);
-        self.asm.finalize_inline()
+        self.asm.release_many(self.vr);
+        self.asm.finalize()
     }
 
     fn load_hash_state(&mut self) {
@@ -261,8 +262,11 @@ impl InlineOp for Blake2bCompression {
     const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
     const NAME: &'static str = crate::BLAKE2_NAME;
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction> {
-        Blake2SequenceBuilder::new(asm, operands).build()
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Blake2SequenceBuilder::new(asm, operands)?.build()
     }
 }
 

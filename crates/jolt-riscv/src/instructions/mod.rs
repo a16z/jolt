@@ -238,10 +238,6 @@ macro_rules! define_source_instruction {
                 }
             }
 
-            pub fn map_row(self, f: impl FnOnce(SourceInstructionRow) -> SourceInstructionRow) -> Self {
-                let kind = self.kind();
-                Self::new(kind, f(self.into_row()))
-            }
         }
 
         impl TryFrom<&SourceInstruction<SourceInstructionRow>> for JoltInstructionRow {
