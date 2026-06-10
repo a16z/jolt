@@ -144,7 +144,7 @@ The `zk` Cargo feature (`cfg(feature = "zk")`) controls zero-knowledge mode:
 | Opening proof | `bind_opening_inputs` (raw eval) | `bind_opening_inputs_zk` (committed eval) |
 
 **Key cfg-gated items:**
-- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`. **Structural** (a proven NARG hard-limit — see `notes/NARG-limits-and-requirements.md`), NOT in the NARG.
+- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`. **Structural** (a deliberate NARG hard-limit), NOT in the NARG.
 - `JoltProof::blindfold_proof` was **removed** under the full-NARG migration: the BlindFold proof is written **per-field into the NARG** (`subprotocols/blindfold/protocol.rs`), not a struct field. The dory `joint_opening_proof` likewise stays structural (the other NARG hard-limit); everything else (commitments, advice presence frame, sumcheck/uni-skip round data, ZK Pedersen commitments) lives in the `JoltProof::narg` byte-string, sealed by `check_eof` + the MAL-1 outer-envelope guard.
 - `JoltProof::zk_mode: bool` — a **runtime** mode flag that replaced the per-stage `SumcheckInstanceProof::{Clear,Zk}` / `UniSkipFirstRoundProofVariant` markers and `verify_zk_consistency` (both removed). The prover sets it from `cfg!(feature = "zk")`; the verifier selects which NARG read-frames to expect off `proof.zk_mode`.
 - Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks for compile-time path selection; the proof additionally carries the runtime `zk_mode` bool so the (compile-time-mode-agnostic) verifier can dispatch.
