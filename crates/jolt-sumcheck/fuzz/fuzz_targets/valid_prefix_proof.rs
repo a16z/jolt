@@ -50,8 +50,7 @@ fuzz_target!(|data: &[u8]| {
     // `valid_rounds` rounds, so the proof is valid by construction up to
     // round `valid_rounds - 1` and the verifier's running sum after
     // ingesting those rounds matches what we compute below.
-    let mut prover_transcript =
-        prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
+    let mut pt = prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
     let mut running_sum = claimed_sum;
     let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
 
@@ -84,10 +83,13 @@ fuzz_target!(|data: &[u8]| {
             let poly = UnivariatePoly::new(coeffs);
 
             // Mirror the verifier's transcript / challenge / evaluate sequence.
+            // `pt` is a concrete `ProverState`, which carries spongefish's
+            // deprecated inherent `challenge`; call the `FsChallenge` trait method
+            // explicitly so we get the migrated challenge, not the inherent one.
             for c in poly.coefficients() {
-                prover_transcript.absorb_field(c);
+                pt.absorb_field(c);
             }
-            let r: Fr = prover_transcript.challenge();
+            let r: Fr = FsChallenge::<Fr>::challenge(&mut pt);
             running_sum = poly.evaluate(r);
             round_proofs.push(poly);
         } else {
@@ -114,13 +116,12 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mut verifier_transcript =
-        prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
+    let mut vt = prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &round_proofs,
         BooleanHypercube,
-        &mut verifier_transcript,
+        &mut vt,
     );
 
     if valid_rounds == num_vars {
