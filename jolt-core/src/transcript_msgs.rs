@@ -309,6 +309,16 @@ pub trait VerifierFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
     /// count is the frame's (self-delimiting, so a varying per-round length is fine).
     /// Bounded allocation — see [`read_all`].
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>>;
+
+    /// Read a frame that must contain exactly one value — the single-element analogue of
+    /// [`read_slice`]. Errors if the frame is empty or carries more than one value, closing
+    /// the silent-truncation gap of `read_slice()?.into_iter().next()`.
+    fn read_single<T: CanonicalDeserialize>(&mut self) -> VerificationResult<T> {
+        match <[T; 1]>::try_from(self.read_slice::<T>()?) {
+            Ok([value]) => Ok(value),
+            Err(_) => Err(VerificationError),
+        }
+    }
 }
 
 impl<F, H> VerifierFs<F> for VerifierState<'_, H>

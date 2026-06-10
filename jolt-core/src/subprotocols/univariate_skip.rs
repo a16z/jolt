@@ -328,21 +328,15 @@ pub mod zk_uni_skip_first_round {
         let degree_bound = sumcheck_instance.degree();
 
         let commitment: C::G1 = transcript
-            .read_slice()
-            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?
-            .into_iter()
-            .next()
-            .ok_or(ProofVerifyError::UniSkipVerificationError)?;
+            .read_single()
+            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?;
 
         let r0: F::Challenge = transcript.challenge_optimized();
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
 
         let poly_degree: usize = transcript
-            .read_slice()
-            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?
-            .into_iter()
-            .next()
-            .ok_or(ProofVerifyError::UniSkipVerificationError)?;
+            .read_single()
+            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?;
         if poly_degree > degree_bound {
             return Err(ProofVerifyError::InvalidInputLength(
                 degree_bound,

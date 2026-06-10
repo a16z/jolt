@@ -1447,7 +1447,13 @@ where
     ) {
         self.zk_round_degrees = zk_stages
             .iter()
-            .map(|stage| stage.poly_coeffs.iter().map(|c| c.len() - 1).collect())
+            .map(|stage| {
+                stage
+                    .poly_coeffs
+                    .iter()
+                    .map(|c| c.len().saturating_sub(1))
+                    .collect()
+            })
             .collect();
     }
 
@@ -3935,7 +3941,7 @@ mod tests {
             Blake2b512::default(),
             &narg,
         );
-        let result = verifier.verify(&verifier_input, &mut verifier_transcript);
+        let result = verifier.verify(verifier_input, &mut verifier_transcript);
 
         assert!(
             result.is_ok(),

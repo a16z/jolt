@@ -293,7 +293,7 @@ impl BatchedSumcheck {
             }
 
             round_commitments_g1.push(commitment);
-            poly_degrees.push(batched_univariate_poly.coeffs.len() - 1);
+            poly_degrees.push(batched_univariate_poly.coeffs.len().saturating_sub(1));
             poly_coeffs.push(batched_univariate_poly.coeffs.clone());
             blinding_factors.push(blinding);
         }
@@ -670,11 +670,8 @@ pub mod zk_sumcheck {
         let mut round_commitments: Vec<C::G1> = Vec::with_capacity(num_rounds);
         for _ in 0..num_rounds {
             let commitment: C::G1 = transcript
-                .read_slice()
-                .map_err(|_| ProofVerifyError::SumcheckVerificationError)?
-                .into_iter()
-                .next()
-                .ok_or(ProofVerifyError::SumcheckVerificationError)?;
+                .read_single()
+                .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
             let r_i: F::Challenge = transcript.challenge_optimized();
             round_commitments.push(commitment);
             r.push(r_i);

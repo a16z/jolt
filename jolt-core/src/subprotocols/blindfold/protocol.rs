@@ -260,26 +260,39 @@ fn write_hyrax_opening<F: JoltField>(
     transcript.write_slice(std::slice::from_ref(&opening.combined_blinding));
 }
 
+/// Read one self-delimiting NARG frame as a `Vec<T>`, mapping any read failure to
+/// [`BlindFoldVerifyError::MalformedProof`].
+fn read_vec<F: JoltField, T: ark_serialize::CanonicalDeserialize>(
+    transcript: &mut impl VerifierFs<F>,
+) -> Result<Vec<T>, BlindFoldVerifyError> {
+    transcript
+        .read_slice()
+        .map_err(|_| BlindFoldVerifyError::MalformedProof)
+}
+
+/// Read a NARG frame carrying exactly one `T` (rejects empty/over-long frames), mapping
+/// any failure to [`BlindFoldVerifyError::MalformedProof`].
+fn read_one<F: JoltField, T: ark_serialize::CanonicalDeserialize>(
+    transcript: &mut impl VerifierFs<F>,
+) -> Result<T, BlindFoldVerifyError> {
+    transcript
+        .read_single()
+        .map_err(|_| BlindFoldVerifyError::MalformedProof)
+}
+
 /// Read a Hyrax opening back from the NARG (matching [`write_hyrax_opening`]): the
 /// `combined_row` frame, then the single `combined_blinding`.
 fn read_hyrax_opening<F: JoltField>(
     transcript: &mut impl VerifierFs<F>,
     expected_len: usize,
 ) -> Result<HyraxOpeningProof<F>, BlindFoldVerifyError> {
-    let combined_row: Vec<F> = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+    let combined_row: Vec<F> = read_vec(transcript)?;
     // Guard against an adversarial over-/under-long frame before it reaches
     // `gens.commit`, which asserts `combined_row.len() <= message_generators.len()`.
     if combined_row.len() != expected_len {
         return Err(BlindFoldVerifyError::MalformedProof);
     }
-    let combined_blinding: F = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?
-        .into_iter()
-        .next()
-        .ok_or(BlindFoldVerifyError::MalformedProof)?;
+    let combined_blinding: F = read_one(transcript)?;
     Ok(HyraxOpeningProof {
         combined_row,
         combined_blinding,
@@ -415,7 +428,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
     #[tracing::instrument(skip_all, name = "BlindFoldVerifier::verify")]
     pub fn verify(
         &self,
-        input: &BlindFoldVerifierInput<C>,
+        input: BlindFoldVerifierInput<C>,
         transcript: &mut impl VerifierFs<F>,
     ) -> Result<(), BlindFoldVerifyError> {
         use super::spartan::{compute_L_w_at_ry, BlindFoldSpartanVerifier};
@@ -435,10 +448,10 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
         // Step 1: real instance — shared fields absorbed, prover-only noncoeff read from NARG.
         let real_instance = read_real_instance_from_transcript::<F, C>(
             F::one(),
-            input.round_commitments.clone(),
-            input.output_claims_row_commitments.clone(),
+            input.round_commitments,
+            input.output_claims_row_commitments,
             vec![C::G1::zero(); R_E],
-            input.eval_commitments.clone(),
+            input.eval_commitments,
             transcript,
         )?;
         if real_instance.noncoeff_row_commitments.len() != expected_noncoeff_rows {
@@ -456,9 +469,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
         }
 
         // Step 3: cross-term row commitments.
-        let cross_term_row_commitments: Vec<C::G1> = transcript
-            .read_slice()
-            .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+        let cross_term_row_commitments: Vec<C::G1> = read_vec(transcript)?;
 
         let r: F::Challenge = transcript.challenge_optimized();
         let r_field: F = r.into();
@@ -467,12 +478,8 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
             real_instance.fold(&random_instance, &cross_term_row_commitments, r_field)?;
 
         // Step 5: folded eval outputs/blindings (now bound before `tau`).
-        let folded_eval_outputs: Vec<F> = transcript
-            .read_slice()
-            .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
-        let folded_eval_blindings: Vec<F> = transcript
-            .read_slice()
-            .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+        let folded_eval_outputs: Vec<F> = read_vec(transcript)?;
+        let folded_eval_blindings: Vec<F> = read_vec(transcript)?;
 
         if let Some((g1_0, h1)) = self.eval_commitment_gens {
             if folded_eval_outputs.len() != folded_instance.eval_commitments.len()
@@ -519,9 +526,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
 
         // Step 8: spartan rounds — each round's compressed coeffs read from NARG.
         for round in 0..num_vars {
-            let coeffs_except_linear_term: Vec<F> = transcript
-                .read_slice()
-                .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+            let coeffs_except_linear_term: Vec<F> = read_vec(transcript)?;
             if coeffs_except_linear_term.len() != SPARTAN_DEGREE_BOUND {
                 return Err(BlindFoldVerifyError::DegreeBoundExceeded {
                     expected: SPARTAN_DEGREE_BOUND,
@@ -544,9 +549,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
         }
 
         // Step 9: az_r/bz_r/cz_r as one frame of 3.
-        let azbzcz: Vec<F> = transcript
-            .read_slice()
-            .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+        let azbzcz: Vec<F> = read_vec(transcript)?;
         if azbzcz.len() != 3 {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
@@ -574,9 +577,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
 
         // Step 12: inner sumcheck rounds — each round's compressed coeffs read from NARG.
         for round in 0..inner_num_vars {
-            let coeffs_except_linear_term: Vec<F> = transcript
-                .read_slice()
-                .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+            let coeffs_except_linear_term: Vec<F> = read_vec(transcript)?;
             if coeffs_except_linear_term.len() != INNER_SUMCHECK_DEGREE_BOUND {
                 return Err(BlindFoldVerifyError::DegreeBoundExceeded {
                     expected: INNER_SUMCHECK_DEGREE_BOUND,
@@ -705,9 +706,7 @@ fn read_real_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
     transcript.absorb(&u);
     transcript.absorb(&round_commitments);
     transcript.absorb(&output_claims_row_commitments);
-    let noncoeff_row_commitments: Vec<C::G1> = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+    let noncoeff_row_commitments: Vec<C::G1> = read_vec(transcript)?;
     transcript.absorb(&e_row_commitments);
     transcript.absorb(&eval_commitments);
     Ok(RelaxedR1CSInstance {
@@ -727,27 +726,12 @@ fn read_real_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
 fn read_random_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
     transcript: &mut impl VerifierFs<F>,
 ) -> Result<RelaxedR1CSInstance<F, C>, BlindFoldVerifyError> {
-    let u: F = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?
-        .into_iter()
-        .next()
-        .ok_or(BlindFoldVerifyError::MalformedProof)?;
-    let round_commitments: Vec<C::G1> = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
-    let output_claims_row_commitments: Vec<C::G1> = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
-    let noncoeff_row_commitments: Vec<C::G1> = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
-    let e_row_commitments: Vec<C::G1> = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
-    let eval_commitments: Vec<C::G1> = transcript
-        .read_slice()
-        .map_err(|_| BlindFoldVerifyError::MalformedProof)?;
+    let u: F = read_one(transcript)?;
+    let round_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let output_claims_row_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let noncoeff_row_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let e_row_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let eval_commitments: Vec<C::G1> = read_vec(transcript)?;
     Ok(RelaxedR1CSInstance {
         u,
         round_commitments,
@@ -880,7 +864,7 @@ mod tests {
     fn verify_narg(
         r1cs: &VerifierR1CS<Fr>,
         gens: &PedersenGenerators<Bn254Curve>,
-        verifier_input: &BlindFoldVerifierInput<Bn254Curve>,
+        verifier_input: BlindFoldVerifierInput<Bn254Curve>,
         narg: &[u8],
         label: &'static [u8],
     ) -> Result<(), BlindFoldVerifyError> {
@@ -899,7 +883,7 @@ mod tests {
     ) -> Result<(), BlindFoldVerifyError> {
         let narg = prove_to_narg(r1cs, gens, real_instance, real_witness, z, label);
         let verifier_input = make_verifier_input(real_instance);
-        verify_narg(r1cs, gens, &verifier_input, &narg, label)
+        verify_narg(r1cs, gens, verifier_input, &narg, label)
     }
 
     #[test]
@@ -968,7 +952,7 @@ mod tests {
         truncated.truncate(truncated.len() / 2);
 
         let verifier_input = make_verifier_input(&real_instance);
-        let result = verify_narg(&r1cs, &gens, &verifier_input, &truncated, b"BlindFold_test");
+        let result = verify_narg(&r1cs, &gens, verifier_input, &truncated, b"BlindFold_test");
 
         assert!(
             result.is_err(),
@@ -1012,7 +996,7 @@ mod tests {
         let extra = verifier_input.round_commitments[0];
         verifier_input.round_commitments.push(extra);
 
-        let result = verify_narg(&r1cs, &gens, &verifier_input, &narg, b"BlindFold_test");
+        let result = verify_narg(&r1cs, &gens, verifier_input, &narg, b"BlindFold_test");
 
         assert_eq!(result, Err(BlindFoldVerifyError::MalformedProof));
     }
@@ -1107,7 +1091,7 @@ mod tests {
         tampered[i] ^= 0x01;
 
         let verifier_input = make_verifier_input(&real_instance);
-        let result = verify_narg(&r1cs, &gens, &verifier_input, &tampered, b"BlindFold_test");
+        let result = verify_narg(&r1cs, &gens, verifier_input, &tampered, b"BlindFold_test");
         assert!(
             result.is_err(),
             "Tampering the NARG (az_r region) should cause verification failure: {result:?}"
@@ -1151,7 +1135,7 @@ mod tests {
         tampered[i] ^= 0x01;
 
         let verifier_input = make_verifier_input(&real_instance);
-        let result = verify_narg(&r1cs, &gens, &verifier_input, &tampered, b"BlindFold_test");
+        let result = verify_narg(&r1cs, &gens, verifier_input, &tampered, b"BlindFold_test");
         assert!(
             result.is_err(),
             "Tampered W opening should fail verification: {result:?}"
@@ -1195,7 +1179,7 @@ mod tests {
         tampered[i] ^= 0x01;
 
         let verifier_input = make_verifier_input(&real_instance);
-        let result = verify_narg(&r1cs, &gens, &verifier_input, &tampered, b"BlindFold_test");
+        let result = verify_narg(&r1cs, &gens, verifier_input, &tampered, b"BlindFold_test");
         assert!(
             result.is_err(),
             "Tampered E opening / NARG region should fail verification: {result:?}"

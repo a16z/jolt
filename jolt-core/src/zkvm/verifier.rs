@@ -213,6 +213,57 @@ fn scale_batching_coefficients<F: JoltField, A: AbstractVerifierOpeningAccumulat
         })
         .collect()
 }
+
+/// Shared ZK "finish" tail for a regular (non-uni-skip) stage: derives the batched
+/// input/output BlindFold constraints and their challenge values from the stage's
+/// `instances`, writes the stage's NARG read-back into `readback_slot`, and returns the
+/// `StageVerifyResult`. Stages 3–7 (incl. 6a) share this verbatim — only the instance set,
+/// challenges, and read-back slot differ; consolidating it stops the claim/constraint sync
+/// (see CLAUDE.md) from drifting across copies. The two touched fields are passed as
+/// separate `&mut`s (not `&mut self`) so the call coexists with the `instances` borrow,
+/// which holds shared borrows of other `self` fields.
+#[cfg(feature = "zk")]
+fn finish_regular_zk_stage<F: JoltField, C: JoltCurve<F = F>>(
+    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    instances: &[&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>],
+    batching_coefficients: &[F],
+    challenges: Vec<F::Challenge>,
+    zk_sumcheck_readback: Option<ZkSumcheckReadback<C>>,
+    readback_slot: &mut Option<ZkSumcheckReadback<C>>,
+) -> StageVerifyResult<F> {
+    let regular_oc_ids = opening_accumulator.take_pending_claim_ids();
+    let batched_output_constraint = batch_output_constraints(instances);
+    let batched_input_constraint = batch_input_constraints(instances);
+    let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+    let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.to_vec();
+    let mut input_constraint_challenge_values: Vec<F> =
+        scale_batching_coefficients(batching_coefficients, instances);
+    for instance in instances {
+        let num_rounds = instance.num_rounds();
+        let offset = instance.round_offset(max_num_rounds);
+        let r_slice = &challenges[offset..offset + num_rounds];
+        output_constraint_challenge_values.extend(
+            instance
+                .get_params()
+                .output_constraint_challenge_values(r_slice),
+        );
+        input_constraint_challenge_values.extend(
+            instance
+                .get_params()
+                .input_constraint_challenge_values(opening_accumulator),
+        );
+    }
+    let stage_result = StageVerifyResult::new(
+        challenges,
+        batched_output_constraint,
+        output_constraint_challenge_values,
+        batched_input_constraint,
+        input_constraint_challenge_values,
+        vec![regular_oc_ids],
+    );
+    *readback_slot = zk_sumcheck_readback;
+    stage_result
+}
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 use jolt_transcript::{verifier_transcript, DuplexSpongeInterface, VerifierState};
@@ -917,38 +968,14 @@ where
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage3[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            let stage_result = StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage3,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
-            );
-            self.zk_sumcheck_readback[2] = zk_sumcheck_readback;
-            Ok(stage_result)
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[2],
+            ))
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1027,38 +1054,14 @@ where
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage4[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            let stage_result = StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage4,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
-            );
-            self.zk_sumcheck_readback[3] = zk_sumcheck_readback;
-            Ok(stage_result)
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[3],
+            ))
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1104,38 +1107,14 @@ where
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage5[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            let stage_result = StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage5,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
-            );
-            self.zk_sumcheck_readback[4] = zk_sumcheck_readback;
-            Ok(stage_result)
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[4],
+            ))
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1192,37 +1171,14 @@ where
             .inspect_err(|err| tracing::error!("Stage 6a: {err}"))?;
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = _batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&_batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage6a[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            let stage_result = StageVerifyResult::new(
+            let stage_result = finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &_batching_coefficients,
                 r_stage6a,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[5],
             );
-            self.zk_sumcheck_readback[5] = zk_sumcheck_readback;
             Ok((
                 bytecode_read_raf.into_params(),
                 booleanity.into_params(),
@@ -1365,38 +1321,14 @@ where
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage6b[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            let stage_result = StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage6b,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
-            );
-            self.zk_sumcheck_readback[6] = zk_sumcheck_readback;
-            Ok(stage_result)
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[6],
+            ))
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1651,7 +1583,7 @@ where
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
 
         verifier
-            .verify(&verifier_input, transcript)
+            .verify(verifier_input, transcript)
             .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 
         tracing::debug!(
@@ -1748,38 +1680,14 @@ where
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage7[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            let stage_result = StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage7,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
-            );
-            self.zk_sumcheck_readback[7] = zk_sumcheck_readback;
-            Ok(stage_result)
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[7],
+            ))
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
