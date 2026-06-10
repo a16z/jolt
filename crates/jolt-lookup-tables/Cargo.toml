@@ -13,7 +13,11 @@ workspace = true
 
 [features]
 core-abi-tests = []
-field-inline = ["jolt-core/field-inline", "jolt-riscv/field-inline", "tracer/field-inline"]
+field-inline = [
+  "jolt-core/field-inline",
+  "jolt-riscv/field-inline",
+  "tracer/field-inline",
+]
 
 [dependencies]
 jolt-field = { workspace = true }
@@ -22,8 +26,10 @@ serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
-jolt-core = { workspace = true, default-features = false, features = ["minimal"] }
-jolt-riscv = { workspace = true, features = ["serialization", "test-utils"] }
+jolt-core = { workspace = true, default-features = false, features = [
+  "minimal",
+] }
+jolt-riscv = { workspace = true, features = ["serialization"] }
 rand = { workspace = true }
 tracer = { workspace = true, features = ["std", "test-utils"] }
 

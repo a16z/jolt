@@ -50,7 +50,7 @@ impl<F: Field> SparseDensePrefix<F> for LsbPrefix {
     ) -> PrefixCheckpoint<F> {
         let _ = (checkpoints, r_x, r_y, j, suffix_len);
         if j == 2 * XLEN - 1 {
-            Some(r_y.into()).into()
+            Some(r_y).into()
         } else {
             Some(F::one()).into()
         }

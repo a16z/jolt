@@ -33,9 +33,12 @@ impl<F: Field> SparseDensePrefix<F> for LeftOperandMsbPrefix {
         if j == 0 {
             F::from_u32(c)
         } else if j == 1 {
-            r_x.unwrap().into()
+            let Some(r_x) = r_x else {
+                unreachable!("r_x is bound in odd rounds")
+            };
+            r_x
         } else {
-            checkpoints[Prefixes::LeftOperandMsb].unwrap()
+            checkpoints[Prefixes::LeftOperandMsb].unwrap_or(F::zero())
         }
     }
 
@@ -48,7 +51,7 @@ impl<F: Field> SparseDensePrefix<F> for LeftOperandMsbPrefix {
     ) -> PrefixCheckpoint<F> {
         let _ = (checkpoints, r_x, r_y, j, suffix_len);
         if j == 1 {
-            Some(r_x.into()).into()
+            Some(r_x).into()
         } else {
             checkpoints[Prefixes::LeftOperandMsb].into()
         }

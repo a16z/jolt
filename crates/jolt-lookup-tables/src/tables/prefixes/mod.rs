@@ -121,6 +121,8 @@ impl<F: Copy> PrefixEval<F> {
 }
 
 impl<F: Copy> PrefixEval<Option<F>> {
+    /// Panics if the checkpoint has not been set yet.
+    #[expect(clippy::unwrap_used)]
     pub fn unwrap(self) -> PrefixEval<F> {
         self.0.unwrap().into()
     }

@@ -35,7 +35,7 @@ impl<F: Field> SparseDensePrefix<F> for RightOperandMsbPrefix {
         } else if j == 1 {
             F::from_u32(c)
         } else {
-            checkpoints[Prefixes::RightOperandMsb].unwrap()
+            checkpoints[Prefixes::RightOperandMsb].unwrap_or(F::zero())
         }
     }
 
@@ -48,7 +48,7 @@ impl<F: Field> SparseDensePrefix<F> for RightOperandMsbPrefix {
     ) -> PrefixCheckpoint<F> {
         let _ = (checkpoints, r_x, r_y, j, suffix_len);
         if j == 1 {
-            Some(r_y.into()).into()
+            Some(r_y).into()
         } else {
             checkpoints[Prefixes::RightOperandMsb].into()
         }

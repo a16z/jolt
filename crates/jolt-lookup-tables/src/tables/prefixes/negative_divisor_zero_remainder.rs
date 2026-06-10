@@ -45,28 +45,29 @@ impl<F: Field> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
             let (remainder, _) = b.uninterleave();
             if u64::from(remainder) != 0 {
                 return F::zero();
-            } else {
-                // `c` is the sign "bit" of the remainder.
-                // This prefix handles the case where the remainder is zero
-                // and the divisor is negative.
-                return (F::one() - F::from_u32(c)) * divisor_sign;
             }
+            // `c` is the sign "bit" of the remainder.
+            // This prefix handles the case where the remainder is zero
+            // and the divisor is negative.
+            return (F::one() - F::from_u32(c)) * divisor_sign;
         }
         if j == 1 {
             let (remainder, _) = b.uninterleave();
             if u64::from(remainder) != 0 {
                 return F::zero();
-            } else {
-                // `r_x` is the sign "bit" of the remainder.
-                // `c` is the sign "bit" of the divisor.
-                // This prefix handles the case where the remainder is zero
-                // and the divisor is negative.
-                return (F::one() - r_x.unwrap()) * F::from_u32(c);
             }
+            let Some(r_x) = r_x else {
+                unreachable!("r_x is bound in odd rounds")
+            };
+            // `r_x` is the sign "bit" of the remainder.
+            // `c` is the sign "bit" of the divisor.
+            // This prefix handles the case where the remainder is zero
+            // and the divisor is negative.
+            return (F::one() - r_x) * F::from_u32(c);
         }
 
         let negative_divisor_zero_remainder =
-            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
+            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap_or(F::one());
 
         if let Some(r_x) = r_x {
             let (remainder, _) = b.uninterleave();
@@ -105,7 +106,7 @@ impl<F: Field> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
         }
 
         let mut negative_divisor_zero_remainder =
-            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
+            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap_or(F::one());
         negative_divisor_zero_remainder *= F::one() - r_x;
         Some(negative_divisor_zero_remainder).into()
     }

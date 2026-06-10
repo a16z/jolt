@@ -392,7 +392,7 @@ impl From<Vec<TraceRow>> for OwnedTrace {
 
 impl TraceSource for OwnedTrace {
     fn next_row(&mut self) -> Option<TraceRow> {
-        let row = self.rows.get(self.next).cloned();
+        let row = self.rows.get(self.next).copied();
         self.next += usize::from(row.is_some());
         row
     }

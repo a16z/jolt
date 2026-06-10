@@ -37,7 +37,10 @@ impl<F: Field> SparseDensePrefix<F> for TwoLsbPrefix {
             // in the log(K)th round, `c` corresponds to bit 0
             // and `r_x` corresponds to bit 1
             debug_assert_eq!(b.len(), 0);
-            (F::one() - F::from_u32(c)) * (F::one() - r_x.unwrap())
+            let Some(r_x) = r_x else {
+                unreachable!("r_x is bound in odd rounds")
+            };
+            (F::one() - F::from_u32(c)) * (F::one() - r_x)
         } else if j == 2 * XLEN - 2 {
             // in the (log(K)-1)th round, `c` corresponds to bit 1
             debug_assert_eq!(b.len(), 1);

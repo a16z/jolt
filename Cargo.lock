@@ -3239,6 +3239,7 @@ dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "common",
  "hex",
+ "jolt-lookup-tables",
  "jolt-riscv",
  "object 0.39.1",
  "serde",
@@ -3268,7 +3269,6 @@ name = "jolt-riscv"
 version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
- "rand 0.8.5",
  "serde",
  "serde_json",
  "strum 0.28.0",
@@ -6307,6 +6307,7 @@ dependencies = [
  "fnv",
  "inventory",
  "itertools 0.14.0",
+ "jolt-field",
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",

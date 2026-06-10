@@ -46,28 +46,30 @@ impl<F: Field> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderPrefi
             let (remainder, divisor) = b.uninterleave();
             if u64::from(remainder) <= u64::from(divisor) {
                 return F::zero();
-            } else {
-                // `c` is the sign "bit" of the remainder.
-                // This prefix handles the case where both remainder and
-                // divisor are negative, i.e. their sign bits are one.
-                return F::from_u32(c) * divisor_sign;
             }
+            // `c` is the sign "bit" of the remainder.
+            // This prefix handles the case where both remainder and
+            // divisor are negative, i.e. their sign bits are one.
+            return F::from_u32(c) * divisor_sign;
         }
         if j == 1 {
             let (remainder, divisor) = b.uninterleave();
             if u64::from(remainder) <= u64::from(divisor) {
                 return F::zero();
-            } else {
-                // `r_x` is the sign "bit" of the remainder.
-                // `c` is the sign "bit" of the divisor.
-                // This prefix handles the case where both remainder and
-                // divisor are negative, i.e. their sign bits are one.
-                return r_x.unwrap() * F::from_u32(c);
             }
+            let Some(r_x) = r_x else {
+                unreachable!("r_x is bound in odd rounds")
+            };
+            // `r_x` is the sign "bit" of the remainder.
+            // `c` is the sign "bit" of the divisor.
+            // This prefix handles the case where both remainder and
+            // divisor are negative, i.e. their sign bits are one.
+            return r_x * F::from_u32(c);
         }
 
-        let mut gt = checkpoints[Prefixes::NegativeDivisorGreaterThanRemainder].unwrap();
-        let mut eq = checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
+        let mut gt =
+            checkpoints[Prefixes::NegativeDivisorGreaterThanRemainder].unwrap_or(F::zero());
+        let mut eq = checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap_or(F::one());
 
         // For j=2 and j=3, the two checkpoints are the same (they both store isNegative(divisor))
         // so to avoid double-counting we multiply `gt` by x * (1 - y) instead of adding
@@ -84,7 +86,9 @@ impl<F: Field> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderPrefi
             return gt;
         }
         if j == 3 {
-            let r_x = r_x.unwrap();
+            let Some(r_x) = r_x else {
+                unreachable!("r_x is bound in odd rounds")
+            };
             let c = F::from_u32(c);
             let (x, y) = b.uninterleave();
             gt *= r_x * (F::one() - c);
@@ -133,8 +137,10 @@ impl<F: Field> SparseDensePrefix<F> for NegativeDivisorGreaterThanRemainderPrefi
             return Some(r_x * r_y).into();
         }
 
-        let gt_checkpoint = checkpoints[Prefixes::NegativeDivisorGreaterThanRemainder].unwrap();
-        let eq_checkpoint = checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
+        let gt_checkpoint =
+            checkpoints[Prefixes::NegativeDivisorGreaterThanRemainder].unwrap_or(F::zero());
+        let eq_checkpoint =
+            checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap_or(F::one());
 
         if j == 3 {
             return Some(gt_checkpoint * r_x * (F::one() - r_y)).into();

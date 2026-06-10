@@ -108,9 +108,10 @@ pub trait InlineInstruction {
 
 macro_rules! impl_inline_instruction {
     (
-        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         $(
+            $(#[$meta])*
             impl<T> InlineInstruction for jolt_riscv::instructions::$marker<T> {
                 const SOURCE_KIND: SourceInstructionKind =
                     jolt_riscv::SourceInstruction::$marker(

@@ -56,7 +56,7 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTA
             24 => Prefixes::XorRot24,
             32 => Prefixes::XorRot32,
             63 => Prefixes::XorRot63,
-            _ => unimplemented!(),
+            _ => unreachable!(),
         };
         let mut result = checkpoints[prefix_idx].unwrap_or(F::zero());
 
@@ -66,7 +66,7 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTA
 
             // Calculate where this bit ends up after rotation
             let original_pos = j / 2;
-            let rotated_pos = (original_pos + ROTATION as usize) % XLEN;
+            let rotated_pos = (original_pos + ROTATION) % XLEN;
             let shift = XLEN - 1 - rotated_pos;
 
             result += F::from_u64(1 << shift) * xor_bit;
@@ -76,7 +76,7 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTA
             let xor_bit = (F::one() - x) * y_msb + x * (F::one() - y_msb);
 
             let original_pos = j / 2;
-            let rotated_pos = (original_pos + ROTATION as usize) % XLEN;
+            let rotated_pos = (original_pos + ROTATION) % XLEN;
             let shift = XLEN - 1 - rotated_pos;
 
             result += F::from_u64(1 << shift) * xor_bit;
@@ -86,7 +86,7 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTA
         let (x, y) = b.uninterleave();
 
         let shift = if suffix_len as i32 / 2 - ROTATION as i32 >= 0 {
-            suffix_len / 2 - ROTATION as usize
+            suffix_len / 2 - ROTATION
         } else {
             (XLEN as i32 + (suffix_len as i32 / 2 - ROTATION as i32)) as usize
         };
@@ -109,10 +109,10 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTA
             24 => Prefixes::XorRot24,
             32 => Prefixes::XorRot32,
             63 => Prefixes::XorRot63,
-            _ => unimplemented!(),
+            _ => unreachable!(),
         };
         let original_pos = j / 2;
-        let rotated_pos = (original_pos + ROTATION as usize) % XLEN;
+        let rotated_pos = (original_pos + ROTATION) % XLEN;
         let shift = XLEN - 1 - rotated_pos;
         let updated = checkpoints[prefix_idx].unwrap_or(F::zero())
             + F::from_u64(1 << shift) * ((F::one() - r_x) * r_y + r_x * (F::one() - r_y));

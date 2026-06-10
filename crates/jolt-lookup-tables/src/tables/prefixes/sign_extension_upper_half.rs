@@ -63,7 +63,10 @@ impl<F: Field> SparseDensePrefix<F> for SignExtensionUpperHalfPrefix {
             F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)).mul_u64(c as u64)
         } else if j == XLEN + half_word_size + 1 {
             // Sign bit is in r_x
-            F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)) * r_x.unwrap()
+            let Some(r_x) = r_x else {
+                unreachable!("r_x is bound in odd rounds")
+            };
+            F::from_u128(((1u128 << (half_word_size)) - 1) << (half_word_size)) * r_x
         } else if j > XLEN + half_word_size + 1 {
             // Sign bit has been processed, use checkpoint
             checkpoints[Prefixes::SignExtensionUpperHalf].unwrap_or(F::zero())

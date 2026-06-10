@@ -65,7 +65,7 @@ impl<F: Field> SparseDensePrefix<F> for ChangeDivisorWPrefix {
         let mut result = if j == XLEN || j == XLEN + 1 {
             F::from_u64(2) - F::from_u128(1u128 << XLEN)
         } else {
-            checkpoints[Prefixes::ChangeDivisorW].unwrap()
+            checkpoints[Prefixes::ChangeDivisorW].unwrap_or(F::zero())
         };
 
         if j == XLEN {
@@ -93,7 +93,7 @@ impl<F: Field> SparseDensePrefix<F> for ChangeDivisorWPrefix {
             }
         } else if j > XLEN {
             let (x, y) = b.uninterleave();
-            if b.len() > 0 && u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
+            if !b.is_empty() && u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
                 return F::zero();
             }
             result *= F::one() - F::from_u64(c as u64);
@@ -116,7 +116,7 @@ impl<F: Field> SparseDensePrefix<F> for ChangeDivisorWPrefix {
         let updated = if j == XLEN + 1 {
             (F::from_u64(2) - F::from_u128(1u128 << XLEN)) * r_x * r_y
         } else {
-            checkpoints[Prefixes::ChangeDivisorW].unwrap() * ((F::one() - r_x) * r_y)
+            checkpoints[Prefixes::ChangeDivisorW].unwrap_or(F::zero()) * ((F::one() - r_x) * r_y)
         };
         Some(updated).into()
     }

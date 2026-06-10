@@ -75,28 +75,26 @@ impl<F: Field> SparseDensePrefix<F> for SignExtensionPrefix {
             let _ = b.pop_msb();
             let (_, mut y) = b.uninterleave();
             let mut result = F::zero();
-            let mut index = 1;
-            for _ in 0..y.len() {
+            for index in 1..=y.len() {
                 let y_i = y.pop_msb() as u64;
                 result += F::from_u64((1 - y_i) << index);
-                index += 1;
             }
             return result * sign_bit;
         }
         if j == 1 {
-            let sign_bit = r_x.unwrap();
+            let Some(sign_bit) = r_x else {
+                unreachable!("r_x is bound in odd rounds")
+            };
             let (_, mut y) = b.uninterleave();
             let mut result = F::zero();
-            let mut index = 1;
-            for _ in 0..y.len() {
+            for index in 1..=y.len() {
                 let y_i = y.pop_msb() as u64;
                 result += F::from_u64((1 - y_i) << index);
-                index += 1;
             }
             return result * sign_bit;
         }
 
-        let sign_bit = checkpoints[Prefixes::LeftOperandMsb].unwrap();
+        let sign_bit = checkpoints[Prefixes::LeftOperandMsb].unwrap_or(F::zero());
         let mut result = checkpoints[Prefixes::SignExtension].unwrap_or(F::zero());
 
         if r_x.is_some() {
@@ -134,7 +132,7 @@ impl<F: Field> SparseDensePrefix<F> for SignExtensionPrefix {
         let mut updated = checkpoints[Prefixes::SignExtension].unwrap_or(F::zero());
         updated += F::from_u64(1 << (j / 2)) * (F::one() - r_y);
         if j == 2 * XLEN - 1 {
-            updated *= checkpoints[Prefixes::LeftOperandMsb].unwrap();
+            updated *= checkpoints[Prefixes::LeftOperandMsb].unwrap_or(F::zero());
         }
         Some(updated).into()
     }

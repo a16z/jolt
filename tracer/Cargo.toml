@@ -32,8 +32,12 @@ std = [
   "postcard/use-std",
   "serde_json/std",
 ]
-test-utils = ["dep:rand", "jolt-riscv/test-utils"]
-field-inline = ["jolt-program/field-inline", "jolt-riscv/field-inline", "dep:jolt-field"]
+test-utils = ["dep:rand"]
+field-inline = [
+  "jolt-program/field-inline",
+  "jolt-riscv/field-inline",
+  "dep:jolt-field",
+]
 
 [dependencies]
 jolt-program = { workspace = true, features = ["image", "serialization"] }
@@ -51,6 +55,7 @@ serde.workspace = true
 serde_json.workspace = true
 strum_macros.workspace = true
 strum.workspace = true
+thiserror.workspace = true
 rand = { workspace = true, optional = true }
 inventory.workspace = true
 paste.workspace = true

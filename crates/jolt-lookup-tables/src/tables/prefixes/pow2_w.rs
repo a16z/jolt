@@ -82,7 +82,7 @@ impl<F: Field> SparseDensePrefix<F> for Pow2WPrefix {
 
         // r_x and r_y are bits in the shift amount
         if 2 * XLEN - j < 5 {
-            let mut checkpoint = checkpoints[Prefixes::Pow2W].unwrap();
+            let mut checkpoint = checkpoints[Prefixes::Pow2W].unwrap_or(F::one());
             let shift = 1 << (1 << (2 * XLEN - j));
             checkpoint *= F::one() + F::from_u64(shift - 1) * r_x;
             let shift = 1 << (1 << (2 * XLEN - j - 1));
