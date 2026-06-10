@@ -29,8 +29,8 @@ use jolt_claims::protocols::jolt::{
             SpartanOuterDimensions,
         },
     },
-    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial, PrecommittedClaimReduction,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -42,6 +42,8 @@ use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_verifier::compat::claims::{offset_opening_claim, opening_claim, upsert_opening_claim};
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+use jolt_verifier::stages::PrecommittedSchedule;
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 #[test]
@@ -1409,45 +1411,21 @@ fn stage6_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-fn case_advice_layouts(
-    base: &CoreVerifierCase,
-) -> (
-    Option<AdviceClaimReductionLayout>,
-    Option<AdviceClaimReductionLayout>,
-) {
-    let log_t = base.proof.trace_length.ilog2() as usize;
-    let log_k_chunk = base.proof.one_hot_config.committed_chunk_bits();
-    let trusted_max_bytes = base
-        .trusted_advice_commitment
-        .is_some()
-        .then_some(base.public_io.memory_layout.max_trusted_advice_size as usize);
-    let untrusted_max_bytes = base
-        .proof
-        .untrusted_advice_commitment
-        .is_some()
-        .then_some(base.public_io.memory_layout.max_untrusted_advice_size as usize);
-    let candidates = advice::precommitted_candidates(trusted_max_bytes, untrusted_max_bytes);
-    let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
-        log_t + log_k_chunk,
-        &candidates,
-        log_k_chunk,
-    );
-    let layout = |max_bytes: Option<usize>| {
-        max_bytes.map(|max_bytes| {
-            AdviceClaimReductionLayout::balanced(
-                base.proof.trace_polynomial_order,
-                log_t,
-                scheduling_reference,
-                max_bytes,
-            )
-        })
-    };
-    (layout(trusted_max_bytes), layout(untrusted_max_bytes))
+fn case_advice_layouts(base: &CoreVerifierCase) -> PrecommittedSchedule {
+    PrecommittedSchedule::new(
+        base.proof.trace_polynomial_order,
+        base.proof.trace_length.ilog2() as usize,
+        base.proof.one_hot_config.committed_chunk_bits(),
+        &base.public_io.memory_layout,
+        base.trusted_advice_commitment.is_some(),
+        base.proof.untrusted_advice_commitment.is_some(),
+    )
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn stage6_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
-    let (trusted_layout, untrusted_layout) = case_advice_layouts(base);
+    let schedule = case_advice_layouts(base);
+    let (trusted_layout, untrusted_layout) = (schedule.trusted_advice, schedule.untrusted_advice);
     let mut openings = Vec::new();
 
     if let Some(layout) = trusted_layout {
@@ -1506,7 +1484,8 @@ fn stage7_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn stage7_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
-    let (trusted_layout, untrusted_layout) = case_advice_layouts(base);
+    let schedule = case_advice_layouts(base);
+    let (trusted_layout, untrusted_layout) = (schedule.trusted_advice, schedule.untrusted_advice);
     let mut openings = Vec::new();
 
     if trusted_layout.is_some_and(|layout| layout.dimensions().has_address_phase()) {

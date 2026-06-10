@@ -4,8 +4,8 @@ use jolt_claims::protocols::jolt::{
         dimensions::JoltFormulaDimensions,
     },
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, HammingWeightClaimReductionChallenge,
-    HammingWeightClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltOpeningId,
-    JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
+    HammingWeightClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial,
+    JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -20,8 +20,9 @@ use jolt_transcript::Transcript;
 use super::{
     inputs::{AdviceAddressPhaseOutputClaim, Deps, Stage7Claims},
     outputs::{
-        AdviceAddressPhasePublicOutput, HammingWeightClaimReductionPublicOutput, Stage7ClearOutput,
-        Stage7Output, Stage7PublicOutput, Stage7ZkOutput, VerifiedAdviceAddressPhaseSumcheck,
+        AdviceAddressPhasePublicOutput, HammingWeightClaimReductionPublicOutput,
+        PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7PublicOutput,
+        Stage7ZkOutput, VerifiedAdviceAddressPhaseSumcheck,
         VerifiedHammingWeightClaimReductionSumcheck, VerifiedStage7Batch,
     },
 };
@@ -93,17 +94,9 @@ where
     );
     let hamming_claims = hamming_weight::claim_reduction::<PCS::Field>(hamming_dimensions);
 
-    let advice_layouts = crate::stages::advice_layouts(
-        proof.trace_polynomial_order,
-        log_t,
-        proof.one_hot_config.committed_chunk_bits(),
-        &checked.public_io.memory_layout,
-        checked.trusted_advice_commitment_present,
-        proof.untrusted_advice_commitment.is_some(),
-    );
-    let trusted_advice_layout = advice_layouts.trusted;
-    let untrusted_advice_layout = advice_layouts.untrusted;
-    let trusted_advice_claims = trusted_advice_layout.as_ref().and_then(|layout| {
+    let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
+    let untrusted_advice_layout = checked.precommitted.untrusted_advice.as_ref();
+    let trusted_advice_claims = trusted_advice_layout.and_then(|layout| {
         if layout.dimensions().has_address_phase() {
             Some(advice::address_phase::<PCS::Field>(
                 JoltAdviceKind::Trusted,
@@ -113,7 +106,7 @@ where
             None
         }
     });
-    let untrusted_advice_claims = untrusted_advice_layout.as_ref().and_then(|layout| {
+    let untrusted_advice_claims = untrusted_advice_layout.and_then(|layout| {
         if layout.dimensions().has_address_phase() {
             Some(advice::address_phase::<PCS::Field>(
                 JoltAdviceKind::Untrusted,
@@ -201,10 +194,9 @@ where
         let hamming_opening_points =
             hamming_opening_points(hamming_dimensions, &hamming_opening_point);
 
-        let trusted_advice = if let (Some(layout), Some(claim)) = (
-            trusted_advice_layout.as_ref(),
-            trusted_advice_claims.as_ref(),
-        ) {
+        let trusted_advice = if let (Some(layout), Some(claim)) =
+            (trusted_advice_layout, trusted_advice_claims.as_ref())
+        {
             Some(advice_address_phase_public(
                 &batch_consistency,
                 claim,
@@ -215,10 +207,9 @@ where
         } else {
             None
         };
-        let untrusted_advice = if let (Some(layout), Some(claim)) = (
-            untrusted_advice_layout.as_ref(),
-            untrusted_advice_claims.as_ref(),
-        ) {
+        let untrusted_advice = if let (Some(layout), Some(claim)) =
+            (untrusted_advice_layout, untrusted_advice_claims.as_ref())
+        {
             Some(advice_address_phase_public(
                 &batch_consistency,
                 claim,
@@ -229,6 +220,41 @@ where
         } else {
             None
         };
+
+        let mut precommitted_final_openings = Vec::new();
+        for (kind, layout, address_phase, cycle_phase) in [
+            (
+                JoltAdviceKind::Trusted,
+                trusted_advice_layout,
+                trusted_advice
+                    .as_ref()
+                    .map(|public| (public.opening_point.as_slice(), None)),
+                stage6
+                    .trusted_advice_cycle_phase
+                    .as_ref()
+                    .map(|public| (public.opening_point.as_slice(), None)),
+            ),
+            (
+                JoltAdviceKind::Untrusted,
+                untrusted_advice_layout,
+                untrusted_advice
+                    .as_ref()
+                    .map(|public| (public.opening_point.as_slice(), None)),
+                stage6
+                    .untrusted_advice_cycle_phase
+                    .as_ref()
+                    .map(|public| (public.opening_point.as_slice(), None)),
+            ),
+        ] {
+            if let Some(layout) = layout {
+                precommitted_final_openings.push(advice_final_opening(
+                    kind,
+                    layout,
+                    address_phase,
+                    cycle_phase,
+                )?);
+            }
+        }
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
             public: public(
@@ -246,6 +272,7 @@ where
             },
             trusted_advice_address_phase: trusted_advice,
             untrusted_advice_address_phase: untrusted_advice,
+            precommitted_final_openings,
         }));
     }
 
@@ -348,7 +375,7 @@ where
     let hamming_opening_points = hamming_opening_points(hamming_dimensions, &hamming_opening_point);
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
-        trusted_advice_layout.as_ref(),
+        trusted_advice_layout,
         trusted_advice_claims.as_ref(),
         claims.advice_address_phase.trusted.as_ref(),
     ) {
@@ -365,7 +392,7 @@ where
         None
     };
     let untrusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
-        untrusted_advice_layout.as_ref(),
+        untrusted_advice_layout,
         untrusted_advice_claims.as_ref(),
         claims.advice_address_phase.untrusted.as_ref(),
     ) {
@@ -433,6 +460,57 @@ where
 
     append_stage7_opening_claims(transcript, claims);
 
+    let mut precommitted_final_openings = Vec::new();
+    for (kind, layout, address_phase, cycle_phase) in [
+        (
+            JoltAdviceKind::Trusted,
+            trusted_advice_layout,
+            match (&trusted_advice, &claims.advice_address_phase.trusted) {
+                (Some(verified), Some(claim)) => {
+                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
+                }
+                _ => None,
+            },
+            match (
+                &stage6.batch.trusted_advice_cycle_phase,
+                &stage6.output_claims.advice_cycle_phase.trusted,
+            ) {
+                (Some(verified), Some(claim)) => {
+                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
+                }
+                _ => None,
+            },
+        ),
+        (
+            JoltAdviceKind::Untrusted,
+            untrusted_advice_layout,
+            match (&untrusted_advice, &claims.advice_address_phase.untrusted) {
+                (Some(verified), Some(claim)) => {
+                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
+                }
+                _ => None,
+            },
+            match (
+                &stage6.batch.untrusted_advice_cycle_phase,
+                &stage6.output_claims.advice_cycle_phase.untrusted,
+            ) {
+                (Some(verified), Some(claim)) => {
+                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
+                }
+                _ => None,
+            },
+        ),
+    ] {
+        if let Some(layout) = layout {
+            precommitted_final_openings.push(advice_final_opening(
+                kind,
+                layout,
+                address_phase,
+                cycle_phase,
+            )?);
+        }
+    }
+
     Ok(Stage7Output::Clear(Stage7ClearOutput {
         public: public(
             batch.reduction.point.as_slice().to_vec(),
@@ -456,6 +534,7 @@ where
             trusted_advice_address_phase: trusted_advice,
             untrusted_advice_address_phase: untrusted_advice,
         },
+        precommitted_final_openings,
     }))
 }
 
@@ -765,6 +844,36 @@ fn hamming_opening_points<F: Field>(
         bytecode: vec![opening_point.to_vec(); dimensions.layout.bytecode()],
         ram: vec![opening_point.to_vec(); dimensions.layout.ram()],
     }
+}
+
+/// Resolves the final opening of an advice polynomial from whichever phase
+/// completed its reduction: this stage's address phase, or the stage 6b cycle
+/// phase when no active address rounds remain.
+fn advice_final_opening<F: Field>(
+    kind: JoltAdviceKind,
+    layout: &AdviceClaimReductionLayout,
+    address_phase: Option<(&[F], Option<F>)>,
+    cycle_phase: Option<(&[F], Option<F>)>,
+) -> Result<PrecommittedFinalOpening<F>, VerifierError> {
+    let (point, opening_claim) = if layout.dimensions().has_address_phase() {
+        address_phase.ok_or(VerifierError::MissingOpeningClaim {
+            id: advice::final_advice_opening(kind),
+        })?
+    } else {
+        cycle_phase.ok_or(VerifierError::MissingOpeningClaim {
+            id: advice::cycle_phase_advice_opening(kind),
+        })?
+    };
+    let polynomial = match kind {
+        JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
+        JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
+    };
+    Ok(PrecommittedFinalOpening {
+        polynomial,
+        id: advice::final_advice_opening(kind),
+        point: point.to_vec(),
+        opening_claim,
+    })
 }
 
 fn advice_address_phase_input<F: Field>(

@@ -124,20 +124,12 @@ where
     );
     let inc_claims = increments::claim_reduction::<PCS::Field>(trace_dimensions);
 
-    let advice_layouts = crate::stages::advice_layouts(
-        proof.trace_polynomial_order,
-        log_t,
-        proof.one_hot_config.committed_chunk_bits(),
-        &checked.public_io.memory_layout,
-        checked.trusted_advice_commitment_present,
-        proof.untrusted_advice_commitment.is_some(),
-    );
-    let trusted_advice_layout = advice_layouts.trusted;
-    let untrusted_advice_layout = advice_layouts.untrusted;
-    let trusted_advice_claims = trusted_advice_layout.as_ref().map(|layout| {
+    let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
+    let untrusted_advice_layout = checked.precommitted.untrusted_advice.as_ref();
+    let trusted_advice_claims = trusted_advice_layout.map(|layout| {
         advice::cycle_phase::<PCS::Field>(JoltAdviceKind::Trusted, layout.dimensions())
     });
-    let untrusted_advice_claims = untrusted_advice_layout.as_ref().map(|layout| {
+    let untrusted_advice_claims = untrusted_advice_layout.map(|layout| {
         advice::cycle_phase::<PCS::Field>(JoltAdviceKind::Untrusted, layout.dimensions())
     });
 
@@ -400,10 +392,9 @@ where
                     reason: error.to_string(),
                 })?;
 
-        let trusted_advice = if let (Some(layout), Some(claim)) = (
-            trusted_advice_layout.as_ref(),
-            trusted_advice_claims.as_ref(),
-        ) {
+        let trusted_advice = if let (Some(layout), Some(claim)) =
+            (trusted_advice_layout, trusted_advice_claims.as_ref())
+        {
             Some(verify_b::advice_cycle_phase_public(
                 &consistency,
                 claim,
@@ -413,10 +404,9 @@ where
         } else {
             None
         };
-        let untrusted_advice = if let (Some(layout), Some(claim)) = (
-            untrusted_advice_layout.as_ref(),
-            untrusted_advice_claims.as_ref(),
-        ) {
+        let untrusted_advice = if let (Some(layout), Some(claim)) =
+            (untrusted_advice_layout, untrusted_advice_claims.as_ref())
+        {
             Some(verify_b::advice_cycle_phase_public(
                 &consistency,
                 claim,
@@ -1321,7 +1311,7 @@ where
     )?;
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
-        trusted_advice_layout.as_ref(),
+        trusted_advice_layout,
         trusted_advice_claims.as_ref(),
         claims.advice_cycle_phase.trusted.as_ref(),
     ) {
@@ -1337,7 +1327,7 @@ where
         None
     };
     let untrusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
-        untrusted_advice_layout.as_ref(),
+        untrusted_advice_layout,
         untrusted_advice_claims.as_ref(),
         claims.advice_cycle_phase.untrusted.as_ref(),
     ) {
@@ -1353,10 +1343,7 @@ where
         None
     };
 
-    if let (Some(layout), Some(_)) = (
-        trusted_advice_layout.as_ref(),
-        trusted_advice_claims.as_ref(),
-    ) {
+    if let (Some(layout), Some(_)) = (trusted_advice_layout, trusted_advice_claims.as_ref()) {
         if trusted_advice.is_none() {
             return Err(VerifierError::MissingOpeningClaim {
                 id: advice::cycle_phase_output_openings(
@@ -1366,10 +1353,7 @@ where
             });
         }
     }
-    if let (Some(layout), Some(_)) = (
-        untrusted_advice_layout.as_ref(),
-        untrusted_advice_claims.as_ref(),
-    ) {
+    if let (Some(layout), Some(_)) = (untrusted_advice_layout, untrusted_advice_claims.as_ref()) {
         if untrusted_advice.is_none() {
             return Err(VerifierError::MissingOpeningClaim {
                 id: advice::cycle_phase_output_openings(
