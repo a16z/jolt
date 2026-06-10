@@ -93,22 +93,16 @@ where
     );
     let hamming_claims = hamming_weight::claim_reduction::<PCS::Field>(hamming_dimensions);
 
-    let trusted_advice_layout = checked.trusted_advice_commitment_present.then(|| {
-        AdviceClaimReductionLayout::balanced(
-            proof.trace_polynomial_order,
-            log_t,
-            proof.one_hot_config.committed_chunk_bits(),
-            checked.public_io.memory_layout.max_trusted_advice_size as usize,
-        )
-    });
-    let untrusted_advice_layout = proof.untrusted_advice_commitment.as_ref().map(|_| {
-        AdviceClaimReductionLayout::balanced(
-            proof.trace_polynomial_order,
-            log_t,
-            proof.one_hot_config.committed_chunk_bits(),
-            checked.public_io.memory_layout.max_untrusted_advice_size as usize,
-        )
-    });
+    let advice_layouts = crate::stages::advice_layouts(
+        proof.trace_polynomial_order,
+        log_t,
+        proof.one_hot_config.committed_chunk_bits(),
+        &checked.public_io.memory_layout,
+        checked.trusted_advice_commitment_present,
+        proof.untrusted_advice_commitment.is_some(),
+    );
+    let trusted_advice_layout = advice_layouts.trusted;
+    let untrusted_advice_layout = advice_layouts.untrusted;
     let trusted_advice_claims = trusted_advice_layout.as_ref().and_then(|layout| {
         if layout.dimensions().has_address_phase() {
             Some(advice::address_phase::<PCS::Field>(

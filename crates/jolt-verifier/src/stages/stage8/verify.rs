@@ -16,11 +16,14 @@ use crate::{
 use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::advice, committed_openings::advice_commitment_embedding_scale,
-        dimensions::JoltFormulaDimensions, ra::JoltRaPolynomialLayout,
+        claim_reductions::advice,
+        committed_openings::{
+            commitment_embedding_scale, final_opening_point, FinalOpeningPointInputs,
+        },
+        dimensions::JoltFormulaDimensions,
+        ra::JoltRaPolynomialLayout,
     },
-    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltRelationId,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
@@ -28,7 +31,7 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim, ZkOpeningScheme,
 };
-use jolt_poly::{EqPolynomial, Point};
+use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 struct AdviceFinalOpening<F: Field> {
@@ -89,36 +92,24 @@ where
     })?;
     let layout = formula_dimensions.ra_layout;
 
-    let opening_point = match deps {
-        Deps::Clear { stage7, .. } => stage7
-            .batch
-            .hamming_weight_claim_reduction
-            .opening_point
-            .clone(),
-        Deps::Zk { stage7, .. } => stage7.hamming_weight_claim_reduction.opening_point.clone(),
+    let (hamming_opening_point, inc_opening_point) = match deps {
+        Deps::Clear { stage6, stage7 } => (
+            stage7
+                .batch
+                .hamming_weight_claim_reduction
+                .opening_point
+                .as_slice(),
+            stage6.batch.inc_claim_reduction.opening_point.as_slice(),
+        ),
+        Deps::Zk { stage6, stage7 } => (
+            stage7
+                .hamming_weight_claim_reduction
+                .opening_point
+                .as_slice(),
+            stage6.inc_claim_reduction.opening_point.as_slice(),
+        ),
     };
-    let committed_chunk_bits = proof.one_hot_config.committed_chunk_bits();
-    if opening_point.len() < committed_chunk_bits {
-        return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: format!(
-                "final opening point has {} variables, expected at least {committed_chunk_bits}",
-                opening_point.len()
-            ),
-        });
-    }
-    let r_address_stage7 = &opening_point[..committed_chunk_bits];
-    let dense_embedding_scale = EqPolynomial::<PCS::Field>::zero_selector(r_address_stage7);
     require_commitment_layout(&proof.commitments, layout)?;
-
-    let pcs_opening_point = Point::high_to_low(
-        proof
-            .trace_polynomial_order
-            .commitment_opening_point(&opening_point, log_t)
-            .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-                reason: error.to_string(),
-            })?,
-    );
-    let common_point = Point::high_to_low(opening_point.clone());
 
     if checked.zk {
         let Deps::Zk { stage6, stage7 } = deps else {
@@ -147,6 +138,28 @@ where
         } else {
             None
         };
+        let precommitted_anchor_points: Vec<&[PCS::Field]> = trusted_advice
+            .iter()
+            .map(|opening| opening.point.as_slice())
+            .chain(
+                untrusted_advice
+                    .iter()
+                    .map(|opening| opening.point.as_slice()),
+            )
+            .collect();
+        let opening_point = final_opening_point(FinalOpeningPointInputs {
+            native_main_vars: log_t + proof.one_hot_config.committed_chunk_bits(),
+            log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
+            trace_order: proof.trace_polynomial_order,
+            hamming_weight_opening_point: hamming_opening_point,
+            inc_claim_reduction_opening_point: inc_opening_point,
+            precommitted_anchor_points: &precommitted_anchor_points,
+        })
+        .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+            reason: error.to_string(),
+        })?;
+        let pcs_opening_point = Point::high_to_low(opening_point.clone());
+        let common_point = pcs_opening_point.clone();
         let final_opening_count = 2
             + field_inline_final_opening_count()
             + layout.total()
@@ -194,7 +207,7 @@ where
                 )
                 .into(),
                 &proof.commitments.ram_inc,
-                dense_embedding_scale,
+                commitment_embedding_scale(&opening_point, inc_opening_point),
             );
             push_opening(
                 JoltOpeningId::committed(
@@ -203,13 +216,13 @@ where
                 )
                 .into(),
                 &proof.commitments.rd_inc,
-                dense_embedding_scale,
+                commitment_embedding_scale(&opening_point, inc_opening_point),
             );
             #[cfg(feature = "field-inline")]
             push_opening(
                 field_increments::field_rd_inc_reduced_opening().into(),
                 &proof.commitments.field_inline.field_registers.rd_inc,
-                dense_embedding_scale,
+                commitment_embedding_scale(&opening_point, inc_opening_point),
             );
             for (index, commitment) in proof.commitments.ra.instruction.iter().enumerate() {
                 push_opening(
@@ -219,7 +232,7 @@ where
                     )
                     .into(),
                     commitment,
-                    PCS::Field::one(),
+                    commitment_embedding_scale(&opening_point, hamming_opening_point),
                 );
             }
             for (index, commitment) in proof.commitments.ra.bytecode.iter().enumerate() {
@@ -230,7 +243,7 @@ where
                     )
                     .into(),
                     commitment,
-                    PCS::Field::one(),
+                    commitment_embedding_scale(&opening_point, hamming_opening_point),
                 );
             }
             for (index, commitment) in proof.commitments.ra.ram.iter().enumerate() {
@@ -241,7 +254,7 @@ where
                     )
                     .into(),
                     commitment,
-                    PCS::Field::one(),
+                    commitment_embedding_scale(&opening_point, hamming_opening_point),
                 );
             }
             if let Some(commitment) = trusted_advice_commitment {
@@ -254,7 +267,7 @@ where
                 push_opening(
                     advice::final_advice_opening(JoltAdviceKind::Trusted).into(),
                     commitment,
-                    advice_commitment_embedding_scale(&opening_point, &final_opening.point),
+                    commitment_embedding_scale(&opening_point, &final_opening.point),
                 );
             }
             if let Some(commitment) = untrusted_advice_commitment {
@@ -267,7 +280,7 @@ where
                 push_opening(
                     advice::final_advice_opening(JoltAdviceKind::Untrusted).into(),
                     commitment,
-                    advice_commitment_embedding_scale(&opening_point, &final_opening.point),
+                    commitment_embedding_scale(&opening_point, &final_opening.point),
                 );
             }
         }
@@ -331,6 +344,28 @@ where
     } else {
         None
     };
+    let precommitted_anchor_points: Vec<&[PCS::Field]> = trusted_advice
+        .iter()
+        .map(|opening| opening.point.as_slice())
+        .chain(
+            untrusted_advice
+                .iter()
+                .map(|opening| opening.point.as_slice()),
+        )
+        .collect();
+    let opening_point = final_opening_point(FinalOpeningPointInputs {
+        native_main_vars: log_t + proof.one_hot_config.committed_chunk_bits(),
+        log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
+        trace_order: proof.trace_polynomial_order,
+        hamming_weight_opening_point: hamming_opening_point,
+        inc_claim_reduction_opening_point: inc_opening_point,
+        precommitted_anchor_points: &precommitted_anchor_points,
+    })
+    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+        reason: error.to_string(),
+    })?;
+    let pcs_opening_point = Point::high_to_low(opening_point.clone());
+    let common_point = pcs_opening_point.clone();
 
     let final_opening_count = 2
         + field_inline_final_opening_count()
@@ -385,7 +420,7 @@ where
             .into(),
             &proof.commitments.ram_inc,
             stage6.output_claims.inc_claim_reduction.ram_inc,
-            dense_embedding_scale,
+            commitment_embedding_scale(&opening_point, inc_opening_point),
         );
         push_opening(
             JoltOpeningId::committed(
@@ -395,7 +430,7 @@ where
             .into(),
             &proof.commitments.rd_inc,
             stage6.output_claims.inc_claim_reduction.rd_inc,
-            dense_embedding_scale,
+            commitment_embedding_scale(&opening_point, inc_opening_point),
         );
         #[cfg(feature = "field-inline")]
         push_opening(
@@ -406,7 +441,7 @@ where
                 .field_inline
                 .field_registers_inc_claim_reduction
                 .field_rd_inc,
-            dense_embedding_scale,
+            commitment_embedding_scale(&opening_point, inc_opening_point),
         );
 
         for (index, commitment) in proof.commitments.ra.instruction.iter().enumerate() {
@@ -420,7 +455,12 @@ where
                 .instruction_ra
                 .get(index)
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
-            push_opening(id.into(), commitment, opening_claim, PCS::Field::one());
+            push_opening(
+                id.into(),
+                commitment,
+                opening_claim,
+                commitment_embedding_scale(&opening_point, hamming_opening_point),
+            );
         }
 
         for (index, commitment) in proof.commitments.ra.bytecode.iter().enumerate() {
@@ -434,7 +474,12 @@ where
                 .bytecode_ra
                 .get(index)
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
-            push_opening(id.into(), commitment, opening_claim, PCS::Field::one());
+            push_opening(
+                id.into(),
+                commitment,
+                opening_claim,
+                commitment_embedding_scale(&opening_point, hamming_opening_point),
+            );
         }
 
         for (index, commitment) in proof.commitments.ra.ram.iter().enumerate() {
@@ -448,7 +493,12 @@ where
                 .ram_ra
                 .get(index)
                 .ok_or(VerifierError::MissingOpeningClaim { id })?;
-            push_opening(id.into(), commitment, opening_claim, PCS::Field::one());
+            push_opening(
+                id.into(),
+                commitment,
+                opening_claim,
+                commitment_embedding_scale(&opening_point, hamming_opening_point),
+            );
         }
 
         if let Some(commitment) = trusted_advice_commitment {
@@ -460,7 +510,7 @@ where
                 id.into(),
                 commitment,
                 final_opening.opening_claim,
-                advice_commitment_embedding_scale(&opening_point, &final_opening.point),
+                commitment_embedding_scale(&opening_point, &final_opening.point),
             );
         }
 
@@ -473,7 +523,7 @@ where
                 id.into(),
                 commitment,
                 final_opening.opening_claim,
-                advice_commitment_embedding_scale(&opening_point, &final_opening.point),
+                commitment_embedding_scale(&opening_point, &final_opening.point),
             );
         }
     }
@@ -569,17 +619,20 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
-    let max_advice_size = match kind {
-        JoltAdviceKind::Trusted => checked.public_io.memory_layout.max_trusted_advice_size,
-        JoltAdviceKind::Untrusted => checked.public_io.memory_layout.max_untrusted_advice_size,
-    } as usize;
-    let layout = AdviceClaimReductionLayout::balanced(
+    let advice_layouts = crate::stages::advice_layouts(
         proof.trace_polynomial_order,
         log_t,
         proof.one_hot_config.committed_chunk_bits(),
-        max_advice_size,
+        &checked.public_io.memory_layout,
+        checked.trusted_advice_commitment_present,
+        proof.untrusted_advice_commitment.is_some(),
     );
     let id = advice::final_advice_opening(kind);
+    let layout = match kind {
+        JoltAdviceKind::Trusted => advice_layouts.trusted,
+        JoltAdviceKind::Untrusted => advice_layouts.untrusted,
+    }
+    .ok_or(VerifierError::MissingOpeningClaim { id })?;
 
     match (kind, layout.dimensions().has_address_phase()) {
         (JoltAdviceKind::Trusted, true) => {
@@ -665,17 +718,20 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
-    let max_advice_size = match kind {
-        JoltAdviceKind::Trusted => checked.public_io.memory_layout.max_trusted_advice_size,
-        JoltAdviceKind::Untrusted => checked.public_io.memory_layout.max_untrusted_advice_size,
-    } as usize;
-    let layout = AdviceClaimReductionLayout::balanced(
+    let advice_layouts = crate::stages::advice_layouts(
         proof.trace_polynomial_order,
         log_t,
         proof.one_hot_config.committed_chunk_bits(),
-        max_advice_size,
+        &checked.public_io.memory_layout,
+        checked.trusted_advice_commitment_present,
+        proof.untrusted_advice_commitment.is_some(),
     );
     let id = advice::final_advice_opening(kind);
+    let layout = match kind {
+        JoltAdviceKind::Trusted => advice_layouts.trusted,
+        JoltAdviceKind::Untrusted => advice_layouts.untrusted,
+    }
+    .ok_or(VerifierError::MissingOpeningClaim { id })?;
 
     match (kind, layout.dimensions().has_address_phase()) {
         (JoltAdviceKind::Trusted, true) => {

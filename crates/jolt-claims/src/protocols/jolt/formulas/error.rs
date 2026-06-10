@@ -17,6 +17,14 @@ pub enum JoltFormulaPointError {
     OpeningPointLengthMismatch { expected: usize, got: usize },
     #[error("evaluation domain length mismatch: expected {expected}, got {got}")]
     EvaluationDomainLengthMismatch { expected: usize, got: usize },
+    #[error("incompatible dominant precommitted anchors: {first} and {second} disagree")]
+    IncompatibleDominantAnchors { first: usize, second: usize },
+    #[error("stage 6 cycle challenges ({got}) shorter than native cycle vars ({expected})")]
+    CycleChallengesShorterThanNativeCycle { expected: usize, got: usize },
+    #[error(
+        "cycle-major final opening expects the stage 6 cycle prefix to equal the native cycle vars"
+    )]
+    CycleMajorCyclePrefixMismatch,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]

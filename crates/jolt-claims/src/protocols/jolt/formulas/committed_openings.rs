@@ -3,6 +3,8 @@
 use jolt_field::Field;
 
 use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
+use super::dimensions::TracePolynomialOrder;
+use super::error::JoltFormulaPointError;
 use super::ra::JoltRaPolynomialLayout;
 
 pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommittedPolynomial> {
@@ -72,20 +74,111 @@ pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelati
     }
 }
 
-pub fn advice_commitment_embedding_scale<F: Field>(
+/// Lagrange factor for embedding a smaller polynomial's opening into the
+/// top-left block of the unified final opening point: `1` on variables the
+/// embedded point binds, `1 - r` on the rest.
+pub fn commitment_embedding_scale<F: Field>(
     opening_point: &[F],
-    advice_opening_point: &[F],
+    embedded_opening_point: &[F],
 ) -> F {
     opening_point
         .iter()
         .map(|challenge| {
-            if advice_opening_point.contains(challenge) {
+            if embedded_opening_point.contains(challenge) {
                 F::one()
             } else {
                 F::one() - challenge
             }
         })
         .product()
+}
+
+/// Inputs to [`final_opening_point`], gathered from earlier verification
+/// stages.
+pub struct FinalOpeningPointInputs<'a, F: Field> {
+    /// `log_T + log_k_chunk` for the native trace domain.
+    pub native_main_vars: usize,
+    pub log_k_chunk: usize,
+    pub trace_order: TracePolynomialOrder,
+    /// Stage 7 hamming-weight claim-reduction opening point.
+    pub hamming_weight_opening_point: &'a [F],
+    /// Stage 6 increment claim-reduction opening point (the stage 6 cycle
+    /// challenges).
+    pub inc_claim_reduction_opening_point: &'a [F],
+    /// Final opening points of present precommitted polynomials, in stage 8
+    /// batch order (trusted advice, untrusted advice).
+    pub precommitted_anchor_points: &'a [&'a [F]],
+}
+
+/// Unified big-endian opening point for the stage 8 batched PCS opening.
+///
+/// When a precommitted polynomial spans more variables than the native trace
+/// domain, its opening point anchors the batch (all dominant anchors must
+/// agree). Otherwise the point is assembled from the stage 6 cycle challenges
+/// and the stage 7 address challenges in the order the active trace layout
+/// expects.
+pub fn final_opening_point<F: Field>(
+    inputs: FinalOpeningPointInputs<'_, F>,
+) -> Result<Vec<F>, JoltFormulaPointError> {
+    let max_anchor_len = inputs
+        .precommitted_anchor_points
+        .iter()
+        .map(|point| point.len())
+        .max()
+        .unwrap_or(0);
+    if max_anchor_len > inputs.native_main_vars {
+        let mut dominant: Option<(usize, &[F])> = None;
+        for (index, point) in inputs.precommitted_anchor_points.iter().enumerate() {
+            if point.len() != max_anchor_len {
+                continue;
+            }
+            match dominant {
+                None => dominant = Some((index, point)),
+                Some((first, dominant_point)) => {
+                    if *point != dominant_point {
+                        return Err(JoltFormulaPointError::IncompatibleDominantAnchors {
+                            first,
+                            second: index,
+                        });
+                    }
+                }
+            }
+        }
+        let (_, dominant_point) =
+            dominant.ok_or(JoltFormulaPointError::OpeningPointLengthMismatch {
+                expected: max_anchor_len,
+                got: 0,
+            })?;
+        return Ok(dominant_point.to_vec());
+    }
+
+    if inputs.hamming_weight_opening_point.len() < inputs.log_k_chunk {
+        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            expected: inputs.log_k_chunk,
+            got: inputs.hamming_weight_opening_point.len(),
+        });
+    }
+    let r_address_stage7 = &inputs.hamming_weight_opening_point[..inputs.log_k_chunk];
+    let r_cycle_stage6 = inputs.inc_claim_reduction_opening_point;
+    match inputs.trace_order {
+        TracePolynomialOrder::AddressMajor => Ok([r_cycle_stage6, r_address_stage7].concat()),
+        TracePolynomialOrder::CycleMajor => {
+            let native_cycle = &inputs.hamming_weight_opening_point[inputs.log_k_chunk..];
+            if r_cycle_stage6.len() < native_cycle.len() {
+                return Err(
+                    JoltFormulaPointError::CycleChallengesShorterThanNativeCycle {
+                        expected: native_cycle.len(),
+                        got: r_cycle_stage6.len(),
+                    },
+                );
+            }
+            if &r_cycle_stage6[..native_cycle.len()] != native_cycle {
+                return Err(JoltFormulaPointError::CycleMajorCyclePrefixMismatch);
+            }
+            let cycle_extra = &r_cycle_stage6[native_cycle.len()..];
+            Ok([cycle_extra, r_address_stage7, native_cycle].concat())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,13 +267,88 @@ mod tests {
     }
 
     #[test]
-    fn advice_embedding_scale_selects_variables_outside_advice_point() {
+    fn embedding_scale_selects_variables_outside_embedded_point() {
         let opening_point = [Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
-        let advice_point = [Fr::from_u64(3)];
+        let embedded_point = [Fr::from_u64(3)];
 
         assert_eq!(
-            advice_commitment_embedding_scale(&opening_point, &advice_point),
+            commitment_embedding_scale(&opening_point, &embedded_point),
             (Fr::from_u64(1) - Fr::from_u64(2)) * (Fr::from_u64(1) - Fr::from_u64(5))
+        );
+    }
+
+    #[test]
+    fn final_opening_point_passes_through_hamming_point_for_cycle_major() {
+        let hamming_point: Vec<Fr> = (1..=6).map(Fr::from_u64).collect();
+        let inc_point: Vec<Fr> = hamming_point[2..].to_vec();
+
+        let point = final_opening_point(FinalOpeningPointInputs {
+            native_main_vars: 6,
+            log_k_chunk: 2,
+            trace_order: TracePolynomialOrder::CycleMajor,
+            hamming_weight_opening_point: &hamming_point,
+            inc_claim_reduction_opening_point: &inc_point,
+            precommitted_anchor_points: &[],
+        })
+        .unwrap_or_else(|error| panic!("final opening point should assemble: {error}"));
+
+        assert_eq!(point, hamming_point);
+    }
+
+    #[test]
+    fn final_opening_point_orders_cycle_before_address_for_address_major() {
+        let hamming_point: Vec<Fr> = (1..=6).map(Fr::from_u64).collect();
+        let inc_point: Vec<Fr> = (11..=14).map(Fr::from_u64).collect();
+
+        let point = final_opening_point(FinalOpeningPointInputs {
+            native_main_vars: 6,
+            log_k_chunk: 2,
+            trace_order: TracePolynomialOrder::AddressMajor,
+            hamming_weight_opening_point: &hamming_point,
+            inc_claim_reduction_opening_point: &inc_point,
+            precommitted_anchor_points: &[],
+        })
+        .unwrap_or_else(|error| panic!("final opening point should assemble: {error}"));
+
+        let expected: Vec<Fr> = inc_point
+            .iter()
+            .chain(&hamming_point[..2])
+            .copied()
+            .collect();
+        assert_eq!(point, expected);
+    }
+
+    #[test]
+    fn final_opening_point_anchors_on_dominant_precommitted_opening() {
+        let hamming_point: Vec<Fr> = (1..=6).map(Fr::from_u64).collect();
+        let inc_point: Vec<Fr> = hamming_point[2..].to_vec();
+        let dominant: Vec<Fr> = (21..=28).map(Fr::from_u64).collect();
+        let conflicting: Vec<Fr> = (31..=38).map(Fr::from_u64).collect();
+
+        let point = final_opening_point(FinalOpeningPointInputs {
+            native_main_vars: 6,
+            log_k_chunk: 2,
+            trace_order: TracePolynomialOrder::CycleMajor,
+            hamming_weight_opening_point: &hamming_point,
+            inc_claim_reduction_opening_point: &inc_point,
+            precommitted_anchor_points: &[&dominant, &dominant],
+        })
+        .unwrap_or_else(|error| panic!("final opening point should assemble: {error}"));
+        assert_eq!(point, dominant);
+
+        assert_eq!(
+            final_opening_point(FinalOpeningPointInputs {
+                native_main_vars: 6,
+                log_k_chunk: 2,
+                trace_order: TracePolynomialOrder::CycleMajor,
+                hamming_weight_opening_point: &hamming_point,
+                inc_claim_reduction_opening_point: &inc_point,
+                precommitted_anchor_points: &[&dominant, &conflicting],
+            }),
+            Err(JoltFormulaPointError::IncompatibleDominantAnchors {
+                first: 0,
+                second: 1
+            })
         );
     }
 }

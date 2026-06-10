@@ -737,35 +737,19 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let present = match kind {
-        JoltAdviceKind::Trusted => input.checked.trusted_advice_commitment_present,
-        JoltAdviceKind::Untrusted => input.proof.untrusted_advice_commitment.is_some(),
-    };
-    present.then(|| {
-        let log_t = input.checked.trace_length.ilog2() as usize;
-        let max_size = match kind {
-            JoltAdviceKind::Trusted => {
-                input
-                    .checked
-                    .public_io
-                    .memory_layout
-                    .max_trusted_advice_size as usize
-            }
-            JoltAdviceKind::Untrusted => {
-                input
-                    .checked
-                    .public_io
-                    .memory_layout
-                    .max_untrusted_advice_size as usize
-            }
-        };
-        AdviceClaimReductionLayout::balanced(
-            input.proof.trace_polynomial_order,
-            log_t,
-            input.proof.one_hot_config.committed_chunk_bits(),
-            max_size,
-        )
-    })
+    let log_t = input.checked.trace_length.ilog2() as usize;
+    let advice_layouts = crate::stages::advice_layouts(
+        input.proof.trace_polynomial_order,
+        log_t,
+        input.proof.one_hot_config.committed_chunk_bits(),
+        &input.checked.public_io.memory_layout,
+        input.checked.trusted_advice_commitment_present,
+        input.proof.untrusted_advice_commitment.is_some(),
+    );
+    match kind {
+        JoltAdviceKind::Trusted => advice_layouts.trusted,
+        JoltAdviceKind::Untrusted => advice_layouts.untrusted,
+    }
 }
 
 #[expect(

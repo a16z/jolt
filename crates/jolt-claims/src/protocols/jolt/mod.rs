@@ -5,6 +5,7 @@ mod relation;
 
 pub use formulas::{
     claim_reductions::advice::{AdviceClaimReductionDimensions, AdviceClaimReductionLayout},
+    claim_reductions::precommitted::{PrecommittedClaimReduction, PrecommittedSchedulingReference},
     dimensions::{
         CommitmentMatrixShape, JoltFormulaDimensions, JoltOneHotConfig, JoltOneHotDimensions,
         JoltReadWriteConfig, JoltSumcheckDomain, JoltSumcheckSpec, ReadWriteDimensions,

@@ -30,7 +30,7 @@ use jolt_claims::protocols::jolt::{
         },
     },
     AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial,
+    JoltPolynomialId, JoltRelationId, JoltVirtualPolynomial, PrecommittedClaimReduction,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -1409,30 +1409,55 @@ fn stage6_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-fn stage6_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
+fn case_advice_layouts(
+    base: &CoreVerifierCase,
+) -> (
+    Option<AdviceClaimReductionLayout>,
+    Option<AdviceClaimReductionLayout>,
+) {
     let log_t = base.proof.trace_length.ilog2() as usize;
+    let log_k_chunk = base.proof.one_hot_config.committed_chunk_bits();
+    let trusted_max_bytes = base
+        .trusted_advice_commitment
+        .is_some()
+        .then_some(base.public_io.memory_layout.max_trusted_advice_size as usize);
+    let untrusted_max_bytes = base
+        .proof
+        .untrusted_advice_commitment
+        .is_some()
+        .then_some(base.public_io.memory_layout.max_untrusted_advice_size as usize);
+    let candidates = advice::precommitted_candidates(trusted_max_bytes, untrusted_max_bytes);
+    let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
+        log_t + log_k_chunk,
+        &candidates,
+        log_k_chunk,
+    );
+    let layout = |max_bytes: Option<usize>| {
+        max_bytes.map(|max_bytes| {
+            AdviceClaimReductionLayout::balanced(
+                base.proof.trace_polynomial_order,
+                log_t,
+                scheduling_reference,
+                max_bytes,
+            )
+        })
+    };
+    (layout(trusted_max_bytes), layout(untrusted_max_bytes))
+}
+
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn stage6_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
+    let (trusted_layout, untrusted_layout) = case_advice_layouts(base);
     let mut openings = Vec::new();
 
-    if base.trusted_advice_commitment.is_some() {
-        let layout = AdviceClaimReductionLayout::balanced(
-            base.proof.trace_polynomial_order,
-            log_t,
-            base.proof.one_hot_config.committed_chunk_bits(),
-            base.public_io.memory_layout.max_trusted_advice_size as usize,
-        );
+    if let Some(layout) = trusted_layout {
         openings.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Trusted, layout.dimensions())
                 .into_iter()
                 .map(|id| ("stage6.claims.advice_cycle_phase.trusted.opening_claim", id)),
         );
     }
-    if base.proof.untrusted_advice_commitment.is_some() {
-        let layout = AdviceClaimReductionLayout::balanced(
-            base.proof.trace_polynomial_order,
-            log_t,
-            base.proof.one_hot_config.committed_chunk_bits(),
-            base.public_io.memory_layout.max_untrusted_advice_size as usize,
-        );
+    if let Some(layout) = untrusted_layout {
         openings.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Untrusted, layout.dimensions())
                 .into_iter()
@@ -1481,36 +1506,20 @@ fn stage7_formula_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str,
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn stage7_advice_output_openings(base: &CoreVerifierCase) -> Vec<(&'static str, JoltOpeningId)> {
-    let log_t = base.proof.trace_length.ilog2() as usize;
+    let (trusted_layout, untrusted_layout) = case_advice_layouts(base);
     let mut openings = Vec::new();
 
-    if base.trusted_advice_commitment.is_some() {
-        let layout = AdviceClaimReductionLayout::balanced(
-            base.proof.trace_polynomial_order,
-            log_t,
-            base.proof.one_hot_config.committed_chunk_bits(),
-            base.public_io.memory_layout.max_trusted_advice_size as usize,
-        );
-        if layout.dimensions().has_address_phase() {
-            openings.push((
-                "stage7.claims.advice_address_phase.trusted.opening_claim",
-                advice::final_advice_opening(JoltAdviceKind::Trusted),
-            ));
-        }
+    if trusted_layout.is_some_and(|layout| layout.dimensions().has_address_phase()) {
+        openings.push((
+            "stage7.claims.advice_address_phase.trusted.opening_claim",
+            advice::final_advice_opening(JoltAdviceKind::Trusted),
+        ));
     }
-    if base.proof.untrusted_advice_commitment.is_some() {
-        let layout = AdviceClaimReductionLayout::balanced(
-            base.proof.trace_polynomial_order,
-            log_t,
-            base.proof.one_hot_config.committed_chunk_bits(),
-            base.public_io.memory_layout.max_untrusted_advice_size as usize,
-        );
-        if layout.dimensions().has_address_phase() {
-            openings.push((
-                "stage7.claims.advice_address_phase.untrusted.opening_claim",
-                advice::final_advice_opening(JoltAdviceKind::Untrusted),
-            ));
-        }
+    if untrusted_layout.is_some_and(|layout| layout.dimensions().has_address_phase()) {
+        openings.push((
+            "stage7.claims.advice_address_phase.untrusted.opening_claim",
+            advice::final_advice_opening(JoltAdviceKind::Untrusted),
+        ));
     }
 
     openings
