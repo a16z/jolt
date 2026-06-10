@@ -53,6 +53,13 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host,zk
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
+      # jolt-verifier's core-fixtures feature gates the jolt-core compat layer
+      # (exhaustive enum mappings); it is not enabled by the workspace-wide
+      # invocations above, so build it explicitly in both modes.
+      - name: cargo clippy -p jolt-verifier --features core-fixtures
+        run: cargo clippy -p jolt-verifier --all-targets --features core-fixtures
+      - name: cargo clippy -p jolt-verifier --features core-fixtures,zk
+        run: cargo clippy -p jolt-verifier --all-targets --features core-fixtures,zk
 
   machete:
     runs-on: ubuntu-latest
