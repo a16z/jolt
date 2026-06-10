@@ -18,12 +18,8 @@ use crate::utils::errors::ProofVerifyError;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::utils::profiling::print_current_memory_usage;
 
-use ark_serialize::*;
 #[cfg(feature = "zk")]
 use rand_core::CryptoRngCore;
-use std::marker::PhantomData;
-
-pub use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 
 /// Implements the standard technique for batching parallel sumchecks to reduce
 /// verifier cost and proof size.
@@ -32,13 +28,13 @@ pub use crate::subprotocols::univariate_skip::UniSkipFirstRoundProof;
 /// We do what they describe as "front-loaded" batch sumcheck.
 pub enum BatchedSumcheck {}
 impl BatchedSumcheck {
-    /// Returns (proof, challenges, initial_batched_claim)
-    /// For non-ZK mode - returns ClearSumcheckProof with polynomial coefficients visible.
+    /// Returns (challenges, initial_batched_claim).
+    /// For non-ZK mode - the round polynomial coefficients are written into the NARG.
     pub fn prove<F: JoltField>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
         opening_accumulator: &mut ProverOpeningAccumulator<F>,
         transcript: &mut impl ProverFs<F>,
-    ) -> (ClearSumcheckProof<F>, Vec<F::Challenge>, F) {
+    ) -> (Vec<F::Challenge>, F) {
         let max_num_rounds = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.num_rounds())
@@ -179,7 +175,7 @@ impl BatchedSumcheck {
 
         opening_accumulator.flush_to_transcript(transcript);
 
-        (ClearSumcheckProof::new(), r_sumcheck, initial_batched_claim)
+        (r_sumcheck, initial_batched_claim)
     }
 
     /// Prove a batched sumcheck with Pedersen commitments (ZK mode).
@@ -192,7 +188,8 @@ impl BatchedSumcheck {
     /// The Pedersen commitments are verified by BlindFold's split-committed R1CS.
     /// BlindFold proves that the committed coefficients satisfy the sumcheck equations.
     ///
-    /// Returns (proof, challenges, initial_batched_claim)
+    /// Returns (challenges, initial_batched_claim).
+    /// The round/output-claim commitments and per-round degrees are written into the NARG.
     #[cfg(feature = "zk")]
     pub fn prove_zk<F: JoltField, C: JoltCurve<F = F>, R: CryptoRngCore>(
         mut sumcheck_instances: Vec<&mut dyn SumcheckInstanceProver<F>>,
@@ -201,7 +198,7 @@ impl BatchedSumcheck {
         transcript: &mut impl ProverFs<F>,
         pedersen_gens: &PedersenGenerators<C>,
         rng: &mut R,
-    ) -> (SumcheckInstanceProof<F, C>, Vec<F::Challenge>, F) {
+    ) -> (Vec<F::Challenge>, F) {
         use crate::subprotocols::blindfold::ZkStageData;
 
         let max_num_rounds = sumcheck_instances
@@ -272,10 +269,11 @@ impl BatchedSumcheck {
             let blinding = F::random(rng);
             let commitment = pedersen_gens.commit(&batched_univariate_poly.coeffs, &blinding);
 
-            // Round commitments are prover-only but carried in the structured `ZkSumcheckProof`
-            // (hybrid: commitments stay structured proof fields), so both sides `absorb` them —
-            // matching `ZkSumcheckProof::verify_transcript_only`. They are NOT written to the NARG.
-            transcript.absorb(&commitment);
+            // Round commitments are prover-only payload: written into the NARG (which also
+            // absorbs them) immediately before squeezing this round's challenge. The verifier
+            // reads each commitment back at the SAME position in `verify_transcript_only`, so
+            // the per-round interleave (write commitment → squeeze challenge) is symmetric.
+            transcript.write_slice(std::slice::from_ref(&commitment));
 
             let r_j = transcript.challenge_optimized();
             r_sumcheck.push(r_j);
@@ -329,7 +327,12 @@ impl BatchedSumcheck {
             .collect();
         let (output_claims_commitments, output_claims_blindings): (Vec<_>, Vec<_>) =
             oc_committed.into_iter().unzip();
-        transcript.absorb(&output_claims_commitments);
+        // After the round loop, write the per-round polynomial degrees (public R1CS data the
+        // verifier needs in stage 8), then the output-claim commitments. The verifier reads in
+        // this SAME order: `poly_degrees` after its round loop (`verify_transcript_only`), then
+        // `output_claims_commitments` (`BatchedSumcheck::verify`).
+        transcript.write_slice(&poly_degrees);
+        transcript.write_slice(&output_claims_commitments);
 
         let output_constraints: Vec<_> = sumcheck_instances
             .iter()
@@ -384,23 +387,22 @@ impl BatchedSumcheck {
             output_claims_commitments: output_claims_commitments.clone(),
         });
 
-        (
-            SumcheckInstanceProof::new_zk(
-                round_commitments_g1,
-                poly_degrees,
-                output_claims_commitments,
-            ),
-            r_sumcheck,
-            initial_batched_claim,
-        )
+        (r_sumcheck, initial_batched_claim)
     }
 
+    /// Returns `(batching_coeffs, r_sumcheck, zk_readback)`. `zk_readback` is `Some` only
+    /// in ZK mode (the round commitments, per-round degrees, and output-claim commitments
+    /// read back from the NARG, threaded to stage 8 / BlindFold); `None` otherwise.
+    ///
+    /// `zk_mode` is the read-frame SELECTOR (sourced from the proof's single global
+    /// `zk_mode`): it picks the Clear round-polynomial path or the ZK commitment path.
+    /// The NARG read order within each path is unchanged.
     pub fn verify<F: JoltField, C: JoltCurve<F = F>>(
-        proof: &SumcheckInstanceProof<F, C>,
+        zk_mode: bool,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>>,
         opening_accumulator: &mut VerifierOpeningAccumulator<F>,
         transcript: &mut impl VerifierFs<F>,
-    ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
+    ) -> Result<(Vec<F>, Vec<F::Challenge>, Option<ZkSumcheckReadback<C>>), ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -412,7 +414,7 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
-        let is_zk = matches!(proof, SumcheckInstanceProof::Zk(_));
+        let is_zk = zk_mode;
         if !is_zk {
             sumcheck_instances.iter().for_each(|sumcheck| {
                 let input_claim = sumcheck.input_claim(opening_accumulator);
@@ -440,8 +442,33 @@ impl BatchedSumcheck {
             })
             .sum();
 
-        let (output_claim, r_sumcheck) =
-            proof.verify(claim, max_num_rounds, max_degree, transcript)?;
+        // SELECTOR: ZK mode reads round commitments from the NARG (BlindFold proves the
+        // round polynomials); non-ZK reads the round polynomials directly. The per-path
+        // NARG read order is identical to before — only the branch source changed.
+        let (output_claim, r_sumcheck, zk_round_readback): (
+            F,
+            Vec<F::Challenge>,
+            Option<(Vec<C::G1>, Vec<usize>)>,
+        ) = if !is_zk {
+            let (output_claim, r) =
+                clear_sumcheck::verify(claim, max_num_rounds, max_degree, transcript)?;
+            (output_claim, r, None)
+        } else {
+            #[cfg(feature = "zk")]
+            {
+                let (r, round_commitments, poly_degrees) =
+                    zk_sumcheck::verify_transcript_only::<F, C>(
+                        max_num_rounds,
+                        max_degree,
+                        transcript,
+                    )?;
+                (F::zero(), r, Some((round_commitments, poly_degrees)))
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                return Err(ProofVerifyError::ZkFeatureRequired);
+            }
+        };
 
         let expected_output_claim: F = sumcheck_instances
             .iter()
@@ -459,25 +486,46 @@ impl BatchedSumcheck {
             })
             .sum();
 
-        if !is_zk {
+        // In ZK mode, read the output-claim commitments back from the NARG (the prover wrote
+        // them right after `poly_degrees`, which `verify_transcript_only` already consumed).
+        // Assemble the full stage readback for stage 8.
+        let zk_readback: Option<ZkSumcheckReadback<C>> = if !is_zk {
             opening_accumulator.flush_to_transcript(transcript);
-        } else if let SumcheckInstanceProof::Zk(zk_proof) = proof {
-            transcript.absorb(&zk_proof.output_claims_commitments);
-            opening_accumulator.take_pending_claims();
-        }
+            None
+        } else {
+            #[cfg(feature = "zk")]
+            {
+                let output_claims_commitments: Vec<C::G1> = transcript
+                    .read_slice()
+                    .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+                opening_accumulator.take_pending_claims();
+                let (round_commitments, poly_degrees) = zk_round_readback
+                    .ok_or(ProofVerifyError::SumcheckVerificationError)?;
+                Some(ZkSumcheckReadback {
+                    round_commitments,
+                    poly_degrees,
+                    output_claims_commitments,
+                })
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                let _ = &zk_round_readback;
+                return Err(ProofVerifyError::ZkFeatureRequired);
+            }
+        };
 
         // In ZK mode, skip output claim verification — BlindFold proves this
         if !is_zk && output_claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
-        Ok((batching_coeffs, r_sumcheck))
+        Ok((batching_coeffs, r_sumcheck, zk_readback))
     }
 
     /// Verify a standard (non-ZK) sumcheck proof without requiring a curve type.
-    /// Used by opening proof reduction which doesn't need ZK mode.
+    /// Used by opening proof reduction which doesn't need ZK mode. The round
+    /// polynomials are read back from the NARG.
     pub fn verify_standard<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
-        proof: &ClearSumcheckProof<F>,
         sumcheck_instances: Vec<&dyn SumcheckInstanceVerifier<F, A>>,
         opening_accumulator: &mut A,
         transcript: &mut impl VerifierFs<F>,
@@ -513,7 +561,7 @@ impl BatchedSumcheck {
             .sum();
 
         let (output_claim, r_sumcheck) =
-            proof.verify(claim, max_num_rounds, max_degree, transcript)?;
+            clear_sumcheck::verify(claim, max_num_rounds, max_degree, transcript)?;
 
         let expected_output_claim = sumcheck_instances
             .iter()
@@ -537,29 +585,20 @@ impl BatchedSumcheck {
     }
 }
 
-/// Clear (non-ZK) sumcheck proof.
+/// Clear (non-ZK) sumcheck verification namespace.
 ///
 /// Under the NARG (Option B) the round-polynomial coefficients live in the NARG
-/// byte-string, not in this struct — the prover writes them via `write_slice` and
-/// the verifier reads them back with `read_slice`. The struct is a mode marker (the
-/// `SumcheckInstanceProof::Clear` variant) carrying no data.
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
-pub struct ClearSumcheckProof<F: JoltField> {
-    _marker: PhantomData<F>,
-}
-
-impl<F: JoltField> ClearSumcheckProof<F> {
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
+/// byte-string — the prover writes them via `write_slice` and the verifier reads
+/// them back with `read_slice`. This type carries no data; it only groups the
+/// non-ZK verification logic. The Fiat-Shamir mode is selected globally by
+/// `JoltProof::zk_mode`, not by a per-stage marker.
+pub mod clear_sumcheck {
+    use super::*;
 
     /// Verify this standard sumcheck by reading each round polynomial back from the
     /// NARG and evaluating it — the math is identical to the cleartext path; only the
     /// source of the coefficients changed (NARG instead of a struct field).
-    pub fn verify(
-        &self,
+    pub fn verify<F: JoltField>(
         claim: F,
         num_rounds: usize,
         degree_bound: usize,
@@ -594,240 +633,71 @@ impl<F: JoltField> ClearSumcheckProof<F> {
     }
 }
 
-/// ZK sumcheck proof - only commitments visible, coefficients hidden in BlindFold.
-/// The verifier appends commitments to transcript and derives challenges,
-/// but polynomial evaluation is verified by BlindFold's R1CS constraints.
+/// ZK sumcheck values read back from the NARG during verification, threaded to stage 8
+/// (BlindFold) which can no longer read them from the (now data-free) proof struct.
+/// Constructed only in ZK builds; the type exists in both so `BatchedSumcheck::verify`'s
+/// signature is uniform (the non-ZK path always yields `None`).
 #[derive(Debug, Clone)]
-pub struct ZkSumcheckProof<F: JoltField, C: JoltCurve<F = F>> {
-    /// Pedersen commitments to round polynomials (G1 curve elements)
+pub struct ZkSumcheckReadback<C: JoltCurve> {
+    /// Pedersen commitments to round polynomials (G1 curve elements), one per round.
     pub round_commitments: Vec<C::G1>,
-    /// Polynomial degrees for each round (public info needed for R1CS construction)
+    /// Polynomial degree for each round (public info needed for R1CS construction).
     pub poly_degrees: Vec<usize>,
-    /// Pedersen commitments to output claims, chunked to fit generator count
+    /// Pedersen commitments to output claims, chunked to fit generator count.
     pub output_claims_commitments: Vec<C::G1>,
-    _marker: PhantomData<F>,
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for ZkSumcheckProof<F, C> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        self.round_commitments
-            .serialize_with_mode(&mut writer, compress)?;
-        self.poly_degrees
-            .serialize_with_mode(&mut writer, compress)?;
-        self.output_claims_commitments
-            .serialize_with_mode(writer, compress)
-    }
+/// ZK sumcheck verification namespace: reads the prover-only round commitments, degrees,
+/// and output-claim commitments back from the NARG (the proof struct carries no data).
+#[cfg(feature = "zk")]
+pub mod zk_sumcheck {
+    use super::*;
 
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.round_commitments.serialized_size(compress)
-            + self.poly_degrees.serialized_size(compress)
-            + self.output_claims_commitments.serialized_size(compress)
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid for ZkSumcheckProof<F, C> {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.round_commitments.check()?;
-        self.poly_degrees.check()?;
-        self.output_claims_commitments.check()
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize for ZkSumcheckProof<F, C> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        let round_commitments =
-            Vec::<C::G1>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let poly_degrees = Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let output_claims_commitments =
-            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
-        Ok(Self {
-            round_commitments,
-            poly_degrees,
-            output_claims_commitments,
-            _marker: PhantomData,
-        })
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> ZkSumcheckProof<F, C> {
-    pub fn new(
-        round_commitments: Vec<C::G1>,
-        poly_degrees: Vec<usize>,
-        output_claims_commitments: Vec<C::G1>,
-    ) -> Self {
-        Self {
-            round_commitments,
-            poly_degrees,
-            output_claims_commitments,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Verify ZK sumcheck by appending commitments to transcript and deriving challenges.
-    /// Does NOT evaluate polynomials - that's handled by BlindFold verification.
-    pub fn verify_transcript_only(
-        &self,
+    /// Verify ZK sumcheck by reading the per-round commitments back from the NARG and
+    /// deriving challenges. Does NOT evaluate polynomials — that's handled by BlindFold.
+    ///
+    /// Reads, in the exact order the prover wrote them in `prove_zk`: per round one
+    /// commitment (then squeezes that round's challenge), then the per-round `poly_degrees`
+    /// frame after the loop. The output-claim commitments are read one position later, by
+    /// the caller (`BatchedSumcheck::verify`), matching the prover. The read-back data is
+    /// returned so stage 8 can consume it.
+    pub fn verify_transcript_only<F: JoltField, C: JoltCurve<F = F>>(
         num_rounds: usize,
         degree_bound: usize,
         transcript: &mut impl VerifierFs<F>,
-    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
-        if self.round_commitments.len() != num_rounds {
-            return Err(ProofVerifyError::InvalidInputLength(
-                num_rounds,
-                self.round_commitments.len(),
-            ));
-        }
-        if self.poly_degrees.len() != num_rounds {
-            return Err(ProofVerifyError::InvalidInputLength(
-                num_rounds,
-                self.poly_degrees.len(),
-            ));
+    ) -> Result<(Vec<F::Challenge>, Vec<C::G1>, Vec<usize>), ProofVerifyError> {
+        let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds);
+        let mut round_commitments: Vec<C::G1> = Vec::with_capacity(num_rounds);
+        for _ in 0..num_rounds {
+            let commitment: C::G1 = transcript
+                .read_slice()
+                .map_err(|_| ProofVerifyError::SumcheckVerificationError)?
+                .into_iter()
+                .next()
+                .ok_or(ProofVerifyError::SumcheckVerificationError)?;
+            let r_i: F::Challenge = transcript.challenge_optimized();
+            round_commitments.push(commitment);
+            r.push(r_i);
         }
 
-        for &degree in &self.poly_degrees {
+        // After the round loop, read the per-round polynomial degrees (matching the prover's
+        // post-loop `write_slice(&poly_degrees)`).
+        let poly_degrees: Vec<usize> = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+        if poly_degrees.len() != num_rounds {
+            return Err(ProofVerifyError::InvalidInputLength(
+                num_rounds,
+                poly_degrees.len(),
+            ));
+        }
+        for &degree in &poly_degrees {
             if degree > degree_bound {
                 return Err(ProofVerifyError::InvalidInputLength(degree_bound, degree));
             }
         }
 
-        let mut r: Vec<F::Challenge> = Vec::new();
-        for commitment in &self.round_commitments {
-            transcript.absorb(commitment);
-            let r_i: F::Challenge = transcript.challenge_optimized();
-            r.push(r_i);
-        }
-
-        Ok(r)
+        Ok((r, round_commitments, poly_degrees))
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum SumcheckInstanceProof<F: JoltField, C: JoltCurve<F = F>> {
-    /// Non-ZK: coefficients visible to verifier
-    Clear(ClearSumcheckProof<F>),
-    /// ZK: only commitments visible, coefficients hidden in BlindFold
-    Zk(ZkSumcheckProof<F, C>),
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for SumcheckInstanceProof<F, C> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        match self {
-            Self::Clear(proof) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                proof.serialize_with_mode(writer, compress)
-            }
-            Self::Zk(proof) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                proof.serialize_with_mode(writer, compress)
-            }
-        }
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        1 + match self {
-            Self::Clear(proof) => proof.serialized_size(compress),
-            Self::Zk(proof) => proof.serialized_size(compress),
-        }
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid for SumcheckInstanceProof<F, C> {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        match self {
-            Self::Clear(proof) => proof.check(),
-            Self::Zk(proof) => proof.check(),
-        }
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize for SumcheckInstanceProof<F, C> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        match variant {
-            0 => {
-                let proof = ClearSumcheckProof::deserialize_with_mode(reader, compress, validate)?;
-                Ok(Self::Clear(proof))
-            }
-            1 => {
-                let proof = ZkSumcheckProof::deserialize_with_mode(reader, compress, validate)?;
-                Ok(Self::Zk(proof))
-            }
-            _ => Err(ark_serialize::SerializationError::InvalidData),
-        }
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> SumcheckInstanceProof<F, C> {
-    /// Create a standard (non-ZK) sumcheck proof.
-    ///
-    /// The `Clear` variant is a data-free marker: the round polynomials are
-    /// written to (and read back from) the NARG, not stored in the proof struct.
-    pub fn new_standard() -> Self {
-        Self::Clear(ClearSumcheckProof::new())
-    }
-
-    /// Create a ZK sumcheck proof with only commitments and polynomial degrees.
-    pub fn new_zk(
-        round_commitments: Vec<C::G1>,
-        poly_degrees: Vec<usize>,
-        output_claims_commitments: Vec<C::G1>,
-    ) -> Self {
-        Self::Zk(ZkSumcheckProof::new(
-            round_commitments,
-            poly_degrees,
-            output_claims_commitments,
-        ))
-    }
-
-    /// Verify the sumcheck proof.
-    /// For Standard: evaluates polynomials and returns (final_claim, challenges).
-    /// For Zk: only derives challenges (BlindFold handles evaluation verification).
-    pub fn verify(
-        &self,
-        claim: F,
-        num_rounds: usize,
-        degree_bound: usize,
-        transcript: &mut impl VerifierFs<F>,
-    ) -> Result<(F, Vec<F::Challenge>), ProofVerifyError> {
-        match self {
-            Self::Clear(proof) => proof.verify(claim, num_rounds, degree_bound, transcript),
-            Self::Zk(proof) => {
-                if !cfg!(feature = "zk") {
-                    return Err(ProofVerifyError::ZkFeatureRequired);
-                }
-                let challenges =
-                    proof.verify_transcript_only(num_rounds, degree_bound, transcript)?;
-                Ok((F::zero(), challenges))
-            }
-        }
-    }
-
-    pub fn is_zk(&self) -> bool {
-        matches!(self, Self::Zk(_))
-    }
-
-    pub fn num_rounds(&self) -> usize {
-        match self {
-            // Clear round count lives in the NARG, not the struct; the verifier derives
-            // it from the sumcheck instances (this is only read on the ZK path).
-            Self::Clear(_) => 0,
-            Self::Zk(proof) => proof.round_commitments.len(),
-        }
-    }
-}

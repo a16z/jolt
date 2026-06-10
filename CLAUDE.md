@@ -70,7 +70,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 - `field/`: `JoltField` trait and BN254 scalar field implementation
 - `subprotocols/`: Sumcheck (batched, streaming, univariate skip), booleanity checks, BlindFold ZK protocol
 - `msm/`: Multi-scalar multiplication
-- `transcripts/`: Fiat-Shamir transcripts (Blake2b, Keccak)
+- `transcript_msgs.rs`: jolt-core's Fiat-Shamir vocabulary over the spongefish NARG (`FsAbsorb`/`FsChallenge`/`ProverFs`/`VerifierFs` from the `jolt-transcript` crate). The old hand-rolled `transcripts/` module was deleted in the spongefish migration.
 
 **tracer** — RISC-V emulator producing execution traces (`Cycle` per instruction)
 
@@ -89,8 +89,10 @@ Most core types are generic over three parameters:
 ```
 F: JoltField                              — scalar field (BN254 Fr)
 PCS: CommitmentScheme<Field = F>          — polynomial commitment (DoryCommitmentScheme)
-ProofTranscript: Transcript               — Fiat-Shamir transcript (Blake2bTranscript)
+H: DuplexSpongeInterface                  — spongefish sponge (RV64IMACSponge: Blake2b512 default / Keccak / Poseidon, cfg-selected)
 ```
+
+Prove/verify take the role-split spongefish surface (`ProverFs<F>` / `VerifierFs<F>` from `transcript_msgs.rs`), not a single `Transcript` trait. The proof carries the sponge as `PhantomData<fn() -> (C, H)>` — a compile-time link so a proof made under sponge `H` can only be verified under `H`.
 
 ### Prover Pipeline
 
@@ -136,16 +138,17 @@ The `zk` Cargo feature (`cfg(feature = "zk")`) controls zero-knowledge mode:
 |---|---|---|
 | Sumcheck proving | `BatchedSumcheck::prove` — cleartext round polys | `BatchedSumcheck::prove_zk` — Pedersen-committed |
 | Uni-skip | `prove_uniskip_round` | `prove_uniskip_round_zk` |
-| Proof contains | `Claims<F>` (all opening claims) | `BlindFoldProof` (no cleartext claims) |
+| Proof contains | NARG + `Claims<F>` (opening claims, structural) | NARG only — BlindFold written per-field into the NARG (no `BlindFoldProof` field) |
 | `input_claim()` | Called, appended to Fiat-Shamir transcript | Skipped; `input_claim_constraint()` used by BlindFold |
 | Output claim check | Explicit equality check | Skipped; verified by BlindFold R1CS |
 | Opening proof | `bind_opening_inputs` (raw eval) | `bind_opening_inputs_zk` (committed eval) |
 
 **Key cfg-gated items:**
-- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`
-- `JoltProof::blindfold_proof: BlindFoldProof` — `#[cfg(feature = "zk")]`
-- Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks — compile-time path selection, no runtime `zk_mode` field
-- Verifier detects mode from proof at runtime: `proof.stage1_sumcheck_proof.is_zk()` — stored as `VerifierOpeningAccumulator::zk_mode`
+- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`. **Structural** (a proven NARG hard-limit — see `notes/NARG-limits-and-requirements.md`), NOT in the NARG.
+- `JoltProof::blindfold_proof` was **removed** under the full-NARG migration: the BlindFold proof is written **per-field into the NARG** (`subprotocols/blindfold/protocol.rs`), not a struct field. The dory `joint_opening_proof` likewise stays structural (the other NARG hard-limit); everything else (commitments, advice presence frame, sumcheck/uni-skip round data, ZK Pedersen commitments) lives in the `JoltProof::narg` byte-string, sealed by `check_eof` + the MAL-1 outer-envelope guard.
+- `JoltProof::zk_mode: bool` — a **runtime** mode flag that replaced the per-stage `SumcheckInstanceProof::{Clear,Zk}` / `UniSkipFirstRoundProofVariant` markers and `verify_zk_consistency` (both removed). The prover sets it from `cfg!(feature = "zk")`; the verifier selects which NARG read-frames to expect off `proof.zk_mode`.
+- Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks for compile-time path selection; the proof additionally carries the runtime `zk_mode` bool so the (compile-time-mode-agnostic) verifier can dispatch.
+- Verifier detects mode at runtime via `proof.zk_mode` — stored as `VerifierOpeningAccumulator::zk_mode`.
 
 **CRITICAL — Verifier `new_from_verifier` must support both modes:**
 

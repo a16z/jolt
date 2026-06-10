@@ -1,6 +1,3 @@
-use std::marker::PhantomData;
-
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "zk")]
 use rand_core::CryptoRngCore;
 
@@ -132,12 +129,12 @@ pub fn build_uniskip_first_round_poly<
 }
 
 /// Prove-only helper for a uni-skip first round instance (non-ZK mode).
-/// Produces the proof object, the uni-skip challenge r0, and the next claim s1(r0).
+/// Writes the first-round polynomial into the NARG and returns the uni-skip challenge r0.
 pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
     instance: &mut I,
     opening_accumulator: &mut ProverOpeningAccumulator<F>,
     transcript: &mut impl ProverFs<F>,
-) -> UniSkipFirstRoundProof<F> {
+) {
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
     // Write the full first-round polynomial into the NARG and derive r0.
@@ -145,7 +142,6 @@ pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
     opening_accumulator.flush_to_transcript(transcript);
-    UniSkipFirstRoundProof::new()
 }
 
 /// ZK variant: commits to coefficients instead of revealing them.
@@ -163,7 +159,7 @@ pub fn prove_uniskip_round_zk<
     transcript: &mut impl ProverFs<F>,
     pedersen_gens: &PedersenGenerators<C>,
     rng: &mut R,
-) -> ZkUniSkipFirstRoundProof<F, C> {
+) {
     use crate::subprotocols::blindfold::UniSkipStageData;
 
     let input_claim = instance.input_claim(opening_accumulator);
@@ -173,12 +169,18 @@ pub fn prove_uniskip_round_zk<
     let blinding = F::random(rng);
     let commitment = pedersen_gens.commit(&uni_poly.coeffs, &blinding);
 
-    // Commitment is prover-only but carried in the structured `ZkUniSkipFirstRoundProof`
-    // (hybrid), so both sides `absorb` it — matching `ZkUniSkipFirstRoundProof::verify_transcript`.
-    transcript.absorb(&commitment);
+    // The first-round commitment is prover-only payload: written into the NARG (which also
+    // absorbs it) immediately before squeezing r0. The verifier reads it back at the SAME
+    // position in `verify_transcript`, keeping the write-commitment → squeeze-challenge
+    // interleave symmetric.
+    transcript.write_slice(std::slice::from_ref(&commitment));
 
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
+
+    // After the challenge, write the public polynomial degree (needed by stage 8 for R1CS
+    // config), then the output-claim commitments — the verifier reads in this same order.
+    transcript.write_slice(std::slice::from_ref(&poly_degree));
 
     let output_claim_values = opening_accumulator.take_pending_claims();
     let output_claim_ids = opening_accumulator.take_pending_claim_ids();
@@ -189,7 +191,7 @@ pub fn prove_uniskip_round_zk<
         .collect();
     let output_claims_commitments: Vec<_> = oc_committed.iter().map(|(c, _)| *c).collect();
     let output_claims_blindings: Vec<_> = oc_committed.iter().map(|(_, b)| *b).collect();
-    transcript.absorb(&output_claims_commitments);
+    transcript.write_slice(&output_claims_commitments);
 
     let input_constraint = instance.get_params().input_claim_constraint();
     let input_constraint_challenge_values = instance
@@ -215,45 +217,32 @@ pub fn prove_uniskip_round_zk<
         output_claims_blindings,
         output_claims_commitments: output_claims_commitments.clone(),
     });
-
-    ZkUniSkipFirstRoundProof::new(commitment, poly_degree, output_claims_commitments)
 }
 
-/// Mode marker for a univariate-skip first round (non-ZK).
+/// Non-ZK univariate-skip first-round verification namespace.
 ///
-/// Under the NARG the full first-round polynomial lives in the NARG byte-string,
-/// not in this struct — the prover writes it via `write_slice` and the verifier
-/// reads it back with `read_slice`.
+/// Under the NARG the full first-round polynomial lives in the NARG byte-string —
+/// the prover writes it via `write_slice` and the verifier reads it back with
+/// `read_slice`. This type carries no data; it only groups the non-ZK first-round
+/// verification logic. The Fiat-Shamir mode is selected globally by `JoltProof::zk_mode`.
 ///
-/// ⚠️ ZK-MIGRATION NOTE (parallel to `ClearSumcheckProof`; see DEV-27): do NOT re-add a
+/// ⚠️ ZK-MIGRATION NOTE (parallel to `clear_sumcheck`; see DEV-27): do NOT re-add a
 /// `uni_poly` field. The first-round poly is in the NARG (Option B). The ZK path uses the
-/// separate [`ZkUniSkipFirstRoundProof`] (Pedersen commitment + degree), NOT this struct,
-/// and the only code that ever read the old `uni_poly` was `poly_degree()` — now
-/// `unreachable!()` on the `Standard` arm (only the `Zk` variant carries a degree). If the
-/// ZK migration ever needs the Standard first-round coeffs, read them from the NARG
-/// (`read_slice`), do not restore the field. (Unlike `compressed_polys`, there is currently
-/// no lingering cfg(zk) reader of this field, so nothing here blocks the zk build.)
-#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone, Default)]
-pub struct UniSkipFirstRoundProof<F: JoltField> {
-    _marker: PhantomData<F>,
-}
-
-impl<F: JoltField> UniSkipFirstRoundProof<F> {
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
+/// separate `zk_uni_skip_first_round` (Pedersen commitment + degree), NOT this path.
+/// If the ZK migration ever needs the Standard first-round coeffs, read them from the NARG
+/// (`read_slice`), do not restore a field.
+pub mod uni_skip_first_round {
+    use super::*;
 
     /// Verify only the univariate-skip first round by reading the polynomial back
     /// from the NARG. The checks (degree, symmetric-domain sum, evaluation) are
     /// identical to the cleartext path; only the source of the polynomial changed.
     pub fn verify<
+        F: JoltField,
         const N: usize,
         const FIRST_ROUND_POLY_NUM_COEFFS: usize,
         A: AbstractVerifierOpeningAccumulator<F>,
     >(
-        &self,
         sumcheck_instance: &dyn SumcheckInstanceVerifier<F, A>,
         opening_accumulator: &mut A,
         transcript: &mut impl VerifierFs<F>,
@@ -302,194 +291,78 @@ impl<F: JoltField> UniSkipFirstRoundProof<F> {
     }
 }
 
-/// ZK variant of uni-skip first round proof.
-/// Contains only the Pedersen commitment to polynomial coefficients.
-/// Actual verification is deferred to BlindFold R1CS.
+/// ZK uni-skip values read back from the NARG during verification, threaded to stage 8
+/// (BlindFold) which can no longer read them from the (now data-free) proof struct.
+/// Constructed only in ZK builds; the type exists in both so the uni-skip verify helpers
+/// have a uniform signature (the non-ZK path always yields `None`).
 #[derive(Debug, Clone)]
-pub struct ZkUniSkipFirstRoundProof<F: JoltField, C: JoltCurve<F = F>> {
+pub struct ZkUniSkipReadback<C: JoltCurve> {
     pub commitment: C::G1,
     pub poly_degree: usize,
-    /// Pedersen commitments to output claims, chunked to fit generator count
+    /// Pedersen commitments to output claims, chunked to fit generator count.
     pub output_claims_commitments: Vec<C::G1>,
-    _marker: PhantomData<F>,
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>> ZkUniSkipFirstRoundProof<F, C> {
-    pub fn new(
-        commitment: C::G1,
-        poly_degree: usize,
-        output_claims_commitments: Vec<C::G1>,
-    ) -> Self {
-        Self {
-            commitment,
-            poly_degree,
-            output_claims_commitments,
-            _marker: PhantomData,
-        }
-    }
+/// ZK uni-skip first-round verification namespace: reads the prover-only commitment,
+/// degree, and output-claim commitments back from the NARG (the proof carries no data).
+#[cfg(feature = "zk")]
+pub mod zk_uni_skip_first_round {
+    use super::*;
 
-    /// Verify transcript consistency only.
-    /// The actual polynomial verification (sum check + evaluation) is done by BlindFold.
+    /// Verify transcript consistency only by reading the first-round values back from the
+    /// NARG. The actual polynomial verification (sum check + evaluation) is done by BlindFold.
+    ///
+    /// Reads, in the exact order the prover wrote them in `prove_uniskip_round_zk`: the
+    /// commitment (then squeezes r0), the polynomial degree, then the output-claim
+    /// commitments. Returns the read-back data so stage 8 can consume it.
     pub fn verify_transcript<
+        F: JoltField,
+        C: JoltCurve<F = F>,
         A: AbstractVerifierOpeningAccumulator<F>,
         I: SumcheckInstanceVerifier<F, A>,
     >(
-        &self,
         sumcheck_instance: &I,
         opening_accumulator: &mut A,
         transcript: &mut impl VerifierFs<F>,
-    ) -> Result<F::Challenge, ProofVerifyError> {
+    ) -> Result<(F::Challenge, ZkUniSkipReadback<C>), ProofVerifyError> {
         let degree_bound = sumcheck_instance.degree();
-        if self.poly_degree > degree_bound {
-            return Err(ProofVerifyError::InvalidInputLength(
-                degree_bound,
-                self.poly_degree,
-            ));
-        }
 
-        transcript.absorb(&self.commitment);
+        let commitment: C::G1 = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?
+            .into_iter()
+            .next()
+            .ok_or(ProofVerifyError::UniSkipVerificationError)?;
 
         let r0: F::Challenge = transcript.challenge_optimized();
         sumcheck_instance.cache_openings(opening_accumulator, &[r0]);
 
-        transcript.absorb(&self.output_claims_commitments);
+        let poly_degree: usize = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?
+            .into_iter()
+            .next()
+            .ok_or(ProofVerifyError::UniSkipVerificationError)?;
+        if poly_degree > degree_bound {
+            return Err(ProofVerifyError::InvalidInputLength(
+                degree_bound,
+                poly_degree,
+            ));
+        }
+
+        let output_claims_commitments: Vec<C::G1> = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::UniSkipVerificationError)?;
         opening_accumulator.take_pending_claims();
 
-        Ok(r0)
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for ZkUniSkipFirstRoundProof<F, C> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        self.commitment.serialize_with_mode(&mut writer, compress)?;
-        self.poly_degree
-            .serialize_with_mode(&mut writer, compress)?;
-        self.output_claims_commitments
-            .serialize_with_mode(writer, compress)
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.commitment.serialized_size(compress)
-            + self.poly_degree.serialized_size(compress)
-            + self.output_claims_commitments.serialized_size(compress)
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize for ZkUniSkipFirstRoundProof<F, C> {
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        let commitment = C::G1::deserialize_with_mode(&mut reader, compress, validate)?;
-        let poly_degree = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let output_claims_commitments =
-            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
-        Ok(Self::new(
-            commitment,
-            poly_degree,
-            output_claims_commitments,
+        Ok((
+            r0,
+            ZkUniSkipReadback {
+                commitment,
+                poly_degree,
+                output_claims_commitments,
+            },
         ))
     }
 }
 
-impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid for ZkUniSkipFirstRoundProof<F, C> {
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.commitment.check()?;
-        self.output_claims_commitments.check()
-    }
-}
-
-/// Unified proof enum for uni-skip first round (similar to SumcheckInstanceProof).
-#[derive(Debug, Clone)]
-pub enum UniSkipFirstRoundProofVariant<F: JoltField, C: JoltCurve<F = F>> {
-    Standard(UniSkipFirstRoundProof<F>),
-    Zk(ZkUniSkipFirstRoundProof<F, C>),
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> UniSkipFirstRoundProofVariant<F, C> {
-    pub fn is_zk(&self) -> bool {
-        matches!(self, Self::Zk(_))
-    }
-
-    /// Returns the polynomial degree for BlindFold R1CS configuration.
-    ///
-    /// Only queried for ZK proofs (`verify_blindfold`, `cfg(feature = "zk")`),
-    /// where the variant is always `Zk`. A `Standard` proof's first-round poly
-    /// lives in the NARG (no in-struct coefficients), and BlindFold never runs
-    /// against it, so that arm is unreachable.
-    pub fn poly_degree(&self) -> usize {
-        match self {
-            Self::Standard(_) => {
-                unreachable!("poly_degree is only queried for ZK (BlindFold) proofs")
-            }
-            Self::Zk(p) => p.poly_degree,
-        }
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalSerialize for UniSkipFirstRoundProofVariant<F, C> {
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        match self {
-            Self::Standard(proof) => {
-                0u8.serialize_with_mode(&mut writer, compress)?;
-                proof.serialize_with_mode(writer, compress)
-            }
-            Self::Zk(proof) => {
-                1u8.serialize_with_mode(&mut writer, compress)?;
-                proof.serialize_with_mode(writer, compress)
-            }
-        }
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        1 + match self {
-            Self::Standard(proof) => proof.serialized_size(compress),
-            Self::Zk(proof) => proof.serialized_size(compress),
-        }
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> CanonicalDeserialize
-    for UniSkipFirstRoundProofVariant<F, C>
-{
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        match variant {
-            0 => {
-                let proof =
-                    UniSkipFirstRoundProof::deserialize_with_mode(reader, compress, validate)?;
-                Ok(Self::Standard(proof))
-            }
-            1 => {
-                let proof =
-                    ZkUniSkipFirstRoundProof::deserialize_with_mode(reader, compress, validate)?;
-                Ok(Self::Zk(proof))
-            }
-            _ => Err(ark_serialize::SerializationError::InvalidData),
-        }
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>> ark_serialize::Valid
-    for UniSkipFirstRoundProofVariant<F, C>
-{
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        match self {
-            Self::Standard(p) => p.check(),
-            Self::Zk(p) => p.check(),
-        }
-    }
-}

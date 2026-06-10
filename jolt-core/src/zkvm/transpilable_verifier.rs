@@ -46,7 +46,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
-use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheck, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
     BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier, PrecommittedParams,
@@ -110,7 +110,7 @@ use tracer::JoltDevice;
 /// TranspilableVerifier only handles non-ZK proofs; ZK mode uses the main verifier.
 fn extract_clear_proof<F: JoltField, C: JoltCurve<F = F>, T: Transcript>(
     proof: &SumcheckInstanceProof<F, C, T>,
-) -> &ClearSumcheckProof<F, T> {
+) -> &ClearSumcheck<F, T> {
     match proof {
         SumcheckInstanceProof::Clear(p) => p,
         SumcheckInstanceProof::Zk(_) => {
@@ -394,7 +394,7 @@ impl<
     }
 
     fn verify_stage1(&mut self) -> Result<(), ProofVerifyError> {
-        let (uni_skip_params, _uni_skip_challenge) =
+        let (uni_skip_params, _uni_skip_challenge, _zk_readback) =
             verify_stage1_uni_skip::<F, C, ProofTranscript, A>(
                 &self.proof.stage1_uni_skip_first_round_proof,
                 &self.spartan_key,
@@ -422,7 +422,7 @@ impl<
     }
 
     fn verify_stage2(&mut self) -> Result<(), ProofVerifyError> {
-        let (uni_skip_params, _uni_skip_challenge) =
+        let (uni_skip_params, _uni_skip_challenge, _zk_readback) =
             verify_stage2_uni_skip::<F, C, ProofTranscript, A>(
                 &self.proof.stage2_uni_skip_first_round_proof,
                 &mut self.opening_accumulator,

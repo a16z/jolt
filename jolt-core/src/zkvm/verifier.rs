@@ -16,11 +16,11 @@ use crate::subprotocols::blindfold::{
 };
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 #[cfg(feature = "zk")]
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::sumcheck::ZkSumcheckReadback;
 #[cfg(feature = "zk")]
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
-use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
+use crate::subprotocols::univariate_skip::ZkUniSkipReadback;
 use crate::zkvm::bytecode::chunks::DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT;
 use crate::zkvm::bytecode::chunks::{
     committed_lanes, is_valid_committed_bytecode_chunking_for_len,
@@ -228,6 +228,13 @@ pub struct JoltVerifier<
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
     pub proof: JoltProof<F, C, PCS, H>,
+    /// Witness-polynomial commitments, decoded from the NARG in `verify_inner`
+    /// (one `read_slice` frame) before stage 1. Populated at FS time, not at
+    /// construction (the NARG isn't read until `verify_inner`).
+    commitments: Vec<PCS::Commitment>,
+    /// Untrusted-advice commitment, decoded from the NARG presence frame
+    /// (length-0/1) in `verify_inner`. `None` if absent.
+    untrusted_advice_commitment: Option<PCS::Commitment>,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
@@ -242,6 +249,18 @@ pub struct JoltVerifier<
     program_image_reduction_verifier: Option<ProgramImageClaimReductionVerifier<F>>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
+    /// ZK sumcheck values (round commitments, per-round degrees, output-claim commitments)
+    /// read back from the NARG during each stage's `BatchedSumcheck::verify`, indexed by
+    /// stage (0 = stage1 … 7 = stage7, where 5 = stage6a and 6 = stage6b). Since the proof
+    /// structs are now data-free, stage 8 (BlindFold) is fed from here instead. Populated
+    /// only in ZK mode.
+    #[cfg(feature = "zk")]
+    zk_sumcheck_readback: Vec<Option<ZkSumcheckReadback<C>>>,
+    /// ZK uni-skip values (commitment, degree, output-claim commitments) read back from the
+    /// NARG during stages 1–2, indexed by uni-skip stage (0 = stage1, 1 = stage2). Populated
+    /// only in ZK mode.
+    #[cfg(feature = "zk")]
+    zk_uniskip_readback: Vec<Option<ZkUniSkipReadback<C>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -270,7 +289,7 @@ where
             self.preprocessing.shared.precommitted_candidate_total_vars(
                 self.preprocessing.shared.program.is_committed(),
                 self.trusted_advice_commitment.is_some(),
-                self.proof.untrusted_advice_commitment.is_some(),
+                self.untrusted_advice_commitment.is_some(),
             ),
         )
     }
@@ -316,12 +335,7 @@ where
                 .map_or(0, |pos| pos + 1),
         );
 
-        let zk_mode = proof.verify_zk_consistency()?;
-        #[cfg(test)]
-        #[allow(unused_mut)]
-        let mut opening_accumulator =
-            VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
-        #[cfg(not(test))]
+        let zk_mode = proof.zk_mode;
         #[allow(unused_mut)]
         let mut opening_accumulator =
             VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
@@ -383,6 +397,8 @@ where
             trusted_advice_commitment,
             program_io,
             proof,
+            commitments: Vec::new(),
+            untrusted_advice_commitment: None,
             preprocessing,
             opening_accumulator,
             advice_reduction_verifier_trusted: None,
@@ -391,6 +407,10 @@ where
             program_image_reduction_verifier: None,
             spartan_key,
             one_hot_params,
+            #[cfg(feature = "zk")]
+            zk_sumcheck_readback: (0..8).map(|_| None).collect(),
+            #[cfg(feature = "zk")]
+            zk_uniskip_readback: (0..2).map(|_| None).collect(),
         })
     }
 
@@ -450,14 +470,23 @@ where
             Some(self.proof.dory_layout),
         );
 
-        // Append commitments to transcript
-        for commitment in &self.proof.commitments {
-            transcript.absorb(commitment);
+        // Read the witness-polynomial commitments back from the NARG as ONE frame
+        // (matching the prover's single `write_slice`), absorbing them in the process.
+        self.commitments = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+        // Read the untrusted-advice presence frame (length-0/1 vec) and reconstruct
+        // the Option. The prover ALWAYS writes this frame, so the read position is the
+        // same in the Some and None cases.
+        let untrusted_advice: Vec<PCS::Commitment> = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+        // The presence frame is length 0 (None) or 1 (Some); reject any over-long frame
+        // rather than silently dropping extra entries via `.next()`.
+        if untrusted_advice.len() > 1 {
+            return Err(ProofVerifyError::SumcheckVerificationError);
         }
-        // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
-            transcript.absorb(untrusted_advice_commitment);
-        }
+        self.untrusted_advice_commitment = untrusted_advice.into_iter().next();
         // Append trusted advice commitment to transcript
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
             transcript.absorb(trusted_advice_commitment);
@@ -617,12 +646,13 @@ where
         &mut self,
         transcript: &mut impl VerifierFs<F>,
     ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
-        let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
-            &self.proof.stage1_uni_skip_first_round_proof,
-            &self.spartan_key,
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (uni_skip_params, uni_skip_challenge, zk_uniskip_readback) =
+            verify_stage1_uni_skip::<F, C, _, _>(
+                self.proof.zk_mode,
+                &self.spartan_key,
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         // Drain uniskip OC block IDs (pending_claims were drained inside verify_transcript)
         #[cfg(feature = "zk")]
@@ -638,12 +668,13 @@ where
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
             vec![&spartan_outer_remaining];
 
-        let (batching_coefficients, r_stage1) = BatchedSumcheck::verify(
-            &self.proof.stage1_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (batching_coefficients, r_stage1, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
@@ -701,6 +732,9 @@ where
                 vec![uniskip_oc_ids, regular_oc_ids],
             );
 
+            self.zk_uniskip_readback[0] = zk_uniskip_readback;
+            self.zk_sumcheck_readback[0] = zk_sumcheck_readback;
+
             Ok((stage_result, uni_skip_challenge))
         }
         #[cfg(not(feature = "zk"))]
@@ -717,11 +751,12 @@ where
         &mut self,
         transcript: &mut impl VerifierFs<F>,
     ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
-        let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
-            &self.proof.stage2_uni_skip_first_round_proof,
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (uni_skip_params, uni_skip_challenge, zk_uniskip_readback) =
+            verify_stage2_uni_skip::<F, C, _, _>(
+                self.proof.zk_mode,
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         let uniskip_oc_ids = self.opening_accumulator.take_pending_claim_ids();
@@ -770,8 +805,8 @@ where
             &ram_output_check,
         ];
 
-        let (batching_coefficients, r_stage2) = BatchedSumcheck::verify(
-            &self.proof.stage2_sumcheck_proof,
+        let (batching_coefficients, r_stage2, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
+            self.proof.zk_mode,
             instances.clone(),
             &mut self.opening_accumulator,
             transcript,
@@ -824,6 +859,9 @@ where
                 vec![uniskip_oc_ids, regular_oc_ids],
             );
 
+            self.zk_uniskip_readback[1] = zk_uniskip_readback;
+            self.zk_sumcheck_readback[1] = zk_sumcheck_readback;
+
             Ok((stage_result, uni_skip_challenge))
         }
         #[cfg(not(feature = "zk"))]
@@ -859,8 +897,8 @@ where
             &spartan_registers_claim_reduction,
         ];
 
-        let (batching_coefficients, r_stage3) = BatchedSumcheck::verify(
-            &self.proof.stage3_sumcheck_proof,
+        let (batching_coefficients, r_stage3, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
+            self.proof.zk_mode,
             instances.clone(),
             &mut self.opening_accumulator,
             transcript,
@@ -890,14 +928,16 @@ where
                         .input_constraint_challenge_values(&self.opening_accumulator),
                 );
             }
-            Ok(StageVerifyResult::new(
+            let stage_result = StageVerifyResult::new(
                 r_stage3,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
                 vec![regular_oc_ids],
-            ))
+            );
+            self.zk_sumcheck_readback[2] = zk_sumcheck_readback;
+            Ok(stage_result)
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -919,7 +959,7 @@ where
         verifier_accumulate_advice::<F, VerifierOpeningAccumulator<F>>(
             self.proof.ram_K,
             &self.program_io,
-            self.proof.untrusted_advice_commitment.is_some(),
+            self.untrusted_advice_commitment.is_some(),
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
         );
@@ -966,8 +1006,8 @@ where
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
             vec![&registers_read_write_checking, &ram_val_check];
 
-        let (batching_coefficients, r_stage4) = BatchedSumcheck::verify(
-            &self.proof.stage4_sumcheck_proof,
+        let (batching_coefficients, r_stage4, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
+            self.proof.zk_mode,
             instances.clone(),
             &mut self.opening_accumulator,
             transcript,
@@ -997,14 +1037,16 @@ where
                         .input_constraint_challenge_values(&self.opening_accumulator),
                 );
             }
-            Ok(StageVerifyResult::new(
+            let stage_result = StageVerifyResult::new(
                 r_stage4,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
                 vec![regular_oc_ids],
-            ))
+            );
+            self.zk_sumcheck_readback[3] = zk_sumcheck_readback;
+            Ok(stage_result)
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1040,8 +1082,8 @@ where
             &registers_val_evaluation,
         ];
 
-        let (batching_coefficients, r_stage5) = BatchedSumcheck::verify(
-            &self.proof.stage5_sumcheck_proof,
+        let (batching_coefficients, r_stage5, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
+            self.proof.zk_mode,
             instances.clone(),
             &mut self.opening_accumulator,
             transcript,
@@ -1071,14 +1113,16 @@ where
                         .input_constraint_challenge_values(&self.opening_accumulator),
                 );
             }
-            Ok(StageVerifyResult::new(
+            let stage_result = StageVerifyResult::new(
                 r_stage5,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
                 vec![regular_oc_ids],
-            ))
+            );
+            self.zk_sumcheck_readback[4] = zk_sumcheck_readback;
+            Ok(stage_result)
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1104,6 +1148,7 @@ where
         Ok((stage6a_result, stage6b_result))
     }
 
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
     fn verify_stage6a(
         &mut self,
         transcript: &mut impl VerifierFs<F>,
@@ -1124,13 +1169,14 @@ where
         ));
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
             vec![&bytecode_read_raf, &booleanity];
-        let (_batching_coefficients, r_stage6a) = BatchedSumcheck::verify(
-            &self.proof.stage6a_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )
-        .inspect_err(|err| tracing::error!("Stage 6a: {err}"))?;
+        let (_batching_coefficients, r_stage6a, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )
+            .inspect_err(|err| tracing::error!("Stage 6a: {err}"))?;
         #[cfg(feature = "zk")]
         {
             let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
@@ -1163,6 +1209,7 @@ where
                 input_constraint_challenge_values,
                 vec![regular_oc_ids],
             );
+            self.zk_sumcheck_readback[5] = zk_sumcheck_readback;
             Ok((
                 bytecode_read_raf.into_params(),
                 booleanity.into_params(),
@@ -1211,7 +1258,7 @@ where
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
             self.preprocessing.shared.program.is_committed(),
             self.trusted_advice_commitment.is_some(),
-            self.proof.untrusted_advice_commitment.is_some(),
+            self.untrusted_advice_commitment.is_some(),
         );
         let precommitted_scheduling_reference =
             PrecommittedClaimReduction::<F>::scheduling_reference(
@@ -1228,7 +1275,7 @@ where
                 &self.opening_accumulator,
             ));
         }
-        if self.proof.untrusted_advice_commitment.is_some() {
+        if self.untrusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_untrusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Untrusted,
                 self.program_io.memory_layout.max_untrusted_advice_size as usize,
@@ -1294,13 +1341,14 @@ where
             instances.push(reduction);
         }
 
-        let (batching_coefficients, r_stage6b) = BatchedSumcheck::verify(
-            &self.proof.stage6b_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )
-        .inspect_err(|err| tracing::error!("Stage 6b: {err}"))?;
+        let (batching_coefficients, r_stage6b, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )
+            .inspect_err(|err| tracing::error!("Stage 6b: {err}"))?;
 
         #[cfg(feature = "zk")]
         {
@@ -1326,14 +1374,16 @@ where
                         .input_constraint_challenge_values(&self.opening_accumulator),
                 );
             }
-            Ok(StageVerifyResult::new(
+            let stage_result = StageVerifyResult::new(
                 r_stage6b,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
                 vec![regular_oc_ids],
-            ))
+            );
+            self.zk_sumcheck_readback[6] = zk_sumcheck_readback;
+            Ok(stage_result)
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1364,16 +1414,20 @@ where
     ) -> Result<(), ProofVerifyError> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
-        let stage_proofs = [
-            &self.proof.stage1_sumcheck_proof,
-            &self.proof.stage2_sumcheck_proof,
-            &self.proof.stage3_sumcheck_proof,
-            &self.proof.stage4_sumcheck_proof,
-            &self.proof.stage5_sumcheck_proof,
-            &self.proof.stage6a_sumcheck_proof,
-            &self.proof.stage6b_sumcheck_proof,
-            &self.proof.stage7_sumcheck_proof,
-        ];
+        //
+        // The ZK commitments/degrees that used to live in the (now data-free) proof structs
+        // were read back from the NARG during each stage's verification; we feed BlindFold
+        // from those caches (`zk_sumcheck_readback` / `zk_uniskip_readback`) instead.
+        let zk_sumcheck_readback: Vec<&ZkSumcheckReadback<C>> = self
+            .zk_sumcheck_readback
+            .iter()
+            .map(|r| r.as_ref().ok_or(ProofVerifyError::SumcheckVerificationError))
+            .collect::<Result<_, _>>()?;
+        let zk_uniskip_readback: Vec<&ZkUniSkipReadback<C>> = self
+            .zk_uniskip_readback
+            .iter()
+            .map(|r| r.as_ref().ok_or(ProofVerifyError::UniSkipVerificationError))
+            .collect::<Result<_, _>>()?;
 
         // Precompute power sums for uni-skip domains
         let outer_power_sums = LagrangeHelper::power_sums::<
@@ -1391,15 +1445,10 @@ where
         let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 8 elements for all stages
         let mut last_round_indices: Vec<usize> = Vec::new();
 
-        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+        for (stage_idx, sumcheck_readback) in zk_sumcheck_readback.iter().enumerate() {
             // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip config first
             if stage_idx < 2 {
-                let uniskip_proof = if stage_idx == 0 {
-                    &self.proof.stage1_uni_skip_first_round_proof
-                } else {
-                    &self.proof.stage2_uni_skip_first_round_proof
-                };
-                let poly_degree = uniskip_proof.poly_degree();
+                let poly_degree = zk_uniskip_readback[stage_idx].poly_degree;
 
                 let power_sums: Vec<i128> = if stage_idx == 0 {
                     outer_power_sums.to_vec()
@@ -1421,17 +1470,9 @@ where
             // Record first regular round index for its input constraint
             regular_first_round_indices.push(stage_configs.len());
 
-            // BlindFold round-degree config is built only for ZK proofs (Zk variant).
-            // For Clear, `num_rounds()` is 0 (round polys live in the NARG, not the
-            // struct), so this iterates nothing — the Clear arm is unreachable here.
-            let round_poly_degrees = (0..proof.num_rounds())
-                .map(|round_idx| match proof {
-                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Clear(_) => 0,
-                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) => {
-                        zk_proof.poly_degrees[round_idx]
-                    }
-                })
-                .collect::<Vec<_>>();
+            // The per-round degrees come from the NARG read-back (one per round); the round
+            // count is derived from its length, not from any (now data-free) proof struct.
+            let round_poly_degrees = sumcheck_readback.poly_degrees.clone();
             stage_configs.push(StageConfig::new_chain_with_round_degrees(
                 round_poly_degrees,
             ));
@@ -1551,24 +1592,18 @@ where
             extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
         };
 
+        // Assemble the BlindFold input from the NARG read-back caches, in the same stage
+        // order as before (uni-skip first for stages 0–1, then the stage's round commitments).
         let mut round_commitments: Vec<C::G1> = Vec::new();
         let mut oc_row_commitments: Vec<C::G1> = Vec::new();
-        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+        for (stage_idx, sumcheck_readback) in zk_sumcheck_readback.iter().enumerate() {
             if stage_idx < 2 {
-                let uniskip_proof = if stage_idx == 0 {
-                    &self.proof.stage1_uni_skip_first_round_proof
-                } else {
-                    &self.proof.stage2_uni_skip_first_round_proof
-                };
-                if let UniSkipFirstRoundProofVariant::Zk(zk_uniskip) = uniskip_proof {
-                    round_commitments.push(zk_uniskip.commitment);
-                    oc_row_commitments.extend_from_slice(&zk_uniskip.output_claims_commitments);
-                }
+                let zk_uniskip = zk_uniskip_readback[stage_idx];
+                round_commitments.push(zk_uniskip.commitment);
+                oc_row_commitments.extend_from_slice(&zk_uniskip.output_claims_commitments);
             }
-            if let SumcheckInstanceProof::Zk(zk_proof) = proof {
-                round_commitments.extend(zk_proof.round_commitments.iter().cloned());
-                oc_row_commitments.extend_from_slice(&zk_proof.output_claims_commitments);
-            }
+            round_commitments.extend(sumcheck_readback.round_commitments.iter().cloned());
+            oc_row_commitments.extend_from_slice(&sumcheck_readback.output_claims_commitments);
         }
 
         let builder = VerifierR1CSBuilder::new_with_extra(
@@ -1600,7 +1635,7 @@ where
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
 
         verifier
-            .verify(&self.proof.blindfold_proof, &verifier_input, transcript)
+            .verify(&verifier_input, transcript)
             .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 
         tracing::debug!(
@@ -1687,8 +1722,8 @@ where
             }
         }
 
-        let (batching_coefficients, r_stage7) = BatchedSumcheck::verify(
-            &self.proof.stage7_sumcheck_proof,
+        let (batching_coefficients, r_stage7, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
+            self.proof.zk_mode,
             instances.clone(),
             &mut self.opening_accumulator,
             transcript,
@@ -1718,14 +1753,16 @@ where
                         .input_constraint_challenge_values(&self.opening_accumulator),
                 );
             }
-            Ok(StageVerifyResult::new(
+            let stage_result = StageVerifyResult::new(
                 r_stage7,
                 batched_output_constraint,
                 output_constraint_challenge_values,
                 batched_input_constraint,
                 input_constraint_challenge_values,
                 vec![regular_oc_ids],
-            ))
+            );
+            self.zk_sumcheck_readback[7] = zk_sumcheck_readback;
+            Ok(stage_result)
         }
         #[cfg(not(feature = "zk"))]
         Ok(StageVerifyResult {
@@ -1908,16 +1945,13 @@ where
         // Build commitments map
         let mut commitments_map = HashMap::new();
         let expected_polynomials = all_committed_polynomials(&self.one_hot_params);
-        if expected_polynomials.len() != self.proof.commitments.len() {
+        if expected_polynomials.len() != self.commitments.len() {
             return Err(ProofVerifyError::InvalidInputLength(
                 expected_polynomials.len(),
-                self.proof.commitments.len(),
+                self.commitments.len(),
             ));
         }
-        for (polynomial, commitment) in expected_polynomials
-            .into_iter()
-            .zip(&self.proof.commitments)
-        {
+        for (polynomial, commitment) in expected_polynomials.into_iter().zip(&self.commitments) {
             commitments_map.insert(polynomial, commitment.clone());
         }
 
@@ -1931,7 +1965,7 @@ where
                 commitments_map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
             }
         }
-        if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
+        if let Some(ref commitment) = self.untrusted_advice_commitment {
             if state
                 .polynomial_claims
                 .iter()

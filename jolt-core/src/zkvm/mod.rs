@@ -312,6 +312,11 @@ where
 {
     pub(crate) opening_accumulator: ProverOpeningAccumulator<F>,
     pub(crate) prover_setup: PCS::ProverSetup,
+    /// Per-ZK-stage, per-round sumcheck polynomial degrees captured by the prover for the
+    /// `blindfold_r1cs_satisfaction` test (the round polys now live in the NARG, not the
+    /// proof struct). Only populated in test builds under the `zk` feature.
+    #[cfg(all(test, feature = "zk"))]
+    pub(crate) zk_round_degrees: Vec<Vec<usize>>,
     pub(crate) _marker: std::marker::PhantomData<fn() -> H>,
 }
 
@@ -443,8 +448,11 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
     /// Reads data from a file
     fn from_file<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        let file = File::open(path.into())?;
-        Ok(Self::deserialize_compressed(file)?)
+        // Route through `deserialize_from_bytes` so the trailing-byte (malleability) guard
+        // applies uniformly. A streaming `deserialize_compressed(file)` cannot detect
+        // trailing garbage after the struct.
+        let bytes = std::fs::read(path.into())?;
+        Self::deserialize_from_bytes(&bytes)
     }
 
     /// Serializes the data to a byte vector
@@ -456,8 +464,16 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
 
     /// Deserializes data from a byte vector
     fn deserialize_from_bytes(bytes: &[u8]) -> Result<Self> {
-        let cursor = Cursor::new(bytes);
-        Ok(Self::deserialize_compressed(cursor)?)
+        let mut cursor = Cursor::new(bytes);
+        let value = Self::deserialize_compressed(&mut cursor)?;
+        // MAL-1 (malleability guard): reject trailing bytes. `CanonicalDeserialize` stops after
+        // the struct without consuming or checking the remainder, so without this check
+        // `valid_proof || garbage` would deserialize to the same proof. The inner `check_eof`
+        // (verifier success path) only seals the NARG byte-string, not this outer envelope.
+        if (cursor.position() as usize) != bytes.len() {
+            eyre::bail!("trailing bytes after serialized proof (malleability guard)");
+        }
+        Ok(value)
     }
 }
 
