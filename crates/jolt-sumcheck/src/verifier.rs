@@ -1,8 +1,9 @@
 //! Sumcheck verifier: checks round polynomials against the claimed sum.
 
+use ark_serialize::CanonicalSerialize;
 use jolt_field::Field;
 use jolt_poly::UnivariatePolynomial;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::FsTranscript;
 
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
@@ -11,8 +12,7 @@ use crate::committed::{
 use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::proof::CompressedSumcheckProof;
-use crate::round_proof::{ClearRound, RoundMessage};
-use crate::scalar::SumcheckScalar;
+use crate::round_proof::{ClearRound, RoundDegree, RoundMessage};
 
 /// Stateless sumcheck verifier engine.
 pub struct SumcheckVerifier;
@@ -52,8 +52,8 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
-        T: Transcript<Challenge = F>,
+        F: Field,
+        T: FsTranscript<F>,
         R: ClearRound<F>,
         D: SumcheckDomain<F>,
     {
@@ -89,12 +89,11 @@ impl SumcheckVerifier {
         claim: &SumcheckClaim<F>,
         proof: &CompressedSumcheckProof<F>,
         domain: BooleanHypercube,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        T: Transcript<Challenge = F>,
+        T: FsTranscript<F>,
     {
         if proof.round_polynomials.len() != claim.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
@@ -119,10 +118,7 @@ impl SumcheckVerifier {
                 return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
             }
 
-            transcript.append(&LabelWithCount(round_label, coeffs.len() as u64));
-            for coeff in coeffs {
-                coeff.append_to_transcript(transcript);
-            }
+            transcript.absorb_field_slice(coeffs);
             let r: F = transcript.challenge();
             running_sum = round_proof.evaluate_with_hint(running_sum, r);
             challenges.push(r);
@@ -142,9 +138,9 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        F: Field,
+        T: FsTranscript<F>,
+        C: Clone + CanonicalSerialize,
     {
         if round_proofs.len() != statement.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
@@ -182,13 +178,12 @@ where
         &self,
         claim: &SumcheckClaim<F>,
         domain: BooleanHypercube,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FsTranscript<F>,
     {
-        SumcheckVerifier::verify_compressed(claim, self, domain, round_label, transcript)
+        SumcheckVerifier::verify_compressed(claim, self, domain, transcript)
     }
 }
 
@@ -203,9 +198,9 @@ impl<C> CommittedSumcheckProof<C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        F: Field,
+        T: FsTranscript<F>,
+        C: Clone + CanonicalSerialize,
     {
         let consistency = SumcheckVerifier::verify_committed_round_consistency(
             statement,

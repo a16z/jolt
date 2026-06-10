@@ -1,4 +1,5 @@
 pub mod field_mul_scalar;
+pub mod jolt_core_transcript_consistency;
 #[cfg(test)]
 mod macro_tests;
 pub mod soundness;
@@ -141,6 +142,9 @@ pub enum JoltInvariants {
     TranscriptConsistencyBlake2b(transcript_symmetry::TranscriptConsistencyBlake2bInvariant),
     TranscriptConsistencyKeccak(transcript_symmetry::TranscriptConsistencyKeccakInvariant),
     TranscriptConsistencyPoseidon(transcript_symmetry::TranscriptConsistencyPoseidonInvariant),
+    JoltCoreTranscriptConsistency(
+        jolt_core_transcript_consistency::JoltCoreTranscriptConsistencyInvariant,
+    ),
     SourceToJoltExpansionEquivalence(
         source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,
     ),
@@ -156,6 +160,7 @@ macro_rules! dispatch {
             JoltInvariants::TranscriptConsistencyBlake2b($inv) => $body,
             JoltInvariants::TranscriptConsistencyKeccak($inv) => $body,
             JoltInvariants::TranscriptConsistencyPoseidon($inv) => $body,
+            JoltInvariants::JoltCoreTranscriptConsistency($inv) => $body,
             JoltInvariants::SourceToJoltExpansionEquivalence($inv) => $body,
         }
     };
@@ -176,6 +181,9 @@ impl JoltInvariants {
             ),
             Self::TranscriptConsistencyPoseidon(
                 transcript_symmetry::TranscriptConsistencyPoseidonInvariant,
+            ),
+            Self::JoltCoreTranscriptConsistency(
+                jolt_core_transcript_consistency::JoltCoreTranscriptConsistencyInvariant,
             ),
             Self::SourceToJoltExpansionEquivalence(
                 source_to_jolt_expansion_equivalence::SourceToJoltExpansionEquivalenceInvariant,

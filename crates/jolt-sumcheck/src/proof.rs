@@ -7,10 +7,10 @@ use crate::{
     error::SumcheckError,
     round_proof::LabeledRoundPoly,
     verifier::SumcheckVerifier,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
+use ark_serialize::CanonicalSerialize;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::FsTranscript;
 use serde::{Deserialize, Serialize};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
@@ -85,20 +85,19 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         &self,
         claim: &SumcheckClaim<F>,
         domain: D,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FsTranscript<F>,
         D: SumcheckDomain<F>,
-        C: Clone + AppendToTranscript,
+        C: Clone + CanonicalSerialize,
     {
         match self {
             Self::Clear(ClearProof::Full(proof)) => {
                 let rounds = proof
                     .round_polynomials
                     .iter()
-                    .map(|poly| LabeledRoundPoly::new(poly, round_label))
+                    .map(|poly| LabeledRoundPoly::new(poly))
                     .collect::<Vec<_>>();
                 SumcheckVerifier::verify(claim, &rounds, domain, transcript)
             }
@@ -120,17 +119,13 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FsTranscript<F>,
+        C: Clone + CanonicalSerialize,
     {
         match self {
-            Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
-                claim,
-                proof,
-                BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-                transcript,
-            ),
+            Self::Clear(ClearProof::Compressed(proof)) => {
+                SumcheckVerifier::verify_compressed(claim, proof, BooleanHypercube, transcript)
+            }
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "compressed clear",
                 got: "full clear",
@@ -154,8 +149,8 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FsTranscript<F>,
+        C: Clone + CanonicalSerialize,
     {
         match self {
             Self::Committed(proof) => proof.verify_committed_consistency(statement, transcript),

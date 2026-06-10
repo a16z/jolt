@@ -3,16 +3,10 @@ use crate::poly::opening_proof::{
 };
 #[cfg(feature = "zk")]
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
-use crate::transcripts::Transcript;
 
 use crate::field::JoltField;
 
-pub trait SumcheckInstanceVerifier<
-    F: JoltField,
-    T: Transcript,
-    A: AbstractVerifierOpeningAccumulator<F>,
->
-{
+pub trait SumcheckInstanceVerifier<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F>;
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {

@@ -5,7 +5,7 @@ pub mod sha2_chain;
 use ark_bn254::Fr;
 use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_core::transcripts::Blake2bTranscript;
+use jolt_transcript::Blake2b512;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
@@ -20,7 +20,7 @@ pub use tracer::JoltDevice;
 pub type F = Fr;
 pub type C = Bn254Curve;
 pub type PCS = DoryCommitmentScheme;
-pub type FS = Blake2bTranscript;
+pub type FS = Blake2b512;
 
 pub type Proof = jolt_core::zkvm::proof_serialization::JoltProof<F, C, PCS, FS>;
 pub type ProverPreprocessing = jolt_core::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;

@@ -46,7 +46,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::dory::DoryGlobals;
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
-use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheckProof, SumcheckInstanceProof};
+use crate::subprotocols::sumcheck::{BatchedSumcheck, ClearSumcheck, SumcheckInstanceProof};
 use crate::zkvm::claim_reductions::{
     AdviceClaimReductionVerifier, AdviceKind, BytecodeClaimReductionParams,
     BytecodeClaimReductionVerifier, HammingWeightClaimReductionVerifier, PrecommittedParams,
@@ -110,7 +110,7 @@ use tracer::JoltDevice;
 /// TranspilableVerifier only handles non-ZK proofs; ZK mode uses the main verifier.
 fn extract_clear_proof<F: JoltField, C: JoltCurve<F = F>, T: Transcript>(
     proof: &SumcheckInstanceProof<F, C, T>,
-) -> &ClearSumcheckProof<F, T> {
+) -> &ClearSumcheck<F, T> {
     match proof {
         SumcheckInstanceProof::Clear(p) => p,
         SumcheckInstanceProof::Zk(_) => {
@@ -394,7 +394,7 @@ impl<
     }
 
     fn verify_stage1(&mut self) -> Result<(), ProofVerifyError> {
-        let (uni_skip_params, _uni_skip_challenge) =
+        let (uni_skip_params, _uni_skip_challenge, _zk_readback) =
             verify_stage1_uni_skip::<F, C, ProofTranscript, A>(
                 &self.proof.stage1_uni_skip_first_round_proof,
                 &self.spartan_key,
@@ -409,8 +409,7 @@ impl<
             &self.opening_accumulator,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
-            vec![&spartan_outer_remaining];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![&spartan_outer_remaining];
 
         let _r_stage1 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
             extract_clear_proof(&self.proof.stage1_sumcheck_proof),
@@ -423,7 +422,7 @@ impl<
     }
 
     fn verify_stage2(&mut self) -> Result<(), ProofVerifyError> {
-        let (uni_skip_params, _uni_skip_challenge) =
+        let (uni_skip_params, _uni_skip_challenge, _zk_readback) =
             verify_stage2_uni_skip::<F, C, ProofTranscript, A>(
                 &self.proof.stage2_uni_skip_first_round_proof,
                 &mut self.opening_accumulator,
@@ -466,7 +465,7 @@ impl<
             &self.proof.rw_config,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![
             &ram_read_write_checking,
             &spartan_product_virtual_remainder,
             &instruction_claim_reduction,
@@ -498,7 +497,7 @@ impl<
             &mut self.transcript,
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![
             &spartan_shift,
             &spartan_instruction_input,
             &spartan_registers_claim_reduction,
@@ -533,7 +532,7 @@ impl<
         }
         // Domain-separate the batching challenge.
         self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
-        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
+        let ram_val_check_gamma: F = self.transcript.challenge_field();
         let initial_ram_state = if self.preprocessing.shared.program.is_full() {
             crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
                 self.proof.ram_K,
@@ -575,7 +574,7 @@ impl<
             self.preprocessing.shared.program.is_committed(),
         );
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> =
             vec![&registers_read_write_checking, &ram_val_check];
 
         let _r_stage4 = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
@@ -606,7 +605,7 @@ impl<
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![
             &lookups_read_raf,
             &ram_ra_reduction,
             &registers_val_evaluation,
@@ -659,7 +658,7 @@ impl<
         );
         let booleanity = BooleanityAddressSumcheckVerifier::new(booleanity_params.clone());
 
-        let instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> =
             vec![&bytecode_read_raf, &booleanity];
 
         let _r_stage6a = BatchedSumcheck::verify_standard::<F, ProofTranscript, A>(
@@ -764,7 +763,7 @@ impl<
             &self.opening_accumulator,
         );
 
-        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> = vec![
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![
             &bytecode_read_raf,
             &booleanity,
             &ram_hamming_booleanity,
@@ -805,8 +804,7 @@ impl<
             &mut self.transcript,
         );
 
-        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, ProofTranscript, A>> =
-            vec![&hw_verifier];
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, A>> = vec![&hw_verifier];
 
         // Phase transition: CycleVariables -> AddressVariables for advice verifiers.
         // The advice verifiers were created in stage 6 with phase = CycleVariables.

@@ -3,9 +3,9 @@ use std::{
     fmt::{self, Debug},
 };
 
+use ark_serialize::CanonicalSerialize;
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, WithAccumulator};
 use jolt_poly::EqPolynomial;
-use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[cfg(feature = "parallel")]
@@ -29,7 +29,7 @@ pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
 /// elements with a blinding factor. Uses `Self::Output` from the supertrait
 /// as the commitment value type.
 pub trait VectorCommitment:
-    Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
+    Commitment<Output: Copy + CanonicalSerialize + Serialize + DeserializeOwned>
 {
     type Field: Field;
 

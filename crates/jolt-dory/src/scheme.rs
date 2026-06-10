@@ -18,7 +18,7 @@ use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, Pedersen
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::FsTranscript;
 use rayon::prelude::*;
 
 use crate::transcript::JoltToDoryTranscript;
@@ -164,7 +164,7 @@ impl CommitmentScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Self::Proof {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
@@ -209,7 +209,7 @@ impl CommitmentScheme for DoryScheme {
         eval: Fr,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
@@ -237,16 +237,12 @@ impl CommitmentScheme for DoryScheme {
     }
 
     fn bind_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
         point: &[Self::Field],
         eval: &Self::Field,
     ) {
-        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"dory_opening_eval"));
-        eval.append_to_transcript(transcript);
+        transcript.absorb_field_slice(point);
+        transcript.absorb_field(eval);
     }
 }
 
@@ -314,7 +310,7 @@ impl ZkOpeningScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
@@ -350,7 +346,7 @@ impl ZkOpeningScheme for DoryScheme {
         point: &[Fr],
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
@@ -378,16 +374,12 @@ impl ZkOpeningScheme for DoryScheme {
     }
 
     fn bind_zk_opening_inputs(
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FsTranscript<Self::Field>,
         point: &[Self::Field],
         hiding_commitment: &Self::HidingCommitment,
     ) {
-        transcript.append(&LabelWithCount(b"dory_opening_point", point.len() as u64));
-        for p in point {
-            p.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"dory_eval_commitment"));
-        hiding_commitment.append_to_transcript(transcript);
+        transcript.absorb_field_slice(point);
+        transcript.absorb(hiding_commitment);
     }
 }
 
@@ -533,8 +525,11 @@ mod tests {
     use jolt_crypto::{Pedersen, VectorCommitment};
     use jolt_field::{FromPrimitiveInt, RandomSampling};
     use jolt_poly::Polynomial;
+    use jolt_transcript::{prover_transcript, Blake2b512};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    const INSTANCE: [u8; 32] = [0u8; 32];
 
     #[test]
     fn commit_open_verify_round_trip() {
@@ -552,7 +547,7 @@ mod tests {
 
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup);
 
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
+        let mut prove_transcript = prover_transcript(b"test", INSTANCE, Blake2b512::default());
         let proof = DoryScheme::open(
             &poly,
             &point,
@@ -562,7 +557,7 @@ mod tests {
             &mut prove_transcript,
         );
 
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
+        let mut verify_transcript = prover_transcript(b"test", INSTANCE, Blake2b512::default());
         let result = DoryScheme::verify(
             &commitment,
             &point,
@@ -626,7 +621,7 @@ mod tests {
         let (commitment, hint) =
             <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup);
 
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
+        let mut prove_transcript = prover_transcript(b"zk-test", INSTANCE, Blake2b512::default());
         let (proof, _eval_com, _blinding) = DoryScheme::open_zk(
             &poly,
             &point,
@@ -636,7 +631,7 @@ mod tests {
             &mut prove_transcript,
         );
 
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
+        let mut verify_transcript = prover_transcript(b"zk-test", INSTANCE, Blake2b512::default());
         let result = DoryScheme::verify_zk(
             &commitment,
             &point,

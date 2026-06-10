@@ -43,9 +43,26 @@ monitor = ["dep:sysinfo"]
 pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
-transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
-transcript-keccak = []
-transcript-blake2b = []
+# D5b (#1586 reviewer): `transcript-poseidon` forces `challenge-254-bit`, so
+# under Poseidon `F::Challenge` is the full-field `Mont254BitChallenge`. Poseidon
+# deliberately has NO 128-bit optimized challenge (`challenge_128` is
+# `unimplemented!` for the Poseidon sponge): for recursion the 128-bit truncation
+# is costly and defeats the purpose of using Poseidon in the first place, so the
+# Poseidon configuration keeps genuine full-field challenges.
+transcript-poseidon = [
+  "jolt-transcript/transcript-poseidon",
+  "challenge-254-bit",
+]
+transcript-keccak = ["jolt-transcript/transcript-keccak"]
+transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
+# Gates `zkvm::transpilable_verifier` (the symbolic on-chain-verifier generator
+# consumed by the `transpiler` crate). It is built on the now-removed hand-rolled
+# `crate::transcripts::Transcript` trait — which the `transpiler` implements
+# symbolically (`impl Transcript for PoseidonAstTranscript`) — and cannot be
+# expressed against spongefish's concrete `VerifierState`. Off by default during
+# the transcript→spongefish migration; the gnark/Solidity regeneration that
+# revives it is a coordinated follow-up (spec Non-Goal #2). See DEV-21.
+transpiler = []
 
 [dependencies]
 ark-bn254.workspace = true
@@ -68,7 +85,6 @@ rayon = { workspace = true, optional = true }
 serde = { workspace = true, default-features = false }
 sha3.workspace = true
 blake2.workspace = true
-light-poseidon = { version = "0.4.0", optional = true }
 chrono.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
@@ -86,6 +102,7 @@ allocative.workspace = true
 inferno = { workspace = true, optional = true }
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-transcript.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-keccak256 = { workspace = true, features = [
   "host",

@@ -8,7 +8,7 @@ use crate::zkvm::verifier::BlindfoldSetup;
 
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::VerifierFs;
 use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
@@ -16,6 +16,7 @@ use crate::zkvm::verifier::JoltVerifier;
 use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
+use jolt_transcript::{DuplexSpongeInterface, VerifierState};
 
 pub fn preprocess(
     guest: &Program,
@@ -55,14 +56,17 @@ pub fn verify<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-    FS: Transcript,
+    H: DuplexSpongeInterface<U = u8> + Default,
 >(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
     outputs_bytes: &[u8],
-    proof: JoltProof<F, C, PCS, FS>,
+    proof: JoltProof<F, C, PCS, H>,
     preprocessing: &JoltVerifierPreprocessing<F, C, PCS>,
-) -> Result<(), ProofVerifyError> {
+) -> Result<(), ProofVerifyError>
+where
+    for<'b> VerifierState<'b, H>: VerifierFs<F>,
+{
     use common::jolt_device::JoltDevice;
     let memory_layout = &preprocessing.shared.memory_layout;
     let memory_config = MemoryConfig {

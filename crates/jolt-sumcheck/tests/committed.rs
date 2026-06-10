@@ -7,10 +7,12 @@ use jolt_sumcheck::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, SumcheckError, SumcheckStatement,
     SumcheckVerifier,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512, FsAbsorb, FsChallenge};
 
 type F = Fr;
 type VC = Pedersen<Bn254G1>;
+
+const INSTANCE: [u8; 32] = [0u8; 32];
 
 fn pedersen_setup(capacity: usize) -> PedersenSetup<Bn254G1> {
     let generator = Bn254::g1_generator();
@@ -50,15 +52,17 @@ fn committed_rounds_complete_with_pedersen_commitments() {
         ],
     );
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
+    let mut prover_transcript =
+        prover_transcript(b"committed-roundtrip", INSTANCE, Blake2b512::default());
     let mut expected_challenges = Vec::new();
     for round in &rounds {
-        round.append_to_transcript(&mut prover_transcript);
-        expected_challenges.push(prover_transcript.challenge());
+        RoundMessage::<F>::append_to_transcript(round, &mut prover_transcript);
+        expected_challenges.push(FsChallenge::<F>::challenge(&mut prover_transcript));
     }
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let consistency = SumcheckVerifier::verify_committed_round_consistency(
+    let mut verifier_transcript =
+        verifier_transcript(b"committed-roundtrip", INSTANCE, Blake2b512::default(), &[]);
+    let consistency = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(rounds.len(), 2),
         &rounds,
         &mut verifier_transcript,
@@ -67,7 +71,11 @@ fn committed_rounds_complete_with_pedersen_commitments() {
 
     assert_eq!(consistency.challenges(), expected_challenges);
     assert_eq!(consistency.round_degrees(), vec![2, 1, 2]);
-    assert_eq!(verifier_transcript.state(), prover_transcript.state());
+    // Both transcripts consumed identical messages; the next squeezed challenge
+    // must agree (the spongefish `state()` accessor the facade exposed is gone).
+    let verifier_next: F = FsChallenge::<F>::challenge(&mut verifier_transcript);
+    let prover_next: F = FsChallenge::<F>::challenge(&mut prover_transcript);
+    assert_eq!(verifier_next, prover_next);
 }
 
 #[test]
@@ -81,8 +89,9 @@ fn committed_rounds_reject_wrong_count_and_degree() {
         ],
     );
 
-    let mut wrong_count_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let wrong_count = SumcheckVerifier::verify_committed_round_consistency(
+    let mut wrong_count_transcript =
+        prover_transcript(b"committed-roundtrip", INSTANCE, Blake2b512::default());
+    let wrong_count = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(3, 2),
         &rounds,
         &mut wrong_count_transcript,
@@ -95,8 +104,9 @@ fn committed_rounds_reject_wrong_count_and_degree() {
         })
     ));
 
-    let mut degree_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let degree = SumcheckVerifier::verify_committed_round_consistency(
+    let mut degree_transcript =
+        prover_transcript(b"committed-roundtrip", INSTANCE, Blake2b512::default());
+    let degree = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(2, 1),
         &rounds,
         &mut degree_transcript,
@@ -124,16 +134,18 @@ fn tampered_committed_round_changes_challenges() {
     )
     .remove(0);
 
-    let mut original_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let original = SumcheckVerifier::verify_committed_round_consistency(
+    let mut original_transcript =
+        prover_transcript(b"committed-roundtrip", INSTANCE, Blake2b512::default());
+    let original = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(2, 2),
         &rounds,
         &mut original_transcript,
     )
     .unwrap();
 
-    let mut tampered_transcript = Blake2bTranscript::<F>::new(b"committed-roundtrip");
-    let tampered = SumcheckVerifier::verify_committed_round_consistency(
+    let mut tampered_transcript =
+        prover_transcript(b"committed-roundtrip", INSTANCE, Blake2b512::default());
+    let tampered = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
         SumcheckStatement::new(2, 2),
         &tampered,
         &mut tampered_transcript,
@@ -141,7 +153,11 @@ fn tampered_committed_round_changes_challenges() {
     .unwrap();
 
     assert_ne!(tampered.challenges(), original.challenges());
-    assert_ne!(tampered_transcript.state(), original_transcript.state());
+    // A tampered commitment desyncs the sponge; the next squeezed challenge
+    // from each transcript must differ.
+    let tampered_next: F = FsChallenge::<F>::challenge(&mut tampered_transcript);
+    let original_next: F = FsChallenge::<F>::challenge(&mut original_transcript);
+    assert_ne!(tampered_next, original_next);
 }
 
 #[test]
@@ -161,14 +177,13 @@ fn committed_output_claims_keep_length_and_order() {
             .collect::<Vec<_>>(),
     };
 
-    let mut actual = Blake2bTranscript::<F>::new(b"committed-output");
+    let mut actual = prover_transcript(b"committed-output", INSTANCE, Blake2b512::default());
     output_claims.append_to_transcript(&mut actual);
 
-    let mut expected = Blake2bTranscript::<F>::new(b"committed-output");
-    expected.append(&LabelWithCount(b"output_claims_coms", 2));
-    for commitment in &output_claims.commitments {
-        commitment.append_to_transcript(&mut expected);
-    }
+    let mut expected = prover_transcript(b"committed-output", INSTANCE, Blake2b512::default());
+    expected.absorb(&output_claims.commitments);
 
-    assert_eq!(actual.state(), expected.state());
+    let actual_next: F = FsChallenge::<F>::challenge(&mut actual);
+    let expected_next: F = FsChallenge::<F>::challenge(&mut expected);
+    assert_eq!(actual_next, expected_next);
 }

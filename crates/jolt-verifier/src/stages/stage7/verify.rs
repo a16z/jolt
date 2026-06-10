@@ -15,7 +15,7 @@ use jolt_poly::try_eq_mle;
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use super::{
     inputs::{AdviceAddressPhaseOutputClaim, Deps, Stage7Claims},
@@ -64,7 +64,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {
@@ -924,21 +924,21 @@ fn stage6_advice_cycle_phase_public<F: Field, C>(
 fn append_stage7_opening_claims<F, T>(transcript: &mut T, claims: &Stage7Claims<F>)
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     for opening_claim in &claims.hamming_weight_claim_reduction.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims.hamming_weight_claim_reduction.bytecode_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims.hamming_weight_claim_reduction.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     if let Some(opening_claim) = &claims.advice_address_phase.trusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
     if let Some(opening_claim) = &claims.advice_address_phase.untrusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
 }

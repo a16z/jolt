@@ -13,9 +13,13 @@ use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::ClearSumcheckProof;
 use jolt_sumcheck::round_proof::RoundMessage;
 use jolt_sumcheck::{BatchedSumcheckVerifier, BooleanHypercube, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, Blake2b512, FsAbsorb, FsChallenge, FsTranscript,
+};
 
 type F = Fr;
+
+const INSTANCE: [u8; 32] = [0u8; 32];
 
 #[derive(Debug)]
 enum OracleCheckError {
@@ -33,15 +37,11 @@ impl From<SumcheckError<F>> for OracleCheckError {
     }
 }
 
-fn new_transcript() -> Blake2bTranscript {
-    Blake2bTranscript::new(b"soundness-test")
-}
-
 /// Honest degree-1 sumcheck prover.
-fn honest_prove(
+fn honest_prove<T: FsTranscript<F>>(
     evals: &[F],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript,
+    transcript: &mut T,
 ) -> ClearSumcheckProof<F> {
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
@@ -55,7 +55,7 @@ fn honest_prove(
             eval_1 += buf[i + half];
         }
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
-        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
+        <UnivariatePoly<F> as RoundMessage<F>>::append_to_transcript(&round_poly, transcript);
         let r: F = transcript.challenge();
         round_polys.push(round_poly);
         for i in 0..half {
@@ -83,7 +83,7 @@ fn verify_with_oracle_check(
     proof: &ClearSumcheckProof<F>,
     intended_evals: &[F],
 ) -> Result<Vec<F>, OracleCheckError> {
-    let mut transcript = new_transcript();
+    let mut transcript = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let EvaluationClaim {
         point: challenges,
         value: final_eval,
@@ -107,7 +107,7 @@ fn honest_proof_passes_oracle_check() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let proof = honest_prove(&evals, 3, &mut pt);
 
     let claim = SumcheckClaim {
@@ -134,7 +134,7 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
     assert_eq!(sum_f, sum_g, "precondition: f and g must have equal sums");
 
     // Construct honest proof for g
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let proof = honest_prove(&g_evals, 3, &mut pt);
 
     let claim = SumcheckClaim {
@@ -144,7 +144,7 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
     };
 
     // Round checks pass (proof is internally consistent for g)
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let round_result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(
@@ -173,7 +173,7 @@ fn proof_for_different_polynomial_different_sum_fails_round_check() {
     let sum_g = compute_sum(&g_evals);
     assert_ne!(sum_f, sum_g);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let proof = honest_prove(&g_evals, 3, &mut pt);
 
     // Claim sum(f) but provide proof for g
@@ -183,7 +183,7 @@ fn proof_for_different_polynomial_different_sum_fails_round_check() {
         claimed_sum: sum_f,
     };
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(matches!(
@@ -197,7 +197,7 @@ fn corrupted_middle_round_detected() {
     let evals: Vec<F> = (1..=16).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let mut proof = honest_prove(&evals, 4, &mut pt);
 
     // Corrupt round 2 (middle round): replace with arbitrary polynomial
@@ -210,7 +210,7 @@ fn corrupted_middle_round_detected() {
         claimed_sum: sum,
     };
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
 
@@ -224,7 +224,7 @@ fn corrupted_last_round_detected() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let mut proof = honest_prove(&evals, 3, &mut pt);
 
     // Corrupt only the last round polynomial
@@ -236,7 +236,7 @@ fn corrupted_last_round_detected() {
         claimed_sum: sum,
     };
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(result.is_err(), "corrupted last round must be rejected");
@@ -250,7 +250,7 @@ fn swapped_round_order_rejected() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let mut proof = honest_prove(&evals, 3, &mut pt);
 
     proof.round_polynomials.swap(0, 1);
@@ -261,7 +261,7 @@ fn swapped_round_order_rejected() {
         claimed_sum: sum,
     };
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
 
@@ -278,7 +278,7 @@ fn replayed_round_polynomial_rejected() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let proof = honest_prove(&evals, 3, &mut pt);
 
     let replayed = ClearSumcheckProof {
@@ -291,7 +291,7 @@ fn replayed_round_polynomial_rejected() {
         claimed_sum: sum,
     };
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result = SumcheckVerifier::verify(
         &claim,
         &replayed.round_polynomials,
@@ -320,7 +320,7 @@ fn all_zero_round_polynomials_rejected_for_nonzero_sum() {
         claimed_sum: sum,
     };
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
     assert!(matches!(
@@ -336,7 +336,7 @@ fn all_zero_polynomial_honest_proof_for_zero_sum() {
     let num_vars = 3;
     let evals = vec![F::from_u64(0); 1 << num_vars];
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let proof = honest_prove(&evals, num_vars, &mut pt);
 
     let claim = SumcheckClaim {
@@ -361,7 +361,7 @@ fn verifier_transcript_desync_rejected() {
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let proof = honest_prove(&evals, 3, &mut pt);
 
     let claim = SumcheckClaim {
@@ -371,8 +371,8 @@ fn verifier_transcript_desync_rejected() {
     };
 
     // Poison the verifier transcript with extra data
-    let mut vt = new_transcript();
-    F::from_u64(0xdead).append_to_transcript(&mut vt);
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
+    vt.absorb_field(&F::from_u64(0xdead));
 
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
@@ -396,7 +396,7 @@ fn num_vars_zero_accepts_any_claimed_sum() {
     };
 
     let round_proofs: &[UnivariatePoly<F>] = &[];
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result = SumcheckVerifier::verify(&claim, round_proofs, BooleanHypercube, &mut vt);
     assert!(result.is_ok());
 
@@ -421,7 +421,7 @@ fn num_vars_zero_no_oracle_check_possible() {
     };
 
     let round_proofs: &[UnivariatePoly<F>] = &[];
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result = SumcheckVerifier::verify(&claim, round_proofs, BooleanHypercube, &mut vt);
 
     // Passes — the verifier has nothing to check!
@@ -437,7 +437,7 @@ fn constant_polynomial_all_same_evals() {
     let evals = vec![F::from_u64(7); 1 << num_vars];
     let sum = compute_sum(&evals);
 
-    let mut pt = new_transcript();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
     let proof = honest_prove(&evals, num_vars, &mut pt);
 
     let claim = SumcheckClaim {
@@ -451,7 +451,7 @@ fn constant_polynomial_all_same_evals() {
 
     // The final eval should be 7 regardless of the challenge point,
     // since f is constant.
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let final_eval =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt)
             .unwrap()
@@ -469,10 +469,10 @@ fn batched_one_dishonest_claim_rejected() {
     let sum_b = compute_sum(&evals_b);
 
     // Build combined proof honestly
-    let mut pt = new_transcript();
-    sum_a.append_to_transcript(&mut pt);
-    sum_b.append_to_transcript(&mut pt);
-    let alpha: F = pt.challenge();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
+    pt.absorb_field(&sum_a);
+    pt.absorb_field(&sum_b);
+    let alpha: F = FsChallenge::<F>::challenge(&mut pt);
 
     let combined: Vec<F> = evals_a
         .iter()
@@ -495,7 +495,7 @@ fn batched_one_dishonest_claim_rejected() {
         },
     ];
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result = BatchedSumcheckVerifier::verify(
         &claims,
         &proof.round_polynomials,
@@ -516,10 +516,10 @@ fn batched_swapped_claim_order_rejected() {
     let sum_b = compute_sum(&evals_b);
 
     // Prove with order [a, b]
-    let mut pt = new_transcript();
-    sum_a.append_to_transcript(&mut pt);
-    sum_b.append_to_transcript(&mut pt);
-    let alpha: F = pt.challenge();
+    let mut pt = prover_transcript(b"soundness-test", INSTANCE, Blake2b512::default());
+    pt.absorb_field(&sum_a);
+    pt.absorb_field(&sum_b);
+    let alpha: F = FsChallenge::<F>::challenge(&mut pt);
 
     let combined: Vec<F> = evals_a
         .iter()
@@ -542,7 +542,7 @@ fn batched_swapped_claim_order_rejected() {
         },
     ];
 
-    let mut vt = new_transcript();
+    let mut vt = verifier_transcript(b"soundness-test", INSTANCE, Blake2b512::default(), &[]);
     let result = BatchedSumcheckVerifier::verify(
         &claims_swapped,
         &proof.round_polynomials,

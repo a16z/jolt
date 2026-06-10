@@ -25,7 +25,7 @@
 use jolt_field::{Fr, ReducingBytes};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, FsAbsorb, FsChallenge};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -50,7 +50,8 @@ fuzz_target!(|data: &[u8]| {
     // `valid_rounds` rounds, so the proof is valid by construction up to
     // round `valid_rounds - 1` and the verifier's running sum after
     // ingesting those rounds matches what we compute below.
-    let mut prover_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
+    let mut prover_transcript =
+        prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
     let mut running_sum = claimed_sum;
     let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
 
@@ -84,7 +85,7 @@ fuzz_target!(|data: &[u8]| {
 
             // Mirror the verifier's transcript / challenge / evaluate sequence.
             for c in poly.coefficients() {
-                c.append_to_transcript(&mut prover_transcript);
+                prover_transcript.absorb_field(c);
             }
             let r: Fr = prover_transcript.challenge();
             running_sum = poly.evaluate(r);
@@ -113,7 +114,8 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
+    let mut verifier_transcript =
+        prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &round_proofs,

@@ -3,6 +3,8 @@
 //! `transcript_tests!` macro exercises only the `legacy::Transcript`
 //! facade.
 
+// Poseidon has no `OptimizedChallenge` (128-bit) tests — it uses full-field
+// `challenge-254-bit` (#1586 reviewer) — so this file only covers the byte sponges.
 #![cfg(any(feature = "transcript-blake2b", feature = "transcript-keccak"))]
 #![expect(clippy::expect_used, reason = "tests")]
 
@@ -96,3 +98,7 @@ mod keccak {
         verifier.check_eof().expect("eof");
     }
 }
+
+// No Poseidon `OptimizedChallenge` tests: `challenge_128` is `unimplemented!()` for
+// the Poseidon sponge (#1586 reviewer — `transcript-poseidon` uses full-field
+// `challenge-254-bit`; 128-bit truncation defeats Poseidon's recursion purpose).

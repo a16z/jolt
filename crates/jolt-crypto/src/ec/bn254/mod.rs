@@ -5,7 +5,7 @@
 //! the public API — all conversions happen internally.
 
 /// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
-/// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
+/// with all operator impls, serde, `CanonicalSerialize`, `JoltGroup`, compile-time
 /// size assertions, and a safe `into_inner` accessor.
 ///
 /// Paths are fully qualified so the macro does not inject `use` items into the caller's
@@ -129,14 +129,19 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl ::jolt_transcript::AppendToTranscript for $wrapper {
-            fn append_to_transcript<T: ::jolt_transcript::Transcript>(&self, transcript: &mut T) {
-                use ::ark_serialize::CanonicalSerialize;
-                let mut buf = Vec::with_capacity(self.0.compressed_size());
-                self.0
-                    .serialize_compressed(&mut buf)
-                    .expect(concat!(stringify!($wrapper), " serialization cannot fail"));
-                transcript.append_bytes(&buf);
+        impl ::ark_serialize::CanonicalSerialize for $wrapper {
+            #[inline]
+            fn serialize_with_mode<W: ::ark_serialize::Write>(
+                &self,
+                writer: W,
+                compress: ::ark_serialize::Compress,
+            ) -> Result<(), ::ark_serialize::SerializationError> {
+                self.0.serialize_with_mode(writer, compress)
+            }
+
+            #[inline]
+            fn serialized_size(&self, compress: ::ark_serialize::Compress) -> usize {
+                self.0.serialized_size(compress)
             }
         }
 
@@ -278,41 +283,54 @@ pub(crate) fn field_to_fr<F: Field>(f: &F) -> ark_bn254::Fr {
 mod tests {
     use ark_serialize::CanonicalSerialize;
     use jolt_field::Fr;
-    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+    use jolt_transcript::{prover_transcript, Blake2b512, FsAbsorb, FsChallenge};
 
     use super::Bn254;
 
+    const SESSION: &[u8] = b"jolt-crypto-ec-test/v1";
+
+    /// `FsAbsorb::absorb` of a group element absorbs exactly its compressed
+    /// serialization — so deriving a challenge after `absorb(&point)` matches
+    /// deriving it after absorbing the raw compressed bytes.
     #[test]
     fn g1_transcript_encoding_uses_compressed_commitment_bytes() {
         let point = Bn254::g1_generator();
-        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
-        point.append_to_transcript(&mut actual);
+        let instance = [0u8; 32];
 
-        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
+        let mut actual = prover_transcript(SESSION, instance, Blake2b512::default());
+        FsAbsorb::absorb(&mut actual, &point);
+        let actual_challenge = FsChallenge::<Fr>::challenge(&mut actual);
+
         let mut bytes = Vec::new();
         point
             .0
             .serialize_compressed(&mut bytes)
             .expect("serialize G1");
-        expected.append_bytes(&bytes);
+        let mut expected = prover_transcript(SESSION, instance, Blake2b512::default());
+        FsAbsorb::absorb_bytes(&mut expected, &bytes);
+        let expected_challenge = FsChallenge::<Fr>::challenge(&mut expected);
 
-        assert_eq!(actual.state(), expected.state());
+        assert_eq!(actual_challenge, expected_challenge);
     }
 
     #[test]
     fn g2_transcript_encoding_uses_compressed_commitment_bytes() {
         let point = Bn254::g2_generator();
-        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
-        point.append_to_transcript(&mut actual);
+        let instance = [0u8; 32];
 
-        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
+        let mut actual = prover_transcript(SESSION, instance, Blake2b512::default());
+        FsAbsorb::absorb(&mut actual, &point);
+        let actual_challenge = FsChallenge::<Fr>::challenge(&mut actual);
+
         let mut bytes = Vec::new();
         point
             .0
             .serialize_compressed(&mut bytes)
             .expect("serialize G2");
-        expected.append_bytes(&bytes);
+        let mut expected = prover_transcript(SESSION, instance, Blake2b512::default());
+        FsAbsorb::absorb_bytes(&mut expected, &bytes);
+        let expected_challenge = FsChallenge::<Fr>::challenge(&mut expected);
 
-        assert_eq!(actual.state(), expected.state());
+        assert_eq!(actual_challenge, expected_challenge);
     }
 }

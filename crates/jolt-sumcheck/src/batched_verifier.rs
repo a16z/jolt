@@ -7,17 +7,17 @@
 //! earlier rounds. Each claim is scaled by $2^{N - n_i}$ where $N$ is the
 //! maximum `num_vars` across all claims.
 
+use ark_serialize::CanonicalSerialize;
 use jolt_field::Field;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::FsTranscript;
 
+use crate::append_sumcheck_claim;
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{CommittedSumcheckConsistency, CommittedSumcheckProof};
 use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, CompressedSumcheckProof, SumcheckProof};
 use crate::round_proof::ClearRound;
-use crate::scalar::SumcheckScalar;
-use crate::{append_sumcheck_claim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchedEvaluationClaim<F: Field> {
@@ -183,8 +183,8 @@ impl BatchedSumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
-        T: Transcript<Challenge = F>,
+        F: Field,
+        T: FsTranscript<F>,
         P: ClearRound<F>,
         D: SumcheckDomain<F>,
     {
@@ -196,7 +196,7 @@ impl BatchedSumcheckVerifier {
 
         // Fiat-Shamir: absorb claimed sums (must match prover).
         for claim in claims {
-            claim.claimed_sum.append_to_transcript(transcript);
+            transcript.absorb_field(&claim.claimed_sum);
         }
 
         let alpha: F = transcript.challenge();
@@ -227,7 +227,7 @@ impl BatchedSumcheckVerifier {
     ) -> Result<BatchedEvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        T: Transcript<Challenge = F>,
+        T: FsTranscript<F>,
     {
         let statement = Self::batch_claim_statement(claims)?;
         let max_num_vars = statement.num_vars;
@@ -255,7 +255,6 @@ impl BatchedSumcheckVerifier {
             &combined_claim,
             proof,
             BooleanHypercube,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )?;
 
@@ -275,8 +274,8 @@ impl BatchedSumcheckVerifier {
     ) -> Result<BatchedEvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        C: Clone + AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        C: Clone + CanonicalSerialize,
+        T: FsTranscript<F>,
     {
         match proof {
             SumcheckProof::Clear(ClearProof::Compressed(proof)) => {
@@ -308,8 +307,8 @@ impl BatchedSumcheckVerifier {
     ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
         F: Field,
-        C: Clone + AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        C: Clone + CanonicalSerialize,
+        T: FsTranscript<F>,
     {
         match proof {
             SumcheckProof::Committed(proof) => {
@@ -335,8 +334,8 @@ impl BatchedSumcheckVerifier {
     ) -> Result<BatchedCommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
         F: Field,
-        C: Clone + AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        C: Clone + CanonicalSerialize,
+        T: FsTranscript<F>,
     {
         let statement = Self::batch_statement(statements)?;
         let batching_coefficients = Self::batching_coefficients(statements.len(), transcript);
@@ -377,7 +376,7 @@ impl BatchedSumcheckVerifier {
     fn batching_coefficients<F, T>(count: usize, transcript: &mut T) -> Vec<F>
     where
         F: Field,
-        T: Transcript<Challenge = F>,
+        T: FsTranscript<F>,
     {
         (0..count)
             .map(|_| transcript.challenge_scalar())

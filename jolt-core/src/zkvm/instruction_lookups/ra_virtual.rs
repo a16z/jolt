@@ -28,7 +28,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     zkvm::{
         config::OneHotParams,
         instruction::LookupQuery,
@@ -58,7 +58,7 @@ impl<F: JoltField> InstructionRaSumcheckParams<F> {
     pub fn new(
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         // Extract the full r_address from the virtual ra_i openings.
         let mut r_address = Vec::new();
@@ -86,7 +86,7 @@ impl<F: JoltField> InstructionRaSumcheckParams<F> {
         );
         let (_, r_cycle) = r.split_at(ra_virtual_log_k_chunk);
 
-        let gamma_powers = transcript.challenge_scalar_powers(n_virtual_ra_polys);
+        let gamma_powers = transcript.challenge_powers(n_virtual_ra_polys);
         Self {
             r_cycle,
             one_hot_params: one_hot_params.clone(),
@@ -247,7 +247,7 @@ impl<F: JoltField> InstructionRaSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for InstructionRaSumcheckProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for InstructionRaSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -355,7 +355,7 @@ impl<F: JoltField> RaSumcheckVerifier<F> {
     pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         one_hot_params: &OneHotParams,
         opening_accumulator: &A,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params =
             InstructionRaSumcheckParams::new(one_hot_params, opening_accumulator, transcript);
@@ -363,8 +363,8 @@ impl<F: JoltField> RaSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for RaSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RaSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

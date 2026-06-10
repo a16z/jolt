@@ -28,7 +28,6 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
     utils::math::Math,
     zkvm::{
         bytecode::BytecodePreprocessing,
@@ -411,7 +410,7 @@ impl<F: JoltField> RamValCheckSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamValCheckSumcheckProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for RamValCheckSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -537,8 +536,8 @@ impl<F: JoltField> RamValCheckSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for RamValCheckSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RamValCheckSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
