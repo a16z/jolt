@@ -7,7 +7,7 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{DuplexSpongeInterface, OptimizedChallenge, VerifierState};
+use jolt_transcript::{DuplexSpongeInterface, VerifierState};
 
 use jolt_verifier::{
     preprocessing::JoltVerifierPreprocessing,
@@ -65,7 +65,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     H: DuplexSpongeInterface<U = u8> + Default,
-    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+    for<'a> VerifierState<'a, H>: jolt_transcript::FsTranscript<F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let state = verify_until_stage1::<PCS, VC, H, ZkProof>(

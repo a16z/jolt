@@ -97,6 +97,26 @@ fn replay(ops: &[Op], instance: [u8; 32], narg: &[u8], expected: &[JFr]) -> Resu
 
 fn seed_corpus() -> Vec<Input> {
     let scalar = JFr::from_le_bytes_mod_order(&[0x3Cu8; 32]);
+
+    // A jolt-core-shaped multi-stage sequence: per "stage", absorb shared
+    // claims, write a round-poly frame, squeeze a run of optimized challenges
+    // (the `challenge_optimized_vec` shape), then flush shared claims. Dense
+    // absorb/write/challenge interleaving is what catches order transpositions
+    // the short seeds miss.
+    let mut staged = vec![Op::PublicBytes(b"statement".to_vec())];
+    for stage in 0u64..8 {
+        staged.push(Op::PublicScalar(JFr::from(stage + 1)));
+        staged.push(Op::ProverBytes(vec![stage as u8; (stage % 5 + 1) as usize]));
+        // challenge_vec / challenge_optimized_vec shape: consecutive squeezes
+        // with no absorb in between.
+        for _ in 0..(stage % 3 + 1) {
+            staged.push(Op::OptimizedChallenge);
+        }
+        staged.push(Op::ProverScalar(JFr::from(stage.wrapping_mul(0x9E37_79B9))));
+        staged.push(Op::Challenge);
+        staged.push(Op::PublicScalar(JFr::from(stage ^ 0xA5)));
+    }
+
     let op_sequences: Vec<Vec<Op>> = vec![
         vec![],
         vec![Op::ProverScalar(scalar), Op::Challenge],
@@ -112,6 +132,27 @@ fn seed_corpus() -> Vec<Input> {
             Op::ProverBytes(vec![]),
             Op::OptimizedChallenge,
         ],
+        // Challenge runs with no interleaved absorbs (challenge_vec shape),
+        // mixing the optimized and plain variants back-to-back.
+        vec![
+            Op::PublicScalar(scalar),
+            Op::Challenge,
+            Op::Challenge,
+            Op::Challenge,
+            Op::OptimizedChallenge,
+            Op::OptimizedChallenge,
+            Op::ProverBytes(b"tail".to_vec()),
+            Op::Challenge,
+        ],
+        // Consecutive NARG frames with no challenge between them (the
+        // commitments + advice-presence-frame shape at the top of verify).
+        vec![
+            Op::ProverBytes(vec![0xAA; 48]),
+            Op::ProverBytes(vec![]),
+            Op::ProverBytes(vec![0xBB; 3]),
+            Op::OptimizedChallenge,
+        ],
+        staged,
     ];
 
     // Index 0 keeps the degenerate all-zeros instance; the rest are non-zero so

@@ -11,8 +11,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{
-    verifier_transcript, DuplexSpongeInterface, FsAbsorb, FsTranscript, OptimizedChallenge,
-    VerifierState,
+    verifier_transcript, DuplexSpongeInterface, FsAbsorb, FsTranscript, VerifierState,
 };
 
 use crate::{
@@ -68,7 +67,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     H: DuplexSpongeInterface<U = u8> + Default,
-    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+    for<'a> VerifierState<'a, H>: FsTranscript<F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     let checked = validate_inputs(
@@ -217,7 +216,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: CanonicalSerialize,
     H: DuplexSpongeInterface<U = u8> + Default,
-    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+    for<'a> VerifierState<'a, H>: FsTranscript<PCS::Field>,
 {
     let checked = validate_inputs(
         preprocessing,
