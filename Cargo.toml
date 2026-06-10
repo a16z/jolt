@@ -123,7 +123,7 @@ members = [
 # `impl Transcript for PoseidonAstTranscript`). That trait cannot be expressed over
 # spongefish's concrete `VerifierState`, so the crate cannot compile under the
 # transcript→spongefish migration. Its regeneration is a coordinated follow-up
-# (spec Non-Goal #2). Re-add here once that lands. See notes/DEV-21.
+# (spec Non-Goal #2). Re-add here once that lands.
 exclude = ["jolt-eval/fuzz", "transpiler"]
 
 [features]

@@ -142,10 +142,10 @@ The `zk` Cargo feature (`cfg(feature = "zk")`) controls zero-knowledge mode:
 | Opening proof | `bind_opening_inputs` (raw eval) | `bind_opening_inputs_zk` (committed eval) |
 
 **Key cfg-gated items:**
-- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`
-- `JoltProof::blindfold_proof: BlindFoldProof` — `#[cfg(feature = "zk")]`
-- Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks — compile-time path selection, no runtime `zk_mode` field
-- Verifier detects mode from proof at runtime: `proof.stage1_sumcheck_proof.is_zk()` — stored as `VerifierOpeningAccumulator::zk_mode`
+- `JoltProof::opening_claims: Claims<F>` — `#[cfg(not(feature = "zk"))]`. Structural, not in the NARG.
+- `JoltProof::blindfold_proof: BlindFoldProof` — `#[cfg(feature = "zk")]`. This split branch keeps the modular verifier bridge's structured ZK proof payload; the full-NARG removal is deferred with the cross-verifier proof-model work.
+- Prover uses `#[cfg(feature = "zk")]` / `#[cfg(not(feature = "zk"))]` blocks — compile-time path selection, no runtime `zk_mode` field in the modular verifier proof.
+- Verifier detects mode from proof at runtime: `proof.stage1_sumcheck_proof.is_zk()` — stored as `VerifierOpeningAccumulator::zk_mode`.
 
 **CRITICAL — Verifier `new_from_verifier` must support both modes:**
 
