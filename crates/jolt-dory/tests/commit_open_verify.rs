@@ -12,9 +12,7 @@ use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
 };
 use jolt_poly::{OneHotPolynomial, Polynomial};
-use jolt_transcript::{
-    prover_transcript, Blake2b512, DuplexSpongeInterface, Keccak, OptimizedChallenge, ProverState,
-};
+use jolt_transcript::{prover_transcript, Blake2b512, DuplexSpongeInterface, Keccak, ProverState};
 use rand::rngs::StdRng;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -28,7 +26,7 @@ const INSTANCE: [u8; 32] = [0u8; 32];
 fn round_trip<H>(num_vars: usize, seed: u64, label: &'static [u8])
 where
     H: DuplexSpongeInterface<U = u8> + Default,
-    ProverState<H, StdRng>: OptimizedChallenge,
+    ProverState<H, StdRng>: jolt_transcript::FsTranscript<Fr>,
 {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let prover_setup = DoryScheme::setup_prover(num_vars);
@@ -359,7 +357,7 @@ fn property_based_round_trip() {
 fn zk_round_trip<H>(num_vars: usize, seed: u64, label: &'static [u8])
 where
     H: DuplexSpongeInterface<U = u8> + Default,
-    ProverState<H, StdRng>: OptimizedChallenge,
+    ProverState<H, StdRng>: jolt_transcript::FsTranscript<Fr>,
 {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let prover_setup = DoryScheme::setup_prover(num_vars);

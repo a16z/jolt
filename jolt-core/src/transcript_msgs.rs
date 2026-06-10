@@ -9,27 +9,30 @@
 //! the end-state: a typed-codec surface (`Encoding` impls on local field/blob newtypes,
 //! or the native codec for concrete `Fr`) is the cleaner design and a deliberate follow-up.
 //!
-//! Challenge width is selected **per sponge** (matching legacy `transcripts/`), via the
-//! `transcript-poseidon` feature:
-//! - **Byte sponges (Blake2b/Keccak), default build:** 128-bit
+//! Challenge width is selected **per sponge type** (matching legacy `transcripts/`),
+//! via per-sponge [`FsChallenge`] impls — NOT via a Cargo feature, so enabling
+//! `transcript-poseidon` cannot change what a Blake2b/Keccak-backed state derives:
+//! - **Byte sponges (Blake2b/Keccak):** 128-bit
 //!   [`OptimizedChallenge::challenge_u128`]; `F::Challenge` is `MontU128Challenge`. They stay
 //!   128-bit even under a hand-set `challenge-254-bit` — as in legacy `blake2b.rs`/`keccak.rs`.
-//! - **Poseidon (`transcript-poseidon` → `challenge-254-bit`, #1586 reviewer / D5b):** GENUINE
-//!   full-field `Fr` squeezes (`verifier_message::<ark_bn254::Fr>`), `F::Challenge` is
+//! - **Poseidon (`transcript-poseidon` → `challenge-254-bit`, maintainer decision on #1586):**
+//!   GENUINE full-field `Fr` squeezes (`verifier_message::<ark_bn254::Fr>`), `F::Challenge` is
 //!   `Mont254BitChallenge`. Poseidon's natural unit (128-bit truncation is costly for recursion);
 //!   restores legacy `transcripts/poseidon.rs` so Poseidon works end-to-end and never hits its
 //!   `unimplemented!()` `challenge_u128`.
 //!
-//! **What actually crosses the NARG (host "hybrid" milestone):** *only* prover-only
-//! payload — the sumcheck/uniskip round polynomials — is `write_slice`/`read_slice`
-//! through the NARG. *Shared* values (the public statement, flushed opening claims) are
-//! `absorb`'d ([`public_message`]); commitments and the dory opening proof stay
-//! **structured proof fields** and are also `absorb`'d, NOT written to the NARG.
-//! (Pushing commitments into the NARG — full Option-B — is a follow-up.)
+//! **What actually crosses the NARG:** prover-only payload — the witness-polynomial
+//! commitments frame, the untrusted-advice presence frame, the sumcheck/uniskip round
+//! polynomials (or their ZK commitments), and the per-field BlindFold values — is
+//! `write_slice`/`read_slice` through the NARG. *Shared* values (flushed opening claims,
+//! trusted/preprocessing commitments) are `absorb`'d ([`public_message`]); the dory
+//! `joint_opening_proof` and — in non-ZK mode — the `opening_claims` stay **structured
+//! proof fields** (see `JoltProof::narg` in `proof_serialization.rs` for the full
+//! inventory).
 //!
 //! Three concerns, three traits:
-//! - [`FsChallenge`] — squeezed verifier randomness; blanket-implemented for any
-//!   transcript with [`OptimizedChallenge`], so prover and verifier share it.
+//! - [`FsChallenge`] — squeezed verifier randomness; implemented per sponge type for
+//!   `ProverState`/`VerifierState`, so prover and verifier share it.
 //! - [`ProverFs`] — `absorb` shared values ([`public_message`], not shipped) and
 //!   `write_slice` prover-only payload ([`prover_message`], into the NARG).
 //! - [`VerifierFs`] — `absorb` the same shared values, and `read_slice` the prover
@@ -84,9 +87,9 @@ use crate::field::JoltField;
 
 /// Squeezed field challenges, shared by both transcript roles.
 ///
-/// Blanket-implemented for any state exposing [`OptimizedChallenge`] (i.e. every
-/// `ProverState`/`VerifierState` over a supported sponge), so the prover and
-/// verifier derive challenges identically.
+/// Implemented per sponge type for `ProverState`/`VerifierState` (Blake2b/Keccak:
+/// 128-bit; Poseidon: full-field), so the prover and verifier derive challenges
+/// identically and the width can never depend on feature unification.
 ///
 /// ## Plain vs optimized — the #1 silent Fiat–Shamir hazard
 ///
@@ -154,12 +157,46 @@ compile_error!(
      the Poseidon full-field challenge transmute in transcript_msgs depends on it"
 );
 
-/// Non-Poseidon path (default): 128-bit [`OptimizedChallenge::challenge_u128`], blanket
-/// over the byte sponges (Blake2b/Keccak). They stay 128-bit even under a hand-set
-/// `challenge-254-bit` (a 128-bit value in the wider type) — gating on the *sponge*, not
-/// the width, preserves legacy's per-sponge behaviour.
-#[cfg(not(feature = "transcript-poseidon"))]
-impl<F: JoltField, S: OptimizedChallenge> FsChallenge<F> for S {
+/// Byte-sponge path (Blake2b/Keccak): 128-bit [`OptimizedChallenge::challenge_u128`].
+/// They stay 128-bit even under a hand-set `challenge-254-bit` (a 128-bit value in the
+/// wider type) — dispatching on the *sponge type*, not a Cargo feature, preserves
+/// legacy's per-sponge behaviour and keeps challenge derivation independent of feature
+/// unification across the workspace.
+impl<F: JoltField, R: RngCore + CryptoRng> FsChallenge<F>
+    for ProverState<jolt_transcript::Blake2b512, R>
+{
+    fn challenge_field(&mut self) -> F {
+        F::from_u128(self.challenge_u128())
+    }
+
+    fn challenge_optimized(&mut self) -> F::Challenge {
+        F::Challenge::from(self.challenge_u128())
+    }
+}
+
+impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::Blake2b512> {
+    fn challenge_field(&mut self) -> F {
+        F::from_u128(self.challenge_u128())
+    }
+
+    fn challenge_optimized(&mut self) -> F::Challenge {
+        F::Challenge::from(self.challenge_u128())
+    }
+}
+
+impl<F: JoltField, R: RngCore + CryptoRng> FsChallenge<F>
+    for ProverState<jolt_transcript::Keccak, R>
+{
+    fn challenge_field(&mut self) -> F {
+        F::from_u128(self.challenge_u128())
+    }
+
+    fn challenge_optimized(&mut self) -> F::Challenge {
+        F::Challenge::from(self.challenge_u128())
+    }
+}
+
+impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::Keccak> {
     fn challenge_field(&mut self) -> F {
         F::from_u128(self.challenge_u128())
     }
@@ -172,7 +209,6 @@ impl<F: JoltField, S: OptimizedChallenge> FsChallenge<F> for S {
 /// Reconstruct `F` from a full BN254 `Fr` squeeze via its canonical 32-byte LE bytes
 /// (stack buffer, no `Vec` — runs per challenge). `from_bytes` is `from_le_bytes_mod_order`
 /// and the bytes are `< modulus`, so the round-trip is exact.
-#[cfg(feature = "transcript-poseidon")]
 fn full_field_squeeze<F: JoltField>(squeezed: ark_bn254::Fr) -> F {
     use ark_ff::PrimeField;
     let limbs = squeezed.into_bigint().0;
@@ -186,10 +222,11 @@ fn full_field_squeeze<F: JoltField>(squeezed: ark_bn254::Fr) -> F {
 /// Reinterpret a full field element as its `F::Challenge` (Poseidon-only: there it's the
 /// `#[repr(transparent)]` `Mont254BitChallenge<F>`). One shared spot so the `unsafe`
 /// prover/verifier reinterpretation can't drift.
-#[cfg(feature = "transcript-poseidon")]
 fn wrap_full_field<F: JoltField>(f: F) -> F::Challenge {
     // Turn a layout mismatch into a compile error — the check `transmute` makes but
     // `transmute_copy` skips for generics (e.g. rejects the 16-byte `MontU128Challenge`).
+    // Instantiated only by the Poseidon impls below, so a build whose `F::Challenge` is
+    // `MontU128Challenge` only fails if it actually uses a Poseidon-backed transcript.
     const { assert!(core::mem::size_of::<F>() == core::mem::size_of::<F::Challenge>()) }
     // SAFETY: `F::Challenge` is the `#[repr(transparent)]` `Mont254BitChallenge<F>` newtype
     // of `F` — identical size (asserted) and layout. Mirrors legacy `challenge_scalar_optimized`.
@@ -199,14 +236,11 @@ fn wrap_full_field<F: JoltField>(f: F) -> F::Challenge {
 /// Poseidon path (`transcript-poseidon` → `challenge-254-bit`): the optimized challenge is a
 /// GENUINE full-field `Fr` (Poseidon's natural unit), not a 128-bit truncation — restoring
 /// legacy `transcripts/poseidon.rs`, so Poseidon never hits its `unimplemented!()`
-/// `challenge_u128`. Per transcript-state (not blanket over `OptimizedChallenge`) to reach
-/// the native `verifier_message::<ark_bn254::Fr>` squeeze. NB: here `challenge_field` and
-/// `challenge_optimized` return the SAME value (no `v·2¹²⁸` masking).
-#[cfg(feature = "transcript-poseidon")]
-impl<F, H, R> FsChallenge<F> for ProverState<H, R>
+/// `challenge_u128` (kept unimplemented per the maintainer's decision on #1586). NB: here
+/// `challenge_field` and `challenge_optimized` return the SAME value (no `v·2¹²⁸` masking).
+impl<F, R> FsChallenge<F> for ProverState<jolt_transcript::PoseidonSponge, R>
 where
     F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
     R: RngCore + CryptoRng,
 {
     fn challenge_field(&mut self) -> F {
@@ -219,12 +253,7 @@ where
     }
 }
 
-#[cfg(feature = "transcript-poseidon")]
-impl<F, H> FsChallenge<F> for VerifierState<'_, H>
-where
-    F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
-{
+impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::PoseidonSponge> {
     fn challenge_field(&mut self) -> F {
         full_field_squeeze(VerifierState::verifier_message::<ark_bn254::Fr>(self))
     }
@@ -267,7 +296,7 @@ where
     F: JoltField,
     H: DuplexSpongeInterface<U = u8>,
     R: RngCore + CryptoRng,
-    Self: OptimizedChallenge,
+    Self: FsChallenge<F>,
 {
     fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
         self.prover_message(&BytesMsg(serialize_slice(values)));
@@ -286,7 +315,7 @@ impl<F, H> VerifierFs<F> for VerifierState<'_, H>
 where
     F: JoltField,
     H: DuplexSpongeInterface<U = u8>,
-    Self: OptimizedChallenge,
+    Self: FsChallenge<F>,
 {
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
         let bytes = self.prover_message::<BytesMsg>()?;
@@ -367,7 +396,10 @@ mod tests {
         for expected in &round_polys {
             // round-poly counts vary, so read the self-delimiting frame (like real sumcheck)
             let read: Vec<Fr> = VerifierFs::<Fr>::read_slice(&mut v).unwrap();
-            assert_eq!(&read, expected, "round poly reconstructed incorrectly from NARG");
+            assert_eq!(
+                &read, expected,
+                "round poly reconstructed incorrectly from NARG"
+            );
             v_round_challenges.push(FsChallenge::<Fr>::challenge_optimized(&mut v));
         }
         // Verifier absorbs the same shared flushed claims (not read from the NARG).

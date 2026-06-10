@@ -43,10 +43,11 @@
 //!
 //! **Byte sponges only (Poseidon caveat).** This 128-bit `MontU128` vocabulary matches
 //! jolt-core's `challenge_optimized` for the byte sponges (Blake2b/Keccak) — the only ones
-//! modular consumers instantiate. It routes through [`OptimizedChallenge::challenge_u128`],
-//! which is `unimplemented!()` for Poseidon (#1586 reviewer — Poseidon uses full-field
-//! `challenge-254-bit`), so a Poseidon-backed state would panic; no modular consumer does.
-//! A full-field model verifier for Poseidon is the deferred gnark/on-chain follow-up.
+//! modular consumers instantiate. [`FsChallenge`] is deliberately implemented per byte-sponge
+//! type and NOT for `PoseidonSponge` (which uses full-field `challenge-254-bit`; maintainer
+//! decision on #1586), so instantiating a modular verifier over a Poseidon-backed state is a
+//! **compile error** rather than a latent runtime panic. A full-field model verifier for
+//! Poseidon is the deferred gnark/on-chain follow-up.
 //!
 //! [`from_challenge_bytes`]: jolt_field::TranscriptChallenge::from_challenge_bytes
 //! [`from_u128`]: jolt_field::FromPrimitiveInt::from_u128
@@ -57,6 +58,7 @@ use rand::{CryptoRng, RngCore};
 use spongefish::{DuplexSpongeInterface, ProverState, VerifierState};
 
 use crate::codec::BytesMsg;
+#[cfg(any(feature = "transcript-blake2b", feature = "transcript-keccak"))]
 use crate::prover::OptimizedChallenge;
 
 #[expect(clippy::expect_used)]
@@ -155,9 +157,10 @@ where
     }
 }
 
-/// Squeeze field challenges. Blanket-implemented for any state exposing
-/// [`OptimizedChallenge`] (every `ProverState` / `VerifierState` over a
-/// supported sponge), so prover and verifier derive challenges identically.
+/// Squeeze field challenges. Implemented per byte-sponge type for
+/// `ProverState` / `VerifierState` (Blake2b/Keccak), so prover and verifier
+/// derive challenges identically. Deliberately NOT implemented for
+/// `PoseidonSponge` — see the module docs.
 ///
 /// See the module docs for the optimized-vs-plain embedding distinction.
 pub trait FsChallenge<F: Field> {
@@ -183,9 +186,52 @@ pub trait FsChallenge<F: Field> {
     }
 }
 
-impl<F: Field, S: OptimizedChallenge> FsChallenge<F> for S {
+#[cfg(any(feature = "transcript-blake2b", feature = "transcript-keccak"))]
+fn optimized_embed<F: Field>(v: u128) -> F {
+    F::from_challenge_bytes(&v.to_le_bytes())
+}
+
+#[cfg(feature = "transcript-blake2b")]
+impl<F: Field, R: RngCore + CryptoRng> FsChallenge<F>
+    for ProverState<spongefish::instantiations::Blake2b512, R>
+{
     fn challenge(&mut self) -> F {
-        F::from_challenge_bytes(&self.challenge_u128().to_le_bytes())
+        optimized_embed(self.challenge_u128())
+    }
+
+    fn challenge_scalar(&mut self) -> F {
+        F::from_u128(self.challenge_u128())
+    }
+}
+
+#[cfg(feature = "transcript-blake2b")]
+impl<F: Field> FsChallenge<F> for VerifierState<'_, spongefish::instantiations::Blake2b512> {
+    fn challenge(&mut self) -> F {
+        optimized_embed(self.challenge_u128())
+    }
+
+    fn challenge_scalar(&mut self) -> F {
+        F::from_u128(self.challenge_u128())
+    }
+}
+
+#[cfg(feature = "transcript-keccak")]
+impl<F: Field, R: RngCore + CryptoRng> FsChallenge<F>
+    for ProverState<spongefish::instantiations::Keccak, R>
+{
+    fn challenge(&mut self) -> F {
+        optimized_embed(self.challenge_u128())
+    }
+
+    fn challenge_scalar(&mut self) -> F {
+        F::from_u128(self.challenge_u128())
+    }
+}
+
+#[cfg(feature = "transcript-keccak")]
+impl<F: Field> FsChallenge<F> for VerifierState<'_, spongefish::instantiations::Keccak> {
+    fn challenge(&mut self) -> F {
+        optimized_embed(self.challenge_u128())
     }
 
     fn challenge_scalar(&mut self) -> F {

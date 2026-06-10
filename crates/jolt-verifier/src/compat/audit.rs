@@ -6,9 +6,7 @@ use jolt_blindfold::BlindFoldProtocol;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{
-    verifier_transcript, DuplexSpongeInterface, OptimizedChallenge, VerifierState,
-};
+use jolt_transcript::{verifier_transcript, DuplexSpongeInterface, VerifierState};
 
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
@@ -67,7 +65,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + CanonicalSerialize,
     H: DuplexSpongeInterface<U = u8> + Default,
-    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+    for<'a> VerifierState<'a, H>: jolt_transcript::FsTranscript<F>,
 {
     let config = JoltProtocolConfig::for_zk(true);
     validate_proof_config(&config, proof)?;

@@ -1154,9 +1154,7 @@ where
     }
 
     #[tracing::instrument(skip_all)]
-    fn prove_stage6a(
-        &mut self,
-    ) -> (BytecodeReadRafSumcheckParams<F>, BooleanityCycleInput<F>) {
+    fn prove_stage6a(&mut self) -> (BytecodeReadRafSumcheckParams<F>, BooleanityCycleInput<F>) {
         #[cfg(not(target_arch = "wasm32"))]
         print_current_memory_usage("Stage 6a baseline");
 
@@ -2553,6 +2551,7 @@ mod tests {
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{OpeningAccumulator, SumcheckId},
     };
+    use crate::utils::errors::ProofVerifyError;
     use crate::zkvm::bytecode::PreprocessingError;
     use crate::zkvm::claim_reductions::AdviceKind;
     use crate::zkvm::program::{CommittedProgramProverData, ProgramPreprocessing};
@@ -3291,6 +3290,53 @@ mod tests {
         )
         .expect("Failed to create verifier");
         verifier.verify().expect("Failed to verify proof");
+    }
+
+    /// `zk_mode` is an attacker-controlled proof field, but the build's `zk` feature fixes
+    /// which mode this verifier can actually check (the proof struct/BlindFold code differ
+    /// per mode at compile time). A flipped flag must be rejected up front by
+    /// `JoltVerifier::new` with `ZkModeMismatch`, not fail somewhere downstream.
+    #[test]
+    #[serial]
+    fn flipped_zk_mode_flag_is_rejected() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("muldiv-guest");
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            1 << 16,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (mut jolt_proof, _debug_info) = prover.prove();
+        jolt_proof.zk_mode = !jolt_proof.zk_mode;
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+        let result =
+            RV64IMACVerifier::new(&verifier_preprocessing, jolt_proof, io_device, None, None);
+        assert!(
+            matches!(result, Err(ProofVerifyError::ZkModeMismatch)),
+            "flipped zk_mode flag must be rejected at verifier construction",
+        );
     }
 
     #[test]

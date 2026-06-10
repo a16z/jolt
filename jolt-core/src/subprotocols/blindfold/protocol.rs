@@ -481,8 +481,8 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
                 return Err(BlindFoldVerifyError::MalformedProof);
             }
             for (i, eval_com) in folded_instance.eval_commitments.iter().enumerate() {
-                let expected =
-                    g1_0.scalar_mul(&folded_eval_outputs[i]) + h1.scalar_mul(&folded_eval_blindings[i]);
+                let expected = g1_0.scalar_mul(&folded_eval_outputs[i])
+                    + h1.scalar_mul(&folded_eval_blindings[i]);
                 if *eval_com != expected {
                     return Err(BlindFoldVerifyError::EvalCommitmentMismatch);
                 }

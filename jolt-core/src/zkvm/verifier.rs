@@ -336,6 +336,15 @@ where
         );
 
         let zk_mode = proof.zk_mode;
+        // `zk_mode` is an attacker-controlled proof field, but the verifier's ability to
+        // check a given mode is fixed at compile time: a `zk` build's `JoltProof` has no
+        // `opening_claims` field (so non-ZK proofs cannot be verified), and a non-`zk`
+        // build has no BlindFold code (so ZK proofs cannot be verified). Reject the
+        // mismatch here, explicitly, instead of failing somewhere downstream with an
+        // empty opening accumulator or a missing-stage error.
+        if zk_mode != cfg!(feature = "zk") {
+            return Err(ProofVerifyError::ZkModeMismatch);
+        }
         #[allow(unused_mut)]
         let mut opening_accumulator =
             VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
@@ -805,12 +814,13 @@ where
             &ram_output_check,
         ];
 
-        let (batching_coefficients, r_stage2, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
-            self.proof.zk_mode,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (batching_coefficients, r_stage2, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
@@ -897,12 +907,13 @@ where
             &spartan_registers_claim_reduction,
         ];
 
-        let (batching_coefficients, r_stage3, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
-            self.proof.zk_mode,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (batching_coefficients, r_stage3, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
@@ -1006,12 +1017,13 @@ where
         let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
             vec![&registers_read_write_checking, &ram_val_check];
 
-        let (batching_coefficients, r_stage4, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
-            self.proof.zk_mode,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (batching_coefficients, r_stage4, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
@@ -1082,12 +1094,13 @@ where
             &registers_val_evaluation,
         ];
 
-        let (batching_coefficients, r_stage5, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
-            self.proof.zk_mode,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (batching_coefficients, r_stage5, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
@@ -1421,7 +1434,10 @@ where
         let zk_sumcheck_readback: Vec<&ZkSumcheckReadback<C>> = self
             .zk_sumcheck_readback
             .iter()
-            .map(|r| r.as_ref().ok_or(ProofVerifyError::SumcheckVerificationError))
+            .map(|r| {
+                r.as_ref()
+                    .ok_or(ProofVerifyError::SumcheckVerificationError)
+            })
             .collect::<Result<_, _>>()?;
         let zk_uniskip_readback: Vec<&ZkUniSkipReadback<C>> = self
             .zk_uniskip_readback
@@ -1722,12 +1738,13 @@ where
             }
         }
 
-        let (batching_coefficients, r_stage7, zk_sumcheck_readback) = BatchedSumcheck::verify::<F, C>(
-            self.proof.zk_mode,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            transcript,
-        )?;
+        let (batching_coefficients, r_stage7, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {

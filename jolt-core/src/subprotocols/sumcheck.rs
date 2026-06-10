@@ -499,8 +499,8 @@ impl BatchedSumcheck {
                     .read_slice()
                     .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
                 opening_accumulator.take_pending_claims();
-                let (round_commitments, poly_degrees) = zk_round_readback
-                    .ok_or(ProofVerifyError::SumcheckVerificationError)?;
+                let (round_commitments, poly_degrees) =
+                    zk_round_readback.ok_or(ProofVerifyError::SumcheckVerificationError)?;
                 Some(ZkSumcheckReadback {
                     round_commitments,
                     poly_degrees,
@@ -700,4 +700,3 @@ pub mod zk_sumcheck {
         Ok((r, round_commitments, poly_degrees))
     }
 }
-

@@ -21,8 +21,8 @@ use jolt_openings::{
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{
-    prover_transcript, verifier_transcript, Blake2b512, DuplexSpongeInterface, Keccak,
-    OptimizedChallenge, ProverState, VerifierState,
+    prover_transcript, verifier_transcript, Blake2b512, DuplexSpongeInterface, Keccak, ProverState,
+    VerifierState,
 };
 use rand::rngs::StdRng;
 use rand_chacha::ChaCha20Rng;
@@ -39,8 +39,8 @@ const INSTANCE: [u8; 32] = [0u8; 32];
 fn reduce_open_verify<H>(polys: &[Polynomial<Fr>], points: &[Vec<Fr>], label: &'static [u8])
 where
     H: DuplexSpongeInterface<U = u8> + Default,
-    ProverState<H, StdRng>: OptimizedChallenge,
-    for<'a> VerifierState<'a, H>: OptimizedChallenge,
+    ProverState<H, StdRng>: jolt_transcript::FsTranscript<Fr>,
+    for<'a> VerifierState<'a, H>: jolt_transcript::FsTranscript<Fr>,
 {
     assert_eq!(polys.len(), points.len());
 

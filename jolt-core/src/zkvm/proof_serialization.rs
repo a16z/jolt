@@ -13,6 +13,11 @@ use strum::EnumCount;
 
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, Openings};
+use crate::zkvm::{
+    config::{OneHotConfig, ReadWriteConfig},
+    instruction::{CircuitFlags, InstructionFlags},
+    witness::{CommittedPolynomial, VirtualPolynomial},
+};
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -20,11 +25,6 @@ use crate::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
     },
-};
-use crate::zkvm::{
-    config::{OneHotConfig, ReadWriteConfig},
-    instruction::{CircuitFlags, InstructionFlags},
-    witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
