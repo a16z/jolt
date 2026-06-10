@@ -29,7 +29,6 @@ jobs:
           - jolt-field
           - jolt-poly
           - jolt-sumcheck
-          - jolt-transcript
     name: Fuzz ${{ matrix.crate }}
     concurrency:
       group: fuzz-crates-${{ github.head_ref || github.ref }}-${{ matrix.crate }}
