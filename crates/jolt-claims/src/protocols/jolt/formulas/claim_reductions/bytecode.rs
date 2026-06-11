@@ -24,9 +24,7 @@ use super::super::super::{
 use super::super::dimensions::{
     log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
-use super::super::error::{
-    require_len, require_opening_point_len, JoltFormulaDimensionsError, JoltFormulaPointError,
-};
+use super::super::error::{require_len, require_opening_point_len, JoltFormulaPointError};
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
@@ -144,9 +142,9 @@ pub const BYTECODE_LANE_LAYOUT: BytecodeLaneLayout = BytecodeLaneLayout::new();
 pub fn precommitted_candidate(
     bytecode_len: usize,
     chunk_count: usize,
-) -> Result<usize, JoltFormulaDimensionsError> {
+) -> Result<usize, JoltFormulaPointError> {
     if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-        return Err(JoltFormulaDimensionsError::InvalidBytecodeChunking {
+        return Err(JoltFormulaPointError::InvalidBytecodeChunking {
             bytecode_len,
             chunk_count,
         });
@@ -171,9 +169,9 @@ impl BytecodeClaimReductionLayout {
         scheduling_reference: PrecommittedSchedulingReference,
         bytecode_len: usize,
         chunk_count: usize,
-    ) -> Result<Self, JoltFormulaDimensionsError> {
+    ) -> Result<Self, JoltFormulaPointError> {
         if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-            return Err(JoltFormulaDimensionsError::InvalidBytecodeChunking {
+            return Err(JoltFormulaPointError::InvalidBytecodeChunking {
                 bytecode_len,
                 chunk_count,
             });
@@ -191,7 +189,7 @@ impl BytecodeClaimReductionLayout {
             scheduling_reference,
             trace_order,
             log_t,
-        );
+        )?;
         Ok(Self {
             chunk_shape,
             precommitted,
@@ -720,7 +718,7 @@ mod tests {
         );
         assert_eq!(
             precommitted_candidate(1024, 3),
-            Err(JoltFormulaDimensionsError::InvalidBytecodeChunking {
+            Err(JoltFormulaPointError::InvalidBytecodeChunking {
                 bytecode_len: 1024,
                 chunk_count: 3,
             })

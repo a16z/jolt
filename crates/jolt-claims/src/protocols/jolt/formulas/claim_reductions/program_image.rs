@@ -51,7 +51,7 @@ impl ProgramImageClaimReductionLayout {
         scheduling_reference: PrecommittedSchedulingReference,
         program_image_len_words: usize,
         start_index: usize,
-    ) -> Self {
+    ) -> Result<Self, JoltFormulaPointError> {
         let padded_len_words = padded_program_image_len_words(program_image_len_words);
         let image_shape = CommitmentMatrixShape::balanced(log2_power_of_two(padded_len_words));
         let precommitted = PrecommittedClaimReduction::new(
@@ -60,13 +60,13 @@ impl ProgramImageClaimReductionLayout {
             scheduling_reference,
             trace_order,
             log_t,
-        );
-        Self {
+        )?;
+        Ok(Self {
             image_shape,
             precommitted,
             start_index,
             padded_len_words,
-        }
+        })
     }
 
     pub const fn image_shape(&self) -> CommitmentMatrixShape {
@@ -461,7 +461,8 @@ mod tests {
             scheduling_reference,
             program_image_len_words,
             start_index,
-        );
+        )
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
         assert_eq!(layout.padded_len_words(), 4);
         assert_eq!(layout.image_shape(), CommitmentMatrixShape::balanced(2));
 

@@ -40,6 +40,13 @@ pub enum JoltFormulaPointError {
         reference_row_vars: usize,
         reference_col_vars: usize,
     },
+    #[error(
+        "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most 256 dividing the power-of-two bytecode length ({bytecode_len})"
+    )]
+    InvalidBytecodeChunking {
+        bytecode_len: usize,
+        chunk_count: usize,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
@@ -66,13 +73,6 @@ pub enum JoltFormulaDimensionsError {
     InvalidPhaseRounds {
         phase1_num_rounds: usize,
         log_t: usize,
-    },
-    #[error(
-        "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most 256 dividing the power-of-two bytecode length ({bytecode_len})"
-    )]
-    InvalidBytecodeChunking {
-        bytecode_len: usize,
-        chunk_count: usize,
     },
 }
 
