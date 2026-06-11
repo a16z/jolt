@@ -38,11 +38,19 @@ pub struct DoryOpeningProofHint {
 }
 
 impl DoryOpeningProofHint {
-    fn new(row_commitments: Vec<ArkG1>, commit_blind: ArkFr) -> Self {
+    pub fn new(row_commitments: Vec<ArkG1>, commit_blind: ArkFr) -> Self {
         Self {
             row_commitments,
             commit_blind,
         }
+    }
+
+    pub fn row_commitments(&self) -> &[ArkG1] {
+        &self.row_commitments
+    }
+
+    pub fn commit_blind(&self) -> &ArkFr {
+        &self.commit_blind
     }
 
     fn into_parts(self) -> (Vec<ArkG1>, ArkFr) {
