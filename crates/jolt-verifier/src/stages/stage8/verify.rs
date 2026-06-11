@@ -34,9 +34,9 @@ use jolt_openings::{
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
-struct Stage8BatchEntry<F: Field, C> {
+struct Stage8BatchEntry<'a, F: Field, C> {
     id: Stage8OpeningId,
-    commitment: C,
+    commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
     opening_claim: Option<F>,
     /// Lagrange factor embedding this polynomial's own opening point into the
@@ -133,11 +133,6 @@ where
     })?;
     let pcs_opening_point = Point::high_to_low(opening_point.clone());
 
-    let advice_final = |polynomial: JoltCommittedPolynomial| {
-        precommitted_finals
-            .iter()
-            .find(|opening| opening.polynomial == polynomial)
-    };
     let entries = batch_entries(
         proof,
         layout,
@@ -145,7 +140,7 @@ where
         &opening_point,
         hamming_opening_point,
         inc_opening_point,
-        &advice_final,
+        precommitted_finals,
         clear_claims,
     )?;
     let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
@@ -182,7 +177,6 @@ where
         return Ok(Stage8Output::Zk(Stage8ZkOutput {
             opening_ids,
             constraint_coefficients,
-            opening_point: pcs_opening_point.clone(),
             pcs_opening_point,
             joint_commitment,
             hiding_evaluation_commitment,
@@ -248,7 +242,6 @@ where
         opening_claims,
         opening_ids,
         constraint_coefficients,
-        opening_point: pcs_opening_point.clone(),
         pcs_opening_point,
         joint_claim,
         joint_commitment,
@@ -269,15 +262,19 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     opening_point: &[F],
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
-    advice_final: &dyn Fn(JoltCommittedPolynomial) -> Option<&'a PrecommittedFinalOpening<F>>,
+    precommitted_finals: &'a [PrecommittedFinalOpening<F>],
     clear_claims: Option<(&Stage6Claims<F>, &Stage7Claims<F>)>,
-) -> Result<Vec<Stage8BatchEntry<F, PCS::Output>>, VerifierError>
+) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone,
     VC: VectorCommitment<Field = F>,
 {
+    let advice_final = |polynomial: JoltCommittedPolynomial| {
+        precommitted_finals
+            .iter()
+            .find(|opening| opening.polynomial == polynomial)
+    };
     let include_trusted = advice_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
     let include_untrusted = advice_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
     let order = final_opening_polynomial_order(layout, include_trusted, include_untrusted);
@@ -383,7 +380,7 @@ where
             };
         entries.push(Stage8BatchEntry {
             id: id.into(),
-            commitment: commitment.clone(),
+            commitment,
             opening_claim,
             scale: commitment_embedding_scale(opening_point, own_point),
         });
@@ -391,12 +388,7 @@ where
         if polynomial == JoltCommittedPolynomial::RdInc {
             entries.push(Stage8BatchEntry {
                 id: field_increments::field_rd_inc_reduced_opening().into(),
-                commitment: proof
-                    .commitments
-                    .field_inline
-                    .field_registers
-                    .rd_inc
-                    .clone(),
+                commitment: &proof.commitments.field_inline.field_registers.rd_inc,
                 opening_claim: clear_claims.map(|(stage6, _)| {
                     stage6
                         .field_inline

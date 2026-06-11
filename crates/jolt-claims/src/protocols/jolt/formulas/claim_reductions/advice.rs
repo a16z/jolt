@@ -13,6 +13,7 @@ use super::super::dimensions::{CommitmentMatrixShape, JoltSumcheckSpec, TracePol
 use super::super::error::JoltFormulaPointError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedSchedulingReference,
+    TWO_PHASE_DEGREE_BOUND,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,7 +24,7 @@ pub struct AdviceClaimReductionLayout {
 
 /// Total-var counts of the present advice polynomials, in the order core feeds
 /// them to the shared precommitted scheduling reference (trusted first).
-pub fn precommitted_candidates(
+pub fn candidate_total_vars(
     trusted_max_advice_size_bytes: Option<usize>,
     untrusted_max_advice_size_bytes: Option<usize>,
 ) -> Vec<usize> {
@@ -142,30 +143,34 @@ fn final_advice_eq_eval<F: Field>(
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct AdviceClaimReductionDimensions {
-    cycle_phase_rounds: usize,
-    address_phase_rounds: usize,
+    cycle_phase_total_rounds: usize,
+    address_phase_total_rounds: usize,
     has_address_phase: bool,
 }
 
 impl AdviceClaimReductionDimensions {
     pub const fn new(
-        cycle_phase_rounds: usize,
-        address_phase_rounds: usize,
+        cycle_phase_total_rounds: usize,
+        address_phase_total_rounds: usize,
         has_address_phase: bool,
     ) -> Self {
         Self {
-            cycle_phase_rounds,
-            address_phase_rounds,
+            cycle_phase_total_rounds,
+            address_phase_total_rounds,
             has_address_phase,
         }
     }
 
-    pub const fn cycle_phase_rounds(self) -> usize {
-        self.cycle_phase_rounds
+    /// Full cycle-phase sumcheck round count, including rounds this advice
+    /// polynomial skips.
+    pub const fn cycle_phase_total_rounds(self) -> usize {
+        self.cycle_phase_total_rounds
     }
 
-    pub const fn address_phase_rounds(self) -> usize {
-        self.address_phase_rounds
+    /// Full address-phase sumcheck round count, including rounds this advice
+    /// polynomial skips.
+    pub const fn address_phase_total_rounds(self) -> usize {
+        self.address_phase_total_rounds
     }
 
     /// The address phase only runs for this advice polynomial when it has
@@ -176,11 +181,11 @@ impl AdviceClaimReductionDimensions {
     }
 
     pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.cycle_phase_rounds, 2)
+        JoltSumcheckSpec::boolean(self.cycle_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
     }
 
     pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.address_phase_rounds, 2)
+        JoltSumcheckSpec::boolean(self.address_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
     }
 }
 

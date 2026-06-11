@@ -25,6 +25,12 @@ pub enum JoltFormulaPointError {
         "cycle-major final opening expects the stage 6 cycle prefix to equal the native cycle vars"
     )]
     CycleMajorCyclePrefixMismatch,
+    #[error(
+        "cycle-phase final opening requested with {active_address_rounds} active address-phase rounds remaining"
+    )]
+    CyclePhaseNotFinal { active_address_rounds: usize },
+    #[error("cycle round {round} is not active for this polynomial")]
+    InactiveCycleRound { round: usize },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]

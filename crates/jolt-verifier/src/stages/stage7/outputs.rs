@@ -1,6 +1,6 @@
 //! Typed outputs produced by stage 7 verification.
 
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -16,7 +16,6 @@ use super::inputs::Stage7Claims;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrecommittedFinalOpening<F: Field> {
     pub polynomial: JoltCommittedPolynomial,
-    pub id: JoltOpeningId,
     pub point: Vec<F>,
     /// `None` in ZK mode, where opening claims stay committed.
     pub opening_claim: Option<F>,

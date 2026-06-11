@@ -228,22 +228,22 @@ where
                 trusted_advice_layout,
                 trusted_advice
                     .as_ref()
-                    .map(|public| (public.opening_point.as_slice(), None)),
+                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
                 stage6
                     .trusted_advice_cycle_phase
                     .as_ref()
-                    .map(|public| (public.opening_point.as_slice(), None)),
+                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
             ),
             (
                 JoltAdviceKind::Untrusted,
                 untrusted_advice_layout,
                 untrusted_advice
                     .as_ref()
-                    .map(|public| (public.opening_point.as_slice(), None)),
+                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
                 stage6
                     .untrusted_advice_cycle_phase
                     .as_ref()
-                    .map(|public| (public.opening_point.as_slice(), None)),
+                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
             ),
         ] {
             if let Some(layout) = layout {
@@ -465,40 +465,38 @@ where
         (
             JoltAdviceKind::Trusted,
             trusted_advice_layout,
-            match (&trusted_advice, &claims.advice_address_phase.trusted) {
-                (Some(verified), Some(claim)) => {
-                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
-                }
-                _ => None,
-            },
-            match (
-                &stage6.batch.trusted_advice_cycle_phase,
-                &stage6.output_claims.advice_cycle_phase.trusted,
-            ) {
-                (Some(verified), Some(claim)) => {
-                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
-                }
-                _ => None,
-            },
+            trusted_advice
+                .as_ref()
+                .zip(claims.advice_address_phase.trusted.as_ref())
+                .map(|(verified, claim)| {
+                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                }),
+            stage6
+                .batch
+                .trusted_advice_cycle_phase
+                .as_ref()
+                .zip(stage6.output_claims.advice_cycle_phase.trusted.as_ref())
+                .map(|(verified, claim)| {
+                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                }),
         ),
         (
             JoltAdviceKind::Untrusted,
             untrusted_advice_layout,
-            match (&untrusted_advice, &claims.advice_address_phase.untrusted) {
-                (Some(verified), Some(claim)) => {
-                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
-                }
-                _ => None,
-            },
-            match (
-                &stage6.batch.untrusted_advice_cycle_phase,
-                &stage6.output_claims.advice_cycle_phase.untrusted,
-            ) {
-                (Some(verified), Some(claim)) => {
-                    Some((verified.opening_point.as_slice(), Some(claim.opening_claim)))
-                }
-                _ => None,
-            },
+            untrusted_advice
+                .as_ref()
+                .zip(claims.advice_address_phase.untrusted.as_ref())
+                .map(|(verified, claim)| {
+                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                }),
+            stage6
+                .batch
+                .untrusted_advice_cycle_phase
+                .as_ref()
+                .zip(stage6.output_claims.advice_cycle_phase.untrusted.as_ref())
+                .map(|(verified, claim)| {
+                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                }),
         ),
     ] {
         if let Some(layout) = layout {
@@ -846,33 +844,54 @@ fn hamming_opening_points<F: Field>(
     }
 }
 
+/// Opening point and (clear-mode) claim recorded by the stage that completed
+/// an advice claim reduction.
+struct AdviceFinalSource<'a, F> {
+    point: &'a [F],
+    opening_claim: Option<F>,
+}
+
+impl<'a, F> AdviceFinalSource<'a, F> {
+    fn zk(point: &'a [F]) -> Self {
+        Self {
+            point,
+            opening_claim: None,
+        }
+    }
+
+    fn clear(point: &'a [F], opening_claim: F) -> Self {
+        Self {
+            point,
+            opening_claim: Some(opening_claim),
+        }
+    }
+}
+
 /// Resolves the final opening of an advice polynomial from whichever phase
 /// completed its reduction: this stage's address phase, or the stage 6b cycle
 /// phase when no active address rounds remain.
 fn advice_final_opening<F: Field>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
-    address_phase: Option<(&[F], Option<F>)>,
-    cycle_phase: Option<(&[F], Option<F>)>,
+    address_phase: Option<AdviceFinalSource<'_, F>>,
+    cycle_phase: Option<AdviceFinalSource<'_, F>>,
 ) -> Result<PrecommittedFinalOpening<F>, VerifierError> {
-    let (point, opening_claim) = if layout.dimensions().has_address_phase() {
-        address_phase.ok_or(VerifierError::MissingOpeningClaim {
-            id: advice::final_advice_opening(kind),
-        })?
+    let source = if layout.dimensions().has_address_phase() {
+        address_phase
     } else {
-        cycle_phase.ok_or(VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_advice_opening(kind),
-        })?
+        cycle_phase
     };
+    let source = source.ok_or(VerifierError::MissingOpeningClaim {
+        id: advice::final_advice_opening(kind),
+    })?;
     let polynomial = match kind {
         JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
         JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
     };
     Ok(PrecommittedFinalOpening {
         polynomial,
-        id: advice::final_advice_opening(kind),
-        point: point.to_vec(),
-        opening_claim,
+        point: source.point.to_vec(),
+        opening_claim: source.opening_claim,
     })
 }
 

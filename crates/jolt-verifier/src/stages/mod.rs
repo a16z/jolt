@@ -41,7 +41,7 @@ impl PrecommittedSchedule {
             trusted_advice_present.then_some(memory_layout.max_trusted_advice_size as usize);
         let untrusted_max_bytes =
             untrusted_advice_present.then_some(memory_layout.max_untrusted_advice_size as usize);
-        let candidates = advice::precommitted_candidates(trusted_max_bytes, untrusted_max_bytes);
+        let candidates = advice::candidate_total_vars(trusted_max_bytes, untrusted_max_bytes);
         let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
             log_t + log_k_chunk,
             &candidates,

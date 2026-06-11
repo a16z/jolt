@@ -186,14 +186,6 @@ impl PrecommittedClaimReduction {
         (cycle_phase_rounds, address_phase_rounds)
     }
 
-    pub const fn scheduling_reference_dimensions(&self) -> PrecommittedSchedulingReference {
-        self.scheduling_reference
-    }
-
-    pub fn num_active_cycle_phase_rounds(&self) -> usize {
-        self.cycle_phase_rounds.len()
-    }
-
     pub fn num_address_phase_rounds(&self) -> usize {
         self.address_phase_rounds.len()
     }
@@ -222,10 +214,6 @@ impl PrecommittedClaimReduction {
         self.scheduling_reference.cycle_alignment_rounds
     }
 
-    pub const fn address_alignment_rounds(&self) -> usize {
-        self.scheduling_reference.address_rounds
-    }
-
     /// Total cycle-phase sumcheck rounds, including rounds this polynomial
     /// skips.
     pub const fn cycle_phase_total_rounds(&self) -> usize {
@@ -251,12 +239,10 @@ impl PrecommittedClaimReduction {
         cycle_var_challenges: &[F],
         round: usize,
     ) -> Result<F, JoltFormulaPointError> {
-        let idx = self.cycle_phase_rounds.binary_search(&round).map_err(|_| {
-            JoltFormulaPointError::ChallengeLengthMismatch {
-                expected: self.cycle_phase_rounds.len(),
-                got: cycle_var_challenges.len(),
-            }
-        })?;
+        let idx = self
+            .cycle_phase_rounds
+            .binary_search(&round)
+            .map_err(|_| JoltFormulaPointError::InactiveCycleRound { round })?;
         cycle_var_challenges.get(idx).copied().ok_or(
             JoltFormulaPointError::ChallengeLengthMismatch {
                 expected: self.cycle_phase_rounds.len(),
@@ -314,9 +300,8 @@ impl PrecommittedClaimReduction {
                 if global_round < cycle_round_limit {
                     Ok(challenges[global_round])
                 } else {
-                    Err(JoltFormulaPointError::ChallengeLengthMismatch {
-                        expected: 0,
-                        got: self.num_address_phase_rounds(),
+                    Err(JoltFormulaPointError::CyclePhaseNotFinal {
+                        active_address_rounds: self.num_address_phase_rounds(),
                     })
                 }
             })
