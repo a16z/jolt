@@ -7,7 +7,7 @@ pub use formulas::{
     claim_reductions::advice::AdviceClaimReductionLayout,
     claim_reductions::bytecode::BytecodeClaimReductionLayout,
     claim_reductions::precommitted::{
-        PrecommittedClaimReduction, PrecommittedReductionDimensions,
+        PrecommittedClaimReduction, PrecommittedReductionDimensions, PrecommittedReductionLayout,
         PrecommittedSchedulingReference,
     },
     claim_reductions::program_image::ProgramImageClaimReductionLayout,

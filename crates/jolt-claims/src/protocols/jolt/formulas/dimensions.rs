@@ -522,7 +522,9 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::super::claim_reductions::advice::AdviceClaimReductionLayout;
-    use super::super::claim_reductions::precommitted::PrecommittedClaimReduction;
+    use super::super::claim_reductions::precommitted::{
+        PrecommittedClaimReduction, PrecommittedReductionLayout,
+    };
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt, Invertible};
     use jolt_poly::EqPolynomial;

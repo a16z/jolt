@@ -13,7 +13,7 @@ use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
-    PrecommittedSchedulingReference,
+    PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,38 +60,6 @@ impl AdviceClaimReductionLayout {
         self.advice_shape
     }
 
-    pub const fn precommitted(&self) -> &PrecommittedClaimReduction {
-        &self.precommitted
-    }
-
-    pub fn dimensions(&self) -> PrecommittedReductionDimensions {
-        self.precommitted.reduction_dimensions()
-    }
-
-    pub fn cycle_phase_opening_point<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted.cycle_phase_opening_point(challenges)
-    }
-
-    pub fn cycle_phase_variable_challenges<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .cycle_phase_variable_challenges(challenges)
-    }
-
-    pub fn address_phase_opening_point<F: Field>(
-        &self,
-        cycle_var_challenges: &[F],
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .address_phase_opening_point(cycle_var_challenges, challenges)
-    }
-
     /// `FinalScale` value when the reduction completes in the cycle phase
     /// (i.e. no active address-phase rounds remain).
     pub fn cycle_phase_final_output_scale<F: Field>(
@@ -118,6 +86,12 @@ impl AdviceClaimReductionLayout {
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
         let eq_eval = final_advice_eq_eval(reference_opening_point, &opening_point)?;
         Ok(eq_eval * precommitted_skip_round_scale::<F>(&self.precommitted))
+    }
+}
+
+impl PrecommittedReductionLayout for AdviceClaimReductionLayout {
+    fn precommitted(&self) -> &PrecommittedClaimReduction {
+        &self.precommitted
     }
 }
 

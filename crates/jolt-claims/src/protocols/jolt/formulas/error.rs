@@ -87,3 +87,18 @@ pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFo
     }
     Ok(())
 }
+
+/// [`require_len`] with the opening-point flavored error, for inputs that are
+/// opening points rather than challenge vectors.
+pub(crate) fn require_opening_point_len<F>(
+    values: &[F],
+    expected: usize,
+) -> Result<(), JoltFormulaPointError> {
+    if values.len() < expected {
+        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    Ok(())
+}

@@ -24,10 +24,12 @@ use super::super::super::{
 use super::super::dimensions::{
     log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
-use super::super::error::{require_len, JoltFormulaDimensionsError, JoltFormulaPointError};
+use super::super::error::{
+    require_len, require_opening_point_len, JoltFormulaDimensionsError, JoltFormulaPointError,
+};
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
-    PrecommittedSchedulingReference,
+    PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
 /// Number of staged `BytecodeValStage(i)` claims batched into the reduction.
@@ -74,11 +76,17 @@ pub fn is_valid_committed_bytecode_chunking_for_len(
     bytecode_len: usize,
     chunk_count: usize,
 ) -> bool {
+    is_valid_chunk_count(chunk_count)
+        && bytecode_len.is_power_of_two()
+        && bytecode_len.is_multiple_of(chunk_count)
+}
+
+/// Chunk-count half of the chunking rules, shared with the formula
+/// constructors that validate a chunk count without the bytecode length.
+const fn is_valid_chunk_count(chunk_count: usize) -> bool {
     chunk_count > 0
         && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
         && chunk_count.is_power_of_two()
-        && bytecode_len.is_power_of_two()
-        && bytecode_len.is_multiple_of(chunk_count)
 }
 
 /// Lane offsets of the committed bytecode row encoding. One-hot `rs1`/`rs2`/
@@ -198,44 +206,12 @@ impl BytecodeClaimReductionLayout {
         self.chunk_shape
     }
 
-    pub const fn precommitted(&self) -> &PrecommittedClaimReduction {
-        &self.precommitted
-    }
-
     pub const fn chunk_count(&self) -> usize {
         self.chunk_count
     }
 
     pub const fn log_bytecode_chunk_size(&self) -> usize {
         self.log_bytecode_chunk_size
-    }
-
-    pub fn dimensions(&self) -> PrecommittedReductionDimensions {
-        self.precommitted.reduction_dimensions()
-    }
-
-    pub fn cycle_phase_opening_point<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted.cycle_phase_opening_point(challenges)
-    }
-
-    pub fn cycle_phase_variable_challenges<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .cycle_phase_variable_challenges(challenges)
-    }
-
-    pub fn address_phase_opening_point<F: Field>(
-        &self,
-        cycle_var_challenges: &[F],
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .address_phase_opening_point(cycle_var_challenges, challenges)
     }
 
     /// Split the full bytecode address point (the `BytecodeReadRafAddrClaim`
@@ -362,6 +338,12 @@ impl BytecodeClaimReductionLayout {
     }
 }
 
+impl PrecommittedReductionLayout for BytecodeClaimReductionLayout {
+    fn precommitted(&self) -> &PrecommittedClaimReduction {
+        &self.precommitted
+    }
+}
+
 /// Per-chunk eq weights over the dropped high bytecode address bits, plus the
 /// chunk-local cycle point.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -405,8 +387,8 @@ pub fn lane_weights<F: Field>(
     require_len(inputs.stage3_gammas, 9)?;
     require_len(inputs.stage4_gammas, 3)?;
     require_len(inputs.stage5_gammas, 2 + LookupTableKind::<XLEN>::COUNT)?;
-    require_len(inputs.register_read_write_point, REGISTER_ADDRESS_BITS)?;
-    require_len(inputs.register_val_evaluation_point, REGISTER_ADDRESS_BITS)?;
+    require_opening_point_len(inputs.register_read_write_point, REGISTER_ADDRESS_BITS)?;
+    require_opening_point_len(inputs.register_val_evaluation_point, REGISTER_ADDRESS_BITS)?;
 
     let mut eta_powers = [F::one(); NUM_BYTECODE_VAL_STAGES];
     for stage in 1..NUM_BYTECODE_VAL_STAGES {
@@ -589,9 +571,7 @@ where
 /// validated source of this value.
 fn assert_valid_chunk_count(chunk_count: usize) {
     assert!(
-        chunk_count > 0
-            && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
-            && chunk_count.is_power_of_two(),
+        is_valid_chunk_count(chunk_count),
         "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most \
          {MAX_COMMITTED_BYTECODE_CHUNK_COUNT}"
     );
@@ -836,7 +816,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            Err(JoltFormulaPointError::OpeningPointLengthMismatch {
                 expected: REGISTER_ADDRESS_BITS,
                 got: REGISTER_ADDRESS_BITS - 1,
             })

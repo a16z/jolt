@@ -19,7 +19,7 @@ use super::super::dimensions::{log2_power_of_two, CommitmentMatrixShape, TracePo
 use super::super::error::JoltFormulaPointError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
-    PrecommittedSchedulingReference,
+    PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
 /// Committed length of the program-image polynomial: the initial RAM
@@ -73,44 +73,12 @@ impl ProgramImageClaimReductionLayout {
         self.image_shape
     }
 
-    pub const fn precommitted(&self) -> &PrecommittedClaimReduction {
-        &self.precommitted
-    }
-
     pub const fn start_index(&self) -> usize {
         self.start_index
     }
 
     pub const fn padded_len_words(&self) -> usize {
         self.padded_len_words
-    }
-
-    pub fn dimensions(&self) -> PrecommittedReductionDimensions {
-        self.precommitted.reduction_dimensions()
-    }
-
-    pub fn cycle_phase_opening_point<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted.cycle_phase_opening_point(challenges)
-    }
-
-    pub fn cycle_phase_variable_challenges<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .cycle_phase_variable_challenges(challenges)
-    }
-
-    pub fn address_phase_opening_point<F: Field>(
-        &self,
-        cycle_var_challenges: &[F],
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .address_phase_opening_point(cycle_var_challenges, challenges)
     }
 
     /// `FinalScale` value when the reduction completes in the cycle phase
@@ -142,6 +110,12 @@ impl ProgramImageClaimReductionLayout {
         let eq_eval =
             eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &opening_point)?;
         Ok(eq_eval * precommitted_skip_round_scale::<F>(&self.precommitted))
+    }
+}
+
+impl PrecommittedReductionLayout for ProgramImageClaimReductionLayout {
+    fn precommitted(&self) -> &PrecommittedClaimReduction {
+        &self.precommitted
     }
 }
 

@@ -6,6 +6,7 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, HammingWeightClaimReductionChallenge,
     HammingWeightClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial,
     JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
+    PrecommittedReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;

@@ -9,7 +9,7 @@ use jolt_claims::protocols::jolt::{
     BooleanityChallenge, BooleanityPublic, BytecodeReadRafChallenge, IncClaimReductionChallenge,
     IncClaimReductionPublic, InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId,
     JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
-    RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
+    PrecommittedReductionLayout, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;

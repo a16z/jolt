@@ -66,6 +66,41 @@ impl PrecommittedReductionDimensions {
     }
 }
 
+/// Common two-phase schedule surface of the per-reduction layout types
+/// (advice, committed bytecode, program image), forwarding to the shared
+/// [`PrecommittedClaimReduction`].
+pub trait PrecommittedReductionLayout {
+    fn precommitted(&self) -> &PrecommittedClaimReduction;
+
+    fn dimensions(&self) -> PrecommittedReductionDimensions {
+        self.precommitted().reduction_dimensions()
+    }
+
+    fn cycle_phase_opening_point<F: Field>(
+        &self,
+        challenges: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        self.precommitted().cycle_phase_opening_point(challenges)
+    }
+
+    fn cycle_phase_variable_challenges<F: Field>(
+        &self,
+        challenges: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        self.precommitted()
+            .cycle_phase_variable_challenges(challenges)
+    }
+
+    fn address_phase_opening_point<F: Field>(
+        &self,
+        cycle_var_challenges: &[F],
+        challenges: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        self.precommitted()
+            .address_phase_opening_point(cycle_var_challenges, challenges)
+    }
+}
+
 /// Shared scheduling dimensions derived from the main trace domain and all
 /// precommitted candidate domains.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
