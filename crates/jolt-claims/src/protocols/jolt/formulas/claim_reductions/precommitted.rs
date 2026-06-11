@@ -77,7 +77,7 @@ impl PrecommittedClaimReduction {
         scheduling_reference: PrecommittedSchedulingReference,
         trace_order: TracePolynomialOrder,
         log_t: usize,
-    ) -> Self {
+    ) -> Result<Self, JoltFormulaPointError> {
         let has_precommitted_dominance =
             scheduling_reference.reference_total_vars > scheduling_reference.main_total_vars;
         let dense_cycle_prefix_rounds = if has_precommitted_dominance { log_t } else { 0 };
@@ -92,19 +92,19 @@ impl PrecommittedClaimReduction {
             &scheduling_reference,
             poly_row_vars,
             poly_col_vars,
-        );
+        )?;
         let (cycle_phase_rounds, address_phase_rounds) = Self::active_rounds_from_poly_permutation(
             &poly_opening_round_permutation_be,
             scheduling_reference.cycle_alignment_rounds,
         );
-        Self {
+        Ok(Self {
             scheduling_reference,
             poly_opening_round_permutation_be,
             cycle_phase_rounds,
             cycle_phase_total_rounds: scheduling_reference.cycle_alignment_rounds,
             address_phase_rounds,
             address_phase_total_rounds: scheduling_reference.address_rounds,
-        }
+        })
     }
 
     fn reference_dory_opening_round_permutation_be(
@@ -146,24 +146,29 @@ impl PrecommittedClaimReduction {
         reference: &PrecommittedSchedulingReference,
         poly_row_vars: usize,
         poly_col_vars: usize,
-    ) -> Vec<usize> {
+    ) -> Result<Vec<usize>, JoltFormulaPointError> {
         let total_full = reference.reference_total_vars;
         let sigma_full = reference.joint_col_vars;
         let nu_full = total_full.saturating_sub(sigma_full);
-        assert_eq!(
-            dory_opening_round_permutation_be.len(),
-            total_full,
-            "reference dory round permutation length mismatch",
-        );
-        assert!(
-            poly_row_vars <= nu_full && poly_col_vars <= sigma_full,
-            "top-left projection requires poly dims <= full dims (poly row/col vars={poly_row_vars}/{poly_col_vars}, full row/col vars={nu_full}/{sigma_full})"
-        );
+        if dory_opening_round_permutation_be.len() != total_full {
+            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+                expected: total_full,
+                got: dory_opening_round_permutation_be.len(),
+            });
+        }
+        if poly_row_vars > nu_full || poly_col_vars > sigma_full {
+            return Err(JoltFormulaPointError::PolyDimsExceedReference {
+                poly_row_vars,
+                poly_col_vars,
+                reference_row_vars: nu_full,
+                reference_col_vars: sigma_full,
+            });
+        }
         let row_be = &dory_opening_round_permutation_be[..nu_full];
         let col_be = &dory_opening_round_permutation_be[nu_full..nu_full + sigma_full];
         let row_tail = &row_be[nu_full - poly_row_vars..];
         let col_tail = &col_be[sigma_full - poly_col_vars..];
-        [row_tail, col_tail].concat()
+        Ok([row_tail, col_tail].concat())
     }
 
     fn active_rounds_from_poly_permutation(
@@ -361,6 +366,8 @@ fn skip_round_scale<F: Field>(gap: usize) -> F {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
+
     use super::*;
     use crate::protocols::jolt::formulas::dimensions::TracePolynomialOrder;
     use jolt_field::{Fr, FromPrimitiveInt, Invertible};
@@ -380,7 +387,8 @@ mod tests {
             scheduling_reference,
             TracePolynomialOrder::CycleMajor,
             3,
-        );
+        )
+        .unwrap_or_else(|error| panic!("schedule should build: {error}"));
 
         let two_inv = Fr::from_u64(2).inv_or_zero();
         assert_eq!(precommitted.cycle_phase_rounds(), &[0]);
@@ -406,7 +414,8 @@ mod tests {
             scheduling_reference,
             TracePolynomialOrder::CycleMajor,
             4,
-        );
+        )
+        .unwrap_or_else(|error| panic!("schedule should build: {error}"));
 
         let two_inv = Fr::from_u64(2).inv_or_zero();
         assert_eq!(precommitted.cycle_phase_rounds(), &[0]);
@@ -441,7 +450,8 @@ mod tests {
             scheduling_reference,
             TracePolynomialOrder::CycleMajor,
             2,
-        );
+        )
+        .unwrap_or_else(|error| panic!("schedule should build: {error}"));
         assert_eq!(
             precommitted.poly_opening_round_permutation_be(),
             &[1, 0, 5, 4, 3, 2]

@@ -237,10 +237,18 @@ where
         proof.trace_polynomial_order,
         proof.trace_length.ilog2() as usize,
         proof.one_hot_config.committed_chunk_bits(),
-        &preprocessing.program.memory_layout,
-        trusted_advice_commitment_present,
-        proof.untrusted_advice_commitment.is_some(),
-    );
+        trusted_advice_commitment_present
+            .then_some(preprocessing.program.memory_layout.max_trusted_advice_size as usize),
+        proof.untrusted_advice_commitment.is_some().then_some(
+            preprocessing
+                .program
+                .memory_layout
+                .max_untrusted_advice_size as usize,
+        ),
+    )
+    .map_err(|error| VerifierError::InvalidPrecommittedSchedule {
+        reason: error.to_string(),
+    })?;
 
     Ok(CheckedInputs {
         public_io: normalized_public_io,

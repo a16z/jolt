@@ -1416,10 +1416,15 @@ fn case_advice_layouts(base: &CoreVerifierCase) -> PrecommittedSchedule {
         base.proof.trace_polynomial_order,
         base.proof.trace_length.ilog2() as usize,
         base.proof.one_hot_config.committed_chunk_bits(),
-        &base.public_io.memory_layout,
-        base.trusted_advice_commitment.is_some(),
-        base.proof.untrusted_advice_commitment.is_some(),
+        base.trusted_advice_commitment
+            .is_some()
+            .then_some(base.public_io.memory_layout.max_trusted_advice_size as usize),
+        base.proof
+            .untrusted_advice_commitment
+            .is_some()
+            .then_some(base.public_io.memory_layout.max_untrusted_advice_size as usize),
     )
+    .unwrap_or_else(|error| panic!("precommitted schedule should build: {error}"))
 }
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]

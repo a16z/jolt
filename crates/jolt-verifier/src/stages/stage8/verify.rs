@@ -121,7 +121,7 @@ where
         .map(|opening| opening.point.as_slice())
         .collect();
     let opening_point = final_opening_point(FinalOpeningPointInputs {
-        native_main_vars: log_t + proof.one_hot_config.committed_chunk_bits(),
+        log_t,
         log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
         trace_order: proof.trace_polynomial_order,
         hamming_weight_opening_point: hamming_opening_point,

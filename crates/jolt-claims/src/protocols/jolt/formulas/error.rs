@@ -31,6 +31,15 @@ pub enum JoltFormulaPointError {
     CyclePhaseNotFinal { active_address_rounds: usize },
     #[error("cycle round {round} is not active for this polynomial")]
     InactiveCycleRound { round: usize },
+    #[error(
+        "polynomial dims ({poly_row_vars}x{poly_col_vars}) exceed reference dims ({reference_row_vars}x{reference_col_vars})"
+    )]
+    PolyDimsExceedReference {
+        poly_row_vars: usize,
+        poly_col_vars: usize,
+        reference_row_vars: usize,
+        reference_col_vars: usize,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]

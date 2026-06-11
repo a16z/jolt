@@ -655,6 +655,7 @@ mod tests {
             scheduling_reference,
             max_advice_size_bytes,
         )
+        .unwrap_or_else(|error| panic!("advice layout should build: {error}"))
     }
 
     #[test]

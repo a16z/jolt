@@ -1,9 +1,8 @@
 //! Typed verifier stage entry points.
 
-use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::advice, AdviceClaimReductionLayout, JoltAdviceKind,
-    PrecommittedClaimReduction, TracePolynomialOrder,
+    formulas::claim_reductions::advice, formulas::error::JoltFormulaPointError,
+    AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedClaimReduction, TracePolynomialOrder,
 };
 
 pub mod stage1;
@@ -33,34 +32,32 @@ impl PrecommittedSchedule {
         trace_order: TracePolynomialOrder,
         log_t: usize,
         log_k_chunk: usize,
-        memory_layout: &MemoryLayout,
-        trusted_advice_present: bool,
-        untrusted_advice_present: bool,
-    ) -> Self {
-        let trusted_max_bytes =
-            trusted_advice_present.then_some(memory_layout.max_trusted_advice_size as usize);
-        let untrusted_max_bytes =
-            untrusted_advice_present.then_some(memory_layout.max_untrusted_advice_size as usize);
-        let candidates = advice::candidate_total_vars(trusted_max_bytes, untrusted_max_bytes);
+        trusted_max_advice_bytes: Option<usize>,
+        untrusted_max_advice_bytes: Option<usize>,
+    ) -> Result<Self, JoltFormulaPointError> {
+        let candidates =
+            advice::candidate_total_vars(trusted_max_advice_bytes, untrusted_max_advice_bytes);
         let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
             log_t + log_k_chunk,
             &candidates,
             log_k_chunk,
         );
         let layout = |max_bytes: Option<usize>| {
-            max_bytes.map(|max_bytes| {
-                AdviceClaimReductionLayout::balanced(
-                    trace_order,
-                    log_t,
-                    scheduling_reference,
-                    max_bytes,
-                )
-            })
+            max_bytes
+                .map(|max_bytes| {
+                    AdviceClaimReductionLayout::balanced(
+                        trace_order,
+                        log_t,
+                        scheduling_reference,
+                        max_bytes,
+                    )
+                })
+                .transpose()
         };
-        Self {
-            trusted_advice: layout(trusted_max_bytes),
-            untrusted_advice: layout(untrusted_max_bytes),
-        }
+        Ok(Self {
+            trusted_advice: layout(trusted_max_advice_bytes)?,
+            untrusted_advice: layout(untrusted_max_advice_bytes)?,
+        })
     }
 
     pub fn advice(&self, kind: JoltAdviceKind) -> Option<&AdviceClaimReductionLayout> {

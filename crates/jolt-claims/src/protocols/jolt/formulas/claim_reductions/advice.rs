@@ -41,7 +41,7 @@ impl AdviceClaimReductionLayout {
         log_t: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         max_advice_size_bytes: usize,
-    ) -> Self {
+    ) -> Result<Self, JoltFormulaPointError> {
         let advice_shape = CommitmentMatrixShape::advice_from_max_bytes(max_advice_size_bytes);
         let precommitted = PrecommittedClaimReduction::new(
             advice_shape.row_vars(),
@@ -49,11 +49,11 @@ impl AdviceClaimReductionLayout {
             scheduling_reference,
             trace_order,
             log_t,
-        );
-        Self {
+        )?;
+        Ok(Self {
             advice_shape,
             precommitted,
-        }
+        })
     }
 
     pub const fn advice_shape(&self) -> CommitmentMatrixShape {

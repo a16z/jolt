@@ -1111,6 +1111,12 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    // The cycle-phase relation references `FinalScale` only when the reduction
+    // finalizes at the cycle-phase handoff; otherwise the stage 7 address
+    // phase supplies it.
+    if layout.dimensions().has_address_phase() {
+        return Ok(());
+    }
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
         .cycle_phase_final_output_scale(&source_point, &public.sumcheck_point)
