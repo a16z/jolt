@@ -44,6 +44,8 @@ pub struct Stage7ZkOutput<F: Field, C> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReductionPublicOutput<F>,
     pub trusted_advice_address_phase: Option<AdviceAddressPhasePublicOutput<F>>,
     pub untrusted_advice_address_phase: Option<AdviceAddressPhasePublicOutput<F>>,
+    pub bytecode_address_phase: Option<CommittedReductionAddressPhasePublicOutput<F>>,
+    pub program_image_address_phase: Option<CommittedReductionAddressPhasePublicOutput<F>>,
     pub precommitted_final_openings: Vec<PrecommittedFinalOpening<F>>,
 }
 
@@ -62,6 +64,8 @@ pub struct VerifiedStage7Batch<F: Field> {
     pub hamming_weight_claim_reduction: VerifiedHammingWeightClaimReductionSumcheck<F>,
     pub trusted_advice_address_phase: Option<VerifiedAdviceAddressPhaseSumcheck<F>>,
     pub untrusted_advice_address_phase: Option<VerifiedAdviceAddressPhaseSumcheck<F>>,
+    pub bytecode_address_phase: Option<VerifiedCommittedReductionAddressPhaseSumcheck<F>>,
+    pub program_image_address_phase: Option<VerifiedCommittedReductionAddressPhaseSumcheck<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,6 +100,21 @@ pub struct VerifiedAdviceAddressPhaseSumcheck<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdviceAddressPhasePublicOutput<F: Field> {
     pub kind: JoltAdviceKind,
+    pub sumcheck_point: Vec<F>,
+    pub opening_point: Vec<F>,
+}
+
+/// Address phase of the committed bytecode or program-image claim reduction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedCommittedReductionAddressPhaseSumcheck<F: Field> {
+    pub input_claim: F,
+    pub sumcheck_point: Vec<F>,
+    pub opening_point: Vec<F>,
+    pub expected_output_claim: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedReductionAddressPhasePublicOutput<F: Field> {
     pub sumcheck_point: Vec<F>,
     pub opening_point: Vec<F>,
 }

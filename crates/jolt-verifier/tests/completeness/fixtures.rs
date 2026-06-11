@@ -50,6 +50,14 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             expected_core_accepts: true,
             notes: "Inline-heavy byte/hash fixture.",
         },
+        FixtureId::CommittedMulDivSmall => FixtureMetadata {
+            id,
+            name: "committed muldiv small standard",
+            zk: false,
+            has_trusted_advice: false,
+            expected_core_accepts: true,
+            notes: "Committed program mode fixture with two bytecode chunks and a program image.",
+        },
         FixtureId::MulDivZkSmall => FixtureMetadata {
             id,
             name: "muldiv small ZK",

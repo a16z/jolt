@@ -43,6 +43,14 @@ fn standard_sha2_small_core_proof_is_accepted() {
 }
 
 #[test]
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn standard_committed_muldiv_core_proof_is_accepted() {
+    support::assert_accepts(
+        crate::support::core_fixtures::standard_committed_muldiv_case().verify(),
+    );
+}
+
+#[test]
 #[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
 #[ignore = "enable --features core-fixtures in a non-ZK build to live-generate and cast this core fixture"]
 fn standard_muldiv_core_proof_is_accepted() {}

@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
-transcript-blake2b = ["spongefish/blake2"]
+transcript-blake2b = ["spongefish/blake2", "dep:blake2"]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["dep:light-poseidon"]
 
@@ -22,6 +22,8 @@ ark-bn254.workspace = true
 ark-ff.workspace = true
 light-poseidon = { workspace = true, optional = true }
 spongefish = { workspace = true, features = ["ark-ff"] }
+blake2 = { workspace = true, optional = true }
+digest = { workspace = true }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 rand.workspace = true
 

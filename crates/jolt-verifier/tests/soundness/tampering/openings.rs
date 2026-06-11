@@ -68,7 +68,7 @@ fn stage8_final_opening_ids(base: &core_fixtures::CoreVerifierCase) -> Vec<JoltO
     let dimensions = JoltFormulaDimensions::try_from(base.proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        base.preprocessing.program.bytecode.code_size,
+        base.preprocessing.program.bytecode_len(),
         base.proof.ram_K,
     ))
     .expect("core fixture has invalid final opening dimensions");
@@ -76,6 +76,10 @@ fn stage8_final_opening_ids(base: &core_fixtures::CoreVerifierCase) -> Vec<JoltO
         dimensions.ra_layout,
         base.trusted_advice_commitment.is_some(),
         base.proof.untrusted_advice_commitment.is_some(),
+        base.preprocessing
+            .program
+            .committed()
+            .map(|committed| committed.bytecode_chunk_count),
     )
 }
 

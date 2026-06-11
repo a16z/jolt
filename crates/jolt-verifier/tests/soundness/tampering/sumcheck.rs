@@ -1423,6 +1423,7 @@ fn case_advice_layouts(base: &CoreVerifierCase) -> PrecommittedSchedule {
             .untrusted_advice_commitment
             .is_some()
             .then_some(base.public_io.memory_layout.max_untrusted_advice_size as usize),
+        None,
     )
     .unwrap_or_else(|error| panic!("precommitted schedule should build: {error}"))
 }
@@ -1515,7 +1516,7 @@ fn stage6_dimensions(base: &CoreVerifierCase) -> JoltFormulaDimensions {
     JoltFormulaDimensions::try_from(base.proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        base.preprocessing.program.bytecode.code_size,
+        base.preprocessing.program.bytecode_len(),
         base.proof.ram_K,
     ))
     .unwrap_or_else(|error| panic!("core fixture has invalid Stage 6 dimensions: {error}"))

@@ -8,18 +8,23 @@ use super::error::JoltFormulaPointError;
 use super::ra::JoltRaPolynomialLayout;
 
 pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommittedPolynomial> {
-    final_opening_polynomial_order(layout, false, false)
+    final_opening_polynomial_order(layout, false, false, None)
 }
 
+/// `committed_bytecode_chunks` is `Some(chunk_count)` in committed program
+/// mode, which appends the trusted bytecode chunk and program-image
+/// commitments to the batch.
 pub fn final_opening_polynomial_order(
     layout: JoltRaPolynomialLayout,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
+    committed_bytecode_chunks: Option<usize>,
 ) -> Vec<JoltCommittedPolynomial> {
     let mut polynomials = Vec::with_capacity(
         2 + layout.total()
             + usize::from(include_trusted_advice)
-            + usize::from(include_untrusted_advice),
+            + usize::from(include_untrusted_advice)
+            + committed_bytecode_chunks.map_or(0, |chunk_count| chunk_count + 1),
     );
     polynomials.push(JoltCommittedPolynomial::RamInc);
     polynomials.push(JoltCommittedPolynomial::RdInc);
@@ -32,6 +37,10 @@ pub fn final_opening_polynomial_order(
     if include_untrusted_advice {
         polynomials.push(JoltCommittedPolynomial::UntrustedAdvice);
     }
+    if let Some(chunk_count) = committed_bytecode_chunks {
+        polynomials.extend((0..chunk_count).map(JoltCommittedPolynomial::BytecodeChunk));
+        polynomials.push(JoltCommittedPolynomial::ProgramImageInit);
+    }
     polynomials
 }
 
@@ -39,11 +48,17 @@ pub fn final_opening_ids(
     layout: JoltRaPolynomialLayout,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
+    committed_bytecode_chunks: Option<usize>,
 ) -> Vec<JoltOpeningId> {
-    final_opening_polynomial_order(layout, include_trusted_advice, include_untrusted_advice)
-        .into_iter()
-        .map(final_opening_id)
-        .collect()
+    final_opening_polynomial_order(
+        layout,
+        include_trusted_advice,
+        include_untrusted_advice,
+        committed_bytecode_chunks,
+    )
+    .into_iter()
+    .map(final_opening_id)
+    .collect()
 }
 
 pub fn final_opening_id(polynomial: JoltCommittedPolynomial) -> JoltOpeningId {
@@ -207,7 +222,7 @@ mod tests {
     #[test]
     fn final_opening_order_matches_stage8_rlc_order() {
         assert_eq!(
-            final_opening_polynomial_order(layout(), true, true),
+            final_opening_polynomial_order(layout(), true, true, None),
             vec![
                 JoltCommittedPolynomial::RamInc,
                 JoltCommittedPolynomial::RdInc,
@@ -225,7 +240,7 @@ mod tests {
     #[test]
     fn final_opening_ids_use_sumcheck_sources() {
         assert_eq!(
-            final_opening_ids(layout(), true, false),
+            final_opening_ids(layout(), true, false, None),
             vec![
                 JoltOpeningId::committed(
                     JoltCommittedPolynomial::RamInc,

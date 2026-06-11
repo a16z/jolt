@@ -42,6 +42,9 @@ pub fn deps<'a, F: Field, C>(
 #[serde(bound = "")]
 pub struct Stage4Claims<F: Field> {
     pub advice: RamValCheckAdviceOpeningClaims<F>,
+    /// Staged `ProgramImageInitContributionRw` scalar; present only in
+    /// committed program mode.
+    pub program_image_contribution: Option<F>,
     pub registers_read_write: RegistersReadWriteOutputOpeningClaims<F>,
     #[cfg(feature = "field-inline")]
     pub field_inline: FieldInlineStage4Claims<F>,

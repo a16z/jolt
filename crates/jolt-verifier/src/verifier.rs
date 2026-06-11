@@ -15,7 +15,7 @@ use crate::{
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
-        PrecommittedSchedule,
+        CommittedProgramSchedule, PrecommittedSchedule,
     },
     VerifierError,
 };
@@ -50,7 +50,12 @@ where
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
-    absorb_commitments(proof, trusted_advice_commitment, &mut transcript);
+    absorb_commitments(
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+    );
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
     let stage2 = stage2::verify(
@@ -167,11 +172,12 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    if public_io.memory_layout != preprocessing.program.memory_layout {
+    let memory_layout = preprocessing.program.memory_layout();
+    if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
     }
 
-    let max_input_size = preprocessing.program.memory_layout.max_input_size as usize;
+    let max_input_size = memory_layout.max_input_size as usize;
     if public_io.inputs.len() > max_input_size {
         return Err(VerifierError::InputTooLarge {
             got: public_io.inputs.len(),
@@ -179,7 +185,7 @@ where
         });
     }
 
-    let max_output_size = preprocessing.program.memory_layout.max_output_size as usize;
+    let max_output_size = memory_layout.max_output_size as usize;
     if public_io.outputs.len() > max_output_size {
         return Err(VerifierError::OutputTooLarge {
             got: public_io.outputs.len(),
@@ -188,26 +194,26 @@ where
     }
 
     if !proof.trace_length.is_power_of_two()
-        || proof.trace_length > preprocessing.program.max_padded_trace_length
+        || proof.trace_length > preprocessing.program.max_padded_trace_length()
     {
         return Err(VerifierError::InvalidTraceLength {
             got: proof.trace_length,
-            max: preprocessing.program.max_padded_trace_length,
+            max: preprocessing.program.max_padded_trace_length(),
         });
     }
 
     let min_ram_k = compute_min_ram_k(
-        &preprocessing.program.ram,
-        &preprocessing.program.memory_layout,
+        preprocessing.program.min_bytecode_address(),
+        preprocessing.program.program_image_len_words(),
+        memory_layout,
     )
     .map_err(|error| VerifierError::InvalidMemoryLayout {
         reason: error.to_string(),
     })?;
-    let max_ram_k = compute_max_ram_k(&preprocessing.program.memory_layout).map_err(|error| {
-        VerifierError::InvalidMemoryLayout {
+    let max_ram_k =
+        compute_max_ram_k(memory_layout).map_err(|error| VerifierError::InvalidMemoryLayout {
             reason: error.to_string(),
-        }
-    })?;
+        })?;
     if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_k || proof.ram_K > max_ram_k {
         return Err(VerifierError::InvalidRamK {
             got: proof.ram_K,
@@ -233,18 +239,42 @@ where
             .map_or(0, |position| position + 1),
     );
 
+    let committed_program = preprocessing
+        .program
+        .committed()
+        .map(|committed| {
+            let program_image_start_index = memory_layout
+                .remapped_word_address(committed.meta.min_bytecode_address)
+                .map_err(|error| VerifierError::InvalidCommittedProgram {
+                    reason: error.to_string(),
+                })?;
+            if committed.bytecode_chunk_commitments.len() != committed.bytecode_chunk_count {
+                return Err(VerifierError::InvalidCommittedProgram {
+                    reason: format!(
+                        "bytecode chunk commitment count {} does not match chunk count {}",
+                        committed.bytecode_chunk_commitments.len(),
+                        committed.bytecode_chunk_count
+                    ),
+                });
+            }
+            Ok(CommittedProgramSchedule {
+                bytecode_len: committed.meta.bytecode_len,
+                bytecode_chunk_count: committed.bytecode_chunk_count,
+                program_image_len_words: committed.meta.program_image_len_words,
+                program_image_start_index: program_image_start_index as usize,
+            })
+        })
+        .transpose()?;
     let precommitted = PrecommittedSchedule::new(
         proof.trace_polynomial_order,
         proof.trace_length.ilog2() as usize,
         proof.one_hot_config.committed_chunk_bits(),
-        trusted_advice_commitment_present
-            .then_some(preprocessing.program.memory_layout.max_trusted_advice_size as usize),
-        proof.untrusted_advice_commitment.is_some().then_some(
-            preprocessing
-                .program
-                .memory_layout
-                .max_untrusted_advice_size as usize,
-        ),
+        trusted_advice_commitment_present.then_some(memory_layout.max_trusted_advice_size as usize),
+        proof
+            .untrusted_advice_commitment
+            .is_some()
+            .then_some(memory_layout.max_untrusted_advice_size as usize),
+        committed_program,
     )
     .map_err(|error| VerifierError::InvalidPrecommittedSchedule {
         reason: error.to_string(),
@@ -255,7 +285,7 @@ where
         zk,
         trace_length: proof.trace_length,
         ram_K: proof.ram_K,
-        entry_address: preprocessing.program.bytecode.entry_address,
+        entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
         vc_capacity,
@@ -353,6 +383,7 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
 }
 
 pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
@@ -384,6 +415,18 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     if let Some(trusted_advice_commitment) = trusted_advice_commitment {
         append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
         transcript.append(trusted_advice_commitment);
+    }
+    if let Some(committed) = preprocessing.program.committed() {
+        for commitment in &committed.bytecode_chunk_commitments {
+            append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
+            transcript.append(commitment);
+        }
+        append_payload_label(
+            transcript,
+            b"program_image_commitment",
+            &committed.program_image_commitment,
+        );
+        transcript.append(&committed.program_image_commitment);
     }
 }
 
@@ -662,7 +705,7 @@ mod tests {
     fn validate_inputs_normalizes_public_output() {
         let preprocessing = test_preprocessing();
         let mut public_io = JoltDevice {
-            memory_layout: preprocessing.program.memory_layout.clone(),
+            memory_layout: preprocessing.program.memory_layout().clone(),
             inputs: vec![1, 2],
             outputs: vec![3, 0, 0],
             ..JoltDevice::default()
@@ -705,7 +748,7 @@ mod tests {
     fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
-            memory_layout: preprocessing.program.memory_layout.clone(),
+            memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
         let mut proof = proof_with_zk(false, clear_claims());
@@ -721,7 +764,7 @@ mod tests {
     fn validate_inputs_rejects_ram_domain_above_layout_maximum() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
-            memory_layout: preprocessing.program.memory_layout.clone(),
+            memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
         let mut proof = proof_with_zk(false, clear_claims());
@@ -741,7 +784,7 @@ mod tests {
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
-            memory_layout: preprocessing.program.memory_layout.clone(),
+            memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
         let proof = proof_with_zk(true, zk_claims());
@@ -760,7 +803,7 @@ mod tests {
             Bn254G1::default(),
         ));
         let public_io = JoltDevice {
-            memory_layout: preprocessing.program.memory_layout.clone(),
+            memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
         let proof = proof_with_zk(true, zk_claims());
@@ -870,6 +913,7 @@ mod tests {
                     untrusted: None,
                     trusted: None,
                 },
+                program_image_contribution: None,
                 registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
                     registers_val: zero,
                     rs1_ra: zero,
@@ -901,6 +945,7 @@ mod tests {
                 address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                     bytecode_read_raf: zero,
                     booleanity: zero,
+                    bytecode_val_stages: None,
                 },
                 bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
                     bytecode_ra: Vec::new(),
@@ -928,6 +973,8 @@ mod tests {
                     trusted: None,
                     untrusted: None,
                 },
+                bytecode_claim_reduction: None,
+                program_image_claim_reduction: None,
             },
             stage7: stage7::inputs::Stage7Claims {
                 hamming_weight_claim_reduction:
@@ -940,6 +987,8 @@ mod tests {
                     trusted: None,
                     untrusted: None,
                 },
+                bytecode_address_phase: None,
+                program_image_address_phase: None,
             },
         })
     }
@@ -1066,12 +1115,12 @@ mod tests {
             heap_size: 8,
         });
         JoltVerifierPreprocessing::new(
-            JoltProgramPreprocessing {
+            crate::preprocessing::ProgramPreprocessing::Full(JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),
                 ram: RAMPreprocessing::default(),
                 memory_layout,
                 max_padded_trace_length: 16,
-            },
+            }),
             [7; 32],
             (),
             None,

@@ -35,7 +35,7 @@ fn excessive_trace_length_rejects_now() {
         tamper_manifest::required_target("proof.trace_length"),
         &base,
         |case| {
-            case.proof.trace_length = case.preprocessing.program.max_padded_trace_length * 2;
+            case.proof.trace_length = case.preprocessing.program.max_padded_trace_length() * 2;
         },
     );
 }
@@ -71,7 +71,7 @@ fn zero_ram_domain_rejects_now() {
 fn oversized_public_input_rejects_now() {
     let mut case = real_core_case();
     case.public_io.inputs =
-        vec![0; case.preprocessing.program.memory_layout.max_input_size as usize + 1];
+        vec![0; case.preprocessing.program.memory_layout().max_input_size as usize + 1];
 
     support::assert_rejects(case.verify());
 }
@@ -81,7 +81,7 @@ fn oversized_public_input_rejects_now() {
 fn oversized_public_output_rejects_now() {
     let mut case = real_core_case();
     case.public_io.outputs =
-        vec![0; case.preprocessing.program.memory_layout.max_output_size as usize + 1];
+        vec![0; case.preprocessing.program.memory_layout().max_output_size as usize + 1];
 
     support::assert_rejects(case.verify());
 }

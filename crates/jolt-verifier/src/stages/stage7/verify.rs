@@ -1,12 +1,18 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::{advice, hamming_weight},
+        claim_reductions::{
+            advice,
+            bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
+            hamming_weight, program_image,
+        },
         dimensions::JoltFormulaDimensions,
     },
-    AdviceClaimReductionLayout, AdviceClaimReductionPublic, HammingWeightClaimReductionChallenge,
+    AdviceClaimReductionLayout, AdviceClaimReductionPublic, BytecodeClaimReductionLayout,
+    BytecodeClaimReductionPublic, HammingWeightClaimReductionChallenge,
     HammingWeightClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial,
     JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
-    PrecommittedReductionLayout,
+    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    ProgramImageClaimReductionPublic,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -21,9 +27,10 @@ use jolt_transcript::Transcript;
 use super::{
     inputs::{AdviceAddressPhaseOutputClaim, Deps, Stage7Claims},
     outputs::{
-        AdviceAddressPhasePublicOutput, HammingWeightClaimReductionPublicOutput,
-        PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7PublicOutput,
-        Stage7ZkOutput, VerifiedAdviceAddressPhaseSumcheck,
+        AdviceAddressPhasePublicOutput, CommittedReductionAddressPhasePublicOutput,
+        HammingWeightClaimReductionPublicOutput, PrecommittedFinalOpening, Stage7ClearOutput,
+        Stage7Output, Stage7PublicOutput, Stage7ZkOutput, VerifiedAdviceAddressPhaseSumcheck,
+        VerifiedCommittedReductionAddressPhaseSumcheck,
         VerifiedHammingWeightClaimReductionSumcheck, VerifiedStage7Batch,
     },
 };
@@ -33,6 +40,7 @@ use crate::{
     stages::{
         stage4::Stage4ClearOutput,
         stage6::{
+            inputs::BytecodeCyclePhaseOutputClaims,
             outputs::{AdviceCyclePhasePublicOutput, VerifiedAdviceCyclePhaseSumcheck},
             Stage6ClearOutput, Stage6ZkOutput,
         },
@@ -47,6 +55,8 @@ struct Stage7BatchInputClaims<F: Field> {
     hamming_weight_claim_reduction: F,
     trusted_advice_address_phase: Option<F>,
     untrusted_advice_address_phase: Option<F>,
+    bytecode_address_phase: Option<F>,
+    program_image_address_phase: Option<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +64,8 @@ struct Stage7BatchExpectedOutputClaims<F: Field> {
     hamming_weight_claim_reduction: F,
     trusted_advice_address_phase: Option<F>,
     untrusted_advice_address_phase: Option<F>,
+    bytecode_address_phase: Option<F>,
+    program_image_address_phase: Option<F>,
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -82,7 +94,7 @@ where
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        preprocessing.program.bytecode.code_size,
+        preprocessing.program.bytecode_len(),
         checked.ram_K,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -117,12 +129,33 @@ where
             None
         }
     });
+    let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
+    let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
+    let bytecode_reduction_claims = bytecode_reduction_layout.and_then(|layout| {
+        layout.dimensions().has_address_phase().then(|| {
+            bytecode_reduction::address_phase::<PCS::Field>(
+                layout.dimensions(),
+                layout.chunk_count(),
+            )
+        })
+    });
+    let program_image_reduction_claims = program_image_reduction_layout.and_then(|layout| {
+        layout
+            .dimensions()
+            .has_address_phase()
+            .then(|| program_image::address_phase::<PCS::Field>(layout.dimensions()))
+    });
 
     validate_compressed_stage_claim(&hamming_claims)?;
-    if let Some(claim) = &trusted_advice_claims {
-        validate_compressed_stage_claim(claim)?;
-    }
-    if let Some(claim) = &untrusted_advice_claims {
+    for claim in [
+        &trusted_advice_claims,
+        &untrusted_advice_claims,
+        &bytecode_reduction_claims,
+        &program_image_reduction_claims,
+    ]
+    .into_iter()
+    .flatten()
+    {
         validate_compressed_stage_claim(claim)?;
     }
 
@@ -142,13 +175,15 @@ where
             hamming_claims.sumcheck.rounds,
             hamming_claims.sumcheck.degree,
         )];
-        if let Some(claim) = &trusted_advice_claims {
-            statements.push(SumcheckStatement::new(
-                claim.sumcheck.rounds,
-                claim.sumcheck.degree,
-            ));
-        }
-        if let Some(claim) = &untrusted_advice_claims {
+        for claim in [
+            &trusted_advice_claims,
+            &untrusted_advice_claims,
+            &bytecode_reduction_claims,
+            &program_image_reduction_claims,
+        ]
+        .into_iter()
+        .flatten()
+        {
             statements.push(SumcheckStatement::new(
                 claim.sumcheck.rounds,
                 claim.sumcheck.degree,
@@ -170,7 +205,12 @@ where
             + output_openings.bytecode_ra.len()
             + output_openings.ram_ra.len()
             + usize::from(trusted_advice_claims.is_some())
-            + usize::from(untrusted_advice_claims.is_some());
+            + usize::from(untrusted_advice_claims.is_some())
+            + bytecode_reduction_claims
+                .as_ref()
+                .and(bytecode_reduction_layout)
+                .map_or(0, BytecodeClaimReductionLayout::chunk_count)
+            + usize::from(program_image_reduction_claims.is_some());
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
@@ -221,6 +261,45 @@ where
         } else {
             None
         };
+        let bytecode_address_phase =
+            if let (Some(layout), Some(claim)) = (
+                bytecode_reduction_layout,
+                bytecode_reduction_claims.as_ref(),
+            ) {
+                let cycle_phase = stage6.bytecode_cycle_phase.as_ref().ok_or(
+                    VerifierError::MissingOpeningClaim {
+                        id: bytecode_reduction::cycle_phase_intermediate_opening(),
+                    },
+                )?;
+                Some(committed_reduction_address_phase_public(
+                    &batch_consistency,
+                    claim,
+                    layout.precommitted(),
+                    &cycle_phase.cycle_phase_variables,
+                    JoltRelationId::BytecodeClaimReduction,
+                )?)
+            } else {
+                None
+            };
+        let program_image_address_phase = if let (Some(layout), Some(claim)) = (
+            program_image_reduction_layout,
+            program_image_reduction_claims.as_ref(),
+        ) {
+            let cycle_phase = stage6.program_image_cycle_phase.as_ref().ok_or(
+                VerifierError::MissingOpeningClaim {
+                    id: program_image::cycle_phase_program_image_opening(),
+                },
+            )?;
+            Some(committed_reduction_address_phase_public(
+                &batch_consistency,
+                claim,
+                layout.precommitted(),
+                &cycle_phase.cycle_phase_variables,
+                JoltRelationId::ProgramImageClaimReduction,
+            )?)
+        } else {
+            None
+        };
 
         let mut precommitted_final_openings = Vec::new();
         for (kind, layout, address_phase, cycle_phase) in [
@@ -229,22 +308,22 @@ where
                 trusted_advice_layout,
                 trusted_advice
                     .as_ref()
-                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
                 stage6
                     .trusted_advice_cycle_phase
                     .as_ref()
-                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
             ),
             (
                 JoltAdviceKind::Untrusted,
                 untrusted_advice_layout,
                 untrusted_advice
                     .as_ref()
-                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
                 stage6
                     .untrusted_advice_cycle_phase
                     .as_ref()
-                    .map(|public| AdviceFinalSource::zk(&public.opening_point)),
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
             ),
         ] {
             if let Some(layout) = layout {
@@ -255,6 +334,30 @@ where
                     cycle_phase,
                 )?);
             }
+        }
+        if let Some(layout) = bytecode_reduction_layout {
+            precommitted_final_openings.extend(bytecode_final_openings(
+                layout,
+                bytecode_address_phase
+                    .as_ref()
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                stage6
+                    .bytecode_cycle_phase
+                    .as_ref()
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+            )?);
+        }
+        if let Some(layout) = program_image_reduction_layout {
+            precommitted_final_openings.push(program_image_final_opening(
+                layout,
+                program_image_address_phase
+                    .as_ref()
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                stage6
+                    .program_image_cycle_phase
+                    .as_ref()
+                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+            )?);
         }
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
@@ -273,6 +376,8 @@ where
             },
             trusted_advice_address_phase: trusted_advice,
             untrusted_advice_address_phase: untrusted_advice,
+            bytecode_address_phase,
+            program_image_address_phase,
             precommitted_final_openings,
         }));
     }
@@ -304,6 +409,53 @@ where
                 advice_address_phase_input::<PCS::Field>(claim, stage6, JoltAdviceKind::Untrusted)
             })
             .transpose()?,
+        bytecode_address_phase: bytecode_reduction_claims
+            .as_ref()
+            .map(|claim| {
+                let intermediate_opening = bytecode_reduction::cycle_phase_intermediate_opening();
+                let intermediate_claim =
+                    match stage6.output_claims.bytecode_claim_reduction.as_ref() {
+                        Some(BytecodeCyclePhaseOutputClaims::Intermediate(value)) => Ok(*value),
+                        _ => Err(VerifierError::MissingOpeningClaim {
+                            id: intermediate_opening,
+                        }),
+                    }?;
+                claim.input.expression().try_evaluate(
+                    |id| {
+                        if *id == intermediate_opening {
+                            Ok(intermediate_claim)
+                        } else {
+                            Err(VerifierError::MissingOpeningClaim { id: *id })
+                        }
+                    },
+                    |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
+        program_image_address_phase: program_image_reduction_claims
+            .as_ref()
+            .map(|claim| {
+                let cycle_opening = program_image::cycle_phase_program_image_opening();
+                let cycle_claim = stage6
+                    .output_claims
+                    .program_image_claim_reduction
+                    .as_ref()
+                    .map(|claim| claim.opening_claim)
+                    .ok_or(VerifierError::MissingOpeningClaim { id: cycle_opening })?;
+                claim.input.expression().try_evaluate(
+                    |id| {
+                        if *id == cycle_opening {
+                            Ok(cycle_claim)
+                        } else {
+                            Err(VerifierError::MissingOpeningClaim { id: *id })
+                        }
+                    },
+                    |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
     };
 
     if trusted_advice_claims.is_none() && claims.advice_address_phase.trusted.is_some() {
@@ -314,6 +466,16 @@ where
     if untrusted_advice_claims.is_none() && claims.advice_address_phase.untrusted.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
             id: advice::final_advice_opening(JoltAdviceKind::Untrusted),
+        });
+    }
+    if bytecode_reduction_claims.is_none() && claims.bytecode_address_phase.is_some() {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: bytecode_reduction::final_bytecode_chunk_opening(0),
+        });
+    }
+    if program_image_reduction_claims.is_none() && claims.program_image_address_phase.is_some() {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: program_image::final_program_image_opening(),
         });
     }
 
@@ -335,6 +497,26 @@ where
     if let (Some(claim), Some(input_claim)) = (
         &untrusted_advice_claims,
         input_claims.untrusted_advice_address_phase,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &bytecode_reduction_claims,
+        input_claims.bytecode_address_phase,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &program_image_reduction_claims,
+        input_claims.program_image_address_phase,
     ) {
         sumcheck_claims.push(SumcheckClaim::new(
             claim.sumcheck.rounds,
@@ -420,6 +602,61 @@ where
             id: advice::final_advice_opening(JoltAdviceKind::Untrusted),
         });
     }
+    let bytecode_address_phase = if let (Some(layout), Some(claim), Some(output_claims)) = (
+        bytecode_reduction_layout,
+        bytecode_reduction_claims.as_ref(),
+        claims.bytecode_address_phase.as_ref(),
+    ) {
+        let input_claim =
+            input_claims
+                .bytecode_address_phase
+                .ok_or(VerifierError::MissingOpeningClaim {
+                    id: bytecode_reduction::cycle_phase_intermediate_opening(),
+                })?;
+        Some(verify_bytecode_address_phase(
+            &batch,
+            claim,
+            layout,
+            output_claims,
+            stage6,
+            input_claim,
+        )?)
+    } else {
+        None
+    };
+    if bytecode_reduction_claims.is_some() && bytecode_address_phase.is_none() {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::final_bytecode_chunk_opening(0),
+        });
+    }
+    let program_image_address_phase = if let (Some(layout), Some(claim), Some(output_claim)) = (
+        program_image_reduction_layout,
+        program_image_reduction_claims.as_ref(),
+        claims.program_image_address_phase.as_ref(),
+    ) {
+        let input_claim =
+            input_claims
+                .program_image_address_phase
+                .ok_or(VerifierError::MissingOpeningClaim {
+                    id: program_image::cycle_phase_program_image_opening(),
+                })?;
+        Some(verify_program_image_address_phase(
+            &batch,
+            claim,
+            layout,
+            output_claim.opening_claim,
+            stage4,
+            stage6,
+            input_claim,
+        )?)
+    } else {
+        None
+    };
+    if program_image_reduction_claims.is_some() && program_image_address_phase.is_none() {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: program_image::final_program_image_opening(),
+        });
+    }
 
     let expected_outputs = Stage7BatchExpectedOutputClaims {
         hamming_weight_claim_reduction: hamming_output,
@@ -429,12 +666,24 @@ where
         untrusted_advice_address_phase: untrusted_advice
             .as_ref()
             .map(|verified| verified.expected_output_claim),
+        bytecode_address_phase: bytecode_address_phase
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        program_image_address_phase: program_image_address_phase
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
     };
     let mut expected_outputs_in_order = vec![expected_outputs.hamming_weight_claim_reduction];
     if let Some(output_claim) = expected_outputs.trusted_advice_address_phase {
         expected_outputs_in_order.push(output_claim);
     }
     if let Some(output_claim) = expected_outputs.untrusted_advice_address_phase {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.bytecode_address_phase {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.program_image_address_phase {
         expected_outputs_in_order.push(output_claim);
     }
     if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
@@ -470,7 +719,7 @@ where
                 .as_ref()
                 .zip(claims.advice_address_phase.trusted.as_ref())
                 .map(|(verified, claim)| {
-                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                    PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
                 }),
             stage6
                 .batch
@@ -478,7 +727,7 @@ where
                 .as_ref()
                 .zip(stage6.output_claims.advice_cycle_phase.trusted.as_ref())
                 .map(|(verified, claim)| {
-                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                    PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
                 }),
         ),
         (
@@ -488,7 +737,7 @@ where
                 .as_ref()
                 .zip(claims.advice_address_phase.untrusted.as_ref())
                 .map(|(verified, claim)| {
-                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                    PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
                 }),
             stage6
                 .batch
@@ -496,7 +745,7 @@ where
                 .as_ref()
                 .zip(stage6.output_claims.advice_cycle_phase.untrusted.as_ref())
                 .map(|(verified, claim)| {
-                    AdviceFinalSource::clear(&verified.opening_point, claim.opening_claim)
+                    PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
                 }),
         ),
     ] {
@@ -508,6 +757,52 @@ where
                 cycle_phase,
             )?);
         }
+    }
+    if let Some(layout) = bytecode_reduction_layout {
+        let address_phase = bytecode_address_phase
+            .as_ref()
+            .zip(claims.bytecode_address_phase.as_ref())
+            .map(|(verified, output_claims)| {
+                PrecommittedFinalSource::clear(
+                    &verified.opening_point,
+                    output_claims.chunks.as_slice(),
+                )
+            });
+        let cycle_phase = match (
+            &stage6.batch.bytecode_cycle_phase,
+            &stage6.output_claims.bytecode_claim_reduction,
+        ) {
+            (Some(verified), Some(BytecodeCyclePhaseOutputClaims::Chunks(chunks))) => Some(
+                PrecommittedFinalSource::clear(&verified.opening_point, chunks.as_slice()),
+            ),
+            _ => None,
+        };
+        precommitted_final_openings.extend(bytecode_final_openings(
+            layout,
+            address_phase,
+            cycle_phase,
+        )?);
+    }
+    if let Some(layout) = program_image_reduction_layout {
+        let address_phase = program_image_address_phase
+            .as_ref()
+            .zip(claims.program_image_address_phase.as_ref())
+            .map(|(verified, claim)| {
+                PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
+            });
+        let cycle_phase = stage6
+            .batch
+            .program_image_cycle_phase
+            .as_ref()
+            .zip(stage6.output_claims.program_image_claim_reduction.as_ref())
+            .map(|(verified, claim)| {
+                PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
+            });
+        precommitted_final_openings.push(program_image_final_opening(
+            layout,
+            address_phase,
+            cycle_phase,
+        )?);
     }
 
     Ok(Stage7Output::Clear(Stage7ClearOutput {
@@ -532,6 +827,8 @@ where
             },
             trusted_advice_address_phase: trusted_advice,
             untrusted_advice_address_phase: untrusted_advice,
+            bytecode_address_phase,
+            program_image_address_phase,
         },
         precommitted_final_openings,
     }))
@@ -845,14 +1142,16 @@ fn hamming_opening_points<F: Field>(
     }
 }
 
-/// Opening point and (clear-mode) claim recorded by the stage that completed
-/// an advice claim reduction.
-struct AdviceFinalSource<'a, F> {
+/// Opening point and (clear-mode) claim payload recorded by the stage that
+/// completed a precommitted claim reduction. `T` is a single claim for advice
+/// and the program image, and the per-chunk claim slice for the committed
+/// bytecode.
+struct PrecommittedFinalSource<'a, F, T = F> {
     point: &'a [F],
-    opening_claim: Option<F>,
+    opening_claim: Option<T>,
 }
 
-impl<'a, F> AdviceFinalSource<'a, F> {
+impl<'a, F, T> PrecommittedFinalSource<'a, F, T> {
     fn zk(point: &'a [F]) -> Self {
         Self {
             point,
@@ -860,7 +1159,7 @@ impl<'a, F> AdviceFinalSource<'a, F> {
         }
     }
 
-    fn clear(point: &'a [F], opening_claim: F) -> Self {
+    fn clear(point: &'a [F], opening_claim: T) -> Self {
         Self {
             point,
             opening_claim: Some(opening_claim),
@@ -874,8 +1173,8 @@ impl<'a, F> AdviceFinalSource<'a, F> {
 fn advice_final_opening<F: Field>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
-    address_phase: Option<AdviceFinalSource<'_, F>>,
-    cycle_phase: Option<AdviceFinalSource<'_, F>>,
+    address_phase: Option<PrecommittedFinalSource<'_, F>>,
+    cycle_phase: Option<PrecommittedFinalSource<'_, F>>,
 ) -> Result<PrecommittedFinalOpening<F>, VerifierError> {
     let source = if layout.dimensions().has_address_phase() {
         address_phase
@@ -1064,4 +1363,249 @@ where
     if let Some(opening_claim) = &claims.advice_address_phase.untrusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
     }
+    if let Some(output_claims) = &claims.bytecode_address_phase {
+        for opening_claim in &output_claims.chunks {
+            transcript.append_labeled(b"opening_claim", opening_claim);
+        }
+    }
+    if let Some(opening_claim) = &claims.program_image_address_phase {
+        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+    }
+}
+
+fn verify_bytecode_address_phase<F: Field>(
+    batch: &jolt_sumcheck::BatchedEvaluationClaim<F>,
+    claim: &JoltRelationClaims<F>,
+    layout: &BytecodeClaimReductionLayout,
+    output_claims: &super::inputs::BytecodeAddressPhaseOutputClaims<F>,
+    stage6: &Stage6ClearOutput<F>,
+    input_claim: F,
+) -> Result<VerifiedCommittedReductionAddressPhaseSumcheck<F>, VerifierError> {
+    let stage = JoltRelationId::BytecodeClaimReduction;
+    let point = batch
+        .try_instance_point_at(0, claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let cycle_phase =
+        stage6
+            .batch
+            .bytecode_cycle_phase
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            })?;
+    let opening_point = layout
+        .address_phase_opening_point(&cycle_phase.cycle_phase_variables, point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    if output_claims.chunks.len() != layout.chunk_count() {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: format!(
+                "bytecode chunk claim count mismatch: expected {}, got {}",
+                layout.chunk_count(),
+                output_claims.chunks.len()
+            ),
+        });
+    }
+    let chunk_weights = layout
+        .address_phase_final_output_weights(
+            BytecodeOutputWeightInputs {
+                r_bc: &cycle_phase.weights.r_bc,
+                chunk_rbc_weights: &cycle_phase.weights.chunk_rbc_weights,
+                lane_weights: &cycle_phase.weights.lane_weights,
+            },
+            &cycle_phase.cycle_phase_variables,
+            point,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let expected_output_claim = claim.output.expression().try_evaluate(
+        |id| {
+            for (chunk_idx, opening_claim) in output_claims.chunks.iter().enumerate() {
+                if *id == bytecode_reduction::final_bytecode_chunk_opening(chunk_idx) {
+                    return Ok(*opening_claim);
+                }
+            }
+            Err(VerifierError::MissingOpeningClaim { id: *id })
+        },
+        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        |id| match id {
+            JoltPublicId::BytecodeClaimReduction(
+                BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx),
+            ) => chunk_weights
+                .get(*chunk_idx)
+                .copied()
+                .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
+    )?;
+
+    Ok(VerifiedCommittedReductionAddressPhaseSumcheck {
+        input_claim,
+        sumcheck_point: point.to_vec(),
+        opening_point,
+        expected_output_claim,
+    })
+}
+
+fn verify_program_image_address_phase<F: Field>(
+    batch: &jolt_sumcheck::BatchedEvaluationClaim<F>,
+    claim: &JoltRelationClaims<F>,
+    layout: &ProgramImageClaimReductionLayout,
+    final_opening_claim: F,
+    stage4: &Stage4ClearOutput<F>,
+    stage6: &Stage6ClearOutput<F>,
+    input_claim: F,
+) -> Result<VerifiedCommittedReductionAddressPhaseSumcheck<F>, VerifierError> {
+    let stage = JoltRelationId::ProgramImageClaimReduction;
+    let point = batch
+        .try_instance_point_at(0, claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let cycle_phase = stage6.batch.program_image_cycle_phase.as_ref().ok_or(
+        VerifierError::MissingOpeningClaim {
+            id: program_image::cycle_phase_program_image_opening(),
+        },
+    )?;
+    let opening_point = layout
+        .address_phase_opening_point(&cycle_phase.cycle_phase_variables, point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let contribution = stage4
+        .ram_val_check_init
+        .program_image_contribution
+        .as_ref()
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: program_image::ram_val_check_contribution_opening(),
+        })?;
+    let final_scale = layout
+        .address_phase_final_output_scale(
+            &contribution.opening_point,
+            &cycle_phase.cycle_phase_variables,
+            point,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let final_opening = program_image::final_program_image_opening();
+    let expected_output_claim = claim.output.expression().try_evaluate(
+        |id| {
+            if *id == final_opening {
+                Ok(final_opening_claim)
+            } else {
+                Err(VerifierError::MissingOpeningClaim { id: *id })
+            }
+        },
+        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        |id| match id {
+            JoltPublicId::ProgramImageClaimReduction(
+                ProgramImageClaimReductionPublic::FinalScale,
+            ) => Ok(final_scale),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
+    )?;
+
+    Ok(VerifiedCommittedReductionAddressPhaseSumcheck {
+        input_claim,
+        sumcheck_point: point.to_vec(),
+        opening_point,
+        expected_output_claim,
+    })
+}
+
+fn committed_reduction_address_phase_public<F: Field, C>(
+    batch: &BatchedCommittedSumcheckConsistency<F, C>,
+    claim: &JoltRelationClaims<F>,
+    precommitted: &jolt_claims::protocols::jolt::PrecommittedClaimReduction,
+    cycle_phase_variables: &[F],
+    stage: JoltRelationId,
+) -> Result<CommittedReductionAddressPhasePublicOutput<F>, VerifierError> {
+    let point = batch
+        .try_instance_point_at(0, claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let opening_point = precommitted
+        .address_phase_opening_point(cycle_phase_variables, &point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+
+    Ok(CommittedReductionAddressPhasePublicOutput {
+        sumcheck_point: point,
+        opening_point,
+    })
+}
+
+/// Resolves the final per-chunk openings of the committed bytecode from
+/// whichever phase completed the reduction: this stage's address phase, or the
+/// stage 6b cycle phase when no active address rounds remain.
+fn bytecode_final_openings<F: Field>(
+    layout: &BytecodeClaimReductionLayout,
+    address_phase: Option<PrecommittedFinalSource<'_, F, &[F]>>,
+    cycle_phase: Option<PrecommittedFinalSource<'_, F, &[F]>>,
+) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
+    let source = if layout.dimensions().has_address_phase() {
+        address_phase
+    } else {
+        cycle_phase
+    };
+    let source = source.ok_or(VerifierError::MissingOpeningClaim {
+        id: bytecode_reduction::final_bytecode_chunk_opening(0),
+    })?;
+    if let Some(chunk_claims) = source.opening_claim {
+        if chunk_claims.len() != layout.chunk_count() {
+            return Err(VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::final_bytecode_chunk_opening(
+                    chunk_claims.len().min(layout.chunk_count()),
+                ),
+            });
+        }
+    }
+    Ok((0..layout.chunk_count())
+        .map(|chunk_idx| PrecommittedFinalOpening {
+            polynomial: JoltCommittedPolynomial::BytecodeChunk(chunk_idx),
+            point: source.point.to_vec(),
+            opening_claim: source
+                .opening_claim
+                .map(|chunk_claims| chunk_claims[chunk_idx]),
+        })
+        .collect())
+}
+
+/// Resolves the final opening of the committed program image from whichever
+/// phase completed the reduction: this stage's address phase, or the stage 6b
+/// cycle phase when no active address rounds remain.
+fn program_image_final_opening<F: Field>(
+    layout: &ProgramImageClaimReductionLayout,
+    address_phase: Option<PrecommittedFinalSource<'_, F>>,
+    cycle_phase: Option<PrecommittedFinalSource<'_, F>>,
+) -> Result<PrecommittedFinalOpening<F>, VerifierError> {
+    let source = if layout.dimensions().has_address_phase() {
+        address_phase
+    } else {
+        cycle_phase
+    };
+    let source = source.ok_or(VerifierError::MissingOpeningClaim {
+        id: program_image::final_program_image_opening(),
+    })?;
+    Ok(PrecommittedFinalOpening {
+        polynomial: JoltCommittedPolynomial::ProgramImageInit,
+        point: source.point.to_vec(),
+        opening_claim: source.opening_claim,
+    })
 }

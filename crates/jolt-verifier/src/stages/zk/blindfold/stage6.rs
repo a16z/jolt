@@ -13,10 +13,15 @@ where
     let log_t = input.checked.trace_length.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
+    let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
+    let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
     let bytecode_address_claims =
         bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
-    let bytecode_claims =
-        bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
+    let bytecode_claims = if bytecode_reduction_layout.is_some() {
+        bytecode::read_raf_cycle_phase_committed::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+    } else {
+        bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+    };
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
@@ -37,6 +42,12 @@ where
         field_increments::claim_reduction::<PCS::Field>(FieldRegistersTraceDimensions::new(log_t));
     let (trusted_layout, trusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Trusted);
     let (untrusted_layout, untrusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Untrusted);
+    let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().map(|layout| {
+        bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
+    });
+    let program_image_reduction_claims = program_image_reduction_layout
+        .as_ref()
+        .map(|layout| program_image::cycle_phase::<PCS::Field>(layout.dimensions()));
 
     add_stage6_publics_and_challenges(
         input,
@@ -118,7 +129,45 @@ where
     ) {
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted, public)?;
     }
+    if let Some(layout) = bytecode_reduction_layout.as_ref() {
+        let eta =
+            input
+                .stage6
+                .public
+                .eta
+                .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
+                    id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+                })?;
+        values.challenge(
+            JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+            eta,
+        )?;
+        let public = input.stage6.bytecode_cycle_phase.as_ref().ok_or_else(|| {
+            VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            }
+        })?;
+        add_bytecode_reduction_cycle_publics(input, values, layout, public)?;
+    }
+    if let Some(layout) = program_image_reduction_layout.as_ref() {
+        let public = input
+            .stage6
+            .program_image_cycle_phase
+            .as_ref()
+            .ok_or_else(|| VerifierError::MissingOpeningClaim {
+                id: program_image::cycle_phase_program_image_opening(),
+            })?;
+        add_program_image_reduction_cycle_publics(input, values, layout, public)?;
+    }
 
+    let mut address_phase_output_ids = vec![bytecode::bytecode_read_raf_address_phase_opening()];
+    if bytecode_reduction_layout.is_some() {
+        address_phase_output_ids.extend(
+            (0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES)
+                .map(bytecode_reduction::bytecode_val_stage_opening),
+        );
+    }
+    address_phase_output_ids.push(booleanity::booleanity_address_phase_opening());
     let builder = add_batched_stage(
         builder,
         "stage6.address_phase",
@@ -126,10 +175,7 @@ where
         &input.stage6.address_phase_consistency,
         &input.stage6.address_phase_output_claims,
         values,
-        vec![
-            bytecode::bytecode_read_raf_address_phase_opening(),
-            booleanity::booleanity_address_phase_opening(),
-        ],
+        address_phase_output_ids,
         Vec::new(),
     )?;
 
@@ -190,6 +236,20 @@ where
             map_jolt_expr(claim.output.expression().clone()),
         ));
     }
+    if let Some(claim) = &bytecode_reduction_claims {
+        batch_claims.push((
+            claim.sumcheck.rounds,
+            map_jolt_expr(claim.input.expression().clone()),
+            map_jolt_expr(claim.output.expression().clone()),
+        ));
+    }
+    if let Some(claim) = &program_image_reduction_claims {
+        batch_claims.push((
+            claim.sumcheck.rounds,
+            map_jolt_expr(claim.input.expression().clone()),
+            map_jolt_expr(claim.output.expression().clone()),
+        ));
+    }
 
     let (mut output_ids, aliases) = stage6_cycle_output_openings_and_aliases(
         formula_dimensions,
@@ -226,6 +286,19 @@ where
             JoltAdviceKind::Untrusted,
             layout.dimensions(),
         )));
+    }
+    if let Some(layout) = bytecode_reduction_layout.as_ref() {
+        output_ids.extend(map_jolt_opening_ids(
+            bytecode_reduction::cycle_phase_output_openings(
+                layout.dimensions(),
+                layout.chunk_count(),
+            ),
+        ));
+    }
+    if let Some(layout) = program_image_reduction_layout.as_ref() {
+        output_ids.extend(map_jolt_opening_ids(
+            program_image::cycle_phase_output_openings(layout.dimensions()),
+        ));
     }
 
     let coefficients = &input.stage6.batch_consistency.batching_coefficients;

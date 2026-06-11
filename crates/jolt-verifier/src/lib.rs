@@ -13,7 +13,9 @@ pub use config::{
     SELECTED_FIELD_INLINE_CONFIG,
 };
 pub use error::VerifierError;
-pub use preprocessing::JoltVerifierPreprocessing;
+pub use preprocessing::{
+    CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
+};
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "field-inline")]
 pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};

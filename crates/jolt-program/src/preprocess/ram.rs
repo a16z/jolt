@@ -74,15 +74,16 @@ impl RAMPreprocessing {
 }
 
 pub fn compute_min_ram_k(
-    ram: &RAMPreprocessing,
+    min_bytecode_address: u64,
+    program_image_len_words: usize,
     memory_layout: &MemoryLayout,
 ) -> Result<usize, RamDomainError> {
-    let bytecode_start = match memory_layout.remap_word_address(ram.min_bytecode_address)? {
+    let bytecode_start = match memory_layout.remap_word_address(min_bytecode_address)? {
         Some(address) => usize::try_from(address).map_err(|_| RamDomainError::DomainTooLarge)?,
         None => 0,
     };
     let bytecode_end = bytecode_start
-        .checked_add(ram.bytecode_words.len())
+        .checked_add(program_image_len_words)
         .ok_or(RamDomainError::DomainTooLarge)?;
 
     let io_end = usize::try_from(memory_layout.remapped_word_address(RAM_START_ADDRESS)?)
@@ -125,6 +126,17 @@ impl PublicInitialRam {
                 words: ram.bytecode_words.clone(),
             });
         }
+
+        segments.extend(Self::inputs_only(public_io)?.segments);
+
+        Ok(Self { segments })
+    }
+
+    /// Public initial RAM without the program image, used in committed program
+    /// mode where the image contribution is a staged opening instead.
+    pub fn inputs_only(public_io: &JoltDevice) -> Result<Self, MemoryLayoutError> {
+        let layout = &public_io.memory_layout;
+        let mut segments = Vec::new();
 
         if !public_io.inputs.is_empty() {
             segments.push(PublicMemorySegment {
@@ -195,13 +207,8 @@ mod tests {
             stack_size: 8,
             heap_size: 8,
         });
-        let preprocessing = RAMPreprocessing {
-            min_bytecode_address: 0x8000_0000,
-            bytecode_words: vec![0; 7],
-        };
-
         assert_eq!(
-            compute_min_ram_k(&preprocessing, &device.memory_layout),
+            compute_min_ram_k(0x8000_0000, 7, &device.memory_layout),
             Ok(16)
         );
         assert_eq!(compute_max_ram_k(&device.memory_layout), Ok(256));
