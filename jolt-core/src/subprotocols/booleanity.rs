@@ -365,12 +365,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         sumcheck_challenges: &[F::Challenge],
     ) {
         // Cache the intermediate address-phase claim used as input to cycle phase.
-        let mut r_address = sumcheck_challenges.to_vec();
-        r_address.reverse();
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             VirtualPolynomial::BooleanityAddrClaim,
             SumcheckId::BooleanityAddressPhase,
-            OpeningPoint::<BIG_ENDIAN, F>::new(r_address),
+            opening_point,
             self.address_claim
                 .expect("Booleanity address-phase claim missing"),
         );
@@ -548,12 +547,11 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 
     fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
-        let mut r_address = sumcheck_challenges.to_vec();
-        r_address.reverse();
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             VirtualPolynomial::BooleanityAddrClaim,
             SumcheckId::BooleanityAddressPhase,
-            OpeningPoint::<BIG_ENDIAN, F>::new(r_address),
+            opening_point,
         );
     }
 }

@@ -480,9 +480,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         accumulator: &mut ProverOpeningAccumulator<F>,
         sumcheck_challenges: &[F::Challenge],
     ) {
-        let mut r_address = sumcheck_challenges.to_vec();
-        r_address.reverse();
-        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(r_address);
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         let address_claim = self
             .prev_round_claims
             .iter()
@@ -871,19 +869,18 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 
     fn cache_openings(&self, accumulator: &mut A, sumcheck_challenges: &[F::Challenge]) {
-        let mut r_address = sumcheck_challenges.to_vec();
-        r_address.reverse();
+        let opening_point = self.params.normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
             VirtualPolynomial::BytecodeReadRafAddrClaim,
             SumcheckId::BytecodeReadRafAddressPhase,
-            OpeningPoint::<BIG_ENDIAN, F>::new(r_address.clone()),
+            opening_point.clone(),
         );
         if self.params.program_mode == ProgramMode::Committed {
             for stage in 0..N_STAGES {
                 accumulator.append_virtual(
                     VirtualPolynomial::BytecodeValStage(stage),
                     SumcheckId::BytecodeReadRafAddressPhase,
-                    OpeningPoint::<BIG_ENDIAN, F>::new(r_address.clone()),
+                    opening_point.clone(),
                 );
             }
         }
