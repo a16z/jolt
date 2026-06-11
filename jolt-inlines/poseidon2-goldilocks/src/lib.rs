@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 //! Goldilocks Poseidon2 inline for the Jolt zkVM.
 //!
@@ -8,16 +8,6 @@
 //! in-place; the host registration expands that instruction into a
 //! deterministic virtual-instruction sequence for Jolt tracing.
 //!
-//! ## Status
-//!
-//! - SDK module (`sdk`) emits the custom opcode in RISC-V guest builds
-//!   and falls back to the host reference implementation when the
-//!   `host` feature is enabled.
-//! - Host reference (`exec`) is a standalone Goldilocks/Poseidon2
-//!   implementation used by tests and host builds.
-//! - Sequence builder (`sequence_builder`) emits the inline expansion
-//!   used by the Jolt tracer/prover.
-//!
 //! ## Inline opcode encoding
 //!
 //! Custom RISC-V instruction:
@@ -26,13 +16,15 @@
 //! .insn r INLINE_OPCODE, POSEIDON2_GOLDILOCKS_FUNCT3, POSEIDON2_GOLDILOCKS_FUNCT7, x0, rs1, x0
 //! ```
 //!
-//! where `rs1` points to a 64-byte (8 × u64) state buffer that is
-//! permuted in-place.
+//! - `rs1` points to a 64-byte (8 × u64), 8-byte-aligned state buffer
+//!   that is permuted in place.
+//! - Round constants are embedded in the inline expansion as virtual
+//!   immediates; `rs2` is unused.
 //!
 //! `INLINE_OPCODE` (0x0B) is shared with the upstream
-//! `jolt-inlines-*` crates. The funct3/funct7 pair is reserved for
-//! Poseidon2-Goldilocks. If/when this crate moves upstream into
-//! `jolt-inlines-poseidon2-goldilocks`, the encoding stays stable.
+//! `jolt-inlines-*` crates; this crate owns the `funct7 = 0x08`
+//! namespace, with `funct3` enumerating its operations (`0x00` = the
+//! 8-wide permutation).
 
 #![cfg_attr(not(feature = "host"), no_std)]
 
@@ -42,10 +34,10 @@ pub const INLINE_OPCODE: u32 = 0x0B;
 
 /// `funct3` for the Goldilocks Poseidon2 permutation opcode.
 ///
-pub const POSEIDON2_GOLDILOCKS_FUNCT3: u32 = 0x01;
+pub const POSEIDON2_GOLDILOCKS_FUNCT3: u32 = 0x00;
 
 /// `funct7` for the Goldilocks Poseidon2 permutation opcode.
-pub const POSEIDON2_GOLDILOCKS_FUNCT7: u32 = 0x02;
+pub const POSEIDON2_GOLDILOCKS_FUNCT7: u32 = 0x08;
 
 /// Human-readable inline name. Used in trace-file headers and
 /// upstream registration.
@@ -83,12 +75,8 @@ pub fn add_mod(a: u64, b: u64) -> u64 {
 /// Layout: 32 external initial (4 rounds × 8 elements) + 22 internal
 /// (state[0] only) + 32 external final (4 rounds × 8 elements).
 ///
-/// Defined as `pub static` (not `pub const`) so it has a stable address
-/// that the SDK's RISC-V guest asm can reference via `sym ...` and pass
-/// as `rs2` to the inline opcode. The sequence builder reads round
-/// constants from `rs2`; passing `x0` (the previous default) silently
-/// reads from address 0 in the guest, which is the rs2-wiring bug
-/// covered by the emulator regression tests.
+/// Kept in the crate root so both the host reference and sequence
+/// builder share the same table.
 #[rustfmt::skip]
 pub static POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8: [u64; 86] = [
     // External initial: 4 rounds × 8 elements
@@ -129,6 +117,9 @@ pub mod sequence_builder;
 
 #[cfg(feature = "host")]
 pub mod host;
+
+#[cfg(all(test, feature = "host"))]
+mod test_constants;
 
 #[cfg(all(test, feature = "host"))]
 mod tests;

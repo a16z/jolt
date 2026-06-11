@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 //! Parity and emulator tests for the Poseidon2-Goldilocks inline.
 
@@ -41,6 +41,21 @@ fn exec_mul_mod_matches_u128_random_stress() {
         let a = next() % P;
         let b = next() % P;
         assert_eq!(crate::exec::mul_mod(a, b), u128_mul_mod(a, b));
+    }
+}
+
+#[test]
+fn opcode_allocation_matches_inline_extension_namespace() {
+    assert_eq!(crate::POSEIDON2_GOLDILOCKS_FUNCT3, 0x00);
+    assert_eq!(crate::POSEIDON2_GOLDILOCKS_FUNCT7, 0x08);
+}
+
+#[test]
+fn known_answer_vectors_match_reference() {
+    for vector in crate::test_constants::POSEIDON2_GOLDILOCKS_KATS {
+        let mut state = vector.input;
+        execute_poseidon2_permutation(&mut state);
+        assert_eq!(state, vector.output);
     }
 }
 
@@ -185,16 +200,18 @@ mod plonky3_parity {
 }
 
 #[test]
-fn sequence_builder_emits_nonempty_instruction_list() {
+fn sequence_builder_emits_expected_instruction_count() {
     use jolt_inlines_sdk::host::InlineOp;
     use tracer::utils::inline_sequence_writer::SequenceInputs;
+
+    const EXPECTED_INSTRUCTION_COUNT: usize = 22_315;
 
     let inputs = SequenceInputs::default();
     let instructions = crate::sequence_builder::Poseidon2GoldilocksPermutation::build_sequence(
         (&inputs).into(),
         (&inputs).into(),
     );
-    assert!(instructions.len() >= 100);
+    assert_eq!(instructions.len(), EXPECTED_INSTRUCTION_COUNT);
 }
 
 #[test]
@@ -231,17 +248,13 @@ mod emulator {
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn create_harness(output_size: usize) -> InlineTestHarness {
-        let layout = InlineMemoryLayout::single_input(
-            POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8.len() * 8,
-            output_size,
-        );
+        let layout = InlineMemoryLayout::single_input(0, output_size);
         InlineTestHarness::new(layout)
     }
 
     fn execute_inline_permutation(initial_state: &[u64; 8]) -> [u64; 8] {
         let mut harness = create_harness(64);
         harness.setup_registers();
-        harness.load_input64(&POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8);
         harness.load_state64(initial_state);
         let inline_instr = InlineTestHarness::create_default_instruction(
             crate::INLINE_OPCODE,
@@ -418,7 +431,6 @@ mod emulator {
     fn run_inline_with_state(funct3: u32, funct7: u32, initial: &[u64; 8]) -> [u64; 8] {
         let mut harness = create_harness(64);
         harness.setup_registers();
-        harness.load_input64(&POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8);
         harness.load_state64(initial);
         let instr =
             InlineTestHarness::create_default_instruction(crate::INLINE_OPCODE, funct3, funct7);
@@ -444,10 +456,9 @@ mod emulator {
                 state[i] = next() % P;
                 state[i + 8] = next() % P;
             }
-            let layout = InlineMemoryLayout::single_input(8, 128);
+            let layout = InlineMemoryLayout::single_input(0, 128);
             let mut harness = InlineTestHarness::new(layout);
             harness.setup_registers();
-            harness.load_input64(&[0u64]);
             harness.load_state64(&state);
             let instr = InlineTestHarness::create_default_instruction(
                 crate::INLINE_OPCODE,
@@ -504,10 +515,9 @@ mod emulator {
 
     #[test]
     fn identity_inline_preserves_state() {
-        let layout = InlineMemoryLayout::single_input(8, 64);
+        let layout = InlineMemoryLayout::single_input(0, 64);
         let mut harness = InlineTestHarness::new(layout);
         harness.setup_registers();
-        harness.load_input64(&[0u64]);
         let initial: [u64; 8] = [11, 22, 33, 44, 55, 66, 77, 88];
         harness.load_state64(&initial);
         let instr = InlineTestHarness::create_default_instruction(

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 //! Host-side reference implementation of the Goldilocks Poseidon2
 //! permutation.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 //! Public Poseidon2-Goldilocks API for guests and hosts.
 //!
@@ -37,15 +37,8 @@ pub fn poseidon2_permute(state: &mut Poseidon2GoldilocksState) {
 ///
 /// Memory contract enforced by the sequence builder:
 /// - `rs1` → pointer to the 8-element state (read+written in place).
-/// - `rs2` → pointer to the 86-element round-constants table
-///   (read-only; the sequence builder loads `RC[i]` from
-///   `rs2 + i*8`).
-///
-/// We load `rs2` from the static `POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8`
-/// via the `la` pseudo-instruction (resolved to `lui+addi` or
-/// `auipc+addi` at link time). If `rs2` is left as `x0` (the v0.3 bug),
-/// the inline silently reads round constants from address 0 and
-/// produces wrong hashes with no visible error.
+/// - Round constants are embedded in the inline expansion as virtual
+///   immediates; `rs2` is unused.
 ///
 /// # Safety
 ///
@@ -57,19 +50,13 @@ pub fn poseidon2_permute(state: &mut Poseidon2GoldilocksState) {
 ))]
 #[inline(always)]
 unsafe fn poseidon2_permute_inner(state: *mut u64) {
-    use crate::{
-        INLINE_OPCODE, POSEIDON2_GOLDILOCKS_FUNCT3, POSEIDON2_GOLDILOCKS_FUNCT7,
-        POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8,
-    };
+    use crate::{INLINE_OPCODE, POSEIDON2_GOLDILOCKS_FUNCT3, POSEIDON2_GOLDILOCKS_FUNCT7};
     core::arch::asm!(
-        "la {rs2}, {rc}",
-        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",
         opcode = const INLINE_OPCODE,
         funct3 = const POSEIDON2_GOLDILOCKS_FUNCT3,
         funct7 = const POSEIDON2_GOLDILOCKS_FUNCT7,
         rs1 = in(reg) state,
-        rs2 = out(reg) _,
-        rc = sym POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8,
         options(nostack)
     );
 }

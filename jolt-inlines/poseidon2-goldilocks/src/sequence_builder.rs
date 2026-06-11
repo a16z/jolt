@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 //! Sequence builder for the Goldilocks Poseidon2 inline.
 //!
@@ -9,7 +9,6 @@
 //!
 //! Memory layout:
 //! - `rs1`: pointer to the 8-element state (64 bytes), permuted in place
-//! - `rs2`: pointer to the 86-element round-constant table (688 bytes)
 //!
 use core::array;
 
@@ -256,6 +255,37 @@ impl Poseidon2GoldilocksSequenceBuilder {
         self.asm.emit_r::<ADD>(dst, tmp, corr);
     }
 
+    /// dst = (a + b) mod P, for call sites where `dst != a`.
+    ///
+    /// Same arithmetic as `add_mod_into`, but skips the `a` snapshot
+    /// because overflow can be checked directly against the still-live
+    /// left operand. `dst` may alias `b`.
+    fn add_mod_into_dst_not_a(&mut self, dst: u8, a: u8, b: u8) {
+        debug_assert_ne!(dst, a, "dst must not alias a");
+
+        let p = self.p_reg();
+        let ovf = self.am_ovf();
+        let corr = self.am_corr();
+        let less = self.am_less();
+        let tmp = self.am_tmp();
+
+        // 1. dst = a + b (wrapping)
+        self.asm.emit_r::<ADD>(dst, a, b);
+        // 2. ovf = (dst < a) ? 1 : 0
+        self.asm.emit_r::<SLTU>(ovf, dst, a);
+        // 3-4. corr = ovf * (2^32 - 1) = (ovf << 32) - ovf
+        self.asm.emit_i::<SLLI>(corr, ovf, 32);
+        self.asm.emit_r::<SUB>(corr, corr, ovf);
+        // 5. dst = dst + corr -- if no overflow, corr = 0
+        self.asm.emit_r::<ADD>(dst, dst, corr);
+        // 6-10. Final reduction: if dst >= P, dst -= P.
+        self.asm.emit_r::<SLTU>(less, dst, p);
+        self.asm.emit_r::<SUB>(tmp, dst, p);
+        self.asm.emit_r::<SUB>(corr, 0, less);
+        self.asm.emit_r::<AND>(corr, corr, p);
+        self.asm.emit_r::<ADD>(dst, tmp, corr);
+    }
+
     /// dst = (a * b) mod P using the Goldilocks reduction trick.
     ///
     /// Mirrors the corrected `exec::mul_mod`. ~25 instructions.
@@ -288,11 +318,11 @@ impl Poseidon2GoldilocksSequenceBuilder {
         self.asm.emit_r::<MULHU>(hi, a, b);
         // 3. hi_hi = hi >> 32
         self.asm.emit_i::<SRLI>(hi_hi, hi, 32);
-        // 4-5. hi_lo = (hi << 32) >> 32  -- zero-extends the low 32 bits
-        self.asm.emit_i::<SLLI>(hi_lo, hi, 32);
-        self.asm.emit_i::<SRLI>(hi_lo, hi_lo, 32);
-        // 6. shifted = hi_lo << 32
-        self.asm.emit_i::<SLLI>(shifted, hi_lo, 32);
+        // 4. hi_lo = hi & (2^32 - 1)
+        self.asm.emit_r::<AND>(hi_lo, hi, mask);
+        // 5. shifted = hi_lo << 32. Shifting `hi` directly is
+        // equivalent because the upper half shifts out of the word.
+        self.asm.emit_i::<SLLI>(shifted, hi, 32);
         // 7. add_term = lo + shifted (wrapping)
         self.asm.emit_r::<ADD>(add_term, lo, shifted);
         // 8. add_ovf = (add_term < lo) ? 1 : 0  -- detect 2^64 overflow
@@ -352,12 +382,11 @@ impl Poseidon2GoldilocksSequenceBuilder {
 
     // ── Round-constant loading ────────────────────────────────────────
 
-    /// Load round constant at index `idx` into sc_rc from rs2 base.
+    /// Load round constant at index `idx` into sc_rc.
     /// 1 instruction.
     fn load_rc(&mut self, idx: usize) {
         let dst = self.sc_rc();
-        self.asm
-            .emit_ld::<LD>(dst, self.operands.rs2, (idx * 8) as i64);
+        self.load_u64_immediate(dst, crate::POSEIDON2_ROUND_CONSTANTS_GOLDILOCKS_8[idx]);
     }
 
     /// Load the i'th diagonal constant into sc_diag.
@@ -436,37 +465,37 @@ impl Poseidon2GoldilocksSequenceBuilder {
         let ab = self.mm_lo();
         let cd = self.mm_hi();
         let sum = self.sum_reg();
-        self.add_mod_into(ab, a, b);
-        self.add_mod_into(cd, c, d);
-        self.add_mod_into(sum, ab, cd);
+        self.add_mod_into_dst_not_a(ab, a, b);
+        self.add_mod_into_dst_not_a(cd, c, d);
+        self.add_mod_into_dst_not_a(sum, ab, cd);
 
         // s[0] = sum + a + 2b
         let bb = self.mm_hi_lo();
         let a_plus_bb = self.mm_hi_hi();
-        self.add_mod_into(bb, b, b);
-        self.add_mod_into(a_plus_bb, a, bb);
-        self.add_mod_into(s[0], sum, a_plus_bb);
+        self.add_mod_into_dst_not_a(bb, b, b);
+        self.add_mod_into_dst_not_a(a_plus_bb, a, bb);
+        self.add_mod_into_dst_not_a(s[0], sum, a_plus_bb);
 
         // s[1] = sum + b + 2c
         let cc = self.mm_hi_lo();
         let b_plus_cc = self.mm_hi_hi();
-        self.add_mod_into(cc, c, c);
-        self.add_mod_into(b_plus_cc, b, cc);
-        self.add_mod_into(s[1], sum, b_plus_cc);
+        self.add_mod_into_dst_not_a(cc, c, c);
+        self.add_mod_into_dst_not_a(b_plus_cc, b, cc);
+        self.add_mod_into_dst_not_a(s[1], sum, b_plus_cc);
 
         // s[2] = sum + c + 2d
         let dd = self.mm_hi_lo();
         let c_plus_dd = self.mm_hi_hi();
-        self.add_mod_into(dd, d, d);
-        self.add_mod_into(c_plus_dd, c, dd);
-        self.add_mod_into(s[2], sum, c_plus_dd);
+        self.add_mod_into_dst_not_a(dd, d, d);
+        self.add_mod_into_dst_not_a(c_plus_dd, c, dd);
+        self.add_mod_into_dst_not_a(s[2], sum, c_plus_dd);
 
         // s[3] = sum + d + 2a
         let aa = self.mm_hi_lo();
         let d_plus_aa = self.mm_hi_hi();
-        self.add_mod_into(aa, a, a);
-        self.add_mod_into(d_plus_aa, d, aa);
-        self.add_mod_into(s[3], sum, d_plus_aa);
+        self.add_mod_into_dst_not_a(aa, a, a);
+        self.add_mod_into_dst_not_a(d_plus_aa, d, aa);
+        self.add_mod_into_dst_not_a(s[3], sum, d_plus_aa);
     }
 
     /// External MDS: two m4 sub-blocks (on left and right halves of the
@@ -503,11 +532,11 @@ impl Poseidon2GoldilocksSequenceBuilder {
 
             // l = 2*t_l + t_r  =  (t_l + t_r) + t_l
             let sum_lr = self.sc_a();
-            self.add_mod_into(sum_lr, t_l, t_r);
-            self.add_mod_into(l, sum_lr, t_l);
+            self.add_mod_into_dst_not_a(sum_lr, t_l, t_r);
+            self.add_mod_into_dst_not_a(l, sum_lr, t_l);
 
             // r = t_l + 2*t_r  =  (t_l + t_r) + t_r
-            self.add_mod_into(r, sum_lr, t_r);
+            self.add_mod_into_dst_not_a(r, sum_lr, t_r);
         }
     }
 
@@ -520,7 +549,7 @@ impl Poseidon2GoldilocksSequenceBuilder {
         // Start with sum = S[0]+S[1].
         let s0 = self.s(0);
         let s1 = self.s(1);
-        self.add_mod_into(sum, s0, s1);
+        self.add_mod_into_dst_not_a(sum, s0, s1);
         for i in 2..STATE_LEN {
             let s_i = self.s(i);
             self.add_mod_into(sum, sum, s_i);

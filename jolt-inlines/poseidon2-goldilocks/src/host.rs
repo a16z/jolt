@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 //! Host-side registration of the Poseidon2-Goldilocks inline with
 //! the Jolt prover/tracer.
