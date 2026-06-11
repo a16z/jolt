@@ -768,6 +768,7 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -805,6 +806,7 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -987,6 +989,7 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -1030,6 +1033,7 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -1198,6 +1202,7 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -1234,6 +1239,7 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,

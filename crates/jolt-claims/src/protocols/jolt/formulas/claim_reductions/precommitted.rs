@@ -10,11 +10,61 @@
 
 use jolt_field::Field;
 
-use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
+use super::super::dimensions::{CommitmentMatrixShape, JoltSumcheckSpec, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
 
 /// Degree bound shared by all two-phase precommitted reduction sumchecks.
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
+
+/// Round counts of a two-phase precommitted claim reduction, shared by the
+/// advice, committed-bytecode, and program-image reductions.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PrecommittedReductionDimensions {
+    cycle_phase_total_rounds: usize,
+    address_phase_total_rounds: usize,
+    has_address_phase: bool,
+}
+
+impl PrecommittedReductionDimensions {
+    pub const fn new(
+        cycle_phase_total_rounds: usize,
+        address_phase_total_rounds: usize,
+        has_address_phase: bool,
+    ) -> Self {
+        Self {
+            cycle_phase_total_rounds,
+            address_phase_total_rounds,
+            has_address_phase,
+        }
+    }
+
+    /// Full cycle-phase sumcheck round count, including rounds this
+    /// polynomial skips.
+    pub const fn cycle_phase_total_rounds(self) -> usize {
+        self.cycle_phase_total_rounds
+    }
+
+    /// Full address-phase sumcheck round count, including rounds this
+    /// polynomial skips.
+    pub const fn address_phase_total_rounds(self) -> usize {
+        self.address_phase_total_rounds
+    }
+
+    /// The address phase only runs for this polynomial when it has active
+    /// address-phase rounds; otherwise the reduction finalizes at the
+    /// cycle-phase handoff.
+    pub const fn has_address_phase(self) -> bool {
+        self.has_address_phase
+    }
+
+    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
+        JoltSumcheckSpec::boolean(self.cycle_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
+    }
+
+    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
+        JoltSumcheckSpec::boolean(self.address_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
+    }
+}
 
 /// Shared scheduling dimensions derived from the main trace domain and all
 /// precommitted candidate domains.
@@ -189,6 +239,14 @@ impl PrecommittedClaimReduction {
         address_phase_rounds.sort_unstable();
         address_phase_rounds.dedup();
         (cycle_phase_rounds, address_phase_rounds)
+    }
+
+    pub fn reduction_dimensions(&self) -> PrecommittedReductionDimensions {
+        PrecommittedReductionDimensions::new(
+            self.cycle_phase_total_rounds,
+            self.address_phase_total_rounds,
+            self.num_address_phase_rounds() > 0,
+        )
     }
 
     pub fn num_address_phase_rounds(&self) -> usize {
