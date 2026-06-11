@@ -1619,6 +1619,21 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         ]
     }
 
+    /// Normalize sumcheck challenges to a big-endian opening point.
+    ///
+    /// The address segment (first `log_K` challenges) and the cycle segment are each
+    /// reversed independently.
+    pub fn normalize_opening_point(
+        &self,
+        challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut r = challenges.to_vec();
+        let split = self.log_K.min(r.len());
+        r[..split].reverse();
+        r[split..].reverse();
+        OpeningPoint::new(r)
+    }
+
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen<PCS: CommitmentScheme>(
         program: &ProgramPreprocessing<PCS>,

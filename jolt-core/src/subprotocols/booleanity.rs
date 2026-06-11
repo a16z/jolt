@@ -175,6 +175,21 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         }
     }
 
+    /// Normalize sumcheck challenges to a big-endian opening point.
+    ///
+    /// The address segment (first `log_k_chunk` challenges) and the cycle segment are
+    /// each reversed independently.
+    pub fn normalize_opening_point(
+        &self,
+        challenges: &[F::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let mut r = challenges.to_vec();
+        let split = self.log_k_chunk.min(r.len());
+        r[..split].reverse();
+        r[split..].reverse();
+        OpeningPoint::new(r)
+    }
+
     fn combined_r_big_endian(&self) -> Vec<F::Challenge> {
         self.r_address
             .iter()
