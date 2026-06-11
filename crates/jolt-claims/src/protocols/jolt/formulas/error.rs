@@ -75,3 +75,15 @@ pub enum JoltFormulaDimensionsError {
         chunk_count: usize,
     },
 }
+
+/// Require at least `expected` leading entries; callers consume the slice by
+/// prefix, so longer inputs are accepted.
+pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
+    if values.len() < expected {
+        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    Ok(())
+}

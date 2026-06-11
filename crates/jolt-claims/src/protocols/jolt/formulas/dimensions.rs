@@ -333,7 +333,7 @@ impl CommitmentMatrixShape {
     }
 }
 
-fn log2_power_of_two(value: usize) -> usize {
+pub(crate) fn log2_power_of_two(value: usize) -> usize {
     assert!(
         value.is_power_of_two(),
         "expected a power-of-two dimension, got {value}"

@@ -22,9 +22,9 @@ use super::super::super::{
     JoltRelationId, JoltVirtualPolynomial,
 };
 use super::super::dimensions::{
-    CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
+    log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
-use super::super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
+use super::super::error::{require_len, JoltFormulaDimensionsError, JoltFormulaPointError};
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
     PrecommittedSchedulingReference,
@@ -64,6 +64,11 @@ pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
 /// Committed bytecode chunking is valid when the chunk count is a nonzero
 /// power of two no larger than [`MAX_COMMITTED_BYTECODE_CHUNK_COUNT`] that
 /// divides the power-of-two bytecode length.
+///
+/// Deliberately stricter than core's same-named predicate: core leaves
+/// `bytecode_len` unchecked because preprocessing pads it to a power of two,
+/// while the chunk-size log derivations here rely on that invariant
+/// explicitly.
 #[inline(always)]
 pub fn is_valid_committed_bytecode_chunking_for_len(
     bytecode_len: usize,
@@ -138,7 +143,7 @@ pub fn precommitted_candidate(
             chunk_count,
         });
     }
-    Ok(committed_lane_vars() + log2_exact(bytecode_len / chunk_count))
+    Ok(committed_lane_vars() + log2_power_of_two(bytecode_len / chunk_count))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,8 +170,8 @@ impl BytecodeClaimReductionLayout {
                 chunk_count,
             });
         }
-        let log_bytecode_chunk_size = log2_exact(bytecode_len / chunk_count);
-        let dropped_address_bits = log2_exact(bytecode_len) - log_bytecode_chunk_size;
+        let log_bytecode_chunk_size = log2_power_of_two(bytecode_len / chunk_count);
+        let dropped_address_bits = log2_power_of_two(bytecode_len) - log_bytecode_chunk_size;
         // Bytecode chunks use their own balanced dimensions (independent from
         // the main trace matrix); stage 8 embeds them as a top-left block in
         // the joint opening.
@@ -373,9 +378,11 @@ pub struct BytecodeOutputWeightInputs<'a, F> {
 }
 
 /// Inputs to [`lane_weights`]; the gamma vectors are the same per-stage gamma
-/// powers consumed by `bytecode::read_raf_public_values`, and the register
-/// points are the full `RdWa` opening points from registers read-write
-/// checking and registers val evaluation.
+/// powers consumed by `bytecode::read_raf_public_values`. The register points
+/// are the full `RdWa` opening points from registers read-write checking and
+/// registers val evaluation; only their leading `REGISTER_ADDRESS_BITS`
+/// address components are read (unlike `BytecodeReadRafEvaluationInputs`,
+/// whose same-named fields take the address components alone).
 pub struct BytecodeLaneWeightInputs<'a, F> {
     pub eta: F,
     pub stage1_gammas: &'a [F],
@@ -485,6 +492,7 @@ pub fn cycle_phase<F>(
 where
     F: RingCore,
 {
+    assert_valid_chunk_count(chunk_count);
     let eta = bytecode_challenge(BytecodeClaimReductionChallenge::Eta);
     let mut input = JoltExpr::zero();
     for stage in 0..NUM_BYTECODE_VAL_STAGES {
@@ -513,6 +521,7 @@ pub fn address_phase<F>(
 where
     F: RingCore,
 {
+    assert_valid_chunk_count(chunk_count);
     JoltRelationClaims::new(
         JoltRelationId::BytecodeClaimReduction,
         dimensions.address_sumcheck(),
@@ -539,6 +548,7 @@ pub fn cycle_phase_output_openings(
     dimensions: PrecommittedReductionDimensions,
     chunk_count: usize,
 ) -> Vec<JoltOpeningId> {
+    assert_valid_chunk_count(chunk_count);
     if dimensions.has_address_phase() {
         vec![cycle_phase_intermediate_opening()]
     } else {
@@ -574,19 +584,17 @@ where
     challenge(JoltChallengeId::from(id))
 }
 
-fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
-    if values.len() < expected {
-        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-            expected,
-            got: values.len(),
-        });
-    }
-    Ok(())
-}
-
-fn log2_exact(value: usize) -> usize {
-    debug_assert!(value.is_power_of_two());
-    value.trailing_zeros() as usize
+/// Backstop for the formula constructors that take a raw chunk count without
+/// the bytecode length needed for full chunking validation; layouts are the
+/// validated source of this value.
+fn assert_valid_chunk_count(chunk_count: usize) {
+    assert!(
+        chunk_count > 0
+            && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
+            && chunk_count.is_power_of_two(),
+        "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most \
+         {MAX_COMMITTED_BYTECODE_CHUNK_COUNT}"
+    );
 }
 
 #[cfg(test)]
@@ -717,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn chunking_validation_matches_core_rules() {
+    fn chunking_validation_rules() {
         assert!(is_valid_committed_bytecode_chunking_for_len(1024, 1));
         assert!(is_valid_committed_bytecode_chunking_for_len(1024, 4));
         assert!(is_valid_committed_bytecode_chunking_for_len(256, 256));

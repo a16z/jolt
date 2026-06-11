@@ -15,7 +15,7 @@ use super::super::super::{
     JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
     JoltRelationId, JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
 };
-use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
+use super::super::dimensions::{log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
@@ -31,7 +31,7 @@ pub fn padded_program_image_len_words(program_image_len_words: usize) -> usize {
 /// Total-var count of the committed program-image polynomial, used as this
 /// reduction's candidate in the shared precommitted scheduling reference.
 pub fn precommitted_candidate(program_image_len_words: usize) -> usize {
-    padded_program_image_len_words(program_image_len_words).trailing_zeros() as usize
+    log2_power_of_two(padded_program_image_len_words(program_image_len_words))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,8 +53,7 @@ impl ProgramImageClaimReductionLayout {
         start_index: usize,
     ) -> Self {
         let padded_len_words = padded_program_image_len_words(program_image_len_words);
-        let image_shape =
-            CommitmentMatrixShape::balanced(padded_len_words.trailing_zeros() as usize);
+        let image_shape = CommitmentMatrixShape::balanced(log2_power_of_two(padded_len_words));
         let precommitted = PrecommittedClaimReduction::new(
             image_shape.row_vars(),
             image_shape.column_vars(),
@@ -224,7 +223,7 @@ pub fn final_program_image_opening() -> JoltOpeningId {
 /// extension at `opening_point_be` with a carry-propagation DP over the
 /// address bits (low to high), tracking whether the running sum
 /// `start_index + y` has produced a carry into the current bit.
-pub fn eval_shifted_eq_poly_at_opening_point<F: Field>(
+fn eval_shifted_eq_poly_at_opening_point<F: Field>(
     r_addr_be: &[F],
     start_index: usize,
     opening_point_be: &[F],
@@ -343,7 +342,8 @@ mod tests {
         let r_addr: Vec<Fr> = [3, 5, 7, 11].into_iter().map(fr).collect();
         let opening_point: Vec<Fr> = [13, 17].into_iter().map(fr).collect();
 
-        for start_index in [0usize, 3, 4, 9, 12] {
+        // 14 and 15 wrap past 2^ell, exercising the DP's carry-out path.
+        for start_index in [0usize, 3, 4, 9, 12, 14, 15] {
             let dp = eval_shifted_eq_poly_at_opening_point(&r_addr, start_index, &opening_point)
                 .unwrap_or_else(|error| panic!("shifted eq should evaluate: {error}"));
             assert_eq!(
