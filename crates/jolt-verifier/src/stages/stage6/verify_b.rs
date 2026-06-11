@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId,
 };
 use jolt_field::Field;
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use crate::{
     stages::{
@@ -157,13 +157,13 @@ pub(super) fn append_opening_claims<F, T>(
     booleanity_point: &[F],
 ) where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     for opening_claim in &claims.bytecode_read_raf.bytecode_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims.booleanity.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
         if bytecode_read_raf_points
@@ -172,30 +172,27 @@ pub(super) fn append_opening_claims<F, T>(
         {
             continue;
         }
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims.booleanity.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.ram_hamming_booleanity.ram_hamming_weight,
-    );
+    transcript.absorb_field(&claims.ram_hamming_booleanity.ram_hamming_weight);
     for opening_claim in &claims.ram_ra_virtualization.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims
         .instruction_ra_virtualization
         .committed_instruction_ra
     {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.ram_inc);
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.rd_inc);
+    transcript.absorb_field(&claims.inc_claim_reduction.ram_inc);
+    transcript.absorb_field(&claims.inc_claim_reduction.rd_inc);
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
     if let Some(opening_claim) = &claims.advice_cycle_phase.untrusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+        transcript.absorb_field(&opening_claim.opening_claim);
     }
 }

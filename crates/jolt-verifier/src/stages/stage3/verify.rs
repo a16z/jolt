@@ -12,7 +12,7 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{try_eq_mle, EqPlusOnePolynomial};
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use super::{
     inputs::{Deps, Stage3Claims},
@@ -52,7 +52,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {
@@ -440,39 +440,28 @@ where
 fn append_stage3_opening_claims<F, T>(transcript: &mut T, claims: &Stage3Claims<F>)
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
-    transcript.append_labeled(b"opening_claim", &claims.shift.unexpanded_pc);
-    transcript.append_labeled(b"opening_claim", &claims.shift.pc);
-    transcript.append_labeled(b"opening_claim", &claims.shift.is_virtual);
-    transcript.append_labeled(b"opening_claim", &claims.shift.is_first_in_sequence);
-    transcript.append_labeled(b"opening_claim", &claims.shift.is_noop);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.left_operand_is_rs1,
-    );
-    transcript.append_labeled(b"opening_claim", &claims.instruction_input.rs1_value);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.left_operand_is_pc,
-    );
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.right_operand_is_rs2,
-    );
-    transcript.append_labeled(b"opening_claim", &claims.instruction_input.rs2_value);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.right_operand_is_imm,
-    );
-    transcript.append_labeled(b"opening_claim", &claims.instruction_input.imm);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.registers_claim_reduction.rd_write_value,
-    );
+    transcript.absorb_field(&claims.shift.unexpanded_pc);
+    transcript.absorb_field(&claims.shift.pc);
+    transcript.absorb_field(&claims.shift.is_virtual);
+    transcript.absorb_field(&claims.shift.is_first_in_sequence);
+    transcript.absorb_field(&claims.shift.is_noop);
+    transcript.absorb_field(&claims.instruction_input.left_operand_is_rs1);
+    transcript.absorb_field(&claims.instruction_input.rs1_value);
+    transcript.absorb_field(&claims.instruction_input.left_operand_is_pc);
+    transcript.absorb_field(&claims.instruction_input.right_operand_is_rs2);
+    transcript.absorb_field(&claims.instruction_input.rs2_value);
+    transcript.absorb_field(&claims.instruction_input.right_operand_is_imm);
+    transcript.absorb_field(&claims.instruction_input.imm);
+    transcript.absorb_field(&claims.registers_claim_reduction.rd_write_value);
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test recording transcript serializes into an in-memory Vec, which is infallible"
+)]
 mod tests {
     use super::*;
 
@@ -480,32 +469,42 @@ mod tests {
         InstructionInputOutputOpeningClaims, RegistersClaimReductionOutputOpeningClaims,
         SpartanShiftOutputOpeningClaims,
     };
-    use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
-    use jolt_transcript::Transcript;
+    use ark_serialize::CanonicalSerialize;
+    use jolt_field::{CanonicalBytes, Fr, FromPrimitiveInt};
+    use jolt_transcript::{FsAbsorb, FsChallenge};
 
     #[derive(Clone, Default)]
     struct RecordingTranscript {
         chunks: Vec<Vec<u8>>,
-        state: [u8; 32],
     }
 
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
+    impl FsAbsorb for RecordingTranscript {
+        fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
+            let mut buf = Vec::with_capacity(value.compressed_size());
+            value.serialize_compressed(&mut buf).unwrap();
+            self.chunks.push(buf);
         }
 
-        fn append_bytes(&mut self, bytes: &[u8]) {
+        fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
+            let mut buf = Vec::new();
+            for v in values {
+                v.serialize_compressed(&mut buf).unwrap();
+            }
+            self.chunks.push(buf);
+        }
+
+        fn absorb_bytes(&mut self, bytes: &[u8]) {
             self.chunks.push(bytes.to_vec());
         }
+    }
 
-        fn challenge(&mut self) -> Self::Challenge {
+    impl FsChallenge<Fr> for RecordingTranscript {
+        fn challenge(&mut self) -> Fr {
             Fr::from_u64(0)
         }
 
-        fn state(&self) -> [u8; 32] {
-            self.state
+        fn challenge_scalar(&mut self) -> Fr {
+            Fr::from_u64(0)
         }
     }
 
@@ -535,7 +534,7 @@ mod tests {
                 rs2_value: Fr::from_u64(16),
             },
         };
-        let mut transcript = RecordingTranscript::new(b"stage3-openings");
+        let mut transcript = RecordingTranscript::default();
 
         append_stage3_opening_claims(&mut transcript, &claims);
 
@@ -554,28 +553,15 @@ mod tests {
             claims.instruction_input.imm,
             claims.registers_claim_reduction.rd_write_value,
         ];
-        assert_eq!(transcript.chunks.len(), expected_payloads.len() * 2);
+        // Like jolt-core: each opening claim is absorbed as just its value (no label).
+        assert_eq!(transcript.chunks.len(), expected_payloads.len());
 
-        let label = opening_claim_label();
         for (index, expected_payload) in expected_payloads.into_iter().enumerate() {
-            assert_eq!(transcript.chunks[2 * index], label);
-            assert_eq!(
-                transcript.chunks[2 * index + 1],
-                scalar_bytes(expected_payload)
-            );
+            assert_eq!(transcript.chunks[index], scalar_bytes(expected_payload));
         }
     }
 
-    fn opening_claim_label() -> Vec<u8> {
-        let mut label = vec![0; 32];
-        label[..b"opening_claim".len()].copy_from_slice(b"opening_claim");
-        label
-    }
-
     fn scalar_bytes(value: Fr) -> Vec<u8> {
-        let mut bytes = vec![0; Fr::NUM_BYTES];
-        value.to_bytes_le(&mut bytes);
-        bytes.reverse();
-        bytes
+        value.to_bytes_le_vec()
     }
 }

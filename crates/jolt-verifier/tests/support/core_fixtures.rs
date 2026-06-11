@@ -33,7 +33,7 @@ use jolt_dory::{DoryScheme, DoryVerifierSetup};
 use jolt_field::Fr;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
-use jolt_transcript::Blake2bTranscript;
+use jolt_transcript::Blake2b512;
 use jolt_verifier::{
     compat::convert::ImportedCoreProof, verify, JoltVerifierPreprocessing, VerifierError,
 };
@@ -211,7 +211,7 @@ pub struct CoreVerifierCase {
 #[cfg(not(feature = "zk"))]
 impl CoreVerifierCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -260,7 +260,7 @@ impl CorePrecompatVerifierCase {
 
     pub fn verify_after_compat(&self) -> Result<(), VerifierError> {
         let proof = self.proof.clone_via_bytes().try_into()?;
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
             &self.preprocessing,
             &self.public_io,
             &proof,
@@ -432,7 +432,7 @@ pub struct CoreZkVerifierCase {
 #[cfg(feature = "zk")]
 impl CoreZkVerifierCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2b512>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,

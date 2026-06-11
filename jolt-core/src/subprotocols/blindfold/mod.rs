@@ -26,8 +26,7 @@ pub use output_constraint::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, SumOfProductsVisitor, ValueSource,
 };
 pub use protocol::{
-    BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput,
-    BlindFoldVerifyError,
+    BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput, BlindFoldVerifyError,
 };
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};

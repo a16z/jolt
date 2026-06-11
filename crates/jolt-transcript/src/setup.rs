@@ -49,17 +49,6 @@ const fn pad_id(src: &[u8]) -> [u8; 64] {
     buf
 }
 
-/// Empty `instance` value used by the legacy facade. Encodes to zero
-/// bytes. The native factory functions use [`InstanceDigest`] instead.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EmptyInstance;
-
-impl Encoding<[u8]> for EmptyInstance {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        [0u8; 0]
-    }
-}
-
 /// 32-byte instance digest. Internal adapter — exposes `Encoding<[u8]>`
 /// over a fixed-size digest so it slots into spongefish's `.instance(...)`
 /// step. Public callers pass a plain `[u8; 32]` to [`prover_transcript`] /

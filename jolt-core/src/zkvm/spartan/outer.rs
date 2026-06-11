@@ -31,7 +31,7 @@ use crate::subprotocols::streaming_sumcheck::{
 use crate::subprotocols::sumcheck_prover::SumcheckInstanceProver;
 use crate::subprotocols::sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier};
 use crate::subprotocols::univariate_skip::build_uniskip_first_round_poly;
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::FsChallenge;
 use crate::utils::accumulation::{FullAccumS, MedAccumS, SmallAccumU, WideAccumS};
 use crate::utils::expanding_table::ExpandingTable;
 use crate::utils::math::Math;
@@ -96,9 +96,9 @@ pub struct OuterUniSkipParams<F: JoltField> {
 }
 
 impl<F: JoltField> OuterUniSkipParams<F> {
-    pub fn new<T: Transcript>(key: &UniformSpartanKey<F>, transcript: &mut T) -> Self {
+    pub fn new<T: FsChallenge<F>>(key: &UniformSpartanKey<F>, transcript: &mut T) -> Self {
         let num_rounds_x: usize = key.num_rows_bits();
-        let tau = transcript.challenge_vector_optimized::<F>(num_rounds_x);
+        let tau = transcript.challenge_optimized_vec(num_rounds_x);
         Self { tau }
     }
 }
@@ -259,7 +259,7 @@ impl<F: JoltField> OuterUniSkipProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OuterUniSkipProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for OuterUniSkipProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -316,14 +316,14 @@ pub struct OuterUniSkipVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> OuterUniSkipVerifier<F> {
-    pub fn new<T: Transcript>(key: &UniformSpartanKey<F>, transcript: &mut T) -> Self {
+    pub fn new<T: FsChallenge<F>>(key: &UniformSpartanKey<F>, transcript: &mut T) -> Self {
         let params = OuterUniSkipParams::new(key, transcript);
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for OuterUniSkipVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for OuterUniSkipVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -693,8 +693,8 @@ impl<F: JoltField> OuterRemainingSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for OuterRemainingSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for OuterRemainingSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

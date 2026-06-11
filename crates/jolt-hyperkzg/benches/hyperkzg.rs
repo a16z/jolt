@@ -5,11 +5,13 @@ use jolt_field::{Fr, RandomSampling};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_poly::Polynomial;
-use jolt_transcript::Transcript;
+use jolt_transcript::{prover_transcript, verifier_transcript, Blake2b512};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type TestScheme = HyperKZGScheme<Bn254>;
+
+const INSTANCE: [u8; 32] = [0u8; 32];
 
 fn make_setup(max_degree: usize) -> (HyperKZGProverSetup<Bn254>, HyperKZGVerifierSetup<Bn254>) {
     let mut rng = ChaCha20Rng::seed_from_u64(0xbe0c);
@@ -61,7 +63,8 @@ fn bench_open(c: &mut Criterion) {
                         (poly, point, eval)
                     },
                     |(poly, point, eval)| {
-                        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"bench-open");
+                        let mut transcript =
+                            prover_transcript(b"bench-open", INSTANCE, Blake2b512::default());
                         <TestScheme as CommitmentScheme>::open(
                             &poly,
                             &point,
@@ -96,7 +99,7 @@ fn bench_verify(c: &mut Criterion) {
                         let eval = poly.evaluate(&point);
                         let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
                         let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify");
+                            prover_transcript(b"bench-verify", INSTANCE, Blake2b512::default());
                         let proof = <TestScheme as CommitmentScheme>::open(
                             &poly,
                             &point,
@@ -108,8 +111,12 @@ fn bench_verify(c: &mut Criterion) {
                         (commitment, point, eval, proof)
                     },
                     |(commitment, point, eval, proof)| {
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify");
+                        let mut transcript = verifier_transcript(
+                            b"bench-verify",
+                            INSTANCE,
+                            Blake2b512::default(),
+                            &[],
+                        );
                         <TestScheme as CommitmentScheme>::verify(
                             &commitment,
                             &point,

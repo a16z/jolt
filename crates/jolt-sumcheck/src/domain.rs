@@ -3,6 +3,7 @@
 use crate::error::SumcheckError;
 use crate::round_proof::ClearRound;
 use crate::scalar::SumcheckScalar;
+use jolt_field::Field;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
 
 pub trait SumcheckDomain<F: SumcheckScalar> {
@@ -36,6 +37,7 @@ pub trait SumcheckDomain<F: SumcheckScalar> {
         round: &R,
     ) -> Result<(), SumcheckError<F>>
     where
+        F: Field,
         R: ClearRound<F>,
     {
         round.check_round_well_formed(round_index)?;

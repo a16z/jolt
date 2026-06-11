@@ -30,9 +30,8 @@ use jolt_r1cs::constraints::jolt::{
 };
 use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, SumcheckStatement,
-    UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 
 use super::{
     inputs::{Deps, Stage2BatchOutputOpeningClaims},
@@ -165,7 +164,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {
@@ -269,7 +268,7 @@ fn verify_product_uniskip<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
@@ -342,7 +341,6 @@ where
                         uniskip_input_claim,
                     ),
                     CenteredIntegerDomain::new(domain_size),
-                    UNISKIP_ROUND_TRANSCRIPT_LABEL,
                     transcript,
                 )
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -353,7 +351,7 @@ where
                 return Err(VerifierError::StageClaimOutputMismatch { stage });
             }
 
-            transcript.append_labeled(b"opening_claim", &uniskip_claim);
+            transcript.absorb_field(&uniskip_claim);
 
             Ok(Stage2ProductUniSkip::Clear(VerifiedProductUniSkip {
                 tau_low,
@@ -414,7 +412,7 @@ fn verify_regular_batch<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
@@ -1055,81 +1053,52 @@ where
                 });
             }
 
-            transcript.append_labeled(b"opening_claim", &claims.batch_outputs.ram_read_write.val);
-            transcript.append_labeled(b"opening_claim", &claims.batch_outputs.ram_read_write.ra);
-            transcript.append_labeled(b"opening_claim", &claims.batch_outputs.ram_read_write.inc);
-            transcript.append_labeled(
-                b"opening_claim",
+            transcript.absorb_field(&claims.batch_outputs.ram_read_write.val);
+            transcript.absorb_field(&claims.batch_outputs.ram_read_write.ra);
+            transcript.absorb_field(&claims.batch_outputs.ram_read_write.inc);
+            transcript.absorb_field(
                 &claims
                     .batch_outputs
                     .product_remainder
                     .left_instruction_input,
             );
-            transcript.append_labeled(
-                b"opening_claim",
+            transcript.absorb_field(
                 &claims
                     .batch_outputs
                     .product_remainder
                     .right_instruction_input,
             );
-            transcript.append_labeled(
-                b"opening_claim",
-                &claims.batch_outputs.product_remainder.jump_flag,
-            );
-            transcript.append_labeled(
-                b"opening_claim",
+            transcript.absorb_field(&claims.batch_outputs.product_remainder.jump_flag);
+            transcript.absorb_field(
                 &claims
                     .batch_outputs
                     .product_remainder
                     .write_lookup_output_to_rd,
             );
-            transcript.append_labeled(
-                b"opening_claim",
-                &claims.batch_outputs.product_remainder.lookup_output,
-            );
-            transcript.append_labeled(
-                b"opening_claim",
-                &claims.batch_outputs.product_remainder.branch_flag,
-            );
-            transcript.append_labeled(
-                b"opening_claim",
-                &claims.batch_outputs.product_remainder.next_is_noop,
-            );
-            transcript.append_labeled(
-                b"opening_claim",
-                &claims.batch_outputs.product_remainder.virtual_instruction,
-            );
+            transcript.absorb_field(&claims.batch_outputs.product_remainder.lookup_output);
+            transcript.absorb_field(&claims.batch_outputs.product_remainder.branch_flag);
+            transcript.absorb_field(&claims.batch_outputs.product_remainder.next_is_noop);
+            transcript.absorb_field(&claims.batch_outputs.product_remainder.virtual_instruction);
             #[cfg(feature = "field-inline")]
             {
-                transcript.append_labeled(
-                    b"opening_claim",
-                    &claims.batch_outputs.field_inline.product.field_rs1_value,
-                );
-                transcript.append_labeled(
-                    b"opening_claim",
-                    &claims.batch_outputs.field_inline.product.field_rs2_value,
-                );
-                transcript.append_labeled(
-                    b"opening_claim",
-                    &claims.batch_outputs.field_inline.product.field_rd_value,
-                );
+                transcript.absorb_field(&claims.batch_outputs.field_inline.product.field_rs1_value);
+                transcript.absorb_field(&claims.batch_outputs.field_inline.product.field_rs2_value);
+                transcript.absorb_field(&claims.batch_outputs.field_inline.product.field_rd_value);
             }
-            transcript.append_labeled(
-                b"opening_claim",
+            transcript.absorb_field(
                 &claims
                     .batch_outputs
                     .instruction_claim_reduction
                     .left_lookup_operand,
             );
-            transcript.append_labeled(
-                b"opening_claim",
+            transcript.absorb_field(
                 &claims
                     .batch_outputs
                     .instruction_claim_reduction
                     .right_lookup_operand,
             );
-            transcript.append_labeled(b"opening_claim", &claims.batch_outputs.ram_raf_evaluation);
-            transcript.append_labeled(b"opening_claim", &claims.batch_outputs.ram_output_check);
+            transcript.absorb_field(&claims.batch_outputs.ram_raf_evaluation);
+            transcript.absorb_field(&claims.batch_outputs.ram_output_check);
 
             Ok(Stage2Batch::Clear {
                 verified: VerifiedStage2Batch {

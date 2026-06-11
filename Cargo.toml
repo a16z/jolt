@@ -111,12 +111,18 @@ members = [
   "examples/sig-recovery/guest",
   "zklean-extractor",
   "z3-verifier",
-  "transpiler",
   "jolt-eval",
   "jolt-eval/macros",
   "jolt-eval/guest-sandbox",
 ]
-exclude = ["jolt-eval/fuzz"]
+# `transpiler` is temporarily excluded: it generates the on-chain (gnark/Solidity)
+# verifier from jolt-core's symbolic verifier, which is built on the hand-rolled
+# `jolt_core::transcripts::Transcript` trait (implemented symbolically as
+# `impl Transcript for PoseidonAstTranscript`). That trait cannot be expressed over
+# spongefish's concrete `VerifierState`, so the crate cannot compile under the
+# transcript→spongefish migration. Its regeneration is a coordinated follow-up
+# (spec Non-Goal #2). Re-add here once that lands.
+exclude = ["jolt-eval/fuzz", "transpiler"]
 
 [features]
 host = ["jolt-sdk/host"]
@@ -259,7 +265,7 @@ blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { version = "0.6.1", default-features = false, features = [
+spongefish = { version = "0.6.2", default-features = false, features = [
   "sha3",
 ] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }

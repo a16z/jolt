@@ -1,6 +1,9 @@
 #[cfg(not(feature = "zk"))]
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
+
+use jolt_transcript::DuplexSpongeInterface;
 
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
@@ -10,26 +13,17 @@ use strum::EnumCount;
 
 #[cfg(not(feature = "zk"))]
 use crate::poly::opening_proof::{OpeningPoint, Openings};
-#[cfg(feature = "zk")]
-use crate::subprotocols::blindfold::BlindFoldProof;
+use crate::zkvm::{
+    config::{OneHotConfig, ReadWriteConfig},
+    instruction::{CircuitFlags, InstructionFlags},
+    witness::{CommittedPolynomial, VirtualPolynomial},
+};
 use crate::{
     curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
         opening_proof::{OpeningId, PolynomialId, SumcheckId},
-    },
-    utils::errors::ProofVerifyError,
-};
-use crate::{
-    subprotocols::{
-        sumcheck::SumcheckInstanceProof, univariate_skip::UniSkipFirstRoundProofVariant,
-    },
-    transcripts::Transcript,
-    zkvm::{
-        config::{OneHotConfig, ReadWriteConfig},
-        instruction::{CircuitFlags, InstructionFlags},
-        witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
 
@@ -38,55 +32,38 @@ pub struct JoltProof<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
-    FS: Transcript,
+    H: DuplexSpongeInterface,
 > {
-    pub commitments: Vec<PCS::Commitment>,
-    pub stage1_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
-    pub stage1_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage2_uni_skip_first_round_proof: UniSkipFirstRoundProofVariant<F, C, FS>,
-    pub stage2_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage6a_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
-    #[cfg(feature = "zk")]
-    pub blindfold_proof: BlindFoldProof<F, C>,
     pub joint_opening_proof: PCS::Proof,
-    pub untrusted_advice_commitment: Option<PCS::Commitment>,
     #[cfg(not(feature = "zk"))]
     pub opening_claims: Claims<F>,
+    /// Spongefish NARG byte-string: the prover-only proof payload the verifier replays via
+    /// `prover_message`/`read_slice`. It carries: the witness-polynomial commitments frame;
+    /// the untrusted-advice presence frame (empty or length-1); per-sumcheck/uniskip Clear
+    /// round polynomials (non-ZK), or in ZK mode the round + output-claim commitments plus
+    /// `poly_degrees`; and every prover-only BlindFold value (instances, cross-terms, Spartan/
+    /// inner round polys, folded eval outputs/blindings, and Hyrax openings).
+    ///
+    /// Two things are deliberately NOT in the NARG (MAL-1-sealed hard limits): the Dory
+    /// `joint_opening_proof` (carried structurally above), and — in non-ZK mode — the
+    /// `opening_claims` (shared values `absorb`'d on both sides, carried structurally above).
+    pub narg: Vec<u8>,
+    /// Single global Fiat-Shamir mode flag: `true` iff the proof was produced in ZK mode.
+    /// All nine per-stage sumcheck/uniskip protocols always share one mode, so this replaces
+    /// the former nine data-free per-stage mode markers (and `verify_zk_consistency`). The
+    /// verifier reads it to select, per stage, which NARG frames to consume (Clear round
+    /// polynomials vs ZK commitments). It does NOT change any NARG read/write order — only
+    /// the dispatch SELECTOR source moved here from the per-stage markers.
+    pub zk_mode: bool,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: ReadWriteConfig,
     pub one_hot_config: OneHotConfig,
     pub dory_layout: DoryLayout,
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>, FS: Transcript>
-    JoltProof<F, C, PCS, FS>
-{
-    /// Verifies all sumcheck and uniskip proofs use the same ZK variant.
-    /// Returns the ZK mode if consistent, or an error if any stage disagrees.
-    pub fn verify_zk_consistency(&self) -> Result<bool, ProofVerifyError> {
-        let zk_mode = self.stage1_sumcheck_proof.is_zk();
-
-        let consistent = self.stage1_uni_skip_first_round_proof.is_zk() == zk_mode
-            && self.stage2_uni_skip_first_round_proof.is_zk() == zk_mode
-            && self.stage2_sumcheck_proof.is_zk() == zk_mode
-            && self.stage3_sumcheck_proof.is_zk() == zk_mode
-            && self.stage4_sumcheck_proof.is_zk() == zk_mode
-            && self.stage5_sumcheck_proof.is_zk() == zk_mode
-            && self.stage6a_sumcheck_proof.is_zk() == zk_mode
-            && self.stage6b_sumcheck_proof.is_zk() == zk_mode
-            && self.stage7_sumcheck_proof.is_zk() == zk_mode;
-
-        if !consistent {
-            return Err(ProofVerifyError::SumcheckVerificationError);
-        }
-        Ok(zk_mode)
-    }
+    /// Compile-time transcript-link: a proof produced under sponge `H` can only be
+    /// verified under sponge `H`. Serializes to zero bytes; `fn() -> (C, H)` keeps the
+    /// proof `Send + Sync` without bounding `C`/`H`.
+    pub _marker: PhantomData<fn() -> (C, H)>,
 }
 
 #[cfg(not(feature = "zk"))]

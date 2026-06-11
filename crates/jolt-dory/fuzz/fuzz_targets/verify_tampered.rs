@@ -6,7 +6,7 @@ use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Fr, RandomSampling};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::Blake2bTranscript;
+use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -50,7 +50,7 @@ fuzz_target!(|data: &[u8]| {
         },
     };
 
-    let mut transcript = Blake2bTranscript::new(b"fuzz-tampered");
+    let mut transcript = prover_transcript(b"fuzz-tampered", [0u8; 32], Blake2b512::default());
     let result = DoryScheme::verify(
         &fix.commitment,
         &fix.point,

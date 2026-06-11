@@ -32,6 +32,14 @@ fn fresh_hasher() -> Poseidon<Fr> {
     Poseidon::<Fr>::new_circom(3).expect("light-poseidon: width-4 init")
 }
 
+// TODO(#1455 follow-up): `PoseidonSponge` is NOT a proper DSFS sponge. Per mmaker's #1455 review,
+// the squeeze is hash-chain-like (not a true sponge), absorb throws away ~1/4 of the rate and
+// squeeze wastes ~all of it (≈25% / ≥50% throughput loss), and it is not streaming-friendly. It
+// should be rewritten as a real `spongefish::Permutation` consumed via `DuplexSponge<P>`.
+// RISK of using it as-is (decision C2 — "include Poseidon now"): any challenge/proof format pinned
+// on this sponge — especially under the NARG proof model, where the absorb layout bakes into the
+// proof bytes — will break a SECOND time when the sponge is rewritten. Kept now for feature parity;
+// revisit before the gnark/on-chain verifier depends on the Poseidon layout.
 /// Width-4 Poseidon duplex sponge over BN254 `Fr`, byte-driven.
 pub struct PoseidonSponge {
     hasher: Poseidon<Fr>,

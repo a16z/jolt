@@ -64,7 +64,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::{config::OneHotParams, ram::remap_address, witness::VirtualPolynomial},
 };
@@ -110,9 +110,7 @@ impl<F: JoltField> RamRaClaimReductionSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for RamRaClaimReductionSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for RamRaClaimReductionSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -608,7 +606,7 @@ impl<F: JoltField> RaReductionParams<F> {
         trace_len: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let log_K = one_hot_params.ram_k.log_2();
         let log_T = trace_len.log_2();
@@ -633,7 +631,7 @@ impl<F: JoltField> RaReductionParams<F> {
         debug_assert_eq!(r_address_raf, r_address_val);
 
         // Sample γ for combining claims
-        let gamma: F = transcript.challenge_scalar();
+        let gamma: F = transcript.challenge_field();
         let gamma_squared = gamma * gamma;
 
         Self {
@@ -724,7 +722,7 @@ impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
         trace_len: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &A,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params =
             RaReductionParams::new(trace_len, one_hot_params, opening_accumulator, transcript);
@@ -732,8 +730,8 @@ impl<F: JoltField> RamRaClaimReductionSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for RamRaClaimReductionSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RamRaClaimReductionSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

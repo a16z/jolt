@@ -4,13 +4,15 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 use crate::poly::commitment::dory::DoryCommitmentScheme;
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::ProverFs;
 use crate::zkvm::bytecode::PreprocessingError;
 use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 use common::jolt_device::MemoryLayout;
+use jolt_transcript::{DuplexSpongeInterface, ProverState};
+use rand::rngs::StdRng;
 use tracer::JoltDevice;
 
 #[allow(clippy::type_complexity)]
@@ -41,7 +43,7 @@ pub fn prove<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-    FS: Transcript,
+    H: DuplexSpongeInterface<U = u8> + Default,
 >(
     guest: &Program,
     inputs_bytes: &[u8],
@@ -52,13 +54,16 @@ pub fn prove<
     output_bytes: &mut [u8],
     preprocessing: &JoltProverPreprocessing<F, C, PCS>,
 ) -> (
-    JoltProof<F, C, PCS, FS>,
+    JoltProof<F, C, PCS, H>,
     JoltDevice,
-    Option<ProverDebugInfo<F, FS, PCS>>,
-) {
+    Option<ProverDebugInfo<F, H, PCS>>,
+)
+where
+    ProverState<H, StdRng>: ProverFs<F>,
+{
     use crate::zkvm::prover::JoltCpuProver;
 
-    let prover = JoltCpuProver::<F, C, PCS, FS>::gen_from_elf(
+    let prover = JoltCpuProver::<F, C, PCS, H>::gen_from_elf(
         preprocessing,
         &guest.elf_contents,
         inputs_bytes,

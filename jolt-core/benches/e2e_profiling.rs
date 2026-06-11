@@ -300,19 +300,11 @@ fn prove_example_with_trace(
         .joint_opening_proof
         .serialized_size(ark_serialize::Compress::No);
 
-    // Commitments (curve points - benefits from compression)
-    let commitments_size_compressed = jolt_proof
-        .commitments
-        .serialized_size(ark_serialize::Compress::Yes);
-    let commitments_size_uncompressed = jolt_proof
-        .commitments
-        .serialized_size(ark_serialize::Compress::No);
+    // Witness-polynomial commitments now live inside the NARG byte-string (already
+    // counted in `proof_size`), so they no longer have a separate compression estimate.
 
-    // Estimate proof size with full Dory compression (assuming ~3x compression ratio)
-    let proof_size_full_compressed = proof_size - stage8_size_compressed
-        + (stage8_size_uncompressed / 3)
-        - commitments_size_compressed
-        + (commitments_size_uncompressed / 3);
+    let proof_size_full_compressed =
+        proof_size - stage8_size_compressed + (stage8_size_uncompressed / 3);
 
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
     let verifier =

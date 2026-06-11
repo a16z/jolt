@@ -4,7 +4,7 @@ mod support;
 
 use jolt_blindfold::VerificationError;
 use jolt_poly::CompressedPoly;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -12,7 +12,11 @@ use support::*;
 fn verify_blindfold_protocol_pipeline(
     full: &BlindFoldTestProof,
 ) -> Result<(), VerificationError<F>> {
-    let mut transcript = Blake2bTranscript::<F>::new(b"protocol-backed-blindfold-proof");
+    let mut transcript = prover_transcript(
+        b"protocol-backed-blindfold-proof",
+        [0u8; 32],
+        Blake2b512::default(),
+    );
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
     full.protocol
         .verify::<VC, _>(&full.proof, &full.setup, &mut transcript)
@@ -53,26 +57,14 @@ fn blindfold_protocol_pipeline_randomness_is_empirically_independent() {
 
         let values = [
             field_low_u64(full.proof.random_u),
-            transcript_projection(
-                b"auxiliary_commitment",
-                &full.proof.auxiliary_row_commitments[0],
-            ),
-            transcript_projection(
-                b"random_round_commitment",
-                &full.proof.random_round_commitments[0],
-            ),
-            transcript_projection(
-                b"random_error_commitment",
-                &full.proof.random_error_row_commitments[0],
-            ),
-            transcript_projection(
-                b"cross_term_commitment",
-                &full.proof.cross_term_error_row_commitments[0],
-            ),
-            compressed_sumcheck_projection(b"outer_sumcheck", &full.proof.outer_sumcheck),
-            compressed_sumcheck_projection(b"inner_sumcheck", &full.proof.inner_sumcheck),
-            opening_projection(b"witness_opening", &full.proof.witness_opening),
-            opening_projection(b"error_opening", &full.proof.error_opening),
+            transcript_projection(&full.proof.auxiliary_row_commitments[0]),
+            transcript_projection(&full.proof.random_round_commitments[0]),
+            transcript_projection(&full.proof.random_error_row_commitments[0]),
+            transcript_projection(&full.proof.cross_term_error_row_commitments[0]),
+            compressed_sumcheck_projection(&full.proof.outer_sumcheck),
+            compressed_sumcheck_projection(&full.proof.inner_sumcheck),
+            opening_projection(&full.proof.witness_opening),
+            opening_projection(&full.proof.error_opening),
         ];
 
         for (projection, value) in projections.iter_mut().zip(values) {
@@ -144,7 +136,7 @@ fn blindfold_protocol_pipeline_rejects_tampered_error_opening_blinding() {
 fn blindfold_protocol_pipeline_rejects_wrong_transcript() {
     let mut rng = ChaCha20Rng::from_seed([76; 32]);
     let full = prove_blindfold_protocol_pipeline(&mut rng);
-    let mut transcript = Blake2bTranscript::<F>::new(b"wrong-transcript");
+    let mut transcript = prover_transcript(b"wrong-transcript", [0u8; 32], Blake2b512::default());
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
 
     assert!(full

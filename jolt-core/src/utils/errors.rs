@@ -44,6 +44,8 @@ pub enum ProofVerifyError {
     SerializationError,
     #[error("ZK proof received but `zk` feature is not enabled")]
     ZkFeatureRequired,
+    #[error("Proof zk_mode flag does not match this verifier build's `zk` feature")]
+    ZkModeMismatch,
     #[error("BlindFold verification failed: {0}")]
     BlindFoldError(String),
     #[error("Bytecode type mismatch: {0}")]

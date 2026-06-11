@@ -6,52 +6,19 @@
 //! 3. Using Spartan sumcheck to prove R1CS satisfaction without revealing the witness
 //! 4. Hyrax-style openings to verify W(ry) and E(rx) evaluations
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-
 use crate::curve::{JoltCurve, JoltGroupElement};
 use crate::field::JoltField;
 use crate::poly::commitment::hyrax::{self as hyrax, HyraxOpeningProof};
 use crate::poly::commitment::pedersen::PedersenGenerators;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::unipoly::CompressedUniPoly;
-use crate::transcripts::Transcript;
+use crate::transcript_msgs::{ProverFs, VerifierFs};
 use crate::utils::math::Math;
 
 use super::folding::{commit_cross_term_rows, compute_cross_term, sample_random_satisfying_pair};
 use super::r1cs::VerifierR1CS;
 use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 use super::spartan::{INNER_SUMCHECK_DEGREE_BOUND, SPARTAN_DEGREE_BOUND};
-
-/// BlindFold proof with Hyrax-style openings for W and E.
-///
-/// The real instance is NOT included — verifier reconstructs from round_commitments,
-/// eval_commitments, public_inputs. The random instance IS included — verifier reads
-/// it from the proof and absorbs into transcript, never learning the random witness.
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct BlindFoldProof<F: JoltField, C: JoltCurve<F = F>> {
-    pub random_instance: RelaxedR1CSInstance<F, C>,
-
-    /// Non-coefficient W row commitments from the real instance
-    pub noncoeff_row_commitments: Vec<C::G1>,
-    /// Cross-term T row commitments (E grid layout)
-    pub cross_term_row_commitments: Vec<C::G1>,
-    pub spartan_proof: Vec<CompressedUniPoly<F>>,
-    pub az_r: F,
-    pub bz_r: F,
-    pub cz_r: F,
-    pub inner_sumcheck_proof: Vec<CompressedUniPoly<F>>,
-    pub w_opening: HyraxOpeningProof<F>,
-    pub e_opening: HyraxOpeningProof<F>,
-    /// Folded eval output values (one per extra constraint / eval_commitment).
-    /// Safe to reveal: folded = real + r*random, where random is a one-time pad.
-    pub folded_eval_outputs: Vec<F>,
-    /// Folded eval blinding values (one per extra constraint / eval_commitment).
-    pub folded_eval_blindings: Vec<F>,
-    /// Folded witness row openings for the evaluation variables used by final PCS bindings.
-    pub folded_eval_output_openings: Vec<HyraxOpeningProof<F>>,
-    /// Folded witness row openings for the blinding variables used by final PCS bindings.
-    pub folded_eval_blinding_openings: Vec<HyraxOpeningProof<F>>,
-}
 
 pub struct BlindFoldProver<'a, F: JoltField, C: JoltCurve<F = F>> {
     gens: &'a PedersenGenerators<C>,
@@ -73,27 +40,18 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
     }
 
     #[tracing::instrument(skip_all, name = "BlindFoldProver::prove")]
-    pub fn prove<T: Transcript>(
+    pub fn prove(
         &self,
         real_instance: &RelaxedR1CSInstance<F, C>,
         real_witness: &RelaxedR1CSWitness<F>,
         real_z: &[F],
-        transcript: &mut T,
-    ) -> BlindFoldProof<F, C> {
+        transcript: &mut impl ProverFs<F>,
+    ) {
         use super::spartan::{BlindFoldInnerSumcheckProver, BlindFoldSpartanProver};
 
         let mut rng = rand::thread_rng();
 
-        append_instance_to_transcript(
-            real_instance,
-            self.r1cs,
-            b"bf_committed_u",
-            b"bf_committed_w",
-            b"bf_committed_e",
-            b"bf_committed_eval",
-            transcript,
-        )
-        .expect("prover-controlled real instance shape must match verifier R1CS");
+        write_instance_to_transcript(real_instance, transcript, InstanceRole::Real);
 
         let (random_instance, random_witness, random_z) = sample_random_satisfying_pair(
             self.gens,
@@ -102,16 +60,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
             &mut rng,
         );
 
-        append_instance_to_transcript(
-            &random_instance,
-            self.r1cs,
-            b"bf_random_u",
-            b"bf_random_w",
-            b"bf_random_e",
-            b"bf_random_eval",
-            transcript,
-        )
-        .expect("prover-controlled random instance shape must match verifier R1CS");
+        write_instance_to_transcript(&random_instance, transcript, InstanceRole::Random);
 
         let T = compute_cross_term(
             self.r1cs,
@@ -126,9 +75,9 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
         let (t_row_commitments, t_row_blindings) =
             commit_cross_term_rows(self.gens, &T, R_E, C_E, &mut rng);
 
-        transcript.append_commitments(b"bf_cross_e", &t_row_commitments);
+        transcript.write_slice(&t_row_commitments);
 
-        let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+        let r: F::Challenge = transcript.challenge_optimized();
         let r_field: F = r.into();
 
         let folded_instance = real_instance
@@ -172,21 +121,17 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
             })
             .collect();
 
+        // Bind the folded eval outputs/blindings to the NARG before the eval-commitment
+        // check (now bound before `tau` — a deliberate clean-break FS change). Safe to
+        // reveal: each folded value = real + r*random, where `random` is a one-time pad.
+        transcript.write_slice(&folded_eval_outputs);
+        transcript.write_slice(&folded_eval_blindings);
+
         for opening in &folded_eval_output_openings {
-            append_hyrax_opening(
-                transcript,
-                b"bf_eval_out_open",
-                b"bf_eval_out_blind",
-                opening,
-            );
+            write_hyrax_opening(transcript, opening);
         }
         for opening in &folded_eval_blinding_openings {
-            append_hyrax_opening(
-                transcript,
-                b"bf_eval_blind_open",
-                b"bf_eval_blind_bl",
-                opening,
-            );
+            write_hyrax_opening(transcript, opening);
         }
 
         let mut folded_z = Vec::with_capacity(self.r1cs.num_vars);
@@ -198,24 +143,21 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
         e_padded.resize(padded_e_len, F::zero());
         let e_for_hyrax = e_padded.clone();
 
-        transcript.append_label(b"bf_spartan");
         let num_vars = padded_e_len.log_2();
-        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
+        let tau: Vec<_> = transcript.challenge_optimized_vec(num_vars);
 
         let mut spartan_prover =
             BlindFoldSpartanProver::new(self.r1cs, folded_instance.u, folded_z, e_padded, tau);
 
-        let mut spartan_proof = Vec::with_capacity(num_vars);
         let mut spartan_challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
         let mut claim = F::zero();
 
         for _ in 0..num_vars {
             let poly = spartan_prover.compute_round_polynomial(claim);
             let compressed = poly.compress();
-            transcript.append_scalars(b"sumcheck_poly", &compressed.coeffs_except_linear_term);
-            spartan_proof.push(compressed);
+            transcript.write_slice(&compressed.coeffs_except_linear_term);
 
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            let r_j = transcript.challenge_optimized();
             claim = poly.evaluate(&r_j);
             spartan_prover.bind_challenge(r_j);
             spartan_challenges.push(r_j);
@@ -236,17 +178,12 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
             combined_blinding: e_combined_blinding,
         };
 
-        transcript.append_scalars(b"bf_az_bz_cz", &[az_r, bz_r, cz_r]);
-        append_hyrax_opening(
-            transcript,
-            b"bf_error_opening",
-            b"bf_error_blind",
-            &e_opening,
-        );
+        transcript.write_slice(&[az_r, bz_r, cz_r]);
+        write_hyrax_opening(transcript, &e_opening);
 
-        let ra: F = transcript.challenge_scalar_optimized::<F>().into();
-        let rb: F = transcript.challenge_scalar_optimized::<F>().into();
-        let rc: F = transcript.challenge_scalar_optimized::<F>().into();
+        let ra: F = transcript.challenge_optimized().into();
+        let rb: F = transcript.challenge_optimized().into();
+        let rc: F = transcript.challenge_optimized().into();
 
         let w_for_inner = folded_W.clone();
         let mut inner_prover = BlindFoldInnerSumcheckProver::new(
@@ -259,7 +196,6 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
         );
 
         let inner_num_vars = inner_prover.num_vars();
-        let mut inner_proof = Vec::with_capacity(inner_num_vars);
         let mut inner_challenges: Vec<F::Challenge> = Vec::with_capacity(inner_num_vars);
 
         let (w_az, w_bz, w_cz) = spartan_prover.witness_contributions(&spartan_challenges);
@@ -274,13 +210,9 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
             );
 
             let compressed = poly.compress();
-            transcript.append_scalars(
-                b"inner_sumcheck_poly",
-                &compressed.coeffs_except_linear_term,
-            );
-            inner_proof.push(compressed);
+            transcript.write_slice(&compressed.coeffs_except_linear_term);
 
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            let r_j = transcript.challenge_optimized();
             inner_claim = poly.evaluate(&r_j);
             inner_prover.bind_challenge(r_j);
             inner_challenges.push(r_j);
@@ -295,28 +227,11 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldProver<'a, F, C> {
             combined_row: w_combined_row,
             combined_blinding: w_combined_blinding,
         };
-        append_hyrax_opening(
-            transcript,
-            b"bf_witness_opening",
-            b"bf_witness_blind",
-            &w_opening,
-        );
-        BlindFoldProof {
-            random_instance,
-            noncoeff_row_commitments: real_instance.noncoeff_row_commitments.clone(),
-            cross_term_row_commitments: t_row_commitments,
-            spartan_proof,
-            az_r,
-            bz_r,
-            cz_r,
-            inner_sumcheck_proof: inner_proof,
-            w_opening,
-            e_opening,
-            folded_eval_outputs,
-            folded_eval_blindings,
-            folded_eval_output_openings,
-            folded_eval_blinding_openings,
-        }
+        write_hyrax_opening(transcript, &w_opening);
+
+        // All prover-only BlindFold values now live in the NARG (written above via
+        // `write_slice` at their natural absorb positions); the verifier reconstructs
+        // every value from the NARG, so `prove` returns no proof object.
     }
 }
 
@@ -335,26 +250,69 @@ fn open_witness_variable<F: JoltField>(
     }
 }
 
-fn append_hyrax_opening<F: JoltField>(
-    transcript: &mut impl Transcript,
-    row_label: &'static [u8],
-    blinding_label: &'static [u8],
+/// Bind a Hyrax opening to the NARG (Option B): `combined_row` then `combined_blinding`,
+/// at the same two positions the structured proof previously `absorb`'d them.
+fn write_hyrax_opening<F: JoltField>(
+    transcript: &mut impl ProverFs<F>,
     opening: &HyraxOpeningProof<F>,
 ) {
-    transcript.append_scalars(row_label, &opening.combined_row);
-    transcript.append_scalar(blinding_label, &opening.combined_blinding);
+    transcript.write_slice(&opening.combined_row);
+    transcript.write_slice(std::slice::from_ref(&opening.combined_blinding));
 }
 
+/// Read one self-delimiting NARG frame as a `Vec<T>`, mapping any read failure to
+/// [`BlindFoldVerifyError::MalformedProof`].
+fn read_vec<F: JoltField, T: ark_serialize::CanonicalDeserialize>(
+    transcript: &mut impl VerifierFs<F>,
+) -> Result<Vec<T>, BlindFoldVerifyError> {
+    transcript
+        .read_slice()
+        .map_err(|_| BlindFoldVerifyError::MalformedProof)
+}
+
+/// Read a NARG frame carrying exactly one `T` (rejects empty/over-long frames), mapping
+/// any failure to [`BlindFoldVerifyError::MalformedProof`].
+fn read_one<F: JoltField, T: ark_serialize::CanonicalDeserialize>(
+    transcript: &mut impl VerifierFs<F>,
+) -> Result<T, BlindFoldVerifyError> {
+    transcript
+        .read_single()
+        .map_err(|_| BlindFoldVerifyError::MalformedProof)
+}
+
+/// Read a Hyrax opening back from the NARG (matching [`write_hyrax_opening`]): the
+/// `combined_row` frame, then the single `combined_blinding`.
+fn read_hyrax_opening<F: JoltField>(
+    transcript: &mut impl VerifierFs<F>,
+    expected_len: usize,
+) -> Result<HyraxOpeningProof<F>, BlindFoldVerifyError> {
+    let combined_row: Vec<F> = read_vec(transcript)?;
+    // Guard against an adversarial over-/under-long frame before it reaches
+    // `gens.commit`, which asserts `combined_row.len() <= message_generators.len()`.
+    if combined_row.len() != expected_len {
+        return Err(BlindFoldVerifyError::MalformedProof);
+    }
+    let combined_blinding: F = read_one(transcript)?;
+    Ok(HyraxOpeningProof {
+        combined_row,
+        combined_blinding,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn verify_folded_eval_witness_bindings<F: JoltField, C: JoltCurve<F = F>>(
     r1cs: &VerifierR1CS<F>,
     gens: &PedersenGenerators<C>,
     folded_instance: &RelaxedR1CSInstance<F, C>,
-    proof: &BlindFoldProof<F, C>,
+    folded_eval_outputs: &[F],
+    folded_eval_blindings: &[F],
+    folded_eval_output_openings: &[HyraxOpeningProof<F>],
+    folded_eval_blinding_openings: &[HyraxOpeningProof<F>],
 ) -> Result<(), BlindFoldVerifyError> {
-    if proof.folded_eval_output_openings.len() != r1cs.extra_output_vars.len()
-        || proof.folded_eval_blinding_openings.len() != r1cs.extra_blinding_vars.len()
-        || proof.folded_eval_outputs.len() != r1cs.extra_output_vars.len()
-        || proof.folded_eval_blindings.len() != r1cs.extra_blinding_vars.len()
+    if folded_eval_output_openings.len() != r1cs.extra_output_vars.len()
+        || folded_eval_blinding_openings.len() != r1cs.extra_blinding_vars.len()
+        || folded_eval_outputs.len() != r1cs.extra_output_vars.len()
+        || folded_eval_blindings.len() != r1cs.extra_blinding_vars.len()
     {
         return Err(BlindFoldVerifyError::MalformedProof);
     }
@@ -362,12 +320,12 @@ fn verify_folded_eval_witness_bindings<F: JoltField, C: JoltCurve<F = F>>(
     for (index, (&variable, opening)) in r1cs
         .extra_output_vars
         .iter()
-        .zip(&proof.folded_eval_output_openings)
+        .zip(folded_eval_output_openings)
         .enumerate()
     {
         let opened =
             verify_witness_variable_opening(r1cs, gens, folded_instance, variable, opening)?;
-        if opened != proof.folded_eval_outputs[index] {
+        if opened != folded_eval_outputs[index] {
             return Err(BlindFoldVerifyError::EvalWitnessMismatch);
         }
     }
@@ -375,12 +333,12 @@ fn verify_folded_eval_witness_bindings<F: JoltField, C: JoltCurve<F = F>>(
     for (index, (&variable, opening)) in r1cs
         .extra_blinding_vars
         .iter()
-        .zip(&proof.folded_eval_blinding_openings)
+        .zip(folded_eval_blinding_openings)
         .enumerate()
     {
         let opened =
             verify_witness_variable_opening(r1cs, gens, folded_instance, variable, opening)?;
-        if opened != proof.folded_eval_blindings[index] {
+        if opened != folded_eval_blindings[index] {
             return Err(BlindFoldVerifyError::EvalWitnessMismatch);
         }
     }
@@ -426,12 +384,10 @@ fn verify_witness_variable_opening<F: JoltField, C: JoltCurve<F = F>>(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlindFoldVerifyError {
     SpartanSumcheckFailed(usize),
-    WrongSpartanProofLength { expected: usize, got: usize },
     DegreeBoundExceeded { expected: usize, got: usize },
     MalformedProof,
     EOpeningFailed,
     OuterClaimMismatch,
-    WrongInnerSumcheckLength { expected: usize, got: usize },
     InnerSumcheckFailed(usize),
     WOpeningFailed,
     FinalClaimMismatch,
@@ -442,7 +398,7 @@ pub enum BlindFoldVerifyError {
 
 pub struct BlindFoldVerifierInput<C: JoltCurve> {
     pub round_commitments: Vec<C::G1>,
-    /// Hyrax OC row commitments, extracted from stage proofs (not from BlindFoldProof).
+    /// Hyrax OC row commitments, extracted from stage proofs (not from the NARG).
     pub output_claims_row_commitments: Vec<C::G1>,
     pub eval_commitments: Vec<C::G1>,
 }
@@ -466,134 +422,120 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
         }
     }
 
+    /// Verify the BlindFold proof by reconstructing every prover-only value from the NARG
+    /// at its natural absorb position (Option B). There is no proof struct to read from;
+    /// all data is read from `transcript`.
     #[tracing::instrument(skip_all, name = "BlindFoldVerifier::verify")]
-    pub fn verify<T: Transcript>(
+    pub fn verify(
         &self,
-        proof: &BlindFoldProof<F, C>,
-        input: &BlindFoldVerifierInput<C>,
-        transcript: &mut T,
+        input: BlindFoldVerifierInput<C>,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<(), BlindFoldVerifyError> {
         use super::spartan::{compute_L_w_at_ry, BlindFoldSpartanVerifier};
 
         let hyrax = &self.r1cs.hyrax;
-        let (R_E, _C_E) = hyrax.e_grid(self.r1cs.num_constraints);
+        let (R_E, C_E) = hyrax.e_grid(self.r1cs.num_constraints);
         let expected_noncoeff_rows = hyrax.regular_noncoeff_rows();
         let expected_oc_rows = hyrax.output_claims_rows;
 
-        if proof.noncoeff_row_commitments.len() != expected_noncoeff_rows
-            || proof.random_instance.noncoeff_row_commitments.len() != expected_noncoeff_rows
-        {
+        if input.round_commitments.len() != hyrax.R_coeff {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
-        if input.round_commitments.len() != hyrax.R_coeff
-            || proof.random_instance.round_commitments.len() != hyrax.R_coeff
-        {
-            return Err(BlindFoldVerifyError::MalformedProof);
-        }
-        if input.output_claims_row_commitments.len() != expected_oc_rows
-            || proof.random_instance.output_claims_row_commitments.len() != expected_oc_rows
-        {
-            return Err(BlindFoldVerifyError::MalformedProof);
-        }
-        if proof.random_instance.e_row_commitments.len() != R_E {
+        if input.output_claims_row_commitments.len() != expected_oc_rows {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
 
-        let real_instance = RelaxedR1CSInstance {
-            u: F::one(),
-            round_commitments: input.round_commitments.clone(),
-            output_claims_row_commitments: input.output_claims_row_commitments.clone(),
-            noncoeff_row_commitments: proof.noncoeff_row_commitments.clone(),
-            e_row_commitments: vec![C::G1::zero(); R_E],
-            eval_commitments: input.eval_commitments.clone(),
-        };
-
-        append_instance_to_transcript(
-            &real_instance,
-            self.r1cs,
-            b"bf_committed_u",
-            b"bf_committed_w",
-            b"bf_committed_e",
-            b"bf_committed_eval",
+        // Step 1: real instance — shared fields absorbed, prover-only noncoeff read from NARG.
+        let real_instance = read_real_instance_from_transcript::<F, C>(
+            F::one(),
+            input.round_commitments,
+            input.output_claims_row_commitments,
+            vec![C::G1::zero(); R_E],
+            input.eval_commitments,
             transcript,
         )?;
+        if real_instance.noncoeff_row_commitments.len() != expected_noncoeff_rows {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
 
-        append_instance_to_transcript(
-            &proof.random_instance,
-            self.r1cs,
-            b"bf_random_u",
-            b"bf_random_w",
-            b"bf_random_e",
-            b"bf_random_eval",
-            transcript,
-        )?;
+        // Step 2: random instance — every field read from NARG (prover-only, sampled).
+        let random_instance = read_random_instance_from_transcript::<F, C>(transcript)?;
+        if random_instance.noncoeff_row_commitments.len() != expected_noncoeff_rows
+            || random_instance.round_commitments.len() != hyrax.R_coeff
+            || random_instance.output_claims_row_commitments.len() != expected_oc_rows
+            || random_instance.e_row_commitments.len() != R_E
+        {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
 
-        transcript.append_commitments(b"bf_cross_e", &proof.cross_term_row_commitments);
+        // Step 3: cross-term row commitments.
+        let cross_term_row_commitments: Vec<C::G1> = read_vec(transcript)?;
 
-        let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
+        let r: F::Challenge = transcript.challenge_optimized();
         let r_field: F = r.into();
 
-        let folded_instance = real_instance.fold(
-            &proof.random_instance,
-            &proof.cross_term_row_commitments,
-            r_field,
-        )?;
+        let folded_instance =
+            real_instance.fold(&random_instance, &cross_term_row_commitments, r_field)?;
+
+        // Step 5: folded eval outputs/blindings (now bound before `tau`).
+        let folded_eval_outputs: Vec<F> = read_vec(transcript)?;
+        let folded_eval_blindings: Vec<F> = read_vec(transcript)?;
 
         if let Some((g1_0, h1)) = self.eval_commitment_gens {
-            if proof.folded_eval_outputs.len() != folded_instance.eval_commitments.len()
-                || proof.folded_eval_blindings.len() != folded_instance.eval_commitments.len()
+            if folded_eval_outputs.len() != folded_instance.eval_commitments.len()
+                || folded_eval_blindings.len() != folded_instance.eval_commitments.len()
             {
                 return Err(BlindFoldVerifyError::MalformedProof);
             }
             for (i, eval_com) in folded_instance.eval_commitments.iter().enumerate() {
-                let expected = g1_0.scalar_mul(&proof.folded_eval_outputs[i])
-                    + h1.scalar_mul(&proof.folded_eval_blindings[i]);
+                let expected = g1_0.scalar_mul(&folded_eval_outputs[i])
+                    + h1.scalar_mul(&folded_eval_blindings[i]);
                 if *eval_com != expected {
                     return Err(BlindFoldVerifyError::EvalCommitmentMismatch);
                 }
             }
         }
-        verify_folded_eval_witness_bindings(self.r1cs, self.gens, &folded_instance, proof)?;
-        for opening in &proof.folded_eval_output_openings {
-            append_hyrax_opening(
-                transcript,
-                b"bf_eval_out_open",
-                b"bf_eval_out_blind",
-                opening,
-            );
+
+        // Step 6: folded eval witness openings (count fixed by the R1CS).
+        let mut folded_eval_output_openings = Vec::with_capacity(self.r1cs.extra_output_vars.len());
+        for _ in 0..self.r1cs.extra_output_vars.len() {
+            folded_eval_output_openings.push(read_hyrax_opening(transcript, self.r1cs.hyrax.C)?);
         }
-        for opening in &proof.folded_eval_blinding_openings {
-            append_hyrax_opening(
-                transcript,
-                b"bf_eval_blind_open",
-                b"bf_eval_blind_bl",
-                opening,
-            );
+        let mut folded_eval_blinding_openings =
+            Vec::with_capacity(self.r1cs.extra_blinding_vars.len());
+        for _ in 0..self.r1cs.extra_blinding_vars.len() {
+            folded_eval_blinding_openings.push(read_hyrax_opening(transcript, self.r1cs.hyrax.C)?);
         }
 
-        transcript.append_label(b"bf_spartan");
+        verify_folded_eval_witness_bindings(
+            self.r1cs,
+            self.gens,
+            &folded_instance,
+            &folded_eval_outputs,
+            &folded_eval_blindings,
+            &folded_eval_output_openings,
+            &folded_eval_blinding_openings,
+        )?;
+
         let num_vars = self.r1cs.num_constraints.next_power_of_two().log_2();
 
-        if proof.spartan_proof.len() != num_vars {
-            return Err(BlindFoldVerifyError::WrongSpartanProofLength {
-                expected: num_vars,
-                got: proof.spartan_proof.len(),
-            });
-        }
-
-        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
+        // Step 7: tau.
+        let tau: Vec<_> = transcript.challenge_optimized_vec(num_vars);
         let mut claim = F::zero();
         let mut challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
 
-        for (round, compressed_poly) in proof.spartan_proof.iter().enumerate() {
-            if compressed_poly.coeffs_except_linear_term.len() != SPARTAN_DEGREE_BOUND {
+        // Step 8: spartan rounds — each round's compressed coeffs read from NARG.
+        for round in 0..num_vars {
+            let coeffs_except_linear_term: Vec<F> = read_vec(transcript)?;
+            if coeffs_except_linear_term.len() != SPARTAN_DEGREE_BOUND {
                 return Err(BlindFoldVerifyError::DegreeBoundExceeded {
                     expected: SPARTAN_DEGREE_BOUND,
-                    got: compressed_poly.coeffs_except_linear_term.len(),
+                    got: coeffs_except_linear_term.len(),
                 });
             }
-
-            transcript.append_scalars(b"sumcheck_poly", &compressed_poly.coeffs_except_linear_term);
+            let compressed_poly = CompressedUniPoly {
+                coeffs_except_linear_term,
+            };
 
             let poly = compressed_poly.decompress(&claim);
             let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>();
@@ -601,26 +543,27 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
                 return Err(BlindFoldVerifyError::SpartanSumcheckFailed(round));
             }
 
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            let r_j = transcript.challenge_optimized();
             challenges.push(r_j);
             claim = poly.evaluate(&r_j);
         }
 
-        let az_r = proof.az_r;
-        let bz_r = proof.bz_r;
-        let cz_r = proof.cz_r;
+        // Step 9: az_r/bz_r/cz_r as one frame of 3.
+        let azbzcz: Vec<F> = read_vec(transcript)?;
+        if azbzcz.len() != 3 {
+            return Err(BlindFoldVerifyError::MalformedProof);
+        }
+        let az_r = azbzcz[0];
+        let bz_r = azbzcz[1];
+        let cz_r = azbzcz[2];
 
-        transcript.append_scalars(b"bf_az_bz_cz", &[az_r, bz_r, cz_r]);
-        append_hyrax_opening(
-            transcript,
-            b"bf_error_opening",
-            b"bf_error_blind",
-            &proof.e_opening,
-        );
+        // Step 10: E opening. Its `combined_row` is the E-grid row of width `C_E`
+        // (= min(hyrax.C, padded_e_len)), which can be narrower than `hyrax.C`.
+        let e_opening = read_hyrax_opening(transcript, C_E)?;
 
-        let ra: F = transcript.challenge_scalar_optimized::<F>().into();
-        let rb: F = transcript.challenge_scalar_optimized::<F>().into();
-        let rc: F = transcript.challenge_scalar_optimized::<F>().into();
+        let ra: F = transcript.challenge_optimized().into();
+        let rb: F = transcript.challenge_optimized().into();
+        let rc: F = transcript.challenge_optimized().into();
 
         let spartan_verifier = BlindFoldSpartanVerifier::new(self.r1cs, tau, folded_instance.u);
 
@@ -630,27 +573,20 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
         let w_padded_len = hyrax.R_prime * hyrax.C;
         let inner_num_vars = w_padded_len.log_2();
 
-        if proof.inner_sumcheck_proof.len() != inner_num_vars {
-            return Err(BlindFoldVerifyError::WrongInnerSumcheckLength {
-                expected: inner_num_vars,
-                got: proof.inner_sumcheck_proof.len(),
-            });
-        }
-
         let mut inner_challenges: Vec<F::Challenge> = Vec::with_capacity(inner_num_vars);
 
-        for (round, compressed_poly) in proof.inner_sumcheck_proof.iter().enumerate() {
-            if compressed_poly.coeffs_except_linear_term.len() != INNER_SUMCHECK_DEGREE_BOUND {
+        // Step 12: inner sumcheck rounds — each round's compressed coeffs read from NARG.
+        for round in 0..inner_num_vars {
+            let coeffs_except_linear_term: Vec<F> = read_vec(transcript)?;
+            if coeffs_except_linear_term.len() != INNER_SUMCHECK_DEGREE_BOUND {
                 return Err(BlindFoldVerifyError::DegreeBoundExceeded {
                     expected: INNER_SUMCHECK_DEGREE_BOUND,
-                    got: compressed_poly.coeffs_except_linear_term.len(),
+                    got: coeffs_except_linear_term.len(),
                 });
             }
-
-            transcript.append_scalars(
-                b"inner_sumcheck_poly",
-                &compressed_poly.coeffs_except_linear_term,
-            );
+            let compressed_poly = CompressedUniPoly {
+                coeffs_except_linear_term,
+            };
 
             let poly = compressed_poly.decompress(&inner_claim);
             let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>();
@@ -658,7 +594,7 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
                 return Err(BlindFoldVerifyError::InnerSumcheckFailed(round));
             }
 
-            let r_j = transcript.challenge_scalar_optimized::<F>();
+            let r_j = transcript.challenge_optimized();
             inner_challenges.push(r_j);
             inner_claim = poly.evaluate(&r_j);
         }
@@ -669,14 +605,13 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
 
         let eq_rx_row: Vec<F> = EqPolynomial::evals(rx_row);
         let c_combined_e = C::g1_msm(&folded_instance.e_row_commitments, &eq_rx_row);
-        let expected_e_com = self.gens.commit(
-            &proof.e_opening.combined_row,
-            &proof.e_opening.combined_blinding,
-        );
+        let expected_e_com = self
+            .gens
+            .commit(&e_opening.combined_row, &e_opening.combined_blinding);
         if c_combined_e != expected_e_com {
             return Err(BlindFoldVerifyError::EOpeningFailed);
         }
-        let e_r = hyrax::evaluate(&proof.e_opening.combined_row, rx_col);
+        let e_r = hyrax::evaluate(&e_opening.combined_row, rx_col);
 
         let expected_outer = spartan_verifier.expected_claim(&challenges, az_r, bz_r, cz_r, e_r);
         if claim != expected_outer {
@@ -690,47 +625,121 @@ impl<'a, F: JoltField, C: JoltCurve<F = F>> BlindFoldVerifier<'a, F, C> {
         let all_w_rows = folded_instance.all_w_row_commitments(hyrax.R_coeff, hyrax.R_prime)?;
         let eq_ry_row: Vec<F> = EqPolynomial::evals(ry_row);
         let c_combined_w = C::g1_msm(&all_w_rows, &eq_ry_row);
-        let expected_w_com = self.gens.commit(
-            &proof.w_opening.combined_row,
-            &proof.w_opening.combined_blinding,
-        );
+
+        // Step 13: W opening — read, check, then bind to the transcript (matching the prover,
+        // which binds it last).
+        let w_opening = read_hyrax_opening(transcript, hyrax.C)?;
+        let expected_w_com = self
+            .gens
+            .commit(&w_opening.combined_row, &w_opening.combined_blinding);
         if c_combined_w != expected_w_com {
             return Err(BlindFoldVerifyError::WOpeningFailed);
         }
-        let w_ry = hyrax::evaluate(&proof.w_opening.combined_row, ry_col);
+        let w_ry = hyrax::evaluate(&w_opening.combined_row, ry_col);
 
         let l_w_at_ry = compute_L_w_at_ry(self.r1cs, &challenges, &inner_challenges, ra, rb, rc);
         let expected_inner_final = l_w_at_ry * w_ry;
         if inner_claim != expected_inner_final {
             return Err(BlindFoldVerifyError::FinalClaimMismatch);
         }
-        append_hyrax_opening(
-            transcript,
-            b"bf_witness_opening",
-            b"bf_witness_blind",
-            &proof.w_opening,
-        );
 
         Ok(())
     }
 }
 
-fn append_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
+/// Which instance is being bound — controls per-field NARG transport (Option B).
+///
+/// The instance fields are bound to the transcript field-by-field (round → oc → noncoeff
+/// → e_row → eval) in a fixed order; spongefish provides positional domain separation, so
+/// the legacy per-field labels are dropped. For the REAL instance all components except
+/// `noncoeff_row_commitments` are SHARED (the verifier already holds them in
+/// `BlindFoldVerifierInput` / derives `e_row = 0`), so they are `absorb`'d; only
+/// `noncoeff_row_commitments` is prover-only and crosses the NARG. For the RANDOM instance
+/// every field is prover-only (freshly sampled), so every field crosses the NARG.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InstanceRole {
+    Real,
+    Random,
+}
+
+/// Prover side of binding an instance to the transcript (Option B): shared fields are
+/// `absorb`'d (not shipped), prover-only fields are `write_slice`'d into the NARG. The
+/// bytes written are byte-identical to what the structured proof previously absorbed —
+/// the transport changes, not the content.
+fn write_instance_to_transcript<F: JoltField, C: JoltCurve<F = F>>(
     instance: &RelaxedR1CSInstance<F, C>,
-    r1cs: &VerifierR1CS<F>,
-    u_label: &'static [u8],
-    witness_label: &'static [u8],
-    error_label: &'static [u8],
-    eval_label: &'static [u8],
-    transcript: &mut impl Transcript,
-) -> Result<(), BlindFoldVerifyError> {
-    let witness_row_commitments =
-        instance.all_w_row_commitments(r1cs.hyrax.R_coeff, r1cs.hyrax.R_prime)?;
-    transcript.append_scalar(u_label, &instance.u);
-    transcript.append_commitments(witness_label, &witness_row_commitments);
-    transcript.append_commitments(error_label, &instance.e_row_commitments);
-    transcript.append_commitments(eval_label, &instance.eval_commitments);
-    Ok(())
+    transcript: &mut impl ProverFs<F>,
+    role: InstanceRole,
+) {
+    match role {
+        InstanceRole::Real => {
+            transcript.absorb(&instance.u);
+            transcript.absorb(&instance.round_commitments);
+            transcript.absorb(&instance.output_claims_row_commitments);
+            transcript.write_slice(&instance.noncoeff_row_commitments);
+            transcript.absorb(&instance.e_row_commitments);
+            transcript.absorb(&instance.eval_commitments);
+        }
+        InstanceRole::Random => {
+            transcript.write_slice(std::slice::from_ref(&instance.u));
+            transcript.write_slice(&instance.round_commitments);
+            transcript.write_slice(&instance.output_claims_row_commitments);
+            transcript.write_slice(&instance.noncoeff_row_commitments);
+            transcript.write_slice(&instance.e_row_commitments);
+            transcript.write_slice(&instance.eval_commitments);
+        }
+    }
+}
+
+/// Verifier side of binding the REAL instance: the shared components are supplied by the
+/// caller (from `BlindFoldVerifierInput` / `e_row = 0`) and `absorb`'d; the prover-only
+/// `noncoeff_row_commitments` is `read_slice`'d from the NARG at the matching position.
+/// Returns the reconstructed real instance.
+fn read_real_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
+    u: F,
+    round_commitments: Vec<C::G1>,
+    output_claims_row_commitments: Vec<C::G1>,
+    e_row_commitments: Vec<C::G1>,
+    eval_commitments: Vec<C::G1>,
+    transcript: &mut impl VerifierFs<F>,
+) -> Result<RelaxedR1CSInstance<F, C>, BlindFoldVerifyError> {
+    transcript.absorb(&u);
+    transcript.absorb(&round_commitments);
+    transcript.absorb(&output_claims_row_commitments);
+    let noncoeff_row_commitments: Vec<C::G1> = read_vec(transcript)?;
+    transcript.absorb(&e_row_commitments);
+    transcript.absorb(&eval_commitments);
+    Ok(RelaxedR1CSInstance {
+        u,
+        round_commitments,
+        output_claims_row_commitments,
+        noncoeff_row_commitments,
+        e_row_commitments,
+        eval_commitments,
+    })
+}
+
+/// Verifier side of binding the RANDOM instance: every field is prover-only, so each is
+/// `read_slice`'d from the NARG (which absorbs it at the matching position) and the
+/// instance is reconstructed entirely from the reads. The verifier never learns the
+/// random witness — only the (hiding) commitments.
+fn read_random_instance_from_transcript<F: JoltField, C: JoltCurve<F = F>>(
+    transcript: &mut impl VerifierFs<F>,
+) -> Result<RelaxedR1CSInstance<F, C>, BlindFoldVerifyError> {
+    let u: F = read_one(transcript)?;
+    let round_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let output_claims_row_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let noncoeff_row_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let e_row_commitments: Vec<C::G1> = read_vec(transcript)?;
+    let eval_commitments: Vec<C::G1> = read_vec(transcript)?;
+    Ok(RelaxedR1CSInstance {
+        u,
+        round_commitments,
+        output_claims_row_commitments,
+        noncoeff_row_commitments,
+        e_row_commitments,
+        eval_commitments,
+    })
 }
 
 #[cfg(test)]
@@ -740,10 +749,36 @@ mod tests {
     use crate::subprotocols::blindfold::r1cs::VerifierR1CSBuilder;
     use crate::subprotocols::blindfold::witness::{BlindFoldWitness, RoundWitness, StageWitness};
     use crate::subprotocols::blindfold::{BakedPublicInputs, StageConfig};
-    use crate::transcripts::KeccakTranscript;
     use ark_bn254::Fr;
     use ark_std::Zero;
+    use jolt_transcript::{Blake2b512, ProverState, VerifierState};
+    use rand::rngs::StdRng;
     use rand::thread_rng;
+
+    const TEST_INSTANCE: [u8; 32] = [0u8; 32];
+
+    /// Prover transcript for the BlindFold tests (fixed test session/instance/sponge).
+    fn bf_prover(label: &'static [u8]) -> ProverState<Blake2b512, StdRng> {
+        jolt_transcript::prover_transcript(label, TEST_INSTANCE, Blake2b512::default())
+    }
+
+    /// Verifier transcript for the BlindFold tests. BlindFold now writes all its prover-only
+    /// values into the NARG (Option B), so the verifier replays over the prover's `narg`
+    /// (not an empty slice), using the same (session, instance) sponge as the prover.
+    fn bf_verifier<'a>(label: &'static [u8], narg: &'a [u8]) -> VerifierState<'a, Blake2b512> {
+        jolt_transcript::verifier_transcript(label, TEST_INSTANCE, Blake2b512::default(), narg)
+    }
+
+    /// The verifier's public input is fully derived from the (honest) real instance.
+    fn make_verifier_input(
+        real_instance: &RelaxedR1CSInstance<Fr, Bn254Curve>,
+    ) -> BlindFoldVerifierInput<Bn254Curve> {
+        BlindFoldVerifierInput {
+            round_commitments: real_instance.round_commitments.clone(),
+            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
+            eval_commitments: real_instance.eval_commitments.clone(),
+        }
+    }
 
     type TestInstance = (
         RelaxedR1CSInstance<Fr, Bn254Curve>,
@@ -810,6 +845,34 @@ mod tests {
         (real_instance, real_witness, r1cs, gens, z)
     }
 
+    /// Run the prover and return the NARG byte-string carrying every prover-only value.
+    fn prove_to_narg(
+        r1cs: &VerifierR1CS<Fr>,
+        gens: &PedersenGenerators<Bn254Curve>,
+        real_instance: &RelaxedR1CSInstance<Fr, Bn254Curve>,
+        real_witness: &RelaxedR1CSWitness<Fr>,
+        z: &[Fr],
+        label: &'static [u8],
+    ) -> Vec<u8> {
+        let prover = BlindFoldProver::new(gens, r1cs, None);
+        let mut prover_transcript = bf_prover(label);
+        prover.prove(real_instance, real_witness, z, &mut prover_transcript);
+        prover_transcript.narg_string().to_vec()
+    }
+
+    /// Verify over a (possibly tampered) NARG with the given verifier input.
+    fn verify_narg(
+        r1cs: &VerifierR1CS<Fr>,
+        gens: &PedersenGenerators<Bn254Curve>,
+        verifier_input: BlindFoldVerifierInput<Bn254Curve>,
+        narg: &[u8],
+        label: &'static [u8],
+    ) -> Result<(), BlindFoldVerifyError> {
+        let verifier = BlindFoldVerifier::new(gens, r1cs, None);
+        let mut verifier_transcript = bf_verifier(label, narg);
+        verifier.verify(verifier_input, &mut verifier_transcript)
+    }
+
     fn prove_and_verify(
         r1cs: &VerifierR1CS<Fr>,
         gens: &PedersenGenerators<Bn254Curve>,
@@ -818,20 +881,9 @@ mod tests {
         z: &[Fr],
         label: &'static [u8],
     ) -> Result<(), BlindFoldVerifyError> {
-        let prover = BlindFoldProver::new(gens, r1cs, None);
-        let verifier = BlindFoldVerifier::new(gens, r1cs, None);
-
-        let mut prover_transcript = KeccakTranscript::new(label);
-        let proof = prover.prove(real_instance, real_witness, z, &mut prover_transcript);
-
-        let verifier_input = BlindFoldVerifierInput {
-            round_commitments: real_instance.round_commitments.clone(),
-            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
-            eval_commitments: real_instance.eval_commitments.clone(),
-        };
-
-        let mut verifier_transcript = KeccakTranscript::new(label);
-        verifier.verify(&proof, &verifier_input, &mut verifier_transcript)
+        let narg = prove_to_narg(r1cs, gens, real_instance, real_witness, z, label);
+        let verifier_input = make_verifier_input(real_instance);
+        verify_narg(r1cs, gens, verifier_input, &narg, label)
     }
 
     #[test]
@@ -885,31 +937,26 @@ mod tests {
         let (real_instance, real_witness, r1cs, gens, z) =
             make_test_instance(&configs, &blindfold_witness);
 
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let narg = prove_to_narg(
+            &r1cs,
+            &gens,
+            &real_instance,
+            &real_witness,
+            &z,
+            b"BlindFold_test",
+        );
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        // The Spartan round polynomials live in the NARG (one frame per round). Truncate the
+        // tail so a later frame read runs off the end → the verifier rejects the proof.
+        let mut truncated = narg.clone();
+        truncated.truncate(truncated.len() / 2);
 
-        if !proof.spartan_proof.is_empty() {
-            proof.spartan_proof.pop();
-        }
-
-        let verifier_input = BlindFoldVerifierInput {
-            round_commitments: real_instance.round_commitments.clone(),
-            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
-            eval_commitments: real_instance.eval_commitments.clone(),
-        };
-
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        let verifier_input = make_verifier_input(&real_instance);
+        let result = verify_narg(&r1cs, &gens, verifier_input, &truncated, b"BlindFold_test");
 
         assert!(
-            matches!(
-                result,
-                Err(BlindFoldVerifyError::WrongSpartanProofLength { .. })
-            ),
-            "Verification should fail with wrong proof length: {result:?}"
+            result.is_err(),
+            "Verification should fail on a truncated NARG: {result:?}"
         );
     }
 
@@ -933,25 +980,23 @@ mod tests {
         let (real_instance, real_witness, r1cs, gens, z) =
             make_test_instance(&configs, &blindfold_witness);
 
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let narg = prove_to_narg(
+            &r1cs,
+            &gens,
+            &real_instance,
+            &real_witness,
+            &z,
+            b"BlindFold_test",
+        );
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
-        let extra_commitment = proof.random_instance.round_commitments[0];
-        proof
-            .random_instance
-            .round_commitments
-            .push(extra_commitment);
+        // The random instance is now reconstructed from the NARG; instance-shape mismatches are
+        // caught against the public input. Feed a verifier input whose `round_commitments` has
+        // the wrong length → the verifier rejects with `MalformedProof`.
+        let mut verifier_input = make_verifier_input(&real_instance);
+        let extra = verifier_input.round_commitments[0];
+        verifier_input.round_commitments.push(extra);
 
-        let verifier_input = BlindFoldVerifierInput {
-            round_commitments: real_instance.round_commitments.clone(),
-            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
-            eval_commitments: real_instance.eval_commitments.clone(),
-        };
-
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        let result = verify_narg(&r1cs, &gens, verifier_input, &narg, b"BlindFold_test");
 
         assert_eq!(result, Err(BlindFoldVerifyError::MalformedProof));
     }
@@ -1029,25 +1074,27 @@ mod tests {
         let (real_instance, real_witness, r1cs, gens, z) =
             make_test_instance(&configs, &blindfold_witness);
 
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let narg = prove_to_narg(
+            &r1cs,
+            &gens,
+            &real_instance,
+            &real_witness,
+            &z,
+            b"BlindFold_test",
+        );
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        // `[az_r, bz_r, cz_r]` is a NARG frame written after the Spartan rounds. Flipping any
+        // byte in the second half of the NARG (which contains it and everything after) diverges
+        // the absorbed transcript and/or fails the outer-claim check → verification fails.
+        let mut tampered = narg.clone();
+        let i = tampered.len() * 3 / 4;
+        tampered[i] ^= 0x01;
 
-        proof.az_r += F::from_u64(1);
-
-        let verifier_input = BlindFoldVerifierInput {
-            round_commitments: real_instance.round_commitments.clone(),
-            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
-            eval_commitments: real_instance.eval_commitments.clone(),
-        };
-
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        let verifier_input = make_verifier_input(&real_instance);
+        let result = verify_narg(&r1cs, &gens, verifier_input, &tampered, b"BlindFold_test");
         assert!(
             result.is_err(),
-            "Tampered az_r should cause verification failure"
+            "Tampering the NARG (az_r region) should cause verification failure: {result:?}"
         );
     }
 
@@ -1071,27 +1118,27 @@ mod tests {
         let (real_instance, real_witness, r1cs, gens, z) =
             make_test_instance(&configs, &blindfold_witness);
 
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let narg = prove_to_narg(
+            &r1cs,
+            &gens,
+            &real_instance,
+            &real_witness,
+            &z,
+            b"BlindFold_test",
+        );
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        // The W opening (`combined_row` + `combined_blinding`) is the LAST NARG frame. Flipping a
+        // byte in its `combined_row` makes the Hyrax W check fail.
+        let mut tampered = narg.clone();
+        // The very last serialized scalar is `combined_blinding`; back off into the row.
+        let i = tampered.len().saturating_sub(40);
+        tampered[i] ^= 0x01;
 
-        if !proof.w_opening.combined_row.is_empty() {
-            proof.w_opening.combined_row[0] += F::from_u64(1);
-        }
-
-        let verifier_input = BlindFoldVerifierInput {
-            round_commitments: real_instance.round_commitments.clone(),
-            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
-            eval_commitments: real_instance.eval_commitments.clone(),
-        };
-
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        let verifier_input = make_verifier_input(&real_instance);
+        let result = verify_narg(&r1cs, &gens, verifier_input, &tampered, b"BlindFold_test");
         assert!(
-            matches!(result, Err(BlindFoldVerifyError::WOpeningFailed)),
-            "Tampered w_combined_row should fail W Hyrax check: {result:?}"
+            result.is_err(),
+            "Tampered W opening should fail verification: {result:?}"
         );
     }
 
@@ -1115,27 +1162,27 @@ mod tests {
         let (real_instance, real_witness, r1cs, gens, z) =
             make_test_instance(&configs, &blindfold_witness);
 
-        let prover = BlindFoldProver::new(&gens, &r1cs, None);
-        let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
+        let narg = prove_to_narg(
+            &r1cs,
+            &gens,
+            &real_instance,
+            &real_witness,
+            &z,
+            b"BlindFold_test",
+        );
 
-        let mut prover_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let mut proof = prover.prove(&real_instance, &real_witness, &z, &mut prover_transcript);
+        // The E opening is read mid-protocol (before the ra/rb/rc challenges). Flipping any byte
+        // in the NARG region after the Spartan rounds diverges the challenges and/or fails the E
+        // Hyrax / outer-claim checks → verification fails.
+        let mut tampered = narg.clone();
+        let i = tampered.len() * 7 / 10;
+        tampered[i] ^= 0x01;
 
-        if !proof.e_opening.combined_row.is_empty() {
-            proof.e_opening.combined_row[0] += F::from_u64(1);
-        }
-
-        let verifier_input = BlindFoldVerifierInput {
-            round_commitments: real_instance.round_commitments.clone(),
-            output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
-            eval_commitments: real_instance.eval_commitments.clone(),
-        };
-
-        let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
-        let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
+        let verifier_input = make_verifier_input(&real_instance);
+        let result = verify_narg(&r1cs, &gens, verifier_input, &tampered, b"BlindFold_test");
         assert!(
-            matches!(result, Err(BlindFoldVerifyError::EOpeningFailed)),
-            "Tampered e_combined_row should fail E Hyrax check: {result:?}"
+            result.is_err(),
+            "Tampered E opening / NARG region should fail verification: {result:?}"
         );
     }
 }

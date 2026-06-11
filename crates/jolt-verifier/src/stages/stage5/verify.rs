@@ -19,7 +19,7 @@ use jolt_poly::{
     OperandSide,
 };
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 use num_traits::Zero;
 
 use super::{
@@ -73,7 +73,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {
@@ -910,25 +910,22 @@ where
 fn append_stage5_opening_claims<F, T>(transcript: &mut T, claims: &Stage5Claims<F>)
 where
     F: Field,
-    T: Transcript<Challenge = F>,
+    T: FsTranscript<F>,
 {
     for opening_claim in &claims.instruction_read_raf.lookup_table_flags {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
     for opening_claim in &claims.instruction_read_raf.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
+        transcript.absorb_field(opening_claim);
     }
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_read_raf.instruction_raf_flag,
-    );
-    transcript.append_labeled(b"opening_claim", &claims.ram_ra_claim_reduction.ram_ra);
-    transcript.append_labeled(b"opening_claim", &claims.registers_val_evaluation.rd_inc);
-    transcript.append_labeled(b"opening_claim", &claims.registers_val_evaluation.rd_wa);
+    transcript.absorb_field(&claims.instruction_read_raf.instruction_raf_flag);
+    transcript.absorb_field(&claims.ram_ra_claim_reduction.ram_ra);
+    transcript.absorb_field(&claims.registers_val_evaluation.rd_inc);
+    transcript.absorb_field(&claims.registers_val_evaluation.rd_wa);
     #[cfg(feature = "field-inline")]
     {
         let field_claims = &claims.field_inline.field_registers_val_evaluation;
-        transcript.append_labeled(b"opening_claim", &field_claims.field_rd_inc);
-        transcript.append_labeled(b"opening_claim", &field_claims.field_rd_wa);
+        transcript.absorb_field(&field_claims.field_rd_inc);
+        transcript.absorb_field(&field_claims.field_rd_wa);
     }
 }

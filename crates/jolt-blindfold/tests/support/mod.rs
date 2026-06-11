@@ -4,6 +4,7 @@
     reason = "shared integration-test harness is intentionally broader than each test file"
 )]
 
+use ark_serialize::CanonicalSerialize;
 use jolt_blindfold::{
     BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
     FinalOpeningBinding, WitnessCoordinate,
@@ -18,9 +19,9 @@ use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
     CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage, SumcheckDomainSpec,
-    SumcheckR1csLayout, SumcheckStatement, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    SumcheckR1csLayout, SumcheckStatement,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, FsAbsorb, FsChallenge, FsTranscript};
 use rand_core::RngCore;
 
 pub type F = Fr;
@@ -151,37 +152,38 @@ pub fn field_low_u64(value: F) -> u64 {
     ])
 }
 
-pub fn transcript_projection<A: AppendToTranscript>(label: &'static [u8], value: &A) -> u64 {
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-statistical-projection");
-    transcript.append(&Label(label));
-    value.append_to_transcript(&mut transcript);
-    field_low_u64(transcript.challenge())
+pub fn transcript_projection<C: CanonicalSerialize>(value: &C) -> u64 {
+    let mut transcript = prover_transcript(
+        b"blindfold-statistical-projection",
+        [0u8; 32],
+        Blake2b512::default(),
+    );
+    transcript.absorb(value);
+    field_low_u64(FsChallenge::<F>::challenge(&mut transcript))
 }
 
-pub fn field_slice_projection(label: &'static [u8], values: &[F]) -> u64 {
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-statistical-projection");
-    transcript.append_values(label, values);
-    field_low_u64(transcript.challenge())
+pub fn field_slice_projection(values: &[F]) -> u64 {
+    let mut transcript = prover_transcript(
+        b"blindfold-statistical-projection",
+        [0u8; 32],
+        Blake2b512::default(),
+    );
+    transcript.absorb_field_slice(values);
+    field_low_u64(FsChallenge::<F>::challenge(&mut transcript))
 }
 
-pub fn compressed_sumcheck_projection(
-    label: &'static [u8],
-    proof: &CompressedSumcheckProof<F>,
-) -> u64 {
+pub fn compressed_sumcheck_projection(proof: &CompressedSumcheckProof<F>) -> u64 {
     let mut values = Vec::new();
     for round in &proof.round_polynomials {
         values.extend_from_slice(round.coeffs_except_linear_term());
     }
-    field_slice_projection(label, &values)
+    field_slice_projection(&values)
 }
 
-pub fn opening_projection(
-    label: &'static [u8],
-    opening: &jolt_crypto::VectorCommitmentOpening<F>,
-) -> u64 {
+pub fn opening_projection(opening: &jolt_crypto::VectorCommitmentOpening<F>) -> u64 {
     let mut values = opening.combined_vector.clone();
     values.push(opening.combined_blinding);
-    field_slice_projection(label, &values)
+    field_slice_projection(&values)
 }
 
 pub fn assert_empirical_distribution(projection: &StatisticalProjection) {
@@ -383,7 +385,7 @@ impl<R: RngCore> SumcheckTestProver<R> {
     pub fn prove_stage(
         &mut self,
         setup: &PedersenSetup<Bn254G1>,
-        transcript: &mut Blake2bTranscript<F>,
+        transcript: &mut impl FsTranscript<F>,
         statement: SumcheckStatement,
         input_claim: F,
     ) -> GeneratedStage {
@@ -393,7 +395,7 @@ impl<R: RngCore> SumcheckTestProver<R> {
     pub fn prove_stage_with_output_claims(
         &mut self,
         setup: &PedersenSetup<Bn254G1>,
-        transcript: &mut Blake2bTranscript<F>,
+        transcript: &mut impl FsTranscript<F>,
         statement: SumcheckStatement,
         input_claim: F,
         output_claim_count: usize,
@@ -457,7 +459,7 @@ impl<R: RngCore> SumcheckTestProver<R> {
         statement: SumcheckStatement,
         input_claim: F,
     ) -> GeneratedStage {
-        let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
+        let mut transcript = prover_transcript(transcript_label, [0u8; 32], Blake2b512::default());
         self.prove_stage(setup, &mut transcript, statement, input_claim)
     }
 }
@@ -485,7 +487,7 @@ pub fn stage_consistency(
     statement: SumcheckStatement,
     proof: &CommittedSumcheckProof<Bn254G1>,
 ) -> CommittedSumcheckConsistency<F, Bn254G1> {
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
+    let mut transcript = prover_transcript(b"blindfold-r1cs-e2e", [0u8; 32], Blake2b512::default());
     proof
         .verify_committed_consistency(statement, &mut transcript)
         .expect("committed proof transcript verifies")
@@ -501,7 +503,7 @@ pub fn stage_consistency_for_transcript_label(
     transcript_label: &'static [u8],
     stages: &[&GeneratedStage],
 ) -> Vec<CommittedSumcheckConsistency<F, Bn254G1>> {
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let mut transcript = prover_transcript(transcript_label, [0u8; 32], Blake2b512::default());
     stages
         .iter()
         .map(|stage| {
@@ -529,7 +531,7 @@ where
         stages.len(),
         "relations and generated stages must align"
     );
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let mut transcript = prover_transcript(transcript_label, [0u8; 32], Blake2b512::default());
     let stages = relations
         .iter()
         .zip(stages)
@@ -712,7 +714,7 @@ pub fn generated_deep_triple<R: RngCore>(
     let setup = pedersen_setup(4);
     let statement = SumcheckStatement::new(4, 3);
     let mut values = deep_values_without_links();
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
+    let mut transcript = prover_transcript(b"blindfold-r1cs-e2e", [0u8; 32], Blake2b512::default());
     let stage1 = prover.prove_stage(
         &setup,
         &mut transcript,
@@ -771,7 +773,7 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
 
     let (stage1, stage2) = {
         let mut prover = SumcheckTestProver::new(&mut *rng);
-        let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
+        let mut transcript = prover_transcript(transcript_label, [0u8; 32], Blake2b512::default());
         let stage1 =
             prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
         let stage2 =
@@ -794,7 +796,7 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
         .map(|(&output, blinding)| VC::commit(&setup, &[output], blinding))
         .collect::<Vec<_>>();
 
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let mut transcript = prover_transcript(transcript_label, [0u8; 32], Blake2b512::default());
     let stage1_consistency = stage1
         .proof
         .verify_committed_consistency(stage1.statement, &mut transcript)
@@ -843,7 +845,7 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
     );
     let protocol = blindfold_protocol_from_statement(&statement)
         .expect("protocol builds from committed statement");
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let mut transcript = prover_transcript(transcript_label, [0u8; 32], Blake2b512::default());
     append_protocol_transcript_prefix(&protocol, &mut transcript);
     let (real_witness_rows, real_witness_blindings) = protocol_backed_witness(
         &protocol,
@@ -905,7 +907,7 @@ where
 
 pub fn append_protocol_transcript_prefix(
     protocol: &BlindFoldProtocol<F, Bn254G1>,
-    transcript: &mut Blake2bTranscript<F>,
+    transcript: &mut impl FsTranscript<F>,
 ) {
     for (stage, output_claims) in protocol
         .sumcheck_consistency
@@ -1056,7 +1058,7 @@ struct ProtocolWitness<'a> {
 fn prove_from_protocol_witness<R: RngCore>(
     setup: &PedersenSetup<Bn254G1>,
     protocol: &BlindFoldProtocol<F, Bn254G1>,
-    transcript: &mut Blake2bTranscript<F>,
+    transcript: &mut impl FsTranscript<F>,
     witness: ProtocolWitness<'_>,
     rng: &mut R,
 ) -> BlindFoldProof<F, Bn254G1> {
@@ -1192,12 +1194,6 @@ fn prove_from_protocol_witness<R: RngCore>(
 
     append_relaxed_instance_from_parts(
         transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_committed_u",
-            witness: b"bf_committed_w",
-            error: b"bf_committed_e",
-            eval: b"bf_committed_eval",
-        },
         committed.u,
         &committed.witness_row_commitments,
         &committed.error_row_commitments,
@@ -1205,18 +1201,12 @@ fn prove_from_protocol_witness<R: RngCore>(
     );
     append_relaxed_instance_from_parts(
         transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_random_u",
-            witness: b"bf_random_w",
-            error: b"bf_random_e",
-            eval: b"bf_random_eval",
-        },
         random_u,
         &random_instance.witness_row_commitments,
         &random_instance.error_row_commitments,
         &random_instance.eval_commitments,
     );
-    transcript.append_values(b"bf_cross_e", &cross_term_error_row_commitments);
+    transcript.absorb(&cross_term_error_row_commitments);
     let folding_challenge = transcript.challenge();
 
     let folded_u = f(1) + folding_challenge * random_u;
@@ -1277,43 +1267,25 @@ fn prove_from_protocol_witness<R: RngCore>(
         }
     }
     for opening in &folded_eval_output_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_out_open",
-            b"bf_eval_out_blind",
-            opening,
-        );
+        append_vector_opening(transcript, opening);
     }
     for opening in &folded_eval_blinding_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_blind_open",
-            b"bf_eval_blind_bl",
-            opening,
-        );
+        append_vector_opening(transcript, opening);
     }
 
-    transcript.append(&Label(b"bf_spartan"));
     let outer_num_vars =
         log2(protocol.dimensions.error.row_count) + log2(protocol.dimensions.error.row_len);
     let tau = transcript.challenge_vector(outer_num_vars);
-    let outer_trace = prove_slow_sumcheck(
-        outer_num_vars,
-        3,
-        f(0),
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        transcript,
-        |point| {
-            outer_function(
-                &protocol.r1cs,
-                folded_u,
-                &flatten(&folded_witness_rows),
-                &folded_error_rows,
-                &tau,
-                point,
-            )
-        },
-    );
+    let outer_trace = prove_slow_sumcheck(outer_num_vars, 3, f(0), transcript, |point| {
+        outer_function(
+            &protocol.r1cs,
+            folded_u,
+            &flatten(&folded_witness_rows),
+            &folded_error_rows,
+            &tau,
+            point,
+        )
+    });
 
     let (az_rx, bz_rx, cz_rx) = abc_at_point(
         &protocol.r1cs,
@@ -1333,13 +1305,8 @@ fn prove_from_protocol_witness<R: RngCore>(
     )
     .expect("folded error rows open");
 
-    transcript.append_values(b"bf_az_bz_cz", &[az_rx, bz_rx, cz_rx]);
-    append_vector_opening(
-        transcript,
-        b"bf_error_opening",
-        b"bf_error_blind",
-        &error_opening,
-    );
+    transcript.absorb_field_slice(&[az_rx, bz_rx, cz_rx]);
+    append_vector_opening(transcript, &error_opening);
 
     let ra = transcript.challenge();
     let rb = transcript.challenge();
@@ -1352,24 +1319,17 @@ fn prove_from_protocol_witness<R: RngCore>(
         .public_column_contributions(&row_weights, 0, folded_u)
         .expect("public column contributions evaluate");
     let inner_claim = ra * (az_rx - public.a) + rb * (bz_rx - public.b) + rc * (cz_rx - public.c);
-    let inner_trace = prove_slow_sumcheck(
-        inner_num_vars,
-        2,
-        inner_claim,
-        b"inner_sumcheck_poly",
-        transcript,
-        |point| {
-            inner_function(
-                &protocol.r1cs,
-                &outer_trace.point,
-                &folded_witness_rows,
-                ra,
-                rb,
-                rc,
-                point,
-            )
-        },
-    );
+    let inner_trace = prove_slow_sumcheck(inner_num_vars, 2, inner_claim, transcript, |point| {
+        inner_function(
+            &protocol.r1cs,
+            &outer_trace.point,
+            &folded_witness_rows,
+            ra,
+            rb,
+            rc,
+            point,
+        )
+    });
     let (witness_row_point, witness_entry_point) = inner_trace
         .point
         .split_at(log2(protocol.dimensions.witness.row_count));
@@ -1438,38 +1398,28 @@ fn boolean_point(index: usize, num_vars: usize) -> Vec<F> {
         .collect()
 }
 
-#[derive(Clone, Copy, Debug)]
-struct RelaxedInstanceLabels {
-    u: &'static [u8],
-    witness: &'static [u8],
-    error: &'static [u8],
-    eval: &'static [u8],
-}
-
 fn append_relaxed_instance_from_parts(
-    transcript: &mut Blake2bTranscript<F>,
-    labels: RelaxedInstanceLabels,
+    transcript: &mut impl FsAbsorb,
     u: F,
     witness_commitments: &[Bn254G1],
     error_commitments: &[Bn254G1],
     eval_commitments: &[Bn254G1],
 ) {
-    transcript.append(&Label(labels.u));
-    u.append_to_transcript(transcript);
-    transcript.append_values(labels.witness, witness_commitments);
-    transcript.append_values(labels.error, error_commitments);
-    transcript.append_values(labels.eval, eval_commitments);
+    transcript.absorb_field(&u);
+    // Absorb each commitment vector as a single value, like jolt-core
+    // (`absorb(&witness_row_commitments)`); the verifier side holds these as
+    // `Vec<Com>`, so absorb the same `Vec` serialization here.
+    transcript.absorb(&witness_commitments.to_vec());
+    transcript.absorb(&error_commitments.to_vec());
+    transcript.absorb(&eval_commitments.to_vec());
 }
 
 fn append_vector_opening(
-    transcript: &mut Blake2bTranscript<F>,
-    row_label: &'static [u8],
-    blinding_label: &'static [u8],
+    transcript: &mut impl FsAbsorb,
     opening: &jolt_crypto::VectorCommitmentOpening<F>,
 ) {
-    transcript.append_values(row_label, &opening.combined_vector);
-    transcript.append(&Label(blinding_label));
-    opening.combined_blinding.append_to_transcript(transcript);
+    transcript.absorb_field_slice(&opening.combined_vector);
+    transcript.absorb_field(&opening.combined_blinding);
 }
 
 fn zero_rows(row_count: usize, row_len: usize) -> Vec<Vec<F>> {
@@ -1659,8 +1609,7 @@ fn prove_slow_sumcheck(
     num_vars: usize,
     degree: usize,
     claim: F,
-    label: &'static [u8],
-    transcript: &mut Blake2bTranscript<F>,
+    transcript: &mut impl FsTranscript<F>,
     eval: impl Fn(&[F]) -> F,
 ) -> SumcheckTrace {
     let mut running_sum = claim;
@@ -1689,7 +1638,9 @@ fn prove_slow_sumcheck(
         let mut compressed = Vec::with_capacity(degree);
         compressed.push(coefficients[0]);
         compressed.extend_from_slice(&coefficients[2..]);
-        transcript.append_values(label, &compressed);
+        // One message for the whole compressed coefficient vector, matching
+        // jolt-sumcheck's verifier (`absorb_field_slice(coeffs_except_linear_term)`).
+        transcript.absorb_field_slice(&compressed);
         let challenge = transcript.challenge();
         running_sum = eval_poly(&coefficients, challenge);
         prefix.push(challenge);

@@ -30,7 +30,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     zkvm::{
         instruction::{Flags, InstructionFlags, JoltTraceCycle},
         witness::VirtualPolynomial,
@@ -49,13 +49,13 @@ pub struct InstructionInputParams<F: JoltField> {
 impl<F: JoltField> InstructionInputParams<F> {
     pub fn new(
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let (r_cycle_stage_2, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::LeftInstructionInput,
             SumcheckId::SpartanProductVirtualization,
         );
-        let gamma = transcript.challenge_scalar();
+        let gamma = transcript.challenge_field();
         Self {
             r_cycle_stage_2,
             gamma,
@@ -303,9 +303,7 @@ impl<F: JoltField> InstructionInputSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for InstructionInputSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for InstructionInputSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -498,15 +496,15 @@ pub struct InstructionInputSumcheckVerifier<F: JoltField> {
 impl<F: JoltField> InstructionInputSumcheckVerifier<F> {
     pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
         opening_accumulator: &A,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params = InstructionInputParams::new(opening_accumulator, transcript);
         Self { params }
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for InstructionInputSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for InstructionInputSumcheckVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);

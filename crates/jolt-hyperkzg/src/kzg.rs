@@ -5,7 +5,7 @@
 
 use jolt_crypto::{JoltGroup, PairingGroup};
 use jolt_field::Field;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::FsTranscript;
 use num_traits::{One, Zero};
 
 use crate::error::HyperKZGError;
@@ -72,9 +72,7 @@ pub(crate) fn kzg_open_batch<P, T>(
 ) -> ([P::G1; 3], [Vec<P::ScalarField>; 3])
 where
     P: PairingGroup,
-    T: Transcript<Challenge = P::ScalarField>,
-    P::ScalarField: AppendToTranscript,
-    P::G1: AppendToTranscript,
+    T: FsTranscript<P::ScalarField>,
 {
     let k = f.len();
 
@@ -83,11 +81,8 @@ where
         (*u).map(|ui| f.iter().map(|fj| eval_univariate(fj, ui)).collect());
 
     // Absorb all evaluations into transcript
-    for row in &v {
-        for val in row {
-            transcript.append(val);
-        }
-    }
+    let scalars: Vec<P::ScalarField> = v.iter().flatten().copied().collect();
+    transcript.absorb_field_slice(&scalars);
 
     // Derive batching challenge and compute powers q, q^2, ..., q^{k-1}
     let q: P::ScalarField = transcript.challenge();
@@ -110,9 +105,7 @@ where
 
     // Absorb witness commitments and mirror the verifier's `d_0` challenge
     // to keep prover/verifier transcripts in sync.
-    for wi in &w {
-        transcript.append(wi);
-    }
+    transcript.absorb(&w.to_vec());
     let _d_0: P::ScalarField = transcript.challenge();
 
     (w, v)
@@ -132,9 +125,7 @@ pub(crate) fn kzg_verify_batch<P, T>(
 ) -> bool
 where
     P: PairingGroup,
-    T: Transcript<Challenge = P::ScalarField>,
-    P::ScalarField: AppendToTranscript,
-    P::G1: AppendToTranscript,
+    T: FsTranscript<P::ScalarField>,
 {
     let k = com.len();
 
@@ -143,19 +134,14 @@ where
     }
 
     // Absorb evaluations
-    for row in v {
-        for val in row {
-            transcript.append(val);
-        }
-    }
+    let scalars: Vec<P::ScalarField> = v.iter().flatten().copied().collect();
+    transcript.absorb_field_slice(&scalars);
 
     let q: P::ScalarField = transcript.challenge();
     let q_powers = challenge_powers(q, k);
 
     // Absorb witness commitments
-    for wi in wit {
-        transcript.append(wi);
-    }
+    transcript.absorb(&wit.to_vec());
     let d_0: P::ScalarField = transcript.challenge();
     let d_1 = d_0 * d_0;
 

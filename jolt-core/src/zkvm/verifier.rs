@@ -16,11 +16,11 @@ use crate::subprotocols::blindfold::{
 };
 use crate::subprotocols::sumcheck::BatchedSumcheck;
 #[cfg(feature = "zk")]
-use crate::subprotocols::sumcheck::SumcheckInstanceProof;
+use crate::subprotocols::sumcheck::ZkSumcheckReadback;
 #[cfg(feature = "zk")]
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
 #[cfg(feature = "zk")]
-use crate::subprotocols::univariate_skip::UniSkipFirstRoundProofVariant;
+use crate::subprotocols::univariate_skip::ZkUniSkipReadback;
 use crate::zkvm::bytecode::chunks::DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT;
 use crate::zkvm::bytecode::chunks::{
     committed_lanes, is_valid_committed_bytecode_chunking_for_len,
@@ -49,7 +49,7 @@ use crate::zkvm::{
         PrecommittedClaimReduction, PrecommittedParams, ProgramImageClaimReductionParams,
         ProgramImageClaimReductionVerifier, RamRaClaimReductionSumcheckVerifier,
     },
-    compute_final_opening_point, fiat_shamir_preamble,
+    compute_final_opening_point, fiat_shamir_instance,
     instruction_lookups::{
         ra_virtual::RaSumcheckVerifier as LookupsRaSumcheckVerifier,
         read_raf_checking::InstructionReadRafSumcheckVerifier,
@@ -89,7 +89,7 @@ use crate::{
         },
         sumcheck_verifier::SumcheckInstanceVerifier,
     },
-    transcripts::Transcript,
+    transcript_msgs::{FsAbsorb, VerifierFs},
     utils::{errors::ProofVerifyError, math::Math},
     zkvm::witness::CommittedPolynomial,
 };
@@ -177,12 +177,8 @@ impl<F: JoltField> StageVerifyResult<F> {
 }
 
 #[cfg(feature = "zk")]
-fn batch_output_constraints<
-    F: JoltField,
-    T: Transcript,
-    A: AbstractVerifierOpeningAccumulator<F>,
->(
-    instances: &[&dyn SumcheckInstanceVerifier<F, T, A>],
+fn batch_output_constraints<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
+    instances: &[&dyn SumcheckInstanceVerifier<F, A>],
 ) -> Option<OutputClaimConstraint> {
     let constraints: Vec<Option<OutputClaimConstraint>> = instances
         .iter()
@@ -192,12 +188,8 @@ fn batch_output_constraints<
 }
 
 #[cfg(feature = "zk")]
-fn batch_input_constraints<
-    F: JoltField,
-    T: Transcript,
-    A: AbstractVerifierOpeningAccumulator<F>,
->(
-    instances: &[&dyn SumcheckInstanceVerifier<F, T, A>],
+fn batch_input_constraints<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
+    instances: &[&dyn SumcheckInstanceVerifier<F, A>],
 ) -> InputClaimConstraint {
     let constraints: Vec<InputClaimConstraint> = instances
         .iter()
@@ -207,13 +199,9 @@ fn batch_input_constraints<
 }
 
 #[cfg(feature = "zk")]
-fn scale_batching_coefficients<
-    F: JoltField,
-    T: Transcript,
-    A: AbstractVerifierOpeningAccumulator<F>,
->(
+fn scale_batching_coefficients<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>>(
     batching_coefficients: &[F],
-    instances: &[&dyn SumcheckInstanceVerifier<F, T, A>],
+    instances: &[&dyn SumcheckInstanceVerifier<F, A>],
 ) -> Vec<F> {
     let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap_or(0);
     batching_coefficients
@@ -225,8 +213,60 @@ fn scale_batching_coefficients<
         })
         .collect()
 }
+
+/// Shared ZK "finish" tail for a regular (non-uni-skip) stage: derives the batched
+/// input/output BlindFold constraints and their challenge values from the stage's
+/// `instances`, writes the stage's NARG read-back into `readback_slot`, and returns the
+/// `StageVerifyResult`. Stages 3–7 (incl. 6a) share this verbatim — only the instance set,
+/// challenges, and read-back slot differ; consolidating it stops the claim/constraint sync
+/// (see CLAUDE.md) from drifting across copies. The two touched fields are passed as
+/// separate `&mut`s (not `&mut self`) so the call coexists with the `instances` borrow,
+/// which holds shared borrows of other `self` fields.
+#[cfg(feature = "zk")]
+fn finish_regular_zk_stage<F: JoltField, C: JoltCurve<F = F>>(
+    opening_accumulator: &mut VerifierOpeningAccumulator<F>,
+    instances: &[&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>],
+    batching_coefficients: &[F],
+    challenges: Vec<F::Challenge>,
+    zk_sumcheck_readback: Option<ZkSumcheckReadback<C>>,
+    readback_slot: &mut Option<ZkSumcheckReadback<C>>,
+) -> StageVerifyResult<F> {
+    let regular_oc_ids = opening_accumulator.take_pending_claim_ids();
+    let batched_output_constraint = batch_output_constraints(instances);
+    let batched_input_constraint = batch_input_constraints(instances);
+    let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
+    let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.to_vec();
+    let mut input_constraint_challenge_values: Vec<F> =
+        scale_batching_coefficients(batching_coefficients, instances);
+    for instance in instances {
+        let num_rounds = instance.num_rounds();
+        let offset = instance.round_offset(max_num_rounds);
+        let r_slice = &challenges[offset..offset + num_rounds];
+        output_constraint_challenge_values.extend(
+            instance
+                .get_params()
+                .output_constraint_challenge_values(r_slice),
+        );
+        input_constraint_challenge_values.extend(
+            instance
+                .get_params()
+                .input_constraint_challenge_values(opening_accumulator),
+        );
+    }
+    let stage_result = StageVerifyResult::new(
+        challenges,
+        batched_output_constraint,
+        output_constraint_challenge_values,
+        batched_input_constraint,
+        input_constraint_challenge_values,
+        vec![regular_oc_ids],
+    );
+    *readback_slot = zk_sumcheck_readback;
+    stage_result
+}
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
+use jolt_transcript::{verifier_transcript, DuplexSpongeInterface, VerifierState};
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -234,13 +274,19 @@ pub struct JoltVerifier<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
+    H: DuplexSpongeInterface,
 > {
     pub trusted_advice_commitment: Option<PCS::Commitment>,
     pub program_io: JoltDevice,
-    pub proof: JoltProof<F, C, PCS, ProofTranscript>,
+    pub proof: JoltProof<F, C, PCS, H>,
+    /// Witness-polynomial commitments, decoded from the NARG in `verify_inner`
+    /// (one `read_slice` frame) before stage 1. Populated at FS time, not at
+    /// construction (the NARG isn't read until `verify_inner`).
+    commitments: Vec<PCS::Commitment>,
+    /// Untrusted-advice commitment, decoded from the NARG presence frame
+    /// (length-0/1) in `verify_inner`. `None` if absent.
+    untrusted_advice_commitment: Option<PCS::Commitment>,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
-    pub transcript: ProofTranscript,
     pub opening_accumulator: VerifierOpeningAccumulator<F>,
     /// The advice claim reduction sumcheck effectively spans two stages (6 and 7).
     /// Cache the verifier state here between stages.
@@ -254,6 +300,18 @@ pub struct JoltVerifier<
     program_image_reduction_verifier: Option<ProgramImageClaimReductionVerifier<F>>,
     pub spartan_key: UniformSpartanKey<F>,
     pub one_hot_params: OneHotParams,
+    /// ZK sumcheck values (round commitments, per-round degrees, output-claim commitments)
+    /// read back from the NARG during each stage's `BatchedSumcheck::verify`, indexed by
+    /// stage (0 = stage1 … 7 = stage7, where 5 = stage6a and 6 = stage6b). Since the proof
+    /// structs are now data-free, stage 8 (BlindFold) is fed from here instead. Populated
+    /// only in ZK mode.
+    #[cfg(feature = "zk")]
+    zk_sumcheck_readback: Vec<Option<ZkSumcheckReadback<C>>>,
+    /// ZK uni-skip values (commitment, degree, output-claim commitments) read back from the
+    /// NARG during stages 1–2, indexed by uni-skip stage (0 = stage1, 1 = stage2). Populated
+    /// only in ZK mode.
+    #[cfg(feature = "zk")]
+    zk_uniskip_readback: Vec<Option<ZkUniSkipReadback<C>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -268,8 +326,10 @@ impl<
         F: JoltField,
         C: JoltCurve<F = F>,
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-        ProofTranscript: Transcript,
-    > JoltVerifier<'a, F, C, PCS, ProofTranscript>
+        H: DuplexSpongeInterface<U = u8> + Default,
+    > JoltVerifier<'a, F, C, PCS, H>
+where
+    for<'b> VerifierState<'b, H>: VerifierFs<F>,
 {
     #[inline]
     fn main_total_vars(&self) -> usize {
@@ -280,17 +340,17 @@ impl<
             self.preprocessing.shared.precommitted_candidate_total_vars(
                 self.preprocessing.shared.program.is_committed(),
                 self.trusted_advice_commitment.is_some(),
-                self.proof.untrusted_advice_commitment.is_some(),
+                self.untrusted_advice_commitment.is_some(),
             ),
         )
     }
 
     pub fn new(
         preprocessing: &'a JoltVerifierPreprocessing<F, C, PCS>,
-        proof: JoltProof<F, C, PCS, ProofTranscript>,
+        proof: JoltProof<F, C, PCS, H>,
         mut program_io: JoltDevice,
         trusted_advice_commitment: Option<PCS::Commitment>,
-        _debug_info: Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+        _debug_info: Option<ProverDebugInfo<F, H, PCS>>,
     ) -> Result<Self, ProofVerifyError> {
         // Memory layout checks
         if program_io.memory_layout != preprocessing.shared.memory_layout {
@@ -326,12 +386,16 @@ impl<
                 .map_or(0, |pos| pos + 1),
         );
 
-        let zk_mode = proof.verify_zk_consistency()?;
-        #[cfg(test)]
-        #[allow(unused_mut)]
-        let mut opening_accumulator =
-            VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
-        #[cfg(not(test))]
+        let zk_mode = proof.zk_mode;
+        // `zk_mode` is an attacker-controlled proof field, but the verifier's ability to
+        // check a given mode is fixed at compile time: a `zk` build's `JoltProof` has no
+        // `opening_claims` field (so non-ZK proofs cannot be verified), and a non-`zk`
+        // build has no BlindFold code (so ZK proofs cannot be verified). Reject the
+        // mismatch here, explicitly, instead of failing somewhere downstream with an
+        // empty opening accumulator or a missing-stage error.
+        if zk_mode != cfg!(feature = "zk") {
+            return Err(ProofVerifyError::ZkModeMismatch);
+        }
         #[allow(unused_mut)]
         let mut opening_accumulator =
             VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
@@ -347,15 +411,12 @@ impl<
             }
         }
 
-        #[cfg(test)]
-        let mut transcript = ProofTranscript::new(b"Jolt");
-        #[cfg(not(test))]
-        let transcript = ProofTranscript::new(b"Jolt");
-
+        // The verifier transcript (VerifierState) borrows the proof's NARG, so it is
+        // built locally in `verify_inner`, not stored as a field (D3). NARG consistency
+        // is inherent (the verifier replays the prover's NARG in lock-step).
         #[cfg(test)]
         {
             if let Some(debug_info) = _debug_info {
-                transcript.compare_to(debug_info.transcript);
                 opening_accumulator.compare_to(debug_info.opening_accumulator);
             }
         }
@@ -396,8 +457,9 @@ impl<
             trusted_advice_commitment,
             program_io,
             proof,
+            commitments: Vec::new(),
+            untrusted_advice_commitment: None,
             preprocessing,
-            transcript,
             opening_accumulator,
             advice_reduction_verifier_trusted: None,
             advice_reduction_verifier_untrusted: None,
@@ -405,6 +467,10 @@ impl<
             program_image_reduction_verifier: None,
             spartan_key,
             one_hot_params,
+            #[cfg(feature = "zk")]
+            zk_sumcheck_readback: (0..8).map(|_| None).collect(),
+            #[cfg(feature = "zk")]
+            zk_uniskip_readback: (0..2).map(|_| None).collect(),
         })
     }
 
@@ -437,8 +503,11 @@ impl<
         let _pprof_verify = pprof_scope!("verify");
         let zk_mode = self.opening_accumulator.zk_mode;
 
+        // Build the verifier transcript locally over the proof's NARG (D3). A.1: the
+        // public statement is bound into the `instance` digest (`Blake2b(statement)`),
+        // recomputed from the proof's public tail — byte-identical to the prover (O1).
         let preprocessing_digest = self.preprocessing.shared.digest();
-        fiat_shamir_preamble(
+        let instance = fiat_shamir_instance(
             &self.program_io,
             self.proof.ram_K,
             self.proof.trace_length,
@@ -447,8 +516,10 @@ impl<
             &self.proof.one_hot_config,
             self.proof.dory_layout,
             &preprocessing_digest,
-            &mut self.transcript,
         );
+        let narg = std::mem::take(&mut self.proof.narg);
+        let mut ts = verifier_transcript(b"Jolt", instance, H::default(), &narg);
+        let transcript = &mut ts;
 
         // Initialize DoryGlobals with the layout from the proof
         // This ensures the verifier uses the same layout as the prover
@@ -459,58 +530,60 @@ impl<
             Some(self.proof.dory_layout),
         );
 
-        // Append commitments to transcript
-        for commitment in &self.proof.commitments {
-            self.transcript
-                .append_serializable(b"commitment", commitment);
+        // Read the witness-polynomial commitments back from the NARG as ONE frame
+        // (matching the prover's single `write_slice`), absorbing them in the process.
+        self.commitments = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+        // Read the untrusted-advice presence frame (length-0/1 vec) and reconstruct
+        // the Option. The prover ALWAYS writes this frame, so the read position is the
+        // same in the Some and None cases.
+        let untrusted_advice: Vec<PCS::Commitment> = transcript
+            .read_slice()
+            .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
+        // The presence frame is length 0 (None) or 1 (Some); reject any over-long frame
+        // rather than silently dropping extra entries via `.next()`.
+        if untrusted_advice.len() > 1 {
+            return Err(ProofVerifyError::SumcheckVerificationError);
         }
-        // Append untrusted advice commitment to transcript
-        if let Some(ref untrusted_advice_commitment) = self.proof.untrusted_advice_commitment {
-            self.transcript
-                .append_serializable(b"untrusted_advice", untrusted_advice_commitment);
-        }
+        self.untrusted_advice_commitment = untrusted_advice.into_iter().next();
         // Append trusted advice commitment to transcript
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
-            self.transcript
-                .append_serializable(b"trusted_advice", trusted_advice_commitment);
+            transcript.absorb(trusted_advice_commitment);
         }
         if let Some(trusted_bytecode) = self.preprocessing.shared.program.bytecode_commitments() {
             for commitment in &trusted_bytecode.commitments {
-                self.transcript
-                    .append_serializable(b"bytecode_chunk_commit", commitment);
+                transcript.absorb(commitment);
             }
         }
         if self.preprocessing.shared.program.is_committed() {
             let trusted = self.preprocessing.shared.program.as_committed()?;
-            self.transcript.append_serializable(
-                b"program_image_commitment",
-                &trusted.program_image_commitment,
-            );
+            transcript.absorb(&trusted.program_image_commitment);
         }
 
         let (stage1_result, uniskip_challenge1) = self
-            .verify_stage1()
+            .verify_stage1(transcript)
             .inspect_err(|e| tracing::error!("Stage 1: {e}"))?;
         let (stage2_result, uniskip_challenge2) = self
-            .verify_stage2()
+            .verify_stage2(transcript)
             .inspect_err(|e| tracing::error!("Stage 2: {e}"))?;
         let stage3_result = self
-            .verify_stage3()
+            .verify_stage3(transcript)
             .inspect_err(|e| tracing::error!("Stage 3: {e}"))?;
         let stage4_result = self
-            .verify_stage4()
+            .verify_stage4(transcript)
             .inspect_err(|e| tracing::error!("Stage 4: {e}"))?;
         let stage5_result = self
-            .verify_stage5()
+            .verify_stage5(transcript)
             .inspect_err(|e| tracing::error!("Stage 5: {e}"))?;
         let (stage6a_result, stage6b_result) = self
-            .verify_stage6()
+            .verify_stage6(transcript)
             .inspect_err(|e| tracing::error!("Stage 6: {e}"))?;
         let stage7_result = self
-            .verify_stage7()
+            .verify_stage7(transcript)
             .inspect_err(|e| tracing::error!("Stage 7: {e}"))?;
         let stage8_data = self
-            .verify_stage8()
+            .verify_stage8(transcript)
             .inspect_err(|e| tracing::error!("Stage 8: {e}"))?;
 
         if zk_mode {
@@ -600,6 +673,7 @@ impl<
                 ];
 
                 self.verify_blindfold(
+                    transcript,
                     &sumcheck_challenges,
                     uniskip_challenges,
                     &stage_output_constraints,
@@ -620,17 +694,25 @@ impl<
             return Err(ProofVerifyError::ZkFeatureRequired);
         }
 
+        // Soundness (malleability guard): the NARG must be fully consumed — reject any
+        // trailing/garbage bytes. Error paths above already returned before reaching here.
+        ts.check_eof()
+            .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
         Ok(())
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage1(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
-        let (uni_skip_params, uni_skip_challenge) = verify_stage1_uni_skip(
-            &self.proof.stage1_uni_skip_first_round_proof,
-            &self.spartan_key,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+    fn verify_stage1(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
+        let (uni_skip_params, uni_skip_challenge, zk_uniskip_readback) =
+            verify_stage1_uni_skip::<F, C, _, _>(
+                self.proof.zk_mode,
+                &self.spartan_key,
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         // Drain uniskip OC block IDs (pending_claims were drained inside verify_transcript)
         #[cfg(feature = "zk")]
@@ -643,16 +725,16 @@ impl<
             &self.opening_accumulator,
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![&spartan_outer_remaining];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&spartan_outer_remaining];
 
-        let (batching_coefficients, r_stage1) = BatchedSumcheck::verify(
-            &self.proof.stage1_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (batching_coefficients, r_stage1, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
@@ -710,6 +792,9 @@ impl<
                 vec![uniskip_oc_ids, regular_oc_ids],
             );
 
+            self.zk_uniskip_readback[0] = zk_uniskip_readback;
+            self.zk_sumcheck_readback[0] = zk_sumcheck_readback;
+
             Ok((stage_result, uni_skip_challenge))
         }
         #[cfg(not(feature = "zk"))]
@@ -722,19 +807,23 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage2(&mut self) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
-        let (uni_skip_params, uni_skip_challenge) = verify_stage2_uni_skip(
-            &self.proof.stage2_uni_skip_first_round_proof,
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+    fn verify_stage2(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<(StageVerifyResult<F>, F::Challenge), ProofVerifyError> {
+        let (uni_skip_params, uni_skip_challenge, zk_uniskip_readback) =
+            verify_stage2_uni_skip::<F, C, _, _>(
+                self.proof.zk_mode,
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         let uniskip_oc_ids = self.opening_accumulator.take_pending_claim_ids();
 
         let ram_read_write_checking = RamReadWriteCheckingVerifier::new(
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
             &self.one_hot_params,
             self.proof.trace_length,
             &self.proof.rw_config,
@@ -749,7 +838,7 @@ impl<
         let instruction_claim_reduction = InstructionLookupsClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
 
         let ram_raf_evaluation = RamRafEvaluationSumcheckVerifier::new(
@@ -763,14 +852,12 @@ impl<
         let ram_output_check = OutputSumcheckVerifier::new(
             self.proof.ram_K,
             &self.program_io,
-            &mut self.transcript,
+            transcript,
             self.proof.trace_length,
             &self.proof.rw_config,
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &ram_read_write_checking,
             &spartan_product_virtual_remainder,
             &instruction_claim_reduction,
@@ -778,12 +865,13 @@ impl<
             &ram_output_check,
         ];
 
-        let (batching_coefficients, r_stage2) = BatchedSumcheck::verify(
-            &self.proof.stage2_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (batching_coefficients, r_stage2, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
@@ -832,6 +920,9 @@ impl<
                 vec![uniskip_oc_ids, regular_oc_ids],
             );
 
+            self.zk_uniskip_readback[1] = zk_uniskip_readback;
+            self.zk_sumcheck_readback[1] = zk_sumcheck_readback;
+
             Ok((stage_result, uni_skip_challenge))
         }
         #[cfg(not(feature = "zk"))]
@@ -844,66 +935,46 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage3(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage3(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let spartan_shift = ShiftSumcheckVerifier::new(
             self.proof.trace_length.log_2(),
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
         let spartan_instruction_input =
-            InstructionInputSumcheckVerifier::new(&self.opening_accumulator, &mut self.transcript);
+            InstructionInputSumcheckVerifier::new(&self.opening_accumulator, transcript);
         let spartan_registers_claim_reduction = RegistersClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &spartan_shift,
             &spartan_instruction_input,
             &spartan_registers_claim_reduction,
         ];
 
-        let (batching_coefficients, r_stage3) = BatchedSumcheck::verify(
-            &self.proof.stage3_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (batching_coefficients, r_stage3, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage3[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            Ok(StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage3,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[2],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -913,17 +984,20 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage4(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage4(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let registers_read_write_checking = RegistersReadWriteCheckingVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
             &self.proof.rw_config,
         );
         verifier_accumulate_advice::<F, VerifierOpeningAccumulator<F>>(
             self.proof.ram_K,
             &self.program_io,
-            self.proof.untrusted_advice_commitment.is_some(),
+            self.untrusted_advice_commitment.is_some(),
             self.trusted_advice_commitment.is_some(),
             &mut self.opening_accumulator,
         );
@@ -931,8 +1005,7 @@ impl<
             verifier_accumulate_program_image::<F>(self.proof.ram_K, &mut self.opening_accumulator);
         }
         // Domain-separate the batching challenge.
-        self.transcript.append_bytes(b"ram_val_check_gamma", &[]);
-        let ram_val_check_gamma: F = self.transcript.challenge_scalar::<F>();
+        let ram_val_check_gamma: F = transcript.challenge_field();
         let initial_ram_state = if self.preprocessing.shared.program.is_full() {
             crate::zkvm::ram::gen_ram_initial_memory_state::<F>(
                 self.proof.ram_K,
@@ -968,48 +1041,26 @@ impl<
             self.preprocessing.shared.program.is_committed(),
         );
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![&registers_read_write_checking, &ram_val_check];
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&registers_read_write_checking, &ram_val_check];
 
-        let (batching_coefficients, r_stage4) = BatchedSumcheck::verify(
-            &self.proof.stage4_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (batching_coefficients, r_stage4, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage4[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            Ok(StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage4,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[3],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -1019,70 +1070,50 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage5(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage5(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
 
         let lookups_read_raf = InstructionReadRafSumcheckVerifier::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
         let ram_ra_reduction = RamRaClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
         let registers_val_evaluation =
             RegistersValEvaluationSumcheckVerifier::new(&self.opening_accumulator);
 
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &lookups_read_raf,
             &ram_ra_reduction,
             &registers_val_evaluation,
         ];
 
-        let (batching_coefficients, r_stage5) = BatchedSumcheck::verify(
-            &self.proof.stage5_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (batching_coefficients, r_stage5, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage5[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            Ok(StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage5,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[4],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -1094,6 +1125,7 @@ impl<
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
     fn verify_stage6(
         &mut self,
+        transcript: &mut impl VerifierFs<F>,
     ) -> Result<(StageVerifyResult<F>, StageVerifyResult<F>), ProofVerifyError> {
         let _ = DoryGlobals::initialize_main_with_log_embedding(
             self.one_hot_params.k_chunk,
@@ -1102,67 +1134,50 @@ impl<
             Some(self.proof.dory_layout),
         );
         let (bytecode_read_raf_params, booleanity_params, stage6a_result) =
-            self.verify_stage6a()?;
-        let stage6b_result = self.verify_stage6b(bytecode_read_raf_params, booleanity_params)?;
+            self.verify_stage6a(transcript)?;
+        let stage6b_result =
+            self.verify_stage6b(transcript, bytecode_read_raf_params, booleanity_params)?;
         Ok((stage6a_result, stage6b_result))
     }
 
-    fn verify_stage6a(&mut self) -> Result<Stage6aVerifyResult<F>, ProofVerifyError> {
+    #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
+    fn verify_stage6a(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<Stage6aVerifyResult<F>, ProofVerifyError> {
         let n_cycle_vars = self.proof.trace_length.log_2();
         let bytecode_read_raf = BytecodeReadRafAddressSumcheckVerifier::new(
             &self.preprocessing.shared.program,
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
         let booleanity = BooleanityAddressSumcheckVerifier::new(BooleanitySumcheckParams::new(
             n_cycle_vars,
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         ));
-        let instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![&bytecode_read_raf, &booleanity];
-        let (_batching_coefficients, r_stage6a) = BatchedSumcheck::verify(
-            &self.proof.stage6a_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )
-        .inspect_err(|err| tracing::error!("Stage 6a: {err}"))?;
+        let instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&bytecode_read_raf, &booleanity];
+        let (_batching_coefficients, r_stage6a, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )
+            .inspect_err(|err| tracing::error!("Stage 6a: {err}"))?;
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = _batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&_batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage6a[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            let stage_result = StageVerifyResult::new(
+            let stage_result = finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &_batching_coefficients,
                 r_stage6a,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[5],
             );
             Ok((
                 bytecode_read_raf.into_params(),
@@ -1183,6 +1198,7 @@ impl<
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
     fn verify_stage6b(
         &mut self,
+        transcript: &mut impl VerifierFs<F>,
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
         booleanity_params: BooleanitySumcheckParams<F>,
     ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
@@ -1194,24 +1210,24 @@ impl<
             self.proof.trace_length,
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
         let lookups_ra_virtual = LookupsRaSumcheckVerifier::new(
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
         let inc_reduction = IncClaimReductionSumcheckVerifier::new(
             self.proof.trace_length,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
 
         let main_total_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
             self.preprocessing.shared.program.is_committed(),
             self.trusted_advice_commitment.is_some(),
-            self.proof.untrusted_advice_commitment.is_some(),
+            self.untrusted_advice_commitment.is_some(),
         );
         let precommitted_scheduling_reference =
             PrecommittedClaimReduction::<F>::scheduling_reference(
@@ -1228,7 +1244,7 @@ impl<
                 &self.opening_accumulator,
             ));
         }
-        if self.proof.untrusted_advice_commitment.is_some() {
+        if self.untrusted_advice_commitment.is_some() {
             self.advice_reduction_verifier_untrusted = Some(AdviceClaimReductionVerifier::new(
                 AdviceKind::Untrusted,
                 self.program_io.memory_layout.max_untrusted_advice_size as usize,
@@ -1244,7 +1260,7 @@ impl<
                 bytecode_chunk_count,
                 precommitted_scheduling_reference,
                 &self.opening_accumulator,
-                &mut self.transcript,
+                transcript,
             );
             self.bytecode_reduction_verifier = Some(BytecodeClaimReductionVerifier::new(
                 bytecode_reduction_params,
@@ -1273,9 +1289,7 @@ impl<
             &self.opening_accumulator,
         );
 
-        let mut instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> = vec![
             &bytecode_read_raf,
             &booleanity,
             &ram_hamming_booleanity,
@@ -1296,45 +1310,24 @@ impl<
             instances.push(reduction);
         }
 
-        let (batching_coefficients, r_stage6b) = BatchedSumcheck::verify(
-            &self.proof.stage6b_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )
-        .inspect_err(|err| tracing::error!("Stage 6b: {err}"))?;
+        let (batching_coefficients, r_stage6b, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )
+            .inspect_err(|err| tracing::error!("Stage 6b: {err}"))?;
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage6b[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            Ok(StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage6b,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[6],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -1347,6 +1340,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     fn verify_blindfold(
         &mut self,
+        transcript: &mut impl VerifierFs<F>,
         sumcheck_challenges: &[Vec<F::Challenge>; 8],
         uniskip_challenges: [F::Challenge; 2],
         stage_output_constraints: &[Option<OutputClaimConstraint>; 8],
@@ -1365,16 +1359,23 @@ impl<
     ) -> Result<(), ProofVerifyError> {
         // Build stage configurations including uni-skip rounds.
         // Uni-skip rounds are the first round of stages 1 and 2 (indices 0 and 1).
-        let stage_proofs = [
-            &self.proof.stage1_sumcheck_proof,
-            &self.proof.stage2_sumcheck_proof,
-            &self.proof.stage3_sumcheck_proof,
-            &self.proof.stage4_sumcheck_proof,
-            &self.proof.stage5_sumcheck_proof,
-            &self.proof.stage6a_sumcheck_proof,
-            &self.proof.stage6b_sumcheck_proof,
-            &self.proof.stage7_sumcheck_proof,
-        ];
+        //
+        // The ZK commitments/degrees that used to live in the (now data-free) proof structs
+        // were read back from the NARG during each stage's verification; we feed BlindFold
+        // from those caches (`zk_sumcheck_readback` / `zk_uniskip_readback`) instead.
+        let zk_sumcheck_readback: Vec<&ZkSumcheckReadback<C>> = self
+            .zk_sumcheck_readback
+            .iter()
+            .map(|r| {
+                r.as_ref()
+                    .ok_or(ProofVerifyError::SumcheckVerificationError)
+            })
+            .collect::<Result<_, _>>()?;
+        let zk_uniskip_readback: Vec<&ZkUniSkipReadback<C>> = self
+            .zk_uniskip_readback
+            .iter()
+            .map(|r| r.as_ref().ok_or(ProofVerifyError::UniSkipVerificationError))
+            .collect::<Result<_, _>>()?;
 
         // Precompute power sums for uni-skip domains
         let outer_power_sums = LagrangeHelper::power_sums::<
@@ -1392,15 +1393,10 @@ impl<
         let mut regular_first_round_indices: Vec<usize> = Vec::new(); // 8 elements for all stages
         let mut last_round_indices: Vec<usize> = Vec::new();
 
-        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+        for (stage_idx, sumcheck_readback) in zk_sumcheck_readback.iter().enumerate() {
             // For stages 0 and 1 (Jolt stages 1 and 2), add uni-skip config first
             if stage_idx < 2 {
-                let uniskip_proof = if stage_idx == 0 {
-                    &self.proof.stage1_uni_skip_first_round_proof
-                } else {
-                    &self.proof.stage2_uni_skip_first_round_proof
-                };
-                let poly_degree = uniskip_proof.poly_degree();
+                let poly_degree = zk_uniskip_readback[stage_idx].poly_degree;
 
                 let power_sums: Vec<i128> = if stage_idx == 0 {
                     outer_power_sums.to_vec()
@@ -1422,18 +1418,9 @@ impl<
             // Record first regular round index for its input constraint
             regular_first_round_indices.push(stage_configs.len());
 
-            let round_poly_degrees = (0..proof.num_rounds())
-                .map(|round_idx| match proof {
-                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Clear(std_proof) => {
-                        std_proof.compressed_polys[round_idx]
-                            .coeffs_except_linear_term
-                            .len()
-                    }
-                    crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) => {
-                        zk_proof.poly_degrees[round_idx]
-                    }
-                })
-                .collect::<Vec<_>>();
+            // The per-round degrees come from the NARG read-back (one per round); the round
+            // count is derived from its length, not from any (now data-free) proof struct.
+            let round_poly_degrees = sumcheck_readback.poly_degrees.clone();
             stage_configs.push(StageConfig::new_chain_with_round_degrees(
                 round_poly_degrees,
             ));
@@ -1553,24 +1540,18 @@ impl<
             extra_constraint_challenges: stage8_data.constraint_coeffs.clone(),
         };
 
+        // Assemble the BlindFold input from the NARG read-back caches, in the same stage
+        // order as before (uni-skip first for stages 0–1, then the stage's round commitments).
         let mut round_commitments: Vec<C::G1> = Vec::new();
         let mut oc_row_commitments: Vec<C::G1> = Vec::new();
-        for (stage_idx, proof) in stage_proofs.iter().enumerate() {
+        for (stage_idx, sumcheck_readback) in zk_sumcheck_readback.iter().enumerate() {
             if stage_idx < 2 {
-                let uniskip_proof = if stage_idx == 0 {
-                    &self.proof.stage1_uni_skip_first_round_proof
-                } else {
-                    &self.proof.stage2_uni_skip_first_round_proof
-                };
-                if let UniSkipFirstRoundProofVariant::Zk(zk_uniskip) = uniskip_proof {
-                    round_commitments.push(zk_uniskip.commitment);
-                    oc_row_commitments.extend_from_slice(&zk_uniskip.output_claims_commitments);
-                }
+                let zk_uniskip = zk_uniskip_readback[stage_idx];
+                round_commitments.push(zk_uniskip.commitment);
+                oc_row_commitments.extend_from_slice(&zk_uniskip.output_claims_commitments);
             }
-            if let SumcheckInstanceProof::Zk(zk_proof) = proof {
-                round_commitments.extend(zk_proof.round_commitments.iter().cloned());
-                oc_row_commitments.extend_from_slice(&zk_proof.output_claims_commitments);
-            }
+            round_commitments.extend(sumcheck_readback.round_commitments.iter().cloned());
+            oc_row_commitments.extend_from_slice(&sumcheck_readback.output_claims_commitments);
         }
 
         let builder = VerifierR1CSBuilder::new_with_extra(
@@ -1600,14 +1581,9 @@ impl<
             PCS::eval_commitment_gens_verifier(&self.preprocessing.generators);
         let verifier =
             BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        self.transcript.append_label(b"BlindFold");
 
         verifier
-            .verify(
-                &self.proof.blindfold_proof,
-                &verifier_input,
-                &mut self.transcript,
-            )
+            .verify(verifier_input, transcript)
             .map_err(|e| ProofVerifyError::BlindFoldError(format!("{e:?}")))?;
 
         tracing::debug!(
@@ -1619,18 +1595,20 @@ impl<
     }
 
     #[cfg_attr(not(feature = "zk"), allow(unused_variables))]
-    fn verify_stage7(&mut self) -> Result<StageVerifyResult<F>, ProofVerifyError> {
+    fn verify_stage7(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<StageVerifyResult<F>, ProofVerifyError> {
         // Create verifier for HammingWeightClaimReduction
         // (r_cycle and r_addr_bool are extracted from Booleanity opening internally)
         let hw_verifier = HammingWeightClaimReductionVerifier::new(
             &self.one_hot_params,
             &self.opening_accumulator,
-            &mut self.transcript,
+            transcript,
         );
 
-        let mut instances: Vec<
-            &dyn SumcheckInstanceVerifier<F, ProofTranscript, VerifierOpeningAccumulator<F>>,
-        > = vec![&hw_verifier];
+        let mut instances: Vec<&dyn SumcheckInstanceVerifier<F, VerifierOpeningAccumulator<F>>> =
+            vec![&hw_verifier];
         if let Some(advice_reduction_verifier_trusted) =
             self.advice_reduction_verifier_trusted.as_mut()
         {
@@ -1692,44 +1670,23 @@ impl<
             }
         }
 
-        let (batching_coefficients, r_stage7) = BatchedSumcheck::verify(
-            &self.proof.stage7_sumcheck_proof,
-            instances.clone(),
-            &mut self.opening_accumulator,
-            &mut self.transcript,
-        )?;
+        let (batching_coefficients, r_stage7, zk_sumcheck_readback) =
+            BatchedSumcheck::verify::<F, C>(
+                self.proof.zk_mode,
+                instances.clone(),
+                &mut self.opening_accumulator,
+                transcript,
+            )?;
 
         #[cfg(feature = "zk")]
         {
-            let regular_oc_ids = self.opening_accumulator.take_pending_claim_ids();
-            let batched_output_constraint = batch_output_constraints(&instances);
-            let batched_input_constraint = batch_input_constraints(&instances);
-            let max_num_rounds = instances.iter().map(|i| i.num_rounds()).max().unwrap();
-            let mut output_constraint_challenge_values: Vec<F> = batching_coefficients.clone();
-            let mut input_constraint_challenge_values: Vec<F> =
-                scale_batching_coefficients(&batching_coefficients, &instances);
-            for instance in &instances {
-                let num_rounds = instance.num_rounds();
-                let offset = instance.round_offset(max_num_rounds);
-                let r_slice = &r_stage7[offset..offset + num_rounds];
-                output_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .output_constraint_challenge_values(r_slice),
-                );
-                input_constraint_challenge_values.extend(
-                    instance
-                        .get_params()
-                        .input_constraint_challenge_values(&self.opening_accumulator),
-                );
-            }
-            Ok(StageVerifyResult::new(
+            Ok(finish_regular_zk_stage(
+                &mut self.opening_accumulator,
+                &instances,
+                &batching_coefficients,
                 r_stage7,
-                batched_output_constraint,
-                output_constraint_challenge_values,
-                batched_input_constraint,
-                input_constraint_challenge_values,
-                vec![regular_oc_ids],
+                zk_sumcheck_readback,
+                &mut self.zk_sumcheck_readback[7],
             ))
         }
         #[cfg(not(feature = "zk"))]
@@ -1738,7 +1695,10 @@ impl<
         })
     }
 
-    fn verify_stage8(&mut self) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
+    fn verify_stage8(
+        &mut self,
+        transcript: &mut impl VerifierFs<F>,
+    ) -> Result<Stage8VerifyData<F>, ProofVerifyError> {
         let native_main_vars = self.proof.trace_length.log_2() + self.one_hot_params.log_k_chunk;
         let opening_point = compute_final_opening_point(
             &self.opening_accumulator,
@@ -1875,10 +1835,8 @@ impl<
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
-        self.transcript.append_scalars(b"rlc_claims", &claims);
-        let gamma_powers: Vec<F> = self
-            .transcript
-            .challenge_scalar_powers(polynomial_claims.len());
+        transcript.absorb(&claims);
+        let gamma_powers: Vec<F> = transcript.challenge_powers(polynomial_claims.len());
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()
             .zip(&scaling_factors)
@@ -1912,16 +1870,13 @@ impl<
         // Build commitments map
         let mut commitments_map = HashMap::new();
         let expected_polynomials = all_committed_polynomials(&self.one_hot_params);
-        if expected_polynomials.len() != self.proof.commitments.len() {
+        if expected_polynomials.len() != self.commitments.len() {
             return Err(ProofVerifyError::InvalidInputLength(
                 expected_polynomials.len(),
-                self.proof.commitments.len(),
+                self.commitments.len(),
             ));
         }
-        for (polynomial, commitment) in expected_polynomials
-            .into_iter()
-            .zip(&self.proof.commitments)
-        {
+        for (polynomial, commitment) in expected_polynomials.into_iter().zip(&self.commitments) {
             commitments_map.insert(polynomial, commitment.clone());
         }
 
@@ -1935,7 +1890,7 @@ impl<
                 commitments_map.insert(CommittedPolynomial::TrustedAdvice, commitment.clone());
             }
         }
-        if let Some(ref commitment) = self.proof.untrusted_advice_commitment {
+        if let Some(ref commitment) = self.untrusted_advice_commitment {
             if state
                 .polynomial_claims
                 .iter()
@@ -1978,7 +1933,7 @@ impl<
             PCS::verify(
                 &self.proof.joint_opening_proof,
                 &self.preprocessing.generators,
-                &mut self.transcript,
+                transcript,
                 &opening_point.r,
                 &F::zero(),
                 &joint_commitment,
@@ -1988,7 +1943,7 @@ impl<
             {
                 let y_com: C::G1 = PCS::eval_commitment(&self.proof.joint_opening_proof)
                     .ok_or(ProofVerifyError::InvalidOpeningProof)?;
-                bind_opening_inputs_zk::<F, C, _>(&mut self.transcript, &opening_point.r, &y_com);
+                bind_opening_inputs_zk::<F, C, _>(transcript, &opening_point.r, &y_com);
             }
             #[cfg(not(feature = "zk"))]
             {
@@ -1998,13 +1953,13 @@ impl<
             PCS::verify(
                 &self.proof.joint_opening_proof,
                 &self.preprocessing.generators,
-                &mut self.transcript,
+                transcript,
                 &opening_point.r,
                 &joint_claim,
                 &joint_commitment,
             )?;
 
-            bind_opening_inputs::<F, _>(&mut self.transcript, &opening_point.r, &joint_claim);
+            bind_opening_inputs::<F, _>(transcript, &opening_point.r, &joint_claim);
         }
 
         Ok(Stage8VerifyData {

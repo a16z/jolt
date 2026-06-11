@@ -117,7 +117,7 @@ where
     >;
     type VerifierRoundCommitment: Copy
         + HomomorphicCommitment<F::VerifierField>
-        + jolt_transcript::AppendToTranscript
+        + ark_serialize::CanonicalSerialize
         + serde::Serialize
         + serde::de::DeserializeOwned;
 

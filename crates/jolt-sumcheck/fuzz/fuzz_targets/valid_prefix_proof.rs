@@ -25,7 +25,7 @@
 use jolt_field::{Fr, ReducingBytes};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, FsAbsorb, FsChallenge};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -50,7 +50,7 @@ fuzz_target!(|data: &[u8]| {
     // `valid_rounds` rounds, so the proof is valid by construction up to
     // round `valid_rounds - 1` and the verifier's running sum after
     // ingesting those rounds matches what we compute below.
-    let mut prover_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
+    let mut pt = prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
     let mut running_sum = claimed_sum;
     let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
 
@@ -82,11 +82,17 @@ fuzz_target!(|data: &[u8]| {
             coeffs.extend_from_slice(&c_high);
             let poly = UnivariatePoly::new(coeffs);
 
-            // Mirror the verifier's transcript / challenge / evaluate sequence.
-            for c in poly.coefficients() {
-                c.append_to_transcript(&mut prover_transcript);
-            }
-            let r: Fr = prover_transcript.challenge();
+            // Mirror the verifier's transcript / challenge / evaluate sequence
+            // EXACTLY. The verifier absorbs the round polynomial as a single
+            // `absorb_field_slice(coefficients())` message (see
+            // `RoundMessage for UnivariatePoly`), so the prover side must too —
+            // absorbing coefficients one-by-one is a different sponge input and
+            // yields a different challenge. `pt` is a concrete `ProverState`,
+            // which carries spongefish's deprecated inherent `challenge`; call
+            // the `FsChallenge` trait method explicitly so we get the migrated
+            // challenge, not the inherent one.
+            pt.absorb_field_slice(poly.coefficients());
+            let r: Fr = FsChallenge::<Fr>::challenge(&mut pt);
             running_sum = poly.evaluate(r);
             round_proofs.push(poly);
         } else {
@@ -113,12 +119,12 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"jolt-sumcheck-valid-fuzz");
+    let mut vt = prover_transcript(b"jolt-sumcheck-valid-fuzz", [0u8; 32], Blake2b512::default());
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &round_proofs,
         BooleanHypercube,
-        &mut verifier_transcript,
+        &mut vt,
     );
 
     if valid_rounds == num_vars {

@@ -21,7 +21,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     utils::math::Math,
     zkvm::{config::ReadWriteConfig, ram::remap_address, witness::VirtualPolynomial},
 };
@@ -60,11 +60,11 @@ impl<F: JoltField> OutputSumcheckParams<F> {
     pub fn new(
         ram_K: usize,
         program_io: &JoltDevice,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
         trace_len: usize,
         rw_config: &ReadWriteConfig,
     ) -> Self {
-        let r_address = transcript.challenge_vector_optimized::<F>(ram_K.log_2());
+        let r_address = transcript.challenge_optimized_vec(ram_K.log_2());
         Self {
             K: ram_K,
             log_T: trace_len.log_2(),
@@ -264,7 +264,7 @@ impl<F: JoltField> OutputSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for OutputSumcheckProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for OutputSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -379,7 +379,7 @@ impl<F: JoltField> OutputSumcheckVerifier<F> {
     pub fn new(
         ram_K: usize,
         program_io: &JoltDevice,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
         trace_len: usize,
         rw_config: &ReadWriteConfig,
     ) -> Self {
@@ -388,8 +388,8 @@ impl<F: JoltField> OutputSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for OutputSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for OutputSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params

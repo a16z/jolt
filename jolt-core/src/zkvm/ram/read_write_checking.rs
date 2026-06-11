@@ -33,7 +33,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{OpeningPoint, ProverOpeningAccumulator, SumcheckId, BIG_ENDIAN},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     utils::math::Math,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
@@ -76,12 +76,12 @@ pub struct RamReadWriteCheckingParams<F: JoltField> {
 impl<F: JoltField> RamReadWriteCheckingParams<F> {
     pub fn new(
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
         one_hot_params: &OneHotParams,
         trace_length: usize,
         config: &ReadWriteConfig,
     ) -> Self {
-        let gamma = transcript.challenge_scalar();
+        let gamma = transcript.challenge_field();
         let (r_cycle, _) = opening_accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::RamReadValue,
             SumcheckId::SpartanOuter,
@@ -638,7 +638,7 @@ impl<F: JoltField> RamReadWriteCheckingProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for RamReadWriteCheckingProver<F> {
+impl<F: JoltField> SumcheckInstanceProver<F> for RamReadWriteCheckingProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -705,7 +705,7 @@ pub struct RamReadWriteCheckingVerifier<F: JoltField> {
 impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     pub fn new(
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
         one_hot_params: &OneHotParams,
         trace_length: usize,
         config: &ReadWriteConfig,
@@ -721,8 +721,8 @@ impl<F: JoltField> RamReadWriteCheckingVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for RamReadWriteCheckingVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for RamReadWriteCheckingVerifier<F>
 {
     fn input_claim(&self, accumulator: &A) -> F {
         let result = self.params.input_claim(accumulator);

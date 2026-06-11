@@ -1,15 +1,12 @@
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::sumcheck_verifier::SumcheckInstanceParams;
-use crate::transcripts::Transcript;
 
 use crate::{
     field::{JoltField, MaybeAllocative},
     poly::opening_proof::ProverOpeningAccumulator,
 };
 
-pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
-    Send + Sync + MaybeAllocative
-{
+pub trait SumcheckInstanceProver<F: JoltField>: Send + Sync + MaybeAllocative {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F>;
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {

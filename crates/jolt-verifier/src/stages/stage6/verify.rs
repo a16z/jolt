@@ -19,7 +19,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::try_eq_mle;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
-use jolt_transcript::Transcript;
+use jolt_transcript::FsTranscript;
 use num_traits::{One, Zero};
 
 use super::{
@@ -78,7 +78,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FsTranscript<PCS::Field>,
 {
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {

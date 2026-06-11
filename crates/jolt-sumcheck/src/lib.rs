@@ -50,10 +50,11 @@
 //!   via front-loaded padding.
 //!
 //! ## Per-round proof types
-//! - [`RoundMessage`] — degree bound and transcript absorption.
+//! - [`RoundDegree`] — field-agnostic degree bound.
+//! - [`RoundMessage`] — transcript absorption (over a challenge field `F`).
 //! - [`ClearRound<F>`] — clear round polynomial evaluation and well-formedness.
-//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw, unlabelled absorb.
-//! - [`LabeledRoundPoly`] — borrowed wrapper adding a `LabelWithCount` prefix.
+//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw round-coefficient absorb.
+//! - [`LabeledRoundPoly`] — borrowed round-polynomial wrapper.
 //! - [`CompressedLabeledRoundPoly`] — borrowed wrapper using the compressed
 //!   wire format (omits the linear coefficient).
 //!
@@ -82,20 +83,15 @@ pub mod verifier;
 #[cfg(test)]
 mod tests;
 
-/// Transcript label used for ordinary sumcheck round polynomials.
-pub const SUMCHECK_ROUND_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_poly";
-/// Transcript label used for univariate-skip round polynomials.
-pub const UNISKIP_ROUND_TRANSCRIPT_LABEL: &[u8] = b"uniskip_poly";
-/// Transcript label used when a sumcheck claim scalar is absorbed before batching.
-pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
-
-/// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
-pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
+/// Absorbs a sumcheck claim scalar. Like jolt-core, no domain-separation label
+/// is absorbed — claims are separated positionally and by the transcript's
+/// one-time `DomainSeparator`/instance.
+pub fn append_sumcheck_claim<F, T>(transcript: &mut T, claim: &F)
 where
-    A: jolt_transcript::AppendToTranscript,
-    T: jolt_transcript::Transcript,
+    F: jolt_field::Field,
+    T: jolt_transcript::FsTranscript<F>,
 {
-    transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
+    transcript.absorb_field(claim);
 }
 
 pub use batched_verifier::{
@@ -115,6 +111,8 @@ pub use r1cs::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
-pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
+pub use round_proof::{
+    ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundDegree, RoundMessage,
+};
 pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;

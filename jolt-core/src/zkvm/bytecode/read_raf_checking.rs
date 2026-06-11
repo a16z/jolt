@@ -35,7 +35,7 @@ use crate::{
         sumcheck_prover::SumcheckInstanceProver,
         sumcheck_verifier::{SumcheckInstanceParams, SumcheckInstanceVerifier},
     },
-    transcripts::Transcript,
+    transcript_msgs::FsChallenge,
     utils::{math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
     zkvm::{
         bytecode::BytecodePreprocessing,
@@ -73,8 +73,8 @@ const N_STAGES: usize = 5;
 /// of degree `d + 1` (cubic only when `d = 2`).
 ///
 /// Challenge notation:
-/// - γ: the stage-folding scalar with powers `params.gamma_powers = transcript.challenge_scalar_powers(8)` (7 stage-folding terms plus `γ_entry` at index 7 for the entry-point constraint).
-/// - β_s: per-stage scalars used *within* Val_s encodings (`stage{s}_gammas = transcript.challenge_scalar_powers(...)`),
+/// - γ: the stage-folding scalar with powers `params.gamma_powers = transcript.challenge_powers(8)` (7 stage-folding terms plus `γ_entry` at index 7 for the entry-point constraint).
+/// - β_s: per-stage scalars used *within* Val_s encodings (`stage{s}_gammas = transcript.challenge_powers(...)`),
 ///   sampled separately for each stage.
 ///
 /// Mathematical claim:
@@ -334,9 +334,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for BytecodeReadRafAddressSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for BytecodeReadRafAddressSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -633,9 +631,7 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckProver<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
-    for BytecodeReadRafCycleSumcheckProver<F>
-{
+impl<F: JoltField> SumcheckInstanceProver<F> for BytecodeReadRafCycleSumcheckProver<F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -658,7 +654,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn compute_message(&mut self, _round: usize, _previous_claim: F) -> UniPoly<F> {
-        let degree = <Self as SumcheckInstanceProver<F, T>>::degree(self);
+        let degree = <Self as SumcheckInstanceProver<F>>::degree(self);
 
         let out_len = self.gruen_eq_polys[0].E_out_current().len();
         let in_len = self.gruen_eq_polys[0].E_in_current().len();
@@ -822,7 +818,7 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let params = BytecodeReadRafSumcheckParams::gen(
             program,
@@ -842,8 +838,8 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for BytecodeReadRafAddressSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for BytecodeReadRafAddressSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -911,8 +907,8 @@ impl<F: JoltField> BytecodeReadRafCycleSumcheckVerifier<F> {
     }
 }
 
-impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
-    SumcheckInstanceVerifier<F, T, A> for BytecodeReadRafCycleSumcheckVerifier<F>
+impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVerifier<F, A>
+    for BytecodeReadRafCycleSumcheckVerifier<F>
 {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
@@ -1626,21 +1622,21 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         n_cycle_vars: usize,
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
-        transcript: &mut impl Transcript,
+        transcript: &mut impl FsChallenge<F>,
     ) -> Self {
         let program_mode = if program.is_committed() {
             ProgramMode::Committed
         } else {
             ProgramMode::Full
         };
-        let gamma_powers = transcript.challenge_scalar_powers(8);
+        let gamma_powers = transcript.challenge_powers(8);
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
-        let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
-        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(4);
-        let stage3_gammas: Vec<F> = transcript.challenge_scalar_powers(9);
-        let stage4_gammas: Vec<F> = transcript.challenge_scalar_powers(3);
-        let stage5_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
+        let stage1_gammas: Vec<F> = transcript.challenge_powers(2 + NUM_CIRCUIT_FLAGS);
+        let stage2_gammas: Vec<F> = transcript.challenge_powers(4);
+        let stage3_gammas: Vec<F> = transcript.challenge_powers(9);
+        let stage4_gammas: Vec<F> = transcript.challenge_powers(3);
+        let stage5_gammas: Vec<F> = transcript.challenge_powers(2 + NUM_LOOKUP_TABLES);
 
         // Compute rv_claims (these don't iterate bytecode, just query opening accumulator)
         let rv_claim_1 = Self::compute_rv_claim_1(opening_accumulator, &stage1_gammas);
