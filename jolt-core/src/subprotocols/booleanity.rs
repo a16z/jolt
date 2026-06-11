@@ -641,9 +641,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanityAddressPhaseParams<F>
     }
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut r = challenges.to_vec();
-        r.reverse();
-        OpeningPoint::new(r)
+        self.common.normalize_opening_point(challenges)
     }
 
     #[cfg(feature = "zk")]
@@ -722,10 +720,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanityCyclePhaseParams<F> {
     }
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut opening_point = self.full_challenges(challenges);
-        opening_point[..self.common.log_k_chunk].reverse();
-        opening_point[self.common.log_k_chunk..].reverse();
-        opening_point.into()
+        self.common
+            .normalize_opening_point(&self.full_challenges(challenges))
     }
 
     #[cfg(feature = "zk")]

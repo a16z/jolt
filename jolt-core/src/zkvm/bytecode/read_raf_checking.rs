@@ -1075,10 +1075,8 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafCyclePhaseParams
     }
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut r = self.full_challenges(challenges);
-        r[0..self.log_K].reverse();
-        r[self.log_K..].reverse();
-        OpeningPoint::new(r)
+        self.inner
+            .normalize_opening_point(&self.full_challenges(challenges))
     }
 
     #[cfg(feature = "zk")]
@@ -1262,9 +1260,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafAddressPhasePara
     }
 
     fn normalize_opening_point(&self, challenges: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
-        let mut r = challenges.to_vec();
-        r.reverse();
-        OpeningPoint::new(r)
+        self.inner.normalize_opening_point(challenges)
     }
 
     #[cfg(feature = "zk")]
