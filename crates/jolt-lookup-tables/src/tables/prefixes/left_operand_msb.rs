@@ -3,7 +3,7 @@ use jolt_field::Field;
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
 
-use super::{PrefixCheckpoint, PrefixEval, Prefixes, SparseDensePrefix};
+use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum LeftOperandMsbPrefix {}
 
@@ -20,40 +20,5 @@ impl<F: Field> SparseDensePrefix<F> for LeftOperandMsbPrefix {
         // Phase 0: MSB of x is the MSB of the interleaved bits
         let (x, _) = b.uninterleave();
         F::from_u64(u64::from(x) >> (x.len() - 1))
-    }
-
-    fn prefix_mle(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
-        c: u32,
-        b: LookupBits,
-        j: usize,
-    ) -> F {
-        let _ = (checkpoints, r_x, c, b, j);
-        if j == 0 {
-            F::from_u32(c)
-        } else if j == 1 {
-            let Some(r_x) = r_x else {
-                unreachable!("r_x is bound in odd rounds")
-            };
-            r_x
-        } else {
-            checkpoints[Prefixes::LeftOperandMsb].unwrap_or(F::zero())
-        }
-    }
-
-    fn update_prefix_checkpoint(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
-        j: usize,
-        suffix_len: usize,
-    ) -> PrefixCheckpoint<F> {
-        let _ = (checkpoints, r_x, r_y, j, suffix_len);
-        if j == 1 {
-            Some(r_x).into()
-        } else {
-            checkpoints[Prefixes::LeftOperandMsb].into()
-        }
     }
 }

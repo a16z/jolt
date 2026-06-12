@@ -3,7 +3,7 @@ use jolt_field::Field;
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
 
-use super::{PrefixCheckpoint, PrefixEval, Prefixes, SparseDensePrefix};
+use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum PositiveRemainderEqualsDivisorPrefix {}
 
@@ -30,84 +30,5 @@ impl<F: Field> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix {
         }
 
         checkpoints[Prefixes::PositiveRemainderEqualsDivisor]
-    }
-
-    fn prefix_mle(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<F>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F {
-        let _ = (checkpoints, r_x, c, b, j);
-        if j == 0 {
-            let divisor_sign = F::from_u8(b.pop_msb());
-            let (remainder, divisor) = b.uninterleave();
-            if u64::from(remainder) != u64::from(divisor) {
-                return F::zero();
-            }
-            // `c` is the sign "bit" of the remainder.
-            // This prefix handles the case where both remainder and divisor
-            // are positive, i.e. their sign bits are zero.
-            return (F::one() - F::from_u32(c)) * (F::one() - divisor_sign);
-        }
-        if j == 1 {
-            let (remainder, divisor) = b.uninterleave();
-            if u64::from(remainder) != u64::from(divisor) {
-                return F::zero();
-            }
-            let Some(r_x) = r_x else {
-                unreachable!("r_x is bound in odd rounds")
-            };
-            // `r_x` is the sign "bit" of the remainder.
-            // `c` is the sign "bit" of the divisor.
-            // This prefix handles the case where both remainder and divisor
-            // are positive, i.e. their sign bits are zero.
-            return (F::one() - r_x) * (F::one() - F::from_u32(c));
-        }
-
-        let positive_remainder_equals_divisor =
-            checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap_or(F::one());
-
-        if let Some(r_x) = r_x {
-            let (remainder, divisor) = b.uninterleave();
-            // Short-circuit if low-order bits of remainder and divisor are not equal
-            if u64::from(remainder) != u64::from(divisor) {
-                return F::zero();
-            }
-            let y = F::from_u32(c);
-            positive_remainder_equals_divisor * (r_x * y + (F::one() - r_x) * (F::one() - y))
-        } else {
-            let y = F::from_u8(b.pop_msb());
-            let (remainder, divisor) = b.uninterleave();
-            // Short-circuit if low-order bits of remainder and divisor are not equal
-            if u64::from(remainder) != u64::from(divisor) {
-                return F::zero();
-            }
-            let x = F::from_u32(c);
-            positive_remainder_equals_divisor * (x * y + (F::one() - x) * (F::one() - y))
-        }
-    }
-
-    fn update_prefix_checkpoint(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: F,
-        r_y: F,
-        j: usize,
-        suffix_len: usize,
-    ) -> PrefixCheckpoint<F> {
-        let _ = (checkpoints, r_x, r_y, j, suffix_len);
-        if j == 1 {
-            // `r_x` is the sign bit of the remainder
-            // `r_y` is the sign bit of the divisor
-            // This prefix handles the case where both remainder and divisor
-            // are positive, i.e. their sign bits are zero.
-            return Some((F::one() - r_x) * (F::one() - r_y)).into();
-        }
-
-        let mut positive_remainder_equals_divisor =
-            checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap_or(F::one());
-        positive_remainder_equals_divisor *= r_x * r_y + (F::one() - r_x) * (F::one() - r_y);
-        Some(positive_remainder_equals_divisor).into()
     }
 }
