@@ -30,7 +30,7 @@ use jolt_claims::protocols::jolt::{
         },
     },
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-    JoltVirtualPolynomial,
+    JoltVirtualPolynomial, PrecommittedReductionLayout,
 };
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
