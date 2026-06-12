@@ -6,8 +6,9 @@ use jolt_r1cs::{ConstraintMatrices, R1csBuilder, Variable};
 use jolt_sumcheck::{CommittedOutputClaims, CommittedSumcheckConsistency};
 
 use crate::{
-    r1cs::Layout, BlindFoldProtocolBuilder, BlindFoldStatement, Error, RelaxedError,
-    RelaxedInstance, VerificationError,
+    r1cs::{build_with_sources, Layout},
+    BlindFoldProtocolBuilder, BlindFoldStatement, Error, RelaxedError, RelaxedInstance,
+    VerificationError,
 };
 
 #[derive(Clone, Debug)]
@@ -438,6 +439,7 @@ where
     ) -> Result<(ConstraintMatrices<F>, Layout), VerificationError<F>> {
         let mut r1cs = R1csBuilder::new();
         let layout = self.build_with_sources(&mut r1cs, publics, challenges)?;
+
         Ok((r1cs.into_matrices(), layout))
     }
 }
