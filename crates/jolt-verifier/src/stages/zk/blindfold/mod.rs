@@ -737,35 +737,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let present = match kind {
-        JoltAdviceKind::Trusted => input.checked.trusted_advice_commitment_present,
-        JoltAdviceKind::Untrusted => input.proof.untrusted_advice_commitment.is_some(),
-    };
-    present.then(|| {
-        let log_t = input.checked.trace_length.ilog2() as usize;
-        let max_size = match kind {
-            JoltAdviceKind::Trusted => {
-                input
-                    .checked
-                    .public_io
-                    .memory_layout
-                    .max_trusted_advice_size as usize
-            }
-            JoltAdviceKind::Untrusted => {
-                input
-                    .checked
-                    .public_io
-                    .memory_layout
-                    .max_untrusted_advice_size as usize
-            }
-        };
-        AdviceClaimReductionLayout::balanced(
-            input.proof.trace_polynomial_order,
-            log_t,
-            input.proof.one_hot_config.committed_chunk_bits(),
-            max_size,
-        )
-    })
+    input.checked.precommitted.advice(kind).cloned()
 }
 
 #[expect(
@@ -1139,6 +1111,12 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    // The cycle-phase relation references `FinalScale` only when the reduction
+    // finalizes at the cycle-phase handoff; otherwise the stage 7 address
+    // phase supplies it.
+    if layout.dimensions().has_address_phase() {
+        return Ok(());
+    }
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
         .cycle_phase_final_output_scale(&source_point, &public.sumcheck_point)

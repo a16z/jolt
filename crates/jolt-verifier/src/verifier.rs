@@ -15,6 +15,7 @@ use crate::{
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
+        PrecommittedSchedule,
     },
     VerifierError,
 };
@@ -152,6 +153,7 @@ pub struct CheckedInputs {
     pub preprocessing_digest: [u8; 32],
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
+    pub precommitted: PrecommittedSchedule,
 }
 
 pub fn validate_inputs<PCS, VC, ZkProof>(
@@ -231,6 +233,23 @@ where
             .map_or(0, |position| position + 1),
     );
 
+    let precommitted = PrecommittedSchedule::new(
+        proof.trace_polynomial_order,
+        proof.trace_length.ilog2() as usize,
+        proof.one_hot_config.committed_chunk_bits(),
+        trusted_advice_commitment_present
+            .then_some(preprocessing.program.memory_layout.max_trusted_advice_size as usize),
+        proof.untrusted_advice_commitment.is_some().then_some(
+            preprocessing
+                .program
+                .memory_layout
+                .max_untrusted_advice_size as usize,
+        ),
+    )
+    .map_err(|error| VerifierError::InvalidPrecommittedSchedule {
+        reason: error.to_string(),
+    })?;
+
     Ok(CheckedInputs {
         public_io: normalized_public_io,
         zk,
@@ -240,6 +259,7 @@ where
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
         vc_capacity,
+        precommitted,
     })
 }
 

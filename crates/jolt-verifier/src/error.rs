@@ -68,6 +68,9 @@ pub enum VerifierError {
     #[error("invalid verifier memory layout: {reason}")]
     InvalidMemoryLayout { reason: String },
 
+    #[error("invalid precommitted claim-reduction schedule: {reason}")]
+    InvalidPrecommittedSchedule { reason: String },
+
     #[error("missing stage claim opening input {id:?}")]
     MissingStageClaimOpening { id: JoltOpeningId },
 

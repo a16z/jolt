@@ -62,27 +62,6 @@ impl TracePolynomialOrder {
         }
     }
 
-    pub fn commitment_opening_point<F: Field>(
-        self,
-        opening_point: &[F],
-        log_t: usize,
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        match self {
-            Self::CycleMajor => Ok(opening_point.to_vec()),
-            Self::AddressMajor => {
-                if opening_point.len() < log_t {
-                    return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-                        expected: log_t,
-                        got: opening_point.len(),
-                    });
-                }
-                let log_k = opening_point.len() - log_t;
-                let (r_address, r_cycle) = opening_point.split_at(log_k);
-                Ok([r_cycle, r_address].concat())
-            }
-        }
-    }
-
     pub const fn address_cycle_to_index(
         self,
         address: usize,
@@ -543,8 +522,10 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::super::claim_reductions::advice::AdviceClaimReductionLayout;
+    use super::super::claim_reductions::precommitted::PrecommittedClaimReduction;
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_poly::EqPolynomial;
 
     fn dimensions() -> JoltOneHotDimensions {
         JoltOneHotDimensions {
@@ -655,20 +636,39 @@ mod tests {
         );
     }
 
+    fn advice_layout(
+        trace_order: TracePolynomialOrder,
+        log_t: usize,
+        log_k_chunk: usize,
+        max_advice_size_bytes: usize,
+    ) -> AdviceClaimReductionLayout {
+        let advice_vars =
+            CommitmentMatrixShape::advice_from_max_bytes(max_advice_size_bytes).total_vars();
+        let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
+            log_t + log_k_chunk,
+            &[advice_vars],
+            log_k_chunk,
+        );
+        AdviceClaimReductionLayout::balanced(
+            trace_order,
+            log_t,
+            scheduling_reference,
+            max_advice_size_bytes,
+        )
+        .unwrap_or_else(|error| panic!("advice layout should build: {error}"))
+    }
+
     #[test]
     fn advice_layout_extracts_cycle_phase_variables_without_dory_globals() {
-        let layout =
-            AdviceClaimReductionLayout::balanced(TracePolynomialOrder::CycleMajor, 8, 4, 64);
-        let challenges = (1..=7).map(Fr::from_u64).collect::<Vec<_>>();
+        let layout = advice_layout(TracePolynomialOrder::CycleMajor, 8, 4, 64);
+        let challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
 
-        assert_eq!(layout.main_shape(), CommitmentMatrixShape::new(6, 6));
         assert_eq!(layout.advice_shape(), CommitmentMatrixShape::new(2, 1));
-        assert_eq!(layout.cycle_phase_col_rounds(), 0..2);
-        assert_eq!(layout.cycle_phase_row_rounds(), 6..7);
-        assert_eq!(layout.cycle_phase_rounds(), 7);
-        assert_eq!(layout.active_cycle_phase_rounds(), 3);
-        assert_eq!(layout.address_phase_rounds(), 0);
-        assert_eq!(layout.dummy_cycle_phase_rounds(), 4);
+        assert_eq!(layout.precommitted().cycle_phase_rounds(), &[0, 1, 6]);
+        assert_eq!(layout.precommitted().num_address_phase_rounds(), 0);
+        assert_eq!(layout.dimensions().cycle_phase_total_rounds(), 8);
+        assert_eq!(layout.dimensions().address_phase_total_rounds(), 4);
+        assert!(!layout.dimensions().has_address_phase());
         assert_eq!(
             layout
                 .cycle_phase_variable_challenges(&challenges)
@@ -685,23 +685,26 @@ mod tests {
 
     #[test]
     fn advice_layout_extracts_address_phase_point_without_dory_globals() {
-        let layout = AdviceClaimReductionLayout::new(
-            TracePolynomialOrder::CycleMajor,
-            8,
-            4,
-            CommitmentMatrixShape::balanced(12),
-            CommitmentMatrixShape::balanced(8),
-        );
+        // 2048 bytes = 256 words: an 8-variable advice polynomial with shape (4, 4).
+        let layout = advice_layout(TracePolynomialOrder::CycleMajor, 8, 4, 2048);
         let cycle_challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
         let cycle_vars = layout
             .cycle_phase_variable_challenges(&cycle_challenges)
             .unwrap_or_else(|error| panic!("cycle variables should extract: {error}"));
-        let address_challenges = [Fr::from_u64(101), Fr::from_u64(102)];
+        let address_challenges = [
+            Fr::from_u64(101),
+            Fr::from_u64(102),
+            Fr::from_u64(103),
+            Fr::from_u64(104),
+        ];
 
-        assert_eq!(layout.cycle_phase_col_rounds(), 0..4);
-        assert_eq!(layout.cycle_phase_row_rounds(), 6..8);
-        assert_eq!(layout.active_cycle_phase_rounds(), 6);
-        assert_eq!(layout.address_phase_rounds(), 2);
+        assert_eq!(layout.advice_shape(), CommitmentMatrixShape::new(4, 4));
+        assert_eq!(
+            layout.precommitted().cycle_phase_rounds(),
+            &[0, 1, 2, 3, 6, 7]
+        );
+        assert_eq!(layout.precommitted().address_phase_rounds(), &[0, 1]);
+        assert!(layout.dimensions().has_address_phase());
         assert_eq!(
             layout
                 .address_phase_opening_point(&cycle_vars, &address_challenges)
@@ -721,43 +724,48 @@ mod tests {
 
     #[test]
     fn advice_layout_tracks_address_major_cycle_gap() {
-        let layout =
-            AdviceClaimReductionLayout::balanced(TracePolynomialOrder::AddressMajor, 8, 4, 64);
-        let challenges = (1..=3).map(Fr::from_u64).collect::<Vec<_>>();
+        let layout = advice_layout(TracePolynomialOrder::AddressMajor, 8, 4, 64);
+        let challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
         let cycle_vars = layout
             .cycle_phase_variable_challenges(&challenges)
             .unwrap_or_else(|error| panic!("cycle variables should extract: {error}"));
+        let address_challenges = [
+            Fr::from_u64(101),
+            Fr::from_u64(102),
+            Fr::from_u64(103),
+            Fr::from_u64(104),
+        ];
 
-        assert_eq!(layout.cycle_phase_col_rounds(), 0..0);
-        assert_eq!(layout.cycle_phase_row_rounds(), 2..3);
-        assert_eq!(layout.cycle_phase_rounds(), 3);
-        assert_eq!(layout.active_cycle_phase_rounds(), 1);
-        assert_eq!(layout.address_phase_rounds(), 2);
-        assert_eq!(layout.dummy_cycle_phase_rounds(), 2);
+        assert_eq!(layout.precommitted().cycle_phase_rounds(), &[2]);
+        assert_eq!(layout.precommitted().address_phase_rounds(), &[0, 1]);
+        assert_eq!(layout.dimensions().cycle_phase_total_rounds(), 8);
+        assert_eq!(layout.dimensions().address_phase_total_rounds(), 4);
+        assert!(layout.dimensions().has_address_phase());
         assert_eq!(cycle_vars, vec![Fr::from_u64(3)]);
         assert_eq!(
             layout
-                .address_phase_opening_point(&cycle_vars, &[Fr::from_u64(101), Fr::from_u64(102)])
+                .address_phase_opening_point(&cycle_vars, &address_challenges)
                 .unwrap_or_else(|error| panic!("address phase point should normalize: {error}")),
             vec![Fr::from_u64(3), Fr::from_u64(102), Fr::from_u64(101)]
         );
     }
 
     #[test]
-    fn advice_final_output_scale_includes_cycle_phase_dummy_rounds() {
-        let layout =
-            AdviceClaimReductionLayout::balanced(TracePolynomialOrder::AddressMajor, 8, 4, 64);
-        let challenges = [Fr::from_u64(11), Fr::from_u64(12), Fr::from_u64(1)];
-        let opening_point = layout
-            .cycle_phase_opening_point(&challenges)
-            .unwrap_or_else(|error| panic!("cycle phase point should normalize: {error}"));
+    fn advice_final_output_scale_includes_cycle_phase_skip_rounds() {
+        let layout = advice_layout(TracePolynomialOrder::CycleMajor, 8, 4, 64);
+        let challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
+        // Permutation order for the active cycle rounds is [6, 1, 0].
+        let permuted_point = [Fr::from_u64(7), Fr::from_u64(2), Fr::from_u64(1)];
+        let reference_point = [Fr::from_u64(101), Fr::from_u64(102), Fr::from_u64(103)];
         let two_inv = Fr::from_u64(2).inv_or_zero();
+        let skip_scale = (0..5).fold(Fr::from_u64(1), |scale, _| scale * two_inv);
+        let expected = EqPolynomial::<Fr>::mle(&permuted_point, &reference_point) * skip_scale;
 
         assert_eq!(
             layout
-                .cycle_phase_final_output_scale(&opening_point, &challenges)
+                .cycle_phase_final_output_scale(&reference_point, &challenges)
                 .unwrap_or_else(|error| panic!("final output scale should compute: {error}")),
-            two_inv * two_inv
+            expected
         );
     }
 
