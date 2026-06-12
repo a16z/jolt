@@ -9,9 +9,9 @@ use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use super::inputs::Stage6Claims;
 pub use super::outputs_a::{Stage6AddressPhasePublicOutput, VerifiedStage6AddressPhaseSumcheck};
 pub use super::outputs_b::{
-    AdviceCyclePhasePublicOutput, BooleanityPublicOutput, BytecodeCyclePhasePublicOutput,
-    BytecodeReadRafPublicOutput, BytecodeReductionWeights, InstructionRaVirtualizationPublicOutput,
-    ProgramImageCyclePhasePublicOutput, RamRaVirtualizationPublicOutput,
+    AdviceCyclePhasePublicOutput, BooleanityPublicOutput, BytecodeReadRafPublicOutput,
+    BytecodeReductionWeights, CommittedReductionCyclePhasePublicOutput,
+    InstructionRaVirtualizationPublicOutput, RamRaVirtualizationPublicOutput,
     Stage6SumcheckPublicOutput, VerifiedAdviceCyclePhaseSumcheck, VerifiedBooleanitySumcheck,
     VerifiedBytecodeCyclePhaseSumcheck, VerifiedBytecodeReadRafSumcheck,
     VerifiedInstructionRaVirtualizationSumcheck, VerifiedProgramImageCyclePhaseSumcheck,
@@ -36,8 +36,8 @@ pub struct Stage6PublicOutput<F: Field> {
     pub instruction_ra_gamma_powers: Vec<F>,
     pub inc_gamma: F,
     /// Committed program mode only: bytecode claim-reduction batching
-    /// challenge.
-    pub eta: Option<F>,
+    /// challenge (core's `eta`).
+    pub bytecode_reduction_eta: Option<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,8 +64,8 @@ pub struct Stage6ZkOutput<F: Field, C> {
     pub inc_claim_reduction: Stage6SumcheckPublicOutput<F>,
     pub trusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
     pub untrusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
-    pub bytecode_cycle_phase: Option<BytecodeCyclePhasePublicOutput<F>>,
-    pub program_image_cycle_phase: Option<ProgramImageCyclePhasePublicOutput<F>>,
+    pub bytecode_cycle_phase: Option<CommittedReductionCyclePhasePublicOutput<F>>,
+    pub program_image_cycle_phase: Option<CommittedReductionCyclePhasePublicOutput<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1443,7 +1443,6 @@ fn convert_preprocessing(
                 },
                 memory_layout: preprocessing.shared.memory_layout.clone(),
                 max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
                 bytecode_chunk_commitments: committed
                     .bytecode_commitments
                     .commitments

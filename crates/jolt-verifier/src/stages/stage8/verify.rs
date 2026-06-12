@@ -272,19 +272,19 @@ where
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
 {
-    let advice_final = |polynomial: JoltCommittedPolynomial| {
+    let precommitted_final = |polynomial: JoltCommittedPolynomial| {
         precommitted_finals
             .iter()
             .find(|opening| opening.polynomial == polynomial)
     };
-    let include_trusted = advice_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
-    let include_untrusted = advice_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
+    let include_trusted = precommitted_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
+    let include_untrusted = precommitted_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
     let committed_program = preprocessing.program.committed();
     let order = final_opening_polynomial_order(
         layout,
         include_trusted,
         include_untrusted,
-        committed_program.map(|committed| committed.bytecode_chunk_count),
+        committed_program.map(|committed| committed.bytecode_chunk_count()),
     );
 
     let mut entries = Vec::with_capacity(order.len() + field_inline_final_opening_count());
@@ -361,14 +361,14 @@ where
                     },
                 ),
                 JoltCommittedPolynomial::TrustedAdvice => {
-                    let opening = advice_final(polynomial)
+                    let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = trusted_advice_commitment
                         .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
                 JoltCommittedPolynomial::UntrustedAdvice => {
-                    let opening = advice_final(polynomial)
+                    let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = proof
                         .untrusted_advice_commitment
@@ -377,7 +377,7 @@ where
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
                 JoltCommittedPolynomial::BytecodeChunk(index) => {
-                    let opening = advice_final(polynomial)
+                    let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = committed_program
                         .and_then(|committed| committed.bytecode_chunk_commitments.get(index))
@@ -385,7 +385,7 @@ where
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
                 JoltCommittedPolynomial::ProgramImageInit => {
-                    let opening = advice_final(polynomial)
+                    let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = committed_program
                         .map(|committed| &committed.program_image_commitment)

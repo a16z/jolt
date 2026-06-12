@@ -130,13 +130,6 @@ pub struct VerifiedBytecodeCyclePhaseSumcheck<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BytecodeCyclePhasePublicOutput<F: Field> {
-    pub sumcheck_point: Vec<F>,
-    pub opening_point: Vec<F>,
-    pub cycle_phase_variables: Vec<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedProgramImageCyclePhaseSumcheck<F: Field> {
     pub input_claim: F,
     pub sumcheck_point: Vec<F>,
@@ -145,8 +138,9 @@ pub struct VerifiedProgramImageCyclePhaseSumcheck<F: Field> {
     pub expected_output_claim: F,
 }
 
+/// Cycle phase of the committed bytecode or program-image claim reduction.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProgramImageCyclePhasePublicOutput<F: Field> {
+pub struct CommittedReductionCyclePhasePublicOutput<F: Field> {
     pub sumcheck_point: Vec<F>,
     pub opening_point: Vec<F>,
     pub cycle_phase_variables: Vec<F>,

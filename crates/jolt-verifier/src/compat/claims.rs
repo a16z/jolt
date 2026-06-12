@@ -482,6 +482,11 @@ fn bytecode_cycle_phase_claims_from_native<F: Field>(
     {
         return Some(BytecodeCyclePhaseOutputClaims::Intermediate(intermediate));
     }
+    let chunks = final_bytecode_chunk_claims_from_native(claims);
+    (!chunks.is_empty()).then_some(BytecodeCyclePhaseOutputClaims::Chunks(chunks))
+}
+
+fn final_bytecode_chunk_claims_from_native<F: Field>(claims: &NativeOpeningClaims<F>) -> Vec<F> {
     let mut chunks = Vec::new();
     for chunk_idx in 0.. {
         let Some(opening_claim) = claims.get(
@@ -491,7 +496,7 @@ fn bytecode_cycle_phase_claims_from_native<F: Field>(
         };
         chunks.push(opening_claim);
     }
-    (!chunks.is_empty()).then_some(BytecodeCyclePhaseOutputClaims::Chunks(chunks))
+    chunks
 }
 
 fn stage7_claims_from_native<F: Field>(
@@ -568,15 +573,7 @@ fn bytecode_address_phase_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
 ) -> Option<BytecodeAddressPhaseOutputClaims<F>> {
     let _ = claims.get(bytecode_claim_reduction::cycle_phase_intermediate_opening())?;
-    let mut chunks = Vec::new();
-    for chunk_idx in 0.. {
-        let Some(opening_claim) = claims.get(
-            bytecode_claim_reduction::final_bytecode_chunk_opening(chunk_idx),
-        ) else {
-            break;
-        };
-        chunks.push(opening_claim);
-    }
+    let chunks = final_bytecode_chunk_claims_from_native(claims);
     (!chunks.is_empty()).then_some(BytecodeAddressPhaseOutputClaims { chunks })
 }
 

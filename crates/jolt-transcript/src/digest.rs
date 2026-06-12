@@ -46,6 +46,11 @@ where
     }
 }
 
+/// Exists only because [`Transcript`] requires `Default`.
+///
+/// WARNING: not byte-compatible with `jolt-core`'s derived `Default` (zero
+/// state, no initial hash); use [`Transcript::new`] for core-compatible
+/// transcripts.
 impl<D, F> Default for DigestTranscript<D, F>
 where
     D: Digest<OutputSize = U32>,

@@ -1569,9 +1569,12 @@ fn bytecode_final_openings<F: Field>(
     })?;
     if let Some(chunk_claims) = source.opening_claim {
         if chunk_claims.len() != layout.chunk_count() {
-            return Err(VerifierError::MissingOpeningClaim {
-                id: bytecode_reduction::final_bytecode_chunk_opening(
-                    chunk_claims.len().min(layout.chunk_count()),
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeClaimReduction,
+                reason: format!(
+                    "final bytecode chunk claim count mismatch: expected {}, got {}",
+                    layout.chunk_count(),
+                    chunk_claims.len()
                 ),
             });
         }

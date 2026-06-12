@@ -4,10 +4,7 @@ use jolt_claims::protocols::jolt::{
         bytecode::{
             self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafEvaluationInputs,
         },
-        claim_reductions::{
-            advice, bytecode as claim_reductions_bytecode, increments,
-            program_image as claim_reductions_program_image,
-        },
+        claim_reductions::{advice, bytecode as bytecode_reduction, increments, program_image},
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram,
     },
@@ -150,14 +147,10 @@ where
         advice::cycle_phase::<PCS::Field>(JoltAdviceKind::Untrusted, layout.dimensions())
     });
     let bytecode_reduction_claims = bytecode_reduction_layout.map(|layout| {
-        claim_reductions_bytecode::cycle_phase::<PCS::Field>(
-            layout.dimensions(),
-            layout.chunk_count(),
-        )
+        bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
     });
-    let program_image_reduction_claims = program_image_reduction_layout.map(|layout| {
-        claim_reductions_program_image::cycle_phase::<PCS::Field>(layout.dimensions())
-    });
+    let program_image_reduction_claims = program_image_reduction_layout
+        .map(|layout| program_image::cycle_phase::<PCS::Field>(layout.dimensions()));
 
     for claim in [
         &bytecode_address_claims,
@@ -242,7 +235,7 @@ where
         booleanity_gamma,
         instruction_ra_gamma_powers: instruction_ra_gamma_powers.clone(),
         inc_gamma,
-        eta,
+        bytecode_reduction_eta: eta,
     };
 
     if checked.zk {
@@ -466,10 +459,11 @@ where
             bytecode_reduction_layout,
             bytecode_reduction_claims.as_ref(),
         ) {
-            Some(verify_b::bytecode_cycle_phase_public(
+            Some(verify_b::committed_reduction_cycle_phase_public(
                 &consistency,
                 claim,
-                layout,
+                layout.precommitted(),
+                JoltRelationId::BytecodeClaimReductionCyclePhase,
             )?)
         } else {
             None
@@ -478,10 +472,11 @@ where
             program_image_reduction_layout,
             program_image_reduction_claims.as_ref(),
         ) {
-            Some(verify_b::program_image_cycle_phase_public(
+            Some(verify_b::committed_reduction_cycle_phase_public(
                 &consistency,
                 claim,
-                layout,
+                layout.precommitted(),
+                JoltRelationId::ProgramImageClaimReductionCyclePhase,
             )?)
         } else {
             None
@@ -502,16 +497,15 @@ where
             &booleanity_opening_point,
         );
         let bytecode_reduction_output_claims = bytecode_reduction_layout.map_or(0, |layout| {
-            claim_reductions_bytecode::cycle_phase_output_openings(
+            bytecode_reduction::cycle_phase_output_openings(
                 layout.dimensions(),
                 layout.chunk_count(),
             )
             .len()
         });
-        let program_image_reduction_output_claims =
-            program_image_reduction_layout.map_or(0, |layout| {
-                claim_reductions_program_image::cycle_phase_output_openings(layout.dimensions())
-                    .len()
+        let program_image_reduction_output_claims = program_image_reduction_layout
+            .map_or(0, |layout| {
+                program_image::cycle_phase_output_openings(layout.dimensions()).len()
             });
         let committed_output_claims = bytecode_output_openings.bytecode_ra.len()
             + booleanity_output_openings.len()
@@ -804,12 +798,12 @@ where
     }
     if bytecode_reduction_claims.is_none() && claims.bytecode_claim_reduction.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
-            id: claim_reductions_bytecode::cycle_phase_intermediate_opening(),
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
         });
     }
     if program_image_reduction_claims.is_none() && claims.program_image_claim_reduction.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
-            id: claim_reductions_program_image::cycle_phase_program_image_opening(),
+            id: program_image::cycle_phase_program_image_opening(),
         });
     }
 
@@ -924,13 +918,13 @@ where
             .map(|claim| {
                 let stage_claims = claims.address_phase.bytecode_val_stages.as_ref().ok_or(
                     VerifierError::MissingOpeningClaim {
-                        id: claim_reductions_bytecode::bytecode_val_stage_opening(0),
+                        id: bytecode_reduction::bytecode_val_stage_opening(0),
                     },
                 )?;
                 claim.input.expression().try_evaluate(
                     |id| {
                         for (stage, stage_claim) in stage_claims.iter().enumerate() {
-                            if *id == claim_reductions_bytecode::bytecode_val_stage_opening(stage) {
+                            if *id == bytecode_reduction::bytecode_val_stage_opening(stage) {
                                 return Ok(*stage_claim);
                             }
                         }
@@ -954,13 +948,11 @@ where
                     .program_image_contribution
                     .as_ref()
                     .ok_or(VerifierError::MissingOpeningClaim {
-                        id: claim_reductions_program_image::ram_val_check_contribution_opening(),
+                        id: program_image::ram_val_check_contribution_opening(),
                     })?;
                 claim.input.expression().try_evaluate(
                     |id| {
-                        if *id
-                            == claim_reductions_program_image::ram_val_check_contribution_opening()
-                        {
+                        if *id == program_image::ram_val_check_contribution_opening() {
                             Ok(contribution.opening_claim)
                         } else {
                             Err(VerifierError::MissingOpeningClaim { id: *id })
@@ -1135,13 +1127,13 @@ where
         );
         let stage_claims = claims.address_phase.bytecode_val_stages.as_ref().ok_or(
             VerifierError::MissingOpeningClaim {
-                id: claim_reductions_bytecode::bytecode_val_stage_opening(0),
+                id: bytecode_reduction::bytecode_val_stage_opening(0),
             },
         )?;
         bytecode_claims.output.expression().try_evaluate(
             |id| {
                 for (stage, stage_claim) in stage_claims.iter().enumerate() {
-                    if *id == claim_reductions_bytecode::bytecode_val_stage_opening(stage) {
+                    if *id == bytecode_reduction::bytecode_val_stage_opening(stage) {
                         return Ok(*stage_claim);
                     }
                 }
@@ -1601,7 +1593,7 @@ where
         ) {
             let output_claims = claims.bytecode_claim_reduction.as_ref().ok_or(
                 VerifierError::MissingOpeningClaim {
-                    id: claim_reductions_bytecode::cycle_phase_output_openings(
+                    id: bytecode_reduction::cycle_phase_output_openings(
                         layout.dimensions(),
                         layout.chunk_count(),
                     )[0],
@@ -1626,7 +1618,7 @@ where
             )?;
             let input_claim = input_claims.bytecode_claim_reduction.ok_or(
                 VerifierError::MissingOpeningClaim {
-                    id: claim_reductions_bytecode::bytecode_val_stage_opening(0),
+                    id: bytecode_reduction::bytecode_val_stage_opening(0),
                 },
             )?;
             Some(verify_b::verify_bytecode_cycle_phase(
@@ -1646,15 +1638,13 @@ where
     ) {
         let output_claim = claims.program_image_claim_reduction.as_ref().ok_or(
             VerifierError::MissingOpeningClaim {
-                id: claim_reductions_program_image::cycle_phase_output_openings(
-                    layout.dimensions(),
-                )[0],
+                id: program_image::cycle_phase_output_openings(layout.dimensions())[0],
             },
         )?;
         let r_addr_rw = &stage4.batch.ram_val_check.opening_point[..log_k];
         let input_claim = input_claims.program_image_claim_reduction.ok_or(
             VerifierError::MissingOpeningClaim {
-                id: claim_reductions_program_image::ram_val_check_contribution_opening(),
+                id: program_image::ram_val_check_contribution_opening(),
             },
         )?;
         Some(verify_b::verify_program_image_cycle_phase(

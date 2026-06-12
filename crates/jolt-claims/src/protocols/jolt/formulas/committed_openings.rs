@@ -11,20 +11,20 @@ pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommitt
     final_opening_polynomial_order(layout, false, false, None)
 }
 
-/// `committed_bytecode_chunks` is `Some(chunk_count)` in committed program
-/// mode, which appends the trusted bytecode chunk and program-image
+/// `committed_program_chunks` is `Some(bytecode_chunk_count)` in committed
+/// program mode, which appends the trusted bytecode chunk and program-image
 /// commitments to the batch.
 pub fn final_opening_polynomial_order(
     layout: JoltRaPolynomialLayout,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
-    committed_bytecode_chunks: Option<usize>,
+    committed_program_chunks: Option<usize>,
 ) -> Vec<JoltCommittedPolynomial> {
     let mut polynomials = Vec::with_capacity(
         2 + layout.total()
             + usize::from(include_trusted_advice)
             + usize::from(include_untrusted_advice)
-            + committed_bytecode_chunks.map_or(0, |chunk_count| chunk_count + 1),
+            + committed_program_chunks.map_or(0, |chunk_count| chunk_count + 1),
     );
     polynomials.push(JoltCommittedPolynomial::RamInc);
     polynomials.push(JoltCommittedPolynomial::RdInc);
@@ -37,7 +37,7 @@ pub fn final_opening_polynomial_order(
     if include_untrusted_advice {
         polynomials.push(JoltCommittedPolynomial::UntrustedAdvice);
     }
-    if let Some(chunk_count) = committed_bytecode_chunks {
+    if let Some(chunk_count) = committed_program_chunks {
         polynomials.extend((0..chunk_count).map(JoltCommittedPolynomial::BytecodeChunk));
         polynomials.push(JoltCommittedPolynomial::ProgramImageInit);
     }
@@ -48,13 +48,13 @@ pub fn final_opening_ids(
     layout: JoltRaPolynomialLayout,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
-    committed_bytecode_chunks: Option<usize>,
+    committed_program_chunks: Option<usize>,
 ) -> Vec<JoltOpeningId> {
     final_opening_polynomial_order(
         layout,
         include_trusted_advice,
         include_untrusted_advice,
-        committed_bytecode_chunks,
+        committed_program_chunks,
     )
     .into_iter()
     .map(final_opening_id)

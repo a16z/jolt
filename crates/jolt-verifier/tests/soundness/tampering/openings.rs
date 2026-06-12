@@ -79,7 +79,7 @@ fn stage8_final_opening_ids(base: &core_fixtures::CoreVerifierCase) -> Vec<JoltO
         base.preprocessing
             .program
             .committed()
-            .map(|committed| committed.bytecode_chunk_count),
+            .map(|committed| committed.bytecode_chunk_count()),
     )
 }
 

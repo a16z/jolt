@@ -9,15 +9,21 @@ use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 
 /// Committed-program verifier inputs: trusted bytecode-chunk and program-image
 /// commitments plus the program metadata they bind to. Mirrors `jolt-core`'s
-/// `CommittedProgramPreprocessing`.
+/// `CommittedProgramPreprocessing`; the chunk count is implied by
+/// `bytecode_chunk_commitments.len()`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub meta: ProgramMetadata,
     pub memory_layout: MemoryLayout,
     pub max_padded_trace_length: usize,
-    pub bytecode_chunk_count: usize,
     pub bytecode_chunk_commitments: Vec<PCS::Output>,
     pub program_image_commitment: PCS::Output,
+}
+
+impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
+    pub fn bytecode_chunk_count(&self) -> usize {
+        self.bytecode_chunk_commitments.len()
+    }
 }
 
 /// Program preprocessing in one of two modes, detected at runtime from the
@@ -31,10 +37,6 @@ pub enum ProgramPreprocessing<PCS: CommitmentScheme> {
 }
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
-    pub fn is_committed(&self) -> bool {
-        matches!(self, Self::Committed(_))
-    }
-
     pub fn as_full(&self) -> Option<&JoltProgramPreprocessing> {
         match self {
             Self::Full(full) => Some(full),

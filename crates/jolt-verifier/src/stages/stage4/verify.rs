@@ -279,31 +279,23 @@ where
         ram_val_check_public_eval,
     )?;
 
+    // WARNING: contribution order and selectors must stay in lockstep with
+    // `ram_val_check_init` in zk/blindfold/mod.rs — the BlindFold constraint
+    // is built from the same decomposition.
+    let mut init_contributions = Vec::new();
+    if ram_val_check_init.program_image_contribution.is_some() {
+        init_contributions.push(FormulaInitContribution::program_image(-PCS::Field::one()));
+    }
+    for contribution in &ram_val_check_init.advice_contributions {
+        let neg_selector = -contribution.selector;
+        init_contributions.push(match contribution.kind {
+            JoltAdviceKind::Trusted => FormulaInitContribution::trusted(neg_selector),
+            JoltAdviceKind::Untrusted => FormulaInitContribution::untrusted(neg_selector),
+        });
+    }
     let ram_val_check_claims = ram::val_check::<PCS::Field>(
         trace_dimensions,
-        RamValCheckInit::decomposed(
-            ram_val_check_init.public_eval,
-            ram_val_check_init
-                .program_image_contribution
-                .iter()
-                .map(|_| FormulaInitContribution::program_image(-PCS::Field::one()))
-                .chain(
-                    ram_val_check_init
-                        .advice_contributions
-                        .iter()
-                        .map(|contribution| {
-                            let neg_selector = -contribution.selector;
-                            match contribution.kind {
-                                JoltAdviceKind::Trusted => {
-                                    FormulaInitContribution::trusted(neg_selector)
-                                }
-                                JoltAdviceKind::Untrusted => {
-                                    FormulaInitContribution::untrusted(neg_selector)
-                                }
-                            }
-                        }),
-                ),
-        ),
+        RamValCheckInit::decomposed(ram_val_check_init.public_eval, init_contributions),
     );
 
     let [_right_operand_is_rs2, rs2_value_instruction, _right_operand_is_imm, _imm, _left_operand_is_rs1, rs1_value_instruction, _left_operand_is_pc, _unexpanded_pc] =

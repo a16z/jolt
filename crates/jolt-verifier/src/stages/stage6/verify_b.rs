@@ -10,7 +10,7 @@ use jolt_claims::protocols::jolt::{
     },
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, BytecodeClaimReductionLayout,
     BytecodeClaimReductionPublic, JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    PrecommittedClaimReduction, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
     ProgramImageClaimReductionPublic,
 };
 use jolt_field::Field;
@@ -25,10 +25,9 @@ use crate::{
                 ProgramImageCyclePhaseOutputClaim, Stage6Claims,
             },
             outputs::{
-                AdviceCyclePhasePublicOutput, BytecodeCyclePhasePublicOutput,
-                BytecodeReductionWeights, ProgramImageCyclePhasePublicOutput,
-                VerifiedAdviceCyclePhaseSumcheck, VerifiedBytecodeCyclePhaseSumcheck,
-                VerifiedProgramImageCyclePhaseSumcheck,
+                AdviceCyclePhasePublicOutput, BytecodeReductionWeights,
+                CommittedReductionCyclePhasePublicOutput, VerifiedAdviceCyclePhaseSumcheck,
+                VerifiedBytecodeCyclePhaseSumcheck, VerifiedProgramImageCyclePhaseSumcheck,
             },
         },
     },
@@ -315,33 +314,32 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
     })
 }
 
-pub(super) fn bytecode_cycle_phase_public<F: Field, C>(
+pub(super) fn committed_reduction_cycle_phase_public<F: Field, C>(
     batch: &jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     claim: &JoltRelationClaims<F>,
-    layout: &BytecodeClaimReductionLayout,
-) -> Result<BytecodeCyclePhasePublicOutput<F>, VerifierError> {
-    let stage = JoltRelationId::BytecodeClaimReductionCyclePhase;
+    precommitted: &PrecommittedClaimReduction,
+    stage: JoltRelationId,
+) -> Result<CommittedReductionCyclePhasePublicOutput<F>, VerifierError> {
     let point = batch
         .try_instance_point_at(0, claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage,
             reason: error.to_string(),
         })?;
-    let opening_point = layout.cycle_phase_opening_point(&point).map_err(|error| {
-        VerifierError::StageClaimPublicInputFailed {
+    let opening_point = precommitted
+        .cycle_phase_opening_point(&point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage,
             reason: error.to_string(),
-        }
-    })?;
-    let cycle_phase_variables =
-        layout
-            .cycle_phase_variable_challenges(&point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage,
-                reason: error.to_string(),
-            })?;
+        })?;
+    let cycle_phase_variables = precommitted
+        .cycle_phase_variable_challenges(&point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
 
-    Ok(BytecodeCyclePhasePublicOutput {
+    Ok(CommittedReductionCyclePhasePublicOutput {
         sumcheck_point: point,
         opening_point,
         cycle_phase_variables,
@@ -408,39 +406,6 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
         opening_point,
         cycle_phase_variables,
         expected_output_claim,
-    })
-}
-
-pub(super) fn program_image_cycle_phase_public<F: Field, C>(
-    batch: &jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
-    claim: &JoltRelationClaims<F>,
-    layout: &ProgramImageClaimReductionLayout,
-) -> Result<ProgramImageCyclePhasePublicOutput<F>, VerifierError> {
-    let stage = JoltRelationId::ProgramImageClaimReductionCyclePhase;
-    let point = batch
-        .try_instance_point_at(0, claim.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage,
-            reason: error.to_string(),
-        })?;
-    let opening_point = layout.cycle_phase_opening_point(&point).map_err(|error| {
-        VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: error.to_string(),
-        }
-    })?;
-    let cycle_phase_variables =
-        layout
-            .cycle_phase_variable_challenges(&point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage,
-                reason: error.to_string(),
-            })?;
-
-    Ok(ProgramImageCyclePhasePublicOutput {
-        sumcheck_point: point,
-        opening_point,
-        cycle_phase_variables,
     })
 }
 

@@ -13,6 +13,7 @@ use super::super::{
     JoltConsistencyClaim, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
     JoltRelationId, JoltVirtualPolynomial,
 };
+use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::error::require_len;
 
@@ -208,20 +209,22 @@ fn read_raf_cycle_output_committed<F>(dimensions: BytecodeReadRafDimensions) -> 
 where
     F: RingCore,
 {
+    const STAGES: usize = NUM_BYTECODE_VAL_STAGES;
     let gamma = bytecode_challenge::<F>(BytecodeReadRafChallenge::Gamma);
     // The staged Val factor multiplies after the RA product so the lowered
     // R1CS auxiliary chain matches core's `[ra..., val_stage]` factor order.
     let mut output = JoltExpr::zero();
-    for stage in 0..super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES {
+    for stage in 0..STAGES {
         output = output
             + gamma.clone().pow(stage)
                 * bytecode_public(BytecodeReadRafPublic::StageCycleEq(stage))
                 * bytecode_ra_product(dimensions)
                 * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(stage));
     }
-    let raf_coeff = gamma.clone().pow(5) * bytecode_public(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(6) * bytecode_public(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(7) * bytecode_public(BytecodeReadRafPublic::Entry);
+    let raf_coeff = gamma.clone().pow(STAGES)
+        * bytecode_public(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(STAGES + 1) * bytecode_public(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(STAGES + 2) * bytecode_public(BytecodeReadRafPublic::Entry);
 
     output + raf_coeff * bytecode_ra_product(dimensions)
 }
@@ -326,7 +329,7 @@ impl<F: Field> BytecodeReadRafPublicValues<F> {
 /// factors are openings; their cycle-eq coefficients are public.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafCommittedPublicValues<F: Field> {
-    pub stage_cycle_eqs: [F; 5],
+    pub stage_cycle_eqs: [F; NUM_BYTECODE_VAL_STAGES],
     pub spartan_outer_raf: F,
     pub spartan_shift_raf: F,
     pub entry: F,
@@ -351,7 +354,7 @@ impl<F: Field> BytecodeReadRafCommittedPublicValues<F> {
 pub struct BytecodeReadRafCommittedEvaluationInputs<'a, F> {
     pub r_address: &'a [F],
     pub r_cycle: &'a [F],
-    pub stage_cycle_points: [&'a [F]; 5],
+    pub stage_cycle_points: [&'a [F]; NUM_BYTECODE_VAL_STAGES],
     pub entry_bytecode_index: usize,
 }
 

@@ -141,6 +141,7 @@ use super::{
 };
 use crate::stages::{
     stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
+    stage6::outputs::BytecodeReductionWeights,
     stage8::outputs::Stage8OpeningId,
 };
 use crate::VerifierError;
@@ -612,10 +613,12 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let r_address = ram_val_check_address(input)?;
+    // WARNING: contribution order and selectors must stay in lockstep with the
+    // clear-path decomposition in stage4/verify.rs.
     let mut contributions = Vec::new();
     if input.checked.precommitted.program_image.is_some() {
         contributions.push(ram::RamValCheckInitContribution::program_image(
-            -PCS::Field::from_u64(1),
+            -PCS::Field::one(),
         ));
     }
     if input.proof.untrusted_advice_commitment.is_some() {
@@ -1156,27 +1159,19 @@ where
     Ok(())
 }
 
-struct CommittedReductionWeights<F: Field> {
-    r_bc: Vec<F>,
-    chunk_rbc_weights: Vec<F>,
-    lane_weights: Vec<F>,
-}
-
 fn bytecode_reduction_weights<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     layout: &BytecodeClaimReductionLayout,
-) -> Result<CommittedReductionWeights<PCS::Field>, VerifierError>
+) -> Result<BytecodeReductionWeights<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let eta = input
-        .stage6
-        .public
-        .eta
-        .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
+    let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
+        VerifierError::MissingStageClaimChallenge {
             id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
-        })?;
+        }
+    })?;
     let address_point = layout
         .split_address_point(&input.stage6.bytecode_read_raf_address.opening_point)
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
@@ -1193,7 +1188,7 @@ where
             [..REGISTER_ADDRESS_BITS],
     })
     .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
-    Ok(CommittedReductionWeights {
+    Ok(BytecodeReductionWeights {
         r_bc: address_point.r_bc,
         chunk_rbc_weights: address_point.chunk_rbc_weights,
         lane_weights,
@@ -1217,7 +1212,7 @@ fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
-    public: &crate::stages::stage6::outputs::BytecodeCyclePhasePublicOutput<PCS::Field>,
+    public: &crate::stages::stage6::outputs::CommittedReductionCyclePhasePublicOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1274,7 +1269,7 @@ fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
-    public: &crate::stages::stage6::outputs::ProgramImageCyclePhasePublicOutput<PCS::Field>,
+    public: &crate::stages::stage6::outputs::CommittedReductionCyclePhasePublicOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,

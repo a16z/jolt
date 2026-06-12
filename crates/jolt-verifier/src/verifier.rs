@@ -248,18 +248,17 @@ where
                 .map_err(|error| VerifierError::InvalidCommittedProgram {
                     reason: error.to_string(),
                 })?;
-            if committed.bytecode_chunk_commitments.len() != committed.bytecode_chunk_count {
+            if committed.meta.entry_bytecode_index >= committed.meta.bytecode_len {
                 return Err(VerifierError::InvalidCommittedProgram {
                     reason: format!(
-                        "bytecode chunk commitment count {} does not match chunk count {}",
-                        committed.bytecode_chunk_commitments.len(),
-                        committed.bytecode_chunk_count
+                        "entry bytecode index {} is out of range for bytecode length {}",
+                        committed.meta.entry_bytecode_index, committed.meta.bytecode_len
                     ),
                 });
             }
             Ok(CommittedProgramSchedule {
                 bytecode_len: committed.meta.bytecode_len,
-                bytecode_chunk_count: committed.bytecode_chunk_count,
+                bytecode_chunk_count: committed.bytecode_chunk_count(),
                 program_image_len_words: committed.meta.program_image_len_words,
                 program_image_start_index: program_image_start_index as usize,
             })
