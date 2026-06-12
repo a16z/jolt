@@ -496,9 +496,9 @@ impl<F: Field> SharedRaRound2<F> {
         let mut tables_10 = self.tables_1.clone();
         let mut tables_11 = self.tables_1;
 
-        rayon::join(
+        let _ = rayon::join(
             || {
-                rayon::join(
+                let _ = rayon::join(
                     || {
                         tables_00
                             .par_iter_mut()
@@ -512,7 +512,7 @@ impl<F: Field> SharedRaRound2<F> {
                 );
             },
             || {
-                rayon::join(
+                let _ = rayon::join(
                     || {
                         tables_10
                             .par_iter_mut()
@@ -604,7 +604,7 @@ impl<F: Field> SharedRaRound3<F> {
         let mut tables_110 = self.tables_11.clone();
         let mut tables_111 = self.tables_11;
 
-        rayon::join(
+        let _ = rayon::join(
             || {
                 [
                     &mut tables_000,

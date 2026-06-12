@@ -1581,10 +1581,7 @@ where
             return evaluate_cached_polynomial(oracle, polynomial, point);
         }
         if !is_boolean_point {
-            if let Some(value) = self
-                .witness
-                .try_evaluate_oracle_view(request.clone(), point)?
-            {
+            if let Some(value) = self.witness.try_evaluate_oracle_view(request, point)? {
                 return Ok(value);
             }
         }
