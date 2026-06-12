@@ -1146,9 +1146,9 @@ where
                 _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
             },
             |id| match id {
-                JoltPublicId::BytecodeReadRaf(public_id) => {
-                    Ok(bytecode_public_values.value(*public_id))
-                }
+                JoltPublicId::BytecodeReadRaf(public_id) => bytecode_public_values
+                    .value(*public_id)
+                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
                 _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
             },
         )?
@@ -1193,9 +1193,9 @@ where
                 _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
             },
             |id| match id {
-                JoltPublicId::BytecodeReadRaf(public_id) => {
-                    Ok(bytecode_public_values.value(*public_id))
-                }
+                JoltPublicId::BytecodeReadRaf(public_id) => bytecode_public_values
+                    .value(*public_id)
+                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
                 _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
             },
         )?

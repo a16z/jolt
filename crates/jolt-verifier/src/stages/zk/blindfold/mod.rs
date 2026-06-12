@@ -80,10 +80,7 @@ use jolt_claims::{
             },
             claim_reductions::{
                 advice,
-                bytecode::{
-                    self as bytecode_reduction, BytecodeLaneWeightInputs,
-                    BytecodeOutputWeightInputs,
-                },
+                bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
                 hamming_weight, increments, program_image,
             },
             dimensions::{JoltFormulaDimensions, JoltSumcheckSpec, REGISTER_ADDRESS_BITS},
@@ -141,7 +138,7 @@ use super::{
 };
 use crate::stages::{
     stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
-    stage6::outputs::BytecodeReductionWeights,
+    stage6::{outputs::BytecodeReductionWeights, verify_b},
     stage8::outputs::Stage8OpeningId,
 };
 use crate::VerifierError;
@@ -899,23 +896,23 @@ where
                 entry_bytecode_index,
             },
         );
-        for index in 0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES {
+        for (index, stage_cycle_eq) in committed_public_values.stage_cycle_eqs.iter().enumerate() {
             values.public(
                 JoltPublicId::from(BytecodeReadRafPublic::StageCycleEq(index)),
-                committed_public_values.value(BytecodeReadRafPublic::StageCycleEq(index)),
+                *stage_cycle_eq,
             )?;
         }
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-            committed_public_values.value(BytecodeReadRafPublic::SpartanOuterRaf),
+            committed_public_values.spartan_outer_raf,
         )?;
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-            committed_public_values.value(BytecodeReadRafPublic::SpartanShiftRaf),
+            committed_public_values.spartan_shift_raf,
         )?;
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::Entry),
-            committed_public_values.value(BytecodeReadRafPublic::Entry),
+            committed_public_values.entry,
         )?;
     } else {
         let full_program = input.preprocessing.program.as_full().ok_or_else(|| {
@@ -1016,23 +1013,23 @@ where
             }
             bytecode_public_values
         };
-        for index in 0..5 {
+        for (index, stage_value) in bytecode_public_values.stage_values.iter().enumerate() {
             values.public(
                 JoltPublicId::from(BytecodeReadRafPublic::StageValue(index)),
-                bytecode_public_values.value(BytecodeReadRafPublic::StageValue(index)),
+                *stage_value,
             )?;
         }
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-            bytecode_public_values.value(BytecodeReadRafPublic::SpartanOuterRaf),
+            bytecode_public_values.spartan_outer_raf,
         )?;
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-            bytecode_public_values.value(BytecodeReadRafPublic::SpartanShiftRaf),
+            bytecode_public_values.spartan_shift_raf,
         )?;
         values.public(
             JoltPublicId::from(BytecodeReadRafPublic::Entry),
-            bytecode_public_values.value(BytecodeReadRafPublic::Entry),
+            bytecode_public_values.entry,
         )?;
     }
 
@@ -1172,27 +1169,22 @@ where
             id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
         }
     })?;
-    let address_point = layout
-        .split_address_point(&input.stage6.bytecode_read_raf_address.opening_point)
-        .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
-    let lane_weights = bytecode_reduction::lane_weights(BytecodeLaneWeightInputs {
-        eta,
-        stage1_gammas: &input.stage6.public.stage1_gammas,
-        stage2_gammas: &input.stage6.public.stage2_gammas,
-        stage3_gammas: &input.stage6.public.stage3_gammas,
-        stage4_gammas: &input.stage6.public.stage4_gammas,
-        stage5_gammas: &input.stage6.public.stage5_gammas,
-        register_read_write_point: &input.stage4.registers_read_write_opening_point
-            [..REGISTER_ADDRESS_BITS],
-        register_val_evaluation_point: &input.stage5.registers_val_evaluation.opening_point
-            [..REGISTER_ADDRESS_BITS],
-    })
-    .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
-    Ok(BytecodeReductionWeights {
-        r_bc: address_point.r_bc,
-        chunk_rbc_weights: address_point.chunk_rbc_weights,
-        lane_weights,
-    })
+    verify_b::bytecode_reduction_weights(
+        layout,
+        verify_b::BytecodeReductionWeightInputs {
+            eta,
+            stage1_gammas: &input.stage6.public.stage1_gammas,
+            stage2_gammas: &input.stage6.public.stage2_gammas,
+            stage3_gammas: &input.stage6.public.stage3_gammas,
+            stage4_gammas: &input.stage6.public.stage4_gammas,
+            stage5_gammas: &input.stage6.public.stage5_gammas,
+            register_read_write_point: &input.stage4.registers_read_write_opening_point
+                [..REGISTER_ADDRESS_BITS],
+            register_val_evaluation_point: &input.stage5.registers_val_evaluation.opening_point
+                [..REGISTER_ADDRESS_BITS],
+            bytecode_r_address: &input.stage6.bytecode_read_raf_address.opening_point,
+        },
+    )
 }
 
 fn add_bytecode_chunk_weight_publics<F: Field>(

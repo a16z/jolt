@@ -166,7 +166,7 @@ pub(super) fn advice_cycle_phase_public<F: Field, C>(
     })
 }
 
-pub(super) struct BytecodeReductionWeightInputs<'a, F: Field> {
+pub(crate) struct BytecodeReductionWeightInputs<'a, F: Field> {
     pub eta: F,
     pub stage1_gammas: &'a [F],
     pub stage2_gammas: &'a [F],
@@ -179,7 +179,7 @@ pub(super) struct BytecodeReductionWeightInputs<'a, F: Field> {
     pub bytecode_r_address: &'a [F],
 }
 
-pub(super) fn bytecode_reduction_weights<F: Field>(
+pub(crate) fn bytecode_reduction_weights<F: Field>(
     layout: &BytecodeClaimReductionLayout,
     inputs: BytecodeReductionWeightInputs<'_, F>,
 ) -> Result<BytecodeReductionWeights<F>, VerifierError> {

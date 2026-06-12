@@ -309,17 +309,16 @@ pub struct BytecodeReadRafPublicValues<F: Field> {
 }
 
 impl<F: Field> BytecodeReadRafPublicValues<F> {
-    pub fn value(&self, id: BytecodeReadRafPublic) -> F {
+    /// Returns `None` for committed-mode publics (`StageCycleEq`) and
+    /// out-of-range stage indices so a wrong-mode formula fails loudly at the
+    /// source instead of evaluating with a silently zeroed term.
+    pub fn value(&self, id: BytecodeReadRafPublic) -> Option<F> {
         match id {
-            BytecodeReadRafPublic::StageValue(index) => self
-                .stage_values
-                .get(index)
-                .copied()
-                .unwrap_or_else(F::zero),
-            BytecodeReadRafPublic::StageCycleEq(_) => F::zero(),
-            BytecodeReadRafPublic::SpartanOuterRaf => self.spartan_outer_raf,
-            BytecodeReadRafPublic::SpartanShiftRaf => self.spartan_shift_raf,
-            BytecodeReadRafPublic::Entry => self.entry,
+            BytecodeReadRafPublic::StageValue(index) => self.stage_values.get(index).copied(),
+            BytecodeReadRafPublic::StageCycleEq(_) => None,
+            BytecodeReadRafPublic::SpartanOuterRaf => Some(self.spartan_outer_raf),
+            BytecodeReadRafPublic::SpartanShiftRaf => Some(self.spartan_shift_raf),
+            BytecodeReadRafPublic::Entry => Some(self.entry),
         }
     }
 }
@@ -336,17 +335,16 @@ pub struct BytecodeReadRafCommittedPublicValues<F: Field> {
 }
 
 impl<F: Field> BytecodeReadRafCommittedPublicValues<F> {
-    pub fn value(&self, id: BytecodeReadRafPublic) -> F {
+    /// Returns `None` for full-mode publics (`StageValue`) and out-of-range
+    /// stage indices so a wrong-mode formula fails loudly at the source
+    /// instead of evaluating with a silently zeroed term.
+    pub fn value(&self, id: BytecodeReadRafPublic) -> Option<F> {
         match id {
-            BytecodeReadRafPublic::StageValue(_) => F::zero(),
-            BytecodeReadRafPublic::StageCycleEq(index) => self
-                .stage_cycle_eqs
-                .get(index)
-                .copied()
-                .unwrap_or_else(F::zero),
-            BytecodeReadRafPublic::SpartanOuterRaf => self.spartan_outer_raf,
-            BytecodeReadRafPublic::SpartanShiftRaf => self.spartan_shift_raf,
-            BytecodeReadRafPublic::Entry => self.entry,
+            BytecodeReadRafPublic::StageValue(_) => None,
+            BytecodeReadRafPublic::StageCycleEq(index) => self.stage_cycle_eqs.get(index).copied(),
+            BytecodeReadRafPublic::SpartanOuterRaf => Some(self.spartan_outer_raf),
+            BytecodeReadRafPublic::SpartanShiftRaf => Some(self.spartan_shift_raf),
+            BytecodeReadRafPublic::Entry => Some(self.entry),
         }
     }
 }
@@ -367,21 +365,13 @@ where
     let stage_cycle_eqs = inputs
         .stage_cycle_points
         .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle));
-
-    let identity = IdentityPolynomial::new(inputs.r_address.len()).evaluate(inputs.r_address);
-    let spartan_outer_raf = identity * stage_cycle_eqs[0];
-    let spartan_shift_raf = identity * stage_cycle_eqs[2];
-
-    let entry_bits = (0..inputs.r_address.len())
-        .map(|i| {
-            F::from_u64(
-                ((inputs.entry_bytecode_index >> (inputs.r_address.len() - 1 - i)) & 1) as u64,
-            )
-        })
-        .collect::<Vec<_>>();
-    let zero_cycle = vec![F::zero(); inputs.r_cycle.len()];
-    let entry = EqPolynomial::<F>::mle(&entry_bits, inputs.r_address)
-        * EqPolynomial::<F>::mle(&zero_cycle, inputs.r_cycle);
+    let (spartan_outer_raf, spartan_shift_raf, entry) = read_raf_raf_entry_publics(
+        inputs.r_address,
+        inputs.r_cycle,
+        stage_cycle_eqs[0],
+        stage_cycle_eqs[2],
+        inputs.entry_bytecode_index,
+    );
 
     BytecodeReadRafCommittedPublicValues {
         stage_cycle_eqs,
@@ -389,6 +379,33 @@ where
         spartan_shift_raf,
         entry,
     }
+}
+
+/// Table-independent read-RAF publics shared by the full and committed
+/// evaluation paths: `(SpartanOuterRaf, SpartanShiftRaf, Entry)`, where the
+/// RAF terms scale `Int(r_address)` by the stage-1/stage-3 cycle-eq factors.
+fn read_raf_raf_entry_publics<F>(
+    r_address: &[F],
+    r_cycle: &[F],
+    outer_stage_cycle_eq: F,
+    shift_stage_cycle_eq: F,
+    entry_bytecode_index: usize,
+) -> (F, F, F)
+where
+    F: Field,
+{
+    let identity = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
+    let spartan_outer_raf = identity * outer_stage_cycle_eq;
+    let spartan_shift_raf = identity * shift_stage_cycle_eq;
+
+    let entry_bits = (0..r_address.len())
+        .map(|i| F::from_u64(((entry_bytecode_index >> (r_address.len() - 1 - i)) & 1) as u64))
+        .collect::<Vec<_>>();
+    let zero_cycle = vec![F::zero(); r_cycle.len()];
+    let entry = EqPolynomial::<F>::mle(&entry_bits, r_address)
+        * EqPolynomial::<F>::mle(&zero_cycle, r_cycle);
+
+    (spartan_outer_raf, spartan_shift_raf, entry)
 }
 
 pub struct BytecodeReadRafEvaluationInputs<'a, F> {
@@ -448,26 +465,20 @@ where
         }
     }
 
-    for (stage_value, stage_cycle_point) in stage_values.iter_mut().zip(inputs.stage_cycle_points) {
-        *stage_value *= EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle);
+    let stage_cycle_eqs = inputs
+        .stage_cycle_points
+        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle));
+    for (stage_value, stage_cycle_eq) in stage_values.iter_mut().zip(&stage_cycle_eqs) {
+        *stage_value *= *stage_cycle_eq;
     }
 
-    let identity = IdentityPolynomial::new(inputs.r_address.len()).evaluate(inputs.r_address);
-    let spartan_outer_raf =
-        identity * EqPolynomial::<F>::mle(inputs.stage_cycle_points[0], inputs.r_cycle);
-    let spartan_shift_raf =
-        identity * EqPolynomial::<F>::mle(inputs.stage_cycle_points[2], inputs.r_cycle);
-
-    let entry_bits = (0..inputs.r_address.len())
-        .map(|i| {
-            F::from_u64(
-                ((inputs.entry_bytecode_index >> (inputs.r_address.len() - 1 - i)) & 1) as u64,
-            )
-        })
-        .collect::<Vec<_>>();
-    let zero_cycle = vec![F::zero(); inputs.r_cycle.len()];
-    let entry = EqPolynomial::<F>::mle(&entry_bits, inputs.r_address)
-        * EqPolynomial::<F>::mle(&zero_cycle, inputs.r_cycle);
+    let (spartan_outer_raf, spartan_shift_raf, entry) = read_raf_raf_entry_publics(
+        inputs.r_address,
+        inputs.r_cycle,
+        stage_cycle_eqs[0],
+        stage_cycle_eqs[2],
+        inputs.entry_bytecode_index,
+    );
 
     Ok(BytecodeReadRafPublicValues {
         stage_values,
