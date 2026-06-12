@@ -32,9 +32,8 @@ use jolt_transcript::Blake2bTranscript;
 use jolt_verifier::{
     compat, zk_vector_commitment_capacity_requirement, JoltVerifierPreprocessing, NoPcsAssist,
 };
-use jolt_witness::{
-    protocols::jolt_vm::{JoltVmWitnessBuilder, JoltVmWitnessConfig, JoltVmWitnessInputs},
-    WitnessBuilder,
+use jolt_witness::protocols::jolt_vm::{
+    JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackedJoltVmWitness,
 };
 use serde::de::DeserializeOwned;
 use tracer::TracerBackend;
@@ -276,7 +275,7 @@ fn trace_witness<'a>(
     preprocessing: &'a JoltProgramPreprocessing,
     trace: TraceOutput<OwnedTrace>,
     proof_parameters: ProofParameters,
-) -> <JoltVmWitnessBuilder<OwnedTrace> as WitnessBuilder<Fr>>::Witness<'a> {
+) -> TraceBackedJoltVmWitness<'a, OwnedTrace> {
     let config = JoltVmWitnessConfig::new(
         proof_parameters.trace_length.trailing_zeros() as usize,
         proof_parameters.ram_k,
@@ -286,13 +285,10 @@ fn trace_witness<'a>(
     .include_trusted_advice(!trace.device.trusted_advice.is_empty())
     .include_untrusted_advice(!trace.device.untrusted_advice.is_empty());
 
-    let mut builder = JoltVmWitnessBuilder::<OwnedTrace>::new();
-    <JoltVmWitnessBuilder<OwnedTrace> as WitnessBuilder<Fr>>::build(
-        &mut builder,
-        &config,
+    TraceBackedJoltVmWitness::new(
+        config,
         JoltVmWitnessInputs::new(program, preprocessing, trace),
     )
-    .expect("trace-backed witness should build")
 }
 
 fn proof_parameters(

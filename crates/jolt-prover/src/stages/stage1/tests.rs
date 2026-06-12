@@ -65,8 +65,8 @@ use jolt_witness::protocols::jolt_vm::field_inline::{
 use jolt_witness::protocols::jolt_vm::{JoltVmSpartanOuterRow, JoltVmSpartanOuterRows};
 use jolt_witness::{
     protocols::jolt_vm::JoltVmNamespace, MaterializationPolicy, OracleDescriptor, OracleKind,
-    OracleRef, OracleViewRequest, PolynomialEncoding, PolynomialView, RetentionHint,
-    ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace, WitnessProvider,
+    OracleRef, PolynomialEncoding, PolynomialView, RetentionHint, ViewRequirement,
+    WitnessDimensions, WitnessError, WitnessNamespace, WitnessProvider,
 };
 
 use crate::stages::primary_view_requirement;
@@ -1298,7 +1298,7 @@ impl WitnessProvider<Fr, JoltVmNamespace> for Stage1Witness {
         };
         Ok(OracleDescriptor::new(
             oracle,
-            WitnessDimensions::new(16, 4),
+            WitnessDimensions::new(4),
             PolynomialEncoding::Dense,
         ))
     }
@@ -1318,9 +1318,9 @@ impl WitnessProvider<Fr, JoltVmNamespace> for Stage1Witness {
 
     fn oracle_view(
         &self,
-        request: OracleViewRequest<JoltVmNamespace>,
+        requirement: ViewRequirement<JoltVmNamespace>,
     ) -> Result<PolynomialView<'_, Fr, JoltVmNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(request.oracle())?;
+        let descriptor = self.describe_oracle(requirement.oracle)?;
         Ok(PolynomialView::owned(descriptor, vec![Fr::from_u64(0); 16]))
     }
 }
@@ -1340,7 +1340,7 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage1Witness {
         };
         Ok(OracleDescriptor::new(
             oracle,
-            WitnessDimensions::new(16, 4),
+            WitnessDimensions::new(4),
             PolynomialEncoding::Dense,
         ))
     }
@@ -1360,10 +1360,10 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage1Witness {
 
     fn oracle_view(
         &self,
-        request: OracleViewRequest<JoltVmNamespace>,
+        requirement: ViewRequirement<JoltVmNamespace>,
     ) -> Result<PolynomialView<'_, Fr, JoltVmNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(request.oracle())?;
-        let OracleKind::Virtual(variable) = request.oracle().kind else {
+        let descriptor = self.describe_oracle(requirement.oracle)?;
+        let OracleKind::Virtual(variable) = requirement.oracle.kind else {
             return Err(WitnessError::UnknownOracle {
                 namespace: JoltVmNamespace::ID.name,
             });
@@ -1454,7 +1454,7 @@ impl WitnessProvider<Fr, FieldInlineNamespace> for Stage1FieldInlineWitness {
         };
         Ok(OracleDescriptor::new(
             oracle,
-            WitnessDimensions::new(16, 4),
+            WitnessDimensions::new(4),
             PolynomialEncoding::Dense,
         ))
     }
@@ -1474,9 +1474,9 @@ impl WitnessProvider<Fr, FieldInlineNamespace> for Stage1FieldInlineWitness {
 
     fn oracle_view(
         &self,
-        request: OracleViewRequest<FieldInlineNamespace>,
+        requirement: ViewRequirement<FieldInlineNamespace>,
     ) -> Result<PolynomialView<'_, Fr, FieldInlineNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(request.oracle())?;
+        let descriptor = self.describe_oracle(requirement.oracle)?;
         Ok(PolynomialView::owned(descriptor, vec![Fr::from_u64(0); 16]))
     }
 }
@@ -1576,7 +1576,7 @@ impl SumcheckBackend<Fr, JoltVmNamespace> for EvaluationBackend {
             .views
             .iter()
             .map(|view| {
-                let materialized = witness.oracle_view(OracleViewRequest::new(view.requirement))?;
+                let materialized = witness.oracle_view(view.requirement)?;
                 let Some(values) = materialized.as_slice() else {
                     return Err(BackendError::InvalidRequest {
                         backend: self.name(),
@@ -1604,7 +1604,7 @@ impl SumcheckBackend<Fr, JoltVmNamespace> for EvaluationBackend {
             .views
             .iter()
             .map(|view| {
-                let materialized = witness.oracle_view(OracleViewRequest::new(view.requirement))?;
+                let materialized = witness.oracle_view(view.requirement)?;
                 let Some(values) = materialized.as_slice() else {
                     return Err(BackendError::InvalidRequest {
                         backend: self.name(),
