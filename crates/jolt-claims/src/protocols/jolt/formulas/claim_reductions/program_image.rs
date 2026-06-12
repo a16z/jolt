@@ -194,9 +194,14 @@ pub fn final_program_image_opening() -> JoltOpeningId {
 ///
 /// The slice is `eq_slice[j] = eq(r_addr, start_index + j)` for `j` in
 /// `0..2^m` where `m = opening_point_be.len()`; this computes its multilinear
-/// extension at `opening_point_be` with a carry-propagation DP over the
-/// address bits (low to high), tracking whether the running sum
-/// `start_index + y` has produced a carry into the current bit.
+/// extension at `opening_point_be` as the MLE of the binary-addition automaton
+/// for `a = start_index + y`, processing bits LSB first. `dp_c` accumulates
+/// the eq weight of bit paths whose carry into the current position is `c`;
+/// per bit, the transfer coefficients are `eq` (output bit matches the y
+/// bit), `carry_gen` (y-bit 1 produced output 0, generating a carry), and
+/// `carry_use` (y-bit 0 produced output 1, consuming the incoming carry).
+/// Window bits at and above `m` are fixed to zero, so `r_y = 0` there. The
+/// final carry-out is dropped, i.e. addresses wrap mod `2^ell`.
 fn eval_shifted_eq_poly_at_opening_point<F: Field>(
     r_addr_be: &[F],
     start_index: usize,
@@ -211,67 +216,22 @@ fn eval_shifted_eq_poly_at_opening_point<F: Field>(
         });
     }
 
-    let mut dp0 = F::one();
-    let mut dp1 = F::zero();
-
-    for old_lsb in 0..ell {
-        let start_bit = ((start_index >> old_lsb) & 1) as u8;
-        let r_addr_bit = r_addr_be[ell - 1 - old_lsb];
-        let k0 = F::one() - r_addr_bit;
-        let k1 = r_addr_bit;
-        let y_var = old_lsb < m;
-        let r_y = if y_var {
-            opening_point_be[m - 1 - old_lsb]
+    let (mut dp0, mut dp1) = (F::one(), F::zero());
+    for lsb in 0..ell {
+        let r_a = r_addr_be[ell - 1 - lsb];
+        let r_y = if lsb < m {
+            opening_point_be[m - 1 - lsb]
         } else {
             F::zero()
         };
-
-        let mut next_dp0 = F::zero();
-        let mut next_dp1 = F::zero();
-
-        let update_state = |weight: F, carry: u8, next_dp0: &mut F, next_dp1: &mut F| {
-            if weight.is_zero() {
-                return;
-            }
-
-            if y_var {
-                let sum0 = start_bit + carry;
-                let k_bit0 = sum0 & 1;
-                let carry0 = (sum0 >> 1) & 1;
-                let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };
-                let y_factor0 = F::one() - r_y;
-                if carry0 == 0 {
-                    *next_dp0 += weight * addr_factor0 * y_factor0;
-                } else {
-                    *next_dp1 += weight * addr_factor0 * y_factor0;
-                }
-
-                let sum1 = start_bit + carry + 1;
-                let k_bit1 = sum1 & 1;
-                let carry1 = (sum1 >> 1) & 1;
-                let addr_factor1 = if k_bit1 == 1 { k1 } else { k0 };
-                if carry1 == 0 {
-                    *next_dp0 += weight * addr_factor1 * r_y;
-                } else {
-                    *next_dp1 += weight * addr_factor1 * r_y;
-                }
-            } else {
-                let sum0 = start_bit + carry;
-                let k_bit0 = sum0 & 1;
-                let carry0 = (sum0 >> 1) & 1;
-                let addr_factor0 = if k_bit0 == 1 { k1 } else { k0 };
-                if carry0 == 0 {
-                    *next_dp0 += weight * addr_factor0;
-                } else {
-                    *next_dp1 += weight * addr_factor0;
-                }
-            }
+        let eq = r_a * r_y + (F::one() - r_a) * (F::one() - r_y);
+        let carry_gen = r_y * (F::one() - r_a);
+        let carry_use = (F::one() - r_y) * r_a;
+        (dp0, dp1) = if (start_index >> lsb) & 1 == 0 {
+            (dp0 * eq + dp1 * carry_use, dp1 * carry_gen)
+        } else {
+            (dp0 * carry_use, dp0 * carry_gen + dp1 * eq)
         };
-
-        update_state(dp0, 0, &mut next_dp0, &mut next_dp1);
-        update_state(dp1, 1, &mut next_dp0, &mut next_dp1);
-        dp0 = next_dp0;
-        dp1 = next_dp1;
     }
 
     Ok(dp0 + dp1)
