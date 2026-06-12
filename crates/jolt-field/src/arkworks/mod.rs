@@ -8,6 +8,8 @@ use ark_ff::BigInt;
 
 pub mod bn254;
 pub(crate) mod bn254_ops;
+#[cfg(feature = "cuda")]
+pub mod cuda;
 pub mod montgomery_impl;
 pub mod scalar_accumulator;
 pub mod wide_accumulator;
