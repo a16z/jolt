@@ -20,9 +20,8 @@ use rayon::prelude::*;
 use super::{checked_pow2, eq_evals_msb, TraceBackedJoltVmWitness};
 use crate::{
     CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind,
-    OracleRef, OracleViewRequest, PolynomialChunk, PolynomialEncoding, PolynomialStream,
-    PolynomialView, RetentionHint, ViewRequirement, WitnessError, WitnessNamespace,
-    WitnessProvider,
+    OracleRef, PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView,
+    RetentionHint, ViewRequirement, WitnessError, WitnessNamespace, WitnessProvider,
 };
 
 pub const FIELD_INLINE_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm.field_inline");
@@ -39,9 +38,6 @@ impl WitnessNamespace for FieldInlineNamespace {
 
     const ID: NamespaceId = FIELD_INLINE_NAMESPACE;
 }
-
-#[derive(Clone, Debug, Default)]
-pub struct FieldInlineWitness;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FieldInlineRegisterReadRow<F: Field> {
@@ -111,10 +107,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
     }
 
     fn trace_dimensions(&self) -> Result<crate::WitnessDimensions, WitnessError> {
-        Ok(crate::WitnessDimensions::new(
-            self.rows,
-            self.parent.config.log_t,
-        ))
+        Ok(crate::WitnessDimensions::new(self.parent.config.log_t))
     }
 
     fn field_register_dimensions(&self) -> Result<crate::WitnessDimensions, WitnessError> {
@@ -127,8 +120,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
                 namespace: FIELD_INLINE_NAMESPACE.name,
                 reason: "field-register witness row count overflow".to_owned(),
             })?;
-        let rows = checked_pow2(log_rows)?;
-        Ok(crate::WitnessDimensions::new(rows, log_rows))
+        Ok(crate::WitnessDimensions::new(log_rows))
     }
 
     fn validate_inputs(&self) -> Result<(), WitnessError> {
@@ -424,13 +416,13 @@ impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
 
     fn oracle_view(
         &self,
-        request: OracleViewRequest<FieldInlineNamespace>,
+        requirement: ViewRequirement<FieldInlineNamespace>,
     ) -> Result<PolynomialView<'_, F, FieldInlineNamespace>, WitnessError> {
         let descriptor = <Self as WitnessProvider<F, FieldInlineNamespace>>::describe_oracle(
             self,
-            request.oracle(),
+            requirement.oracle,
         )?;
-        let values = match request.oracle().kind {
+        let values = match requirement.oracle.kind {
             OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 materialize_field_rd_inc::<F>(&self.trace_rows, self.rows)
             }
@@ -444,13 +436,13 @@ impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
 
     fn try_evaluate_oracle_view(
         &self,
-        request: OracleViewRequest<FieldInlineNamespace>,
+        requirement: ViewRequirement<FieldInlineNamespace>,
         point: &[F],
     ) -> Result<Option<F>, WitnessError> {
-        if request.requirement.encoding != PolynomialEncoding::Dense {
+        if requirement.encoding != PolynomialEncoding::Dense {
             return Ok(None);
         }
-        match request.oracle().kind {
+        match requirement.oracle.kind {
             OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 self.evaluate_field_rd_inc(point).map(Some)
             }
@@ -1105,7 +1097,7 @@ mod tests {
             <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
                 Fr,
                 FieldInlineNamespace,
-            >>::oracle_view(provider, OracleViewRequest::new(requirement))
+            >>::oracle_view(provider, requirement)
             .unwrap();
         match view {
             PolynomialView::Owned { values, .. } => values,
@@ -1199,7 +1191,7 @@ mod tests {
                 FieldInlineNamespace,
             >>::describe_oracle(&provider, oracle)
             .unwrap();
-        assert_eq!(descriptor.dimensions.rows, 8);
+        assert_eq!(descriptor.dimensions.rows(), 8);
         assert_eq!(descriptor.encoding, PolynomialEncoding::Dense);
 
         let requirements: Vec<ViewRequirement<FieldInlineNamespace>> =
