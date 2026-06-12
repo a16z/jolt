@@ -130,7 +130,8 @@ pub fn prove<F, W, B, T, C>(
 ) -> Result<Stage7ProofComponent<F, SumcheckProof<F, C>>, ProverError>
 where
     F: Field,
-    W: WitnessProvider<F, JoltVmNamespace>,
+    W: WitnessProvider<F, JoltVmNamespace>
+        + jolt_witness::RaFamilyCycleIndexSource<F, JoltVmNamespace>,
     B: SumcheckBackend<F, JoltVmNamespace>,
     T: Transcript<Challenge = F>,
 {
@@ -238,7 +239,8 @@ fn prepare_stage7_regular_batch<'a, F, W, B, T>(
 ) -> Result<Stage7PreparedBatch<'a, F>, ProverError>
 where
     F: Field,
-    W: WitnessProvider<F, JoltVmNamespace>,
+    W: WitnessProvider<F, JoltVmNamespace>
+        + jolt_witness::RaFamilyCycleIndexSource<F, JoltVmNamespace>,
     B: SumcheckBackend<F, JoltVmNamespace>,
     T: Transcript<Challenge = F>,
 {
