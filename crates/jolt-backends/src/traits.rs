@@ -1,7 +1,7 @@
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::UnivariatePoly;
-use jolt_witness::{WitnessNamespace, WitnessProvider};
+use jolt_witness::{RaFamilyCycleIndexSource, WitnessNamespace, WitnessProvider};
 
 use crate::{
     BackendError, CommitmentRequest, CommitmentResult, OpeningRequest, OpeningResult,
@@ -579,7 +579,7 @@ where
         witness: &W,
     ) -> Result<Vec<Vec<F>>, BackendError>
     where
-        W: WitnessProvider<F, N>,
+        W: WitnessProvider<F, N> + RaFamilyCycleIndexSource<F, N>,
     {
         let _ = request;
         let _ = witness;
@@ -595,7 +595,7 @@ where
         witness: &W,
     ) -> Result<SumcheckStage7HammingState<F>, BackendError>
     where
-        W: WitnessProvider<F, N>,
+        W: WitnessProvider<F, N> + RaFamilyCycleIndexSource<F, N>,
     {
         let _ = request;
         let _ = witness;
