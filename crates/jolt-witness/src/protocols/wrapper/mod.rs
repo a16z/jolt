@@ -1,5 +1,6 @@
+use super::util::{power_of_two_log_rows, require_unique_ids};
 use crate::{
-    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind, OracleRef, OracleViewRequest,
+    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind, OracleRef,
     PolynomialEncoding, PolynomialView, PublicValue, RetentionHint, ViewRequirement,
     WitnessDimensions, WitnessError, WitnessNamespace, WitnessProvider,
 };
@@ -89,14 +90,19 @@ impl<F> WrapperAssignmentWitness<F> {
         slices: Vec<WrapperAssignmentSlice<F>>,
         public_inputs: Vec<WrapperPublicInput<F>>,
     ) -> Result<Self, WitnessError> {
-        require_unique_ids(slices.iter().map(|slice| slice.id), "assignment slice")?;
         require_unique_ids(
+            WRAPPER_NAMESPACE,
+            slices.iter().map(|slice| slice.id),
+            "assignment slice",
+        )?;
+        require_unique_ids(
+            WRAPPER_NAMESPACE,
             public_inputs.iter().map(|public_input| public_input.id),
             "public input",
         )?;
 
         for slice in &slices {
-            let _ = power_of_two_log_rows(slice.values.len())?;
+            let _ = power_of_two_log_rows(WRAPPER_NAMESPACE, slice.values.len())?;
         }
 
         Ok(Self {
@@ -127,7 +133,10 @@ impl<F> WrapperAssignmentWitness<F> {
 
     fn dimensions(&self, id: WrapperVirtualPolynomial) -> Result<WitnessDimensions, WitnessError> {
         let rows = self.assignment_slice(id)?.len();
-        Ok(WitnessDimensions::new(rows, power_of_two_log_rows(rows)?))
+        Ok(WitnessDimensions::new(power_of_two_log_rows(
+            WRAPPER_NAMESPACE,
+            rows,
+        )?))
     }
 }
 
@@ -160,48 +169,18 @@ impl<F> WitnessProvider<F, WrapperNamespace> for WrapperAssignmentWitness<F> {
 
     fn oracle_view(
         &self,
-        request: OracleViewRequest<WrapperNamespace>,
+        requirement: ViewRequirement<WrapperNamespace>,
     ) -> Result<PolynomialView<'_, F, WrapperNamespace>, WitnessError> {
         let descriptor = <Self as WitnessProvider<F, WrapperNamespace>>::describe_oracle(
             self,
-            request.oracle(),
+            requirement.oracle,
         )?;
-        let OracleKind::Virtual(id) = request.oracle().kind;
+        let OracleKind::Virtual(id) = requirement.oracle.kind;
         Ok(PolynomialView::borrowed(
             descriptor,
             self.assignment_slice(id)?,
         ))
     }
-}
-
-fn require_unique_ids<Id>(
-    ids: impl IntoIterator<Item = Id>,
-    label: &'static str,
-) -> Result<(), WitnessError>
-where
-    Id: Copy + Eq + core::fmt::Debug,
-{
-    let mut seen = Vec::new();
-    for id in ids {
-        if seen.contains(&id) {
-            return Err(WitnessError::InvalidWitnessData {
-                namespace: WRAPPER_NAMESPACE.name,
-                reason: format!("duplicate {label} id: {id:?}"),
-            });
-        }
-        seen.push(id);
-    }
-    Ok(())
-}
-
-fn power_of_two_log_rows(rows: usize) -> Result<usize, WitnessError> {
-    if rows == 0 || !rows.is_power_of_two() {
-        return Err(WitnessError::InvalidDimensions {
-            namespace: WRAPPER_NAMESPACE.name,
-            reason: format!("row count must be a nonzero power of two, got {rows}"),
-        });
-    }
-    Ok(rows.trailing_zeros() as usize)
 }
 
 #[cfg(test)]
@@ -240,7 +219,7 @@ mod tests {
         let descriptor = witness.describe_oracle(oracle).unwrap();
 
         assert_eq!(descriptor.reference, oracle);
-        assert_eq!(descriptor.dimensions, WitnessDimensions::new(2, 1));
+        assert_eq!(descriptor.dimensions, WitnessDimensions::new(1));
         assert_eq!(descriptor.encoding, PolynomialEncoding::Dense);
         assert_ne!(
             WRAPPER_NAMESPACE,
@@ -255,12 +234,10 @@ mod tests {
             OracleRef::virtual_polynomial(WrapperVirtualPolynomial::SumcheckVerifierEquations);
         let requirement = witness.view_requirements(oracle).unwrap().remove(0);
 
-        let view = witness
-            .oracle_view(OracleViewRequest::new(requirement))
-            .unwrap();
+        let view = witness.oracle_view(requirement).unwrap();
 
         assert_eq!(view.as_slice(), Some([10, 11, 12, 13].as_slice()));
-        assert_eq!(view.descriptor().dimensions, WitnessDimensions::new(4, 2));
+        assert_eq!(view.descriptor().dimensions, WitnessDimensions::new(2));
     }
 
     #[test]
