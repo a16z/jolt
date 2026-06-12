@@ -40,6 +40,7 @@ field-inline = [
 ]
 
 [dependencies]
+thiserror.workspace = true
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true, optional = true }
