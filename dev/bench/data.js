@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1781199451197,
+  "lastUpdate": 1781289768317,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -113026,6 +113026,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 863280,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3fd608a0546bedf6f4c87178924b1f6974194d5b",
+          "message": "feat: port precommitted polynomial reductions to modular verifier (#1610)\n\n* refactor: port precommitted polynomial reductions to modular verifier\n\nMirror jolt-core #1572 in the crates/ verifier stack. Advice claim\nreductions now run on a shared PrecommittedClaimReduction schedule\n(reference domain, Dory opening-round permutation, cycle/address skip\nscales), and stage 8 assembles the unified opening point with uniform\nembedding scales and dominant precommitted anchoring. This is the\nfoundation the committed-bytecode and program-image reductions plug\ninto in the next port steps.\n\n* refactor: derive precommitted schedule once and drive stage 8 from canonical order\n\nBuild the PrecommittedSchedule during input validation and carry it on\nCheckedInputs, replacing per-stage layout reconstruction in stages 6/7/8\nand the blindfold mirror. Stage 7 now resolves each precommitted\npolynomial's final opening (cycle- or address-phase terminated) into a\nkeyed collection, and stage 8 builds both clear and ZK batches from one\nfinal_opening_polynomial_order-driven loop, removing the duplicated\nper-mode push sequences and the four-armed advice opening matches.\n\n* refactor: clean up precommitted reduction port after review\n\n- report final_advice_opening id on the cycle-phase missing-source error\n- drop unused PrecommittedFinalOpening.id and vestigial stage 8 opening_point\n- delete dead commitment_opening_point and uncalled schedule accessors\n- wire TWO_PHASE_DEGREE_BOUND into the advice sumcheck specs\n- pass precommitted finals as a slice; borrow commitments in batch entries\n- rename Dimensions round accessors to *_total_rounds; advice candidate fn\n- add CyclePhaseNotFinal/InactiveCycleRound error variants\n- collapse stage 7 final-opening gather loops via AdviceFinalSource\n\n* chore: switch ci-code-review skill agents from opus to fable\n\n* refactor: address review feedback on precommitted schedule\n\n- gate blindfold cycle-phase FinalScale on the advice having no address phase\n- port core's embedded-point containment check into commitment_embedding_scale\n- derive native_main_vars from log_t inside final_opening_point\n- select the dominant anchor in one pass, dropping the unreachable error\n- take advice max-bytes Options in PrecommittedSchedule::new\n- make the Dory round projection fallible instead of asserting",
+          "timestamp": "2026-06-12T10:40:38-07:00",
+          "tree_id": "baad89cac4ae18e82859d5ff285b411ec3491d67",
+          "url": "https://github.com/a16z/jolt/commit/3fd608a0546bedf6f4c87178924b1f6974194d5b"
+        },
+        "date": 1781289764542,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7956,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3291,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 511248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 502580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 507332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7196,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5888,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8867,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 507016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9766,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 190292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4338,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 865500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5571,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4539,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.5042,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 510996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 497764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.7223,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1049044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.361,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 632008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 96.4627,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2131392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4926,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.7574,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 868036,
             "unit": "KB",
             "extra": ""
           }
