@@ -1,11 +1,24 @@
+/// Dimensions of a multilinear witness polynomial.
+///
+/// The evaluation domain is always a power of two, so only the variable count
+/// is stored; the row count is derived.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WitnessDimensions {
-    pub rows: usize,
     pub log_rows: usize,
 }
 
 impl WitnessDimensions {
-    pub const fn new(rows: usize, log_rows: usize) -> Self {
-        Self { rows, log_rows }
+    /// Panics if `log_rows >= usize::BITS`; a domain that large is a
+    /// programming error, not recoverable input.
+    pub const fn new(log_rows: usize) -> Self {
+        assert!(
+            log_rows < usize::BITS as usize,
+            "log_rows must be smaller than usize::BITS"
+        );
+        Self { log_rows }
+    }
+
+    pub const fn rows(&self) -> usize {
+        1 << self.log_rows
     }
 }

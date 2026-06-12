@@ -33,4 +33,3 @@ thiserror.workspace = true
 
 [dev-dependencies]
 common.workspace = true
-criterion.workspace = true
