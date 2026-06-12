@@ -231,6 +231,7 @@ where
         + BlindFoldProverBackend<PCS::Field>,
     W: CommittedWitnessProvider<PCS::Field, JoltVmNamespace>
         + WitnessProvider<PCS::Field, JoltVmNamespace>
+        + jolt_witness::RaFamilyCycleIndexSource<PCS::Field, JoltVmNamespace>
         + JoltVmSpartanOuterRows
         + JoltVmStage2Rows
         + JoltVmStage3ShiftRows
@@ -271,6 +272,7 @@ where
         + BlindFoldProverBackend<PCS::Field>,
     W: CommittedWitnessProvider<PCS::Field, JoltVmNamespace>
         + WitnessProvider<PCS::Field, JoltVmNamespace>
+        + jolt_witness::RaFamilyCycleIndexSource<PCS::Field, JoltVmNamespace>
         + JoltVmSpartanOuterRows
         + JoltVmStage2Rows
         + JoltVmStage3ShiftRows
@@ -320,6 +322,7 @@ where
         + BlindFoldProverBackend<PCS::Field>,
     W: CommittedWitnessProvider<PCS::Field, JoltVmNamespace>
         + WitnessProvider<PCS::Field, JoltVmNamespace>
+        + jolt_witness::RaFamilyCycleIndexSource<PCS::Field, JoltVmNamespace>
         + JoltVmSpartanOuterRows
         + JoltVmStage2Rows
         + JoltVmStage3ShiftRows
@@ -366,6 +369,7 @@ where
         + BlindFoldProverBackend<PCS::Field>,
     W: CommittedWitnessProvider<PCS::Field, JoltVmNamespace>
         + WitnessProvider<PCS::Field, JoltVmNamespace>
+        + jolt_witness::RaFamilyCycleIndexSource<PCS::Field, JoltVmNamespace>
         + JoltVmSpartanOuterRows
         + JoltVmStage2Rows
         + JoltVmStage3ShiftRows
