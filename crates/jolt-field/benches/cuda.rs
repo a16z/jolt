@@ -23,8 +23,8 @@ fn bench_map(c: &mut Criterion) {
     for (name, gpu, cpu) in [
         (
             "add",
-            (&|c: &CudaFieldContext, a: &DeviceFrVec, b: &DeviceFrVec| c.add(a, b).unwrap())
-                as &dyn Fn(&CudaFieldContext, &DeviceFrVec, &DeviceFrVec) -> DeviceFrVec,
+            (&|c: &CudaFieldContext, a: &mut DeviceFrVec, b: &DeviceFrVec| c.add(a, b).unwrap())
+                as &dyn Fn(&CudaFieldContext, &mut DeviceFrVec, &DeviceFrVec),
             (&|a: &[Fr], b: &[Fr]| a.iter().zip(b).map(|(x, y)| *x + *y).collect::<Vec<_>>())
                 as &dyn Fn(&[Fr], &[Fr]) -> Vec<Fr>,
         ),
@@ -43,7 +43,7 @@ fn bench_map(c: &mut Criterion) {
         for &n in &SIZES {
             let a = random_vec(&mut rng, n);
             let b = random_vec(&mut rng, n);
-            let a_dev = ctx.upload(&a).unwrap();
+            let mut a_dev = ctx.upload(&a).unwrap();
             let b_dev = ctx.upload(&b).unwrap();
             group.throughput(Throughput::Elements(n as u64));
 
@@ -51,7 +51,7 @@ fn bench_map(c: &mut Criterion) {
                 bench.iter(|| cpu(black_box(&a), black_box(&b)));
             });
             group.bench_with_input(BenchmarkId::new("gpu", n), &n, |bench, _| {
-                bench.iter(|| gpu(&ctx, black_box(&a_dev), black_box(&b_dev)));
+                bench.iter(|| gpu(&ctx, &mut a_dev, black_box(&b_dev)));
             });
         }
         group.finish();
@@ -107,8 +107,8 @@ fn gpu_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr
     let mut acc = ctx.upload(a).unwrap();
     let b_dev = ctx.upload(b).unwrap();
     for _ in 0..steps {
-        acc = ctx.mul(&acc, &b_dev).unwrap();
-        acc = ctx.add(&acc, &b_dev).unwrap();
+        ctx.mul(&mut acc, &b_dev).unwrap();
+        ctx.add(&mut acc, &b_dev).unwrap();
     }
     acc.to_host().unwrap()
 }
@@ -148,7 +148,7 @@ fn gpu_reduce_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) ->
     let b_dev = ctx.upload(b).unwrap();
     let mut total = Fr::from_u64(0);
     for _ in 0..steps {
-        acc = ctx.mul(&acc, &b_dev).unwrap();
+        ctx.mul(&mut acc, &b_dev).unwrap();
         total += ctx.sum(&acc).unwrap();
     }
     total

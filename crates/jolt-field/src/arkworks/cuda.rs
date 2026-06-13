@@ -88,19 +88,19 @@ __device__ void fr_mul(const u64 *a, const u64 *b, u64 *out) {
     if (t[4] != 0 || geq_modulus(out)) sub_modulus(out);
 }
 
-extern "C" __global__ void add_kernel(u64 *out, const u64 *a, const u64 *b, unsigned long n) {
+extern "C" __global__ void add_kernel(u64 *io, const u64 *b, unsigned long n) {
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) fr_add(a + i * 4, b + i * 4, out + i * 4);
+    if (i < n) fr_add(io + i * 4, b + i * 4, io + i * 4);
 }
 
-extern "C" __global__ void sub_kernel(u64 *out, const u64 *a, const u64 *b, unsigned long n) {
+extern "C" __global__ void sub_kernel(u64 *io, const u64 *b, unsigned long n) {
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) fr_sub(a + i * 4, b + i * 4, out + i * 4);
+    if (i < n) fr_sub(io + i * 4, b + i * 4, io + i * 4);
 }
 
-extern "C" __global__ void mul_kernel(u64 *out, const u64 *a, const u64 *b, unsigned long n) {
+extern "C" __global__ void mul_kernel(u64 *io, const u64 *b, unsigned long n) {
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) fr_mul(a + i * 4, b + i * 4, out + i * 4);
+    if (i < n) fr_mul(io + i * 4, b + i * 4, io + i * 4);
 }
 
 extern "C" __global__ void sum_reduce(u64 *out, const u64 *in, unsigned long n) {
@@ -214,6 +214,14 @@ impl DeviceFrVec {
         let raw = self.stream.clone_dtoh(&self.buf)?;
         Ok(unflatten(&raw))
     }
+
+    pub fn try_clone(&self) -> Result<Self, CudaError> {
+        Ok(Self {
+            stream: self.stream.clone(),
+            buf: self.stream.clone_dtod(&self.buf)?,
+            len: self.len,
+        })
+    }
 }
 
 #[inline]
@@ -274,16 +282,11 @@ impl CudaFieldContext {
         })
     }
 
-    fn map(&self, func: &CudaFunction, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+    fn map(&self, func: &CudaFunction, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
         assert_eq!(a.len, b.len, "map operands must have equal length");
         let n = a.len;
-        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(n * LIMBS)?;
         if n == 0 {
-            return Ok(DeviceFrVec {
-                stream: self.stream.clone(),
-                buf: out,
-                len: 0,
-            });
+            return Ok(());
         }
 
         let cfg = LaunchConfig {
@@ -293,33 +296,26 @@ impl CudaFieldContext {
         };
         let n_arg = n as u64;
         let mut launch = self.stream.launch_builder(func);
-        let _ = launch
-            .arg(&mut out)
-            .arg(&a.buf)
-            .arg(&b.buf)
-            .arg(&n_arg);
-        // SAFETY: kernel reads n elements from a/b and writes n elements to out,
-        // all of which are allocated with n * LIMBS u64s.
+        let _ = launch.arg(&mut a.buf).arg(&b.buf).arg(&n_arg);
+        // SAFETY: each thread i reads a[i] and b[i] and writes a[i] in place; the
+        // elementwise access pattern means the in/out alias on `a` is hazard-free.
+        // Both buffers hold n * LIMBS u64s.
         let _ = unsafe { launch.launch(cfg) }?;
 
-        Ok(DeviceFrVec {
-            stream: self.stream.clone(),
-            buf: out,
-            len: n,
-        })
+        Ok(())
     }
 
-    pub fn add(&self, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+    pub fn add(&self, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
         let f = self.add.clone();
         self.map(&f, a, b)
     }
 
-    pub fn sub(&self, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+    pub fn sub(&self, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
         let f = self.sub.clone();
         self.map(&f, a, b)
     }
 
-    pub fn mul(&self, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+    pub fn mul(&self, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
         let f = self.mul.clone();
         self.map(&f, a, b)
     }
@@ -330,10 +326,14 @@ impl CudaFieldContext {
             return Ok(if sum { Fr::zero() } else { Fr::one() });
         }
 
-        let mut current = self.stream.clone_dtod(&values.buf)?;
+        // The reduce kernels only read their input and write to a fresh `out_dev`,
+        // so the first pass reads `values.buf` directly; later passes consume the
+        // owned intermediate. No copy of the input is needed.
+        let mut owned: Option<CudaSlice<u64>> = None;
         let mut len = values.len;
 
         while len > 1 {
+            let input: &CudaSlice<u64> = owned.as_ref().unwrap_or(&values.buf);
             let blocks = (len as u32).div_ceil(BLOCK);
             let mut out_dev: CudaSlice<u64> =
                 self.stream.alloc_zeros(blocks as usize * LIMBS)?;
@@ -349,20 +349,21 @@ impl CudaFieldContext {
                 self.product_reduce.clone()
             };
             let mut launch = self.stream.launch_builder(&func);
-            let _ = launch.arg(&mut out_dev).arg(&current).arg(&len_arg);
+            let _ = launch.arg(&mut out_dev).arg(input).arg(&len_arg);
             if !sum {
                 let _ = launch.arg(&self.one_dev);
             }
-            // SAFETY: each block reads up to BLOCK elements from `current` (len total)
+            // SAFETY: each block reads up to BLOCK elements from `input` (len total)
             // and writes one element per block to `out_dev` (blocks total). Shared
             // memory holds BLOCK field elements as configured above.
             let _ = unsafe { launch.launch(cfg) }?;
 
-            current = out_dev;
+            owned = Some(out_dev);
             len = blocks as usize;
         }
 
-        let raw = self.stream.clone_dtoh(&current)?;
+        let final_buf = owned.as_ref().unwrap_or(&values.buf);
+        let raw = self.stream.clone_dtoh(final_buf)?;
         Ok(limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]))
     }
 
@@ -401,8 +402,9 @@ mod tests {
             let b = a.iter().rev().copied().collect::<Vec<_>>();
             let expected: Vec<Fr> = a.iter().zip(&b).map(|(x, y)| *x + *y).collect();
             let c = ctx();
-            let got = c.add(&c.upload(&a).unwrap(), &c.upload(&b).unwrap()).unwrap().to_host().unwrap();
-            prop_assert_eq!(got, expected);
+            let mut a_dev = c.upload(&a).unwrap();
+            c.add(&mut a_dev, &c.upload(&b).unwrap()).unwrap();
+            prop_assert_eq!(a_dev.to_host().unwrap(), expected);
         }
 
         #[test]
@@ -410,8 +412,9 @@ mod tests {
             let b = a.iter().rev().copied().collect::<Vec<_>>();
             let expected: Vec<Fr> = a.iter().zip(&b).map(|(x, y)| *x - *y).collect();
             let c = ctx();
-            let got = c.sub(&c.upload(&a).unwrap(), &c.upload(&b).unwrap()).unwrap().to_host().unwrap();
-            prop_assert_eq!(got, expected);
+            let mut a_dev = c.upload(&a).unwrap();
+            c.sub(&mut a_dev, &c.upload(&b).unwrap()).unwrap();
+            prop_assert_eq!(a_dev.to_host().unwrap(), expected);
         }
 
         #[test]
@@ -419,8 +422,9 @@ mod tests {
             let b = a.iter().rev().copied().collect::<Vec<_>>();
             let expected: Vec<Fr> = a.iter().zip(&b).map(|(x, y)| *x * *y).collect();
             let c = ctx();
-            let got = c.mul(&c.upload(&a).unwrap(), &c.upload(&b).unwrap()).unwrap().to_host().unwrap();
-            prop_assert_eq!(got, expected);
+            let mut a_dev = c.upload(&a).unwrap();
+            c.mul(&mut a_dev, &c.upload(&b).unwrap()).unwrap();
+            prop_assert_eq!(a_dev.to_host().unwrap(), expected);
         }
 
         #[test]
@@ -446,8 +450,9 @@ mod tests {
         let zero = Fr::zero();
         let one = Fr::one();
 
-        let empty = c.upload(&[]).unwrap();
-        assert_eq!(c.add(&empty, &empty).unwrap().to_host().unwrap(), Vec::<Fr>::new());
+        let mut empty = c.upload(&[]).unwrap();
+        c.add(&mut empty, &c.upload(&[]).unwrap()).unwrap();
+        assert_eq!(empty.to_host().unwrap(), Vec::<Fr>::new());
         assert_eq!(c.sum(&empty).unwrap(), zero);
         assert_eq!(c.product(&empty).unwrap(), one);
 
@@ -455,15 +460,52 @@ mod tests {
         assert_eq!(c.sum(&single).unwrap(), Fr::from_u64(42));
         assert_eq!(c.product(&single).unwrap(), Fr::from_u64(42));
 
-        let a = c.upload(&[zero, one, Fr::from_u64(7)]).unwrap();
         let b = c.upload(&[one, one, Fr::from_u64(6)]).unwrap();
+
+        let mut a = c.upload(&[zero, one, Fr::from_u64(7)]).unwrap();
+        c.add(&mut a, &b).unwrap();
         assert_eq!(
-            c.add(&a, &b).unwrap().to_host().unwrap(),
+            a.to_host().unwrap(),
             vec![one, Fr::from_u64(2), Fr::from_u64(13)]
         );
+
+        let mut a = c.upload(&[zero, one, Fr::from_u64(7)]).unwrap();
+        c.mul(&mut a, &b).unwrap();
         assert_eq!(
-            c.mul(&a, &b).unwrap().to_host().unwrap(),
+            a.to_host().unwrap(),
             vec![zero, one, Fr::from_u64(42)]
         );
+    }
+
+    #[test]
+    fn try_clone_is_independent() {
+        let c = ctx();
+        let original = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)];
+        let a = c.upload(&original).unwrap();
+        let mut cloned = a.try_clone().unwrap();
+        let ones = c.upload(&[Fr::one(); 3]).unwrap();
+        c.add(&mut cloned, &ones).unwrap();
+
+        assert_eq!(a.to_host().unwrap(), original);
+        assert_eq!(
+            cloned.to_host().unwrap(),
+            vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(4)]
+        );
+    }
+
+    #[test]
+    fn reduce_preserves_input() {
+        let c = ctx();
+        // Larger than BLOCK so the multi-pass loop runs.
+        let original: Vec<Fr> = (1..=1000u64).map(Fr::from_u64).collect();
+        let a = c.upload(&original).unwrap();
+
+        let expected_sum: Fr = original.iter().copied().sum();
+        assert_eq!(c.sum(&a).unwrap(), expected_sum);
+        assert_eq!(a.to_host().unwrap(), original);
+
+        let expected_product: Fr = original.iter().copied().product();
+        assert_eq!(c.product(&a).unwrap(), expected_product);
+        assert_eq!(a.to_host().unwrap(), original);
     }
 }
