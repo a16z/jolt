@@ -192,6 +192,28 @@ pub struct CudaFieldContext {
     mul: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
+    one_dev: CudaSlice<u64>,
+}
+
+pub struct DeviceFrVec {
+    stream: Arc<CudaStream>,
+    buf: CudaSlice<u64>,
+    len: usize,
+}
+
+impl DeviceFrVec {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn to_host(&self) -> Result<Vec<Fr>, CudaError> {
+        let raw = self.stream.clone_dtoh(&self.buf)?;
+        Ok(unflatten(&raw))
+    }
 }
 
 #[inline]
@@ -227,6 +249,7 @@ impl CudaFieldContext {
             ..Default::default()
         };
         let module = ctx.load_module(compile_ptx_with_opts(KERNEL_SRC, opts)?)?;
+        let one_dev = stream.clone_htod(&fr_to_limbs(<Fr as num_traits::One>::one()))?;
         Ok(Self {
             add: module.load_function("add_kernel")?,
             sub: module.load_function("sub_kernel")?,
@@ -234,18 +257,34 @@ impl CudaFieldContext {
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
+            one_dev,
         })
     }
 
-    fn map(&self, func: &CudaFunction, a: &[Fr], b: &[Fr]) -> Result<Vec<Fr>, CudaError> {
-        assert_eq!(a.len(), b.len(), "map operands must have equal length");
-        let n = a.len();
+    pub fn upload(&self, values: &[Fr]) -> Result<DeviceFrVec, CudaError> {
+        let buf = if values.is_empty() {
+            self.stream.alloc_zeros(0)?
+        } else {
+            self.stream.clone_htod(&flatten(values))?
+        };
+        Ok(DeviceFrVec {
+            stream: self.stream.clone(),
+            buf,
+            len: values.len(),
+        })
+    }
+
+    fn map(&self, func: &CudaFunction, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+        assert_eq!(a.len, b.len, "map operands must have equal length");
+        let n = a.len;
+        let mut out: CudaSlice<u64> = self.stream.alloc_zeros(n * LIMBS)?;
         if n == 0 {
-            return Ok(Vec::new());
+            return Ok(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf: out,
+                len: 0,
+            });
         }
-        let a_dev = self.stream.clone_htod(&flatten(a))?;
-        let b_dev = self.stream.clone_htod(&flatten(b))?;
-        let mut out_dev: CudaSlice<u64> = self.stream.alloc_zeros(n * LIMBS)?;
 
         let cfg = LaunchConfig {
             grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
@@ -255,45 +294,44 @@ impl CudaFieldContext {
         let n_arg = n as u64;
         let mut launch = self.stream.launch_builder(func);
         let _ = launch
-            .arg(&mut out_dev)
-            .arg(&a_dev)
-            .arg(&b_dev)
+            .arg(&mut out)
+            .arg(&a.buf)
+            .arg(&b.buf)
             .arg(&n_arg);
         // SAFETY: kernel reads n elements from a/b and writes n elements to out,
         // all of which are allocated with n * LIMBS u64s.
         let _ = unsafe { launch.launch(cfg) }?;
 
-        let raw = self.stream.clone_dtoh(&out_dev)?;
-        Ok(unflatten(&raw))
+        Ok(DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: out,
+            len: n,
+        })
     }
 
-    pub fn add(&self, a: &[Fr], b: &[Fr]) -> Result<Vec<Fr>, CudaError> {
+    pub fn add(&self, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         let f = self.add.clone();
         self.map(&f, a, b)
     }
 
-    pub fn sub(&self, a: &[Fr], b: &[Fr]) -> Result<Vec<Fr>, CudaError> {
+    pub fn sub(&self, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         let f = self.sub.clone();
         self.map(&f, a, b)
     }
 
-    pub fn mul(&self, a: &[Fr], b: &[Fr]) -> Result<Vec<Fr>, CudaError> {
+    pub fn mul(&self, a: &DeviceFrVec, b: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         let f = self.mul.clone();
         self.map(&f, a, b)
     }
 
-    fn reduce(&self, sum: bool, values: &[Fr]) -> Result<Fr, CudaError> {
+    fn reduce(&self, sum: bool, values: &DeviceFrVec) -> Result<Fr, CudaError> {
         use num_traits::{One, Zero};
-        let identity = if sum { Fr::zero() } else { Fr::one() };
-        if values.is_empty() {
-            return Ok(identity);
+        if values.len == 0 {
+            return Ok(if sum { Fr::zero() } else { Fr::one() });
         }
 
-        let one_limbs = fr_to_limbs(Fr::one());
-        let one_dev = self.stream.clone_htod(&one_limbs)?;
-
-        let mut current = self.stream.clone_htod(&flatten(values))?;
-        let mut len = values.len();
+        let mut current = self.stream.clone_dtod(&values.buf)?;
+        let mut len = values.len;
 
         while len > 1 {
             let blocks = (len as u32).div_ceil(BLOCK);
@@ -313,7 +351,7 @@ impl CudaFieldContext {
             let mut launch = self.stream.launch_builder(&func);
             let _ = launch.arg(&mut out_dev).arg(&current).arg(&len_arg);
             if !sum {
-                let _ = launch.arg(&one_dev);
+                let _ = launch.arg(&self.one_dev);
             }
             // SAFETY: each block reads up to BLOCK elements from `current` (len total)
             // and writes one element per block to `out_dev` (blocks total). Shared
@@ -328,11 +366,11 @@ impl CudaFieldContext {
         Ok(limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]))
     }
 
-    pub fn sum(&self, values: &[Fr]) -> Result<Fr, CudaError> {
+    pub fn sum(&self, values: &DeviceFrVec) -> Result<Fr, CudaError> {
         self.reduce(true, values)
     }
 
-    pub fn product(&self, values: &[Fr]) -> Result<Fr, CudaError> {
+    pub fn product(&self, values: &DeviceFrVec) -> Result<Fr, CudaError> {
         self.reduce(false, values)
     }
 }
@@ -362,7 +400,8 @@ mod tests {
         fn add_matches_cpu(a in fr_vec_strategy(300)) {
             let b = a.iter().rev().copied().collect::<Vec<_>>();
             let expected: Vec<Fr> = a.iter().zip(&b).map(|(x, y)| *x + *y).collect();
-            let got = ctx().add(&a, &b).unwrap();
+            let c = ctx();
+            let got = c.add(&c.upload(&a).unwrap(), &c.upload(&b).unwrap()).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
 
@@ -370,7 +409,8 @@ mod tests {
         fn sub_matches_cpu(a in fr_vec_strategy(300)) {
             let b = a.iter().rev().copied().collect::<Vec<_>>();
             let expected: Vec<Fr> = a.iter().zip(&b).map(|(x, y)| *x - *y).collect();
-            let got = ctx().sub(&a, &b).unwrap();
+            let c = ctx();
+            let got = c.sub(&c.upload(&a).unwrap(), &c.upload(&b).unwrap()).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
 
@@ -378,21 +418,24 @@ mod tests {
         fn mul_matches_cpu(a in fr_vec_strategy(300)) {
             let b = a.iter().rev().copied().collect::<Vec<_>>();
             let expected: Vec<Fr> = a.iter().zip(&b).map(|(x, y)| *x * *y).collect();
-            let got = ctx().mul(&a, &b).unwrap();
+            let c = ctx();
+            let got = c.mul(&c.upload(&a).unwrap(), &c.upload(&b).unwrap()).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
 
         #[test]
         fn sum_matches_cpu(a in fr_vec_strategy(2000)) {
             let expected: Fr = a.iter().copied().sum();
-            let got = ctx().sum(&a).unwrap();
+            let c = ctx();
+            let got = c.sum(&c.upload(&a).unwrap()).unwrap();
             prop_assert_eq!(got, expected);
         }
 
         #[test]
         fn product_matches_cpu(a in fr_vec_strategy(2000)) {
             let expected: Fr = a.iter().copied().product();
-            let got = ctx().product(&a).unwrap();
+            let c = ctx();
+            let got = c.product(&c.upload(&a).unwrap()).unwrap();
             prop_assert_eq!(got, expected);
         }
     }
@@ -403,20 +446,23 @@ mod tests {
         let zero = Fr::zero();
         let one = Fr::one();
 
-        assert_eq!(c.add(&[], &[]).unwrap(), Vec::<Fr>::new());
-        assert_eq!(c.sum(&[]).unwrap(), zero);
-        assert_eq!(c.product(&[]).unwrap(), one);
-        assert_eq!(c.sum(&[Fr::from_u64(42)]).unwrap(), Fr::from_u64(42));
-        assert_eq!(c.product(&[Fr::from_u64(42)]).unwrap(), Fr::from_u64(42));
+        let empty = c.upload(&[]).unwrap();
+        assert_eq!(c.add(&empty, &empty).unwrap().to_host().unwrap(), Vec::<Fr>::new());
+        assert_eq!(c.sum(&empty).unwrap(), zero);
+        assert_eq!(c.product(&empty).unwrap(), one);
 
-        let a = vec![zero, one, Fr::from_u64(7)];
-        let b = vec![one, one, Fr::from_u64(6)];
+        let single = c.upload(&[Fr::from_u64(42)]).unwrap();
+        assert_eq!(c.sum(&single).unwrap(), Fr::from_u64(42));
+        assert_eq!(c.product(&single).unwrap(), Fr::from_u64(42));
+
+        let a = c.upload(&[zero, one, Fr::from_u64(7)]).unwrap();
+        let b = c.upload(&[one, one, Fr::from_u64(6)]).unwrap();
         assert_eq!(
-            c.add(&a, &b).unwrap(),
+            c.add(&a, &b).unwrap().to_host().unwrap(),
             vec![one, Fr::from_u64(2), Fr::from_u64(13)]
         );
         assert_eq!(
-            c.mul(&a, &b).unwrap(),
+            c.mul(&a, &b).unwrap().to_host().unwrap(),
             vec![zero, one, Fr::from_u64(42)]
         );
     }
