@@ -2,7 +2,7 @@
 
 use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::advice, AdviceClaimReductionLayout, AdviceClaimReductionPublic,
-    JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_field::Field;
 use jolt_transcript::Transcript;

@@ -142,6 +142,23 @@ pub enum AdviceClaimReductionPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum BytecodeClaimReductionChallenge {
+    Eta,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum BytecodeClaimReductionPublic {
+    /// Final output coefficient of one committed bytecode chunk opening:
+    /// `eq(r_bc_high)[chunk] * eq_combined * skip_scale`.
+    ChunkOutputWeight(usize),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProgramImageClaimReductionPublic {
+    FinalScale,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum SpartanShiftChallenge {
     Gamma,
 }
@@ -222,6 +239,7 @@ pub enum JoltChallengeId {
     IncClaimReduction(IncClaimReductionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
+    BytecodeClaimReduction(BytecodeClaimReductionChallenge),
     SpartanShift(SpartanShiftChallenge),
     RegistersReadWrite(RegistersReadWriteChallenge),
     RegistersValEvaluation(RegistersValEvaluationChallenge),
@@ -356,6 +374,8 @@ pub enum JoltPublicId {
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
     BytecodeReadRaf(BytecodeReadRafPublic),
     AdviceClaimReduction(AdviceClaimReductionPublic),
+    BytecodeClaimReduction(BytecodeClaimReductionPublic),
+    ProgramImageClaimReduction(ProgramImageClaimReductionPublic),
     SpartanShift(SpartanShiftPublic),
     SpartanProductVirtualization(SpartanProductVirtualizationPublic),
     SpartanOuter(SpartanOuterPublic),

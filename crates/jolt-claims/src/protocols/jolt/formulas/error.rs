@@ -40,6 +40,13 @@ pub enum JoltFormulaPointError {
         reference_row_vars: usize,
         reference_col_vars: usize,
     },
+    #[error(
+        "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most 256 dividing the power-of-two bytecode length ({bytecode_len})"
+    )]
+    InvalidBytecodeChunking {
+        bytecode_len: usize,
+        chunk_count: usize,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
@@ -67,4 +74,31 @@ pub enum JoltFormulaDimensionsError {
         phase1_num_rounds: usize,
         log_t: usize,
     },
+}
+
+/// Require at least `expected` leading entries; callers consume the slice by
+/// prefix, so longer inputs are accepted.
+pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
+    if values.len() < expected {
+        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    Ok(())
+}
+
+/// [`require_len`] with the opening-point flavored error, for inputs that are
+/// opening points rather than challenge vectors.
+pub(crate) fn require_opening_point_len<F>(
+    values: &[F],
+    expected: usize,
+) -> Result<(), JoltFormulaPointError> {
+    if values.len() < expected {
+        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    Ok(())
 }

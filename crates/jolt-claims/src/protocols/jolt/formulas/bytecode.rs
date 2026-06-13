@@ -14,6 +14,7 @@ use super::super::{
     JoltRelationId, JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
+use super::error::require_len;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafDimensions {
@@ -454,16 +455,6 @@ fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
         .and_then(|register| eq.get(register as usize))
         .copied()
         .unwrap_or_else(F::zero)
-}
-
-fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
-    if values.len() < expected {
-        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-            expected,
-            got: values.len(),
-        });
-    }
-    Ok(())
 }
 
 pub fn read_raf_input_openings() -> BytecodeReadRafInputOpenings {

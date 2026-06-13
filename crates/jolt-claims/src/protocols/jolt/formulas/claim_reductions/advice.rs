@@ -9,11 +9,11 @@ use super::super::super::{
     AdviceClaimReductionPublic, JoltAdviceKind, JoltOpeningId, JoltPublicId, JoltRelationClaims,
     JoltRelationId,
 };
-use super::super::dimensions::{CommitmentMatrixShape, JoltSumcheckSpec, TracePolynomialOrder};
+use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
 use super::precommitted::{
-    precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedSchedulingReference,
-    TWO_PHASE_DEGREE_BOUND,
+    precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
+    PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,42 +60,6 @@ impl AdviceClaimReductionLayout {
         self.advice_shape
     }
 
-    pub const fn precommitted(&self) -> &PrecommittedClaimReduction {
-        &self.precommitted
-    }
-
-    pub fn dimensions(&self) -> AdviceClaimReductionDimensions {
-        AdviceClaimReductionDimensions::new(
-            self.precommitted.cycle_phase_total_rounds(),
-            self.precommitted.address_phase_total_rounds(),
-            self.precommitted.num_address_phase_rounds() > 0,
-        )
-    }
-
-    pub fn cycle_phase_opening_point<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted.cycle_phase_opening_point(challenges)
-    }
-
-    pub fn cycle_phase_variable_challenges<F: Field>(
-        &self,
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .cycle_phase_variable_challenges(challenges)
-    }
-
-    pub fn address_phase_opening_point<F: Field>(
-        &self,
-        cycle_var_challenges: &[F],
-        challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.precommitted
-            .address_phase_opening_point(cycle_var_challenges, challenges)
-    }
-
     /// `FinalScale` value when the reduction completes in the cycle phase
     /// (i.e. no active address-phase rounds remain).
     pub fn cycle_phase_final_output_scale<F: Field>(
@@ -125,6 +89,12 @@ impl AdviceClaimReductionLayout {
     }
 }
 
+impl PrecommittedReductionLayout for AdviceClaimReductionLayout {
+    fn precommitted(&self) -> &PrecommittedClaimReduction {
+        &self.precommitted
+    }
+}
+
 fn final_advice_eq_eval<F: Field>(
     reference_opening_point: &[F],
     opening_point: &[F],
@@ -141,57 +111,9 @@ fn final_advice_eq_eval<F: Field>(
     ))
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct AdviceClaimReductionDimensions {
-    cycle_phase_total_rounds: usize,
-    address_phase_total_rounds: usize,
-    has_address_phase: bool,
-}
-
-impl AdviceClaimReductionDimensions {
-    pub const fn new(
-        cycle_phase_total_rounds: usize,
-        address_phase_total_rounds: usize,
-        has_address_phase: bool,
-    ) -> Self {
-        Self {
-            cycle_phase_total_rounds,
-            address_phase_total_rounds,
-            has_address_phase,
-        }
-    }
-
-    /// Full cycle-phase sumcheck round count, including rounds this advice
-    /// polynomial skips.
-    pub const fn cycle_phase_total_rounds(self) -> usize {
-        self.cycle_phase_total_rounds
-    }
-
-    /// Full address-phase sumcheck round count, including rounds this advice
-    /// polynomial skips.
-    pub const fn address_phase_total_rounds(self) -> usize {
-        self.address_phase_total_rounds
-    }
-
-    /// The address phase only runs for this advice polynomial when it has
-    /// active address-phase rounds; otherwise the reduction finalizes at the
-    /// cycle-phase handoff.
-    pub const fn has_address_phase(self) -> bool {
-        self.has_address_phase
-    }
-
-    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.cycle_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
-    }
-
-    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
-        JoltSumcheckSpec::boolean(self.address_phase_total_rounds, TWO_PHASE_DEGREE_BOUND)
-    }
-}
-
 pub fn cycle_phase<F>(
     kind: JoltAdviceKind,
-    dimensions: AdviceClaimReductionDimensions,
+    dimensions: PrecommittedReductionDimensions,
 ) -> JoltRelationClaims<F>
 where
     F: RingCore,
@@ -215,7 +137,7 @@ where
 
 pub fn address_phase<F>(
     kind: JoltAdviceKind,
-    dimensions: AdviceClaimReductionDimensions,
+    dimensions: PrecommittedReductionDimensions,
 ) -> JoltRelationClaims<F>
 where
     F: RingCore,
@@ -235,7 +157,7 @@ where
 
 pub fn cycle_phase_output_openings(
     kind: JoltAdviceKind,
-    dimensions: AdviceClaimReductionDimensions,
+    dimensions: PrecommittedReductionDimensions,
 ) -> Vec<JoltOpeningId> {
     if dimensions.has_address_phase() {
         vec![cycle_phase_advice_opening(kind)]
@@ -268,12 +190,12 @@ mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
 
-    fn with_address_phase() -> AdviceClaimReductionDimensions {
-        AdviceClaimReductionDimensions::new(4, 3, true)
+    fn with_address_phase() -> PrecommittedReductionDimensions {
+        PrecommittedReductionDimensions::new(4, 3, true)
     }
 
-    fn without_address_phase() -> AdviceClaimReductionDimensions {
-        AdviceClaimReductionDimensions::new(4, 3, false)
+    fn without_address_phase() -> PrecommittedReductionDimensions {
+        PrecommittedReductionDimensions::new(4, 3, false)
     }
 
     #[test]
