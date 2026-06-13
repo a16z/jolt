@@ -3,13 +3,32 @@
 //! This crate transpiles Jolt's verifier (stages 1-7, all sumchecks) into circuit code
 //! for various proving backends. Currently supported: gnark (Go/Groth16).
 //!
+//! # SCOPE (maintainer-accepted; matches the pre-spongefish transpiler)
+//!
+//! - **Non-ZK proofs ONLY.** ZK/BlindFold proofs (`proof.zk_mode == true`) are
+//!   rejected up front ([`narg_parser::NargParseError::ZkProofUnsupported`]).
+//! - **Poseidon transcript sponge ONLY.** Requires the `transcript-poseidon`
+//!   feature; the Blake2b/Keccak byte sponges used elsewhere in Jolt are
+//!   intentionally unsupported here ([`pipeline::PipelineError::WrongSpongeFeature`]).
+//! - **Field-aligned absorption.** Each 32-byte NARG word is deserialized to one
+//!   `Fr` and absorbed as a single field element — proof scalars are NEVER
+//!   byte-decomposed in-circuit. The 31-byte chunk rule applies only to genuine
+//!   byte STRINGS (the domain separator, GT commitment bytes) and is applied
+//!   OUTSIDE the circuit.
+//!
+//! This restores the scope of the pre-spongefish transpiler (commit
+//! `f3de3c9160498abdd7452740b37869ecbc60f611`, where `raw_append_scalar`
+//! absorbed each scalar as itself).
+//!
 //! # Architecture
 //!
 //! ```text
-//! JoltProof (concrete Fr values)
-//!     ↓ symbolize_proof()
-//! JoltProof<MleAst> (symbolic variables)
-//!     ↓ TranspilableVerifier::verify()
+//! JoltProof (NARG byte-string + structural fields)
+//!     ↓ symbolize_proof(): claims → vars; NARG → frames (narg_parser)
+//! TranspilableVerifier stages 1–7 over SymbolicVerifierFs
+//!     (frames → witness vars at their exact read positions;
+//!      absorbs/squeezes → sponge-layout AST nodes)
+//!     ↓
 //! AST in NODE_ARENA (recorded operations)
 //!     ↓ target-specific codegen
 //! Circuit code (e.g., stages_circuit.go for gnark)
@@ -48,19 +67,19 @@
 //!
 //! # Transcript Feature Flags
 //!
-//! The transpiler must use the same transcript as proof generation:
-//! - `--features transcript-poseidon`: Poseidon hash (SNARK-friendly, recommended)
-//! - `--features transcript-keccak`: Keccak hash
-//! - `--features transcript-blake2b`: Blake2b hash (default if none specified)
-//!
-//! **Note**: Only Poseidon-generated proofs can be efficiently verified in-circuit.
+//! `transcript-poseidon` is the only transcript feature: the symbolic sponge layout
+//! (and the Go gadget) model Poseidon, the sole sponge that is efficient in-circuit.
+//! Featureless builds compile, but `run_symbolic_pipeline` returns
+//! `WrongSpongeFeature` — the transpiler must use the same transcript as proof
+//! generation.
 //!
 //! # Module Overview
 //!
+//! - [`narg_parser`]: split the proof's NARG byte-string into self-delimiting frames
 //! - [`gnark_codegen`]: AST → Go/gnark code generation with CSE
-//! - [`symbolic_proof`]: Convert concrete proofs to symbolic form
+//! - [`symbolic_proof`]: symbolize the proof's structural parts (claims, configs)
 //! - [`symbolic_traits`]: Trait implementations for MleAst transpilation
-//!   - [`symbolic_traits::poseidon`]: Poseidon transcript for symbolic Fiat-Shamir
+//!   - [`symbolic_traits::verifier_fs`]: spongefish `VerifierFs` for symbolic Fiat-Shamir
 //!   - [`symbolic_traits::opening_accumulator`]: Symbolic opening accumulator
 //!   - [`symbolic_traits::ast_commitment_scheme`]: Stub commitment scheme for transpilation
 //!
@@ -69,59 +88,25 @@
 //! See `main.rs` for the full transpilation pipeline, or use the library directly:
 //!
 //! ```ignore
-//! use transpiler::{symbolize_proof, gnark_codegen, PoseidonAstTranscript};
+//! use transpiler::symbolic_proof::{symbolize_proof, SymbolizedProof};
+//! use transpiler::symbolic_traits::{FieldAlignedLayout, SymbolicVerifierFs};
 //!
-//! let (symbolic_proof, accumulator, var_alloc) = symbolize_proof::<PoseidonAstTranscript>(&real_proof);
-//! // ... run TranspilableVerifier::verify() ...
+//! let SymbolizedProof { parsed_narg, accumulator, proof_data } =
+//!     symbolize_proof(&real_proof, &mut var_alloc)?;
+//! // ... build SymbolicVerifierFs over the frames, drive TranspilableVerifier stages ...
 //! let circuit_code = gnark_codegen::generate_circuit_from_bundle(&bundle, "MyCircuit");
 //! ```
 
 pub mod ast_evaluator;
 pub mod gnark_codegen;
+pub mod narg_parser;
+pub mod pipeline;
+#[cfg(test)]
+pub(crate) mod poseidon_model;
 pub mod symbolic_proof;
 pub mod symbolic_traits;
 pub mod symbolize;
 
 pub use gnark_codegen::{generate_circuit_from_bundle, sanitize_go_name};
 pub use symbolic_proof::{symbolize_proof, VarAllocator};
-pub use symbolic_traits::{
-    AstCommitmentScheme, AstCurve, AstOpeningAccumulator, PoseidonAstTranscript,
-};
-
-// Re-export transcript types based on feature flags (matching jolt-core pattern)
-// This allows main.rs to use the selected transcript without conditional imports
-
-// Compile-time error if multiple transcript features are enabled
-#[cfg(any(
-    all(feature = "transcript-poseidon", feature = "transcript-keccak"),
-    all(feature = "transcript-poseidon", feature = "transcript-blake2b"),
-    all(feature = "transcript-keccak", feature = "transcript-blake2b"),
-    all(
-        feature = "transcript-poseidon",
-        feature = "transcript-keccak",
-        feature = "transcript-blake2b"
-    )
-))]
-compile_error!("Cannot enable multiple transcript features simultaneously. Please choose exactly one of: 'transcript-poseidon', 'transcript-keccak', or 'transcript-blake2b'.");
-
-/// The selected AST transcript type based on feature flags.
-/// For symbolic execution, this determines which transcript implementation to use.
-///
-/// Note: Currently only Poseidon is implemented for symbolic execution.
-/// Other transcript types will use PoseidonAstTranscript as a fallback
-/// (the circuit still uses Poseidon internally regardless of proof transcript).
-#[cfg(feature = "transcript-poseidon")]
-pub type SelectedAstTranscript = PoseidonAstTranscript;
-
-#[cfg(feature = "transcript-keccak")]
-pub type SelectedAstTranscript = PoseidonAstTranscript; // TODO: KeccakAstTranscript when implemented
-
-#[cfg(feature = "transcript-blake2b")]
-pub type SelectedAstTranscript = PoseidonAstTranscript; // TODO: Blake2bAstTranscript when implemented
-
-#[cfg(not(any(
-    feature = "transcript-poseidon",
-    feature = "transcript-keccak",
-    feature = "transcript-blake2b"
-)))]
-pub type SelectedAstTranscript = PoseidonAstTranscript; // Default to Poseidon
+pub use symbolic_traits::{AstCommitmentScheme, AstCurve, AstOpeningAccumulator};

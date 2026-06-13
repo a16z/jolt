@@ -26,9 +26,9 @@ pub mod mle_ast;
 pub mod scalar_ops;
 
 // Re-export core types
-pub use ast_bundle::{Assertion, AstBundle, AstCommitment, TargetField, WitnessType};
-pub use mle_ast::{
-    set_pending_commitment_chunks, set_pending_point_elements, take_pending_commitment_chunks,
-    take_pending_point_elements,
+pub use ast_bundle::{
+    Assertion, AstBundle, AstCommitment, TargetField, WitnessType, BYTES_PER_CHUNK,
+    COMMITMENT_BYTES, COMMITMENT_CHUNKS,
 };
+pub use mle_ast::{set_pending_commitment_chunks, take_pending_commitment_chunks};
 pub use mle_ast::{DefaultMleAst, MleAst};

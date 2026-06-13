@@ -11,27 +11,29 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::{HashMap, HashSet};
 
-use crate::mle_ast::{node_arena, set_pending_commitment_chunks, Edge, MleAst, Node, NodeId};
+use crate::mle_ast::{
+    node_arena, set_pending_commitment_chunks, symbolize_read_bytes, Atom, Edge, MleAst, Node,
+    NodeId, Scalar, TranscriptHashData,
+};
 
 // =============================================================================
 // Input and Constraint Types
 // =============================================================================
 
-/// The witness type for an input variable.
-///
-/// Determines how it's treated in circuit generation:
-/// - `PublicStatement`: Fixed for a given program (constant in circuit)
-/// - `ProofData`: Varies per proof (variable witness in circuit)
+/// The witness type for an input variable, which drives its **gnark visibility**:
+/// - `PublicStatement`: emitted as a `gnark:",public"` input — the program statement
+///   (IO) plus the stage-8 binding values (opening claims, commitments) the on-chain
+///   PCS check must see.
+/// - `ProofData`: emitted as a `gnark:",secret"` witness — proof bytes the circuit
+///   re-derives Fiat-Shamir from in-circuit, so they need not be public.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WitnessType {
-    /// Public statement data (constant in the circuit).
-    /// This includes things like: program bytecode hash, memory layout params,
-    /// input/output hashes, etc. These are absorbed into the transcript during
-    /// fiat_shamir_preamble but are fixed for a given program.
+    /// Public circuit input: the program IO statement and the stage-8 binding values
+    /// (opening claims, polynomial/advice/trusted commitments). Kept public so an
+    /// on-chain wrapper can bind them to the statement and to the deferred PCS check.
     PublicStatement,
-    /// Proof data (variable in the circuit).
-    /// This includes everything that comes from the proof: commitments,
-    /// sumcheck coefficients, opening claims, etc. These vary per proof.
+    /// Secret circuit witness: sumcheck round polynomials, uni-skip coefficients, and
+    /// other per-proof bytes. Self-binding via the in-circuit sponge, so not public.
     ProofData,
 }
 
@@ -244,14 +246,6 @@ impl AstBundle {
         self.inputs.iter().any(|i| i.target_field == field)
     }
 
-    /// Count inputs for a specific target field.
-    pub fn count_inputs_for_field(&self, field: TargetField) -> usize {
-        self.inputs
-            .iter()
-            .filter(|i| i.target_field == field)
-            .count()
-    }
-
     /// Add a constraint that asserts an expression equals zero.
     pub fn add_constraint_eq_zero(&mut self, name: impl Into<String>, root: NodeId) {
         self.constraints.push(Constraint {
@@ -294,11 +288,135 @@ impl AstBundle {
         self.nodes = guard.clone();
     }
 
-    /// Run global CSE: identify nodes shared across ≥2 constraints and hoist them.
+    /// Structural hash-consing + dead-node sweep (transpiler-optimization spec §5.1/§5.3).
     ///
-    /// This finds `TranscriptHash` nodes (and their dependencies) that appear in
-    /// multiple constraint subtrees. These are computed once in a global block
-    /// instead of being duplicated in each constraint function.
+    /// A POST-HOC pass over the snapshotted arena (deliberately NOT arena-time
+    /// interning: replay must stay byte-identical and NodeId assignment deterministic;
+    /// see the spec's §5.1 rationale). Two effects, one remap:
+    ///
+    /// 1. **Hash-consing**: nodes are interned by (kind, canonicalized children), with
+    ///    commutative canonicalization for `Add`/`Mul` (operands sorted in the intern
+    ///    key only — the surviving node keeps its original operand order, which is
+    ///    value-identical). Edges to `Node::Atom` nodes are normalized to inline
+    ///    `Edge::Atom`s so the two representations of the same atom unify. Duplicates
+    ///    map to the *minimum* NodeId representative — the arena is topological
+    ///    (children strictly precede parents), so min-id representatives preserve that
+    ///    invariant and a single forward scan sees final canonical children.
+    /// 2. **Dead-node sweep**: nodes unreachable from the constraint roots (incl.
+    ///    `EqualNode` targets) and `extra_roots` are dropped, and surviving nodes are
+    ///    compacted to dense NodeIds (in original order, preserving topology).
+    ///
+    /// All edge kinds are remapped: plain children, `TranscriptHash` data/state/rounds
+    /// edges, constraint roots, `EqualNode` targets, and the caller's `extra_roots`
+    /// (remapped in place — used by the pipeline for squeezed-challenge ASTs that live
+    /// outside the constraint set). Inputs are Var-indexed and unaffected.
+    ///
+    /// Must run BEFORE `run_global_cse()`/`run_cse()`: CSE bindings are NodeId lists
+    /// and are invalidated by the compaction (they are reset here defensively).
+    pub fn canonicalize_and_sweep(&mut self, extra_roots: &mut [NodeId]) -> CanonicalizeStats {
+        let n = self.nodes.len();
+
+        // Pass 1: forward hash-consing scan. Children precede parents, so canon[] is
+        // final for every child when its parent is visited.
+        let mut canon: Vec<NodeId> = (0..n).collect();
+        let mut intern: HashMap<Node, NodeId> = HashMap::with_capacity(n);
+        let mut duplicates_merged = 0usize;
+        for i in 0..n {
+            let remapped = map_node_edges(self.nodes[i].clone(), &mut |e| match e {
+                Edge::NodeRef(id) => {
+                    debug_assert!(id < i, "arena must be topological (children < parent)");
+                    let c = canon[id];
+                    // Normalize references-to-atom-nodes to inline atoms so both
+                    // representations of the same atom unify under one key.
+                    match &self.nodes[c] {
+                        Node::Atom(a) => Edge::Atom(*a),
+                        _ => Edge::NodeRef(c),
+                    }
+                }
+                atom => atom,
+            });
+            self.nodes[i] = remapped.clone();
+            match intern.entry(commutative_key(remapped)) {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    canon[i] = *entry.get();
+                    duplicates_merged += 1;
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(i);
+                }
+            }
+        }
+
+        // Pass 2: reachability from (canonicalized) constraint roots + extra roots.
+        let mut reachable = vec![false; n];
+        let mut stack: Vec<NodeId> = Vec::new();
+        for constraint in &self.constraints {
+            stack.push(canon[constraint.root]);
+            if let Assertion::EqualNode(other) = &constraint.assertion {
+                stack.push(canon[*other]);
+            }
+        }
+        stack.extend(extra_roots.iter().map(|r| canon[*r]));
+        while let Some(id) = stack.pop() {
+            if reachable[id] {
+                continue;
+            }
+            reachable[id] = true;
+            // Children of a rewritten node already point at canonical ids.
+            stack.extend(self.node_children(id));
+        }
+
+        // Pass 3: compaction in original id order (preserves topological order).
+        let mut new_id: Vec<NodeId> = vec![usize::MAX; n];
+        let mut new_nodes: Vec<Node> = Vec::with_capacity(reachable.iter().filter(|b| **b).count());
+        for i in 0..n {
+            if !reachable[i] {
+                continue;
+            }
+            new_id[i] = new_nodes.len();
+            let node = map_node_edges(self.nodes[i].clone(), &mut |e| match e {
+                Edge::NodeRef(id) => Edge::NodeRef(new_id[id]),
+                atom => atom,
+            });
+            new_nodes.push(node);
+        }
+        let nodes_after = new_nodes.len();
+        let dead_nodes_dropped = n - duplicates_merged - nodes_after;
+        self.nodes = new_nodes;
+
+        // Pass 4: remap constraint roots, EqualNode targets, and extra roots.
+        for constraint in &mut self.constraints {
+            constraint.root = new_id[canon[constraint.root]];
+            if let Assertion::EqualNode(other) = &mut constraint.assertion {
+                *other = new_id[canon[*other]];
+            }
+        }
+        for root in extra_roots.iter_mut() {
+            *root = new_id[canon[*root]];
+        }
+
+        // CSE bindings are NodeId lists; any previously computed ones are now stale.
+        self.global_cse = GlobalCse::default();
+        self.constraint_cse.clear();
+
+        CanonicalizeStats {
+            nodes_before: n,
+            duplicates_merged,
+            dead_nodes_dropped,
+            nodes_after,
+        }
+    }
+
+    /// Run global CSE: identify nodes shared across ≥2 constraints and hoist them into
+    /// a global block computed once, instead of being duplicated in each constraint
+    /// function.
+    ///
+    /// EVERY non-atom node reachable from ≥2 distinct constraints is hoisted — not just
+    /// `TranscriptHash` nodes. Shared compound nodes (eq-poly products, challenge
+    /// powers, etc.) sit *above* the hash nodes in the DAG, so a hash-only filter
+    /// (with a downward-only dependency walk) would leave them to be re-emitted in
+    /// every consuming constraint. Atoms stay inline (free); only multi-constraint
+    /// compound nodes hoist.
     ///
     /// Call this after `snapshot_arena()` and before `run_cse()`.
     pub fn run_global_cse(&mut self) {
@@ -318,14 +436,19 @@ impl AstBundle {
             }
         }
 
-        // Phase 2: Find TranscriptHash nodes that appear in ≥2 distinct constraints
+        // Phase 2: Hoist every non-atom node reachable from ≥2 distinct constraints.
+        // `node_to_constraints` already enumerates all such nodes, so the old downward
+        // dependency expansion is unnecessary (children of a hoisted node that are
+        // themselves multi-constraint are caught here directly).
         let mut global_nodes: HashSet<NodeId> = HashSet::new();
         for (&node_id, constraints) in &node_to_constraints {
-            // Deduplicate constraint indices
+            if matches!(self.nodes[node_id], Node::Atom(_)) {
+                continue;
+            }
             let mut unique: Vec<usize> = constraints.clone();
             unique.sort_unstable();
             unique.dedup();
-            if unique.len() >= 2 && matches!(self.nodes[node_id], Node::TranscriptHash(..)) {
+            if unique.len() >= 2 {
                 global_nodes.insert(node_id);
             }
         }
@@ -335,48 +458,28 @@ impl AstBundle {
             return;
         }
 
-        // Phase 3: Include dependencies of global nodes that are also multi-constraint.
-        // Walk children of each global node; if a child is in ≥2 constraints and is
-        // non-trivial (not an atom), include it too. This captures the full chain.
-        let mut expanded = global_nodes.clone();
-        let mut worklist: Vec<NodeId> = global_nodes.into_iter().collect();
-        while let Some(node_id) = worklist.pop() {
-            for child_id in self.node_children(node_id) {
-                if expanded.contains(&child_id) {
-                    continue;
-                }
-                if matches!(self.nodes[child_id], Node::Atom(_)) {
-                    continue;
-                }
-                // Check if child is in ≥2 distinct constraints
-                if let Some(constraints) = node_to_constraints.get(&child_id) {
-                    let mut unique: Vec<usize> = constraints.clone();
-                    unique.sort_unstable();
-                    unique.dedup();
-                    if unique.len() >= 2 {
-                        expanded.insert(child_id);
-                        worklist.push(child_id);
-                    }
-                }
-            }
-        }
-
-        // Phase 4: Topological sort (post-order) of the expanded set
-        // We need a post-order that respects dependencies within the global set.
-        // Use a multi-root post-order traversal restricted to the expanded set.
-        let bindings = self.topological_sort_subset(&expanded);
+        // Phase 3: Topological sort (post-order) of the global set so each node's
+        // children are computed before it.
+        let bindings = self.topological_sort_subset(&global_nodes);
 
         self.global_cse = GlobalCse { bindings };
     }
 
     /// Topological sort a subset of nodes in post-order (children before parents).
+    ///
+    /// Roots are visited in ascending `NodeId` order (not `HashSet` iteration order) so
+    /// the output — and therefore the `gcse[i]` index assignment derived from it — is
+    /// DETERMINISTIC across runs. The arena assigns NodeIds in a fixed construction
+    /// order, so this yields reproducible generated circuits (hence a reproducible
+    /// Groth16 proving/verifying key) for the same proof.
     fn topological_sort_subset(&self, subset: &HashSet<NodeId>) -> Vec<NodeId> {
         let mut result = Vec::new();
         let mut visited: HashSet<NodeId> = HashSet::new();
         let mut stack: Vec<(NodeId, bool)> = Vec::new();
 
-        // Start from all nodes in the subset
-        for &node_id in subset {
+        let mut roots: Vec<NodeId> = subset.iter().copied().collect();
+        roots.sort_unstable();
+        for node_id in roots {
             if visited.contains(&node_id) {
                 continue;
             }
@@ -533,24 +636,20 @@ impl AstBundle {
         match &self.nodes[node_id] {
             Node::Atom(_) => vec![],
             Node::Neg(e) | Node::Inv(e) => edge_to_node_id(*e).into_iter().collect(),
-            Node::ByteReverse(e)
-            | Node::Truncate128Reverse(e)
-            | Node::Truncate128(e)
-            | Node::AppendU64Transform(e) => edge_to_node_id(*e).into_iter().collect(),
             Node::Add(l, r) | Node::Mul(l, r) | Node::Sub(l, r) | Node::Div(l, r) => {
                 [edge_to_node_id(*l), edge_to_node_id(*r)]
                     .into_iter()
                     .flatten()
                     .collect()
             }
-            Node::TranscriptHash(hash_data, state, n_rounds) => {
+            Node::TranscriptHash(hash_data, state, rate_unit_a) => {
                 let mut children: Vec<NodeId> = hash_data
                     .as_slice()
                     .iter()
                     .filter_map(|e| edge_to_node_id(*e))
                     .collect();
                 children.extend(edge_to_node_id(*state));
-                children.extend(edge_to_node_id(*n_rounds));
+                children.extend(edge_to_node_id(*rate_unit_a));
                 children
             }
         }
@@ -588,22 +687,23 @@ impl AstBundle {
             .count()
     }
 
-    /// Serialize to pretty-printed JSON string (used by write_json).
-    fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
     /// Deserialize from JSON string (used by read_json).
     fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 
     /// Write to a JSON file.
+    ///
+    /// Streams compact JSON straight to a buffered file handle rather than
+    /// materializing a pretty-printed `String` of the whole arena first — the arena can
+    /// hold millions of nodes, so the intermediate `String` (several× the on-disk size)
+    /// was a large, avoidable peak-memory spike.
     pub fn write_json(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let json = self
-            .to_json_pretty()
+        use std::io::Write;
+        let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+        serde_json::to_writer(&mut file, self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        std::fs::write(path, json)
+        file.flush()
     }
 
     /// Read from a JSON file.
@@ -620,44 +720,105 @@ impl Default for AstBundle {
     }
 }
 
+/// Counters returned by [`AstBundle::canonicalize_and_sweep`].
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CanonicalizeStats {
+    pub nodes_before: usize,
+    /// Structural duplicates merged into an earlier identical node.
+    pub duplicates_merged: usize,
+    /// Canonical nodes unreachable from any constraint/extra root.
+    pub dead_nodes_dropped: usize,
+    pub nodes_after: usize,
+}
+
+/// Rebuild a node with every child edge passed through `f` (plain children,
+/// `TranscriptHash` data/state/rate_unit_a edges included). Non-edge payloads
+/// (atoms) are preserved.
+fn map_node_edges(node: Node, f: &mut impl FnMut(Edge) -> Edge) -> Node {
+    match node {
+        Node::Atom(a) => Node::Atom(a),
+        Node::Neg(e) => Node::Neg(f(e)),
+        Node::Inv(e) => Node::Inv(f(e)),
+        Node::Add(a, b) => Node::Add(f(a), f(b)),
+        Node::Mul(a, b) => Node::Mul(f(a), f(b)),
+        Node::Sub(a, b) => Node::Sub(f(a), f(b)),
+        Node::Div(a, b) => Node::Div(f(a), f(b)),
+        Node::TranscriptHash(data, state, rate_unit_a) => {
+            let TranscriptHashData::Poseidon(e) = data;
+            let data = TranscriptHashData::Poseidon(f(e));
+            Node::TranscriptHash(data, f(state), f(rate_unit_a))
+        }
+    }
+}
+
+/// Total order on edges used for commutative canonicalization of `Add`/`Mul`
+/// intern keys (any fixed total order works; it only has to be deterministic).
+fn edge_sort_key(e: &Edge) -> (u8, u128, Scalar) {
+    match e {
+        Edge::Atom(Atom::Scalar(s)) => (0, 0, *s),
+        Edge::Atom(Atom::Var(v)) => (1, *v as u128, [0; 4]),
+        Edge::Atom(Atom::NamedVar(v)) => (2, *v as u128, [0; 4]),
+        Edge::NodeRef(id) => (3, *id as u128, [0; 4]),
+    }
+}
+
+/// Intern key for hash-consing: the node itself, with `Add`/`Mul` operands sorted
+/// (field + and × are commutative, so `Mul(a, b)` and `Mul(b, a)` are
+/// value-identical). `Sub`/`Div` are NOT commutative and keep operand order.
+fn commutative_key(node: Node) -> Node {
+    match node {
+        Node::Add(a, b) if edge_sort_key(&b) < edge_sort_key(&a) => Node::Add(b, a),
+        Node::Mul(a, b) if edge_sort_key(&b) < edge_sort_key(&a) => Node::Mul(b, a),
+        other => other,
+    }
+}
+
 // =============================================================================
 // AstCommitment
 // =============================================================================
 
 /// Wrapper type for a commitment represented as MleAst chunks.
 ///
-/// In the real verifier, commitments are `PCS::Commitment` (e.g., G1Affine for Dory).
-/// When `append_serializable` is called, it serializes to bytes and calls `append_bytes`
-/// which chunks into 32-byte pieces and hashes them with proper chaining.
+/// In the real verifier, commitments are `PCS::Commitment` (a Dory GT
+/// element, 384 canonical bytes). The field-aligned Poseidon transcript
+/// (specs/transpiler-optimization-spec.md §4.2) absorbs each commitment as
+/// the byte rule over its serialization: [`COMMITMENT_CHUNKS`] = 13
+/// little-endian chunks of [`BYTES_PER_CHUNK`] = 31 bytes (the last chunk is
+/// the 12-byte remainder; 12×31 + 12 = 384). Each chunk is < 2²⁴⁸ < r, so
+/// chunk ↦ `Fr` is injective and byte-reconstructible — this re-chunking is
+/// what dissolved the review-spec "GT bytes as 32-byte reductions" blocker.
 ///
-/// For symbolic execution, we represent each chunk as an MleAst variable.
-/// When `AstCommitment` is serialized, it stores the chunks in the
-/// `PENDING_COMMITMENT_CHUNKS` thread-local. `PoseidonAstTranscript::append_serializable`
-/// then retrieves them and performs the same hash chaining operation symbolically.
-///
-/// # Commitment Size
-///
-/// The number of chunks depends on the PCS commitment type:
-/// - **Dory**: 384 bytes → 12 chunks (G1Affine on BN254)
-/// - **HyperKZG**: Variable size depending on configuration
-/// - **Other PCS**: Determined at symbolization time from `serialized_size()`
-///
-/// This type is PCS-agnostic: chunk count is derived from the concrete commitment's
-/// serialized size during `symbolize_proof()`, not hardcoded here.
+/// For symbolic execution, each chunk is an MleAst witness variable. When
+/// `AstCommitment` is serialized, it stores the chunks in the
+/// `PENDING_COMMITMENT_CHUNKS` thread-local; the transpiler's
+/// `SymbolicVerifierFs::absorb_commitment` retrieves them and feeds the
+/// sponge layout's commitment hook.
 #[derive(Clone, Debug)]
 pub struct AstCommitment {
-    /// The MleAst chunks representing this commitment (one per 32 bytes of serialized form)
+    /// The MleAst chunks representing this commitment (13 byte-rule chunks
+    /// per Dory GT: 12×31B + 1×12B).
     pub chunks: Vec<MleAst>,
 }
 
-/// Number of bytes per chunk (one BN254 field element)
-const BYTES_PER_CHUNK: usize = 32;
+/// Bytes per byte-rule chunk (31 = the largest whole-byte count with
+/// chunk < 2²⁴⁸ < r, so every chunk embeds injectively in a BN254 `Fr`).
+/// Mirrors `jolt_transcript::BYTE_RULE_CHUNK`.
+pub const BYTES_PER_CHUNK: usize = 31;
+
+/// Canonical byte length of one Dory GT commitment (Fq12, compressed ==
+/// uncompressed = 384 bytes) — the only commitment type the transpiler
+/// handles today.
+pub const COMMITMENT_BYTES: usize = 384;
+
+/// Byte-rule chunk count per commitment: ceil(384 / 31) = 13
+/// (12 full 31-byte chunks + one 12-byte tail).
+pub const COMMITMENT_CHUNKS: usize = COMMITMENT_BYTES.div_ceil(BYTES_PER_CHUNK);
 
 impl AstCommitment {
     /// Create a new AstCommitment from chunks.
     ///
-    /// The number of chunks should match `ceil(serialized_size / 32)` of the
-    /// concrete commitment being symbolized.
+    /// The number of chunks should match `ceil(serialized_size / 31)` of the
+    /// concrete commitment being symbolized ([`COMMITMENT_CHUNKS`] for Dory).
     ///
     /// # Panics
     /// Panics if `chunks` is empty.
@@ -668,12 +829,6 @@ impl AstCommitment {
         );
         Self { chunks }
     }
-
-    /// Returns the serialized size in bytes (chunks × 32).
-    #[inline]
-    pub fn serialized_byte_len(&self) -> usize {
-        self.chunks.len() * BYTES_PER_CHUNK
-    }
 }
 
 impl CanonicalSerialize for AstCommitment {
@@ -682,23 +837,45 @@ impl CanonicalSerialize for AstCommitment {
         _writer: W,
         _compress: ark_serialize::Compress,
     ) -> Result<(), SerializationError> {
-        // Store chunks in thread-local for PoseidonAstTranscript::append_serializable to retrieve
+        // Store chunks in thread-local for SymbolicVerifierFs::absorb_commitment to retrieve
         set_pending_commitment_chunks(self.chunks.clone());
         Ok(())
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
-        self.serialized_byte_len()
+        // The 31-byte chunking is not length-invertible, so this is fixed to the
+        // Dory GT width the deserializer consumes.
+        COMMITMENT_BYTES
     }
 }
 
+/// Reads one commitment's worth of REAL proof bytes ([`COMMITMENT_BYTES`] =
+/// Dory GT — an immutable const, not a mutable thread-local, so there is no
+/// set-without-restore hazard; code-review #4) and symbolizes each byte-rule
+/// chunk (12×31B + 1×12B, zero-padded into the 32-byte hook buffer — LE, so
+/// the witness value equals `Fr::from_le_bytes_mod_order(chunk)`) into a
+/// fresh witness variable via the `set_read_symbolizer` hook. Used by the
+/// transpiler's `SymbolicVerifierFs::read_commitments` on the
+/// commitment/advice frames.
 impl CanonicalDeserialize for AstCommitment {
     fn deserialize_with_mode<R: std::io::Read>(
-        _reader: R,
+        mut reader: R,
         _compress: ark_serialize::Compress,
         _validate: ark_serialize::Validate,
     ) -> Result<Self, SerializationError> {
-        unimplemented!("AstCommitment deserialization not needed for transpilation")
+        let mut chunks = Vec::with_capacity(COMMITMENT_CHUNKS);
+        let mut remaining = COMMITMENT_BYTES;
+        while remaining > 0 {
+            let take = remaining.min(BYTES_PER_CHUNK);
+            let mut bytes = [0u8; 32];
+            reader
+                .read_exact(&mut bytes[..take])
+                .map_err(|_| SerializationError::InvalidData)?;
+            chunks.push(symbolize_read_bytes(&bytes).ok_or(SerializationError::InvalidData)?);
+            remaining -= take;
+        }
+        debug_assert_eq!(chunks.len(), COMMITMENT_CHUNKS);
+        Ok(Self { chunks })
     }
 }
 
@@ -727,5 +904,266 @@ impl PartialEq for AstCommitment {
                 .iter()
                 .zip(other.chunks.iter())
                 .all(|(a, b)| a.root() == b.root())
+    }
+}
+
+#[cfg(test)]
+mod canonicalize_tests {
+    use super::*;
+
+    fn var(i: u16) -> Edge {
+        Edge::Atom(Atom::Var(i))
+    }
+
+    fn scalar(x: u64) -> Edge {
+        Edge::Atom(Atom::Scalar([x, 0, 0, 0]))
+    }
+
+    /// Bundle built directly on local nodes (no global arena involvement).
+    fn bundle_with(nodes: Vec<Node>) -> AstBundle {
+        AstBundle {
+            nodes,
+            ..AstBundle::new()
+        }
+    }
+
+    #[test]
+    fn merges_structurally_identical_subtrees() {
+        // Two identical subtrees (v0 * v1) feeding one Add: exactly one Mul survives.
+        let mut bundle = bundle_with(vec![
+            Node::Mul(var(0), var(1)),
+            Node::Mul(var(0), var(1)),
+            Node::Add(Edge::NodeRef(0), Edge::NodeRef(1)),
+        ]);
+        bundle.add_constraint_eq_zero("c0", 2);
+
+        let stats = bundle.canonicalize_and_sweep(&mut []);
+
+        assert_eq!(stats.duplicates_merged, 1);
+        assert_eq!(bundle.nodes.len(), 2);
+        let root = bundle.constraints[0].root;
+        match &bundle.nodes[root] {
+            Node::Add(Edge::NodeRef(a), Edge::NodeRef(b)) => {
+                assert_eq!(a, b, "both edges must point at the single surviving Mul");
+                assert!(matches!(bundle.nodes[*a], Node::Mul(_, _)));
+            }
+            other => panic!("expected Add of two NodeRefs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn commutative_canonicalization_merges_swapped_mul_but_not_sub() {
+        let mut bundle = bundle_with(vec![
+            Node::Mul(var(0), var(1)),
+            Node::Mul(var(1), var(0)), // dup of 0 under commutativity
+            Node::Sub(var(0), var(1)),
+            Node::Sub(var(1), var(0)), // NOT a dup: Sub is order-sensitive
+            Node::Add(Edge::NodeRef(0), Edge::NodeRef(1)),
+            Node::Add(Edge::NodeRef(2), Edge::NodeRef(3)),
+            Node::Add(Edge::NodeRef(4), Edge::NodeRef(5)),
+        ]);
+        bundle.add_constraint_eq_zero("c0", 6);
+
+        let stats = bundle.canonicalize_and_sweep(&mut []);
+
+        assert_eq!(stats.duplicates_merged, 1, "only the swapped Mul merges");
+        let n_subs = bundle
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Sub(_, _)))
+            .count();
+        assert_eq!(n_subs, 2, "both Sub orientations must survive");
+        let n_muls = bundle
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Mul(_, _)))
+            .count();
+        assert_eq!(n_muls, 1);
+    }
+
+    #[test]
+    fn sweeps_dead_nodes_and_remaps_equal_node_targets() {
+        let mut bundle = bundle_with(vec![
+            Node::Atom(Atom::Scalar([7, 0, 0, 0])), // dead (only ever atom-inlined)
+            Node::Mul(var(0), scalar(3)),           // constraint root
+            Node::Mul(var(9), var(9)),              // dead: unreachable
+            Node::Add(var(1), scalar(2)),           // EqualNode target
+        ]);
+        bundle.add_constraint_eq_node("c0", 1, 3);
+
+        let stats = bundle.canonicalize_and_sweep(&mut []);
+
+        assert_eq!(stats.dead_nodes_dropped, 2);
+        assert_eq!(bundle.nodes.len(), 2);
+        let root = bundle.constraints[0].root;
+        assert!(matches!(bundle.nodes[root], Node::Mul(_, _)));
+        match &bundle.constraints[0].assertion {
+            Assertion::EqualNode(other) => {
+                assert!(matches!(bundle.nodes[*other], Node::Add(_, _)));
+            }
+            other => panic!("expected EqualNode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remaps_transcript_hash_data_edges_through_duplicates() {
+        let mut bundle = bundle_with(vec![
+            Node::Add(var(0), var(1)),
+            Node::Add(var(0), var(1)), // dup of 0
+            Node::TranscriptHash(
+                TranscriptHashData::Poseidon(Edge::NodeRef(1)),
+                var(2),
+                scalar(1),
+            ),
+            Node::TranscriptHash(
+                TranscriptHashData::Poseidon(Edge::NodeRef(0)),
+                var(2),
+                scalar(1),
+            ),
+            Node::Sub(Edge::NodeRef(2), Edge::NodeRef(3)),
+        ]);
+        bundle.add_constraint_eq_zero("c0", 4);
+
+        let stats = bundle.canonicalize_and_sweep(&mut []);
+
+        // The Add dup merges; the two hashes then become identical and merge too.
+        assert_eq!(stats.duplicates_merged, 2);
+        let n_hashes = bundle
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::TranscriptHash(_, _, _)))
+            .count();
+        assert_eq!(n_hashes, 1);
+        let root = bundle.constraints[0].root;
+        match &bundle.nodes[root] {
+            Node::Sub(Edge::NodeRef(a), Edge::NodeRef(b)) => {
+                assert_eq!(a, b);
+                match &bundle.nodes[*a] {
+                    Node::TranscriptHash(TranscriptHashData::Poseidon(Edge::NodeRef(d)), _, _) => {
+                        assert!(matches!(bundle.nodes[*d], Node::Add(_, _)));
+                    }
+                    other => panic!("expected Poseidon hash with NodeRef data edge, got {other:?}"),
+                }
+            }
+            other => panic!("expected Sub of two NodeRefs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extra_roots_stay_alive_and_are_remapped() {
+        let mut bundle = bundle_with(vec![
+            Node::Mul(var(0), var(1)),
+            Node::Mul(var(0), var(1)), // dup of 0; an extra root points here
+            Node::Add(Edge::NodeRef(0), scalar(5)), // constraint root
+            Node::Mul(var(7), var(8)), // extra root, NOT constraint-reachable
+        ]);
+        bundle.add_constraint_eq_zero("c0", 2);
+        let mut extra_roots = vec![1, 3];
+
+        bundle.canonicalize_and_sweep(&mut extra_roots);
+
+        // Extra root 1 collapses onto the canonical Mul(v0, v1); extra root 3 survives
+        // the sweep despite being unreachable from constraints.
+        let r0 = extra_roots[0];
+        let r1 = extra_roots[1];
+        assert!(matches!(bundle.nodes[r0], Node::Mul(var0, var1)
+            if var0 == var(0) && var1 == var(1)));
+        assert!(matches!(bundle.nodes[r1], Node::Mul(var7, var8)
+            if var7 == var(7) && var8 == var(8)));
+        // And the constraint root's child edge points at the same canonical Mul.
+        match &bundle.nodes[bundle.constraints[0].root] {
+            Node::Add(Edge::NodeRef(a), _) => assert_eq!(*a, r0),
+            other => panic!("expected Add(NodeRef, _), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_commutative_kinds_never_merge() {
+        // Div swaps, Sub swaps, and cross-kind (Add vs Mul) must all stay
+        // distinct — only the literal Add/Mul operand swap is canonicalized.
+        let mut bundle = bundle_with(vec![
+            Node::Div(var(0), var(1)),
+            Node::Div(var(1), var(0)), // NOT a dup: Div is order-sensitive
+            Node::Sub(var(0), var(1)),
+            Node::Sub(var(1), var(0)), // NOT a dup: Sub is order-sensitive
+            Node::Add(var(0), var(1)),
+            Node::Mul(var(0), var(1)), // NOT a dup of the Add: different kind
+            Node::Add(Edge::NodeRef(0), Edge::NodeRef(1)),
+            Node::Add(Edge::NodeRef(2), Edge::NodeRef(3)),
+            Node::Add(Edge::NodeRef(4), Edge::NodeRef(5)),
+            Node::Add(Edge::NodeRef(6), Edge::NodeRef(7)),
+            Node::Add(Edge::NodeRef(8), Edge::NodeRef(9)),
+        ]);
+        bundle.add_constraint_eq_zero("c0", 10);
+
+        let stats = bundle.canonicalize_and_sweep(&mut []);
+
+        assert_eq!(stats.duplicates_merged, 0);
+        assert_eq!(stats.dead_nodes_dropped, 0);
+        assert_eq!(bundle.nodes.len(), 11);
+    }
+
+    #[test]
+    fn transcript_hash_chains_do_not_collapse() {
+        // Sponge chain h1 = H(d, s0, r), h2 = H(d, h1, r): same data + rounds but the
+        // state edge differs by construction — h2 must NOT merge with h1. A second
+        // hash with the same data + state but a different round count must also stay
+        // distinct. Only a hash with ALL THREE of (data, state, rounds) identical
+        // merges (pure-function dedup).
+        let d = var(0);
+        let s0 = var(1);
+        let mut bundle = bundle_with(vec![
+            Node::TranscriptHash(TranscriptHashData::Poseidon(d), s0, scalar(1)), // h1
+            Node::TranscriptHash(TranscriptHashData::Poseidon(d), Edge::NodeRef(0), scalar(1)), // h2: state = h1
+            Node::TranscriptHash(TranscriptHashData::Poseidon(d), s0, scalar(2)), // h3: rounds differ
+            Node::TranscriptHash(TranscriptHashData::Poseidon(d), s0, scalar(1)), // h4: true dup of h1
+            Node::Add(Edge::NodeRef(1), Edge::NodeRef(2)),
+            Node::Add(Edge::NodeRef(4), Edge::NodeRef(3)),
+        ]);
+        bundle.add_constraint_eq_zero("c0", 5);
+
+        let stats = bundle.canonicalize_and_sweep(&mut []);
+
+        assert_eq!(
+            stats.duplicates_merged, 1,
+            "only the (data,state,rounds)-identical h4 merges"
+        );
+        let n_hashes = bundle
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::TranscriptHash(_, _, _)))
+            .count();
+        assert_eq!(
+            n_hashes, 3,
+            "h1, h2 (chained state), h3 (different rounds) all survive"
+        );
+        // The chain edge survives intact: some hash's state edge points at another hash.
+        let chained = bundle.nodes.iter().any(|n| {
+            matches!(n, Node::TranscriptHash(_, Edge::NodeRef(s), _)
+                if matches!(bundle.nodes[*s], Node::TranscriptHash(_, _, _)))
+        });
+        assert!(chained, "h2's state edge must still reference h1");
+    }
+
+    #[test]
+    fn atom_node_references_unify_with_inline_atoms() {
+        // Mul(NodeRef -> Atom(v0), v1) must merge with Mul(inline v0, v1).
+        let mut bundle = bundle_with(vec![
+            Node::Atom(Atom::Var(0)),
+            Node::Mul(Edge::NodeRef(0), var(1)),
+            Node::Mul(var(0), var(1)),
+            Node::Add(Edge::NodeRef(1), Edge::NodeRef(2)),
+        ]);
+        bundle.add_constraint_eq_zero("c0", 3);
+
+        let stats = bundle.canonicalize_and_sweep(&mut []);
+
+        assert_eq!(stats.duplicates_merged, 1);
+        let n_muls = bundle
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Mul(_, _)))
+            .count();
+        assert_eq!(n_muls, 1);
     }
 }

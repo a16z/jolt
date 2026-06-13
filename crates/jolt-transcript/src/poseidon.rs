@@ -1,15 +1,23 @@
 //! `PoseidonSponge` — Circom-compatible BN254 Poseidon adapter exposed
-//! through `spongefish::DuplexSpongeInterface`.
+//! through `spongefish::DuplexSpongeInterface` with **`U = Fr`** (the
+//! field-aligned transcript of `specs/transpiler-optimization-spec.md` §4).
 //!
-//! Sponge layout: one `Fr` capacity element (`self.state`) plus two `Fr`
-//! rate inputs per `permute` call, fed through light-poseidon's width-4
-//! compression function (`Poseidon::new_circom(3)` — width minus one
-//! inputs). Each call replaces capacity with the compression output.
+//! Sponge layout (unchanged compression chain, spec decision D2): one `Fr`
+//! capacity element (`self.state`) plus two `Fr` rate inputs per `permute`
+//! call, fed through light-poseidon's width-4 compression function
+//! (`Poseidon::new_circom(3)` — width minus one inputs). Each call replaces
+//! capacity with the compression output. This is a hash chain, not a true
+//! duplex sponge (no hidden capacity across squeezes); cost and
+//! ideal-permutation uniformity are unaffected (spec §11.2).
 //!
-//! Byte traffic is mapped to `Fr` via 31-byte little-endian chunks
-//! (`Fr::from_le_bytes_mod_order` is injective on chunks ≤ 31 bytes since
-//! 248 bits < BN254 modulus). Squeezed bytes come from
-//! `into_bigint().to_bytes_le()` of the running state.
+//! - `absorb(&[Fr])` feeds unit pairs: `permute(u0,u1)`, `permute(u2,u3)`, …
+//!   zero-padding an odd tail. Every absorb call starts a fresh permute pair,
+//!   so message boundaries bind exactly when each message is a complete
+//!   tagged group per spec §4.2 (the tagged-length encoding lives in the
+//!   message layer — see [`crate::codec`] — NOT here; the sponge just eats
+//!   unit slices).
+//! - `squeeze(&mut [Fr])`: per output unit, `permute(0,0)` and emit the new
+//!   state — one permute per squeezed unit, no buffering.
 //!
 //! Round constants are built once per `PoseidonSponge` construction; the
 //! same `Poseidon<Fr>` is reused for every `permute` call in this sponge's
@@ -17,12 +25,9 @@
 //! exit, so reuse is safe).
 
 use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField, Zero};
+use ark_ff::Zero;
 use light_poseidon::{Poseidon, PoseidonHasher};
 use spongefish::DuplexSpongeInterface;
-
-const SQUEEZE_BYTES: usize = 32;
-const ABSORB_CHUNK_BYTES: usize = 31;
 
 #[expect(
     clippy::expect_used,
@@ -32,20 +37,11 @@ fn fresh_hasher() -> Poseidon<Fr> {
     Poseidon::<Fr>::new_circom(3).expect("light-poseidon: width-4 init")
 }
 
-// TODO(#1455 follow-up): `PoseidonSponge` is NOT a proper DSFS sponge. Per mmaker's #1455 review,
-// the squeeze is hash-chain-like (not a true sponge), absorb throws away ~1/4 of the rate and
-// squeeze wastes ~all of it (≈25% / ≥50% throughput loss), and it is not streaming-friendly. It
-// should be rewritten as a real `spongefish::Permutation` consumed via `DuplexSponge<P>`.
-// RISK of using it as-is (decision C2 — "include Poseidon now"): any challenge/proof format pinned
-// on this sponge — especially under the NARG proof model, where the absorb layout bakes into the
-// proof bytes — will break a SECOND time when the sponge is rewritten. Kept now for feature parity;
-// revisit before the gnark/on-chain verifier depends on the Poseidon layout.
-/// Width-4 Poseidon duplex sponge over BN254 `Fr`, byte-driven.
+/// Width-4 Poseidon compression-chain sponge over BN254 `Fr`, field-unit
+/// driven (`U = Fr`).
 pub struct PoseidonSponge {
     hasher: Poseidon<Fr>,
     state: Fr,
-    pending_squeeze: [u8; SQUEEZE_BYTES],
-    squeeze_offset: usize,
 }
 
 impl PoseidonSponge {
@@ -54,8 +50,6 @@ impl PoseidonSponge {
         Self {
             hasher: fresh_hasher(),
             state: Fr::zero(),
-            pending_squeeze: [0u8; SQUEEZE_BYTES],
-            squeeze_offset: SQUEEZE_BYTES,
         }
     }
 
@@ -72,23 +66,6 @@ impl PoseidonSponge {
             .expect("light-poseidon hash");
         self.state = next;
     }
-
-    fn refill_squeeze(&mut self) {
-        self.permute(Fr::zero(), Fr::zero());
-        let bytes = self.state.into_bigint().to_bytes_le();
-        self.pending_squeeze.fill(0);
-        let n = bytes.len().min(SQUEEZE_BYTES);
-        self.pending_squeeze[..n].copy_from_slice(&bytes[..n]);
-        self.squeeze_offset = 0;
-    }
-
-    fn absorb_fr_pair(&mut self, a: Fr, b: Fr) {
-        // Any pending squeeze is invalidated by a new absorb; spongefish's
-        // DuplexSpongeInterface contract is associative within a phase and
-        // the squeeze cache is just a buffer over fresh permutations.
-        self.squeeze_offset = SQUEEZE_BYTES;
-        self.permute(a, b);
-    }
 }
 
 impl Default for PoseidonSponge {
@@ -102,8 +79,6 @@ impl Clone for PoseidonSponge {
         Self {
             hasher: fresh_hasher(),
             state: self.state,
-            pending_squeeze: self.pending_squeeze,
-            squeeze_offset: self.squeeze_offset,
         }
     }
 }
@@ -112,59 +87,32 @@ impl std::fmt::Debug for PoseidonSponge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PoseidonSponge")
             .field("state", &self.state)
-            .field("squeeze_offset", &self.squeeze_offset)
             .finish_non_exhaustive()
     }
 }
 
 impl DuplexSpongeInterface for PoseidonSponge {
-    type U = u8;
+    type U = Fr;
 
-    fn absorb(&mut self, input: &[u8]) -> &mut Self {
-        // Length-binding permutation up front: without it, absorb(&[]),
-        // absorb(&[0]), absorb(&[0; 31]) all collapse to Fr::zero() at the
-        // chunk level and would alias.
-        let len_fr = Fr::from(input.len() as u64);
-        self.absorb_fr_pair(len_fr, Fr::zero());
-
-        let mut iter = input.chunks(ABSORB_CHUNK_BYTES);
-        while let Some(first) = iter.next() {
-            let a = Fr::from_le_bytes_mod_order(first);
-            let b = iter
-                .next()
-                .map_or_else(Fr::zero, Fr::from_le_bytes_mod_order);
-            self.absorb_fr_pair(a, b);
+    fn absorb(&mut self, input: &[Fr]) -> &mut Self {
+        for pair in input.chunks(2) {
+            let a = pair[0];
+            let b = pair.get(1).copied().unwrap_or_else(Fr::zero);
+            self.permute(a, b);
         }
         self
     }
 
-    fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
-        let mut written = 0;
-        while written < output.len() {
-            if self.squeeze_offset >= SQUEEZE_BYTES {
-                self.refill_squeeze();
-            }
-            let avail = SQUEEZE_BYTES - self.squeeze_offset;
-            let want = output.len() - written;
-            let take = avail.min(want);
-            output[written..written + take].copy_from_slice(
-                &self.pending_squeeze[self.squeeze_offset..self.squeeze_offset + take],
-            );
-            self.squeeze_offset += take;
-            written += take;
+    fn squeeze(&mut self, output: &mut [Fr]) -> &mut Self {
+        for slot in output {
+            self.permute(Fr::zero(), Fr::zero());
+            *slot = self.state;
         }
         self
     }
 
     fn ratchet(&mut self) -> &mut Self {
-        // Intentional double-permute on the `ratchet ; squeeze` path: the
-        // permutation here is the one-way ratchet, and the next `squeeze`
-        // call's `refill_squeeze` runs a second permutation to produce the
-        // first squeeze block. Matches spongefish's own `DuplexSponge::ratchet`
-        // semantics (one permute in `ratchet`, another in the first
-        // `squeeze`); do not collapse to a single call.
         self.permute(Fr::zero(), Fr::zero());
-        self.squeeze_offset = SQUEEZE_BYTES;
         self
     }
 }
@@ -177,42 +125,51 @@ impl DuplexSpongeInterface for PoseidonSponge {
 mod tests {
     use super::*;
 
+    fn squeeze1(s: &mut PoseidonSponge) -> Fr {
+        let mut out = [Fr::zero(); 1];
+        s.squeeze(&mut out);
+        out[0]
+    }
+
     #[test]
     fn deterministic() {
         let mut a = PoseidonSponge::new();
         let mut b = PoseidonSponge::new();
-        a.absorb(b"hello");
-        b.absorb(b"hello");
-        let mut x = [0u8; 64];
-        let mut y = [0u8; 64];
-        a.squeeze(&mut x);
-        b.squeeze(&mut y);
-        assert_eq!(x, y);
+        let units = [Fr::from(7u64), Fr::from(11u64), Fr::from(13u64)];
+        a.absorb(&units);
+        b.absorb(&units);
+        assert_eq!(squeeze1(&mut a), squeeze1(&mut b));
     }
 
     #[test]
     fn order_sensitive() {
         let mut a = PoseidonSponge::new();
         let mut b = PoseidonSponge::new();
-        a.absorb(b"x").absorb(b"y");
-        b.absorb(b"y").absorb(b"x");
-        let mut x = [0u8; 32];
-        let mut y = [0u8; 32];
-        a.squeeze(&mut x);
-        b.squeeze(&mut y);
-        assert_ne!(x, y);
+        a.absorb(&[Fr::from(1u64), Fr::from(2u64)]);
+        b.absorb(&[Fr::from(2u64), Fr::from(1u64)]);
+        assert_ne!(squeeze1(&mut a), squeeze1(&mut b));
     }
 
+    /// One squeezed unit costs exactly one permute: two single-unit squeezes
+    /// equal one two-unit squeeze (associativity, no buffering).
     #[test]
-    fn empty_distinct_from_zero_absorb() {
+    fn squeeze_is_associative_one_permute_per_unit() {
         let mut a = PoseidonSponge::new();
         let mut b = PoseidonSponge::new();
-        a.absorb(&[]);
-        b.absorb(&[0u8]);
-        let mut x = [0u8; 32];
-        let mut y = [0u8; 32];
-        a.squeeze(&mut x);
-        b.squeeze(&mut y);
-        assert_ne!(x, y);
+        let x = squeeze1(&mut a);
+        let y = squeeze1(&mut a);
+        let mut out = [Fr::zero(); 2];
+        b.squeeze(&mut out);
+        assert_eq!([x, y], out);
+    }
+
+    /// Odd-length absorbs zero-pad the trailing pair.
+    #[test]
+    fn odd_absorb_pads_with_zero_unit() {
+        let mut a = PoseidonSponge::new();
+        let mut b = PoseidonSponge::new();
+        a.absorb(&[Fr::from(5u64)]);
+        b.absorb(&[Fr::from(5u64), Fr::zero()]);
+        assert_eq!(squeeze1(&mut a), squeeze1(&mut b));
     }
 }

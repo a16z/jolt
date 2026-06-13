@@ -83,4 +83,3 @@ func TestPoseidonConstants(t *testing.T) {
 		t.Errorf("cConstants[0] mismatch!\nGot:      %s\nExpected: %s", cConstants[0].String(), expected.String())
 	}
 }
-

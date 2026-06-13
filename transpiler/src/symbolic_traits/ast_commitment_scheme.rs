@@ -15,7 +15,6 @@
 //! let verifier = TranspilableVerifier::<
 //!     MleAst,                    // Symbolic field (records operations)
 //!     AstCommitmentScheme,       // This stub (satisfies trait bounds)
-//!     PoseidonAstTranscript,     // Symbolic transcript
 //!     AstOpeningAccumulator,     // Collects opening claims
 //! >::new(...);
 //!
@@ -47,7 +46,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
-use jolt_core::transcripts::Transcript;
+use jolt_core::transcript_msgs::{ProverFs, VerifierFs};
 use jolt_core::utils::errors::ProofVerifyError;
 use std::borrow::Borrow;
 use zklean_extractor::mle_ast::MleAst;
@@ -131,20 +130,20 @@ impl CommitmentScheme for AstCommitmentScheme {
         todo!("AstCommitmentScheme::combine_commitments - implement for stage 8")
     }
 
-    fn prove<ProofTranscript: Transcript>(
+    fn prove<T: ProverFs<Self::Field>>(
         _setup: &Self::ProverSetup,
         _poly: &MultilinearPolynomial<Self::Field>,
         _opening_point: &[<Self::Field as JoltField>::Challenge],
         _hint: Option<Self::OpeningProofHint>,
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut T,
     ) -> (Self::Proof, Option<Self::Field>) {
         panic!("AstCommitmentScheme::prove should never be called during verification")
     }
 
-    fn verify<ProofTranscript: Transcript>(
+    fn verify<T: VerifierFs<Self::Field>>(
         _proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut ProofTranscript,
+        _transcript: &mut T,
         _opening_point: &[<Self::Field as JoltField>::Challenge],
         _opening: &Self::Field,
         _commitment: &Self::Commitment,

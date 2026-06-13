@@ -27,7 +27,7 @@ func NewBN254Chip(api frontend.API) *BN254Chip {
 }
 
 // Hash computes Poseidon hash of 3 field elements.
-// API: poseidon.Hash(api, state, n_rounds, data)
+// API: poseidon.Hash(api, state, rate_unit_a, data)
 func Hash(api frontend.API, in1, in2, in3 frontend.Variable) frontend.Variable {
 	chip := NewBN254Chip(api)
 

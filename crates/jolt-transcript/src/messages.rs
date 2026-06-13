@@ -89,9 +89,11 @@ pub fn serialize_slice<T: CanonicalSerialize>(values: &[T]) -> Vec<u8> {
 /// no NARG bytes.
 ///
 /// Shared by both transcript roles so symmetric modular code absorbs
-/// identically on the prover and verifier sides. Every absorb is one
-/// length-prefixed [`BytesMsg`], so `absorb(a) ; absorb(b)` stays distinct
-/// from `absorb(a ‖ b)`.
+/// identically on the prover and verifier sides. On byte sponges every absorb
+/// is one length-prefixed [`BytesMsg`], so `absorb(a) ; absorb(b)` stays
+/// distinct from `absorb(a ‖ b)`; on the `Fr`-unit Poseidon sponge every
+/// absorb is one leading-tagged unit message (see [`crate::codec`]) with the
+/// same length-binding property.
 pub trait FsAbsorb {
     /// Absorb one `CanonicalSerialize` value (e.g. a commitment) as a single
     /// message, via its compressed serialization.
@@ -119,6 +121,58 @@ pub trait FsAbsorb {
             buf.extend_from_slice(&v.to_bytes_le_vec());
         }
         self.absorb_bytes(&buf);
+    }
+
+    // ── Typed vocabulary (spec §4.4) ────────────────────────────────────────
+    //
+    // `absorb` is type-opaque (a `CanonicalSerialize` blob), so a field-unit
+    // sponge cannot recover the value's kind from it — and length-sniffing is
+    // unsound (12 field elements serialize to exactly one GT's 384 bytes).
+    // These typed methods carry the kind. Their DEFAULTS route through the
+    // required byte methods above, so byte sponges (and symbolic implementors
+    // like the transpiler's `SymbolicVerifierFs`) keep today's behavior
+    // bit-for-bit with zero impl changes; the `Fr`-unit Poseidon state
+    // overrides them with the spec §4.2 unit encodings.
+
+    /// Absorb one **field element** as a single message.
+    ///
+    /// Default: identical to [`absorb`](Self::absorb). Poseidon override: the
+    /// count-led field frame `[Fr(3), value]`.
+    fn absorb_scalar<T: CanonicalSerialize>(&mut self, value: &T) {
+        self.absorb(value);
+    }
+
+    /// Absorb a slice of **field elements** as a single message.
+    ///
+    /// Default: identical to `absorb(&values.to_vec())` (ark's `Vec`
+    /// serialization: 8-byte LE count ‖ elements) — the byte form every
+    /// converted call site used. Poseidon override: the count-led field frame
+    /// `[Fr(2k+1), e₁, …, e_k]`.
+    fn absorb_scalars<T: CanonicalSerialize + Clone>(&mut self, values: &[T]) {
+        self.absorb(&values.to_vec());
+    }
+
+    /// Absorb one **commitment / group element** (Dory GT, G1/G2 points) as a
+    /// single message.
+    ///
+    /// Default: identical to [`absorb`](Self::absorb). Poseidon override: the
+    /// byte rule over the compressed serialization (one GT = 384 bytes ↦
+    /// `[Fr(768), 13 chunks]`); group coordinates (q > r) must NEVER be
+    /// absorbed as native field units.
+    fn absorb_commitment<T: CanonicalSerialize>(&mut self, value: &T) {
+        self.absorb(value);
+    }
+
+    /// [`absorb_commitment`](Self::absorb_commitment) for a group element
+    /// already given as its canonical compressed bytes (the Dory bridge's
+    /// `append_group`/`append_serde`, whose `DorySerialize` values are not
+    /// ark-`CanonicalSerialize`).
+    ///
+    /// Default: identical to `absorb(&bytes.to_vec())` (8-byte LE length ‖
+    /// bytes inside the message) — today's byte form at those sites. Poseidon
+    /// override: the byte rule directly over `bytes`.
+    fn absorb_commitment_bytes(&mut self, bytes: &[u8]) {
+        self.absorb(&bytes.to_vec());
     }
 }
 
@@ -155,6 +209,107 @@ where
     fn absorb_bytes(&mut self, bytes: &[u8]) {
         self.public_message(&BytesMsg(bytes.to_vec()));
     }
+}
+
+/// Poseidon (`U = Fr`) absorb path. The prover- and verifier-state impls are
+/// emitted from one `macro_rules!` body (`impl_poseidon_fs_absorb`), so the
+/// two roles cannot drift. Type-opaque absorbs and raw bytes go under the
+/// byte rule ([`RawBytesMsg`](crate::RawBytesMsg)); the typed methods carry
+/// the spec §4.2 unit encodings.
+#[cfg(feature = "transcript-poseidon")]
+mod poseidon_absorb {
+    use super::*;
+    use crate::codec::{FieldFrameMsg, RawBytesMsg};
+    use crate::poseidon::PoseidonSponge;
+    use ark_bn254::Fr;
+    use ark_serialize::CanonicalDeserialize;
+
+    /// Parse the concatenated 32-byte-LE canonical serializations of field
+    /// elements (e.g. jolt-core's `F: JoltField` scalars) into native `Fr`
+    /// units. Canonical inputs round-trip exactly; a non-32-multiple length
+    /// means a non-scalar reached a scalar-typed absorb — a call-site bug.
+    #[expect(clippy::expect_used, reason = "caller-contract violation, not data")]
+    fn parse_scalar_units(bytes: &[u8]) -> Vec<Fr> {
+        assert!(
+            bytes.len().is_multiple_of(32),
+            "absorb_scalar(s): value is not a sequence of 32-byte field elements ({} bytes)",
+            bytes.len()
+        );
+        bytes
+            .chunks_exact(32)
+            .map(|c| Fr::deserialize_compressed(c).expect("non-canonical scalar absorbed"))
+            .collect()
+    }
+
+    /// Emits the full Poseidon `FsAbsorb` method set under the given impl
+    /// header. Invoked once per transcript role so both impls share one
+    /// token-for-token method body and cannot drift.
+    macro_rules! impl_poseidon_fs_absorb {
+        ($($header:tt)+) => {
+            $($header)+ {
+                fn absorb<T: CanonicalSerialize>(&mut self, value: &T) {
+                    self.public_message(&RawBytesMsg(serialize_one(value)));
+                }
+
+                fn absorb_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
+                    self.public_message(&RawBytesMsg(serialize_slice(values)));
+                }
+
+                fn absorb_bytes(&mut self, bytes: &[u8]) {
+                    self.public_message(&RawBytesMsg(bytes.to_vec()));
+                }
+
+                // The trait default routes `absorb_field`/`absorb_field_slice` through
+                // `absorb_bytes` (byte rule), which on Poseidon diverges from
+                // `absorb_scalar`/`absorb_scalars` (count-led field frame). Override here so a
+                // field element absorbed via `absorb_field` produces the SAME `FieldFrameMsg`
+                // it would via `absorb_scalar`: `Field::to_bytes_le_vec()` for BN254 `Fr`
+                // equals `serialize_compressed` (canonical 32-byte LE), so feeding it through
+                // `parse_scalar_units` yields the identical native `Fr` units.
+                fn absorb_field<F: Field>(&mut self, value: &F) {
+                    self.public_message(&FieldFrameMsg(parse_scalar_units(
+                        &value.to_bytes_le_vec(),
+                    )));
+                }
+
+                fn absorb_field_slice<F: Field>(&mut self, values: &[F]) {
+                    let mut buf = Vec::with_capacity(values.len() * F::NUM_BYTES);
+                    for v in values {
+                        buf.extend_from_slice(&v.to_bytes_le_vec());
+                    }
+                    self.public_message(&FieldFrameMsg(parse_scalar_units(&buf)));
+                }
+
+                fn absorb_scalar<T: CanonicalSerialize>(&mut self, value: &T) {
+                    self.public_message(&FieldFrameMsg(parse_scalar_units(&serialize_one(value))));
+                }
+
+                fn absorb_scalars<T: CanonicalSerialize + Clone>(&mut self, values: &[T]) {
+                    self.public_message(&FieldFrameMsg(parse_scalar_units(&serialize_slice(
+                        values,
+                    ))));
+                }
+
+                fn absorb_commitment<T: CanonicalSerialize>(&mut self, value: &T) {
+                    // The byte rule over one compressed serialization —
+                    // unit-identical to one per-GT group inside a
+                    // `CommitmentsMsg` frame (the frame's leading `Fr(2k+1)`
+                    // count unit binds the frame partition and is not emitted
+                    // for a lone, schedule-fixed commitment absorb).
+                    self.absorb_commitment_bytes(&serialize_one(value));
+                }
+
+                fn absorb_commitment_bytes(&mut self, bytes: &[u8]) {
+                    self.public_message(&RawBytesMsg(bytes.to_vec()));
+                }
+            }
+        };
+    }
+
+    impl_poseidon_fs_absorb!(
+        impl<R: RngCore + CryptoRng> FsAbsorb for ProverState<PoseidonSponge, R>
+    );
+    impl_poseidon_fs_absorb!(impl FsAbsorb for VerifierState<'_, PoseidonSponge>);
 }
 
 /// Squeeze field challenges. Implemented per byte-sponge type for
@@ -249,7 +404,12 @@ pub trait FsTranscript<F: Field>: FsAbsorb + FsChallenge<F> {}
 
 impl<F: Field, T: FsAbsorb + FsChallenge<F>> FsTranscript<F> for T {}
 
-#[cfg(test)]
+// Gated on `transcript-blake2b`: the suite fixes its sponge to `Blake2b512`
+// (and exercises that sponge's `FsChallenge` impl), so it only compiles when
+// that feature — the one pulling `spongefish/blake2` — is on. Without this
+// gate `--no-default-features --features transcript-poseidon --all-targets`
+// fails to build (no `Blake2b512` in `spongefish::instantiations`).
+#[cfg(all(test, feature = "transcript-blake2b"))]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;

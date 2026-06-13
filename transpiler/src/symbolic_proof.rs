@@ -1,68 +1,41 @@
-//! Convert a real JoltProof to a symbolic JoltProof for transpilation.
+//! Symbolize a real `RV64IMACProof` for NARG-replay transpilation.
 //!
 //! # Overview
 //!
-//! This module creates symbolic versions of proof data structures. During symbolic
-//! execution, we need a `JoltProof<MleAst>` where each field element is replaced
-//! with an `MleAst::Var(index)`, a unique symbolic variable.
+//! Under the spongefish/NARG proof format, only the proof's *structural* parts are
+//! symbolized here up front:
 //!
-//! # Key Function
+//! - the non-ZK `opening_claims` (named `claim_{OpeningId:?}`), pre-seeded into the
+//!   [`AstOpeningAccumulator`];
+//! - the structural scalars (`trace_length`, `ram_K`, configs) carried as
+//!   [`TranspilableProofData`].
 //!
-//! - [`symbolize_proof`]: Convert a concrete `RV64IMACProof` to symbolic form
+//! Everything else (witness commitments, advice presence, uni-skip coefficients,
+//! sumcheck round polynomials) lives in the NARG byte-string: it is split into frames
+//! by [`crate::narg_parser::parse_narg`] and symbolized *lazily during replay* by
+//! `SymbolicVerifierFs::read_slice`, which allocates witness variables from the real
+//! frame bytes at the exact protocol position the verifier reads them.
 //!
-//! # How It Works
-//!
-//! The `VarAllocator` simultaneously:
-//! 1. Allocates fresh symbolic variables (`MleAst::Var(index)`)
-//! 2. Records the corresponding concrete witness values
-//!
-//! This single-pass approach makes witness/symbolization mismatches structurally
-//! impossible - both are recorded in the same function call.
+//! The `VarAllocator` still guarantees the core invariant: symbolic variables and
+//! their concrete witness values are recorded in the same call, making
+//! witness/symbolization mismatches structurally impossible.
 //!
 //! # Commitment Serialization
 //!
-//! Dory commitments are 384-byte elliptic curve points. They're split into 12 chunks
-//! of 32 bytes each (to fit in BN254 field elements). The serialization uses:
-//!
-//! - `serialize_uncompressed` (not compressed)
-//! - LE byte order (no reversal needed for circuit)
-//!
-//! Dory will probably be replaced in future iterations,
-//! the transpilation code will need to be updated in that case.
-//!
-//! This must match exactly how the Poseidon transcript hashes commitments.
+//! Dory commitments are 384-byte GT elements, split into 13 byte-rule chunks
+//! (12 × 31 bytes + one 12-byte tail; each chunk < 2²⁴⁸ < r so the map to `Fr`
+//! is injective — spec §4.2); `serialize_compressed` (== uncompressed for GT),
+//! LE order, no reversal. MUST match `jolt_transcript`'s byte rule exactly.
 
-use crate::symbolic_traits::ast_commitment_scheme::AstCommitmentScheme;
 #[cfg(not(feature = "zk"))]
-use crate::symbolic_traits::ast_commitment_scheme::AstProof;
-use crate::symbolic_traits::ast_curve::AstCurve;
+use crate::narg_parser::parse_narg;
+use crate::narg_parser::{NargParseError, ParsedNarg};
 use crate::symbolic_traits::opening_accumulator::AstOpeningAccumulator;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
-#[cfg(not(feature = "zk"))]
-use jolt_core::curve::Bn254Curve;
-#[cfg(not(feature = "zk"))]
-use jolt_core::curve::JoltCurve;
-#[cfg(not(feature = "zk"))]
-use jolt_core::poly::opening_proof::OpeningPoint;
-#[cfg(not(feature = "zk"))]
-use jolt_core::poly::unipoly::CompressedUniPoly;
-#[cfg(not(feature = "zk"))]
-use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
-#[cfg(not(feature = "zk"))]
-use jolt_core::subprotocols::univariate_skip::{
-    UniSkipFirstRoundProof, UniSkipFirstRoundProofVariant,
-};
-use jolt_core::transcripts::Transcript;
-#[cfg(not(feature = "zk"))]
-use jolt_core::zkvm::proof_serialization::Claims;
-use jolt_core::zkvm::proof_serialization::JoltProof;
+use jolt_core::zkvm::transpilable_verifier::TranspilableProofData;
 use jolt_core::zkvm::RV64IMACProof;
-#[cfg(not(feature = "zk"))]
-use std::collections::BTreeMap;
 use zklean_extractor::mle_ast::{MleAst, TargetField};
-#[cfg(not(feature = "zk"))]
-use zklean_extractor::AstCommitment;
 
 /// Tracks variable index allocation and witness values during symbolization.
 ///
@@ -79,14 +52,17 @@ use zklean_extractor::AstCommitment;
 ///
 /// The allocator records:
 /// - Human-readable descriptions for Go struct field names (e.g., `Stage1_Sumcheck_R0_0`)
-/// - Concrete witness values as decimal strings (for JSON serialization to Go)
+/// - Concrete witness values as native `Fr` (rendered to decimal strings on demand
+///   for JSON serialization to Go)
 /// - Field kind per variable (Fr for native, Fq for emulated arithmetic)
 pub struct VarAllocator {
     next_idx: u16,
     /// (index, name, target_field) tuples for each allocated variable.
     descriptions: Vec<(u16, String, TargetField)>,
-    /// Witness values indexed by variable index, stored as decimal strings.
-    witness_values: Vec<String>,
+    /// Witness values indexed by variable index, as native `Fr`: consumed by
+    /// in-process AST evaluation (the challenge differential in
+    /// `tests/symbolic_pipeline.rs`) and rendered to decimal by [`Self::witness_values`].
+    witness_frs: Vec<ark_bn254::Fr>,
 }
 
 impl VarAllocator {
@@ -94,7 +70,7 @@ impl VarAllocator {
         Self {
             next_idx: 0,
             descriptions: Vec::new(),
-            witness_values: Vec::new(),
+            witness_frs: Vec::new(),
         }
     }
 
@@ -109,11 +85,11 @@ impl VarAllocator {
     ///
     /// # Arguments
     /// * `description`: Human-readable name for codegen
-    /// * `value`: Concrete witness value (as Fr, converted to decimal string)
+    /// * `value`: Concrete witness value (as Fr)
     /// * `target_field`: Target field (Fr for native, Fq for emulated)
     ///
     /// # Note
-    /// The value is stored as a decimal string regardless of field.
+    /// The value is stored as `Fr` regardless of field.
     /// For Fq values, ensure the value fits in the Fq modulus.
     pub fn alloc_with_value_and_field(
         &mut self,
@@ -121,12 +97,21 @@ impl VarAllocator {
         value: &ark_bn254::Fr,
         target_field: TargetField,
     ) -> MleAst {
-        use ark_ff::PrimeField;
         let idx = self.next_idx;
         self.descriptions
             .push((idx, description.to_string(), target_field));
-        self.witness_values.push(format!("{}", value.into_bigint()));
-        self.next_idx += 1;
+        self.witness_frs.push(*value);
+        // `MleAst::from_var` indexes witness variables with a `u16`. A NARG large
+        // enough to need >65 535 variables (very large traces) would otherwise wrap
+        // silently in release and reuse indices, corrupting the witness↔symbol map.
+        // Fail loudly instead (code-review #2). Lifting the cap is an MleAst change.
+        self.next_idx = self.next_idx.checked_add(1).unwrap_or_else(|| {
+            panic!(
+                "VarAllocator exceeded u16::MAX ({}) symbolic variables — NARG too large \
+                 for the current MleAst u16 var-index width",
+                u16::MAX
+            )
+        });
         MleAst::from_var(idx)
     }
 
@@ -154,6 +139,7 @@ impl VarAllocator {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn next_idx(&self) -> u16 {
         self.next_idx
     }
@@ -163,31 +149,39 @@ impl VarAllocator {
         &self.descriptions
     }
 
-    /// Get descriptions without field kinds (backward compatible iterator).
-    pub fn descriptions(&self) -> impl Iterator<Item = (u16, &str)> + '_ {
-        self.descriptions
-            .iter()
-            .map(|(idx, name, _)| (*idx, name.as_str()))
-    }
-
-    /// Get witness values as a HashMap for JSON serialization.
-    pub fn witness_values(&self) -> std::collections::HashMap<usize, String> {
-        self.witness_values
+    /// Witness values as native `Fr` keyed by variable index — the map
+    /// `ast_evaluator::eval_root`/`eval_roots` consume (challenge differential,
+    /// `tests/symbolic_pipeline.rs`).
+    pub fn witness_fr_map(&self) -> std::collections::HashMap<u16, ark_bn254::Fr> {
+        self.witness_frs
             .iter()
             .enumerate()
-            .map(|(i, v)| (i, v.clone()))
+            .map(|(i, v)| (i as u16, *v))
+            .collect()
+    }
+
+    /// Get witness values as a HashMap of decimal strings for JSON serialization.
+    pub fn witness_values(&self) -> std::collections::HashMap<usize, String> {
+        self.witness_frs
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i, v.into_bigint().to_string()))
             .collect()
     }
 
     /// Check if any variables with the specified field kind were allocated.
+    #[cfg(test)]
     pub fn has_variables_for_field(&self, field: TargetField) -> bool {
         self.descriptions.iter().any(|(_, _, tf)| *tf == field)
     }
 
-    /// Allocate variables for a commitment's 12 chunks and record witness values (Fr field).
+    /// Allocate variables for a commitment's byte-rule chunks (13 for a Dory
+    /// GT) and record witness values (Fr field).
     ///
-    /// Commitments are serialized as uncompressed LE bytes,
-    /// then split into 12 × 32-byte chunks (each fits in a BN254 field element).
+    /// Commitments are serialized as compressed LE bytes, then split into
+    /// 31-byte chunks (12 × 31B + one 12-byte tail for the 384-byte GT; each
+    /// chunk < 2²⁴⁸ < r) — the exact byte rule the field-aligned sponge
+    /// absorbs them under.
     pub fn alloc_commitment<T: CanonicalSerialize>(
         &mut self,
         commitment: &T,
@@ -204,284 +198,99 @@ impl Default for VarAllocator {
     }
 }
 
-/// Number of bytes per chunk (one BN254 field element)
-const BYTES_PER_CHUNK: usize = 32;
+/// Bytes per byte-rule chunk (spec §4.2: 31-byte LE chunks, each < 2²⁴⁸ < r
+/// so `from_le_bytes_mod_order` is exact/injective). Mirrors
+/// `jolt_transcript::BYTE_RULE_CHUNK` / `zklean_extractor::BYTES_PER_CHUNK`.
+/// Only the chunking tests reference the width directly now that
+/// `commitment_to_field_chunks` delegates to `jolt_transcript::commitment_to_chunks`.
+#[cfg(test)]
+const BYTES_PER_CHUNK: usize = jolt_transcript::BYTE_RULE_CHUNK;
 
-/// Serialize a commitment to bytes in the format used by Poseidon transcript.
-/// MUST match the Poseidon transcript serialization exactly:
-/// 1. Use serialize_uncompressed (not compressed)
-/// 2. LE bytes directly (no byte reversal needed for circuit)
+/// Serialize a commitment to bytes in the format the field-aligned Poseidon
+/// transcript absorbs: `serialize_compressed` (== uncompressed for Dory GT),
+/// LE bytes directly — must match `jolt_transcript::CommitmentsMsg` /
+/// `FsAbsorb::absorb_commitment` exactly.
 fn commitment_to_bytes<T: CanonicalSerialize>(commitment: &T) -> Vec<u8> {
     let mut bytes = Vec::new();
     commitment
-        .serialize_uncompressed(&mut bytes)
+        .serialize_compressed(&mut bytes)
         .expect("serialization failed");
     bytes
 }
 
-/// Convert commitment bytes to field element chunks.
-///
-/// The number of chunks is derived from the serialized size:
-/// `num_chunks = ceil(serialized_size / 32)`
-///
-/// This is PCS-agnostic: Dory (384 bytes) produces 12 chunks,
-/// other PCS types produce different chunk counts based on their commitment size.
+/// Convert commitment bytes to byte-rule field element chunks
+/// (`num_chunks = ceil(serialized_size / 31)`; Dory's 384 bytes → 13 chunks =
+/// 12 × 31B + one 12-byte tail). Chunk values are exactly what the native
+/// sponge's `push_byte_rule_units` absorbs for the same bytes.
 fn commitment_to_field_chunks<T: CanonicalSerialize>(commitment: &T) -> Vec<ark_bn254::Fr> {
-    let bytes = commitment_to_bytes(commitment);
-    let num_chunks = bytes.len().div_ceil(BYTES_PER_CHUNK);
-
-    (0..num_chunks)
-        .map(|i| {
-            let start = i * BYTES_PER_CHUNK;
-            let end = std::cmp::min(start + BYTES_PER_CHUNK, bytes.len());
-            ark_bn254::Fr::from_le_bytes_mod_order(&bytes[start..end])
-        })
-        .collect()
+    jolt_transcript::commitment_to_chunks(&commitment_to_bytes(commitment))
 }
 
-/// Convert a real proof to a symbolic proof for transpilation.
+/// The structural parts of a symbolized proof; the NARG frames are symbolized lazily
+/// during replay (see module docs).
+pub struct SymbolizedProof {
+    /// The proof's NARG split into ordered frames (zk_mode already refused).
+    pub parsed_narg: ParsedNarg,
+    /// Accumulator pre-seeded with the symbolic opening claims, exactly as
+    /// `JoltVerifier::new` seeds its accumulator from `proof.opening_claims`.
+    pub accumulator: AstOpeningAccumulator,
+    /// The structural proof fields `TranspilableVerifier::new` validates and uses.
+    pub proof_data: TranspilableProofData,
+}
+
+/// Symbolize a real proof's structural parts for NARG-replay transpilation.
 ///
-/// This is the main entry point for proof symbolization. It creates symbolic
-/// variables for every field element in the proof structure.
-///
-/// # Variable Naming Convention
-///
-/// Variables are named by their semantic role in the proof:
-/// - `commitment_{n}_{chunk}` - Chunk (0-11) of commitment n
-/// - `claim_{key:?}` - Opening claim for polynomial key
-/// - `stage{n}_uni_skip_coeff_{i}` - Uni-skip polynomial coefficient i
-/// - `stage{n}_sumcheck_r{round}_{coeff}` - Sumcheck round polynomial coefficient
-/// - `untrusted_advice_commitment_{chunk}` - Advice commitment chunk (if present)
-///
-/// These names appear in the witness JSON and are transformed by `sanitize_go_name`
-/// for Go struct field names.
-///
-/// # Returns
-///
-/// - `JoltProof<MleAst>`: The symbolic proof with variables instead of concrete values
-/// - `AstOpeningAccumulator`: Accumulator pre-populated with symbolic opening claims
-/// - `VarAllocator`: Tracks all allocated variables and their descriptions
-///
-/// # Type Parameter
-///
-/// `OutputTranscript` specifies the transcript type for the symbolic proof.
-/// Use `PoseidonAstTranscript` for Poseidon-based proofs (current default).
-pub fn symbolize_proof<OutputTranscript: Transcript>(
+/// Allocates one named variable per non-ZK opening claim (`claim_{OpeningId:?}` —
+/// the frozen Era-2 naming the Go side keys on) and splits the NARG into frames.
+/// All other proof values become variables during replay, named by
+/// `SymbolicVerifierFs`'s `FrameLabel` context (`commitment_{c}_{chunk}`,
+/// `stage{n}_uni_skip_coeff_{i}`, `stage{n}_sumcheck_r{round}_{i}`, ...).
+#[cfg(not(feature = "zk"))]
+pub fn symbolize_proof(
     real_proof: &RV64IMACProof,
-) -> (
-    JoltProof<MleAst, AstCurve, AstCommitmentScheme, OutputTranscript>,
-    AstOpeningAccumulator,
-    VarAllocator,
-) {
-    // The transpiler doesn't support zk mode (JoltProof fields differ).
-    // Panic early so clippy is happy with both feature sets.
-    #[cfg(feature = "zk")]
-    {
-        let _ = real_proof;
-        unimplemented!("Transpiler does not support zk mode");
-    }
-
-    #[cfg(not(feature = "zk"))]
-    {
-        let mut alloc = VarAllocator::new();
-
-        // === Symbolize commitments (with witness values) ===
-        let commitments: Vec<AstCommitment> = real_proof
-            .commitments
-            .iter()
-            .enumerate()
-            .map(|(c, commitment)| {
-                let chunks = alloc.alloc_commitment(commitment, &format!("commitment_{c}"));
-                AstCommitment::new(chunks)
-            })
-            .collect();
-
-        // === Symbolize opening claims (with witness values) ===
-        let symbolic_claims = {
-            let mut claims = BTreeMap::new();
-            for (key, (_point, claim)) in &real_proof.opening_claims.0 {
-                let symbolic_claim = alloc.alloc_with_value(&format!("claim_{key:?}"), claim);
-                claims.insert(*key, (OpeningPoint::default(), symbolic_claim));
-            }
-            claims
-        };
-
-        // === Symbolize stage 1 uni-skip proof ===
-        let stage1_uni_skip = symbolize_uni_skip_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage1_uni_skip_first_round_proof,
-            &mut alloc,
-            "stage1_uni_skip",
-        );
-
-        // === Symbolize stage 1 sumcheck proof ===
-        let stage1_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage1_sumcheck_proof,
-            &mut alloc,
-            "stage1_sumcheck",
-        );
-
-        // === Symbolize stage 2 uni-skip proof ===
-        let stage2_uni_skip = symbolize_uni_skip_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage2_uni_skip_first_round_proof,
-            &mut alloc,
-            "stage2_uni_skip",
-        );
-
-        // === Symbolize stage 2 sumcheck proof ===
-        let stage2_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage2_sumcheck_proof,
-            &mut alloc,
-            "stage2_sumcheck",
-        );
-
-        // === Symbolize stage 3 sumcheck proof ===
-        let stage3_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage3_sumcheck_proof,
-            &mut alloc,
-            "stage3_sumcheck",
-        );
-
-        // === Symbolize stage 4 sumcheck proof ===
-        let stage4_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage4_sumcheck_proof,
-            &mut alloc,
-            "stage4_sumcheck",
-        );
-
-        // === Symbolize stage 5 sumcheck proof ===
-        let stage5_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage5_sumcheck_proof,
-            &mut alloc,
-            "stage5_sumcheck",
-        );
-
-        // === Symbolize stage 6a sumcheck proof ===
-        let stage6a_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage6a_sumcheck_proof,
-            &mut alloc,
-            "stage6a_sumcheck",
-        );
-
-        // === Symbolize stage 6b sumcheck proof ===
-        let stage6b_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage6b_sumcheck_proof,
-            &mut alloc,
-            "stage6b_sumcheck",
-        );
-
-        // === Symbolize stage 7 sumcheck proof ===
-        let stage7_sumcheck = symbolize_sumcheck_variant::<Bn254Curve, _, OutputTranscript>(
-            &real_proof.stage7_sumcheck_proof,
-            &mut alloc,
-            "stage7_sumcheck",
-        );
-
-        // === Symbolize advice commitment (if present, with witness values) ===
-        let untrusted_advice_commitment =
-            real_proof
-                .untrusted_advice_commitment
-                .as_ref()
-                .map(|commitment| {
-                    let chunks = alloc.alloc_commitment(commitment, "untrusted_advice_commitment");
-                    AstCommitment::new(chunks)
-                });
-
-        // Build the symbolic proof
-        let symbolic_proof = JoltProof {
-            opening_claims: Claims(symbolic_claims),
-            commitments,
-            stage1_uni_skip_first_round_proof: stage1_uni_skip,
-            stage1_sumcheck_proof: stage1_sumcheck,
-            stage2_uni_skip_first_round_proof: stage2_uni_skip,
-            stage2_sumcheck_proof: stage2_sumcheck,
-            stage3_sumcheck_proof: stage3_sumcheck,
-            stage4_sumcheck_proof: stage4_sumcheck,
-            stage5_sumcheck_proof: stage5_sumcheck,
-            stage6a_sumcheck_proof: stage6a_sumcheck,
-            stage6b_sumcheck_proof: stage6b_sumcheck,
-            stage7_sumcheck_proof: stage7_sumcheck,
-            joint_opening_proof: AstProof::default(),
-            untrusted_advice_commitment,
-            trace_length: real_proof.trace_length,
-            ram_K: real_proof.ram_K,
-            rw_config: real_proof.rw_config.clone(),
-            one_hot_config: real_proof.one_hot_config.clone(),
-            dory_layout: real_proof.dory_layout,
-        };
-
-        // Build the opening accumulator with the symbolic claims we created
-        #[allow(non_snake_case)] // Match VerifierOpeningAccumulator naming
-        let log_T = (real_proof.trace_length as f64).log2().ceil() as usize;
-        let mut accumulator = AstOpeningAccumulator::new(log_T);
-        for (key, (_, claim)) in &symbolic_proof.opening_claims.0 {
-            accumulator.openings.insert(*key, (vec![], *claim));
-        }
-
-        (symbolic_proof, accumulator, alloc)
-    }
-}
-
-// =============================================================================
-// Symbolization Helpers
-// =============================================================================
-//
-// These functions convert concrete proof components (Fr values) to symbolic form
-// (MleAst variables) while simultaneously recording witness values in VarAllocator.
-
-#[cfg(not(feature = "zk"))]
-fn symbolize_uni_skip_variant<C: JoltCurve<F = ark_bn254::Fr>, T: Transcript, OutT: Transcript>(
-    real: &UniSkipFirstRoundProofVariant<ark_bn254::Fr, C, T>,
     alloc: &mut VarAllocator,
-    prefix: &str,
-) -> UniSkipFirstRoundProofVariant<MleAst, AstCurve, OutT> {
-    match real {
-        UniSkipFirstRoundProofVariant::Standard(inner) => {
-            let coeffs =
-                alloc.alloc_n_with_values(&inner.uni_poly.coeffs, &format!("{prefix}_coeff"));
-            UniSkipFirstRoundProofVariant::Standard(UniSkipFirstRoundProof::new(
-                jolt_core::poly::unipoly::UniPoly::from_coeff(coeffs),
-            ))
-        }
-        UniSkipFirstRoundProofVariant::Zk(_) => {
-            panic!("ZK uni-skip proofs are not supported in symbolic transpilation")
-        }
-    }
+) -> Result<SymbolizedProof, NargParseError> {
+    let parsed_narg = parse_narg(&real_proof.narg, real_proof.zk_mode)?;
+
+    let claims: Vec<_> = real_proof
+        .opening_claims
+        .0
+        .iter()
+        .map(|(key, (_point, claim))| {
+            (
+                *key,
+                alloc.alloc_with_value(&format!("claim_{key:?}"), claim),
+            )
+        })
+        .collect();
+
+    // Exact integer log2, matching the real verifier (`proof.trace_length.log_2()`,
+    // verifier.rs) — trace_length is a validated power of two. (code-review #5)
+    use jolt_core::utils::math::Math;
+    #[allow(non_snake_case)] // Match VerifierOpeningAccumulator naming
+    let log_T = real_proof.trace_length.log_2();
+    let accumulator = AstOpeningAccumulator::new_with_claims(claims, log_T);
+
+    let proof_data = TranspilableProofData::from_proof(real_proof);
+
+    Ok(SymbolizedProof {
+        parsed_narg,
+        accumulator,
+        proof_data,
+    })
 }
 
-#[cfg(not(feature = "zk"))]
-fn symbolize_sumcheck_variant<C: JoltCurve<F = ark_bn254::Fr>, T: Transcript, OutT: Transcript>(
-    real: &SumcheckInstanceProof<ark_bn254::Fr, C, T>,
-    alloc: &mut VarAllocator,
-    prefix: &str,
-) -> SumcheckInstanceProof<MleAst, AstCurve, OutT> {
-    match real {
-        SumcheckInstanceProof::Clear(clear_proof) => {
-            let compressed_polys: Vec<CompressedUniPoly<MleAst>> = clear_proof
-                .compressed_polys
-                .iter()
-                .enumerate()
-                .map(|(round, poly)| {
-                    let coeffs = alloc.alloc_n_with_values(
-                        &poly.coeffs_except_linear_term,
-                        &format!("{prefix}_r{round}"),
-                    );
-                    CompressedUniPoly {
-                        coeffs_except_linear_term: coeffs,
-                    }
-                })
-                .collect();
-
-            SumcheckInstanceProof::new_standard(compressed_polys)
-        }
-        SumcheckInstanceProof::Zk(_) => {
-            panic!("ZK sumcheck proofs are not supported in symbolic transpilation")
-        }
-    }
+/// ZK proofs are out of scope (spec §16 guardrail 4 / §17): their NARG carries extra
+/// frames that the non-ZK replay would silently mis-assign.
+#[cfg(feature = "zk")]
+pub fn symbolize_proof(
+    _real_proof: &RV64IMACProof,
+    _alloc: &mut VarAllocator,
+) -> Result<SymbolizedProof, NargParseError> {
+    Err(NargParseError::ZkProofUnsupported)
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -490,9 +299,7 @@ mod tests {
     use ark_ff::PrimeField;
     use zklean_extractor::mle_ast::{get_node, Atom, Node};
 
-    // =========================================================================
     // VarAllocator Tests
-    // =========================================================================
 
     #[test]
     fn test_var_allocator_index_increments() {
@@ -671,9 +478,7 @@ mod tests {
         assert!(descriptions.len() == chunks.len());
     }
 
-    // =========================================================================
     // Commitment Chunking Tests
-    // =========================================================================
 
     #[test]
     fn test_commitment_to_field_chunks_g1() {
@@ -687,7 +492,7 @@ mod tests {
         let chunks = commitment_to_field_chunks(&point);
         let bytes = commitment_to_bytes(&point);
 
-        // Verify chunk count matches ceil(bytes.len() / 32)
+        // Verify chunk count matches ceil(bytes.len() / 31) (field-aligned byte rule)
         let expected_chunks = bytes.len().div_ceil(BYTES_PER_CHUNK);
         assert_eq!(
             chunks.len(),
@@ -708,10 +513,10 @@ mod tests {
     }
 
     #[test]
-    fn test_commitment_chunking_matches_poseidon() {
-        // CRITICAL: Verify chunk values match what Poseidon transcript expects
+    fn test_commitment_chunking_matches_byte_rule() {
+        // CRITICAL: Verify chunk values match the field-aligned byte rule.
         // This ensures commitment_to_field_chunks produces identical chunks
-        // to what Poseidon transcript uses when hashing commitments
+        // to what the transcript absorbs when hashing commitments.
         use ark_bn254::G1Affine;
         use ark_std::UniformRand;
 
@@ -729,7 +534,7 @@ mod tests {
 
             assert_eq!(
                 *chunk, expected_chunk,
-                "Chunk {i} should match bytes[{start}..{end}] (Poseidon format)"
+                "Chunk {i} should match bytes[{start}..{end}] (byte rule)"
             );
         }
     }

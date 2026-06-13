@@ -8,7 +8,7 @@
 //!
 //! - [`commitment_scheme`]: `CommitmentScheme` implementation (`AstCommitmentScheme`)
 //! - [`opening_accumulator`]: `OpeningAccumulator` implementation (`AstOpeningAccumulator`)
-//! - [`transcript`]: `Transcript` implementation (`PoseidonAstTranscript`)
+//! - [`verifier_fs`]: spongefish `VerifierFs` implementation (`SymbolicVerifierFs`)
 //!
 //! # Usage
 //!
@@ -16,27 +16,23 @@
 //!
 //! ```ignore
 //! use transpiler::symbolic_traits::{
-//!     AstCommitmentScheme, AstOpeningAccumulator, PoseidonAstTranscript
+//!     AstCommitmentScheme, AstOpeningAccumulator, FieldAlignedLayout, SymbolicVerifierFs,
 //! };
 //! use jolt_core::zkvm::transpilable_verifier::TranspilableVerifier;
 //!
-//! let verifier = TranspilableVerifier::<
-//!     MleAst,                    // Symbolic field (records operations)
-//!     AstCommitmentScheme,       // Stub commitment scheme
-//!     PoseidonAstTranscript,     // Symbolic Poseidon transcript
-//!     AstOpeningAccumulator,     // Collects opening claims
-//! >::new(...);
-//!
-//! verifier.verify(&proof, ...);  // Runs stages 1-7, records AST
+//! // See `transpiler::pipeline::run_symbolic_pipeline` for the real driver.
+//! let layout = FieldAlignedLayout::new(b"Jolt", &instance);
+//! let mut fs = SymbolicVerifierFs::new(layout, parsed_narg, var_alloc);
+//! let mut verifier = TranspilableVerifier::<MleAst, AstCurve, AstCommitmentScheme, AstOpeningAccumulator>::new(...)?;
+//! verifier.verify_stage1(&mut fs)?; // ... stages 1-7, recording the AST
 //! ```
 
 pub mod ast_commitment_scheme;
 pub mod ast_curve;
-pub mod io_replay;
 pub mod opening_accumulator;
-pub mod poseidon;
+pub mod verifier_fs;
 
 pub use ast_commitment_scheme::AstCommitmentScheme;
 pub use ast_curve::AstCurve;
 pub use opening_accumulator::AstOpeningAccumulator;
-pub use poseidon::PoseidonAstTranscript;
+pub use verifier_fs::{FieldAlignedLayout, FrameLabel, SymbolicSpongeLayout, SymbolicVerifierFs};

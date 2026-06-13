@@ -9,6 +9,14 @@ This tool performs **symbolic execution** of the Jolt verifier. Instead of compu
 1. **Analyzed directly**: constraint structure, dependency graphs, optimization passes
 2. **Transformed to target code**: currently Gnark/Go, but the IR is target-agnostic
 
+### Scope
+
+- **Non-ZK proofs only** — ZK/BlindFold proofs (`zk_mode == true`) are rejected up front.
+- **Poseidon transcript only** — requires the `transcript-poseidon` feature; the Blake2b/Keccak byte sponges used elsewhere in Jolt are intentionally unsupported here.
+- **Field-aligned absorption** — each 32-byte NARG word deserializes to one `Fr` absorbed as a single field element; proof scalars are never byte-decomposed in-circuit. The 31-byte chunk rule applies only to genuine byte strings (domain separator, GT commitment bytes) and runs outside the circuit.
+
+This matches the scope of the pre-spongefish transpiler (commit `f3de3c91`, where `raw_append_scalar` absorbed each scalar as itself).
+
 ### How It Works
 
 The Rust verifier is executed normally, but with a "recording" field type:
@@ -64,15 +72,7 @@ cd transpiler/go && go test -v -run TestStagesCircuitProveVerify
 
 ## Transcript Feature Flags
 
-The transpiler must use the **same transcript** as proof generation:
-
-| Feature Flag | Hash Function | SNARK-Friendly |
-|--------------|---------------|----------------|
-| `transcript-poseidon` | Poseidon | Yes |
-| `transcript-keccak` | Keccak | No |
-| `transcript-blake2b` | Blake2b | No |
-
-Only Poseidon-generated proofs can be efficiently verified in-circuit. The other transcripts can still be used for IR analysis or if circuit size is not a concern. If no transcript feature is specified, both default to Blake2b.
+The transpiler must use the **same transcript** as proof generation. `transcript-poseidon` is the only transcript feature: Poseidon is the sole sponge the symbolic layout (and the Go gadget) model, and the only one efficient in-circuit. Featureless builds compile, but `run_symbolic_pipeline` refuses to run (`WrongSpongeFeature`).
 
 ## CLI Options
 

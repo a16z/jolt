@@ -16,7 +16,7 @@ use jolt_core::poly::opening_proof::{
     AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningId, OpeningPoint, PolynomialId,
     SumcheckId, BIG_ENDIAN,
 };
-use jolt_core::transcripts::Transcript;
+use jolt_core::transcript_msgs::VerifierFs;
 use jolt_core::zkvm::claim_reductions::AdviceKind;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use std::collections::BTreeMap;
@@ -258,9 +258,14 @@ impl AbstractVerifierOpeningAccumulator<MleAst> for AstOpeningAccumulator {
         }
     }
 
-    fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+    // Mirrors `VerifierOpeningAccumulator::flush_to_transcript`: a TYPED per-claim
+    // `absorb_scalar` (the real accumulator's call — under the field-aligned
+    // Poseidon sponge a scalar absorb is the count-led `[Fr(3), v]` frame, NOT
+    // the byte rule, so the untyped `absorb` would diverge the transcript).
+    // Flushed claims are SHARED values, absorbed on both sides — never in the NARG.
+    fn flush_to_transcript<T: VerifierFs<MleAst>>(&mut self, transcript: &mut T) {
         for claim in self.pending_claims.drain(..) {
-            transcript.append_scalar(b"opening_claim", &claim);
+            transcript.absorb_scalar(&claim);
         }
     }
 

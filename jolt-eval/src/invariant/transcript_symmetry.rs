@@ -12,8 +12,8 @@ use rand::rngs::StdRng;
 use spongefish::instantiations::{Blake2b512, Keccak};
 
 use jolt_transcript::{
-    prover_transcript, verifier_transcript, BytesMsg, OptimizedChallenge, PoseidonSponge,
-    ProverState, VerifierState,
+    prover_transcript, verifier_transcript, BytesMsg, FieldFrameMsg, NativeChallenge,
+    OptimizedChallenge, PoseidonSponge, ProverState, RawBytesMsg, VerifierState,
 };
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
@@ -198,6 +198,87 @@ fn mismatch(what: &str, op_idx: usize) -> CheckError {
     ))
 }
 
+/// Poseidon (`U = Fr`) sibling of [`prover_run`]: the field-aligned sponge
+/// has no `[u8]`-domain codecs, so the same ops go through the typed `Fr`
+/// message vocabulary (spec §4.2/§4.3) — bytes under [`RawBytesMsg`]'s byte
+/// rule, scalars as count-led [`FieldFrameMsg`] frames, challenges as
+/// one-unit [`NativeChallenge`] squeezes. `Op::OptimizedChallenge` never
+/// reaches here (the invariant maps it to `Op::Challenge`: Poseidon's
+/// optimized challenge IS the full-field one).
+fn prover_run_poseidon(input: &Input, instance: [u8; 32]) -> (Vec<u8>, Vec<JFr>) {
+    let mut prover = prover_transcript(SESSION, instance, PoseidonSponge::new());
+    let mut challenges: Vec<JFr> = Vec::new();
+    for op in &input.ops {
+        match op {
+            Op::PublicBytes(b) => prover.public_message(&RawBytesMsg(b.clone())),
+            Op::PublicScalar(f) => prover.public_message(&FieldFrameMsg(vec![ArkFr::from(*f)])),
+            Op::ProverBytes(b) => prover.prover_message(&RawBytesMsg(b.clone())),
+            Op::ProverScalar(f) => prover.prover_message(&FieldFrameMsg(vec![ArkFr::from(*f)])),
+            Op::Challenge | Op::OptimizedChallenge => {
+                let c: NativeChallenge = prover.verifier_message();
+                challenges.push(JFr::from(c.0));
+            }
+        }
+    }
+    (prover.narg_string().to_vec(), challenges)
+}
+
+/// Poseidon (`U = Fr`) sibling of [`run_check`], over the typed `Fr` codecs.
+fn run_check_poseidon(input: &Input) -> Result<(), CheckError> {
+    let (narg, prover_challenges) = prover_run_poseidon(input, input.instance);
+    let mut verifier = verifier_transcript(SESSION, input.instance, PoseidonSponge::new(), &narg);
+    let mut challenge_idx = 0usize;
+
+    for (op_idx, op) in input.ops.iter().enumerate() {
+        match op {
+            Op::PublicBytes(b) => verifier.public_message(&RawBytesMsg(b.clone())),
+            Op::PublicScalar(f) => verifier.public_message(&FieldFrameMsg(vec![ArkFr::from(*f)])),
+            Op::ProverBytes(expected) => {
+                let got: RawBytesMsg = verifier
+                    .prover_message()
+                    .map_err(|e| violation("prover_message<RawBytesMsg>", op_idx, e))?;
+                if got.0.as_slice() != expected.as_slice() {
+                    return Err(mismatch("ProverBytes round-trip", op_idx));
+                }
+            }
+            Op::ProverScalar(expected) => {
+                let got: FieldFrameMsg = verifier
+                    .prover_message()
+                    .map_err(|e| violation("prover_message<FieldFrameMsg>", op_idx, e))?;
+                if got.0 != vec![ArkFr::from(*expected)] {
+                    return Err(mismatch("ProverScalar round-trip", op_idx));
+                }
+            }
+            Op::Challenge | Op::OptimizedChallenge => {
+                let verifier_c: NativeChallenge = verifier.verifier_message();
+                if JFr::from(verifier_c.0) != prover_challenges[challenge_idx] {
+                    return Err(mismatch("Challenge", op_idx));
+                }
+                challenge_idx += 1;
+            }
+        }
+    }
+
+    verifier
+        .check_eof()
+        .map_err(|e| violation("check_eof", input.ops.len(), e))?;
+
+    // Domain separation — same rationale as `run_check`.
+    if !prover_challenges.is_empty() {
+        let mut other_instance = input.instance;
+        other_instance[0] ^= 0xFF;
+        let (_, other_challenges) = prover_run_poseidon(input, other_instance);
+        if other_challenges == prover_challenges {
+            return Err(CheckError::Violation(InvariantViolation::with_details(
+                "instance digest not bound — distinct instances derive identical challenges"
+                    .to_string(),
+                "domain separation violated: prove(instance) == prove(instance ^ 0xFF)".to_string(),
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn seed_corpus_shared() -> Vec<Input> {
     let scalar = JFr::from_le_bytes_mod_order(&[0xABu8; 32]);
     let mut mixed_1k = Vec::with_capacity(1000);
@@ -337,6 +418,8 @@ impl Invariant for TranscriptConsistencyPoseidonInvariant {
         // Poseidon has no 128-bit `challenge_128` (it's `unimplemented!()`); its optimized
         // challenge IS the full-field one. Map `OptimizedChallenge -> Challenge` (don't drop
         // it) so the op still squeezes — keeping the domain-separation check alive.
+        // The field-aligned sponge (`U = Fr`) takes the typed-codec sibling of
+        // `run_check` (no `[u8]`-domain codecs exist for it).
         let ops = input
             .ops
             .into_iter()
@@ -349,7 +432,7 @@ impl Invariant for TranscriptConsistencyPoseidonInvariant {
             instance: input.instance,
             ops,
         };
-        run_check::<PoseidonSponge>(&input, PoseidonSponge::new)
+        run_check_poseidon(&input)
     }
 
     fn seed_corpus(&self) -> Vec<Input> {

@@ -14,25 +14,33 @@ serde_json = "1.0"
 clap = { version = "4.6", features = ["derive"] }
 
 rand_core.workspace = true
-jolt-core = { path = "../jolt-core" }
+rayon.workspace = true
+jolt-core = { path = "../jolt-core", features = ["transpiler"] }
+jolt-transcript = { path = "../crates/jolt-transcript" }
 zklean-extractor = { path = "../zklean-extractor" }
 common = { path = "../common" }
 light-poseidon = "0.4.0"
 num-bigint = "0.4"
 
+[dev-dependencies]
+# Build a real proof in-process for the symbolic-pipeline integration test.
+jolt-core = { path = "../jolt-core", features = ["host", "transpiler"] }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+serial_test = "3.0"
+
 [features]
 default = []
-# Transcript features - must match proof generation
-# Only one can be enabled at a time (enforced by jolt-core)
+# Must match proof generation; Poseidon is the only sponge the symbolic layout
+# (and the Go gadget) model. Featureless builds compile but `run_symbolic_pipeline`
+# returns `WrongSpongeFeature`.
 transcript-poseidon = ["jolt-core/transcript-poseidon"]
-transcript-keccak = ["jolt-core/transcript-keccak"]
-transcript-blake2b = ["jolt-core/transcript-blake2b"]
+# NOT a supported mode — ZK proofs are out of the transpiler's scope (see the
+# lib.rs SCOPE section). This forwarding exists only so workspace-wide
+# `--features zk` builds compile: it swaps `symbolize_proof` for an
+# always-reject stub (jolt-core's zk feature removes the `opening_claims`
+# field the real path reads).
 zk = ["jolt-core/zk"]
 
 [[bin]]
 name = "transpiler"
 path = "src/main.rs"
-
-[[bin]]
-name = "compute_r_inv"
-path = "src/bin/compute_r_inv.rs"

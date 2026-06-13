@@ -136,7 +136,7 @@ fn edge_for_root(root: NodeId) -> Edge {
 // for ASTs, we use thread-local storage to tunnel the actual MleAst values through
 // these trait boundaries.
 //
-// This will be used by PoseidonAstTranscript (in transpiler) to build symbolic
+// This will be used by SymbolicVerifierFs (in transpiler) to build symbolic
 // AST nodes for Poseidon hash operations during verifier transpilation.
 //
 // Note: These are kept here (rather than a separate module) because they're used by
@@ -145,28 +145,40 @@ fn edge_for_root(root: NodeId) -> Edge {
 // cleanly decoupled from MleAst without introducing circular dependencies.
 // =============================================================================
 
+/// Symbolizer hook for `MleAst::deserialize_with_mode`: maps the 32 raw bytes of one
+/// field element read from a NARG frame to a fresh symbolic variable (allocated with
+/// its witness value by the transpiler's `SymbolicVerifierFs`).
+///
+/// This replaces the former `PENDING_CHALLENGE` tunnel: under the spongefish surface,
+/// symbolic challenges flow back *directly* from the transpiler's `FsChallenge` impl
+/// (its methods return `F = MleAst`), and prover-message frame reads flow through this
+/// hook — `from_bytes` no longer participates in either.
+pub type ReadSymbolizer = Box<dyn FnMut(&[u8; 32]) -> MleAst>;
+
 thread_local! {
-    static PENDING_CHALLENGE: RefCell<Option<MleAst>> = const { RefCell::new(None) };
+    static READ_SYMBOLIZER: RefCell<Option<ReadSymbolizer>> = const { RefCell::new(None) };
 }
 
-/// Set a pending challenge that will be returned by the next MleAst::from_bytes call.
-/// Called by PoseidonAstTranscript::challenge_scalar before returning.
-pub fn set_pending_challenge(challenge: MleAst) {
-    PENDING_CHALLENGE.with(|cell| {
-        *cell.borrow_mut() = Some(challenge);
-    });
+/// Install the frame-read symbolizer (capturing the variable allocator + naming
+/// context). Active until [`clear_read_symbolizer`].
+pub fn set_read_symbolizer(symbolizer: ReadSymbolizer) {
+    READ_SYMBOLIZER.with(|cell| *cell.borrow_mut() = Some(symbolizer));
 }
 
-/// Take the pending challenge (if any).
-fn take_pending_challenge() -> Option<MleAst> {
-    PENDING_CHALLENGE.with(|cell| cell.borrow_mut().take())
+pub fn clear_read_symbolizer() {
+    READ_SYMBOLIZER.with(|cell| *cell.borrow_mut() = None);
+}
+
+/// Run the installed symbolizer on one 32-byte element; `None` if not installed.
+pub fn symbolize_read_bytes(bytes: &[u8; 32]) -> Option<MleAst> {
+    READ_SYMBOLIZER.with(|cell| cell.borrow_mut().as_mut().map(|f| f(bytes)))
 }
 
 thread_local! {
     static PENDING_APPEND: RefCell<Option<MleAst>> = const { RefCell::new(None) };
 }
 
-/// Set a pending MleAst value that will be retrieved by PoseidonAstTranscript::append_scalar.
+/// Set a pending MleAst value that will be retrieved by SymbolicVerifierFs's absorb path.
 /// Called by MleAst::serialize_with_mode.
 pub fn set_pending_append(value: MleAst) {
     PENDING_APPEND.with(|cell| {
@@ -175,7 +187,7 @@ pub fn set_pending_append(value: MleAst) {
 }
 
 /// Take the pending append value (if any).
-/// Called by PoseidonAstTranscript::append_scalar to get the actual MleAst.
+/// Called by SymbolicVerifierFs's absorb path to get the actual MleAst.
 pub fn take_pending_append() -> Option<MleAst> {
     PENDING_APPEND.with(|cell| cell.borrow_mut().take())
 }
@@ -184,7 +196,7 @@ thread_local! {
     static PENDING_COMMITMENT_CHUNKS: RefCell<Option<Vec<MleAst>>> = const { RefCell::new(None) };
 }
 
-/// Set pending commitment chunks for PoseidonAstTranscript::append_serializable.
+/// Set pending commitment chunks for SymbolicVerifierFs::absorb_commitment.
 /// Called by AstCommitment::serialize_with_mode.
 pub fn set_pending_commitment_chunks(chunks: Vec<MleAst>) {
     PENDING_COMMITMENT_CHUNKS.with(|cell| {
@@ -193,32 +205,9 @@ pub fn set_pending_commitment_chunks(chunks: Vec<MleAst>) {
 }
 
 /// Take the pending commitment chunks (if any).
-/// Called by PoseidonAstTranscript::append_serializable to get the 12 MleAst chunks.
+/// Called by the symbolic transcript's `absorb_commitment` to get the 13 MleAst chunks.
 pub fn take_pending_commitment_chunks() -> Option<Vec<MleAst>> {
     PENDING_COMMITMENT_CHUNKS.with(|cell| cell.borrow_mut().take())
-}
-
-thread_local! {
-    static PENDING_POINT_ELEMENTS: RefCell<Option<Vec<MleAst>>> = const { RefCell::new(None) };
-}
-
-/// Set pending point elements for PoseidonAstTranscript::raw_append_point.
-/// `elements` must have exactly 2 entries: [x_field_element, y_field_element].
-pub fn set_pending_point_elements(elements: Vec<MleAst>) {
-    assert_eq!(
-        elements.len(),
-        2,
-        "Point must have exactly 2 elements (x, y)"
-    );
-    PENDING_POINT_ELEMENTS.with(|cell| {
-        *cell.borrow_mut() = Some(elements);
-    });
-}
-
-/// Take the pending point elements (if any).
-/// Called by PoseidonAstTranscript::raw_append_point to get the 2 MleAst elements.
-pub fn take_pending_point_elements() -> Option<Vec<MleAst>> {
-    PENDING_POINT_ELEMENTS.with(|cell| cell.borrow_mut().take())
 }
 
 // =============================================================================
@@ -333,26 +322,19 @@ pub enum Edge {
     NodeRef(NodeId),
 }
 
-/// Data payload for a transcript hash node.
-/// The variant determines both the hash backend and the data shape (arity).
+/// Data payload for a transcript hash node. The transpiler is Poseidon-only,
+/// so this carries exactly one data element (arity enforced by type).
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum TranscriptHashData {
-    /// Poseidon: exactly 1 data element. Arity enforced by type.
+    /// Poseidon: exactly 1 data element.
     Poseidon(Edge),
-    /// Blake2b: variable arity (0..N data elements in a single hash call).
-    Blake2b(Vec<Edge>),
-    /// Keccak: variable arity (0..N data elements in a single hash call).
-    Keccak(Vec<Edge>),
 }
 
 impl TranscriptHashData {
     /// View data elements as a slice (generic traversal).
     pub fn as_slice(&self) -> &[Edge] {
-        match self {
-            Self::Poseidon(e) => std::slice::from_ref(e),
-            Self::Blake2b(v) => v.as_slice(),
-            Self::Keccak(v) => v.as_slice(),
-        }
+        let Self::Poseidon(e) = self;
+        std::slice::from_ref(e)
     }
 }
 
@@ -375,38 +357,11 @@ pub enum Node {
     /// The quotient between the first and second nodes (from zklean base, unused by Jolt transpiler)
     /// NOTE: No div-by-zero checks are performed here
     Div(Edge, Edge),
-    /// Transcript hash: hash(state, n_rounds, data).
-    /// The `TranscriptHashData` variant determines which hash function and arity.
+    /// Field-aligned Poseidon compression: `poseidon(state, rate_unit_a, data)`.
+    /// The second slot is the first absorbed rate UNIT (a squeeze passes 0); it
+    /// is NOT a round counter — the width-4 Circom permutation has a fixed round
+    /// schedule.
     TranscriptHash(TranscriptHashData, Edge, Edge),
-    // -------------------------------------------------------------------------
-    // Byte-level transcript transforms
-    // -------------------------------------------------------------------------
-    // Note: These are NOT used by Poseidon (which operates on field elements natively).
-    // They are used by Blake2b/Keccak transcripts, which use byte-level serialization
-    // inherited from the original Jolt transcript design (for EVM compatibility).
-    // -------------------------------------------------------------------------
-    /// Byte-reverse a field element.
-    /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
-    /// Used by transcript append_scalar which reverses bytes for EVM compatibility.
-    ByteReverse(Edge),
-    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
-    /// Used for challenge_scalar_optimized which produces F::Challenge (MontU128Challenge).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
-    /// The 2^128 shift matches MontU128Challenge internal layout.
-    Truncate128Reverse(Edge),
-    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
-    /// Used for challenge_scalar which produces F (raw field element).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
-    Truncate128(Edge),
-    /// Transform for transcript append_u64.
-    ///
-    /// Computes: bswap64(x) * 2^192
-    ///
-    /// Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes(),
-    /// then interprets the 32 bytes as a little-endian field element.
-    ///
-    /// The result is bswap64(x) * 2^192, not just x * 2^192.
-    AppendU64Transform(Edge),
 }
 
 /// An AST intended for representing an MLE computation (although it will actually work for any
@@ -476,100 +431,21 @@ impl MleAst {
         self.root
     }
 
-    /// Poseidon hash with 3 inputs (state, n_rounds, data).
-    pub fn poseidon(state: &Self, n_rounds: &Self, data: &Self) -> Self {
+    /// Field-aligned Poseidon compression with 3 inputs
+    /// `(state, rate_unit_a, data)`. `rate_unit_a` is the first absorbed rate
+    /// unit (a squeeze passes 0), NOT a round counter.
+    pub fn poseidon(state: &Self, rate_unit_a: &Self, data: &Self) -> Self {
         let state_edge = edge_for_root(state.root);
-        let rounds_edge = edge_for_root(n_rounds.root);
+        let rate_unit_a_edge = edge_for_root(rate_unit_a.root);
         let data_edge = edge_for_root(data.root);
         let root = insert_node(Node::TranscriptHash(
             TranscriptHashData::Poseidon(data_edge),
             state_edge,
-            rounds_edge,
+            rate_unit_a_edge,
         ));
         Self {
             root,
-            reg_name: state.reg_name.or(n_rounds.reg_name).or(data.reg_name),
-        }
-    }
-
-    /// Blake2b hash with variable-arity data.
-    pub fn blake2b(state: &Self, n_rounds: &Self, data: &[Self]) -> Self {
-        let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
-        let root = insert_node(Node::TranscriptHash(
-            TranscriptHashData::Blake2b(data_edges),
-            edge_for_root(state.root),
-            edge_for_root(n_rounds.root),
-        ));
-        Self {
-            root,
-            reg_name: state.reg_name.or(n_rounds.reg_name),
-        }
-    }
-
-    /// Keccak hash with variable-arity data.
-    pub fn keccak(state: &Self, n_rounds: &Self, data: &[Self]) -> Self {
-        let data_edges: Vec<Edge> = data.iter().map(|d| edge_for_root(d.root)).collect();
-        let root = insert_node(Node::TranscriptHash(
-            TranscriptHashData::Keccak(data_edges),
-            edge_for_root(state.root),
-            edge_for_root(n_rounds.root),
-        ));
-        Self {
-            root,
-            reg_name: state.reg_name.or(n_rounds.reg_name),
-        }
-    }
-
-    /// Byte-reverse a field element.
-    /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
-    pub fn byte_reverse(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::ByteReverse(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
-        }
-    }
-
-    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
-    /// Used for challenge_scalar_optimized (produces MontU128Challenge).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
-    pub fn truncate_128_reverse(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::Truncate128Reverse(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
-        }
-    }
-
-    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
-    /// Used for challenge_scalar (produces raw F field element).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
-    pub fn truncate_128(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::Truncate128(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
-        }
-    }
-
-    /// Transform for PoseidonTranscript::append_u64.
-    ///
-    /// Computes: bswap64(x) * 2^192
-    ///
-    /// This matches PoseidonTranscript::raw_append_u64 which:
-    /// 1. Packs u64 x into bytes 24-31 of a 32-byte array using x.to_be_bytes()
-    /// 2. Interprets the 32 bytes as a little-endian field element
-    ///
-    /// The result is bswap64(x) * 2^192, not just x * 2^192.
-    pub fn append_u64_transform(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::AppendU64Transform(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
+            reg_name: state.reg_name.or(rate_unit_a.reg_name).or(data.reg_name),
         }
     }
 }
@@ -596,13 +472,9 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
         Node::Mul(e1, e2) => evaluate_edge(e1, env) * evaluate_edge(e2, env),
         Node::Sub(e1, e2) => evaluate_edge(e1, env) - evaluate_edge(e2, env),
         Node::Div(e1, e2) => evaluate_edge(e1, env) / evaluate_edge(e2, env),
-        Node::TranscriptHash(_, _, _)
-        | Node::ByteReverse(_)
-        | Node::Truncate128Reverse(_)
-        | Node::Truncate128(_)
-        | Node::AppendU64Transform(_) => {
-            // Hash/transform nodes are for circuit generation only, not field evaluation
-            unreachable!("Hash/transform nodes should not appear in zklean-extractor tests")
+        Node::TranscriptHash(_, _, _) => {
+            // Hash nodes are for circuit generation only, not field evaluation
+            unreachable!("Hash nodes should not appear in zklean-extractor tests")
         }
     }
 }
@@ -694,12 +566,7 @@ fn fmt_node(
             fmt_edge(f, fmt_data, e2, true)
         }
         Node::TranscriptHash(ref hash_data, e1, e2) => {
-            let backend_name = match hash_data {
-                TranscriptHashData::Poseidon(_) => "Poseidon",
-                TranscriptHashData::Blake2b(_) => "Blake2b",
-                TranscriptHashData::Keccak(_) => "Keccak",
-            };
-            write!(f, "transcript_hash({backend_name}, ")?;
+            write!(f, "transcript_hash(Poseidon, ")?;
             fmt_edge(f, fmt_data, e1, false)?;
             write!(f, ", ")?;
             fmt_edge(f, fmt_data, e2, false)?;
@@ -711,26 +578,6 @@ fn fmt_node(
                 fmt_edge(f, fmt_data, *d, false)?;
             }
             write!(f, "])")
-        }
-        Node::ByteReverse(edge) => {
-            write!(f, "byte_reverse(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
-        }
-        Node::Truncate128Reverse(edge) => {
-            write!(f, "truncate_128_reverse(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
-        }
-        Node::Truncate128(edge) => {
-            write!(f, "truncate_128(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
-        }
-        Node::AppendU64Transform(edge) => {
-            write!(f, "append_u64_transform(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
         }
     }
 }
@@ -754,12 +601,7 @@ fn node_depth(node: &Node) -> usize {
     }
     match node {
         Node::Atom(_) => 0,
-        Node::Neg(e)
-        | Node::Inv(e)
-        | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e)
-        | Node::Truncate128(e)
-        | Node::AppendU64Transform(e) => 1 + edge_depth(*e),
+        Node::Neg(e) | Node::Inv(e) => 1 + edge_depth(*e),
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             1 + max(edge_depth(*e1), edge_depth(*e2))
         }
@@ -857,13 +699,8 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                 let cse_e2 = aux_edge(bindings, nodes, e2);
                 register(bindings, nodes, Node::Div(cse_e1, cse_e2))
             }
-            // Transpilation-only nodes: used by challenge derivation and Blake/Keccak transcripts.
-            // Lean4 extraction never encounters them.
-            Node::TranscriptHash(..)
-            | Node::ByteReverse(..)
-            | Node::Truncate128Reverse(..)
-            | Node::Truncate128(..)
-            | Node::AppendU64Transform(..) => {
+            // Transpilation-only node; Lean4 extraction never encounters it.
+            Node::TranscriptHash(..) => {
                 unreachable!(
                     "Transpilation-only node {:?} should never appear in Lean4 CSE",
                     node
@@ -1403,11 +1240,12 @@ impl JoltField for MleAst {
     }
 
     fn from_bytes(_bytes: &[u8]) -> Self {
-        // Check if there's a pending challenge from PoseidonAstTranscript
-        if let Some(challenge) = take_pending_challenge() {
-            return challenge;
-        }
-        panic!("MleAst::from_bytes called without a pending challenge — PoseidonAstTranscript must call set_pending_challenge() before from_bytes()")
+        // Unreachable: symbolic challenges return directly from the transpiler's
+        // `FsChallenge` impl (the former PENDING_CHALLENGE tunnel is gone) and NARG
+        // frame reads go through the read-symbolizer hook (`CanonicalDeserialize`).
+        // Decoding here would silently bake a CONSTANT where a symbolic node is
+        // required, so fail loud instead.
+        unimplemented!("MleAst::from_bytes has no reachable caller")
     }
 
     fn inverse(&self) -> Option<Self> {
@@ -1486,7 +1324,7 @@ impl JoltField for MleAst {
 /// through the generic `Transcript` trait (which expects `CanonicalSerialize`).
 ///
 /// `serialize_with_mode` stores `self` in a thread-local via `set_pending_append`,
-/// which `PoseidonAstTranscript::raw_append_scalar` retrieves via `take_pending_append`.
+/// which `SymbolicVerifierFs`'s absorb path retrieves via `take_pending_append`.
 impl CanonicalSerialize for MleAst {
     fn serialize_with_mode<W: std::io::Write>(
         &self,
@@ -1503,21 +1341,38 @@ impl CanonicalSerialize for MleAst {
     }
 }
 
-/// Required by `JoltField` trait bound but not called during symbolic execution.
+/// Reads exactly 32 bytes (one serialized field element) and maps them to a fresh
+/// symbolic variable via the installed [`set_read_symbolizer`] hook. This is how NARG
+/// frame bytes become circuit witness variables during symbolic replay: the
+/// transpiler's `SymbolicVerifierFs::read_slice` installs the hook (capturing the
+/// variable allocator + naming context), then drives the standard byte-cursor decode
+/// loop over the frame — exactly mirroring jolt-core's `read_all`.
 impl CanonicalDeserialize for MleAst {
     fn deserialize_with_mode<R: std::io::Read>(
-        _reader: R,
+        mut reader: R,
         _compress: ark_serialize::Compress,
         _validate: ark_serialize::Validate,
     ) -> Result<Self, SerializationError> {
-        unimplemented!("MleAst deserialization not needed. We build ASTs, not read them")
+        let mut bytes = [0u8; 32];
+        reader
+            .read_exact(&mut bytes)
+            .map_err(|_| SerializationError::InvalidData)?;
+        // Spec guardrail §8.6: REJECT non-canonical (>= r) elements exactly like the
+        // native path (`FieldFrameMsg` / ark `Validate::Yes` both refuse them), so the
+        // symbolic replay never accepts a frame the real verifier rejects — and the
+        // symbolizer's `from_le_bytes_mod_order` witness value is exact, not reduced.
+        if ark_bn254::Fr::deserialize_compressed(bytes.as_slice()).is_err() {
+            return Err(SerializationError::InvalidData);
+        }
+        // No hook installed = programmer error (deserializing MleAst outside a
+        // symbolic frame replay); surfaced as InvalidData through the read path.
+        symbolize_read_bytes(&bytes).ok_or(SerializationError::InvalidData)
     }
 }
 
-/// Required by `CanonicalDeserialize` but not called during symbolic execution.
 impl Valid for MleAst {
     fn check(&self) -> Result<(), SerializationError> {
-        unimplemented!("MleAst validation not needed")
+        Ok(())
     }
 }
 
@@ -1657,19 +1512,20 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_pending_challenge_round_trip() {
-        // Test thread-local challenge tunneling
-        let challenge = MleAst::from_u64(12345);
+    fn test_read_symbolizer_round_trip() {
+        // The frame-read hook maps 32-byte elements to symbolic values.
+        let expected = MleAst::from_u64(12345);
+        set_read_symbolizer(Box::new(move |_bytes| expected));
 
-        set_pending_challenge(challenge);
-        let retrieved = take_pending_challenge();
+        let bytes = [7u8; 32];
+        let got = symbolize_read_bytes(&bytes).expect("hook installed");
+        assert_eq!(got.root(), expected.root());
 
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().root(), challenge.root());
-
-        // Taking again should return None
-        let empty = take_pending_challenge();
-        assert!(empty.is_none());
+        clear_read_symbolizer();
+        assert!(
+            symbolize_read_bytes(&bytes).is_none(),
+            "hook must be gone after clear"
+        );
     }
 
     #[test]
@@ -1710,37 +1566,6 @@ mod tests {
         // Taking again should return None
         let empty = take_pending_commitment_chunks();
         assert!(empty.is_none());
-    }
-
-    #[test]
-    fn test_pending_point_elements_round_trip() {
-        // Test thread-local point elements tunneling (must be exactly 2 elements)
-        let elements = vec![MleAst::from_u64(100), MleAst::from_u64(200)];
-
-        set_pending_point_elements(elements.clone());
-        let retrieved = take_pending_point_elements();
-
-        assert!(retrieved.is_some());
-        let retrieved_elements = retrieved.unwrap();
-        assert_eq!(retrieved_elements.len(), 2);
-        assert_eq!(retrieved_elements[0].root(), elements[0].root());
-        assert_eq!(retrieved_elements[1].root(), elements[1].root());
-
-        // Taking again should return None
-        let empty = take_pending_point_elements();
-        assert!(empty.is_none());
-    }
-
-    #[test]
-    #[should_panic(expected = "Point must have exactly 2 elements")]
-    fn test_pending_point_elements_wrong_length() {
-        // Should panic if not exactly 2 elements
-        let elements = vec![
-            MleAst::from_u64(1),
-            MleAst::from_u64(2),
-            MleAst::from_u64(3),
-        ];
-        set_pending_point_elements(elements);
     }
 
     // =============================================================================

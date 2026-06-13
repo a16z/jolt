@@ -18,7 +18,7 @@
 //! The coupling is intentional: we emit target-specific code for gnark. If we add other
 //! targets (Circom, Plonky2), they'd need separate codegen modules.
 //!
-//! Currently targets: **gnark v0.10.x** with Go 1.21+
+//! Currently targets: **gnark v0.14.0** with Go 1.25+
 //!
 //! # Key Components
 //!
@@ -64,9 +64,7 @@ use zklean_extractor::mle_ast::{
     TargetField, TranscriptHashData,
 };
 
-// =============================================================================
 // Helper Functions
-// =============================================================================
 
 /// Extract child node IDs from a Node (used by generate_expr for traversal).
 fn node_children(node: &Node) -> Vec<usize> {
@@ -79,12 +77,7 @@ fn node_children(node: &Node) -> Vec<usize> {
 
     match node {
         Node::Atom(_) => vec![],
-        Node::Neg(e)
-        | Node::Inv(e)
-        | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e)
-        | Node::Truncate128(e)
-        | Node::AppendU64Transform(e) => edge_to_child(e).into_iter().collect(),
+        Node::Neg(e) | Node::Inv(e) => edge_to_child(e).into_iter().collect(),
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             [edge_to_child(e1), edge_to_child(e2)]
                 .into_iter()
@@ -102,9 +95,7 @@ fn node_children(node: &Node) -> Vec<usize> {
     }
 }
 
-// =============================================================================
 // Types
-// =============================================================================
 
 /// Statistics about constant assertions detected during codegen.
 #[derive(Debug, Default)]
@@ -212,7 +203,7 @@ impl<'a> GnarkCodeGen<'a> {
         var_names: &'a HashMap<u16, String>,
         constraint_idx: usize,
         cse_bindings: &[usize],
-        global_node_map: &HashMap<usize, usize>,
+        global_generated: &HashMap<usize, String>,
     ) -> Self {
         let mut ref_counts = HashMap::new();
 
@@ -223,16 +214,13 @@ impl<'a> GnarkCodeGen<'a> {
             ref_counts.insert(node_id, 2);
         }
 
-        // Pre-populate `generated` for global CSE nodes so they resolve to gcse[i]
-        let mut generated = HashMap::new();
-        for (&node_id, &gcse_idx) in global_node_map {
-            generated.insert(node_id, format!("gcse[{gcse_idx}]"));
-        }
-
+        // Seed `generated` with the global CSE nodes' `gcse[i]` names. The strings are
+        // formatted ONCE by the caller (`global_generated`) and cloned here, so the
+        // per-global-node `format!` is not repeated for every constraint.
         Self {
             nodes,
             ref_counts,
-            generated,
+            generated: global_generated.clone(),
             bindings: Vec::new(),
             cse_counter: 0,
             var_names,
@@ -345,40 +333,14 @@ impl<'a> GnarkCodeGen<'a> {
 
                 // Unary ops
                 Node::Inv(e) => self.unary_op("api.Inverse", e),
-                Node::ByteReverse(e) => {
-                    self.uses_poseidon = true;
-                    self.unary_op("poseidon.ByteReverse", e)
-                }
-                Node::Truncate128Reverse(e) => {
-                    self.uses_poseidon = true;
-                    self.unary_op("poseidon.Truncate128Reverse", e)
-                }
-                Node::Truncate128(e) => {
-                    self.uses_poseidon = true;
-                    self.unary_op("poseidon.Truncate128", e)
-                }
-                Node::AppendU64Transform(e) => {
-                    self.uses_poseidon = true;
-                    self.unary_op("poseidon.AppendU64Transform", e)
-                }
-
                 // Transcript hash (dispatched by hash_data variant)
-                Node::TranscriptHash(ref hash_data, state, n_rounds) => {
+                Node::TranscriptHash(ref hash_data, state, rate_unit_a) => {
                     let s = self.edge_to_gnark_iterative(state);
-                    let r = self.edge_to_gnark_iterative(n_rounds);
-                    match hash_data {
-                        TranscriptHashData::Poseidon(data_edge) => {
-                            self.uses_poseidon = true;
-                            let d = self.edge_to_gnark_iterative(*data_edge);
-                            format!("poseidon.Hash(api, {s}, {r}, {d})")
-                        }
-                        TranscriptHashData::Blake2b(_data_edges) => {
-                            todo!("Blake2b Go codegen will be implemented in Phase 4")
-                        }
-                        TranscriptHashData::Keccak(_data_edges) => {
-                            todo!("Keccak Go codegen will be implemented in Phase 4")
-                        }
-                    }
+                    let r = self.edge_to_gnark_iterative(rate_unit_a);
+                    let TranscriptHashData::Poseidon(data_edge) = hash_data;
+                    self.uses_poseidon = true;
+                    let d = self.edge_to_gnark_iterative(*data_edge);
+                    format!("poseidon.Hash(api, {s}, {r}, {d})")
                 }
 
                 // zklean base nodes: Neg and Div are part of upstream zklean's Node enum.
@@ -455,9 +417,7 @@ impl<'a> GnarkCodeGen<'a> {
         }
     }
 
-    // -------------------------------------------------------------------------
     // Private helper methods
-    // -------------------------------------------------------------------------
 
     /// Generate a CSE variable name using the configured prefix
     fn make_cse_name(&self) -> String {
@@ -507,9 +467,7 @@ impl<'a> GnarkCodeGen<'a> {
     }
 }
 
-// =============================================================================
 // Public functions
-// =============================================================================
 
 /// Generate a complete Gnark circuit from an AstBundle.
 ///
@@ -620,15 +578,16 @@ pub fn generate_circuit_from_bundle_with_stats(
         );
     }
 
-    // Build global CSE node map: NodeId → index in gcse slice
-    let global_node_map: HashMap<usize, usize> = bundle
+    // Build global CSE node map: NodeId → `gcse[i]` name. Formatted once here and
+    // cloned per constraint (see `GnarkCodeGen::new`), not re-`format!`ed per constraint.
+    let global_generated: HashMap<usize, String> = bundle
         .global_cse
         .bindings
         .iter()
         .enumerate()
-        .map(|(idx, &node_id)| (node_id, idx))
+        .map(|(idx, &node_id)| (node_id, format!("gcse[{idx}]")))
         .collect();
-    let has_global_cse = !global_node_map.is_empty();
+    let has_global_cse = !global_generated.is_empty();
     if bundle
         .global_cse
         .bindings
@@ -646,7 +605,7 @@ pub fn generate_circuit_from_bundle_with_stats(
             &var_names,
             constraint_idx,
             cse_bindings,
-            &global_node_map,
+            &global_generated,
         );
 
         // Generate expression for this constraint.
@@ -700,14 +659,12 @@ pub fn generate_circuit_from_bundle_with_stats(
             stats.uses_poseidon = true;
         }
 
-        // Get bindings (will be empty string if none)
-        let bindings = if codegen.bindings_code().is_empty() {
+        // Get bindings (will be empty string if none). Join the binding vec once.
+        let bindings_code = codegen.bindings_code();
+        let bindings = if bindings_code.is_empty() {
             String::new()
         } else {
-            format!(
-                "\t// CSE bindings for constraint {constraint_idx}\n{}",
-                codegen.bindings_code()
-            )
+            format!("\t// CSE bindings for constraint {constraint_idx}\n{bindings_code}")
         };
 
         processed_constraints.push(ProcessedConstraint {
@@ -724,23 +681,38 @@ pub fn generate_circuit_from_bundle_with_stats(
 
     stats.total_constraints = processed_constraints.len();
 
-    // Collect all struct field names with their target field types
-    // Using BTreeMap to deduplicate by name while preserving field type
-    let mut struct_fields: BTreeMap<String, TargetField> = BTreeMap::new();
+    // Collect all struct field names with their target field type and gnark
+    // visibility. `BTreeMap` deduplicates by name (deterministic order).
+    //
+    // Visibility (audit: ~1,400 public inputs ⇒ ~9M gas, ~36× the spec target): only
+    // `WitnessType::PublicStatement` inputs (program IO) and the stage-8 binding values
+    // (opening claims, polynomial/advice commitments) are emitted `public`; the bulk —
+    // sumcheck round polynomials and uni-skip coefficients (`WitnessType::ProofData`) —
+    // are `secret`. This is sound because the circuit re-derives every Fiat-Shamir
+    // challenge from those proof bytes in-circuit (they are self-binding via the
+    // sponge), so the on-chain verifier never needs to see them; the values the
+    // deferred stage-8 PCS check WILL bind (commitments, final claims) stay public.
+    let mut struct_fields: BTreeMap<String, (TargetField, bool)> = BTreeMap::new();
 
     for input in &bundle.inputs {
         if input.witness_type == WitnessType::ProofData
             || input.witness_type == WitnessType::PublicStatement
         {
-            struct_fields.insert(sanitize_go_name(&input.name), input.target_field);
+            let is_public = input.witness_type == WitnessType::PublicStatement;
+            let entry = struct_fields
+                .entry(sanitize_go_name(&input.name))
+                .or_insert((input.target_field, is_public));
+            // A name surfacing as both public and proof-data stays public.
+            entry.1 |= is_public;
         }
     }
     for constraint in &bundle.constraints {
         if let Assertion::EqualPublicInput { name } = &constraint.assertion {
-            // Public inputs from constraints default to Fr (native field)
+            // Public inputs from constraints default to Fr (native field) and are public.
             struct_fields
                 .entry(sanitize_go_name(name))
-                .or_insert(TargetField::Fr);
+                .or_insert((TargetField::Fr, true))
+                .1 = true;
         }
     }
 
@@ -774,18 +746,10 @@ pub fn generate_circuit_from_bundle_with_stats(
     output.push_str("\treturn n\n");
     output.push_str("}\n\n");
 
-    // Circuit struct - deduplicated fields with correct types based on TargetField
-    //
-    // All inputs are marked public. Without PCS verification in the circuit
-    // (stage 8 is deferred pending PCS choice), commitments and proof data
-    // must be externally verifiable. Once the PCS is integrated, we'll
-    // determine which inputs can move to private witness. The exact public
-    // surface requires investigation: some inputs may benefit from staying
-    // public to avoid in-circuit range checks that the verifier gets for
-    // free on public inputs. The WitnessType::PublicStatement / ProofData
-    // distinction in AstBundle is already in place for this split.
+    // Circuit struct - deduplicated fields with correct types and visibility (see the
+    // `struct_fields` build above for the public/secret rationale).
     output.push_str(&format!("type {circuit_name} struct {{\n"));
-    for (field_name, target_field) in &struct_fields {
+    for (field_name, (target_field, is_public)) in &struct_fields {
         let go_type = match target_field {
             TargetField::Fr => "frontend.Variable",
             TargetField::Fq => {
@@ -796,7 +760,10 @@ pub fn generate_circuit_from_bundle_with_stats(
                 "emulated.Element[emulated.BN254Fp]"
             }
         };
-        output.push_str(&format!("\t{field_name} {go_type} `gnark:\",public\"`\n"));
+        let visibility = if *is_public { "public" } else { "secret" };
+        output.push_str(&format!(
+            "\t{field_name} {go_type} `gnark:\",{visibility}\"`\n"
+        ));
     }
     output.push_str("}\n\n");
 
@@ -849,6 +816,8 @@ pub fn generate_circuit_from_bundle_with_stats(
                 output.push_str(&format!(
                     "func (circuit *{circuit_name}) computeGlobalCsePart{part}(api frontend.API, gcse []frontend.Variable) {{\n"
                 ));
+                // Global lines are already in slice form (gcse[N] = ...), so parts can
+                // be split anywhere — every cross-part value flows through the slice.
                 for line in &global_binding_lines[start..end] {
                     output.push_str(line);
                     output.push('\n');
@@ -955,11 +924,10 @@ pub fn generate_circuit_from_bundle_with_stats(
                     "func (circuit *{circuit_name}) {func_name}Bindings{part}(api frontend.API, cse []frontend.Variable{gcse_param}) {{\n"
                 ));
 
+                // Rewrite "cse_K_N := expr" to "cse[N] = expr" and "cse_K_M" refs to
+                // "cse[M]" so the parts can share intermediates through the slice.
                 for line in &binding_lines[start..end] {
-                    // Rewrite "cse_K_N := expr" to "cse[N] = expr" and
-                    // references to "cse_K_M" to "cse[M]" within the expression
-                    let rewritten = rewrite_cse_names_to_slice(line, idx, true);
-                    output.push_str(&rewritten);
+                    output.push_str(&rewrite_cse_names_to_slice(line, idx, true));
                     output.push('\n');
                 }
 
@@ -1141,9 +1109,7 @@ pub fn sanitize_go_name(name: &str) -> String {
         .join("_")
 }
 
-// =============================================================================
 // Private helper functions
-// =============================================================================
 
 /// Format a scalar value ([u64; 4]) for Gnark code generation.
 ///
@@ -1179,12 +1145,7 @@ fn is_node_constant_in(nodes: &[Node], node_id: usize) -> bool {
         Node::Atom(Atom::Scalar(_)) => true,
         Node::Atom(Atom::Var(_)) => false,
         Node::Atom(Atom::NamedVar(_)) => false,
-        Node::Neg(e)
-        | Node::Inv(e)
-        | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e)
-        | Node::Truncate128(e)
-        | Node::AppendU64Transform(e) => is_edge_constant_in(nodes, e),
+        Node::Neg(e) | Node::Inv(e) => is_edge_constant_in(nodes, e),
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             is_edge_constant_in(nodes, e1) && is_edge_constant_in(nodes, e2)
         }
@@ -1231,12 +1192,8 @@ fn evaluate_constant_node_in(nodes: &[Node], node_id: usize) -> Scalar {
         Node::Inv(_) | Node::Div(_, _) => {
             panic!("Modular inverse not implemented for constant evaluation")
         }
-        Node::TranscriptHash(_, _, _)
-        | Node::ByteReverse(_)
-        | Node::Truncate128Reverse(_)
-        | Node::Truncate128(_)
-        | Node::AppendU64Transform(_) => {
-            panic!("Hash/transform operations cannot be evaluated as constants")
+        Node::TranscriptHash(_, _, _) => {
+            panic!("Hash operations cannot be evaluated as constants")
         }
     }
 }
@@ -1262,11 +1219,7 @@ fn node_requires_poseidon_import(nodes: &[Node], root: usize) -> bool {
 
         match &nodes[node_id] {
             Node::Atom(_) => {}
-            Node::TranscriptHash(TranscriptHashData::Poseidon(_), _, _)
-            | Node::ByteReverse(_)
-            | Node::Truncate128Reverse(_)
-            | Node::Truncate128(_)
-            | Node::AppendU64Transform(_) => return true,
+            Node::TranscriptHash(TranscriptHashData::Poseidon(_), _, _) => return true,
             node => stack.extend(node_children(node)),
         }
     }
@@ -1274,9 +1227,7 @@ fn node_requires_poseidon_import(nodes: &[Node], root: usize) -> bool {
     false
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1374,9 +1325,7 @@ mod tests {
         assert!(code.contains("poseidon.Hash(api,"));
     }
 
-    // =========================================================================
     // sanitize_go_name tests
-    // =========================================================================
     // These tests are CRITICAL because sanitize_go_name must produce identical
     // output for circuit struct fields and witness JSON keys. Any mismatch
     // causes witness loading to fail silently with all-zero values.

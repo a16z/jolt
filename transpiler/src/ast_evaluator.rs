@@ -6,9 +6,21 @@
 use ark_bn254::Fr;
 use ark_ff::{Field, PrimeField};
 use light_poseidon::{Poseidon, PoseidonHasher};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use zklean_extractor::ast_bundle::Constraint;
 use zklean_extractor::mle_ast::{Atom, Edge, Node, NodeId, Scalar, TranscriptHashData};
+
+thread_local! {
+    /// Reused width-4 Circom Poseidon hasher for `TranscriptHash` evaluation.
+    /// `compute_node` runs once per hash node over thousands of nodes per
+    /// challenge AST, so rebuilding the round-constant tables on each call was a
+    /// large, avoidable cost. `hash` resets its internal state per call (it is
+    /// driven statefully by `ConcreteFieldSponge`), so reuse is value-identical.
+    static POSEIDON_HASHER: RefCell<Poseidon<Fr>> = RefCell::new(
+        Poseidon::<Fr>::new_circom(3).expect("failed to create Poseidon hasher"),
+    );
+}
 
 /// Evaluate an Edge to a concrete Fr value.
 fn eval_edge(
@@ -44,107 +56,114 @@ fn scalar_to_fr(limbs: &Scalar) -> Fr {
     Fr::from_le_bytes_mod_order(&bytes)
 }
 
-/// Evaluate a node, caching results.
+/// Evaluate a single AST root to a concrete `Fr` given a witness map. Used by the
+/// field-aligned sponge differential gate (`field_aligned_layout_matches_native_sponge`):
+/// evaluate the symbolic challenge AST and compare against the native `PoseidonSponge`.
+pub fn eval_root(nodes: &[Node], root: NodeId, witness: &HashMap<u16, Fr>) -> Fr {
+    let mut cache = HashMap::new();
+    eval_node(root, nodes, &mut cache, witness)
+}
+
+/// [`eval_root`] over many roots sharing ONE memo cache. Fiat-Shamir challenge
+/// ASTs embed the whole sponge chain of every earlier challenge, so evaluating
+/// `k` challenges with per-root fresh caches is quadratic in the transcript
+/// length; the shared cache makes it linear. Used by the in-CI real-proof
+/// challenge differential (`tests/symbolic_pipeline.rs`).
+pub fn eval_roots(nodes: &[Node], roots: &[NodeId], witness: &HashMap<u16, Fr>) -> Vec<Fr> {
+    let mut cache = HashMap::new();
+    roots
+        .iter()
+        .map(|&root| eval_node(root, nodes, &mut cache, witness))
+        .collect()
+}
+
+/// Uncached `NodeRef` children of `node`, pushed onto `out`. Returns `true`
+/// if any were pending (i.e. `node` is not ready to compute yet).
+fn push_pending_children(node: &Node, cache: &HashMap<NodeId, Fr>, out: &mut Vec<NodeId>) -> bool {
+    let before = out.len();
+    let mut push = |e: &Edge| {
+        if let Edge::NodeRef(id) = e {
+            if !cache.contains_key(id) {
+                out.push(*id);
+            }
+        }
+    };
+    match node {
+        Node::Atom(_) => {}
+        Node::Neg(e) | Node::Inv(e) => push(e),
+        Node::Add(a, b) | Node::Sub(a, b) | Node::Mul(a, b) | Node::Div(a, b) => {
+            push(a);
+            push(b);
+        }
+        Node::TranscriptHash(hash_data, state, rate_unit_a) => {
+            push(state);
+            push(rate_unit_a);
+            for e in hash_data.as_slice() {
+                push(e);
+            }
+        }
+    }
+    out.len() > before
+}
+
+/// Evaluate a node, caching results. Iterative (explicit work stack): the
+/// sponge state chain alone is thousands of nodes deep, so a recursive walk
+/// overflows the default test-thread stack on unoptimized builds.
 fn eval_node(
     node_id: NodeId,
     nodes: &[Node],
     cache: &mut HashMap<NodeId, Fr>,
     witness: &HashMap<u16, Fr>,
 ) -> Fr {
-    if let Some(&val) = cache.get(&node_id) {
-        return val;
+    let mut stack: Vec<NodeId> = vec![node_id];
+    while let Some(&id) = stack.last() {
+        if cache.contains_key(&id) {
+            let _ = stack.pop();
+            continue;
+        }
+        if push_pending_children(&nodes[id], cache, &mut stack) {
+            continue; // children first; `id` stays on the stack below them
+        }
+        let value = compute_node(&nodes[id], cache, witness);
+        let _ = cache.insert(id, value);
+        let _ = stack.pop();
     }
+    cache[&node_id]
+}
 
-    let result = match &nodes[node_id] {
-        Node::Atom(atom) => eval_atom(atom, witness),
-
-        Node::Add(a, b) => {
-            eval_edge(a, nodes, cache, witness) + eval_edge(b, nodes, cache, witness)
-        }
-        Node::Sub(a, b) => {
-            eval_edge(a, nodes, cache, witness) - eval_edge(b, nodes, cache, witness)
-        }
-        Node::Mul(a, b) => {
-            eval_edge(a, nodes, cache, witness) * eval_edge(b, nodes, cache, witness)
-        }
-        Node::Div(a, b) => {
-            let denom = eval_edge(b, nodes, cache, witness);
-            eval_edge(a, nodes, cache, witness) * denom.inverse().expect("div by zero")
-        }
-        Node::Neg(a) => -eval_edge(a, nodes, cache, witness),
-        Node::Inv(a) => eval_edge(a, nodes, cache, witness)
-            .inverse()
-            .expect("inv of zero"),
-
-        Node::TranscriptHash(hash_data, state_edge, rounds_edge) => {
-            let state = eval_edge(state_edge, nodes, cache, witness);
-            let rounds = eval_edge(rounds_edge, nodes, cache, witness);
-
-            match hash_data {
-                TranscriptHashData::Poseidon(data_edge) => {
-                    let data = eval_edge(data_edge, nodes, cache, witness);
-                    let mut hasher =
-                        Poseidon::<Fr>::new_circom(3).expect("failed to create Poseidon hasher");
-                    hasher
-                        .hash(&[state, rounds, data])
-                        .expect("Poseidon hash failed")
-                }
-                _ => panic!("only Poseidon transcript is supported for evaluation"),
-            }
-        }
-
-        Node::ByteReverse(e) => {
-            let val = eval_edge(e, nodes, cache, witness);
-            let bigint = val.into_bigint();
-            let mut bytes = [0u8; 32];
-            for (i, limb) in bigint.0.iter().enumerate() {
-                bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-            }
-            bytes.reverse();
-            Fr::from_le_bytes_mod_order(&bytes)
-        }
-
-        Node::Truncate128Reverse(e) => {
-            let val = eval_edge(e, nodes, cache, witness);
-            let bigint = val.into_bigint();
-            let mut le_bytes = [0u8; 32];
-            for (i, limb) in bigint.0.iter().enumerate() {
-                le_bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-            }
-            // Take low 16 bytes, reverse, interpret as field element, multiply by 2^128
-            let mut truncated = [0u8; 16];
-            truncated.copy_from_slice(&le_bytes[..16]);
-            truncated.reverse();
-            let base = Fr::from_le_bytes_mod_order(&truncated);
-            let shift = Fr::from(2u64).pow([128]);
-            base * shift
-        }
-
-        Node::Truncate128(e) => {
-            let val = eval_edge(e, nodes, cache, witness);
-            let bigint = val.into_bigint();
-            let mut le_bytes = [0u8; 32];
-            for (i, limb) in bigint.0.iter().enumerate() {
-                le_bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
-            }
-            let mut truncated = [0u8; 16];
-            truncated.copy_from_slice(&le_bytes[..16]);
-            truncated.reverse();
-            Fr::from_le_bytes_mod_order(&truncated)
-        }
-
-        Node::AppendU64Transform(e) => {
-            let val = eval_edge(e, nodes, cache, witness);
-            // bswap64(x) * 2^192
-            let bigint = val.into_bigint();
-            let x = bigint.0[0]; // u64 value
-            let swapped = x.swap_bytes();
-            Fr::from(swapped) * Fr::from(2u64).pow([192])
+/// Compute one node whose `NodeRef` children are all cached.
+fn compute_node(node: &Node, cache: &HashMap<NodeId, Fr>, witness: &HashMap<u16, Fr>) -> Fr {
+    let val = |e: &Edge| -> Fr {
+        match e {
+            Edge::Atom(atom) => eval_atom(atom, witness),
+            Edge::NodeRef(id) => cache[id],
         }
     };
 
-    cache.insert(node_id, result);
-    result
+    match node {
+        Node::Atom(atom) => eval_atom(atom, witness),
+
+        Node::Add(a, b) => val(a) + val(b),
+        Node::Sub(a, b) => val(a) - val(b),
+        Node::Mul(a, b) => val(a) * val(b),
+        Node::Div(a, b) => val(a) * val(b).inverse().expect("div by zero"),
+        Node::Neg(a) => -val(a),
+        Node::Inv(a) => val(a).inverse().expect("inv of zero"),
+
+        Node::TranscriptHash(hash_data, state_edge, rate_unit_a_edge) => {
+            let state = val(state_edge);
+            let rate_unit_a = val(rate_unit_a_edge);
+
+            let TranscriptHashData::Poseidon(data_edge) = hash_data;
+            let data = val(data_edge);
+            POSEIDON_HASHER.with(|hasher| {
+                hasher
+                    .borrow_mut()
+                    .hash(&[state, rate_unit_a, data])
+                    .expect("Poseidon hash failed")
+            })
+        }
+    }
 }
 
 /// LHS and RHS of one assertion.

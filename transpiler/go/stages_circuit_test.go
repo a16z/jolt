@@ -85,7 +85,7 @@ func TestStagesCircuitSolver(t *testing.T) {
 	fieldsToShow := []string{
 		"Stage1_Uni_Skip_Coeff_0",
 		"Stage1_Uni_Skip_Coeff_1",
-		"Claim_Virtual_UnivariateSkip_SpartanOuter",
+		"Claim_Polynomial_Virtual_UnivariateSkip_SpartanOuter",
 		"Stage1_Sumcheck_R0_0",
 		"Stage1_Sumcheck_R0_1",
 		"Stage1_Sumcheck_R0_2",
@@ -138,9 +138,9 @@ func TestStagesCircuitSolver(t *testing.T) {
 
 	// Print the UnivariateSkip claim
 	t.Log("\nClaims:")
-	uniSkipField := v.FieldByName("Claim_Virtual_UnivariateSkip_SpartanOuter")
+	uniSkipField := v.FieldByName("Claim_Polynomial_Virtual_UnivariateSkip_SpartanOuter")
 	if uniSkipField.IsValid() {
-		t.Logf("  Claim_Virtual_UnivariateSkip_SpartanOuter = %v", uniSkipField.Interface())
+		t.Logf("  Claim_Polynomial_Virtual_UnivariateSkip_SpartanOuter = %v", uniSkipField.Interface())
 	}
 
 	// Manually compute the sumcheck verification for Stage1
@@ -160,10 +160,10 @@ func TestStagesCircuitSolver(t *testing.T) {
 
 	// Let's print some intermediate claim values
 	claimFields := []string{
-		"Claim_Virtual_OpFlags_Load_SpartanOuter",
-		"Claim_Virtual_OpFlags_Store_SpartanOuter",
-		"Claim_Virtual_RamAddress_SpartanOuter",
-		"Claim_Virtual_LookupOutput_SpartanOuter",
+		"Claim_Polynomial_Virtual_OpFlags_Load_SpartanOuter",
+		"Claim_Polynomial_Virtual_OpFlags_Store_SpartanOuter",
+		"Claim_Polynomial_Virtual_RamAddress_SpartanOuter",
+		"Claim_Polynomial_Virtual_LookupOutput_SpartanOuter",
 	}
 	for _, name := range claimFields {
 		field := v.FieldByName(name)
@@ -172,15 +172,14 @@ func TestStagesCircuitSolver(t *testing.T) {
 		}
 	}
 
-	// Use gnark test solver to check constraints
+	// Use gnark test solver to check constraints. A solver error means the honest
+	// witness does NOT satisfy the generated circuit — a real failure, not a debug log.
 	var circuit JoltStagesCircuit
 	err = test.IsSolved(&circuit, assignment, ecc.BN254.ScalarField())
 	if err != nil {
-		t.Logf("Solver error: %v", err)
-		// The error message should tell us which constraint failed
-	} else {
-		t.Log("All constraints satisfied!")
+		t.Fatalf("circuit not satisfied by the honest witness: %v", err)
 	}
+	t.Log("All constraints satisfied!")
 }
 
 // TestStagesCircuitProveVerify runs the complete Groth16 workflow: compile, setup, prove, verify.
@@ -340,35 +339,35 @@ func TestCorruptedWitnessRejected(t *testing.T) {
 		},
 		{
 			name:      "Corrupt PC claim (Spartan outer)",
-			fieldName: "Claim_Virtual_PC_SpartanOuter",
+			fieldName: "Claim_Polynomial_Virtual_PC_SpartanOuter",
 			corruptFunc: func(v *big.Int) *big.Int {
 				return new(big.Int).Add(v, big.NewInt(1))
 			},
 		},
 		{
 			name:      "Corrupt Rs1 value claim",
-			fieldName: "Claim_Virtual_Rs1Value_SpartanOuter",
+			fieldName: "Claim_Polynomial_Virtual_Rs1Value_SpartanOuter",
 			corruptFunc: func(v *big.Int) *big.Int {
 				return new(big.Int).Add(v, big.NewInt(42))
 			},
 		},
 		{
 			name:      "Zero out RdInc claim",
-			fieldName: "Claim_Committed_RdInc_RegistersReadWriteChecking",
+			fieldName: "Claim_Polynomial_Committed_RdInc_RegistersReadWriteChecking",
 			corruptFunc: func(v *big.Int) *big.Int {
 				return big.NewInt(0)
 			},
 		},
 		{
 			name:      "Negate RAM booleanity claim",
-			fieldName: "Claim_Committed_RamRa_0_RamBooleanity",
+			fieldName: "Claim_Polynomial_Committed_RamRa_0_Booleanity",
 			corruptFunc: func(v *big.Int) *big.Int {
 				return new(big.Int).Neg(v)
 			},
 		},
 		{
 			name:      "Corrupt lookup output claim",
-			fieldName: "Claim_Virtual_LookupOutput_SpartanOuter",
+			fieldName: "Claim_Polynomial_Virtual_LookupOutput_SpartanOuter",
 			corruptFunc: func(v *big.Int) *big.Int {
 				return new(big.Int).Add(v, big.NewInt(999))
 			},
@@ -387,11 +386,16 @@ func TestCorruptedWitnessRejected(t *testing.T) {
 			t.Fatalf("Failed to reload witness: %v", err)
 		}
 
-		// Apply corruption
+		// Apply corruption. A missing target field means the hardcoded name is stale
+		// w.r.t. the current witness-naming scheme — fail loudly (t.Errorf reports every
+		// stale name in one run) instead of silently skipping, which would degrade this
+		// sanity gate to whichever cases happen to still match.
 		v := reflect.ValueOf(assignment).Elem()
 		field := v.FieldByName(tc.fieldName)
 		if !field.IsValid() {
-			t.Logf("  ? %s - field %s not found, skipping", tc.name, tc.fieldName)
+			t.Errorf("  %s - corruption target field %q not found in circuit struct "+
+				"(stale test scaffolding; update to the current witness-naming scheme)",
+				tc.name, tc.fieldName)
 			continue
 		}
 
@@ -424,4 +428,3 @@ func TestCorruptedWitnessRejected(t *testing.T) {
 	t.Log("")
 	t.Log("✓ All corruption tests passed - circuit correctly rejects invalid witnesses")
 }
-

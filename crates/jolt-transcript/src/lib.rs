@@ -22,11 +22,23 @@ mod verifier;
 
 pub use codec::BytesMsg;
 pub use messages::{serialize_slice, FsAbsorb, FsChallenge, FsTranscript};
-pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
+pub use setup::{
+    prover_transcript, transcript_builder, verifier_transcript, TranscriptInit, PROTOCOL_ID,
+};
 
+#[cfg(feature = "transcript-poseidon")]
+pub use codec::{
+    commitment_to_chunks, push_byte_rule_units, push_commitments_frame_header,
+    push_field_frame_units, CommitmentsMsg, FieldFrameMsg, NativeChallenge, RawBytesMsg,
+    BYTE_RULE_CHUNK,
+};
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
 pub use prover::{OptimizedChallenge, ProverTranscript};
+#[cfg(feature = "transcript-poseidon")]
+pub use setup::{
+    poseidon_domain_separator_msgs, poseidon_prover_transcript, poseidon_verifier_transcript,
+};
 pub use verifier::VerifierTranscript;
 
 // Re-export the spongefish state types + sponge interface the split traits are built on,
