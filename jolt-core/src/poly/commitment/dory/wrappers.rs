@@ -441,7 +441,7 @@ impl<'a, T: FsAbsorb + FsChallenge<Fr>> DoryTranscript for JoltToDoryTranscript<
             .as_mut()
             .expect("Transcript not initialized");
         let jolt_scalar: Fr = ark_to_jolt(x);
-        transcript.absorb(&jolt_scalar);
+        transcript.absorb_scalar(&jolt_scalar);
     }
 
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {
@@ -453,7 +453,7 @@ impl<'a, T: FsAbsorb + FsChallenge<Fr>> DoryTranscript for JoltToDoryTranscript<
         let mut buffer = Vec::new();
         g.serialize_compressed(&mut buffer)
             .expect("DorySerialize serialization should not fail");
-        transcript.absorb(&buffer);
+        transcript.absorb_commitment_bytes(&buffer);
     }
 
     fn append_serde<S: DorySerialize>(&mut self, _label: &[u8], s: &S) {
@@ -465,7 +465,7 @@ impl<'a, T: FsAbsorb + FsChallenge<Fr>> DoryTranscript for JoltToDoryTranscript<
         let mut buffer = Vec::new();
         s.serialize_compressed(&mut buffer)
             .expect("DorySerialize serialization should not fail");
-        transcript.absorb(&buffer);
+        transcript.absorb_commitment_bytes(&buffer);
     }
 
     fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {

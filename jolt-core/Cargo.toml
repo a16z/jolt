@@ -55,13 +55,10 @@ transcript-poseidon = [
 ]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
-# Gates `zkvm::transpilable_verifier` (the symbolic on-chain-verifier generator
-# consumed by the `transpiler` crate). It is built on the now-removed hand-rolled
-# `crate::transcripts::Transcript` trait — which the `transpiler` implements
-# symbolically (`impl Transcript for PoseidonAstTranscript`) — and cannot be
-# expressed against spongefish's concrete `VerifierState`. Off by default during
-# the transcript→spongefish migration; the gnark/Solidity regeneration that
-# revives it is a coordinated follow-up (spec Non-Goal #2). See DEV-21.
+# Gates `zkvm::transpilable_verifier`: a generic mirror of `JoltVerifier` over the
+# opening accumulator and the spongefish `VerifierFs` surface (non-ZK stages 1-7
+# only), consumed by the `transpiler` crate to generate the on-chain verifier.
+# See specs/on-chain-solidity-verifier-plan.md Part II.
 transpiler = []
 
 [dependencies]

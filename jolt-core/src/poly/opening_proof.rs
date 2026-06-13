@@ -618,7 +618,7 @@ where
 
     pub fn flush_to_transcript<T: ProverFs<F>>(&mut self, transcript: &mut T) {
         for claim in self.pending_claims.drain(..) {
-            transcript.absorb(&claim);
+            transcript.absorb_scalar(&claim);
         }
         self.pending_claim_ids.clear();
     }
@@ -740,7 +740,7 @@ impl<F: JoltField> AbstractVerifierOpeningAccumulator<F> for VerifierOpeningAccu
 
     fn flush_to_transcript<T: VerifierFs<F>>(&mut self, transcript: &mut T) {
         for claim in self.pending_claims.drain(..) {
-            transcript.absorb(&claim);
+            transcript.absorb_scalar(&claim);
         }
         self.pending_claim_ids.clear();
     }
@@ -765,6 +765,16 @@ where
             zk_mode,
             pending_claims: Vec::new(),
             pending_claim_ids: Vec::new(),
+        }
+    }
+
+    /// Pre-seed the accumulator with a proof's structural opening claims (empty
+    /// points), as `JoltVerifier::new` does.
+    #[cfg(not(feature = "zk"))]
+    pub fn preseed_structural_claims(&mut self, claims: &Openings<F>) {
+        for (id, (_, claim)) in claims {
+            self.openings
+                .insert(*id, (OpeningPoint::<BIG_ENDIAN, F>::new(vec![]), *claim));
         }
     }
 

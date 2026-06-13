@@ -11,7 +11,7 @@ use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 use common::jolt_device::MemoryLayout;
-use jolt_transcript::{DuplexSpongeInterface, ProverState};
+use jolt_transcript::{ProverState, TranscriptInit};
 use rand::rngs::StdRng;
 use tracer::JoltDevice;
 
@@ -43,7 +43,7 @@ pub fn prove<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-    H: DuplexSpongeInterface<U = u8> + Default,
+    H: TranscriptInit + Default,
 >(
     guest: &Program,
     inputs_bytes: &[u8],

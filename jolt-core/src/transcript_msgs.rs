@@ -5,9 +5,10 @@
 //! are implemented only for the concrete arkworks types, so they can't be used
 //! *directly* on a generic `F`. As a **host bridge** we therefore move values through
 //! the NARG as a length-prefixed `CanonicalSerialize` blob (reusing
-//! [`jolt_transcript::BytesMsg`]). This is intentionally the simplest transport, not
-//! the end-state: a typed-codec surface (`Encoding` impls on local field/blob newtypes,
-//! or the native codec for concrete `Fr`) is the cleaner design and a deliberate follow-up.
+//! [`jolt_transcript::BytesMsg`]). Byte sponges (Blake2b/Keccak) ship the anonymous
+//! `BytesMsg` blob; the field-aligned Poseidon sponge (`U = Fr`) routes frames through
+//! the typed `FieldFrameMsg`/`CommitmentsMsg`/`RawBytesMsg` wrappers, whose NARG bytes
+//! are `BytesMsg`-identical but whose sponge absorption is typed by value kind (spec §4.2).
 //!
 //! Challenge width is selected **per sponge type** (matching legacy `transcripts/`),
 //! via per-sponge [`FsChallenge`] impls — NOT via a Cargo feature, so enabling
@@ -21,10 +22,11 @@
 //!   restores legacy `transcripts/poseidon.rs` so Poseidon works end-to-end and never hits its
 //!   `unimplemented!()` `challenge_u128`.
 //!
-//! **What actually crosses the NARG:** prover-only payload — the witness-polynomial
-//! commitments frame, the untrusted-advice presence frame, the sumcheck/uniskip round
-//! polynomials (or their ZK commitments), and the per-field BlindFold values — is
-//! `write_slice`/`read_slice` through the NARG. *Shared* values (flushed opening claims,
+//! **What actually crosses the NARG:** prover-only payload — the sumcheck/uniskip round
+//! polynomials via `write_scalars`/`read_scalars`, the witness-commitments and
+//! untrusted-advice presence frames via `write_commitments`/`read_commitments`, and the
+//! type-opaque ZK/BlindFold payloads (round-poly commitments, per-field BlindFold
+//! values) via `write_slice`/`read_slice`. *Shared* values (flushed opening claims,
 //! trusted/preprocessing commitments) are `absorb`'d ([`public_message`]); the dory
 //! `joint_opening_proof` and — in non-ZK mode — the `opening_claims` stay **structured
 //! proof fields** (see `JoltProof::narg` in `proof_serialization.rs` for the full
@@ -43,8 +45,8 @@
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_transcript::{
-    serialize_slice, BytesMsg, DuplexSpongeInterface, OptimizedChallenge, ProverState,
-    VerificationError, VerificationResult, VerifierState,
+    serialize_slice, BytesMsg, OptimizedChallenge, ProverState, VerificationError,
+    VerificationResult, VerifierState,
 };
 
 /// Absorbing shared values is the field-agnostic [`jolt_transcript::FsAbsorb`] surface
@@ -56,34 +58,14 @@ use rand::{CryptoRng, RngCore};
 
 use crate::field::JoltField;
 
-// ─── WIRE-FORMAT — FOLLOW-UP DECISION (read this before changing the codec) ─────────────
-//
-// Every NARG message below is transported as ONE anonymous length-prefixed byte blob
-// (`BytesMsg(CanonicalSerialize)`), regardless of the value's kind. This is the host *bridge*
-// choice: DRY (a single codec path) and adequate while only ONE kind of value crosses the NARG
-// — the sumcheck/uniskip round polynomials. History: typed per-kind wrappers
-// (`FieldMsg` / `FieldVecMsg` / `Blob`) once existed (DEV-12) and were deliberately collapsed
-// into this single `BytesMsg` path for less redundancy (DEV-16). Trade-off: the wire format is
-// now anonymous — type identity is recovered only by read-order + the deserialize target, not by
-// the bytes themselves.
-//
-// SWITCH to a typed per-kind codec surface — local newtypes that `impl Encoding`/`NargDeserialize`
-// (e.g. `FsField<F>` / `FsFieldVec<F>` / `FsBlob<T>`, exposing `write_field`/`read_fields`/…) — when
-// EITHER trigger lands:
-//   1. Full Option-B moves commitments + the dory opening proof + claims INTO the NARG (today they
-//      stay structured proof fields and are only `absorb`'d). With many value kinds in the NARG, an
-//      explicit, self-describing wire format prevents read-order / wrong-type mixups.
-//   2. The on-chain verifier (gnark / Solidity / Lean) must re-read the NARG inside a circuit /
-//      contract — a typed wire format is far easier to mirror there than N anonymous blobs.
-// At either point you are ALREADY restructuring what the NARG contains, so introduce the typed
-// types here and route `write`/`read` through them instead of `BytesMsg` — one change, made when
-// the explicit format is load-bearing rather than cosmetic.
-//
-// DO NOT do it before then. With a single value kind, typed vs. anonymous is a wash; doing it now
-// only reverses DEV-16 and forces a fresh `muldiv` re-verify, then gets redone at full-B = churn.
-// The host path is `muldiv`-verified as-is. Decision rule: typed codec IFF (full-Option-B || on-chain
-// reader); otherwise keep `BytesMsg`. See DEV-16 (the collapse) + DEV-25 (this decision).
-// ───────────────────────────────────────────────────────────────────────────────────────────────
+// WIRE-FORMAT — RESOLVED (DEV-25 trigger #2 fired: the on-chain transpiler reader landed).
+// Typed per-kind messages (`FieldFrameMsg`/`CommitmentsMsg`/`RawBytesMsg`) were introduced
+// for the Poseidon (`U = Fr`) path, because the field-aligned sponge absorbs by value KIND;
+// byte sponges keep the single anonymous `BytesMsg` path (see `impl_byte_sponge_fs!`).
+// NARG wire bytes are identical on every path (8-byte LE length ‖ concatenated compressed
+// serializations) — only Poseidon ABSORPTION is typed, so converting a call site never
+// changes byte-sponge proof bytes. History: typed wrappers (DEV-12) → collapsed to
+// `BytesMsg` (DEV-16) → partially reintroduced here.
 
 /// Squeezed field challenges, shared by both transcript roles.
 ///
@@ -206,17 +188,60 @@ impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::Keccak>
     }
 }
 
-/// Reconstruct `F` from a full BN254 `Fr` squeeze via its canonical 32-byte LE bytes
-/// (stack buffer, no `Vec` — runs per challenge). `from_bytes` is `from_le_bytes_mod_order`
-/// and the bytes are `< modulus`, so the round-trip is exact.
-fn full_field_squeeze<F: JoltField>(squeezed: ark_bn254::Fr) -> F {
+/// Reconstruct `F` from a native BN254 `Fr` (runs per challenge / per read scalar).
+///
+/// When `F` *is* `ark_bn254::Fr` (the production instantiation) this is the identity:
+/// a single `transmute_copy` skips the `into_bigint → LE bytes → from_le_bytes_mod_order`
+/// round-trip. For any other `F` (e.g. the `repr(Rust)` `TrackedFr` profiling newtype,
+/// whose in-memory layout is NOT guaranteed to match `Fr`) it falls back to the canonical
+/// 32-byte LE round-trip. `from_bytes` is `from_le_bytes_mod_order` and the bytes are
+/// `< modulus`, so the round-trip is exact. The `TypeId` branch is on a monomorphized
+/// `F`, so the compiler folds it to a single path per instantiation (no runtime cost).
+fn native_to_field<F: JoltField>(native: ark_bn254::Fr) -> F {
     use ark_ff::PrimeField;
-    let limbs = squeezed.into_bigint().0;
+    if core::any::TypeId::of::<F>() == core::any::TypeId::of::<ark_bn254::Fr>() {
+        // SAFETY: the `TypeId` guard proves `F` is exactly `ark_bn254::Fr` (both are
+        // `'static`), so this reinterprets `Fr → Fr` — an identity copy of identical size
+        // and layout. Equals the round-trip below: `into_bigint`/`from_le_bytes_mod_order`
+        // compose to the identity on a canonical `Fr` value.
+        return unsafe { core::mem::transmute_copy::<ark_bn254::Fr, F>(&native) };
+    }
+    let limbs = native.into_bigint().0;
     let mut le = [0u8; 32];
     for (i, limb) in limbs.iter().enumerate() {
         le[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
     }
     F::from_bytes(&le)
+}
+
+/// The inverse of [`native_to_field`]: a native BN254 `Fr` unit carrying the value of `F`
+/// (sumcheck/uni-skip round-poly coeffs — runs per element in the `write_scalars` hot path).
+///
+/// When `F` *is* `ark_bn254::Fr` (the production instantiation) this is the identity:
+/// a single `transmute_copy` replaces the `serialize_compressed → deserialize_compressed`
+/// no-op round-trip. For any other `F` (e.g. the `repr(Rust)` `TrackedFr` profiling newtype)
+/// it falls back to the canonical serialization round-trip, exact for every `F` this crate
+/// instantiates (BN254-backed, `NUM_BYTES == 32`). The `TypeId` branch is on a monomorphized
+/// `F`, so the compiler folds it to a single path per instantiation (no runtime cost).
+#[expect(
+    clippy::expect_used,
+    reason = "32-byte canonical field serialization round-trips infallibly"
+)]
+fn field_to_native<F: JoltField>(value: &F) -> ark_bn254::Fr {
+    use ark_serialize::CanonicalDeserialize;
+    if core::any::TypeId::of::<F>() == core::any::TypeId::of::<ark_bn254::Fr>() {
+        // SAFETY: the `TypeId` guard proves `F` is exactly `ark_bn254::Fr` (both are
+        // `'static`), so this reinterprets `Fr → Fr` — an identity copy of identical size
+        // and layout. Equals the round-trip below: `serialize_compressed` writes `Fr`'s
+        // canonical (non-Montgomery) LE bytes and `deserialize_compressed::<Fr>` reads them
+        // back into the same in-memory `Fr`, i.e. the identity on the value.
+        return unsafe { core::mem::transmute_copy::<F, ark_bn254::Fr>(value) };
+    }
+    let mut buf = [0u8; 32];
+    value
+        .serialize_compressed(&mut buf[..])
+        .expect("32-byte field element serializes into a 32-byte buffer");
+    ark_bn254::Fr::deserialize_compressed(&buf[..]).expect("canonical field bytes parse as Fr")
 }
 
 /// Reinterpret a full field element as its `F::Challenge` (Poseidon-only: there it's the
@@ -234,9 +259,11 @@ fn wrap_full_field<F: JoltField>(f: F) -> F::Challenge {
 }
 
 /// Poseidon path (`transcript-poseidon` → `challenge-254-bit`): the optimized challenge is a
-/// GENUINE full-field `Fr` (Poseidon's natural unit), not a 128-bit truncation — restoring
-/// legacy `transcripts/poseidon.rs`, so Poseidon never hits its `unimplemented!()`
-/// `challenge_u128` (kept unimplemented per the maintainer's decision on #1586). NB: here
+/// GENUINE full-field `Fr` (Poseidon's natural unit), not a 128-bit truncation, so Poseidon
+/// never hits its `unimplemented!()` `challenge_u128` (kept unimplemented per the maintainer's
+/// decision on #1586). With the field-aligned `U = Fr` sponge the squeeze is **one native unit
+/// = exactly one permute** ([`jolt_transcript::NativeChallenge`], identity decode) — exactly
+/// uniform under the ideal-permutation model, with zero in-circuit decode cost. NB: here
 /// `challenge_field` and `challenge_optimized` return the SAME value (no `v·2¹²⁸` masking).
 impl<F, R> FsChallenge<F> for ProverState<jolt_transcript::PoseidonSponge, R>
 where
@@ -244,7 +271,7 @@ where
     R: RngCore + CryptoRng,
 {
     fn challenge_field(&mut self) -> F {
-        full_field_squeeze(ProverState::verifier_message::<ark_bn254::Fr>(self))
+        native_to_field(ProverState::verifier_message::<jolt_transcript::NativeChallenge>(self).0)
     }
 
     fn challenge_optimized(&mut self) -> F::Challenge {
@@ -255,7 +282,7 @@ where
 
 impl<F: JoltField> FsChallenge<F> for VerifierState<'_, jolt_transcript::PoseidonSponge> {
     fn challenge_field(&mut self) -> F {
-        full_field_squeeze(VerifierState::verifier_message::<ark_bn254::Fr>(self))
+        native_to_field(VerifierState::verifier_message::<jolt_transcript::NativeChallenge>(self).0)
     }
 
     fn challenge_optimized(&mut self) -> F::Challenge {
@@ -284,26 +311,100 @@ fn read_all<T: CanonicalDeserialize>(body: &[u8]) -> VerificationResult<Vec<T>> 
 }
 
 /// Prover-side message vocabulary over the spongefish NARG.
+///
+/// The typed `write_scalars`/`write_commitments` variants exist because the
+/// `Fr`-unit Poseidon sponge absorbs by value *kind* (spec §4.2) and
+/// `write_slice` is type-opaque. Their NARG bytes are identical to
+/// [`write_slice`](Self::write_slice) on every sponge — only what the sponge
+/// absorbs differs on the Poseidon path — so converting a call site never
+/// changes the proof bytes of the byte-sponge builds.
 pub trait ProverFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
     /// Write a sequence of prover-only values as one self-delimiting frame
     /// (read back with [`VerifierFs::read_slice`]). No length prefix is shipped; the
     /// frame is bounded by the NARG, so the per-round element count may vary.
+    /// On the Poseidon path the sponge absorbs the frame under the byte rule —
+    /// the right classification for type-opaque payloads (e.g. ZK G1 points,
+    /// whose Fq coordinates must never embed as native `Fr` units).
     fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]);
+
+    /// [`write_slice`](Self::write_slice) for a frame of **field elements**
+    /// (sumcheck/uni-skip round polynomials). Poseidon absorbs the count-led
+    /// field frame `[Fr(2k+1), e₁, …, e_k]`; read back with
+    /// [`VerifierFs::read_scalars`].
+    fn write_scalars(&mut self, values: &[F]) {
+        self.write_slice(values);
+    }
+
+    /// [`write_slice`](Self::write_slice) for a frame of **commitments**
+    /// (witness commitments, the advice presence frame). Poseidon absorbs a
+    /// frame count unit `Fr(2k+1)` then per-commitment byte-rule groups (one
+    /// GT ↦ `[Fr(768), 13 chunks]`); an empty frame is the count-led
+    /// `[Fr(1)]`. Read back with [`VerifierFs::read_commitments`].
+    fn write_commitments<T: CanonicalSerialize + Clone>(&mut self, values: &[T]) {
+        self.write_slice(values);
+    }
 }
 
-impl<F, H, R> ProverFs<F> for ProverState<H, R>
+/// Byte-sponge `ProverFs`/`VerifierFs` impls. Per-sponge (like [`FsChallenge`])
+/// rather than blanket over `H: DuplexSpongeInterface<U = u8>`: coherence
+/// cannot prove a foreign-sponge blanket disjoint from the concrete
+/// `PoseidonSponge` (`U = Fr`) impls below, because the `U` projection lives in
+/// a foreign crate.
+macro_rules! impl_byte_sponge_fs {
+    ($sponge:ty) => {
+        impl<F, R> ProverFs<F> for ProverState<$sponge, R>
+        where
+            F: JoltField,
+            R: RngCore + CryptoRng,
+        {
+            fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
+                self.prover_message(&BytesMsg(serialize_slice(values)));
+            }
+        }
+
+        impl<F: JoltField> VerifierFs<F> for VerifierState<'_, $sponge> {
+            fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
+                let bytes = self.prover_message::<BytesMsg>()?;
+                read_all(&bytes.0)
+            }
+        }
+    };
+}
+
+/// Poseidon (`U = Fr`) NARG path: every frame ships the **same bytes** as the
+/// byte-sponge path (`8-byte LE length ‖ concatenated compressed
+/// serializations`), while the sponge absorbs the typed unit encoding of the
+/// decoded values (spec §4.2). The seam is spongefish's
+/// `prover_message`/`prover_message::<T>()`, which couples "write/read these
+/// NARG bytes" with "absorb `T`'s `Encoding<[H::U]>`" — so the typed message
+/// types ([`jolt_transcript::FieldFrameMsg`] / [`jolt_transcript::CommitmentsMsg`]
+/// / [`jolt_transcript::RawBytesMsg`]) carry a `BytesMsg`-identical NARG codec
+/// next to their `Fr`-unit encoding, and prover/verifier absorption cannot
+/// drift from the shipped bytes.
+impl<F, R> ProverFs<F> for ProverState<jolt_transcript::PoseidonSponge, R>
 where
     F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
     R: RngCore + CryptoRng,
-    Self: FsChallenge<F>,
 {
     fn write_slice<T: CanonicalSerialize>(&mut self, values: &[T]) {
-        self.prover_message(&BytesMsg(serialize_slice(values)));
+        self.prover_message(&jolt_transcript::RawBytesMsg(serialize_slice(values)));
+    }
+
+    fn write_scalars(&mut self, values: &[F]) {
+        let units: Vec<ark_bn254::Fr> = values.iter().map(field_to_native).collect();
+        self.prover_message(&jolt_transcript::FieldFrameMsg(units));
+    }
+
+    fn write_commitments<T: CanonicalSerialize + Clone>(&mut self, values: &[T]) {
+        self.prover_message(&jolt_transcript::CommitmentsMsg(values.to_vec()));
     }
 }
 
 /// Verifier-side message vocabulary over the spongefish NARG.
+///
+/// The typed `read_scalars`/`read_commitments` variants mirror
+/// [`ProverFs::write_scalars`]/[`ProverFs::write_commitments`]; a frame must be
+/// read with the same kind it was written with or the Poseidon sponges diverge.
 pub trait VerifierFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
     /// Read every value in the next frame written by [`ProverFs::write_slice`]; the
     /// count is the frame's (self-delimiting, so a varying per-round length is fine).
@@ -319,17 +420,40 @@ pub trait VerifierFs<F: JoltField>: FsChallenge<F> + FsAbsorb {
             Err(_) => Err(VerificationError),
         }
     }
+
+    /// Read back a [`ProverFs::write_scalars`] frame of field elements.
+    fn read_scalars(&mut self) -> VerificationResult<Vec<F>> {
+        self.read_slice()
+    }
+
+    /// Read back a [`ProverFs::write_commitments`] frame of commitments.
+    fn read_commitments<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+    ) -> VerificationResult<Vec<T>> {
+        self.read_slice()
+    }
 }
 
-impl<F, H> VerifierFs<F> for VerifierState<'_, H>
-where
-    F: JoltField,
-    H: DuplexSpongeInterface<U = u8>,
-    Self: FsChallenge<F>,
-{
+impl_byte_sponge_fs!(jolt_transcript::Blake2b512);
+impl_byte_sponge_fs!(jolt_transcript::Keccak);
+
+impl<F: JoltField> VerifierFs<F> for VerifierState<'_, jolt_transcript::PoseidonSponge> {
     fn read_slice<T: CanonicalDeserialize>(&mut self) -> VerificationResult<Vec<T>> {
-        let bytes = self.prover_message::<BytesMsg>()?;
+        let bytes = self.prover_message::<jolt_transcript::RawBytesMsg>()?;
         read_all(&bytes.0)
+    }
+
+    fn read_scalars(&mut self) -> VerificationResult<Vec<F>> {
+        let frame = self.prover_message::<jolt_transcript::FieldFrameMsg>()?;
+        Ok(frame.0.into_iter().map(native_to_field).collect())
+    }
+
+    fn read_commitments<T: CanonicalSerialize + CanonicalDeserialize>(
+        &mut self,
+    ) -> VerificationResult<Vec<T>> {
+        Ok(self
+            .prover_message::<jolt_transcript::CommitmentsMsg<T>>()?
+            .0)
     }
 }
 

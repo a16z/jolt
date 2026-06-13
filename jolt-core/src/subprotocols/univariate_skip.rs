@@ -138,7 +138,7 @@ pub fn prove_uniskip_round<F: JoltField, I: SumcheckInstanceProver<F>>(
     let input_claim = instance.input_claim(opening_accumulator);
     let uni_poly = instance.compute_message(0, input_claim);
     // Write the full first-round polynomial into the NARG and derive r0.
-    transcript.write_slice(&uni_poly.coeffs);
+    transcript.write_scalars(&uni_poly.coeffs);
     let r0: F::Challenge = transcript.challenge_optimized();
     instance.cache_openings(opening_accumulator, &[r0]);
     opening_accumulator.flush_to_transcript(transcript);
@@ -251,7 +251,7 @@ pub mod uni_skip_first_round {
 
         // Read the full first-round polynomial back from the NARG and derive r0.
         let coeffs: Vec<F> = transcript
-            .read_slice()
+            .read_scalars()
             .map_err(|_| ProofVerifyError::UniSkipVerificationError)?;
         // The first-round polynomial has a fixed coefficient count; reject a frame of
         // any other length before it reaches `check_sum_evals` (which indexes by

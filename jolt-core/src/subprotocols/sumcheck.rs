@@ -44,7 +44,7 @@ impl BatchedSumcheck {
         // Input claims are shared (the verifier recomputes them from openings).
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.absorb(&input_claim);
+            transcript.absorb_scalar(&input_claim);
         });
         let batching_coeffs: Vec<F> = transcript.challenge_vec(sumcheck_instances.len());
 
@@ -118,7 +118,7 @@ impl BatchedSumcheck {
             // Write the prover's round polynomial into the NARG (prover-only payload).
             // The self-delimiting frame lets the verifier read back the exact (possibly
             // round-varying) number of coefficients.
-            transcript.write_slice(&compressed_poly.coeffs_except_linear_term);
+            transcript.write_scalars(&compressed_poly.coeffs_except_linear_term);
             let r_j = transcript.challenge_optimized();
             r_sumcheck.push(r_j);
 
@@ -418,7 +418,7 @@ impl BatchedSumcheck {
         if !is_zk {
             sumcheck_instances.iter().for_each(|sumcheck| {
                 let input_claim = sumcheck.input_claim(opening_accumulator);
-                transcript.absorb(&input_claim);
+                transcript.absorb_scalar(&input_claim);
             });
         }
         let batching_coeffs: Vec<F> = transcript.challenge_vec(sumcheck_instances.len());
@@ -545,7 +545,7 @@ impl BatchedSumcheck {
         // (must match ordering in BatchedSumcheck::prove)
         sumcheck_instances.iter().for_each(|sumcheck| {
             let input_claim = sumcheck.input_claim(opening_accumulator);
-            transcript.absorb(&input_claim);
+            transcript.absorb_scalar(&input_claim);
         });
 
         let batching_coeffs: Vec<F> = transcript.challenge_vec(sumcheck_instances.len());
@@ -610,7 +610,7 @@ pub mod clear_sumcheck {
         for _ in 0..num_rounds {
             // Read the prover's round polynomial back from the NARG and reconstruct it.
             let coeffs_except_linear_term: Vec<F> = transcript
-                .read_slice()
+                .read_scalars()
                 .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
             let poly = CompressedUniPoly {
                 coeffs_except_linear_term,

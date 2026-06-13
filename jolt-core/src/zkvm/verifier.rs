@@ -266,7 +266,7 @@ fn finish_regular_zk_stage<F: JoltField, C: JoltCurve<F = F>>(
 }
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
-use jolt_transcript::{verifier_transcript, DuplexSpongeInterface, VerifierState};
+use jolt_transcript::{verifier_transcript, DuplexSpongeInterface, TranscriptInit, VerifierState};
 use tracer::JoltDevice;
 
 pub struct JoltVerifier<
@@ -326,7 +326,7 @@ impl<
         F: JoltField,
         C: JoltCurve<F = F>,
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-        H: DuplexSpongeInterface<U = u8> + Default,
+        H: TranscriptInit + Default,
     > JoltVerifier<'a, F, C, PCS, H>
 where
     for<'b> VerifierState<'b, H>: VerifierFs<F>,
@@ -401,15 +401,7 @@ where
             VerifierOpeningAccumulator::new(proof.trace_length.log_2(), zk_mode);
 
         #[cfg(not(feature = "zk"))]
-        {
-            use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
-            for (id, (_, claim)) in &proof.opening_claims.0 {
-                let dummy_point = OpeningPoint::<BIG_ENDIAN, F>::new(vec![]);
-                opening_accumulator
-                    .openings
-                    .insert(*id, (dummy_point, *claim));
-            }
-        }
+        opening_accumulator.preseed_structural_claims(&proof.opening_claims.0);
 
         // The verifier transcript (VerifierState) borrows the proof's NARG, so it is
         // built locally in `verify_inner`, not stored as a field (D3). NARG consistency
@@ -531,15 +523,15 @@ where
         );
 
         // Read the witness-polynomial commitments back from the NARG as ONE frame
-        // (matching the prover's single `write_slice`), absorbing them in the process.
+        // (matching the prover's single `write_commitments`), absorbing them in the process.
         self.commitments = transcript
-            .read_slice()
+            .read_commitments()
             .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
         // Read the untrusted-advice presence frame (length-0/1 vec) and reconstruct
         // the Option. The prover ALWAYS writes this frame, so the read position is the
-        // same in the Some and None cases.
+        // same in the Some and None cases (count-led on the Poseidon path).
         let untrusted_advice: Vec<PCS::Commitment> = transcript
-            .read_slice()
+            .read_commitments()
             .map_err(|_| ProofVerifyError::SumcheckVerificationError)?;
         // The presence frame is length 0 (None) or 1 (Some); reject any over-long frame
         // rather than silently dropping extra entries via `.next()`.
@@ -549,16 +541,16 @@ where
         self.untrusted_advice_commitment = untrusted_advice.into_iter().next();
         // Append trusted advice commitment to transcript
         if let Some(ref trusted_advice_commitment) = self.trusted_advice_commitment {
-            transcript.absorb(trusted_advice_commitment);
+            transcript.absorb_commitment(trusted_advice_commitment);
         }
         if let Some(trusted_bytecode) = self.preprocessing.shared.program.bytecode_commitments() {
             for commitment in &trusted_bytecode.commitments {
-                transcript.absorb(commitment);
+                transcript.absorb_commitment(commitment);
             }
         }
         if self.preprocessing.shared.program.is_committed() {
             let trusted = self.preprocessing.shared.program.as_committed()?;
-            transcript.absorb(&trusted.program_image_commitment);
+            transcript.absorb_commitment(&trusted.program_image_commitment);
         }
 
         let (stage1_result, uniskip_challenge1) = self
@@ -1835,7 +1827,7 @@ where
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
-        transcript.absorb(&claims);
+        transcript.absorb_scalars(&claims);
         let gamma_powers: Vec<F> = transcript.challenge_powers(polynomial_claims.len());
         let constraint_coeffs: Vec<F> = gamma_powers
             .iter()

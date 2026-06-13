@@ -2,7 +2,7 @@
 use crate::poly::opening_proof::OpeningId;
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
-use jolt_transcript::{prover_transcript, DuplexSpongeInterface, ProverState};
+use jolt_transcript::{prover_transcript, DuplexSpongeInterface, ProverState, TranscriptInit};
 use rand::rngs::StdRng;
 use std::marker::PhantomData;
 #[cfg(not(target_arch = "wasm32"))]
@@ -227,7 +227,7 @@ impl<
         F: JoltField,
         C: JoltCurve<F = F>,
         PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-        H: DuplexSpongeInterface<U = u8> + Default,
+        H: TranscriptInit + Default,
     > JoltCpuProver<'a, F, C, PCS, H>
 where
     ProverState<H, StdRng>: ProverFs<F>,
@@ -494,12 +494,12 @@ where
         if let Some(bytecode_commitments) = self.preprocessing.shared.program.bytecode_commitments()
         {
             for commitment in &bytecode_commitments.commitments {
-                self.transcript.absorb(commitment);
+                self.transcript.absorb_commitment(commitment);
             }
         }
         if let Some(program_commitments) = self.preprocessing.shared.program.program_commitments() {
             self.transcript
-                .absorb(&program_commitments.program_image_commitment);
+                .absorb_commitment(&program_commitments.program_image_commitment);
         }
 
         self.prove_stage1();
@@ -737,8 +737,10 @@ where
         };
 
         // Append commitments to transcript. ONE self-delimiting NARG frame (not N
-        // separate absorbs) — the verifier reads it back with a single `read_slice`.
-        self.transcript.write_slice(&commitments);
+        // separate absorbs) — the verifier reads it back with a single `read_commitments`
+        // (on the Poseidon path the sponge absorbs per-GT byte-rule groups; the NARG
+        // bytes are unchanged).
+        self.transcript.write_commitments(&commitments);
 
         hint_map
     }
@@ -746,9 +748,9 @@ where
     fn generate_and_commit_untrusted_advice(&mut self) {
         if self.program_io.untrusted_advice.is_empty() {
             // ALWAYS emit a presence frame (here: empty) so the verifier reconstructs the
-            // Option deterministically from a single `read_slice` at a fixed transcript
+            // Option deterministically from a single `read_commitments` at a fixed transcript
             // position — both the None and Some branches write exactly one frame here.
-            self.transcript.write_slice::<PCS::Commitment>(&[]);
+            self.transcript.write_commitments::<PCS::Commitment>(&[]);
             return;
         }
 
@@ -774,7 +776,7 @@ where
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
         // Presence frame (length-1) — pairs with the empty frame in the None branch above.
         self.transcript
-            .write_slice(std::slice::from_ref(&commitment));
+            .write_commitments(std::slice::from_ref(&commitment));
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -798,7 +800,7 @@ where
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
         self.advice.trusted_advice_polynomial = Some(poly);
         self.transcript
-            .absorb(self.advice.trusted_advice_commitment.as_ref().unwrap());
+            .absorb_commitment(self.advice.trusted_advice_commitment.as_ref().unwrap());
     }
 
     /// Returns (uni_skip_proof, sumcheck_proof, challenges, initial_claim)
@@ -2184,7 +2186,7 @@ where
         // In non-ZK mode, absorb claims before sampling gamma for Fiat-Shamir binding.
         // In ZK mode, claims are secret; binding comes from BlindFold constraints instead.
         #[cfg(not(feature = "zk"))]
-        self.transcript.absorb(&claims);
+        self.transcript.absorb_scalars(&claims);
         let gamma_powers: Vec<F> = self.transcript.challenge_powers(claims.len());
         #[cfg(feature = "zk")]
         let constraint_coeffs: Vec<F> = gamma_powers
@@ -3296,6 +3298,105 @@ mod tests {
         )
         .expect("Failed to create verifier");
         verifier.verify().expect("Failed to verify proof");
+    }
+
+    /// T4 parity test (specs/on-chain-solidity-verifier-plan.md §15): the generic
+    /// `TranspilableVerifier` instantiated with the REAL accumulator and a REAL
+    /// spongefish transcript must accept a real proof, replaying the same NARG as
+    /// `JoltVerifier` stages 1–7. In non-ZK mode every NARG frame is consumed by the
+    /// end of stage 7 (stage 8 only absorbs/squeezes), so `check_eof` must pass.
+    #[cfg(all(feature = "transpiler", not(feature = "zk")))]
+    #[test]
+    #[serial]
+    fn muldiv_transpilable_verifier_parity() {
+        use crate::poly::commitment::dory::DoryCommitmentScheme;
+        use crate::poly::opening_proof::VerifierOpeningAccumulator;
+        use crate::utils::math::Math;
+        use crate::zkvm::transpilable_verifier::{TranspilableProofData, TranspilableVerifier};
+        use crate::zkvm::{fiat_shamir_instance, RV64IMACSponge};
+        use jolt_transcript::verifier_transcript;
+
+        DoryGlobals::reset();
+        let mut program = host::Program::new("muldiv-guest");
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            1 << 16,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, _debug_info) = prover.prove();
+        assert!(!jolt_proof.zk_mode);
+
+        let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+
+        // Pre-seed the accumulator with the structural opening claims, exactly as
+        // `JoltVerifier::new` does.
+        let mut accumulator =
+            VerifierOpeningAccumulator::<Fr>::new(jolt_proof.trace_length.log_2(), false);
+        accumulator.preseed_structural_claims(&jolt_proof.opening_claims.0);
+
+        let proof_data = TranspilableProofData::from_proof(&jolt_proof);
+        let mut transpilable: TranspilableVerifier<
+            '_,
+            Fr,
+            Bn254Curve,
+            DoryCommitmentScheme,
+            VerifierOpeningAccumulator<Fr>,
+        > = TranspilableVerifier::new(
+            &verifier_preprocessing,
+            proof_data,
+            io_device,
+            None,
+            accumulator,
+        )
+        .expect("Failed to create transpilable verifier");
+
+        // Build the real transcript over the proof's NARG, mirroring `verify_inner`
+        // (instance computed over the TRUNCATED program_io held by the verifier).
+        let preprocessing_digest = verifier_preprocessing.shared.digest();
+        let instance = fiat_shamir_instance(
+            &transpilable.program_io,
+            jolt_proof.ram_K,
+            jolt_proof.trace_length,
+            verifier_preprocessing.shared.program_meta.entry_address,
+            &jolt_proof.rw_config,
+            &jolt_proof.one_hot_config,
+            jolt_proof.dory_layout,
+            &preprocessing_digest,
+        );
+        let mut ts = verifier_transcript(
+            b"Jolt",
+            instance,
+            RV64IMACSponge::default(),
+            &jolt_proof.narg,
+        );
+
+        transpilable
+            .verify(&mut ts)
+            .expect("TranspilableVerifier failed on a real proof");
+        // Stage-7 completeness: stage 8 reads no NARG frames in non-ZK mode.
+        ts.check_eof()
+            .expect("NARG not fully consumed after stage 7");
     }
 
     /// `zk_mode` is an attacker-controlled proof field, but the build's `zk` feature fixes

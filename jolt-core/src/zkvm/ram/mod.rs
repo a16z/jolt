@@ -68,16 +68,26 @@ use std::vec;
 use common::{constants::RAM_START_ADDRESS, jolt_device::MemoryLayout};
 pub use jolt_program::preprocess::RAMPreprocessing;
 use rayon::prelude::*;
+#[cfg(feature = "transpiler")]
 use std::any::Any;
+#[cfg(feature = "transpiler")]
 use std::cell::RefCell;
 use tracer::emulator::memory::Memory;
 use tracer::JoltDevice;
 
 // ---------------------------------------------------------------------------
-// Symbolic IO overrides (used by transpiler, no-op in native prover/verifier)
+// Symbolic IO overrides — transpiler ONLY.
+//
+// These thread-locals let the transpiler swap the concrete IO / initial-RAM MLE
+// evaluation for caller-supplied symbolic values before running `verify()`. They are
+// a verifier-path backdoor (`eval_io_mle` / `eval_initial_ram_mle` sit on the RAM
+// output-check), so they are gated behind `#[cfg(feature = "transpiler")]`: a
+// production (non-transpiler) build compiles ONLY the concrete path, and the public
+// setters do not exist, so nothing can install an attacker-chosen IO evaluation.
 // ---------------------------------------------------------------------------
 
 /// Override values for `eval_io_mle` during symbolic execution.
+#[cfg(feature = "transpiler")]
 pub struct PendingIoMleValues<F: JoltField> {
     pub input_words: Vec<F>,
     pub output_words: Vec<F>,
@@ -85,20 +95,24 @@ pub struct PendingIoMleValues<F: JoltField> {
 }
 
 /// Override values for `eval_initial_ram_mle` during symbolic execution.
+#[cfg(feature = "transpiler")]
 pub struct PendingInitialRamValues<F: JoltField> {
     pub bytecode_words: Vec<F>,
     pub input_words: Vec<F>,
 }
 
+#[cfg(feature = "transpiler")]
 thread_local! {
     static PENDING_IO_MLE: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
     static PENDING_INITIAL_RAM: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
 }
 
+#[cfg(feature = "transpiler")]
 pub fn set_pending_io_mle<F: JoltField + 'static>(v: PendingIoMleValues<F>) {
     PENDING_IO_MLE.with(|cell| *cell.borrow_mut() = Some(Box::new(v)));
 }
 
+#[cfg(feature = "transpiler")]
 pub fn take_pending_io_mle<F: JoltField + 'static>() -> Option<PendingIoMleValues<F>> {
     PENDING_IO_MLE.with(|cell| {
         cell.borrow_mut()
@@ -107,10 +121,12 @@ pub fn take_pending_io_mle<F: JoltField + 'static>() -> Option<PendingIoMleValue
     })
 }
 
+#[cfg(feature = "transpiler")]
 pub fn set_pending_initial_ram<F: JoltField + 'static>(v: PendingInitialRamValues<F>) {
     PENDING_INITIAL_RAM.with(|cell| *cell.borrow_mut() = Some(Box::new(v)));
 }
 
+#[cfg(feature = "transpiler")]
 pub fn take_pending_initial_ram<F: JoltField + 'static>() -> Option<PendingInitialRamValues<F>> {
     PENDING_INITIAL_RAM.with(|cell| {
         cell.borrow_mut()
@@ -622,7 +638,8 @@ pub fn eval_initial_ram_mle<F: JoltField + 'static>(
     program_io: &JoltDevice,
     r_address: &[F::Challenge],
 ) -> F {
-    // Symbolic override path (transpiler sets this before verify())
+    // Symbolic override path (transpiler-only; absent in production builds).
+    #[cfg(feature = "transpiler")]
     if let Some(pending) = take_pending_initial_ram::<F>() {
         let bytecode_start = remap_address(
             ram_preprocessing.min_bytecode_address,
@@ -690,7 +707,8 @@ pub fn eval_io_mle<F: JoltField + 'static>(
         hi_scale *= F::one() - *r_i;
     }
 
-    // Symbolic override path (transpiler sets this before verify())
+    // Symbolic override path (transpiler-only; absent in production builds).
+    #[cfg(feature = "transpiler")]
     if let Some(pending) = take_pending_io_mle::<F>() {
         let mut acc = F::zero();
 

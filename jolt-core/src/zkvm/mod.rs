@@ -40,7 +40,6 @@ pub type RV64IMACSponge = jolt_transcript::Blake2b512;
 pub type RV64IMACSponge = jolt_transcript::Keccak;
 #[cfg(feature = "transcript-poseidon")]
 pub type RV64IMACSponge = jolt_transcript::PoseidonSponge;
-use crate::transcript_msgs::FsAbsorb;
 use ark_bn254::Fr;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::Result;
@@ -70,9 +69,9 @@ pub mod spartan;
 #[cfg(all(test, feature = "host"))]
 mod trace_row_parity;
 /// Symbolic verifier used to transpile the on-chain verifier (gated behind the
-/// `transpiler` feature). It relies on the removed `crate::transcripts::Transcript`
-/// trait and cannot be expressed over spongefish's concrete `VerifierState`, so it
-/// is disabled during the transcript→spongefish migration (spec Non-Goal #2).
+/// `transpiler` feature): a generic mirror of `JoltVerifier` over the accumulator
+/// and the spongefish `VerifierFs` surface, non-ZK stages 1–7 only. See
+/// `specs/on-chain-solidity-verifier-plan.md` Part II.
 #[cfg(feature = "transpiler")]
 pub mod transpilable_verifier;
 pub mod verifier;
@@ -322,57 +321,18 @@ where
     pub(crate) _marker: std::marker::PhantomData<fn() -> H>,
 }
 
-/// Absorb public instance data into the transcript for Fiat-Shamir.
-///
-/// **Legacy — no longer on the production prove/verify path.** The public statement is
-/// now bound via [`fiat_shamir_instance`] (`instance = Blake2b(statement)`, the
-/// spongefish domain-separator instance) — see DEV-38. This per-field scatter-absorb is
-/// the *old* hand-rolled style, retained only for the cfg-gated (and currently disabled)
-/// `transpilable_verifier`; it will be deleted or regenerated when the on-chain verifier
-/// is revived (Non-Goal #2). While it exists, its field set and order MUST stay identical
-/// to [`fiat_shamir_instance`] below.
-#[expect(clippy::too_many_arguments)]
-pub fn fiat_shamir_preamble(
-    program_io: &JoltDevice,
-    ram_K: usize,
-    trace_length: usize,
-    entry_address: u64,
-    rw_config: &ReadWriteConfig,
-    one_hot_config: &OneHotConfig,
-    dory_layout: DoryLayout,
-    preprocessing_digest: &[u8; 32],
-    transcript: &mut impl FsAbsorb,
-) {
-    transcript.absorb(&preprocessing_digest.to_vec());
-    transcript.absorb(&program_io.memory_layout.max_input_size);
-    transcript.absorb(&program_io.memory_layout.max_output_size);
-    transcript.absorb(&program_io.memory_layout.heap_size);
-    transcript.absorb(&program_io.inputs);
-    transcript.absorb(&program_io.outputs);
-    transcript.absorb(&(program_io.panic as u64));
-    transcript.absorb(&(ram_K as u64));
-    transcript.absorb(&(trace_length as u64));
-    transcript.absorb(&entry_address);
-    transcript.absorb(&(rw_config.ram_rw_phase1_num_rounds as u64));
-    transcript.absorb(&(rw_config.ram_rw_phase2_num_rounds as u64));
-    transcript.absorb(&(rw_config.registers_rw_phase1_num_rounds as u64));
-    transcript.absorb(&(rw_config.registers_rw_phase2_num_rounds as u64));
-    transcript.absorb(&(one_hot_config.log_k_chunk as u64));
-    transcript.absorb(&(one_hot_config.lookups_ra_virtual_log_k_chunk as u64));
-    transcript.absorb(&(dory_layout as u64));
-}
-
 /// The 32-byte Fiat-Shamir `instance` binding the public statement
 /// (`Blake2b(CanonicalSerialize(statement))`, per @mmaker's #1455 mandate).
 ///
 /// The transcript is constructed with this digest as its spongefish `instance`,
-/// which **replaces** the per-param [`fiat_shamir_preamble`] absorbs: binding the
-/// statement once at the domain-separator boundary instead of scattering it.
+/// which replaced the legacy per-param `fiat_shamir_preamble` scatter-absorbs
+/// (deleted — see DEV-38): the statement is bound once at the domain-separator
+/// boundary instead of being scattered across absorbs.
 ///
 /// **O1 (soundness-critical):** the digest must be byte-identical on prover and
 /// verifier. Both sides call this one helper over the same statement params (the
 /// verifier recomputes them from the proof's public tail), serialized in a fixed
-/// order — the same field set and order [`fiat_shamir_preamble`] absorbs.
+/// order.
 #[expect(clippy::too_many_arguments)]
 #[expect(
     clippy::expect_used,

@@ -88,8 +88,8 @@ pub fn bind_opening_inputs<F: JoltField, T: FsAbsorb>(
     }
     // Both the opening point (sumcheck challenges) and the claimed evaluation are
     // shared: the verifier already holds them before reading the proof → `absorb`.
-    transcript.absorb(&point_scalars);
-    transcript.absorb(opening);
+    transcript.absorb_scalars(&point_scalars);
+    transcript.absorb_scalar(opening);
 }
 
 #[cfg(feature = "zk")]
@@ -103,9 +103,9 @@ pub fn bind_opening_inputs_zk<F: JoltField, C: JoltCurve<F = F>, T: FsAbsorb>(
         let scalar: F = (*point).into();
         point_scalars.push(scalar);
     }
-    transcript.absorb(&point_scalars);
+    transcript.absorb_scalars(&point_scalars);
 
-    transcript.absorb(y_com);
+    transcript.absorb_commitment(y_com);
 }
 
 impl CommitmentScheme for DoryCommitmentScheme {

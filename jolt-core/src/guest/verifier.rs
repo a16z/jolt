@@ -16,7 +16,7 @@ use crate::zkvm::verifier::JoltVerifier;
 use crate::zkvm::verifier::JoltVerifierPreprocessing;
 use common::jolt_device::MemoryConfig;
 use common::jolt_device::MemoryLayout;
-use jolt_transcript::{DuplexSpongeInterface, VerifierState};
+use jolt_transcript::{TranscriptInit, VerifierState};
 
 pub fn preprocess(
     guest: &Program,
@@ -56,7 +56,7 @@ pub fn verify<
     F: JoltField,
     C: JoltCurve<F = F>,
     PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
-    H: DuplexSpongeInterface<U = u8> + Default,
+    H: TranscriptInit + Default,
 >(
     inputs_bytes: &[u8],
     trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,

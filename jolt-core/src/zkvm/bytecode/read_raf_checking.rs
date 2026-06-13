@@ -820,9 +820,8 @@ impl<F: JoltField> BytecodeReadRafAddressSumcheckVerifier<F> {
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl FsChallenge<F>,
     ) -> Self {
-        let params = BytecodeReadRafSumcheckParams::gen(
+        let params = BytecodeReadRafSumcheckParams::gen_verifier(
             program,
-            None,
             n_cycle_vars,
             one_hot_params,
             opening_accumulator,
@@ -946,16 +945,21 @@ impl<F: JoltField, A: AbstractVerifierOpeningAccumulator<F>> SumcheckInstanceVer
                 .1
         });
 
+        // Full mode: evaluate all five stage Vals in one regrouped pass sharing a
+        // single eq(r,·) table (spec §5.2); Committed mode reads virtual openings.
+        let stage_vals: Option<[F; N_STAGES]> = (self.params.program_mode
+            != ProgramMode::Committed)
+            .then(|| self.params.stage_val_evals(&r_address_prime.r));
         let stage_val_claim = |stage: usize| {
-            if self.params.program_mode == ProgramMode::Committed {
+            if let Some(vals) = &stage_vals {
+                vals[stage]
+            } else {
                 accumulator
                     .get_virtual_polynomial_opening(
                         VirtualPolynomial::BytecodeValStage(stage),
                         SumcheckId::BytecodeReadRafAddressPhase,
                     )
                     .1
-            } else {
-                self.params.val_polys[stage].evaluate(&r_address_prime.r)
             }
         };
         let int_poly_contrib_by_stage = [
@@ -1166,16 +1170,17 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafCyclePhaseParams
             return challenge_values;
         }
 
-        // Prover stores bound values before clearing polys; verifier evaluates directly.
+        // Prover stores bound values before clearing polys; verifier evaluates directly
+        // (regrouped per spec §5.2 — value-identical).
         let stage_values: [F; N_STAGES] = if let Some(bound_val_polys) = &self.bound_val_polys {
             array::from_fn(|index| {
                 bound_val_polys[index]
                     * EqPolynomial::<F>::mle(&self.r_cycles[index], &r_cycle_prime.r)
             })
         } else {
+            let vals = self.stage_val_evals(&r_address_prime.r);
             array::from_fn(|index| {
-                self.val_polys[index].evaluate(&r_address_prime.r)
-                    * EqPolynomial::<F>::mle(&self.r_cycles[index], &r_cycle_prime.r)
+                vals[index] * EqPolynomial::<F>::mle(&self.r_cycles[index], &r_cycle_prime.r)
             })
         };
         let int_poly = self
@@ -1558,6 +1563,29 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafAddressPhasePara
     }
 }
 
+/// Verifier-side inputs for the regrouped stage-Val evaluation
+/// (specs/transpiler-optimization-spec.md §5.2).
+///
+/// The verifier never materializes the γ-combined `val_polys` (whose per-row
+/// coefficients are challenge-dependent). Instead it keeps the raw bytecode table
+/// (protocol constants) plus the two `eq(r_register, ·)` tables, and evaluates
+/// `Val_s(r) = Σ_j β_s^j·(Σ_k c_{s,j,k}·eq(r,k))` by linearity — exact field algebra,
+/// value-identical to `val_polys[s].evaluate(r)` on every path. In the transpiled
+/// circuit the inner Σ_k products are const×var (free) since every c is a bytecode
+/// constant; the challenge-dependent register columns of stages 4/5 are salvaged by a
+/// second-level regroup over register values (register operands ARE bytecode
+/// constants), leaving only the per-β and per-touched-register products as real muls.
+#[derive(Allocative, Clone)]
+pub struct VerifierValEvalData<F: JoltField> {
+    /// Full bytecode table; rows are protocol constants.
+    #[allocative(skip)]
+    bytecode: Arc<BytecodePreprocessing>,
+    /// eq(r_register, ·) over the stage-4 `RdWa` opening (RegistersReadWriteChecking).
+    eq_r_register_4: Vec<F>,
+    /// eq(r_register, ·) over the stage-5 `RdWa` opening (RegistersValEvaluation).
+    eq_r_register_5: Vec<F>,
+}
+
 #[derive(Allocative, Clone)]
 pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
     pub program_mode: ProgramMode,
@@ -1602,6 +1630,9 @@ pub struct BytecodeReadRafSumcheckParams<F: JoltField> {
     pub cycle_initial_round_claims: Option<[F; N_STAGES]>,
     /// Prover-cached entry cycle claim after address binding.
     pub cycle_initial_entry_claim: Option<F>,
+    /// Verifier-side data for the regrouped `Val_s(r_address)` evaluation (Full
+    /// program mode only; `None` for the prover and in Committed mode).
+    pub verifier_val_data: Option<VerifierValEvalData<F>>,
 }
 
 impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
@@ -1615,6 +1646,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         ]
     }
 
+    /// Prover-side params: materializes the combined `val_polys`, which the address
+    /// phase binds round-by-round.
     #[tracing::instrument(skip_all, name = "BytecodeReadRafSumcheckParams::gen")]
     pub fn gen<PCS: CommitmentScheme>(
         program: &ProgramPreprocessing<PCS>,
@@ -1623,6 +1656,49 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         one_hot_params: &OneHotParams,
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl FsChallenge<F>,
+    ) -> Self {
+        Self::gen_impl(
+            program,
+            materialized_program,
+            n_cycle_vars,
+            one_hot_params,
+            opening_accumulator,
+            transcript,
+            true,
+        )
+    }
+
+    /// Verifier-side params: identical Fiat-Shamir interaction to [`Self::gen`], but
+    /// the combined `val_polys` are NOT materialized — the verifier only ever needs
+    /// `Val_s(r_address)`, which `stage_val_evals` computes by the §5.2 linearity
+    /// regroup from [`VerifierValEvalData`] (value-identical, and free of the
+    /// challenge-dependent per-row coefficient products in the transpiled circuit).
+    fn gen_verifier<PCS: CommitmentScheme>(
+        program: &ProgramPreprocessing<PCS>,
+        n_cycle_vars: usize,
+        one_hot_params: &OneHotParams,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl FsChallenge<F>,
+    ) -> Self {
+        Self::gen_impl(
+            program,
+            None,
+            n_cycle_vars,
+            one_hot_params,
+            opening_accumulator,
+            transcript,
+            false,
+        )
+    }
+
+    fn gen_impl<PCS: CommitmentScheme>(
+        program: &ProgramPreprocessing<PCS>,
+        materialized_program: Option<&FullProgramPreprocessing>,
+        n_cycle_vars: usize,
+        one_hot_params: &OneHotParams,
+        opening_accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl FsChallenge<F>,
+        materialize_val_polys: bool,
     ) -> Self {
         let program_mode = if program.is_committed() {
             ProgramMode::Committed
@@ -1657,6 +1733,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             },
             ProgramMode::Committed => materialized_program,
         };
+        let mut verifier_val_data = None;
         let val_polys = if let Some(program) = program_source {
             let r_register_4 = opening_accumulator
                 .get_virtual_polynomial_opening(
@@ -1678,16 +1755,25 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             let eq_r_register_5 =
                 EqPolynomial::<F>::evals(&r_register_5[..(REGISTER_COUNT as usize).log_2()]);
 
-            Self::compute_val_polys(
-                &program.bytecode.bytecode,
-                &eq_r_register_4,
-                &eq_r_register_5,
-                &stage1_gammas,
-                &stage2_gammas,
-                &stage3_gammas,
-                &stage4_gammas,
-                &stage5_gammas,
-            )
+            if materialize_val_polys {
+                Self::compute_val_polys(
+                    &program.bytecode.bytecode,
+                    &eq_r_register_4,
+                    &eq_r_register_5,
+                    &stage1_gammas,
+                    &stage2_gammas,
+                    &stage3_gammas,
+                    &stage4_gammas,
+                    &stage5_gammas,
+                )
+            } else {
+                verifier_val_data = Some(VerifierValEvalData {
+                    bytecode: Arc::clone(&program.bytecode),
+                    eq_r_register_4,
+                    eq_r_register_5,
+                });
+                array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()]))
+            }
         } else {
             array::from_fn(|_| MultilinearPolynomial::from(vec![F::zero()]))
         };
@@ -1773,7 +1859,160 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             bound_f_entry: None,
             cycle_initial_round_claims: None,
             cycle_initial_entry_claim: None,
+            verifier_val_data,
         }
+    }
+
+    /// `[Val_s(r_address)]` for all five stages (Full program mode).
+    ///
+    /// Verifier params evaluate by the §5.2 linearity regroup over
+    /// [`VerifierValEvalData`]; params without that data (prover-built, e.g. in
+    /// `#[cfg(test)]` paths) fall back to evaluating the materialized `val_polys`.
+    /// Both compute the identical field value — exact algebra, no division.
+    fn stage_val_evals(&self, r_address: &[F::Challenge]) -> [F; N_STAGES] {
+        if let Some(data) = &self.verifier_val_data {
+            self.stage_val_evals_regrouped(data, r_address)
+        } else {
+            array::from_fn(|stage| self.val_polys[stage].evaluate(r_address))
+        }
+    }
+
+    /// Regrouped evaluation: `Val_s(r) = Σ_j β_s^j·(Σ_k c_{s,j,k}·eq(r,k))`, one
+    /// shared `eq(r,·)` table across all five stages. The stage-4 columns and the
+    /// stage-5 rd column have challenge-dependent `eq(r_register, ·)` coefficients,
+    /// so they get a second-level regroup by register value:
+    /// `Σ_k eq_reg[reg(k)]·eq(r,k) = Σ_reg eq_reg[reg]·(Σ_{k: reg(k)=reg} eq(r,k))`.
+    /// Skips are keyed on bytecode constants only (zero/absent operands and unset
+    /// flags contribute exactly zero), so native and symbolic runs take identical
+    /// branches and the result is value-identical to `val_polys[s].evaluate(r)`.
+    fn stage_val_evals_regrouped(
+        &self,
+        data: &VerifierValEvalData<F>,
+        r_address: &[F::Challenge],
+    ) -> [F; N_STAGES] {
+        let bytecode = &data.bytecode.bytecode;
+        let eq_table: Vec<F> = EqPolynomial::evals(r_address);
+
+        let n_registers = REGISTER_COUNT as usize;
+        let mut s1_addr = F::zero();
+        let mut s1_imm = F::zero();
+        let mut s1_flags = vec![F::zero(); NUM_CIRCUIT_FLAGS];
+        let mut s2 = [F::zero(); 4];
+        let mut s3_imm = F::zero();
+        let mut s3_addr = F::zero();
+        let mut s3_flags = [F::zero(); 7];
+        let mut s4_rd = vec![F::zero(); n_registers];
+        let mut s4_rs1 = vec![F::zero(); n_registers];
+        let mut s4_rs2 = vec![F::zero(); n_registers];
+        let mut s5_rd = vec![F::zero(); n_registers];
+        let mut s5_raf = F::zero();
+        let mut s5_tables = vec![F::zero(); NUM_LOOKUP_TABLES];
+
+        // zip_eq (not zip): a length mismatch between the padded bytecode and the
+        // eq table must panic in release builds too, not silently truncate the sum.
+        for (instruction, &eq_k) in zip_eq(bytecode.iter(), eq_table.iter()) {
+            let instr = *instruction;
+            let circuit_flags = instruction.circuit_flags();
+            let instr_flags = instruction.instruction_flags();
+
+            // Stage 1: unexpanded_pc + β·imm + Σ β^{2+t}·circuit_flag_t
+            if instr.address != 0 {
+                s1_addr += eq_k.mul_u64(instr.address as u64);
+            }
+            if instr.operands.imm != 0 {
+                s1_imm += instr.operands.imm.field_mul(eq_k);
+            }
+            for (sum, flag) in s1_flags.iter_mut().zip(circuit_flags.iter()) {
+                if *flag {
+                    *sum += eq_k;
+                }
+            }
+
+            // Stage 2: jump + β·branch + β²·write_lookup_to_rd + β³·virtual
+            if circuit_flags[CircuitFlags::Jump] {
+                s2[0] += eq_k;
+            }
+            if instr_flags[InstructionFlags::Branch] {
+                s2[1] += eq_k;
+            }
+            if circuit_flags[CircuitFlags::WriteLookupOutputToRD] {
+                s2[2] += eq_k;
+            }
+            if circuit_flags[CircuitFlags::VirtualInstruction] {
+                s2[3] += eq_k;
+            }
+
+            // Stage 3: imm + β·unexpanded_pc + β²..β⁸ over seven flags
+            if instr.operands.imm != 0 {
+                s3_imm += instr.operands.imm.field_mul(eq_k);
+            }
+            if instr.address != 0 {
+                s3_addr += eq_k.mul_u64(instr.address as u64);
+            }
+            if instr_flags[InstructionFlags::LeftOperandIsRs1Value] {
+                s3_flags[0] += eq_k;
+            }
+            if instr_flags[InstructionFlags::LeftOperandIsPC] {
+                s3_flags[1] += eq_k;
+            }
+            if instr_flags[InstructionFlags::RightOperandIsRs2Value] {
+                s3_flags[2] += eq_k;
+            }
+            if instr_flags[InstructionFlags::RightOperandIsImm] {
+                s3_flags[3] += eq_k;
+            }
+            if instr_flags[InstructionFlags::IsNoop] {
+                s3_flags[4] += eq_k;
+            }
+            if circuit_flags[CircuitFlags::VirtualInstruction] {
+                s3_flags[5] += eq_k;
+            }
+            if circuit_flags[CircuitFlags::IsFirstInSequence] {
+                s3_flags[6] += eq_k;
+            }
+
+            // Stage 4: register-grouped rd/rs1/rs2 indicator sums
+            if let Some(r) = instr.operands.rd {
+                s4_rd[r as usize] += eq_k;
+            }
+            if let Some(r) = instr.operands.rs1 {
+                s4_rs1[r as usize] += eq_k;
+            }
+            if let Some(r) = instr.operands.rs2 {
+                s4_rs2[r as usize] += eq_k;
+            }
+
+            // Stage 5: register-grouped rd + β·raf_flag + Σ β^{2+i}·table_flag_i
+            if let Some(r) = instr.operands.rd {
+                s5_rd[r as usize] += eq_k;
+            }
+            if !circuit_flags.is_interleaved_operands() {
+                s5_raf += eq_k;
+            }
+            if let Some(table) = InstructionLookup::<XLEN>::lookup_table(instruction) {
+                s5_tables[LookupTables::<XLEN>::enum_index(&table)] += eq_k;
+            }
+        }
+
+        let dot = |weights: &[F], sums: &[F]| -> F {
+            zip_eq(weights.iter(), sums.iter())
+                .map(|(w, s)| *w * *s)
+                .sum::<F>()
+        };
+
+        let val1 =
+            s1_addr + self.stage1_gammas[1] * s1_imm + dot(&self.stage1_gammas[2..], &s1_flags);
+        let val2 = dot(&self.stage2_gammas, &s2);
+        let val3 =
+            s3_imm + self.stage3_gammas[1] * s3_addr + dot(&self.stage3_gammas[2..], &s3_flags);
+        let val4 = self.stage4_gammas[0] * dot(&data.eq_r_register_4, &s4_rd)
+            + self.stage4_gammas[1] * dot(&data.eq_r_register_4, &s4_rs1)
+            + self.stage4_gammas[2] * dot(&data.eq_r_register_4, &s4_rs2);
+        let val5 = dot(&data.eq_r_register_5, &s5_rd)
+            + self.stage5_gammas[1] * s5_raf
+            + dot(&self.stage5_gammas[2..], &s5_tables);
+
+        [val1, val2, val3, val4, val5]
     }
 
     /// Fused computation of all Val polynomials in a single parallel pass over bytecode.
@@ -2114,5 +2353,188 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
         }
 
         sum
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::zkvm::config::OneHotConfig;
+    use ark_bn254::Fr;
+    use ark_std::test_rng;
+    use jolt_riscv::{JoltInstructionKind, NormalizedOperands, RV64IMAC_JOLT};
+    use rand_core::RngCore;
+
+    fn row(
+        kind: JoltInstructionKind,
+        address: usize,
+        operands: NormalizedOperands,
+        virtual_sequence_remaining: Option<u16>,
+        is_first_in_sequence: bool,
+    ) -> JoltInstructionRow {
+        JoltInstructionRow {
+            instruction_kind: kind,
+            address,
+            operands,
+            virtual_sequence_remaining,
+            is_first_in_sequence,
+            is_compressed: false,
+        }
+    }
+
+    fn ops(rd: Option<u8>, rs1: Option<u8>, rs2: Option<u8>, imm: i128) -> NormalizedOperands {
+        NormalizedOperands { rs1, rs2, rd, imm }
+    }
+
+    fn rand_frs(n: usize, rng: &mut impl RngCore) -> Vec<Fr> {
+        (0..n).map(|_| <Fr as JoltField>::random(rng)).collect()
+    }
+
+    fn rand_challenges(n: usize, rng: &mut impl RngCore) -> Vec<<Fr as JoltField>::Challenge> {
+        (0..n)
+            .map(|_| <Fr as JoltField>::Challenge::random(rng))
+            .collect()
+    }
+
+    /// Property gate for the §5.2 linearity regroup: for random per-stage gammas,
+    /// random `eq(r_register, ·)` tables, and a random `r_address`, the verifier's
+    /// `stage_val_evals_regrouped` must equal the materialized
+    /// `compute_val_polys(..)[s].evaluate(r_address)` for every stage — including
+    /// the register-grouped stage-4 rd/rs1/rs2 and stage-5 rd columns.
+    #[test]
+    fn stage_val_evals_regrouped_matches_materialized_val_polys() {
+        let mut rng = test_rng();
+
+        // Small synthetic bytecode exercising every column: address/imm (stages
+        // 1, 3), jump/branch/write-to-rd flags (stage 2), operand-source flags
+        // (stage 3), rd/rs1/rs2 register columns (stage 4), rd + raf +
+        // lookup-table columns (stage 5), a two-row inline sequence
+        // (VirtualInstruction / IsFirstInSequence), and the noop padding rows
+        // `preprocess` inserts (IsNoop, absent operands).
+        let base = 0x8000_0000usize;
+        let rows = vec![
+            row(
+                JoltInstructionKind::ADDI,
+                base,
+                ops(Some(5), Some(6), None, 42),
+                None,
+                false,
+            ),
+            row(
+                JoltInstructionKind::MUL,
+                base + 4,
+                ops(Some(7), Some(8), Some(9), 0),
+                None,
+                false,
+            ),
+            row(
+                JoltInstructionKind::BEQ,
+                base + 8,
+                ops(None, Some(10), Some(11), -8),
+                None,
+                false,
+            ),
+            row(
+                JoltInstructionKind::JAL,
+                base + 12,
+                ops(Some(1), None, None, 16),
+                None,
+                false,
+            ),
+            row(
+                JoltInstructionKind::SLTU,
+                base + 16,
+                ops(Some(12), Some(13), Some(14), 0),
+                None,
+                false,
+            ),
+            row(
+                JoltInstructionKind::XOR,
+                base + 20,
+                ops(Some(15), Some(16), Some(17), 0),
+                Some(1),
+                true,
+            ),
+            row(
+                JoltInstructionKind::ADDI,
+                base + 20,
+                ops(Some(15), Some(15), None, 1),
+                Some(0),
+                false,
+            ),
+        ];
+        let bytecode =
+            Arc::new(BytecodePreprocessing::preprocess(rows, base as u64, RV64IMAC_JOLT).unwrap());
+        let K = bytecode.bytecode.len();
+        let log_K = K.log_2();
+
+        let stage1_gammas = rand_frs(2 + NUM_CIRCUIT_FLAGS, &mut rng);
+        let stage2_gammas = rand_frs(4, &mut rng);
+        let stage3_gammas = rand_frs(9, &mut rng);
+        let stage4_gammas = rand_frs(3, &mut rng);
+        let stage5_gammas = rand_frs(2 + NUM_LOOKUP_TABLES, &mut rng);
+
+        let log_registers = (REGISTER_COUNT as usize).log_2();
+        let eq_r_register_4 = EqPolynomial::<Fr>::evals(&rand_challenges(log_registers, &mut rng));
+        let eq_r_register_5 = EqPolynomial::<Fr>::evals(&rand_challenges(log_registers, &mut rng));
+
+        let val_polys = BytecodeReadRafSumcheckParams::<Fr>::compute_val_polys(
+            &bytecode.bytecode,
+            &eq_r_register_4,
+            &eq_r_register_5,
+            &stage1_gammas,
+            &stage2_gammas,
+            &stage3_gammas,
+            &stage4_gammas,
+            &stage5_gammas,
+        );
+
+        let r_address = rand_challenges(log_K, &mut rng);
+
+        let params = BytecodeReadRafSumcheckParams::<Fr> {
+            program_mode: ProgramMode::Full,
+            gamma_powers: vec![Fr::zero(); 8],
+            stage1_gammas,
+            stage2_gammas,
+            stage3_gammas,
+            stage4_gammas,
+            stage5_gammas,
+            input_claim: Fr::zero(),
+            one_hot_params: OneHotParams::from_config(&OneHotConfig::new(16), K, 1 << 16),
+            K,
+            log_K,
+            log_T: 16,
+            d: 1,
+            val_polys,
+            rv_claims: [Fr::zero(); N_STAGES],
+            raf_claim: Fr::zero(),
+            raf_shift_claim: Fr::zero(),
+            int_poly: IdentityPolynomial::new(log_K),
+            r_cycles: array::from_fn(|_| Vec::new()),
+            bound_val_polys: None,
+            bound_int_poly: None,
+            entry_gamma: Fr::zero(),
+            entry_bytecode_index: 0,
+            bound_f_entry: None,
+            cycle_initial_round_claims: None,
+            cycle_initial_entry_claim: None,
+            verifier_val_data: Some(VerifierValEvalData {
+                bytecode: Arc::clone(&bytecode),
+                eq_r_register_4,
+                eq_r_register_5,
+            }),
+        };
+
+        let regrouped = params
+            .stage_val_evals_regrouped(params.verifier_val_data.as_ref().unwrap(), &r_address);
+        for (stage, regrouped_eval) in regrouped.iter().enumerate() {
+            assert_eq!(
+                *regrouped_eval,
+                params.val_polys[stage].evaluate(&r_address),
+                "stage {} regrouped Val(r_address) diverges from the materialized val poly",
+                stage + 1,
+            );
+        }
     }
 }
