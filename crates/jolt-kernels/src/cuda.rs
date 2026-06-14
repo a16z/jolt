@@ -297,6 +297,11 @@ impl DeviceFrVec {
             staging: self.staging.clone(),
         })
     }
+
+    pub fn first(&self) -> Result<Fr, CudaError> {
+        let raw = self.stream.clone_dtoh(&self.buf.slice(0..LIMBS))?;
+        Ok(limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]))
+    }
 }
 
 #[inline]

@@ -67,10 +67,11 @@ impl<F: Field> SplitEqState<F> {
 #[cfg(feature = "cuda")]
 use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec};
 #[cfg(feature = "cuda")]
+use crate::dense::bind_dense_evals_reuse_cuda;
+#[cfg(feature = "cuda")]
 use jolt_field::Fr;
 
 #[cfg(feature = "cuda")]
-#[expect(dead_code)]
 pub struct CudaSplitEqState<'a> {
     ctx: &'a CudaKernelContext,
     low_point: Vec<Fr>,
@@ -82,34 +83,58 @@ pub struct CudaSplitEqState<'a> {
 }
 
 #[cfg(feature = "cuda")]
-#[expect(clippy::todo, unused_variables)]
 impl<'a> CudaSplitEqState<'a> {
     pub fn new_low_to_high(
         ctx: &'a CudaKernelContext,
         point: &[Fr],
         scaling: Option<Fr>,
     ) -> Result<Self, CudaError> {
-        todo!()
+        let (high_point, low_point) = point.split_at(point.len() / 2);
+        Ok(Self {
+            ctx,
+            low_point: low_point.to_vec(),
+            high_point: high_point.to_vec(),
+            e_in: ctx.upload(&EqPolynomial::<Fr>::evals(low_point, scaling))?,
+            e_out: ctx.upload(&EqPolynomial::<Fr>::evals(high_point, None))?,
+            e_in_scratch: ctx.upload(&[])?,
+            e_out_scratch: ctx.upload(&[])?,
+        })
     }
 
     pub fn e_in(&self) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        self.e_in.to_host()
     }
 
     pub fn e_out(&self) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        self.e_out.to_host()
     }
 
     pub fn current_target(&self) -> Fr {
-        todo!()
+        debug_assert!(self.e_in.len() > 1 || self.e_out.len() > 1);
+        if self.e_in.len() > 1 {
+            let remaining = self.e_in.len().trailing_zeros() as usize;
+            self.low_point[remaining - 1]
+        } else {
+            let remaining = self.e_out.len().trailing_zeros() as usize;
+            self.high_point[remaining - 1]
+        }
     }
 
     pub fn eval(&self) -> Result<Fr, CudaError> {
-        todo!()
+        Ok(self.e_in.first()? * self.e_out.first()?)
     }
 
     pub fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
-        todo!()
+        if self.e_in.len() > 1 {
+            bind_dense_evals_reuse_cuda(self.ctx, &mut self.e_in, &mut self.e_in_scratch, challenge)
+        } else {
+            bind_dense_evals_reuse_cuda(
+                self.ctx,
+                &mut self.e_out,
+                &mut self.e_out_scratch,
+                challenge,
+            )
+        }
     }
 }
 
@@ -125,7 +150,6 @@ mod cuda_tests {
 
     proptest! {
         #[test]
-        #[ignore = "CudaSplitEqState methods are todo!()"]
         fn cuda_split_eq_matches_cpu(
             num_vars in 1usize..10,
             point_seed in fr_strategy(),

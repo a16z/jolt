@@ -11,7 +11,7 @@ use jolt_kernels::{CudaSplitEqState, SplitEqState};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-const NUM_VARS: [usize; 4] = [12, 16, 20, 22];
+const NUM_VARS: [usize; 4] = [20, 22, 24, 26];
 
 fn random_point(rng: &mut ChaCha20Rng, num_vars: usize) -> Vec<Fr> {
     (0..num_vars).map(|_| Field::random(rng)).collect()
