@@ -1,6 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use cudarc::driver::{CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{
+    result as cuda_result, CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig,
+    PushKernelArg,
+};
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 
 use crate::Fr;
@@ -169,6 +172,7 @@ extern "C" __global__ void product_reduce(u64 *out, const u64 *in, unsigned long
 pub enum CudaError {
     Compile(cudarc::nvrtc::CompileError),
     Driver(cudarc::driver::DriverError),
+    Pool,
 }
 
 impl std::fmt::Display for CudaError {
@@ -176,6 +180,7 @@ impl std::fmt::Display for CudaError {
         match self {
             CudaError::Compile(e) => write!(f, "nvrtc compile error: {e:?}"),
             CudaError::Driver(e) => write!(f, "cuda driver error: {e:?}"),
+            CudaError::Pool => write!(f, "pinned staging pool invariant violated"),
         }
     }
 }
@@ -203,12 +208,14 @@ pub struct CudaFieldContext {
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
+    staging: PinnedStaging,
 }
 
 pub struct DeviceFrVec {
     stream: Arc<CudaStream>,
     buf: CudaSlice<u64>,
     len: usize,
+    staging: PinnedStaging,
 }
 
 impl DeviceFrVec {
@@ -221,8 +228,15 @@ impl DeviceFrVec {
     }
 
     pub fn to_host(&self) -> Result<Vec<Fr>, CudaError> {
-        let raw = self.stream.clone_dtoh(&self.buf)?;
-        Ok(unflatten(&raw))
+        if self.len == 0 {
+            return Ok(Vec::new());
+        }
+        let n = self.len * LIMBS;
+        let mut pool = lock_pool(&self.staging);
+        let staging = pool.ensure(self.stream.context(), n)?;
+        self.stream.memcpy_dtoh(&self.buf, staging.as_mut_slice(n))?;
+        self.stream.synchronize()?;
+        Ok(unflatten(staging.as_slice(n)))
     }
 
     pub fn try_clone(&self) -> Result<Self, CudaError> {
@@ -230,6 +244,7 @@ impl DeviceFrVec {
             stream: self.stream.clone(),
             buf: self.stream.clone_dtod(&self.buf)?,
             len: self.len,
+            staging: self.staging.clone(),
         })
     }
 }
@@ -244,18 +259,85 @@ fn limbs_to_fr(limbs: [u64; LIMBS]) -> Fr {
     Fr::from_bigint_unchecked(crate::Limbs(limbs))
 }
 
-fn flatten(values: &[Fr]) -> Vec<u64> {
-    let mut out = Vec::with_capacity(values.len() * LIMBS);
-    for &v in values {
-        out.extend_from_slice(&fr_to_limbs(v));
-    }
-    out
-}
-
 fn unflatten(raw: &[u64]) -> Vec<Fr> {
     raw.chunks_exact(LIMBS)
         .map(|c| limbs_to_fr([c[0], c[1], c[2], c[3]]))
         .collect()
+}
+
+struct PinnedBuf {
+    ctx: Arc<CudaContext>,
+    ptr: *mut u64,
+    cap: usize,
+}
+
+impl PinnedBuf {
+    fn with_capacity(ctx: &Arc<CudaContext>, cap: usize) -> Result<Self, CudaError> {
+        ctx.bind_to_thread()?;
+        // SAFETY: malloc_host returns uninitialized page-locked memory; callers
+        // only read limbs they have written or that a DMA has filled.
+        let ptr = unsafe { cuda_result::malloc_host(cap * std::mem::size_of::<u64>(), 0)? };
+        Ok(Self {
+            ctx: ctx.clone(),
+            ptr: ptr.cast::<u64>(),
+            cap,
+        })
+    }
+
+    fn as_slice(&self, len: usize) -> &[u64] {
+        debug_assert!(len <= self.cap);
+        // SAFETY: `ptr` points at `cap >= len` u64s of page-locked memory owned by self.
+        unsafe { std::slice::from_raw_parts(self.ptr, len) }
+    }
+
+    fn as_mut_slice(&mut self, len: usize) -> &mut [u64] {
+        debug_assert!(len <= self.cap);
+        // SAFETY: `ptr` points at `cap >= len` u64s of page-locked memory owned by
+        // self, and `&mut self` guarantees exclusive access.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, len) }
+    }
+}
+
+impl Drop for PinnedBuf {
+    fn drop(&mut self) {
+        let _ = self.ctx.bind_to_thread();
+        // SAFETY: `ptr` was returned by malloc_host and is freed exactly once.
+        self.ctx
+            .record_err(unsafe { cuda_result::free_host(self.ptr.cast()) });
+    }
+}
+
+// SAFETY: the allocation is owned solely by this `PinnedBuf` and only accessed
+// behind a borrow (and, when shared, a Mutex), like cudarc's `PinnedHostSlice`.
+unsafe impl Send for PinnedBuf {}
+// SAFETY: see the `Send` impl above.
+unsafe impl Sync for PinnedBuf {}
+
+#[derive(Default)]
+struct PinnedPool {
+    buf: Option<PinnedBuf>,
+}
+
+impl PinnedPool {
+    fn ensure(&mut self, ctx: &Arc<CudaContext>, len: usize) -> Result<&mut PinnedBuf, CudaError> {
+        let grow = match &self.buf {
+            Some(b) => b.cap < len,
+            None => true,
+        };
+        if grow {
+            self.buf = Some(PinnedBuf::with_capacity(ctx, len)?);
+        }
+        match self.buf.as_mut() {
+            Some(b) => Ok(b),
+            None => Err(CudaError::Pool),
+        }
+    }
+}
+
+type PinnedStaging = Arc<Mutex<PinnedPool>>;
+
+fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
+    pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl CudaFieldContext {
@@ -277,6 +359,7 @@ impl CudaFieldContext {
             product_reduce: module.load_function("product_reduce")?,
             stream,
             one_dev,
+            staging: Arc::new(Mutex::new(PinnedPool::default())),
         })
     }
 
@@ -284,12 +367,21 @@ impl CudaFieldContext {
         let buf = if values.is_empty() {
             self.stream.alloc_zeros(0)?
         } else {
-            self.stream.clone_htod(&flatten(values))?
+            let n = values.len() * LIMBS;
+            let mut pool = lock_pool(&self.staging);
+            let staging = pool.ensure(self.stream.context(), n)?;
+            for (slot, &v) in staging.as_mut_slice(n).chunks_exact_mut(LIMBS).zip(values) {
+                slot.copy_from_slice(&fr_to_limbs(v));
+            }
+            let dev = self.stream.clone_htod(staging.as_slice(n))?;
+            self.stream.synchronize()?;
+            dev
         };
         Ok(DeviceFrVec {
             stream: self.stream.clone(),
             buf,
             len: values.len(),
+            staging: self.staging.clone(),
         })
     }
 
