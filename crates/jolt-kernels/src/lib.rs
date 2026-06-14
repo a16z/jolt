@@ -14,6 +14,11 @@ pub use dense::{bind_dense_evals_reuse, bind_dense_evals_reuse_serial};
 #[cfg(feature = "cuda")]
 #[doc(hidden)]
 pub use dense::bind_dense_evals_reuse_cuda;
+#[doc(hidden)]
+pub use split_eq::SplitEqState;
+#[cfg(feature = "cuda")]
+#[doc(hidden)]
+pub use split_eq::CudaSplitEqState;
 
 pub mod stage1;
 pub mod stage2;

@@ -44,3 +44,8 @@ required-features = ["cuda"]
 name = "cuda"
 harness = false
 required-features = ["cuda"]
+
+[[bench]]
+name = "split_eq"
+harness = false
+required-features = ["cuda"]
