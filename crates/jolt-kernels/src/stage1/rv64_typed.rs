@@ -1192,6 +1192,7 @@ mod tests {
         let context = Stage1OuterRemainingContext {
             tau: &tau,
             r0: Fr::from_u64(0),
+            backend: "cpu",
         };
 
         for point in [

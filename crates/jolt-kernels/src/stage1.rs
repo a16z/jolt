@@ -267,6 +267,7 @@ pub struct Stage1OracleData<'a, F: Field> {
 pub struct Stage1OuterRemainingContext<'a, F: Field> {
     pub tau: &'a [F],
     pub r0: F,
+    pub backend: &'static str,
 }
 
 pub type Stage1RemainingRoundProof<F> = Result<(Vec<F>, Vec<UnivariatePoly<F>>), Stage1KernelError>;
@@ -1474,7 +1475,11 @@ where
             input: "stage1.uniskip.eval",
         },
     )?;
-    let remaining_context = Stage1OuterRemainingContext { tau, r0 };
+    let remaining_context = Stage1OuterRemainingContext {
+        tau,
+        r0,
+        backend: context.kernel.backend,
+    };
     append_labeled_scalar(transcript, context.driver.claim_label, &input_claim);
     let batching_coeff = transcript.challenge();
     let fast_path = evaluator.prove_remaining_rounds(
