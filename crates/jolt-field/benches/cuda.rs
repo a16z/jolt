@@ -113,6 +113,15 @@ fn gpu_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr
     acc.to_host().unwrap()
 }
 
+fn gpu_chain_fma(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr> {
+    let mut acc = ctx.upload(a).unwrap();
+    let b_dev = ctx.upload(b).unwrap();
+    for _ in 0..steps {
+        ctx.fma(&mut acc, &b_dev, &b_dev).unwrap();
+    }
+    acc.to_host().unwrap()
+}
+
 fn bench_chain(c: &mut Criterion) {
     let ctx = CudaFieldContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(2);
@@ -128,6 +137,26 @@ fn bench_chain(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("gpu", n), &n, |bench, _| {
             bench.iter(|| gpu_chain(&ctx, black_box(&a), black_box(&b), CHAIN_STEPS));
+        });
+    }
+    group.finish();
+}
+
+fn bench_chain_fma(c: &mut Criterion) {
+    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let mut rng = ChaCha20Rng::seed_from_u64(2);
+
+    let mut group = c.benchmark_group("chain_fma");
+    for &n in &SIZES {
+        let a = random_vec(&mut rng, n);
+        let b = random_vec(&mut rng, n);
+        group.throughput(Throughput::Elements((n * CHAIN_STEPS * 2) as u64));
+
+        group.bench_with_input(BenchmarkId::new("cpu", n), &n, |bench, _| {
+            bench.iter(|| cpu_chain(black_box(&a), black_box(&b), CHAIN_STEPS));
+        });
+        group.bench_with_input(BenchmarkId::new("gpu", n), &n, |bench, _| {
+            bench.iter(|| gpu_chain_fma(&ctx, black_box(&a), black_box(&b), CHAIN_STEPS));
         });
     }
     group.finish();
@@ -174,5 +203,12 @@ fn bench_reduce_chain(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_map, bench_reduce, bench_chain, bench_reduce_chain);
+criterion_group!(
+    benches,
+    bench_map,
+    bench_reduce,
+    bench_chain,
+    bench_chain_fma,
+    bench_reduce_chain
+);
 criterion_main!(benches);

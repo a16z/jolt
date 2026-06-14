@@ -103,6 +103,15 @@ extern "C" __global__ void mul_kernel(u64 *io, const u64 *b, unsigned long n) {
     if (i < n) fr_mul(io + i * 4, b + i * 4, io + i * 4);
 }
 
+extern "C" __global__ void fma_kernel(u64 *io, const u64 *b, const u64 *c, unsigned long n) {
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        u64 prod[4];
+        fr_mul(io + i * 4, b + i * 4, prod);
+        fr_add(prod, c + i * 4, io + i * 4);
+    }
+}
+
 extern "C" __global__ void sum_reduce(u64 *out, const u64 *in, unsigned long n) {
     extern __shared__ u64 sdata[];
     u64 *acc = sdata + threadIdx.x * 4;
@@ -190,6 +199,7 @@ pub struct CudaFieldContext {
     add: CudaFunction,
     sub: CudaFunction,
     mul: CudaFunction,
+    fma: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -262,6 +272,7 @@ impl CudaFieldContext {
             add: module.load_function("add_kernel")?,
             sub: module.load_function("sub_kernel")?,
             mul: module.load_function("mul_kernel")?,
+            fma: module.load_function("fma_kernel")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -318,6 +329,35 @@ impl CudaFieldContext {
     pub fn mul(&self, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
         let f = self.mul.clone();
         self.map(&f, a, b)
+    }
+
+    pub fn fma(
+        &self,
+        a: &mut DeviceFrVec,
+        b: &DeviceFrVec,
+        c: &DeviceFrVec,
+    ) -> Result<(), CudaError> {
+        assert_eq!(a.len, b.len, "fma operands must have equal length");
+        assert_eq!(a.len, c.len, "fma operands must have equal length");
+        let n = a.len;
+        if n == 0 {
+            return Ok(());
+        }
+
+        let cfg = LaunchConfig {
+            grid_dim: ((n as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let n_arg = n as u64;
+        let f = self.fma.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch.arg(&mut a.buf).arg(&b.buf).arg(&c.buf).arg(&n_arg);
+        // SAFETY: elementwise kernel; the in/out alias on `a` is hazard-free, and
+        // all three buffers hold n * LIMBS u64s.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        Ok(())
     }
 
     fn reduce(&self, sum: bool, values: &DeviceFrVec) -> Result<Fr, CudaError> {
@@ -424,6 +464,23 @@ mod tests {
             let c = ctx();
             let mut a_dev = c.upload(&a).unwrap();
             c.mul(&mut a_dev, &c.upload(&b).unwrap()).unwrap();
+            prop_assert_eq!(a_dev.to_host().unwrap(), expected);
+        }
+
+        #[test]
+        fn fma_matches_cpu(a in fr_vec_strategy(300)) {
+            let b = a.iter().rev().copied().collect::<Vec<_>>();
+            let cc = a.iter().map(|x| *x + Fr::from_u64(1)).collect::<Vec<_>>();
+            let expected: Vec<Fr> = a
+                .iter()
+                .zip(&b)
+                .zip(&cc)
+                .map(|((x, y), z)| *x * *y + *z)
+                .collect();
+            let c = ctx();
+            let mut a_dev = c.upload(&a).unwrap();
+            c.fma(&mut a_dev, &c.upload(&b).unwrap(), &c.upload(&cc).unwrap())
+                .unwrap();
             prop_assert_eq!(a_dev.to_host().unwrap(), expected);
         }
 
