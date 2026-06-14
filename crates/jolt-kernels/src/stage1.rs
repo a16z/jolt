@@ -11,6 +11,8 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
 use rayon::prelude::*;
 
+use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
+
 mod rv64_typed;
 pub use rv64_typed::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 
@@ -22,7 +24,6 @@ const OUTER_UNISKIP_DEGREE_BOUND: usize = OUTER_UNISKIP_NUM_COEFFS - 1;
 const OUTER_UNISKIP_EXTENDED_START: i64 = -(OUTER_UNISKIP_DEGREE as i64);
 const OUTER_UNISKIP_BASE_START: i64 = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
-const DENSE_BIND_PAR_THRESHOLD: usize = 1024;
 const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
 const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
 const OUTER_EQ_CONSTRAINT_ROWS: usize =
@@ -1989,29 +1990,6 @@ fn accumulate_cubic_product_coefficients<F: Field>(
     coefficients[2].fmadd(eq_delta, az0_bz_delta);
     coefficients[2].fmadd(eq0, az_delta_bz_delta);
     coefficients[3].fmadd(eq_delta, az_delta_bz_delta);
-}
-
-fn bind_dense_evals_reuse<F: Field>(values: &mut Vec<F>, scratch: &mut Vec<F>, challenge: F) {
-    let half = values.len() / 2;
-    scratch.resize(half, F::zero());
-    if half >= DENSE_BIND_PAR_THRESHOLD {
-        scratch
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, output)| {
-                let low = values[index << 1];
-                let high = values[(index << 1) + 1];
-                *output = low + (high - low) * challenge;
-            });
-    } else {
-        for (index, output) in scratch.iter_mut().enumerate() {
-            let low = values[index << 1];
-            let high = values[(index << 1) + 1];
-            *output = low + (high - low) * challenge;
-        }
-    }
-    std::mem::swap(values, scratch);
-    scratch.clear();
 }
 
 fn outer_remaining_round_poly<F: Field>(
