@@ -163,6 +163,111 @@ extern "C" __global__ void bind_kernel(u64 *__restrict__ out, const u64 *__restr
     }
 }
 
+__device__ __forceinline__ void cubic_coeffs(
+    const u64 *eq0, const u64 *eq1,
+    const u64 *az0, const u64 *az1,
+    const u64 *bz0, const u64 *bz1,
+    u64 *c
+) {
+    u64 eqd[4], azd[4], bzd[4];
+    fr_sub(eq1, eq0, eqd);
+    fr_sub(az1, az0, azd);
+    fr_sub(bz1, bz0, bzd);
+
+    u64 az0bz0[4], azdbz0[4], az0bzd[4], azdbzd[4];
+    fr_mul(az0, bz0, az0bz0);
+    fr_mul(azd, bz0, azdbz0);
+    fr_mul(az0, bzd, az0bzd);
+    fr_mul(azd, bzd, azdbzd);
+
+    u64 t[4], s[4];
+
+    fr_mul(eq0, az0bz0, c + 0);
+
+    fr_mul(eqd, az0bz0, s);
+    fr_mul(eq0, azdbz0, t);
+    fr_add(s, t, s);
+    fr_mul(eq0, az0bzd, t);
+    fr_add(s, t, c + 4);
+
+    fr_mul(eqd, azdbz0, s);
+    fr_mul(eqd, az0bzd, t);
+    fr_add(s, t, s);
+    fr_mul(eq0, azdbzd, t);
+    fr_add(s, t, c + 8);
+
+    fr_mul(eqd, azdbzd, c + 12);
+}
+
+__device__ __forceinline__ void cubic_tuple_add(u64 *a, const u64 *b) {
+    u64 t[4];
+    fr_add(a + 0, b + 0, t);  for (int k = 0; k < 4; k++) a[k] = t[k];
+    fr_add(a + 4, b + 4, t);  for (int k = 0; k < 4; k++) a[4 + k] = t[k];
+    fr_add(a + 8, b + 8, t);  for (int k = 0; k < 4; k++) a[8 + k] = t[k];
+    fr_add(a + 12, b + 12, t); for (int k = 0; k < 4; k++) a[12 + k] = t[k];
+}
+
+extern "C" __global__ void cubic_pairs(
+    u64 *__restrict__ out,
+    const u64 *__restrict__ eq,
+    const u64 *__restrict__ az,
+    const u64 *__restrict__ bz,
+    unsigned long pairs
+) {
+    extern __shared__ u64 sdata[];
+    u64 *acc = sdata + threadIdx.x * 16;
+
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < pairs) {
+        cubic_coeffs(
+            eq + (i * 2) * 4, eq + (i * 2 + 1) * 4,
+            az + (i * 2) * 4, az + (i * 2 + 1) * 4,
+            bz + (i * 2) * 4, bz + (i * 2 + 1) * 4,
+            acc
+        );
+    } else {
+        for (int k = 0; k < 16; k++) acc[k] = 0;
+    }
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            cubic_tuple_add(acc, sdata + (threadIdx.x + s) * 16);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        for (int k = 0; k < 16; k++) out[blockIdx.x * 16 + k] = acc[k];
+    }
+}
+
+extern "C" __global__ void cubic_tuple_reduce(
+    u64 *__restrict__ out,
+    const u64 *__restrict__ in,
+    unsigned long n
+) {
+    extern __shared__ u64 sdata[];
+    u64 *acc = sdata + threadIdx.x * 16;
+
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        for (int k = 0; k < 16; k++) acc[k] = in[i * 16 + k];
+    } else {
+        for (int k = 0; k < 16; k++) acc[k] = 0;
+    }
+    __syncthreads();
+
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            cubic_tuple_add(acc, sdata + (threadIdx.x + s) * 16);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        for (int k = 0; k < 16; k++) out[blockIdx.x * 16 + k] = acc[k];
+    }
+}
+
 extern "C" __global__ void sum_reduce(u64 *__restrict__ out, const u64 *__restrict__ in, unsigned long n) {
     extern __shared__ u64 sdata[];
     u64 *acc = sdata + threadIdx.x * 4;
@@ -254,6 +359,8 @@ pub struct CudaKernelContext {
     mul: CudaFunction,
     fma: CudaFunction,
     bind: CudaFunction,
+    cubic_pairs: CudaFunction,
+    cubic_tuple_reduce: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -411,6 +518,8 @@ impl CudaKernelContext {
             mul: module.load_function("mul_kernel")?,
             fma: module.load_function("fma_kernel")?,
             bind: module.load_function("bind_kernel")?,
+            cubic_pairs: module.load_function("cubic_pairs")?,
+            cubic_tuple_reduce: module.load_function("cubic_tuple_reduce")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -546,6 +655,71 @@ impl CudaKernelContext {
 
         std::mem::swap(values, scratch);
         Ok(())
+    }
+
+    pub fn cubic_accumulate(
+        &self,
+        eq: &DeviceFrVec,
+        az: &DeviceFrVec,
+        bz: &DeviceFrVec,
+    ) -> Result<[Fr; 4], CudaError> {
+        use num_traits::Zero;
+        assert_eq!(eq.len, az.len, "cubic operands must have equal length");
+        assert_eq!(eq.len, bz.len, "cubic operands must have equal length");
+        let pairs = eq.len / 2;
+        if pairs == 0 {
+            return Ok([Fr::zero(); 4]);
+        }
+
+        const TUPLE: usize = 4 * LIMBS;
+        let shared = BLOCK * TUPLE as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (pairs as u32).div_ceil(BLOCK);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * TUPLE)?;
+
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let pairs_arg = pairs as u64;
+        let f = self.cubic_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&eq.buf)
+            .arg(&az.buf)
+            .arg(&bz.buf)
+            .arg(&pairs_arg);
+        // SAFETY: each block reads up to BLOCK pairs from eq/az/bz (2*pairs elements
+        // each) and writes one 4-coefficient tuple to `buf` (blocks tuples). Shared
+        // memory holds BLOCK tuples as configured above.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(BLOCK);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * TUPLE)?;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let len_arg = len as u64;
+            let f = self.cubic_tuple_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&len_arg);
+            // SAFETY: each block reads up to BLOCK tuples from `buf` (len tuples) and
+            // writes one tuple to `out` (out_blocks tuples). Shared memory holds
+            // BLOCK tuples as configured above.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..TUPLE))?;
+        Ok(core::array::from_fn(|i| {
+            limbs_to_fr([raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3]])
+        }))
     }
 
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
@@ -725,6 +899,54 @@ mod tests {
             prop_assert_eq!(got.len(), 1);
             prop_assert_eq!(got.to_host().unwrap(), vec![expected]);
         }
+
+        #[test]
+        fn cubic_accumulate_matches_cpu(
+            (eq, az, bz) in (1usize..600).prop_flat_map(|pairs| {
+                let len = pairs * 2;
+                (
+                    prop::collection::vec(fr_strategy(), len),
+                    prop::collection::vec(fr_strategy(), len),
+                    prop::collection::vec(fr_strategy(), len),
+                )
+            })
+        ) {
+            let expected = cpu_cubic(&eq, &az, &bz);
+            let c = ctx();
+            let got = c
+                .cubic_accumulate(
+                    &c.upload(&eq).unwrap(),
+                    &c.upload(&az).unwrap(),
+                    &c.upload(&bz).unwrap(),
+                )
+                .unwrap();
+            prop_assert_eq!(got, expected);
+        }
+    }
+
+    fn cpu_cubic(eq: &[Fr], az: &[Fr], bz: &[Fr]) -> [Fr; 4] {
+        let mut c = [Fr::zero(); 4];
+        for ((eq_pair, az_pair), bz_pair) in eq
+            .chunks_exact(2)
+            .zip(az.chunks_exact(2))
+            .zip(bz.chunks_exact(2))
+        {
+            let eq0 = eq_pair[0];
+            let eqd = eq_pair[1] - eq_pair[0];
+            let az0 = az_pair[0];
+            let azd = az_pair[1] - az_pair[0];
+            let bz0 = bz_pair[0];
+            let bzd = bz_pair[1] - bz_pair[0];
+            let az0bz0 = az0 * bz0;
+            let azdbz0 = azd * bz0;
+            let az0bzd = az0 * bzd;
+            let azdbzd = azd * bzd;
+            c[0] += eq0 * az0bz0;
+            c[1] += eqd * az0bz0 + eq0 * azdbz0 + eq0 * az0bzd;
+            c[2] += eqd * azdbz0 + eqd * az0bzd + eq0 * azdbzd;
+            c[3] += eqd * azdbzd;
+        }
+        c
     }
 
     #[test]

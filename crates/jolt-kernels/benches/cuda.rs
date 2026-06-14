@@ -270,6 +270,58 @@ fn bench_reduce_burst(c: &mut Criterion) {
     group.finish();
 }
 
+fn cpu_cubic(eq: &[Fr], az: &[Fr], bz: &[Fr]) -> [Fr; 4] {
+    let mut c = [Fr::from_u64(0); 4];
+    for ((eq_pair, az_pair), bz_pair) in eq
+        .chunks_exact(2)
+        .zip(az.chunks_exact(2))
+        .zip(bz.chunks_exact(2))
+    {
+        let eq0 = eq_pair[0];
+        let eqd = eq_pair[1] - eq_pair[0];
+        let az0 = az_pair[0];
+        let azd = az_pair[1] - az_pair[0];
+        let bz0 = bz_pair[0];
+        let bzd = bz_pair[1] - bz_pair[0];
+        let az0bz0 = az0 * bz0;
+        let azdbz0 = azd * bz0;
+        let az0bzd = az0 * bzd;
+        let azdbzd = azd * bzd;
+        c[0] += eq0 * az0bz0;
+        c[1] += eqd * az0bz0 + eq0 * azdbz0 + eq0 * az0bzd;
+        c[2] += eqd * azdbz0 + eqd * az0bzd + eq0 * azdbzd;
+        c[3] += eqd * azdbzd;
+    }
+    c
+}
+
+fn bench_cubic(c: &mut Criterion) {
+    let ctx = CudaKernelContext::new(0).expect("cuda init");
+    let mut rng = ChaCha20Rng::seed_from_u64(5);
+
+    let mut group = c.benchmark_group("cubic");
+    for &n in &SIZES {
+        let eq = random_vec(&mut rng, n);
+        let az = random_vec(&mut rng, n);
+        let bz = random_vec(&mut rng, n);
+        let eq_dev = ctx.upload(&eq).unwrap();
+        let az_dev = ctx.upload(&az).unwrap();
+        let bz_dev = ctx.upload(&bz).unwrap();
+        group.throughput(Throughput::Elements(n as u64));
+
+        group.bench_with_input(BenchmarkId::new("cpu", n), &n, |bench, _| {
+            bench.iter(|| cpu_cubic(black_box(&eq), black_box(&az), black_box(&bz)));
+        });
+        group.bench_with_input(BenchmarkId::new("gpu", n), &n, |bench, _| {
+            bench.iter(|| {
+                ctx.cubic_accumulate(black_box(&eq_dev), black_box(&az_dev), black_box(&bz_dev))
+                    .unwrap()
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_map,
@@ -277,6 +329,7 @@ criterion_group!(
     bench_chain,
     bench_chain_fma,
     bench_reduce_chain,
-    bench_reduce_burst
+    bench_reduce_burst,
+    bench_cubic
 );
 criterion_main!(benches);
