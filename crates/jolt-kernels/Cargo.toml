@@ -12,6 +12,9 @@ categories = ["cryptography"]
 [lints]
 workspace = true
 
+[features]
+cuda = ["jolt-field/cuda"]
+
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-lookup-tables = { path = "../jolt-lookup-tables" }
@@ -23,3 +26,6 @@ jolt-trace = { path = "../jolt-trace" }
 jolt-witness = { path = "../jolt-witness" }
 rayon = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

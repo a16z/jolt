@@ -3164,6 +3164,7 @@ dependencies = [
  "jolt-trace",
  "jolt-transcript",
  "jolt-witness",
+ "proptest",
  "rayon",
  "tracing",
 ]
