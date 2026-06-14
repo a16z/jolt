@@ -183,6 +183,18 @@ fn gpu_reduce_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) ->
     total
 }
 
+fn gpu_reduce_chain_device(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Fr {
+    let mut acc = ctx.upload(a).unwrap();
+    let b_dev = ctx.upload(b).unwrap();
+    let mut total = ctx.upload(&[Fr::from_u64(0)]).unwrap();
+    for _ in 0..steps {
+        ctx.mul(&mut acc, &b_dev).unwrap();
+        let partial = ctx.sum_device(&acc).unwrap();
+        ctx.add(&mut total, &partial).unwrap();
+    }
+    total.to_host().unwrap()[0]
+}
+
 fn bench_reduce_chain(c: &mut Criterion) {
     let ctx = CudaFieldContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(3);
@@ -198,6 +210,9 @@ fn bench_reduce_chain(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("gpu", n), &n, |bench, _| {
             bench.iter(|| gpu_reduce_chain(&ctx, black_box(&a), black_box(&b), CHAIN_STEPS));
+        });
+        group.bench_with_input(BenchmarkId::new("gpu_device", n), &n, |bench, _| {
+            bench.iter(|| gpu_reduce_chain_device(&ctx, black_box(&a), black_box(&b), CHAIN_STEPS));
         });
     }
     group.finish();

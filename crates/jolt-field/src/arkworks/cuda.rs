@@ -452,15 +452,15 @@ impl CudaFieldContext {
         Ok(())
     }
 
-    fn reduce(&self, sum: bool, values: &DeviceFrVec) -> Result<Fr, CudaError> {
+    fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         use num_traits::{One, Zero};
         if values.len == 0 {
-            return Ok(if sum { Fr::zero() } else { Fr::one() });
+            return self.upload(&[if sum { Fr::zero() } else { Fr::one() }]);
+        }
+        if values.len == 1 {
+            return values.try_clone();
         }
 
-        // The reduce kernels only read their input and write to a fresh `out_dev`,
-        // so the first pass reads `values.buf` directly; later passes consume the
-        // owned intermediate. No copy of the input is needed.
         let mut owned: Option<CudaSlice<u64>> = None;
         let mut len = values.len;
 
@@ -494,17 +494,33 @@ impl CudaFieldContext {
             len = blocks as usize;
         }
 
-        let final_buf = owned.as_ref().unwrap_or(&values.buf);
-        let raw = self.stream.clone_dtoh(final_buf)?;
-        Ok(limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]))
+        match owned {
+            Some(buf) => Ok(DeviceFrVec {
+                stream: self.stream.clone(),
+                buf,
+                len: 1,
+                staging: self.staging.clone(),
+            }),
+            None => Err(CudaError::Pool),
+        }
     }
 
     pub fn sum(&self, values: &DeviceFrVec) -> Result<Fr, CudaError> {
-        self.reduce(true, values)
+        let host = self.reduce_to_device(true, values)?.to_host()?;
+        Ok(host[0])
     }
 
     pub fn product(&self, values: &DeviceFrVec) -> Result<Fr, CudaError> {
-        self.reduce(false, values)
+        let host = self.reduce_to_device(false, values)?.to_host()?;
+        Ok(host[0])
+    }
+
+    pub fn sum_device(&self, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+        self.reduce_to_device(true, values)
+    }
+
+    pub fn product_device(&self, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
+        self.reduce_to_device(false, values)
     }
 }
 
@@ -590,6 +606,24 @@ mod tests {
             let c = ctx();
             let got = c.product(&c.upload(&a).unwrap()).unwrap();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn sum_device_matches_cpu(a in fr_vec_strategy(2000)) {
+            let expected: Fr = a.iter().copied().sum();
+            let c = ctx();
+            let got = c.sum_device(&c.upload(&a).unwrap()).unwrap();
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(got.to_host().unwrap(), vec![expected]);
+        }
+
+        #[test]
+        fn product_device_matches_cpu(a in fr_vec_strategy(2000)) {
+            let expected: Fr = a.iter().copied().product();
+            let c = ctx();
+            let got = c.product_device(&c.upload(&a).unwrap()).unwrap();
+            prop_assert_eq!(got.len(), 1);
+            prop_assert_eq!(got.to_host().unwrap(), vec![expected]);
         }
     }
 
