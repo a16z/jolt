@@ -20,26 +20,18 @@ serde = { workspace = true, features = ["derive"] }
 allocative = { workspace = true, optional = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
-cudarc = { workspace = true, optional = true }
 
 [features]
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 allocative = ["dep:allocative"]
-cuda = ["dep:cudarc", "bn254"]
 
 [dev-dependencies]
 ark-std = { workspace = true }
 rand_chacha = { workspace = true }
 criterion = { workspace = true }
-proptest = { workspace = true }
 
 [[bench]]
 name = "field_arith"
 harness = false
 required-features = ["bn254"]
-
-[[bench]]
-name = "cuda"
-harness = false
-required-features = ["cuda"]

@@ -4,6 +4,8 @@
 //! generated code. It owns the temporary coarse CPU ABI while the compiler
 //! grows finer compute lowerings.
 
+#[cfg(feature = "cuda")]
+pub mod cuda;
 mod dense;
 mod split_eq;
 

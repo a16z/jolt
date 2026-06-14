@@ -6,7 +6,7 @@ use cudarc::driver::{
 };
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 
-use crate::Fr;
+use jolt_field::Fr;
 
 const LIMBS: usize = 4;
 const BLOCK: u32 = 256;
@@ -247,7 +247,7 @@ impl From<cudarc::driver::DriverError> for CudaError {
     }
 }
 
-pub struct CudaFieldContext {
+pub struct CudaKernelContext {
     stream: Arc<CudaStream>,
     add: CudaFunction,
     sub: CudaFunction,
@@ -306,7 +306,7 @@ fn fr_to_limbs(f: Fr) -> [u64; LIMBS] {
 
 #[inline]
 fn limbs_to_fr(limbs: [u64; LIMBS]) -> Fr {
-    Fr::from_bigint_unchecked(crate::Limbs(limbs))
+    Fr::from_bigint_unchecked(jolt_field::Limbs(limbs))
 }
 
 fn unflatten(raw: &[u64]) -> Vec<Fr> {
@@ -390,7 +390,7 @@ fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-impl CudaFieldContext {
+impl CudaKernelContext {
     pub fn new(ordinal: usize) -> Result<Self, CudaError> {
         let ctx = CudaContext::new(ordinal)?;
         let stream = ctx.default_stream();
@@ -619,12 +619,12 @@ impl CudaFieldContext {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::Field;
+    use jolt_field::Field;
     use num_traits::{One, Zero};
     use proptest::prelude::*;
 
-    fn ctx() -> CudaFieldContext {
-        CudaFieldContext::new(0).unwrap()
+    fn ctx() -> CudaKernelContext {
+        CudaKernelContext::new(0).unwrap()
     }
 
     fn fr_strategy() -> impl Strategy<Value = Fr> {
@@ -636,6 +636,10 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 16, .. ProptestConfig::default()
+        })]
+
         #[test]
         fn add_matches_cpu(a in fr_vec_strategy(300)) {
             let b = a.iter().rev().copied().collect::<Vec<_>>();

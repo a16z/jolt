@@ -13,7 +13,7 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-cuda = ["jolt-field/cuda"]
+cuda = ["dep:cudarc"]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
@@ -24,8 +24,10 @@ jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-trace = { path = "../jolt-trace" }
 jolt-witness = { path = "../jolt-witness" }
+num-traits = { workspace = true }
 rayon = { workspace = true }
 tracing = { workspace = true }
+cudarc = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
@@ -35,5 +37,10 @@ rand_core = { workspace = true }
 
 [[bench]]
 name = "bind_dense"
+harness = false
+required-features = ["cuda"]
+
+[[bench]]
+name = "cuda"
 harness = false
 required-features = ["cuda"]

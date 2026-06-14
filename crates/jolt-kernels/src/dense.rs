@@ -49,13 +49,13 @@ pub fn bind_dense_evals_reuse_serial<F: Field>(
 }
 
 #[cfg(feature = "cuda")]
-use jolt_field::arkworks::cuda::{CudaError, CudaFieldContext, DeviceFrVec};
+use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec};
 #[cfg(feature = "cuda")]
 use jolt_field::Fr;
 
 #[cfg(feature = "cuda")]
 pub fn bind_dense_evals_reuse_cuda(
-    ctx: &CudaFieldContext,
+    ctx: &CudaKernelContext,
     values: &mut DeviceFrVec,
     scratch: &mut DeviceFrVec,
     challenge: Fr,
@@ -88,7 +88,7 @@ mod cuda_tests {
             let mut scratch = Vec::new();
             bind_dense_evals_reuse_serial(&mut expected, &mut scratch, challenge);
 
-            let ctx = CudaFieldContext::new(0).unwrap();
+            let ctx = CudaKernelContext::new(0).unwrap();
             let mut values_dev = ctx.upload(&values).unwrap();
             let mut scratch_dev = ctx.upload(&[]).unwrap();
             bind_dense_evals_reuse_cuda(&ctx, &mut values_dev, &mut scratch_dev, challenge).unwrap();
@@ -104,7 +104,7 @@ mod cuda_tests {
             let mut expected = values.clone();
             let mut expected_scratch = Vec::new();
 
-            let ctx = CudaFieldContext::new(0).unwrap();
+            let ctx = CudaKernelContext::new(0).unwrap();
             let mut values_dev = ctx.upload(&values).unwrap();
             let mut scratch_dev = ctx.upload(&[]).unwrap();
 

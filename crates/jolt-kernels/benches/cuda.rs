@@ -5,7 +5,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_field::arkworks::cuda::{CudaFieldContext, DeviceFrVec};
+use jolt_kernels::cuda::{CudaKernelContext, DeviceFrVec};
 use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -17,14 +17,14 @@ fn random_vec(rng: &mut ChaCha20Rng, n: usize) -> Vec<Fr> {
 }
 
 fn bench_map(c: &mut Criterion) {
-    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let ctx = CudaKernelContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(0);
 
     for (name, gpu, cpu) in [
         (
             "add",
-            (&|c: &CudaFieldContext, a: &mut DeviceFrVec, b: &DeviceFrVec| c.add(a, b).unwrap())
-                as &dyn Fn(&CudaFieldContext, &mut DeviceFrVec, &DeviceFrVec),
+            (&|c: &CudaKernelContext, a: &mut DeviceFrVec, b: &DeviceFrVec| c.add(a, b).unwrap())
+                as &dyn Fn(&CudaKernelContext, &mut DeviceFrVec, &DeviceFrVec),
             (&|a: &[Fr], b: &[Fr]| a.iter().zip(b).map(|(x, y)| *x + *y).collect::<Vec<_>>())
                 as &dyn Fn(&[Fr], &[Fr]) -> Vec<Fr>,
         ),
@@ -59,14 +59,14 @@ fn bench_map(c: &mut Criterion) {
 }
 
 fn bench_reduce(c: &mut Criterion) {
-    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let ctx = CudaKernelContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(1);
 
     for (name, gpu, cpu) in [
         (
             "sum",
-            (&|c: &CudaFieldContext, a: &DeviceFrVec| c.sum(a).unwrap())
-                as &dyn Fn(&CudaFieldContext, &DeviceFrVec) -> Fr,
+            (&|c: &CudaKernelContext, a: &DeviceFrVec| c.sum(a).unwrap())
+                as &dyn Fn(&CudaKernelContext, &DeviceFrVec) -> Fr,
             (&|a: &[Fr]| a.iter().copied().sum::<Fr>()) as &dyn Fn(&[Fr]) -> Fr,
         ),
         (
@@ -103,7 +103,7 @@ fn cpu_chain(a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr> {
     acc
 }
 
-fn gpu_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr> {
+fn gpu_chain(ctx: &CudaKernelContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr> {
     let mut acc = ctx.upload(a).unwrap();
     let b_dev = ctx.upload(b).unwrap();
     for _ in 0..steps {
@@ -113,7 +113,7 @@ fn gpu_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr
     acc.to_host().unwrap()
 }
 
-fn gpu_chain_fma(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr> {
+fn gpu_chain_fma(ctx: &CudaKernelContext, a: &[Fr], b: &[Fr], steps: usize) -> Vec<Fr> {
     let mut acc = ctx.upload(a).unwrap();
     let b_dev = ctx.upload(b).unwrap();
     for _ in 0..steps {
@@ -123,7 +123,7 @@ fn gpu_chain_fma(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Ve
 }
 
 fn bench_chain(c: &mut Criterion) {
-    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let ctx = CudaKernelContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(2);
 
     let mut group = c.benchmark_group("chain");
@@ -143,7 +143,7 @@ fn bench_chain(c: &mut Criterion) {
 }
 
 fn bench_chain_fma(c: &mut Criterion) {
-    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let ctx = CudaKernelContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(2);
 
     let mut group = c.benchmark_group("chain_fma");
@@ -172,7 +172,7 @@ fn cpu_reduce_chain(a: &[Fr], b: &[Fr], steps: usize) -> Fr {
     total
 }
 
-fn gpu_reduce_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Fr {
+fn gpu_reduce_chain(ctx: &CudaKernelContext, a: &[Fr], b: &[Fr], steps: usize) -> Fr {
     let mut acc = ctx.upload(a).unwrap();
     let b_dev = ctx.upload(b).unwrap();
     let mut total = Fr::from_u64(0);
@@ -183,7 +183,7 @@ fn gpu_reduce_chain(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) ->
     total
 }
 
-fn gpu_reduce_chain_device(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: usize) -> Fr {
+fn gpu_reduce_chain_device(ctx: &CudaKernelContext, a: &[Fr], b: &[Fr], steps: usize) -> Fr {
     let mut acc = ctx.upload(a).unwrap();
     let b_dev = ctx.upload(b).unwrap();
     let mut total = ctx.upload(&[Fr::from_u64(0)]).unwrap();
@@ -196,7 +196,7 @@ fn gpu_reduce_chain_device(ctx: &CudaFieldContext, a: &[Fr], b: &[Fr], steps: us
 }
 
 fn bench_reduce_chain(c: &mut Criterion) {
-    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let ctx = CudaKernelContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(3);
 
     let mut group = c.benchmark_group("reduce_chain");
@@ -229,7 +229,7 @@ fn cpu_reduce_burst(a: &[Fr], rounds: usize) -> Fr {
     total
 }
 
-fn gpu_reduce_burst(ctx: &CudaFieldContext, a: &[Fr], rounds: usize) -> Fr {
+fn gpu_reduce_burst(ctx: &CudaKernelContext, a: &[Fr], rounds: usize) -> Fr {
     let a_dev = ctx.upload(a).unwrap();
     let mut total = Fr::from_u64(0);
     for _ in 0..rounds {
@@ -238,7 +238,7 @@ fn gpu_reduce_burst(ctx: &CudaFieldContext, a: &[Fr], rounds: usize) -> Fr {
     total
 }
 
-fn gpu_reduce_burst_device(ctx: &CudaFieldContext, a: &[Fr], rounds: usize) -> Fr {
+fn gpu_reduce_burst_device(ctx: &CudaKernelContext, a: &[Fr], rounds: usize) -> Fr {
     let a_dev = ctx.upload(a).unwrap();
     let mut total = ctx.upload(&[Fr::from_u64(0)]).unwrap();
     for _ in 0..rounds {
@@ -249,7 +249,7 @@ fn gpu_reduce_burst_device(ctx: &CudaFieldContext, a: &[Fr], rounds: usize) -> F
 }
 
 fn bench_reduce_burst(c: &mut Criterion) {
-    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let ctx = CudaKernelContext::new(0).expect("cuda init");
     let mut rng = ChaCha20Rng::seed_from_u64(4);
 
     let mut group = c.benchmark_group("reduce_burst");
