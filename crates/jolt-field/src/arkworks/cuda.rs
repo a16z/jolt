@@ -51,6 +51,17 @@ __device__ __forceinline__ void sub_modulus(u64 *a) {
     for (int i = 0; i < 4; i++) a[i] = sbb(a[i], MODULUS[i], &borrow);
 }
 
+__device__ __forceinline__ void load4(const u64 *__restrict__ p, u64 *r) {
+    ulonglong4 v = *reinterpret_cast<const ulonglong4 *>(p);
+    r[0] = v.x; r[1] = v.y; r[2] = v.z; r[3] = v.w;
+}
+
+__device__ __forceinline__ void store4(u64 *p, const u64 *r) {
+    ulonglong4 v;
+    v.x = r[0]; v.y = r[1]; v.z = r[2]; v.w = r[3];
+    *reinterpret_cast<ulonglong4 *>(p) = v;
+}
+
 __device__ void fr_add(const u64 *a, const u64 *b, u64 *out) {
     u64 carry = 0;
     for (int i = 0; i < 4; i++) out[i] = adc(a[i], b[i], &carry);
@@ -91,37 +102,59 @@ __device__ void fr_mul(const u64 *a, const u64 *b, u64 *out) {
     if (t[4] != 0 || geq_modulus(out)) sub_modulus(out);
 }
 
-extern "C" __global__ void add_kernel(u64 *io, const u64 *b, unsigned long n) {
-    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) fr_add(io + i * 4, b + i * 4, io + i * 4);
-}
-
-extern "C" __global__ void sub_kernel(u64 *io, const u64 *b, unsigned long n) {
-    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) fr_sub(io + i * 4, b + i * 4, io + i * 4);
-}
-
-extern "C" __global__ void mul_kernel(u64 *io, const u64 *b, unsigned long n) {
-    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) fr_mul(io + i * 4, b + i * 4, io + i * 4);
-}
-
-extern "C" __global__ void fma_kernel(u64 *io, const u64 *b, const u64 *c, unsigned long n) {
+extern "C" __global__ void add_kernel(u64 *__restrict__ io, const u64 *__restrict__ b, unsigned long n) {
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        u64 prod[4];
-        fr_mul(io + i * 4, b + i * 4, prod);
-        fr_add(prod, c + i * 4, io + i * 4);
+        u64 x[4], y[4];
+        load4(io + i * 4, x);
+        load4(b + i * 4, y);
+        fr_add(x, y, x);
+        store4(io + i * 4, x);
     }
 }
 
-extern "C" __global__ void sum_reduce(u64 *out, const u64 *in, unsigned long n) {
+extern "C" __global__ void sub_kernel(u64 *__restrict__ io, const u64 *__restrict__ b, unsigned long n) {
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        u64 x[4], y[4];
+        load4(io + i * 4, x);
+        load4(b + i * 4, y);
+        fr_sub(x, y, x);
+        store4(io + i * 4, x);
+    }
+}
+
+extern "C" __global__ void mul_kernel(u64 *__restrict__ io, const u64 *__restrict__ b, unsigned long n) {
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        u64 x[4], y[4];
+        load4(io + i * 4, x);
+        load4(b + i * 4, y);
+        fr_mul(x, y, x);
+        store4(io + i * 4, x);
+    }
+}
+
+extern "C" __global__ void fma_kernel(u64 *__restrict__ io, const u64 *__restrict__ b, const u64 *__restrict__ c, unsigned long n) {
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        u64 x[4], y[4], z[4];
+        load4(io + i * 4, x);
+        load4(b + i * 4, y);
+        load4(c + i * 4, z);
+        fr_mul(x, y, x);
+        fr_add(x, z, x);
+        store4(io + i * 4, x);
+    }
+}
+
+extern "C" __global__ void sum_reduce(u64 *__restrict__ out, const u64 *__restrict__ in, unsigned long n) {
     extern __shared__ u64 sdata[];
     u64 *acc = sdata + threadIdx.x * 4;
 
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        for (int k = 0; k < 4; k++) acc[k] = in[i * 4 + k];
+        load4(in + i * 4, acc);
     } else {
         for (int k = 0; k < 4; k++) acc[k] = 0;
     }
@@ -137,17 +170,17 @@ extern "C" __global__ void sum_reduce(u64 *out, const u64 *in, unsigned long n) 
         __syncthreads();
     }
     if (threadIdx.x == 0) {
-        for (int k = 0; k < 4; k++) out[blockIdx.x * 4 + k] = acc[k];
+        store4(out + blockIdx.x * 4, acc);
     }
 }
 
-extern "C" __global__ void product_reduce(u64 *out, const u64 *in, unsigned long n, const u64 *one) {
+extern "C" __global__ void product_reduce(u64 *__restrict__ out, const u64 *__restrict__ in, unsigned long n, const u64 *__restrict__ one) {
     extern __shared__ u64 sdata[];
     u64 *acc = sdata + threadIdx.x * 4;
 
     unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        for (int k = 0; k < 4; k++) acc[k] = in[i * 4 + k];
+        load4(in + i * 4, acc);
     } else {
         for (int k = 0; k < 4; k++) acc[k] = one[k];
     }
@@ -163,7 +196,7 @@ extern "C" __global__ void product_reduce(u64 *out, const u64 *in, unsigned long
         __syncthreads();
     }
     if (threadIdx.x == 0) {
-        for (int k = 0; k < 4; k++) out[blockIdx.x * 4 + k] = acc[k];
+        store4(out + blockIdx.x * 4, acc);
     }
 }
 "#;
