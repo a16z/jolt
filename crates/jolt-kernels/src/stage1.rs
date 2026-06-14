@@ -727,6 +727,22 @@ impl<F: Field> Stage1OuterRemainingEvaluator<F> for Stage1OuterR1csData<'_, F> {
         observe_round: &mut dyn FnMut(&UnivariatePoly<F>) -> F,
     ) -> Option<Stage1RemainingRoundProof<F>> {
         let mut state = self.dense_outer_state(context, num_rounds, batching_coeff);
+
+        #[cfg(feature = "cuda")]
+        if context.backend == "cuda" {
+            if let Some(result) = crate::cuda_stage1::prove_remaining_rounds_cuda(
+                &state.eq,
+                &state.az,
+                &state.bz,
+                num_rounds,
+                batching_coeff,
+                initial_claim,
+                observe_round,
+            ) {
+                return Some(result);
+            }
+        }
+
         let mut running_sum = initial_claim * batching_coeff;
         let mut point = Vec::with_capacity(num_rounds);
         let mut round_polynomials = Vec::with_capacity(num_rounds);
@@ -2890,6 +2906,82 @@ mod tests {
             prover_artifacts.sumchecks[1].evals[0].value,
             verifier_artifacts.sumchecks[1].evals[0].value
         );
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn full_stage1_r1cs_data_cuda_matches_cpu() {
+        static CUDA_KERNELS: &[Stage1KernelPlan] = &[
+            Stage1KernelPlan {
+                symbol: "uniskip_kernel",
+                relation: "jolt.stage1.outer.uniskip",
+                kind: "sumcheck",
+                backend: "cpu",
+                abi: "jolt_stage1_outer_uniskip",
+            },
+            Stage1KernelPlan {
+                symbol: "remaining_kernel",
+                relation: "jolt.stage1.outer.remaining",
+                kind: "sumcheck",
+                backend: "cuda",
+                abi: "jolt_stage1_outer_remaining",
+            },
+        ];
+        static CUDA_PROGRAM: Stage1CpuProgramPlan = Stage1CpuProgramPlan {
+            params: Stage1Params {
+                field: "bn254_fr",
+                pcs: "dory",
+                transcript: "blake2b_transcript",
+            },
+            transcript_squeezes: REAL_SQUEEZES,
+            kernels: CUDA_KERNELS,
+            claims: FULL_CLAIMS,
+            batches: FULL_BATCHES,
+            drivers: FULL_DRIVERS,
+            instance_results: &[],
+            evals: REAL_EVALS,
+            opening_claims: &[],
+            opening_batches: &[],
+        };
+
+        let (key, witness) = noop_r1cs_key_and_witness(2);
+        let data = Stage1OuterR1csData::new(&key, &witness).expect("valid R1CS witness shape");
+        let inputs =
+            Stage1ProverInputs::empty(key.num_cycle_vars()).with_outer_remaining_evaluator(&data);
+
+        let mut cpu_executor = Stage1ProverKernelExecutor::new(inputs);
+        let mut cpu_transcript = MockTranscript::<Fr>::new(b"stage1");
+        let _ = execute_stage1_program(
+            &REAL_PROGRAM,
+            Stage1ExecutionMode::Prover,
+            &mut cpu_executor,
+            &mut cpu_transcript,
+        )
+        .expect("cpu stage1 prover succeeds");
+
+        let mut cuda_executor = Stage1ProverKernelExecutor::new(inputs);
+        let mut cuda_transcript = MockTranscript::<Fr>::new(b"stage1");
+        let cuda_artifacts = execute_stage1_program(
+            &CUDA_PROGRAM,
+            Stage1ExecutionMode::Prover,
+            &mut cuda_executor,
+            &mut cuda_transcript,
+        )
+        .expect("cuda stage1 prover succeeds");
+
+        assert_eq!(cpu_transcript.state(), cuda_transcript.state());
+
+        let proof = Stage1Proof::from(cuda_artifacts);
+        let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
+        let mut verifier_transcript = MockTranscript::<Fr>::new(b"stage1");
+        let _ = execute_stage1_program(
+            &REAL_PROGRAM,
+            Stage1ExecutionMode::Verifier,
+            &mut verifier_executor,
+            &mut verifier_transcript,
+        )
+        .expect("verifier accepts cuda-produced proof");
+        assert_eq!(cuda_transcript.state(), verifier_transcript.state());
     }
 
     #[test]

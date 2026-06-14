@@ -1,8 +1,93 @@
-use jolt_field::Fr;
+use std::any::Any;
+use std::sync::OnceLock;
+
+use jolt_field::{Field, Fr};
 use jolt_poly::UnivariatePoly;
 
 use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec};
 use crate::dense::bind_dense_evals_reuse_cuda;
+use crate::stage1::{Stage1KernelError, Stage1RemainingRoundProof};
+
+fn context() -> Option<&'static CudaKernelContext> {
+    static CTX: OnceLock<Option<CudaKernelContext>> = OnceLock::new();
+    CTX.get_or_init(|| CudaKernelContext::new(0).ok()).as_ref()
+}
+
+fn into_fr_vec<F: Field>(values: Vec<F>) -> Option<Vec<Fr>> {
+    (Box::new(values) as Box<dyn Any>)
+        .downcast::<Vec<Fr>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+fn into_fr<F: Field>(value: F) -> Option<Fr> {
+    (Box::new(value) as Box<dyn Any>)
+        .downcast::<Fr>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+pub fn prove_remaining_rounds_cuda<F: Field>(
+    eq: &[F],
+    az: &[F],
+    bz: &[F],
+    num_rounds: usize,
+    batching_coeff: F,
+    initial_claim: F,
+    observe_round: &mut dyn FnMut(&UnivariatePoly<F>) -> F,
+) -> Option<Stage1RemainingRoundProof<F>> {
+    let ctx = context()?;
+    let eq = into_fr_vec(eq.to_vec())?;
+    let az = into_fr_vec(az.to_vec())?;
+    let bz = into_fr_vec(bz.to_vec())?;
+
+    let mut state = match CudaDenseOuterState::from_host(ctx, &eq, &az, &bz) {
+        Ok(state) => state,
+        Err(error) => return Some(Err(cuda_error(error))),
+    };
+
+    let mut running_sum = initial_claim * batching_coeff;
+    let mut point = Vec::with_capacity(num_rounds);
+    let mut round_polynomials = Vec::with_capacity(num_rounds);
+
+    for _round in 0..num_rounds {
+        let poly_fr = match state.round_poly() {
+            Ok(poly) => poly,
+            Err(error) => return Some(Err(cuda_error(error))),
+        };
+        let poly = fr_poly_into::<F>(poly_fr)?;
+        if poly.evaluate(F::zero()) + poly.evaluate(F::one()) != running_sum {
+            return Some(Err(Stage1KernelError::InvalidProof {
+                driver: "stage1.outer.remaining",
+                reason: "dense outer remaining claim mismatch",
+            }));
+        }
+        let challenge = observe_round(&poly);
+        running_sum = poly.evaluate(challenge);
+        let challenge_fr = into_fr(challenge)?;
+        if let Err(error) = state.bind(challenge_fr) {
+            return Some(Err(cuda_error(error)));
+        }
+        point.push(challenge);
+        round_polynomials.push(poly);
+    }
+    Some(Ok((point, round_polynomials)))
+}
+
+fn cuda_error(error: CudaError) -> Stage1KernelError {
+    let _ = error;
+    Stage1KernelError::InvalidProof {
+        driver: "stage1.outer.remaining",
+        reason: "cuda dense outer remaining failed",
+    }
+}
 
 pub struct CudaDenseOuterState<'a> {
     ctx: &'a CudaKernelContext,
