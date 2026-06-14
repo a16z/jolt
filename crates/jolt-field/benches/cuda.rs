@@ -218,12 +218,65 @@ fn bench_reduce_chain(c: &mut Criterion) {
     group.finish();
 }
 
+const BURST_ROUNDS: usize = 256;
+const BURST_SIZES: [usize; 3] = [1 << 10, 1 << 12, 1 << 14];
+
+fn cpu_reduce_burst(a: &[Fr], rounds: usize) -> Fr {
+    let mut total = Fr::from_u64(0);
+    for _ in 0..rounds {
+        total += a.iter().copied().sum::<Fr>();
+    }
+    total
+}
+
+fn gpu_reduce_burst(ctx: &CudaFieldContext, a: &[Fr], rounds: usize) -> Fr {
+    let a_dev = ctx.upload(a).unwrap();
+    let mut total = Fr::from_u64(0);
+    for _ in 0..rounds {
+        total += ctx.sum(&a_dev).unwrap();
+    }
+    total
+}
+
+fn gpu_reduce_burst_device(ctx: &CudaFieldContext, a: &[Fr], rounds: usize) -> Fr {
+    let a_dev = ctx.upload(a).unwrap();
+    let mut total = ctx.upload(&[Fr::from_u64(0)]).unwrap();
+    for _ in 0..rounds {
+        let partial = ctx.sum_device(&a_dev).unwrap();
+        ctx.add(&mut total, &partial).unwrap();
+    }
+    total.to_host().unwrap()[0]
+}
+
+fn bench_reduce_burst(c: &mut Criterion) {
+    let ctx = CudaFieldContext::new(0).expect("cuda init");
+    let mut rng = ChaCha20Rng::seed_from_u64(4);
+
+    let mut group = c.benchmark_group("reduce_burst");
+    for &n in &BURST_SIZES {
+        let a = random_vec(&mut rng, n);
+        group.throughput(Throughput::Elements((n * BURST_ROUNDS) as u64));
+
+        group.bench_with_input(BenchmarkId::new("cpu", n), &n, |bench, _| {
+            bench.iter(|| cpu_reduce_burst(black_box(&a), BURST_ROUNDS));
+        });
+        group.bench_with_input(BenchmarkId::new("gpu", n), &n, |bench, _| {
+            bench.iter(|| gpu_reduce_burst(&ctx, black_box(&a), BURST_ROUNDS));
+        });
+        group.bench_with_input(BenchmarkId::new("gpu_device", n), &n, |bench, _| {
+            bench.iter(|| gpu_reduce_burst_device(&ctx, black_box(&a), BURST_ROUNDS));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_map,
     bench_reduce,
     bench_chain,
     bench_chain_fma,
-    bench_reduce_chain
+    bench_reduce_chain,
+    bench_reduce_burst
 );
 criterion_main!(benches);
