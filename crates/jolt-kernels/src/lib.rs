@@ -7,6 +7,12 @@
 mod dense;
 mod split_eq;
 
+#[doc(hidden)]
+pub use dense::{bind_dense_evals_reuse, bind_dense_evals_reuse_serial};
+#[cfg(feature = "cuda")]
+#[doc(hidden)]
+pub use dense::bind_dense_evals_reuse_cuda;
+
 pub mod stage1;
 pub mod stage2;
 pub mod stage3;

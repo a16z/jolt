@@ -148,6 +148,21 @@ extern "C" __global__ void fma_kernel(u64 *__restrict__ io, const u64 *__restric
     }
 }
 
+extern "C" __global__ void bind_kernel(u64 *__restrict__ out, const u64 *__restrict__ values, const u64 *__restrict__ challenge, unsigned long half) {
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < half) {
+        u64 lo[4], hi[4], c[4];
+        load4(values + (i * 2) * 4, lo);
+        load4(values + (i * 2 + 1) * 4, hi);
+        load4(challenge, c);
+        u64 diff[4];
+        fr_sub(hi, lo, diff);
+        fr_mul(diff, c, diff);
+        fr_add(lo, diff, lo);
+        store4(out + i * 4, lo);
+    }
+}
+
 extern "C" __global__ void sum_reduce(u64 *__restrict__ out, const u64 *__restrict__ in, unsigned long n) {
     extern __shared__ u64 sdata[];
     u64 *acc = sdata + threadIdx.x * 4;
@@ -238,6 +253,7 @@ pub struct CudaFieldContext {
     sub: CudaFunction,
     mul: CudaFunction,
     fma: CudaFunction,
+    bind: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -267,7 +283,8 @@ impl DeviceFrVec {
         let n = self.len * LIMBS;
         let mut pool = lock_pool(&self.staging);
         let staging = pool.ensure(self.stream.context(), n)?;
-        self.stream.memcpy_dtoh(&self.buf, staging.as_mut_slice(n))?;
+        self.stream
+            .memcpy_dtoh(&self.buf.slice(0..n), staging.as_mut_slice(n))?;
         self.stream.synchronize()?;
         Ok(unflatten(staging.as_slice(n)))
     }
@@ -388,6 +405,7 @@ impl CudaFieldContext {
             sub: module.load_function("sub_kernel")?,
             mul: module.load_function("mul_kernel")?,
             fma: module.load_function("fma_kernel")?,
+            bind: module.load_function("bind_kernel")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -482,6 +500,46 @@ impl CudaFieldContext {
         // all three buffers hold n * LIMBS u64s.
         let _ = unsafe { launch.launch(cfg) }?;
 
+        Ok(())
+    }
+
+    pub fn bind(
+        &self,
+        values: &mut DeviceFrVec,
+        scratch: &mut DeviceFrVec,
+        challenge: Fr,
+    ) -> Result<(), CudaError> {
+        let half = values.len / 2;
+        if scratch.buf.len() < half * LIMBS {
+            scratch.buf = self.stream.alloc_zeros(half * LIMBS)?;
+        }
+        scratch.len = half;
+        if half == 0 {
+            std::mem::swap(values, scratch);
+            return Ok(());
+        }
+
+        let challenge_dev = self.stream.clone_htod(&fr_to_limbs(challenge))?;
+        let cfg = LaunchConfig {
+            grid_dim: ((half as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let half_arg = half as u64;
+        let f = self.bind.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut scratch.buf)
+            .arg(&values.buf)
+            .arg(&challenge_dev)
+            .arg(&half_arg);
+        // SAFETY: each thread i reads values[2i], values[2i+1] and the single
+        // challenge, writing scratch[i]; scratch and values are distinct buffers
+        // holding >= half and 2*half elements respectively.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        std::mem::swap(values, scratch);
         Ok(())
     }
 

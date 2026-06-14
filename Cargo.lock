@@ -3156,6 +3156,7 @@ dependencies = [
 name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "jolt-field",
  "jolt-lookup-tables",
  "jolt-poly",
@@ -3165,6 +3166,8 @@ dependencies = [
  "jolt-transcript",
  "jolt-witness",
  "proptest",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "rayon",
  "tracing",
 ]
