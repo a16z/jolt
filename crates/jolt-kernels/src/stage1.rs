@@ -1889,7 +1889,7 @@ where
     }
 }
 
-struct DenseOuterState<F: Field> {
+pub struct DenseOuterState<F: Field> {
     eq: Vec<F>,
     az: Vec<F>,
     bz: Vec<F>,
@@ -1899,8 +1899,35 @@ struct DenseOuterState<F: Field> {
 }
 
 impl<F: Field> DenseOuterState<F> {
+    #[cfg(feature = "cuda")]
+    pub fn from_raw(eq: Vec<F>, az: Vec<F>, bz: Vec<F>) -> Self {
+        Self {
+            eq,
+            az,
+            bz,
+            eq_scratch: Vec::new(),
+            az_scratch: Vec::new(),
+            bz_scratch: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn eq(&self) -> &[F] {
+        &self.eq
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn az(&self) -> &[F] {
+        &self.az
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn bz(&self) -> &[F] {
+        &self.bz
+    }
+
     #[tracing::instrument(skip_all, name = "DenseOuterState::round_poly")]
-    fn round_poly(&self) -> UnivariatePoly<F> {
+    pub fn round_poly(&self) -> UnivariatePoly<F> {
         let pair_count = self.eq.len() / 2;
         let accumulators = if pair_count >= DENSE_BIND_PAR_THRESHOLD {
             self.eq
@@ -1954,7 +1981,7 @@ impl<F: Field> DenseOuterState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "DenseOuterState::bind")]
-    fn bind(&mut self, challenge: F) {
+    pub fn bind(&mut self, challenge: F) {
         rayon::join(
             || bind_dense_evals_reuse(&mut self.eq, &mut self.eq_scratch, challenge),
             || {

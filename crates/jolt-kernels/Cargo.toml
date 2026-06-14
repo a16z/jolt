@@ -49,3 +49,8 @@ required-features = ["cuda"]
 name = "split_eq"
 harness = false
 required-features = ["cuda"]
+
+[[bench]]
+name = "dense_outer"
+harness = false
+required-features = ["cuda"]

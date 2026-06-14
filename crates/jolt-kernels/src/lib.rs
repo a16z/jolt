@@ -6,6 +6,8 @@
 
 #[cfg(feature = "cuda")]
 pub mod cuda;
+#[cfg(feature = "cuda")]
+mod cuda_stage1;
 mod dense;
 mod split_eq;
 
@@ -19,6 +21,9 @@ pub use split_eq::SplitEqState;
 #[cfg(feature = "cuda")]
 #[doc(hidden)]
 pub use split_eq::CudaSplitEqState;
+#[cfg(feature = "cuda")]
+#[doc(hidden)]
+pub use cuda_stage1::CudaDenseOuterState;
 
 pub mod stage1;
 pub mod stage2;
