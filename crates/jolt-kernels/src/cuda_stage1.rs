@@ -2,8 +2,8 @@ use jolt_field::Fr;
 use jolt_poly::UnivariatePoly;
 
 use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec};
+use crate::dense::bind_dense_evals_reuse_cuda;
 
-#[expect(dead_code)]
 pub struct CudaDenseOuterState<'a> {
     ctx: &'a CudaKernelContext,
     eq: DeviceFrVec,
@@ -14,7 +14,6 @@ pub struct CudaDenseOuterState<'a> {
     bz_scratch: DeviceFrVec,
 }
 
-#[expect(clippy::todo, unused_variables)]
 impl<'a> CudaDenseOuterState<'a> {
     pub fn from_host(
         ctx: &'a CudaKernelContext,
@@ -22,27 +21,39 @@ impl<'a> CudaDenseOuterState<'a> {
         az: &[Fr],
         bz: &[Fr],
     ) -> Result<Self, CudaError> {
-        todo!()
+        Ok(Self {
+            ctx,
+            eq: ctx.upload(eq)?,
+            az: ctx.upload(az)?,
+            bz: ctx.upload(bz)?,
+            eq_scratch: ctx.upload(&[])?,
+            az_scratch: ctx.upload(&[])?,
+            bz_scratch: ctx.upload(&[])?,
+        })
     }
 
     pub fn round_poly(&self) -> Result<UnivariatePoly<Fr>, CudaError> {
-        todo!()
+        let coeffs = self.ctx.cubic_accumulate(&self.eq, &self.az, &self.bz)?;
+        Ok(UnivariatePoly::new(coeffs.to_vec()))
     }
 
     pub fn bind(&mut self, challenge: Fr) -> Result<(), CudaError> {
-        todo!()
+        bind_dense_evals_reuse_cuda(self.ctx, &mut self.eq, &mut self.eq_scratch, challenge)?;
+        bind_dense_evals_reuse_cuda(self.ctx, &mut self.az, &mut self.az_scratch, challenge)?;
+        bind_dense_evals_reuse_cuda(self.ctx, &mut self.bz, &mut self.bz_scratch, challenge)?;
+        Ok(())
     }
 
     pub fn eq(&self) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        self.eq.to_host()
     }
 
     pub fn az(&self) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        self.az.to_host()
     }
 
     pub fn bz(&self) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        self.bz.to_host()
     }
 }
 
@@ -58,9 +69,9 @@ mod tests {
         any::<[u8; 32]>().prop_map(|bytes| Fr::from_bytes(&bytes))
     }
 
-    fn triple_strategy(max_pairs: usize) -> impl Strategy<Value = (Vec<Fr>, Vec<Fr>, Vec<Fr>)> {
-        (1usize..max_pairs).prop_flat_map(|pairs| {
-            let len = pairs * 2;
+    fn triple_strategy(max_vars: usize) -> impl Strategy<Value = (Vec<Fr>, Vec<Fr>, Vec<Fr>)> {
+        (1usize..max_vars).prop_flat_map(|num_vars| {
+            let len = 1usize << num_vars;
             (
                 prop::collection::vec(fr_strategy(), len),
                 prop::collection::vec(fr_strategy(), len),
