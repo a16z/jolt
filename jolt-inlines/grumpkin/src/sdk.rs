@@ -72,6 +72,34 @@ pub enum GrumpkinError {
     InvalidFqElement,
     InvalidFrElement,
     NotOnCurve,
+    InvalidGlvSignWord(u64),
+}
+
+// Grumpkin GLV endomorphism constants in Montgomery form.
+// The endomorphism is (x, y) -> (beta * x, y), where beta^3 = 1.
+pub(crate) const GRUMPKIN_ENDO_BETA_LIMBS: [u64; 4] = [
+    244305545194690131,
+    8351807910065594880,
+    14266533074055306532,
+    404339206190769364,
+];
+
+#[allow(dead_code)]
+pub(crate) const GRUMPKIN_GLV_LAMBDA_LIMBS: [u64; 4] = [
+    3697675806616062876,
+    9065277094688085689,
+    6918009208039626314,
+    2775033306905974752,
+];
+
+#[inline(always)]
+#[cfg(any(
+    all(test, feature = "host"),
+    target_arch = "riscv32",
+    target_arch = "riscv64"
+))]
+pub(crate) fn decode_glv_sign_word(sign: u64) -> Result<bool, GrumpkinError> {
+    jolt_inlines_sdk::decode_sign_word(sign).ok_or(GrumpkinError::InvalidGlvSignWord(sign))
 }
 
 /// Wrapper around ark_grumpkin::Fq with inline-accelerated division
@@ -420,6 +448,14 @@ impl GrumpkinFr {
         }
         self.div_assume_nonzero(other)
     }
+
+    /// GLV scalar decomposition: returns (k1, k2) such that
+    /// self = k1 + k2 * lambda (mod r) and |k1|, |k2| < 2^128.
+    /// Each entry is (is_negative, abs_value).
+    #[inline(always)]
+    pub fn glv_decompose(&self) -> [(bool, u128); 2] {
+        decompose_scalar_impl(self)
+    }
 }
 
 #[derive(Clone)]
@@ -440,6 +476,8 @@ pub type GrumpkinPoint = AffinePoint<GrumpkinFq, GrumpkinCurve>;
 
 pub trait GrumpkinPointExt {
     fn generator() -> GrumpkinPoint;
+    fn generator_w_endomorphism() -> GrumpkinPoint;
+    fn endomorphism(&self) -> GrumpkinPoint;
 }
 
 impl GrumpkinPointExt for GrumpkinPoint {
@@ -450,4 +488,72 @@ impl GrumpkinPointExt for GrumpkinPoint {
             GrumpkinFq::new(ark_grumpkin::G_GENERATOR_Y),
         )
     }
+
+    #[inline(always)]
+    fn generator_w_endomorphism() -> GrumpkinPoint {
+        Self::generator().endomorphism()
+    }
+
+    #[inline(always)]
+    fn endomorphism(&self) -> GrumpkinPoint {
+        if self.is_infinity() {
+            Self::infinity()
+        } else {
+            let beta = GrumpkinFq::from_u64_arr_unchecked(&GRUMPKIN_ENDO_BETA_LIMBS);
+            Self::new_unchecked(self.x().mul(&beta), self.y())
+        }
+    }
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    any(target_arch = "riscv32", target_arch = "riscv64")
+))]
+fn decompose_scalar_impl(k: &GrumpkinFr) -> [(bool, u128); 2] {
+    let mut out = [0u64; 6];
+    unsafe {
+        use crate::{GRUMPKIN_FUNCT7, GRUMPKIN_GLVR_ADV_FUNCT3, INLINE_OPCODE};
+        core::arch::asm!(
+            ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, x0",
+            opcode = const INLINE_OPCODE,
+            funct3 = const GRUMPKIN_GLVR_ADV_FUNCT3,
+            funct7 = const GRUMPKIN_FUNCT7,
+            rd = in(reg) out.as_mut_ptr(),
+            rs1 = in(reg) k.e.0.0.as_ptr(),
+            options(nostack)
+        );
+    }
+
+    let k1_sign = decode_glv_sign_word(out[0]).unwrap_or_spoil_proof();
+    let k2_sign = decode_glv_sign_word(out[3]).unwrap_or_spoil_proof();
+    let lambda = GrumpkinFr::from_u64_arr_unchecked(&GRUMPKIN_GLV_LAMBDA_LIMBS);
+    let mut k1 = GrumpkinFr::from_u64_arr(&[out[1], out[2], 0u64, 0u64]).unwrap_or_spoil_proof();
+    if k1_sign {
+        k1 = k1.neg();
+    }
+    let mut k2 = GrumpkinFr::from_u64_arr(&[out[4], out[5], 0u64, 0u64]).unwrap_or_spoil_proof();
+    if k2_sign {
+        k2 = k2.neg();
+    }
+    let recomposed_k = k1.add(&k2.mul(&lambda));
+    if recomposed_k != *k {
+        spoil_proof();
+    }
+    [
+        (k1_sign, (out[1] as u128) | ((out[2] as u128) << 64)),
+        (k2_sign, (out[4] as u128) | ((out[5] as u128) << 64)),
+    ]
+}
+
+#[cfg(all(
+    not(feature = "host"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
+fn decompose_scalar_impl(_k: &GrumpkinFr) -> [(bool, u128); 2] {
+    panic!("decompose_scalar called on non-RISC-V target without host feature");
+}
+
+#[cfg(feature = "host")]
+fn decompose_scalar_impl(k: &GrumpkinFr) -> [(bool, u128); 2] {
+    crate::glv::decompose_scalar(k.e.into_bigint().into())
 }

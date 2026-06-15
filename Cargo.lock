@@ -3077,6 +3077,8 @@ dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-grumpkin",
  "jolt-inlines-sdk",
+ "num-bigint",
+ "num-integer",
  "serde",
  "tracer",
 ]
