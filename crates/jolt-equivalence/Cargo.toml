@@ -8,6 +8,9 @@ description = "Cross-system equivalence testing between jolt-core and Bolt-gener
 [lints]
 workspace = true
 
+[features]
+cuda = ["jolt-kernels/cuda"]
+
 [dependencies]
 # jolt-core reference prover/verifier. Equivalence tests compare against the
 # generated full-field Fiat-Shamir path.
