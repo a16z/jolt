@@ -17,6 +17,36 @@ pub enum JoltFormulaPointError {
     OpeningPointLengthMismatch { expected: usize, got: usize },
     #[error("evaluation domain length mismatch: expected {expected}, got {got}")]
     EvaluationDomainLengthMismatch { expected: usize, got: usize },
+    #[error("incompatible dominant precommitted anchors: {first} and {second} disagree")]
+    IncompatibleDominantAnchors { first: usize, second: usize },
+    #[error("stage 6 cycle challenges ({got}) shorter than native cycle vars ({expected})")]
+    CycleChallengesShorterThanNativeCycle { expected: usize, got: usize },
+    #[error(
+        "cycle-major final opening expects the stage 6 cycle prefix to equal the native cycle vars"
+    )]
+    CycleMajorCyclePrefixMismatch,
+    #[error(
+        "cycle-phase final opening requested with {active_address_rounds} active address-phase rounds remaining"
+    )]
+    CyclePhaseNotFinal { active_address_rounds: usize },
+    #[error("cycle round {round} is not active for this polynomial")]
+    InactiveCycleRound { round: usize },
+    #[error(
+        "polynomial dims ({poly_row_vars}x{poly_col_vars}) exceed reference dims ({reference_row_vars}x{reference_col_vars})"
+    )]
+    PolyDimsExceedReference {
+        poly_row_vars: usize,
+        poly_col_vars: usize,
+        reference_row_vars: usize,
+        reference_col_vars: usize,
+    },
+    #[error(
+        "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most 256 dividing the power-of-two bytecode length ({bytecode_len})"
+    )]
+    InvalidBytecodeChunking {
+        bytecode_len: usize,
+        chunk_count: usize,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
@@ -44,4 +74,31 @@ pub enum JoltFormulaDimensionsError {
         phase1_num_rounds: usize,
         log_t: usize,
     },
+}
+
+/// Require at least `expected` leading entries; callers consume the slice by
+/// prefix, so longer inputs are accepted.
+pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
+    if values.len() < expected {
+        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    Ok(())
+}
+
+/// [`require_len`] with the opening-point flavored error, for inputs that are
+/// opening points rather than challenge vectors.
+pub(crate) fn require_opening_point_len<F>(
+    values: &[F],
+    expected: usize,
+) -> Result<(), JoltFormulaPointError> {
+    if values.len() < expected {
+        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            expected,
+            got: values.len(),
+        });
+    }
+    Ok(())
 }

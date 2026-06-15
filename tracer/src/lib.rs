@@ -20,6 +20,7 @@ pub mod emulator;
 pub mod execution_backend;
 pub mod instruction;
 mod jolt_cycle_adapter;
+pub mod trace_row;
 pub mod utils;
 
 pub use common::jolt_device::JoltDevice;
@@ -29,6 +30,7 @@ pub use instruction::inline::{
     list_registered_inlines, InlineRegistration, TracerInlineExpansionProvider,
 };
 pub use jolt_riscv::InlineExtension;
+pub use trace_row::{build_trace_rows, cycle_to_trace_row, CycleConversionError};
 
 use crate::emulator::{
     memory::{Memory, MemoryData},

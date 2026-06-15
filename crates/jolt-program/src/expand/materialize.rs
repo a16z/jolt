@@ -2,22 +2,41 @@ use jolt_riscv::{
     JoltInstructionProfile, JoltInstructionRow, NormalizedOperands, SourceInstruction,
     SourceInstructionRow,
 };
+use std::marker::PhantomData;
 
 use crate::expand::{
-    allocator::{ExpansionAllocator, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
+    allocator::{ExpansionAllocator, NUM_INLINE_REGISTERS, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
     expand_source_only_instruction,
     grammar::{
-        is_source_only, ExpandedInstructionSequence, ExpansionOp, RegisterOperand, RowTemplate,
-        SourceInstructionRowTemplate, TempId, TemplateOperands,
+        is_source_only, ExpandedInstructionSequence, ExpansionOp, InlineTempId, RegisterOperand,
+        RowTemplate, SourceInstructionRowTemplate, TempId, TemplateOperands,
     },
-    metadata::stamp_instruction_sequence,
+    metadata::{stamp_inline_sequence, stamp_instruction_sequence},
     operands::{handles_rd_zero_internally, noop_for},
     ExpansionError,
 };
 
 pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
+pub(super) const MAX_INLINE_ROWS_PER_SOURCE: usize = u16::MAX as usize + 1;
 
-/// Materializes symbolic recipes into concrete instructions (phase 2).
+type StampSequenceFn = fn(
+    Vec<JoltInstructionRow>,
+    bool,
+    JoltInstructionProfile,
+) -> Result<Vec<JoltInstructionRow>, ExpansionError>;
+
+struct MaterializeOptions {
+    capacity: usize,
+    append_inline_resets: bool,
+    stamp: StampSequenceFn,
+}
+
+/// Materializes symbolic recipes into concrete final rows.
+///
+/// `ExpansionState` is the only component that binds symbolic temps to physical
+/// virtual registers. It also owns recursive source-only expansion, so nested
+/// helper recipes share allocator state with their parent and cannot collide
+/// with a top-level `rd = x0` rewrite or a registered inline allocation.
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
     profile: JoltInstructionProfile,
@@ -32,6 +51,11 @@ impl ExpansionState {
         self.allocator
     }
 
+    /// Expand a source instruction while preserving allocator recursion state.
+    ///
+    /// Recursive expansion is used when a recipe emits a source-only helper row.
+    /// It rejects unbounded recursion and routes all rows through the same
+    /// `rd = x0`, profile, and materialization rules as top-level expansion.
     pub(super) fn expand_source_recursive(
         &mut self,
         instruction: &SourceInstruction,
@@ -42,7 +66,11 @@ impl ExpansionState {
         result
     }
 
-    /// Routes: rd=x0 rewrite → recurse, native → pass-through, source-only → build recipe + materialize.
+    /// Route one source instruction to its final-row representation.
+    ///
+    /// The order matters: `rd = x0` is handled before provider dispatch or
+    /// source-only lowering, native target rows pass through unchanged, and
+    /// built-in source-only rows are lowered into a recipe and materialized.
     fn dispatch_source(
         &mut self,
         instruction: &SourceInstruction,
@@ -51,10 +79,9 @@ impl ExpansionState {
         if instruction.row().operands.rd == Some(0) && !handles_rd_zero_internally(kind) {
             if kind.has_side_effects() {
                 let virtual_register = self.allocate_register()?;
-                let rewritten = (*instruction).map_row(|mut row| {
-                    row.operands.rd = Some(virtual_register);
-                    row
-                });
+                let mut row = *instruction.row();
+                row.operands.rd = Some(virtual_register);
+                let rewritten = SourceInstruction::new(kind, row);
                 let expanded = self.expand_source_recursive(&rewritten);
                 self.release_register(virtual_register)?;
                 return expanded;
@@ -82,11 +109,77 @@ impl ExpansionState {
         self.allocator.release(register)
     }
 
+    /// Materialize a built-in source-only recipe and stamp it as one sequence.
+    ///
+    /// This path is bounded by `MAX_FINAL_ROWS_PER_SOURCE` because ordinary
+    /// source-only instructions should expand into small fixed recipes.
     pub(super) fn materialize(
         &mut self,
         sequence: ExpandedInstructionSequence,
     ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
-        let mut materializer = SequenceMaterializer::new(sequence.source, self.profile);
+        self.materialize_with_options(
+            sequence,
+            MaterializeOptions {
+                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+                append_inline_resets: false,
+                stamp: stamp_instruction_sequence,
+            },
+        )
+    }
+
+    /// Materialize a registered inline recipe, append reset rows, and stamp it.
+    ///
+    /// Inline recipes can be much larger than built-in instruction recipes, so
+    /// they use the full `u16` virtual-sequence range. Reset rows are appended
+    /// here, after all provider-owned inline registers have been released, so
+    /// virtual-register cleanup is centralized and independent of tracer RAII.
+    pub(super) fn materialize_inline(
+        &mut self,
+        sequence: ExpandedInstructionSequence,
+    ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+        self.materialize_with_options(
+            sequence,
+            MaterializeOptions {
+                capacity: MAX_INLINE_ROWS_PER_SOURCE,
+                append_inline_resets: true,
+                stamp: stamp_inline_sequence,
+            },
+        )
+    }
+
+    fn materialize_with_options(
+        &mut self,
+        sequence: ExpandedInstructionSequence,
+        options: MaterializeOptions,
+    ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+        let source = sequence.source;
+        let mut rows = self.materialize_unstamped(sequence, options.capacity)?;
+        if options.append_inline_resets {
+            for register in self.allocator.take_registers_for_reset()? {
+                rows.push(JoltInstructionRow {
+                    instruction_kind: jolt_riscv::JoltInstructionKind::ADDI,
+                    address: source.address,
+                    operands: NormalizedOperands {
+                        rd: Some(register),
+                        rs1: Some(0),
+                        rs2: None,
+                        imm: 0,
+                    },
+                    virtual_sequence_remaining: Some(0),
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                })?;
+            }
+        }
+        (options.stamp)(rows.into_vec(), source.is_compressed, self.profile)
+    }
+
+    fn materialize_unstamped(
+        &mut self,
+        sequence: ExpandedInstructionSequence,
+        capacity: usize,
+    ) -> Result<ExpansionBuffer, ExpansionError> {
+        let mut materializer = SequenceMaterializer::new(sequence.source, capacity);
         for op in sequence.ops {
             match op {
                 ExpansionOp::Emit(row) => materializer.emit(row)?,
@@ -102,6 +195,14 @@ impl ExpansionState {
                     let register = materializer.resolve_register_for_release(register)?;
                     self.allocator.release(register)?;
                 }
+                ExpansionOp::AllocateInline(register) => {
+                    let allocated = self.allocator.allocate_for_inline()?;
+                    materializer.bind_inline_temp(register, allocated)?;
+                }
+                ExpansionOp::ReleaseInline(register) => {
+                    let register = materializer.resolve_inline_register_for_release(register)?;
+                    self.allocator.release(register)?;
+                }
             }
         }
         materializer.finish()
@@ -112,20 +213,22 @@ impl ExpansionState {
 #[derive(Debug)]
 struct ExpansionBuffer {
     rows: Vec<JoltInstructionRow>,
+    capacity: usize,
 }
 
 impl ExpansionBuffer {
-    fn new() -> Self {
+    fn new(capacity: usize) -> Self {
         Self {
-            rows: Vec::with_capacity(MAX_FINAL_ROWS_PER_SOURCE),
+            rows: Vec::new(),
+            capacity,
         }
     }
 
     fn push(&mut self, row: JoltInstructionRow) -> Result<(), ExpansionError> {
-        if self.rows.len() == MAX_FINAL_ROWS_PER_SOURCE {
+        if self.rows.len() == self.capacity {
             return Err(ExpansionError::CapacityExceeded {
                 actual: self.rows.len() + 1,
-                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+                capacity: self.capacity,
             });
         }
         self.rows.push(row);
@@ -140,10 +243,10 @@ impl ExpansionBuffer {
     }
 
     fn check_capacity(&self) -> Result<(), ExpansionError> {
-        if self.rows.len() > MAX_FINAL_ROWS_PER_SOURCE {
+        if self.rows.len() > self.capacity {
             return Err(ExpansionError::CapacityExceeded {
                 actual: self.rows.len(),
-                capacity: MAX_FINAL_ROWS_PER_SOURCE,
+                capacity: self.capacity,
             });
         }
         Ok(())
@@ -154,19 +257,37 @@ impl ExpansionBuffer {
     }
 }
 
-/// Maps symbolic `TempId`s to physical virtual registers for one recipe materialization.
-struct TempBindings {
-    slots: [Option<u8>; NUM_VIRTUAL_INSTRUCTION_REGISTERS],
+trait TempBindingId: Copy {
+    fn index(self) -> usize;
 }
 
-impl TempBindings {
+impl TempBindingId for TempId {
+    fn index(self) -> usize {
+        TempId::index(self)
+    }
+}
+
+impl TempBindingId for InlineTempId {
+    fn index(self) -> usize {
+        InlineTempId::index(self)
+    }
+}
+
+/// Maps symbolic ids to physical virtual registers for one recipe materialization.
+struct TempBindings<Id, const N: usize> {
+    slots: [Option<u8>; N],
+    _marker: PhantomData<fn(Id)>,
+}
+
+impl<Id: TempBindingId, const N: usize> TempBindings<Id, N> {
     fn new() -> Self {
         Self {
-            slots: [None; NUM_VIRTUAL_INSTRUCTION_REGISTERS],
+            slots: [None; N],
+            _marker: PhantomData,
         }
     }
 
-    fn bind(&mut self, temp: TempId, allocated: u8) -> Result<(), ExpansionError> {
+    fn bind(&mut self, temp: Id, allocated: u8) -> Result<(), ExpansionError> {
         let index = temp.index();
         if self.slots[index].is_some() {
             return Err(ExpansionError::DuplicateTemporaryRegister { index });
@@ -175,12 +296,12 @@ impl TempBindings {
         Ok(())
     }
 
-    fn get(&self, temp: TempId) -> Result<u8, ExpansionError> {
+    fn get(&self, temp: Id) -> Result<u8, ExpansionError> {
         let index = temp.index();
         self.slots[index].ok_or(ExpansionError::UnallocatedTemporaryRegister { index })
     }
 
-    fn take(&mut self, temp: TempId) -> Result<u8, ExpansionError> {
+    fn take(&mut self, temp: Id) -> Result<u8, ExpansionError> {
         let index = temp.index();
         match self.slots[index].take() {
             Some(register) => Ok(register),
@@ -196,20 +317,18 @@ impl TempBindings {
 /// Executes a single recipe: resolves temps, collects output rows, checks capacity.
 struct SequenceMaterializer {
     address: usize,
-    is_compressed: bool,
-    profile: JoltInstructionProfile,
     rows: ExpansionBuffer,
-    temps: TempBindings,
+    temps: TempBindings<TempId, NUM_VIRTUAL_INSTRUCTION_REGISTERS>,
+    inline_temps: TempBindings<InlineTempId, NUM_INLINE_REGISTERS>,
 }
 
 impl SequenceMaterializer {
-    fn new(source: SourceInstructionRow, profile: JoltInstructionProfile) -> Self {
+    fn new(source: SourceInstructionRow, capacity: usize) -> Self {
         Self {
             address: source.address,
-            is_compressed: source.is_compressed,
-            profile,
-            rows: ExpansionBuffer::new(),
+            rows: ExpansionBuffer::new(capacity),
             temps: TempBindings::new(),
+            inline_temps: TempBindings::new(),
         }
     }
 
@@ -252,8 +371,23 @@ impl SequenceMaterializer {
         self.temps.bind(temp, allocated)
     }
 
+    fn bind_inline_temp(
+        &mut self,
+        temp: InlineTempId,
+        allocated: u8,
+    ) -> Result<(), ExpansionError> {
+        self.inline_temps.bind(temp, allocated)
+    }
+
     fn resolve_register_for_release(&mut self, temp: TempId) -> Result<u8, ExpansionError> {
         self.temps.take(temp)
+    }
+
+    fn resolve_inline_register_for_release(
+        &mut self,
+        temp: InlineTempId,
+    ) -> Result<u8, ExpansionError> {
+        self.inline_temps.take(temp)
     }
 
     fn resolve_operands(
@@ -282,15 +416,19 @@ impl SequenceMaterializer {
         match register {
             RegisterOperand::Register(register) => Ok(register),
             RegisterOperand::Temp(temp) => self.temps.get(temp),
+            RegisterOperand::InlineTemp(temp) => self.inline_temps.get(temp),
         }
     }
 
-    fn finish(self) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+    fn finish(self) -> Result<ExpansionBuffer, ExpansionError> {
         if let Some(index) = self.temps.first_leaked() {
             return Err(ExpansionError::LeakedTemporaryRegister { index });
         }
+        if let Some(index) = self.inline_temps.first_leaked() {
+            return Err(ExpansionError::LeakedTemporaryRegister { index });
+        }
         self.rows.check_capacity()?;
-        stamp_instruction_sequence(self.rows.into_vec(), self.is_compressed, self.profile)
+        Ok(self.rows)
     }
 }
 

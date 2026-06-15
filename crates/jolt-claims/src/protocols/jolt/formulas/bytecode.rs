@@ -14,6 +14,7 @@ use super::super::{
     JoltRelationId, JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
+use super::error::require_len;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafDimensions {
@@ -45,6 +46,14 @@ impl BytecodeReadRafDimensions {
 
     pub const fn sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t + self.log_k, self.committed_ra_polys + 1)
+    }
+
+    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
+        JoltSumcheckSpec::boolean(self.log_k, self.committed_ra_polys + 1)
+    }
+
+    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
+        JoltSumcheckSpec::boolean(self.log_t, self.committed_ra_polys + 1)
     }
 
     pub fn opening_point<F: Field>(
@@ -94,21 +103,11 @@ where
         + gamma.clone().pow(5) * opening(pc_spartan_outer())
         + gamma.pow(6) * opening(pc_spartan_shift());
 
-    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
-    let output_coeff = bytecode_public(BytecodeReadRafPublic::StageValue(0))
-        + gamma.clone() * bytecode_public(BytecodeReadRafPublic::StageValue(1))
-        + gamma.clone().pow(2) * bytecode_public(BytecodeReadRafPublic::StageValue(2))
-        + gamma.clone().pow(3) * bytecode_public(BytecodeReadRafPublic::StageValue(3))
-        + gamma.clone().pow(4) * bytecode_public(BytecodeReadRafPublic::StageValue(4))
-        + gamma.clone().pow(5) * bytecode_public(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(6) * bytecode_public(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(7) * bytecode_public(BytecodeReadRafPublic::Entry);
-
     JoltRelationClaims::new(
         JoltRelationId::BytecodeReadRaf,
         dimensions.sumcheck(),
         input,
-        output_coeff * bytecode_ra_product(dimensions),
+        read_raf_cycle_output(dimensions),
     )
     .with_input_challenges([
         JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
@@ -122,6 +121,70 @@ where
         unexpanded_pc_spartan_shift(),
         unexpanded_pc_instruction_input(),
     )])
+}
+
+pub fn read_raf_address_phase<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
+
+    let input = gamma.clone().pow(7)
+        + stage1_claim()
+        + gamma.clone() * stage2_claim()
+        + gamma.clone().pow(2) * stage3_claim()
+        + gamma.clone().pow(3) * stage4_claim()
+        + gamma.clone().pow(4) * stage5_claim::<F>()
+        + gamma.clone().pow(5) * opening(pc_spartan_outer())
+        + gamma.pow(6) * opening(pc_spartan_shift());
+
+    JoltRelationClaims::new(
+        JoltRelationId::BytecodeReadRaf,
+        dimensions.address_sumcheck(),
+        input,
+        opening(bytecode_read_raf_address_phase_opening()),
+    )
+    .with_input_challenges([
+        JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
+        JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
+        JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
+        JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
+        JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
+        JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
+    ])
+    .with_consistency([JoltConsistencyClaim::same_evaluation(
+        unexpanded_pc_spartan_shift(),
+        unexpanded_pc_instruction_input(),
+    )])
+}
+
+pub fn read_raf_cycle_phase<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    JoltRelationClaims::new(
+        JoltRelationId::BytecodeReadRaf,
+        dimensions.cycle_sumcheck(),
+        opening(bytecode_read_raf_address_phase_opening()),
+        read_raf_cycle_output(dimensions),
+    )
+}
+
+fn read_raf_cycle_output<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
+    let output_coeff = bytecode_public(BytecodeReadRafPublic::StageValue(0))
+        + gamma.clone() * bytecode_public(BytecodeReadRafPublic::StageValue(1))
+        + gamma.clone().pow(2) * bytecode_public(BytecodeReadRafPublic::StageValue(2))
+        + gamma.clone().pow(3) * bytecode_public(BytecodeReadRafPublic::StageValue(3))
+        + gamma.clone().pow(4) * bytecode_public(BytecodeReadRafPublic::StageValue(4))
+        + gamma.clone().pow(5) * bytecode_public(BytecodeReadRafPublic::SpartanOuterRaf)
+        + gamma.clone().pow(6) * bytecode_public(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(7) * bytecode_public(BytecodeReadRafPublic::Entry);
+
+    output_coeff * bytecode_ra_product(dimensions)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -186,6 +249,13 @@ pub struct BytecodeReadRafRegistersValEvaluationOpenings {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafOutputOpenings {
     pub bytecode_ra: Vec<JoltOpeningId>,
+}
+
+pub fn bytecode_read_raf_address_phase_opening() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::BytecodeReadRafAddrClaim,
+        JoltRelationId::BytecodeReadRaf,
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -385,16 +455,6 @@ fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
         .and_then(|register| eq.get(register as usize))
         .copied()
         .unwrap_or_else(F::zero)
-}
-
-fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
-    if values.len() < expected {
-        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
-            expected,
-            got: values.len(),
-        });
-    }
-    Ok(())
 }
 
 pub fn read_raf_input_openings() -> BytecodeReadRafInputOpenings {

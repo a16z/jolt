@@ -9,6 +9,7 @@ use crate::zkvm::verifier::BlindfoldSetup;
 use crate::guest::program::Program;
 use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
+use crate::zkvm::program::ProgramPreprocessing;
 use crate::zkvm::proof_serialization::JoltProof;
 use crate::zkvm::verifier::JoltSharedPreprocessing;
 use crate::zkvm::verifier::JoltVerifier;
@@ -42,13 +43,12 @@ fn preprocess_shared(
     let mut memory_config = guest.memory_config;
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
-    JoltSharedPreprocessing::new(
-        bytecode,
+    let program = ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
+    Ok(JoltSharedPreprocessing::new(
+        program,
         memory_layout,
-        memory_init,
         max_trace_length,
-        e_entry,
-    )
+    ))
 }
 
 pub fn verify<

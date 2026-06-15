@@ -1,0 +1,43 @@
+[package]
+name = "jolt-inlines-fixtures"
+version = "0.1.0"
+edition = "2021"
+description = "Fixture tests for registered Jolt inline expansion"
+license = "MIT"
+homepage = "https://github.com/a16z/jolt/README.md"
+repository = "https://github.com/a16z/jolt"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+host = [
+  "jolt-inlines-bigint/host",
+  "jolt-inlines-blake2/host",
+  "jolt-inlines-blake3/host",
+  "jolt-inlines-grumpkin/host",
+  "jolt-inlines-keccak256/host",
+  "jolt-inlines-p256/host",
+  "jolt-inlines-secp256k1/host",
+  "jolt-inlines-sha2/host",
+]
+
+[dependencies]
+hex.workspace = true
+inventory.workspace = true
+jolt-inlines-bigint.workspace = true
+jolt-inlines-blake2.workspace = true
+jolt-inlines-blake3.workspace = true
+jolt-inlines-grumpkin.workspace = true
+jolt-inlines-keccak256.workspace = true
+jolt-inlines-p256.workspace = true
+jolt-inlines-secp256k1.workspace = true
+jolt-inlines-sha2.workspace = true
+jolt-program = { workspace = true, features = ["serialization"] }
+jolt-riscv = { workspace = true, features = ["serialization"] }
+serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+sha2.workspace = true
+tracer = { workspace = true, features = ["std"] }

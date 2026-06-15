@@ -25,6 +25,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
   "crates/jolt-claims",
+  "crates/jolt-blindfold",
   "crates/jolt-crypto",
   "crates/jolt-program",
   "crates/jolt-poly",
@@ -32,6 +33,7 @@ members = [
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
+  "crates/jolt-verifier",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
@@ -45,6 +47,7 @@ members = [
   "jolt-sdk",
   "jolt-sdk/macros",
   "jolt-inlines/sdk",
+  "jolt-inlines/fixtures",
   "jolt-inlines/sha2",
   "jolt-inlines/keccak256",
   "jolt-inlines/blake2",
@@ -103,6 +106,7 @@ members = [
   "examples/modinv/guest",
   "examples/advice-demo",
   "examples/advice-demo/guest",
+  "examples/advice-consumer/guest",
   "examples/sig-recovery/host",
   "examples/sig-recovery/guest",
   "zklean-extractor",
@@ -163,12 +167,12 @@ lto = "fat"
 strip = false
 codegen-units = 1
 
-[patch.crates-io]
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+[replace]
+"ark-bn254:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"ark-ff:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+"allocative:0.3.4" = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -250,11 +254,14 @@ ark-secp256r1 = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
-sha3 = "0.11"
+sha3 = "=0.11.0-rc.9"
 blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
+spongefish = { version = "0.6.1", default-features = false, features = [
+  "sha3",
+] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.3.0", features = [
   "backends",
@@ -286,7 +293,7 @@ rand_distr = "0.4.3"
 
 # Serialization
 serde = { version = "1.0", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0.108", default-features = false }
+serde_json = { version = "1.0.150", default-features = false }
 rmp-serde = "1.3.0"
 bincode = { version = "2", features = ["serde"] }
 postcard = { version = "1.0.8", default-features = false, features = [
@@ -351,7 +358,7 @@ spinners = { version = "4.2.0", default-features = false }
 # Testing
 criterion = { version = "0.8.2", features = ["html_reports"] }
 iai-callgrind = "0.16.1"
-serial_test = "3.4.0"
+serial_test = "3.5.0"
 
 # Logging
 log = { version = "0.4" }
@@ -367,7 +374,7 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.3", features = ["rayon", "serde"] }
+reth-primitives-traits = { version = "0.4", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
@@ -377,10 +384,12 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
+jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
+jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }

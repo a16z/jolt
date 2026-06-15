@@ -1,7 +1,7 @@
 //! Lookup-table-related traits.
 
 use jolt_field::Field;
-use jolt_riscv::{JoltInstruction, JoltInstructionRowData};
+use jolt_riscv::{JoltInstruction, JoltTraceRow};
 use std::fmt::Debug;
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -34,7 +34,7 @@ macro_rules! impl_jolt_instruction_lookup_table {
     (
         instructions: [$($kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
-        impl<const XLEN: usize, T: JoltInstructionRowData> InstructionLookupTable<XLEN>
+        impl<const XLEN: usize, T> InstructionLookupTable<XLEN>
             for JoltInstruction<T>
         {
             #[inline]
@@ -52,11 +52,17 @@ macro_rules! impl_jolt_instruction_lookup_table {
 
 jolt_riscv::for_each_jolt_instruction_kind!(impl_jolt_instruction_lookup_table);
 
+impl<const XLEN: usize> InstructionLookupTable<XLEN> for JoltTraceRow {
+    #[inline]
+    fn lookup_table(&self) -> Option<LookupTableKind<XLEN>> {
+        let instruction = self.instruction_kind()?;
+        InstructionLookupTable::<XLEN>::lookup_table(&instruction)
+    }
+}
+
 macro_rules! impl_lookup_table {
     ($instr:ident, Some($table:ident)) => {
-        impl<const XLEN: usize, T: jolt_riscv::JoltInstructionRowData>
-            $crate::traits::InstructionLookupTable<XLEN> for $instr<T>
-        {
+        impl<const XLEN: usize, T> $crate::traits::InstructionLookupTable<XLEN> for $instr<T> {
             #[inline]
             fn lookup_table(&self) -> Option<$crate::tables::LookupTableKind<XLEN>> {
                 Some($crate::tables::LookupTableKind::$table(
@@ -66,9 +72,7 @@ macro_rules! impl_lookup_table {
         }
     };
     ($instr:ident, None) => {
-        impl<const XLEN: usize, T: jolt_riscv::JoltInstructionRowData>
-            $crate::traits::InstructionLookupTable<XLEN> for $instr<T>
-        {
+        impl<const XLEN: usize, T> $crate::traits::InstructionLookupTable<XLEN> for $instr<T> {
             #[inline]
             fn lookup_table(&self) -> Option<$crate::tables::LookupTableKind<XLEN>> {
                 None

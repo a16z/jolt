@@ -1,18 +1,72 @@
 use std::collections::VecDeque;
 
 pub use num_bigint::BigUint as NBigUint;
-use tracer::utils::inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs};
+use tracer::{
+    instruction::inline::INLINE,
+    utils::{
+        inline_sequence_writer::{write_inline_trace, InlineDescriptor, SequenceInputs},
+        virtual_registers::VirtualRegisterAllocator,
+    },
+};
 
 pub use inventory;
+pub use jolt_program::expand::{
+    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
+    InlineRegister, Value,
+};
 pub use tracer::emulator::cpu::Cpu;
-pub use tracer::instruction;
 pub use tracer::instruction::format::format_inline::FormatInline;
 pub use tracer::instruction::inline::InlineRegistration;
-pub use tracer::instruction::Instruction;
-pub use tracer::utils::inline_helpers::{InstrAssembler, Value};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
-pub use tracer::utils::virtual_registers::VirtualRegisterGuard;
 pub use tracer::InlineExtension;
+
+pub mod instruction {
+    macro_rules! alias_instruction {
+        ($module:ident, $alias:ident, $target:ident) => {
+            pub mod $module {
+                pub use jolt_riscv::instructions::$target as $alias;
+            }
+        };
+    }
+
+    alias_instruction!(add, ADD, Add);
+    alias_instruction!(addi, ADDI, Addi);
+    alias_instruction!(and, AND, And);
+    alias_instruction!(andi, ANDI, AndI);
+    alias_instruction!(andn, ANDN, Andn);
+    alias_instruction!(ld, LD, Ld);
+    alias_instruction!(lui, LUI, Lui);
+    alias_instruction!(lw, LW, Lw);
+    alias_instruction!(mul, MUL, Mul);
+    alias_instruction!(mulhu, MULHU, MulHU);
+    alias_instruction!(or, OR, Or);
+    alias_instruction!(sd, SD, Sd);
+    alias_instruction!(slli, SLLI, SllI);
+    alias_instruction!(sltu, SLTU, SltU);
+    alias_instruction!(srli, SRLI, SrlI);
+    alias_instruction!(srliw, SRLIW, SrlIW);
+    alias_instruction!(sub, SUB, Sub);
+    alias_instruction!(virtual_advice, VirtualAdvice, VirtualAdvice);
+    alias_instruction!(virtual_assert_eq, VirtualAssertEQ, AssertEq);
+    alias_instruction!(virtual_assert_lte, VirtualAssertLTE, AssertLte);
+    pub mod virtual_xor_rot {
+        pub use jolt_riscv::instructions::VirtualXorRot16 as VirtualXORROT16;
+        pub use jolt_riscv::instructions::VirtualXorRot24 as VirtualXORROT24;
+        pub use jolt_riscv::instructions::VirtualXorRot32 as VirtualXORROT32;
+        pub use jolt_riscv::instructions::VirtualXorRot63 as VirtualXORROT63;
+    }
+    pub mod virtual_xor_rotw {
+        pub use jolt_riscv::instructions::VirtualXorRotW12 as VirtualXORROTW12;
+        pub use jolt_riscv::instructions::VirtualXorRotW16 as VirtualXORROTW16;
+        pub use jolt_riscv::instructions::VirtualXorRotW7 as VirtualXORROTW7;
+        pub use jolt_riscv::instructions::VirtualXorRotW8 as VirtualXORROTW8;
+    }
+    alias_instruction!(
+        virtual_zero_extend_word,
+        VirtualZeroExtendWord,
+        VirtualZeroExtendWord
+    );
+}
 
 /// Convert a slice of `u64` limbs (little-endian) to `NBigUint`.
 pub fn limbs_to_nbiguint(limbs: &[u64]) -> NBigUint {
@@ -109,18 +163,32 @@ pub fn mulq_advice(
 /// Implement this for each sub-inline (e.g. `Sha256Compression`, `Secp256k1MulQ`),
 /// then pass the types to [`register_inlines!`] to generate registration boilerplate.
 pub trait InlineOp: Send + Sync {
+    /// RISC-V custom opcode used to identify this inline.
     const OPCODE: u32;
+    /// RISC-V funct3 selector used with `OPCODE`.
     const FUNCT3: u32;
+    /// RISC-V funct7 selector used with `OPCODE` and `FUNCT3`.
     const FUNCT7: u32;
+    /// Human-readable registration name used in diagnostics and fixtures.
     const NAME: &'static str;
 
-    fn build_sequence(asm: InstrAssembler, operands: FormatInline) -> Vec<Instruction>;
+    /// Build the static expansion recipe for this inline.
+    ///
+    /// This method must be deterministic and tracer-free: it receives decoded
+    /// inline operands and records symbolic rows through `InlineExpansionBuilder`.
+    /// Runtime CPU state and concrete advice values belong in `build_advice`,
+    /// not in this static recipe.
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError>;
 
-    fn build_advice(
-        _asm: InstrAssembler,
-        _operands: FormatInline,
-        _cpu: &mut Cpu,
-    ) -> Option<VecDeque<u64>> {
+    /// Optionally compute runtime advice values for this inline.
+    ///
+    /// The returned values are consumed in order by `VirtualAdvice` rows emitted
+    /// by `build_sequence`. Returning `None` means the static recipe contains no
+    /// runtime-advice rows.
+    fn build_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Option<VecDeque<u64>> {
         None
     }
 }
@@ -129,15 +197,25 @@ pub trait InlineOp: Send + Sync {
 pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), String> {
     let inline_info = InlineDescriptor::new(T::NAME.to_string(), T::OPCODE, T::FUNCT3, T::FUNCT7);
     let inputs = SequenceInputs::default();
-    let instructions = T::build_sequence((&inputs).into(), (&inputs).into());
+    let inline = INLINE {
+        opcode: T::OPCODE,
+        funct3: T::FUNCT3,
+        funct7: T::FUNCT7,
+        address: inputs.address,
+        operands: (&inputs).into(),
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: inputs.is_compressed,
+    };
+    let instructions = inline.inline_sequence(&VirtualRegisterAllocator::default());
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 
-/// Extension trait adding paired u32 load/store helpers to [`InstrAssembler`].
+/// Extension trait adding paired u32 load/store helpers to [`InlineExpansionBuilder`].
 ///
 /// These combine two adjacent u32 values into a single 64-bit memory access,
 /// halving the number of load/store instructions for u32 arrays on RV64.
-pub trait InstrAssemblerExt {
+pub trait InlineBuilderExt {
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
@@ -147,7 +225,7 @@ pub trait InstrAssemblerExt {
     fn emit_advice_stores(&mut self, vr: u8, base_reg: u8, count: usize);
 }
 
-impl InstrAssemblerExt for InstrAssembler {
+impl InlineBuilderExt for InlineExpansionBuilder {
     /// Load two packed u32 from 8-byte aligned `base+offset` into `vr_lo` and `vr_hi`.
     /// Clean extraction: `vr_lo` gets zero-extended low 32 bits; `vr_hi` gets high 32 bits.
     /// Clobbers `temp` for the intermediate 64-bit load.
@@ -193,7 +271,7 @@ impl InstrAssemblerExt for InstrAssembler {
     }
 }
 
-/// Extension trait adding multiply-accumulate helpers to [`InstrAssembler`].
+/// Extension trait adding multiply-accumulate helpers to [`InlineExpansionBuilder`].
 ///
 /// These emit RISC-V instruction patterns for 64-bit multiply-accumulate with
 /// carry propagation, used by modular arithmetic inlines (secp256k1, P-256, etc.).
@@ -228,7 +306,7 @@ pub trait MulAccExt {
     fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8);
 }
 
-impl MulAccExt for InstrAssembler {
+impl MulAccExt for InlineExpansionBuilder {
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
         self.emit_r::<instruction::mul::MUL>(aux, a, b);
         self.emit_r::<instruction::add::ADD>(c1, c1, aux);
@@ -383,12 +461,12 @@ macro_rules! __submit_inline_op {
             $crate::host::InlineRegistration {
                 opcode: <$op as $crate::host::InlineOp>::OPCODE,
                 funct3: <$op as $crate::host::InlineOp>::FUNCT3,
-                funct7: <$op as $crate::host::InlineOp>::FUNCT7,
-                extension: $extension,
-                name: <$op as $crate::host::InlineOp>::NAME,
-                build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
-                build_advice: <$op as $crate::host::InlineOp>::build_advice,
-            }
+            funct7: <$op as $crate::host::InlineOp>::FUNCT7,
+            extension: $extension,
+            name: <$op as $crate::host::InlineOp>::NAME,
+            build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
+            build_advice: <$op as $crate::host::InlineOp>::build_advice,
+        }
         }
     };
 }

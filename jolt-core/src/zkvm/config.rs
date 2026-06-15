@@ -1,5 +1,8 @@
 use allocative::Allocative;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
+};
+use std::io::{Read, Write};
 
 use crate::field::JoltField;
 use crate::utils::math::Math;
@@ -17,6 +20,52 @@ pub fn get_instruction_sumcheck_phases(log_t: usize) -> usize {
         16
     } else {
         8
+    }
+}
+
+/// Controls how bytecode and program-image data are handled by the verifier.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Allocative, Default)]
+pub enum ProgramMode {
+    /// Verifier has full bytecode and program image available.
+    #[default]
+    Full = 0,
+    /// Verifier uses commitments for bytecode/program-image openings in Stage 8.
+    Committed = 1,
+}
+
+impl CanonicalSerialize for ProgramMode {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        (*self as u8).serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        (*self as u8).serialized_size(compress)
+    }
+}
+
+impl Valid for ProgramMode {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for ProgramMode {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = u8::deserialize_with_mode(reader, compress, validate)?;
+        match value {
+            0 => Ok(Self::Full),
+            1 => Ok(Self::Committed),
+            _ => Err(SerializationError::InvalidData),
+        }
     }
 }
 
@@ -90,15 +139,6 @@ impl ReadWriteConfig {
             ));
         }
         Ok(())
-    }
-
-    /// Returns true if all cycle variables are bound in phase 1.
-    ///
-    /// When this returns true, the advice opening points for `RamValCheck` and
-    /// `RamValCheck` are identical, so we only need one advice opening.
-    #[inline]
-    pub fn needs_single_advice_opening(&self, log_T: usize) -> bool {
-        self.ram_rw_phase1_num_rounds as usize == log_T
     }
 }
 
@@ -200,14 +240,14 @@ impl OneHotConfig {
 /// Full one-hot parameters with cached derived values.
 ///
 /// This struct is NOT serialized in the proof. It is constructed by the prover
-/// and verifier from `OneHotConfig`, `bytecode_K` (from preprocessing), and `ram_K` (from proof).
+/// and verifier from `OneHotConfig`, `bytecode_len` (from preprocessing), and `ram_K` (from proof).
 #[derive(Allocative, Clone, Debug, Default)]
 pub struct OneHotParams {
     pub log_k_chunk: usize,
     pub lookups_ra_virtual_log_k_chunk: usize,
     pub k_chunk: usize,
 
-    pub bytecode_k: usize,
+    pub bytecode_len: usize,
     pub ram_k: usize,
 
     pub instruction_d: usize,
@@ -224,12 +264,12 @@ impl OneHotParams {
     ///
     /// This is used by the verifier to reconstruct the full params from
     /// the minimal config stored in the proof.
-    pub fn from_config(config: &OneHotConfig, bytecode_k: usize, ram_k: usize) -> Self {
+    pub fn from_config(config: &OneHotConfig, bytecode_len: usize, ram_k: usize) -> Self {
         let log_k_chunk = config.log_k_chunk as usize;
         let lookups_ra_virtual_log_k_chunk = config.lookups_ra_virtual_log_k_chunk as usize;
 
         let instruction_d = LOG_K.div_ceil(log_k_chunk);
-        let bytecode_d = bytecode_k.log_2().div_ceil(log_k_chunk);
+        let bytecode_d = bytecode_len.log_2().div_ceil(log_k_chunk);
         let ram_d = ram_k.log_2().div_ceil(log_k_chunk);
 
         let instruction_shifts = (0..instruction_d)
@@ -244,7 +284,7 @@ impl OneHotParams {
             log_k_chunk,
             lookups_ra_virtual_log_k_chunk,
             k_chunk: 1 << log_k_chunk,
-            bytecode_k,
+            bytecode_len,
             ram_k,
             instruction_d,
             bytecode_d,
@@ -258,9 +298,9 @@ impl OneHotParams {
     /// Create OneHotParams for the given trace parameters using default config.
     ///
     /// This is a convenience constructor for the prover.
-    pub fn new(log_T: usize, bytecode_k: usize, ram_k: usize) -> Self {
+    pub fn new(log_T: usize, bytecode_len: usize, ram_k: usize) -> Self {
         let config = OneHotConfig::new(log_T);
-        Self::from_config(&config, bytecode_k, ram_k)
+        Self::from_config(&config, bytecode_len, ram_k)
     }
 
     /// Extract the minimal config for serialization in the proof.

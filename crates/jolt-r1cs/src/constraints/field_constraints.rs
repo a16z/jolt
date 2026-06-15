@@ -140,7 +140,7 @@ fn append_product_constraints<F: Field>(
 ///
 /// Product constraints are intentionally excluded for consumers that handle the
 /// field multiplication checks in a separate protocol step.
-pub fn field_eq_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = field_eq_constraint_rows();
     crate::ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
@@ -156,7 +156,7 @@ pub fn field_eq_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 /// Returns 10 constraints over 17 variables per cycle:
 /// - 8 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
-pub fn field_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = field_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -209,7 +209,7 @@ mod tests {
             &[(V_IS_FIELD_ADD, one())],
         );
 
-        field_constraints::<Fr>()
+        field_inline_trace_constraints::<Fr>()
             .check_witness(&witness)
             .expect("FADD witness satisfies constraints");
     }
@@ -223,7 +223,7 @@ mod tests {
             &[(V_IS_FIELD_SUB, one())],
         );
 
-        field_constraints::<Fr>()
+        field_inline_trace_constraints::<Fr>()
             .check_witness(&witness)
             .expect("FSUB witness satisfies constraints");
     }
@@ -237,7 +237,7 @@ mod tests {
             &[(V_IS_FIELD_MUL, one())],
         );
 
-        field_constraints::<Fr>()
+        field_inline_trace_constraints::<Fr>()
             .check_witness(&witness)
             .expect("FMUL witness satisfies constraints");
     }
@@ -252,7 +252,7 @@ mod tests {
         );
 
         assert_eq!(
-            field_constraints::<Fr>().check_witness(&witness),
+            field_inline_trace_constraints::<Fr>().check_witness(&witness),
             Err(ROW_FMUL)
         );
     }
@@ -263,7 +263,7 @@ mod tests {
         witness[V_FIELD_PRODUCT] = Fr::from_u64(34);
 
         assert_eq!(
-            field_constraints::<Fr>().check_witness(&witness),
+            field_inline_trace_constraints::<Fr>().check_witness(&witness),
             Err(ROW_FIELD_PRODUCT)
         );
     }
@@ -272,7 +272,7 @@ mod tests {
     fn inactive_field_mul_does_not_pin_destination_to_product() {
         let witness = witness(Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(99), &[]);
 
-        field_constraints::<Fr>()
+        field_inline_trace_constraints::<Fr>()
             .check_witness(&witness)
             .expect("inactive FMUL guard leaves destination unconstrained");
     }
@@ -290,7 +290,7 @@ mod tests {
             &[(V_IS_FIELD_INV, one())],
         );
 
-        field_constraints::<Fr>()
+        field_inline_trace_constraints::<Fr>()
             .check_witness(&witness)
             .expect("FINV witness satisfies constraints");
     }
@@ -305,7 +305,7 @@ mod tests {
         );
 
         assert_eq!(
-            field_constraints::<Fr>().check_witness(&witness),
+            field_inline_trace_constraints::<Fr>().check_witness(&witness),
             Err(ROW_FINV)
         );
     }
@@ -319,7 +319,7 @@ mod tests {
             &[(V_IS_FIELD_ASSERT_EQ, one())],
         );
 
-        field_constraints::<Fr>()
+        field_inline_trace_constraints::<Fr>()
             .check_witness(&witness)
             .expect("ASSERT_EQ witness satisfies constraints");
     }
@@ -336,10 +336,10 @@ mod tests {
             V_IS_FIELD_STORE_TO_X,
             V_IS_FIELD_LOAD_IMM,
         ] {
-            let mut selected = witness.clone();
-            selected[selector] = one();
-            field_constraints::<Fr>()
-                .check_witness(&selected)
+            let mut active = witness.clone();
+            active[selector] = one();
+            field_inline_trace_constraints::<Fr>()
+                .check_witness(&active)
                 .expect("native identity bridge witness satisfies constraints");
         }
     }
