@@ -2,22 +2,30 @@ use std::any::Any;
 use std::sync::OnceLock;
 
 use jolt_field::{Field, Fr};
-use jolt_poly::UnivariatePoly;
+use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
+use jolt_poly::{EqPolynomial, UnivariatePoly};
 
 use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec};
 use crate::dense::bind_dense_evals_reuse_cuda;
-use crate::stage1::{Stage1KernelError, Stage1RemainingRoundProof};
+use crate::stage1::{
+    Stage1KernelError, Stage1OuterR1csData, Stage1OuterRemainingContext, Stage1RemainingRoundProof,
+    OUTER_FIRST_GROUP_ROWS, OUTER_SECOND_GROUP_ROWS, OUTER_UNISKIP_BASE_START,
+    OUTER_UNISKIP_DOMAIN_SIZE,
+};
 
-fn context() -> Option<&'static CudaKernelContext> {
+fn ctx() -> Option<&'static CudaKernelContext> {
     static CTX: OnceLock<Option<CudaKernelContext>> = OnceLock::new();
     CTX.get_or_init(|| CudaKernelContext::new(0).ok()).as_ref()
 }
 
-fn into_fr_vec<F: Field>(values: Vec<F>) -> Option<Vec<Fr>> {
-    (Box::new(values) as Box<dyn Any>)
-        .downcast::<Vec<Fr>>()
-        .ok()
-        .map(|boxed| *boxed)
+fn as_fr_slice<F: Field>(values: &[F]) -> Option<&[Fr]> {
+    if std::any::TypeId::of::<F>() == std::any::TypeId::of::<Fr>() {
+        // SAFETY: F and Fr are the same type (checked above), so &[F] and &[Fr]
+        // have identical layout.
+        Some(unsafe { &*(std::ptr::from_ref::<[F]>(values) as *const [Fr]) })
+    } else {
+        None
+    }
 }
 
 fn into_fr<F: Field>(value: F) -> Option<Fr> {
@@ -35,20 +43,49 @@ fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>>
 }
 
 pub fn prove_remaining_rounds_cuda<F: Field>(
-    eq: &[F],
-    az: &[F],
-    bz: &[F],
+    data: &Stage1OuterR1csData<'_, F>,
+    context: Stage1OuterRemainingContext<'_, F>,
     num_rounds: usize,
     batching_coeff: F,
     initial_claim: F,
     observe_round: &mut dyn FnMut(&UnivariatePoly<F>) -> F,
 ) -> Option<Stage1RemainingRoundProof<F>> {
-    let ctx = context()?;
-    let eq = into_fr_vec(eq.to_vec())?;
-    let az = into_fr_vec(az.to_vec())?;
-    let bz = into_fr_vec(bz.to_vec())?;
+    let ctx = ctx()?;
 
-    let mut state = match CudaDenseOuterState::from_host(ctx, &eq, &az, &bz) {
+    let tau_high = context.tau[context.tau.len() - 1];
+    let tau_low = &context.tau[..context.tau.len() - 1];
+    let lagrange_tau_r0 = lagrange_kernel_eval(
+        OUTER_UNISKIP_BASE_START,
+        OUTER_UNISKIP_DOMAIN_SIZE,
+        tau_high,
+        context.r0,
+    );
+    let weights = lagrange_evals(OUTER_UNISKIP_BASE_START, OUTER_UNISKIP_DOMAIN_SIZE, context.r0);
+    let scale = lagrange_tau_r0 * batching_coeff;
+    let eq_evals = EqPolynomial::new(tau_low.to_vec()).evaluations();
+    let first_group_rows: Vec<u32> = OUTER_FIRST_GROUP_ROWS.iter().map(|&r| r as u32).collect();
+    let second_group_rows: Vec<u32> = OUTER_SECOND_GROUP_ROWS.iter().map(|&r| r as u32).collect();
+
+    let row_dots = &data.row_dots;
+    let eq_evals = as_fr_slice(&eq_evals)?;
+    let scale = into_fr(scale)?;
+    let weights = as_fr_slice(&weights)?;
+    let row_dots_a = as_fr_slice(row_dots.a())?;
+    let row_dots_b = as_fr_slice(row_dots.b())?;
+
+    let mut state = match CudaDenseOuterState::from_row_dots(
+        ctx,
+        DenseOuterInputs {
+            eq_evals,
+            scale,
+            weights,
+            row_dots_a,
+            row_dots_b,
+            row_count: row_dots.row_count(),
+            first_group_rows: &first_group_rows,
+            second_group_rows: &second_group_rows,
+        },
+    ) {
         Ok(state) => state,
         Err(error) => return Some(Err(cuda_error(error))),
     };

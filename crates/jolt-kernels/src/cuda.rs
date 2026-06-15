@@ -686,6 +686,23 @@ impl CudaKernelContext {
         Ok((make(eq, len), make(az, len), make(bz, len)))
     }
 
+    #[expect(clippy::todo, clippy::too_many_arguments, unused_variables)]
+    pub fn compute_row_dots(
+        &self,
+        witness: &[Fr],
+        a_offsets: &[u32],
+        a_vars: &[u32],
+        a_coeffs: &[Fr],
+        b_offsets: &[u32],
+        b_vars: &[u32],
+        b_coeffs: &[Fr],
+        row_count: usize,
+        num_vars_padded: usize,
+        num_cycles: usize,
+    ) -> Result<(Vec<Fr>, Vec<Fr>), CudaError> {
+        todo!()
+    }
+
     fn map(&self, func: &CudaFunction, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
         assert_eq!(a.len, b.len, "map operands must have equal length");
         let n = a.len;
@@ -1083,6 +1100,105 @@ mod tests {
             c[3] += eqd * azdbzd;
         }
         c
+    }
+
+    struct Csr {
+        offsets: Vec<u32>,
+        vars: Vec<u32>,
+        coeffs: Vec<Fr>,
+    }
+
+    // `rows` lists each row's (var, coeff) nonzeros.
+    fn build_csr(rows: &[Vec<(u32, Fr)>]) -> Csr {
+        let mut offsets = vec![0u32];
+        let mut vars = Vec::new();
+        let mut coeffs = Vec::new();
+        for row in rows {
+            for &(var, coeff) in row {
+                vars.push(var);
+                coeffs.push(coeff);
+            }
+            offsets.push(vars.len() as u32);
+        }
+        Csr {
+            offsets,
+            vars,
+            coeffs,
+        }
+    }
+
+    fn cpu_row_dots(
+        witness: &[Fr],
+        csr: &Csr,
+        row_count: usize,
+        num_vars_padded: usize,
+        num_cycles: usize,
+    ) -> Vec<Fr> {
+        let mut out = vec![Fr::zero(); num_cycles * row_count];
+        for cycle in 0..num_cycles {
+            let base = cycle * num_vars_padded;
+            for row in 0..row_count {
+                let start = csr.offsets[row] as usize;
+                let end = csr.offsets[row + 1] as usize;
+                let mut acc = Fr::zero();
+                for k in start..end {
+                    acc += csr.coeffs[k] * witness[base + csr.vars[k] as usize];
+                }
+                out[cycle * row_count + row] = acc;
+            }
+        }
+        out
+    }
+
+    const ROW_DOTS_NUM_VARS: usize = 32;
+
+    fn row_strategy() -> impl Strategy<Value = Vec<(u32, Fr)>> {
+        prop::collection::vec(
+            (0u32..ROW_DOTS_NUM_VARS as u32, fr_strategy()),
+            0..6,
+        )
+    }
+
+    proptest! {
+        #[test]
+        #[ignore = "CudaKernelContext::compute_row_dots is todo!()"]
+        fn compute_row_dots_matches_cpu(
+            log_cycles in 0usize..8,
+            a_rows in prop::collection::vec(row_strategy(), 1..24),
+            b_rows in prop::collection::vec(row_strategy(), 1..24),
+            seed in fr_strategy(),
+        ) {
+            let row_count = a_rows.len().min(b_rows.len());
+            let a = build_csr(&a_rows[..row_count]);
+            let b = build_csr(&b_rows[..row_count]);
+
+            let num_cycles = 1usize << log_cycles;
+            let num_vars_padded = ROW_DOTS_NUM_VARS.next_power_of_two();
+            let witness: Vec<Fr> = (0..num_cycles * num_vars_padded)
+                .map(|i| seed + Fr::from_u64(i as u64))
+                .collect();
+
+            let expected_a = cpu_row_dots(&witness, &a, row_count, num_vars_padded, num_cycles);
+            let expected_b = cpu_row_dots(&witness, &b, row_count, num_vars_padded, num_cycles);
+
+            let c = ctx();
+            let (got_a, got_b) = c
+                .compute_row_dots(
+                    &witness,
+                    &a.offsets,
+                    &a.vars,
+                    &a.coeffs,
+                    &b.offsets,
+                    &b.vars,
+                    &b.coeffs,
+                    row_count,
+                    num_vars_padded,
+                    num_cycles,
+                )
+                .unwrap();
+            prop_assert_eq!(got_a, expected_a);
+            prop_assert_eq!(got_b, expected_b);
+        }
     }
 
     #[test]

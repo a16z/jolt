@@ -57,6 +57,16 @@ impl<F: Field> R1csRowDotTable<F> {
     }
 
     #[inline]
+    pub fn a(&self) -> &[F] {
+        &self.a
+    }
+
+    #[inline]
+    pub fn b(&self) -> &[F] {
+        &self.b
+    }
+
+    #[inline]
     pub fn cycle(&self, cycle: usize) -> R1csRowDotSlice<'_, F> {
         assert!(cycle < self.cycle_count, "cycle index out of bounds");
         let start = cycle * self.row_count;

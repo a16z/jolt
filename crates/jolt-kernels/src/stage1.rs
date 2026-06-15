@@ -16,16 +16,16 @@ use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 mod rv64_typed;
 pub use rv64_typed::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 
-const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
+pub(crate) const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
 const OUTER_UNISKIP_DEGREE: usize = 9;
 const OUTER_UNISKIP_EXTENDED_SIZE: usize = 19;
 const OUTER_UNISKIP_NUM_COEFFS: usize = 28;
 const OUTER_UNISKIP_DEGREE_BOUND: usize = OUTER_UNISKIP_NUM_COEFFS - 1;
 const OUTER_UNISKIP_EXTENDED_START: i64 = -(OUTER_UNISKIP_DEGREE as i64);
-const OUTER_UNISKIP_BASE_START: i64 = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
+pub(crate) const OUTER_UNISKIP_BASE_START: i64 = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
-const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
+pub(crate) const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+pub(crate) const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
 const OUTER_EQ_CONSTRAINT_ROWS: usize =
     OUTER_FIRST_GROUP_ROWS.len() + OUTER_SECOND_GROUP_ROWS.len();
 const OUTER_UNISKIP_TARGET_COEFFS: [[i64; OUTER_UNISKIP_DOMAIN_SIZE]; OUTER_UNISKIP_DEGREE] = [
@@ -364,7 +364,7 @@ impl<'a, F: Field> Stage1ProverInputs<'a, F> {
 pub struct Stage1OuterR1csData<'a, F: Field> {
     pub key: &'a R1csKey<F>,
     pub witness: &'a [F],
-    row_dots: R1csRowDotTable<F>,
+    pub(crate) row_dots: R1csRowDotTable<F>,
 }
 
 impl<'a, F: Field> Stage1OuterR1csData<'a, F> {
@@ -726,14 +726,11 @@ impl<F: Field> Stage1OuterRemainingEvaluator<F> for Stage1OuterR1csData<'_, F> {
         initial_claim: F,
         observe_round: &mut dyn FnMut(&UnivariatePoly<F>) -> F,
     ) -> Option<Stage1RemainingRoundProof<F>> {
-        let mut state = self.dense_outer_state(context, num_rounds, batching_coeff);
-
         #[cfg(feature = "cuda")]
         if context.backend == "cuda" {
             if let Some(result) = crate::cuda_stage1::prove_remaining_rounds_cuda(
-                &state.eq,
-                &state.az,
-                &state.bz,
+                self,
+                context,
                 num_rounds,
                 batching_coeff,
                 initial_claim,
@@ -743,6 +740,7 @@ impl<F: Field> Stage1OuterRemainingEvaluator<F> for Stage1OuterR1csData<'_, F> {
             }
         }
 
+        let mut state = self.dense_outer_state(context, num_rounds, batching_coeff);
         let mut running_sum = initial_claim * batching_coeff;
         let mut point = Vec::with_capacity(num_rounds);
         let mut round_polynomials = Vec::with_capacity(num_rounds);

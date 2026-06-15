@@ -89,7 +89,7 @@ impl Stage1Rv64Cycle {
 
 #[derive(Debug)]
 pub struct Stage1OuterRv64Data<'a> {
-    field_data: Stage1OuterR1csData<'a, Fr>,
+    pub(crate) field_data: Stage1OuterR1csData<'a, Fr>,
     cycles: &'a [Stage1Rv64Cycle],
 }
 
@@ -289,6 +289,20 @@ impl Stage1OuterRemainingEvaluator<Fr> for Stage1OuterRv64Data<'_> {
         initial_claim: Fr,
         observe_round: &mut dyn FnMut(&UnivariatePoly<Fr>) -> Fr,
     ) -> Option<Stage1RemainingRoundProof<Fr>> {
+        #[cfg(feature = "cuda")]
+        if context.backend == "cuda" {
+            if let Some(result) = crate::cuda_stage1::prove_remaining_rounds_cuda(
+                &self.field_data,
+                context,
+                num_rounds,
+                batching_coeff,
+                initial_claim,
+                observe_round,
+            ) {
+                return Some(result);
+            }
+        }
+
         let mut state = self.dense_outer_state(context, num_rounds, batching_coeff);
         let mut running_sum = initial_claim * batching_coeff;
         let mut point = Vec::with_capacity(num_rounds);
