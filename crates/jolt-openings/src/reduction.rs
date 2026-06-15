@@ -2,7 +2,7 @@
 
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
 use crate::claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 use crate::error::OpeningsError;
@@ -11,36 +11,48 @@ use jolt_crypto::HomomorphicCommitment;
 
 /// Groups claims by point, draws ρ per group, combines: p = Σ ρ^i · p_i.
 #[tracing::instrument(skip_all, name = "reduce_prover")]
-pub fn reduce_prover<F: Field, T: Transcript<Challenge = F>>(
-    claims: Vec<ProverOpeningClaim<F>>,
+pub fn reduce_prover<PCS, T>(
+    claims: Vec<ProverOpeningClaim<PCS::Field, PCS::Output>>,
     transcript: &mut T,
-) -> Vec<ProverOpeningClaim<F>> {
+) -> Vec<ProverOpeningClaim<PCS::Field, PCS::Output>>
+where
+    PCS: AdditivelyHomomorphic,
+    PCS::Output: HomomorphicCommitment<PCS::Field> + AppendToTranscript,
+    T: Transcript<Challenge = PCS::Field>,
+{
     if claims.is_empty() {
         return Vec::new();
     }
 
     transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
     for claim in &claims {
-        claim.evaluation.value.append_to_transcript(transcript);
+        append_evaluation_claim(&claim.evaluation, transcript);
+        transcript.append(&Label(b"rlc_claim_commitment"));
+        claim.commitment.append_to_transcript(transcript);
     }
 
     let groups = group_prover_claims_by_point(claims);
     let mut reduced = Vec::with_capacity(groups.len());
 
     for (point, group_claims) in groups {
-        let rho: F = transcript.challenge();
+        let rho: PCS::Field = transcript.challenge();
 
-        let eval_slices: Vec<&[F]> = group_claims
+        let eval_slices: Vec<&[PCS::Field]> = group_claims
             .iter()
             .map(|c| c.polynomial.evaluations())
             .collect();
-        let evals: Vec<F> = group_claims.iter().map(|c| c.evaluation.value).collect();
+        let commitments: Vec<PCS::Output> =
+            group_claims.iter().map(|c| c.commitment.clone()).collect();
+        let evals: Vec<PCS::Field> = group_claims.iter().map(|c| c.evaluation.value).collect();
 
+        let powers = rho_powers(rho, commitments.len());
         let combined_evals = rlc_combine(&eval_slices, rho);
+        let combined_commitment = PCS::combine(&commitments, &powers);
         let combined_eval = rlc_combine_scalars(&evals, rho);
 
         reduced.push(ProverOpeningClaim {
             polynomial: combined_evals.into(),
+            commitment: combined_commitment,
             evaluation: EvaluationClaim::new(point, combined_eval),
         });
     }
@@ -60,7 +72,7 @@ pub fn reduce_verifier<PCS, T>(
 ) -> Result<Vec<VerifierOpeningClaim<PCS::Field, PCS::Output>>, OpeningsError>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Output: HomomorphicCommitment<PCS::Field>,
+    PCS::Output: HomomorphicCommitment<PCS::Field> + AppendToTranscript,
     T: Transcript<Challenge = PCS::Field>,
 {
     if claims.is_empty() {
@@ -69,7 +81,9 @@ where
 
     transcript.append(&LabelWithCount(b"rlc_claims", claims.len() as u64));
     for claim in &claims {
-        claim.evaluation.value.append_to_transcript(transcript);
+        append_evaluation_claim(&claim.evaluation, transcript);
+        transcript.append(&Label(b"rlc_claim_commitment"));
+        claim.commitment.append_to_transcript(transcript);
     }
 
     let groups = group_verifier_claims_by_point(claims);
@@ -133,13 +147,29 @@ fn rho_powers<F: Field>(rho: F, n: usize) -> Vec<F> {
         .collect()
 }
 
-type PointGroup<F, P> = Vec<(Point<HIGH_TO_LOW, F>, Vec<ProverOpeningClaim<F, P>>)>;
 type VerifierPointGroup<F, C> = Vec<(Point<HIGH_TO_LOW, F>, Vec<VerifierOpeningClaim<F, C>>)>;
 
-fn group_prover_claims_by_point<F: Field, P>(
-    claims: Vec<ProverOpeningClaim<F, P>>,
-) -> PointGroup<F, P> {
-    let mut groups: PointGroup<F, P> = Vec::new();
+fn append_evaluation_claim<F: Field, T: Transcript<Challenge = F>>(
+    evaluation: &EvaluationClaim<F>,
+    transcript: &mut T,
+) {
+    transcript.append(&LabelWithCount(
+        b"rlc_claim_point",
+        evaluation.point.len() as u64,
+    ));
+    for coordinate in evaluation.point.as_slice() {
+        coordinate.append_to_transcript(transcript);
+    }
+    transcript.append(&Label(b"rlc_claim_eval"));
+    evaluation.value.append_to_transcript(transcript);
+}
+
+type PointGroup<F, C, P> = Vec<(Point<HIGH_TO_LOW, F>, Vec<ProverOpeningClaim<F, C, P>>)>;
+
+fn group_prover_claims_by_point<F: Field, C, P>(
+    claims: Vec<ProverOpeningClaim<F, C, P>>,
+) -> PointGroup<F, C, P> {
+    let mut groups: PointGroup<F, C, P> = Vec::new();
     for claim in claims {
         if let Some((_, group)) = groups
             .iter_mut()
@@ -255,10 +285,12 @@ mod tests {
         let claims = vec![
             ProverOpeningClaim {
                 polynomial: Polynomial::new(vec![Fr::from_u64(10)]),
+                commitment: (),
                 evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(10)),
             },
             ProverOpeningClaim {
                 polynomial: Polynomial::new(vec![Fr::from_u64(20)]),
+                commitment: (),
                 evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(20)),
             },
         ];
@@ -272,10 +304,12 @@ mod tests {
         let claims = vec![
             ProverOpeningClaim {
                 polynomial: Polynomial::new(vec![Fr::from_u64(10)]),
+                commitment: (),
                 evaluation: EvaluationClaim::new(vec![Fr::from_u64(1)], Fr::from_u64(10)),
             },
             ProverOpeningClaim {
                 polynomial: Polynomial::new(vec![Fr::from_u64(20)]),
+                commitment: (),
                 evaluation: EvaluationClaim::new(vec![Fr::from_u64(2)], Fr::from_u64(20)),
             },
         ];

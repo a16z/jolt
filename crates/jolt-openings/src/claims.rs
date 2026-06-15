@@ -19,10 +19,11 @@ impl<F> EvaluationClaim<F> {
     }
 }
 
-/// Prover-side opening claim: polynomial, evaluation point, and claimed value.
+/// Prover-side opening claim: polynomial, commitment, evaluation point, and claimed value.
 #[derive(Clone, Debug)]
-pub struct ProverOpeningClaim<F: Field, P = Polynomial<F>> {
+pub struct ProverOpeningClaim<F: Field, C, P = Polynomial<F>> {
     pub polynomial: P,
+    pub commitment: C,
     pub evaluation: EvaluationClaim<F>,
 }
 

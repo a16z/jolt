@@ -39,11 +39,12 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
 
     for (poly, point) in polys.iter().zip(points.iter()) {
         let eval = poly.evaluate(point);
+        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
         prover_claims.push(ProverOpeningClaim {
             polynomial: Polynomial::new(poly.evaluations().to_vec()),
+            commitment: commitment.clone(),
             evaluation: EvaluationClaim::new(point.clone(), eval),
         });
-        let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
         verifier_claims.push(VerifierOpeningClaim {
             commitment,
             evaluation: EvaluationClaim::new(point.clone(), eval),
@@ -52,7 +53,7 @@ fn reduce_open_verify<T: Transcript<Challenge = Fr>>(
 
     // Prover side
     let mut transcript_p = T::new(label);
-    let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
+    let reduced_p = reduce_prover::<MockPCS, _>(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {
@@ -136,38 +137,40 @@ fn rlc_rho_binds_claimed_evaluation() {
     let zero_poly = Polynomial::new(vec![Fr::from_u64(0), Fr::from_u64(0)]);
     let one_poly = Polynomial::new(vec![Fr::from_u64(1), Fr::from_u64(1)]);
     let point = vec![Fr::from_u64(3)];
+    let (zero_commitment, ()) = MockPCS::commit(zero_poly.evaluations(), &());
+    let (one_commitment, ()) = MockPCS::commit(one_poly.evaluations(), &());
 
     let claims = vec![
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: zero_poly.clone(),
-            point: point.clone(),
-            eval: Fr::from_u64(0),
+            commitment: zero_commitment.clone(),
+            evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(0)),
         },
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: one_poly.clone(),
-            point: point.clone(),
-            eval: Fr::from_u64(1),
+            commitment: one_commitment.clone(),
+            evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(1)),
         },
     ];
 
     let claims_with_different_eval = vec![
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: zero_poly,
-            point: point.clone(),
-            eval: Fr::from_u64(0),
+            commitment: zero_commitment,
+            evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(0)),
         },
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: one_poly,
-            point,
-            eval: Fr::from_u64(2),
+            commitment: one_commitment,
+            evaluation: EvaluationClaim::new(point, Fr::from_u64(2)),
         },
     ];
 
     let mut transcript = Blake2bTranscript::new(b"rlc-eval-binding");
     let mut transcript_with_different_eval = Blake2bTranscript::new(b"rlc-eval-binding");
 
-    let reduced = reduce_prover(claims, &mut transcript);
-    let reduced_with_different_eval = reduce_prover(
+    let reduced = reduce_prover::<MockPCS, _>(claims, &mut transcript);
+    let reduced_with_different_eval = reduce_prover::<MockPCS, _>(
         claims_with_different_eval,
         &mut transcript_with_different_eval,
     );
@@ -175,7 +178,7 @@ fn rlc_rho_binds_claimed_evaluation() {
     assert_eq!(reduced.len(), 1);
     assert_eq!(reduced_with_different_eval.len(), 1);
     assert_ne!(
-        reduced[0].eval, reduced_with_different_eval[0].eval,
+        reduced[0].evaluation.value, reduced_with_different_eval[0].evaluation.value,
         "RLC rho must be bound to the claimed evaluation"
     );
 }
@@ -184,46 +187,48 @@ fn rlc_rho_binds_claimed_evaluation() {
 fn rlc_rho_binds_opening_point() {
     let zero_poly = Polynomial::new(vec![Fr::from_u64(0), Fr::from_u64(0)]);
     let one_poly = Polynomial::new(vec![Fr::from_u64(1), Fr::from_u64(1)]);
+    let (zero_commitment, ()) = MockPCS::commit(zero_poly.evaluations(), &());
+    let (one_commitment, ()) = MockPCS::commit(one_poly.evaluations(), &());
 
     let point_a = vec![Fr::from_u64(3)];
     let point_b = vec![Fr::from_u64(9)];
 
     let claims_at_a = vec![
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: zero_poly.clone(),
-            point: point_a.clone(),
-            eval: Fr::from_u64(0),
+            commitment: zero_commitment.clone(),
+            evaluation: EvaluationClaim::new(point_a.clone(), Fr::from_u64(0)),
         },
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: one_poly.clone(),
-            point: point_a,
-            eval: Fr::from_u64(1),
+            commitment: one_commitment.clone(),
+            evaluation: EvaluationClaim::new(point_a, Fr::from_u64(1)),
         },
     ];
 
     let claims_at_b = vec![
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: zero_poly,
-            point: point_b.clone(),
-            eval: Fr::from_u64(0),
+            commitment: zero_commitment,
+            evaluation: EvaluationClaim::new(point_b.clone(), Fr::from_u64(0)),
         },
-        ProverClaim {
+        ProverOpeningClaim {
             polynomial: one_poly,
-            point: point_b,
-            eval: Fr::from_u64(1),
+            commitment: one_commitment,
+            evaluation: EvaluationClaim::new(point_b, Fr::from_u64(1)),
         },
     ];
 
     let mut transcript_a = Blake2bTranscript::new(b"rlc-point-binding");
     let mut transcript_b = Blake2bTranscript::new(b"rlc-point-binding");
 
-    let reduced_a = reduce_prover(claims_at_a, &mut transcript_a);
-    let reduced_b = reduce_prover(claims_at_b, &mut transcript_b);
+    let reduced_a = reduce_prover::<MockPCS, _>(claims_at_a, &mut transcript_a);
+    let reduced_b = reduce_prover::<MockPCS, _>(claims_at_b, &mut transcript_b);
 
     assert_eq!(reduced_a.len(), 1);
     assert_eq!(reduced_b.len(), 1);
     assert_ne!(
-        reduced_a[0].eval, reduced_b[0].eval,
+        reduced_a[0].evaluation.value, reduced_b[0].evaluation.value,
         "RLC rho must be bound to the opening point"
     );
 }
@@ -243,28 +248,24 @@ fn rlc_rho_binds_claimed_commitment() {
     let (three_commitment, ()) = MockPCS::commit(three_poly.evaluations(), &());
 
     let claims = vec![
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: zero_commitment,
-            point: point.clone(),
-            eval: Fr::from_u64(0),
+            evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(0)),
         },
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: one_commitment,
-            point: point.clone(),
-            eval: Fr::from_u64(1),
+            evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(1)),
         },
     ];
 
     let claims_with_different_commitments = vec![
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: two_commitment,
-            point: point.clone(),
-            eval: Fr::from_u64(0),
+            evaluation: EvaluationClaim::new(point.clone(), Fr::from_u64(0)),
         },
-        VerifierClaim {
+        VerifierOpeningClaim {
             commitment: three_commitment,
-            point,
-            eval: Fr::from_u64(1),
+            evaluation: EvaluationClaim::new(point, Fr::from_u64(1)),
         },
     ];
 
@@ -287,7 +288,7 @@ fn rlc_rho_binds_claimed_commitment() {
         "test setup must use different claimed commitments"
     );
     assert_ne!(
-        reduced[0].eval, reduced_with_different_commitments[0].eval,
+        reduced[0].evaluation.value, reduced_with_different_commitments[0].evaluation.value,
         "RLC rho must be bound to the claimed commitment"
     );
 }
@@ -318,7 +319,7 @@ fn mixed_shared_and_distinct_points() {
 #[test]
 fn empty_claims_is_noop() {
     let mut transcript_p = Blake2bTranscript::new(b"empty");
-    let reduced = reduce_prover::<Fr, _>(Vec::new(), &mut transcript_p);
+    let reduced = reduce_prover::<MockPCS, _>(Vec::new(), &mut transcript_p);
     assert!(reduced.is_empty());
 
     let mut transcript_v = Blake2bTranscript::new(b"empty");
@@ -337,20 +338,22 @@ fn tampered_eval_detected() {
 
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
+    let (com_a, ()) = MockPCS::commit(poly_a.evaluations(), &());
+    let (com_b, ()) = MockPCS::commit(poly_b.evaluations(), &());
 
     let prover_claims = vec![
         ProverOpeningClaim {
             polynomial: Polynomial::new(poly_a.evaluations().to_vec()),
+            commitment: com_a.clone(),
             evaluation: EvaluationClaim::new(point.clone(), eval_a),
         },
         ProverOpeningClaim {
             polynomial: Polynomial::new(poly_b.evaluations().to_vec()),
+            commitment: com_b.clone(),
             evaluation: EvaluationClaim::new(point.clone(), eval_b),
         },
     ];
 
-    let (com_a, ()) = MockPCS::commit(poly_a.evaluations(), &());
-    let (com_b, ()) = MockPCS::commit(poly_b.evaluations(), &());
     let verifier_claims = vec![
         VerifierOpeningClaim {
             commitment: com_a,
@@ -363,7 +366,7 @@ fn tampered_eval_detected() {
     ];
 
     let mut transcript_p = Blake2bTranscript::new(b"tampered");
-    let reduced_p = reduce_prover(prover_claims, &mut transcript_p);
+    let reduced_p = reduce_prover::<MockPCS, _>(prover_claims, &mut transcript_p);
     let proofs: Vec<_> = reduced_p
         .iter()
         .map(|c| {

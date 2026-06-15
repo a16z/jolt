@@ -349,12 +349,13 @@ mod tests {
 
         for (i, (poly, point)) in prover_polys.iter().enumerate() {
             let eval = poly.evaluate(point);
+            let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             prover_claims.push(ProverOpeningClaim {
                 polynomial: Polynomial::new(poly.evaluations().to_vec()),
+                commitment: commitment.clone(),
                 evaluation: EvaluationClaim::new(point.clone(), eval),
             });
 
-            let (commitment, ()) = MockPCS::commit(poly.evaluations(), &());
             let v_eval = verifier_evals.map_or(eval, |overrides| overrides[i]);
             verifier_claims.push(VerifierOpeningClaim {
                 commitment,
@@ -364,7 +365,7 @@ mod tests {
 
         // Prover: reduce + open
         let mut transcript_p = Blake2bTranscript::new(b"e2e-test");
-        let reduced_prover = reduce_prover(prover_claims, &mut transcript_p);
+        let reduced_prover = reduce_prover::<MockPCS, _>(prover_claims, &mut transcript_p);
         let proofs: Vec<_> = reduced_prover
             .iter()
             .map(|claim| {
@@ -467,24 +468,30 @@ mod tests {
         let p3 = Polynomial::<Fr>::random(nv, &mut rng);
         let r: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
         let s: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
+        let (c1, ()) = MockPCS::commit(p1.evaluations(), &());
+        let (c2, ()) = MockPCS::commit(p2.evaluations(), &());
+        let (c3, ()) = MockPCS::commit(p3.evaluations(), &());
 
         let claims = vec![
             ProverOpeningClaim {
                 polynomial: Polynomial::new(p1.evaluations().to_vec()),
+                commitment: c1,
                 evaluation: EvaluationClaim::new(r.clone(), p1.evaluate(&r)),
             },
             ProverOpeningClaim {
                 polynomial: Polynomial::new(p2.evaluations().to_vec()),
+                commitment: c2,
                 evaluation: EvaluationClaim::new(r.clone(), p2.evaluate(&r)),
             },
             ProverOpeningClaim {
                 polynomial: Polynomial::new(p3.evaluations().to_vec()),
+                commitment: c3,
                 evaluation: EvaluationClaim::new(s.clone(), p3.evaluate(&s)),
             },
         ];
 
         let mut transcript = Blake2bTranscript::new(b"grouping");
-        let reduced = reduce_prover(claims, &mut transcript);
+        let reduced = reduce_prover::<MockPCS, _>(claims, &mut transcript);
         assert_eq!(reduced.len(), 2, "two distinct points → two reduced claims");
     }
 
