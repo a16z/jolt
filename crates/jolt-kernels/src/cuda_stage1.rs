@@ -89,6 +89,18 @@ fn cuda_error(error: CudaError) -> Stage1KernelError {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct DenseOuterInputs<'a> {
+    pub eq_evals: &'a [Fr],
+    pub scale: Fr,
+    pub weights: &'a [Fr],
+    pub row_dots_a: &'a [Fr],
+    pub row_dots_b: &'a [Fr],
+    pub row_count: usize,
+    pub first_group_rows: &'a [u32],
+    pub second_group_rows: &'a [u32],
+}
+
 pub struct CudaDenseOuterState<'a> {
     ctx: &'a CudaKernelContext,
     eq: DeviceFrVec,
@@ -115,6 +127,14 @@ impl<'a> CudaDenseOuterState<'a> {
             az_scratch: ctx.upload(&[])?,
             bz_scratch: ctx.upload(&[])?,
         })
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn from_row_dots(
+        ctx: &'a CudaKernelContext,
+        inputs: DenseOuterInputs<'_>,
+    ) -> Result<Self, CudaError> {
+        todo!()
     }
 
     pub fn round_poly(&self) -> Result<UnivariatePoly<Fr>, CudaError> {
@@ -186,6 +206,88 @@ mod tests {
             }
 
             prop_assert_eq!(gpu.eq().unwrap(), cpu.eq().to_vec());
+        }
+    }
+
+    const FIRST_GROUP_ROWS: [u32; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+    const SECOND_GROUP_ROWS: [u32; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
+    const ROW_COUNT: usize = 19;
+
+    fn cpu_from_row_dots(
+        eq_evals: &[Fr],
+        scale: Fr,
+        weights: &[Fr],
+        row_dots_a: &[Fr],
+        row_dots_b: &[Fr],
+    ) -> (Vec<Fr>, Vec<Fr>, Vec<Fr>) {
+        let len = eq_evals.len();
+        let cycles = len / 2;
+        let mut eq = vec![Fr::from_u64(0); len];
+        let mut az = vec![Fr::from_u64(0); len];
+        let mut bz = vec![Fr::from_u64(0); len];
+        let matvec = |rows: &[u32], cycle: usize| -> (Fr, Fr) {
+            let base = cycle * ROW_COUNT;
+            let mut a = Fr::from_u64(0);
+            let mut b = Fr::from_u64(0);
+            for (&row, &weight) in rows.iter().zip(weights.iter()) {
+                a += weight * row_dots_a[base + row as usize];
+                b += weight * row_dots_b[base + row as usize];
+            }
+            (a, b)
+        };
+        for cycle in 0..cycles {
+            let index = cycle << 1;
+            let (az0, bz0) = matvec(&FIRST_GROUP_ROWS, cycle);
+            let (az1, bz1) = matvec(&SECOND_GROUP_ROWS, cycle);
+            eq[index] = eq_evals[index] * scale;
+            eq[index + 1] = eq_evals[index + 1] * scale;
+            az[index] = az0;
+            bz[index] = bz0;
+            az[index + 1] = az1;
+            bz[index + 1] = bz1;
+        }
+        (eq, az, bz)
+    }
+
+    proptest! {
+        #[test]
+        #[ignore = "CudaDenseOuterState::from_row_dots is todo!()"]
+        fn cuda_from_row_dots_matches_cpu(
+            num_vars in 1usize..10,
+            scale in fr_strategy(),
+            weights in prop::collection::vec(fr_strategy(), 10),
+            seed in fr_strategy(),
+        ) {
+            let len = 1usize << num_vars;
+            let cycles = len / 2;
+            let eq_evals: Vec<Fr> = (0..len).map(|i| seed + Fr::from_u64(i as u64)).collect();
+            let row_dots_a: Vec<Fr> =
+                (0..cycles * ROW_COUNT).map(|i| seed + Fr::from_u64((i + 1) as u64)).collect();
+            let row_dots_b: Vec<Fr> =
+                (0..cycles * ROW_COUNT).map(|i| seed + Fr::from_u64((i + 7) as u64)).collect();
+
+            let (eq, az, bz) =
+                cpu_from_row_dots(&eq_evals, scale, &weights, &row_dots_a, &row_dots_b);
+
+            let ctx = CudaKernelContext::new(0).unwrap();
+            let gpu = CudaDenseOuterState::from_row_dots(
+                &ctx,
+                DenseOuterInputs {
+                    eq_evals: &eq_evals,
+                    scale,
+                    weights: &weights,
+                    row_dots_a: &row_dots_a,
+                    row_dots_b: &row_dots_b,
+                    row_count: ROW_COUNT,
+                    first_group_rows: &FIRST_GROUP_ROWS,
+                    second_group_rows: &SECOND_GROUP_ROWS,
+                },
+            )
+            .unwrap();
+
+            prop_assert_eq!(gpu.eq().unwrap(), eq);
+            prop_assert_eq!(gpu.az().unwrap(), az);
+            prop_assert_eq!(gpu.bz().unwrap(), bz);
         }
     }
 }
