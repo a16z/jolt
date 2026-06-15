@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use ark_ff::{BigInt, Field};
+use ark_ff::{BigInt, Field, PrimeField};
 use ark_grumpkin::{Fq, Fr};
 use jolt_inlines_sdk::host::{
     Cpu, ExpandedInstructionSequence, ExpansionError, FormatInline, InlineBuilderExt,
@@ -67,6 +67,41 @@ impl GrumpkinDivAdv {
     }
 }
 
+struct GlvrAdvBuilder {
+    asm: InlineExpansionBuilder,
+    vr: InlineRegister,
+    operands: InlineOperands,
+}
+
+impl GlvrAdvBuilder {
+    fn new(
+        mut asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<Self, ExpansionError> {
+        let vr = asm.allocate_for_inline()?;
+        Ok(GlvrAdvBuilder { asm, vr, operands })
+    }
+
+    fn advice(operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+        let k_addr = cpu.x[operands.rs1 as usize] as u64;
+        let k_limbs = [
+            cpu.mmu.load_doubleword(k_addr).unwrap().0,
+            cpu.mmu.load_doubleword(k_addr + 8).unwrap().0,
+            cpu.mmu.load_doubleword(k_addr + 16).unwrap().0,
+            cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
+        ];
+        let k = Fr::new_unchecked(BigInt(k_limbs)).into_bigint().into();
+        let result = crate::glv::decompose_scalar_to_u64s(k);
+        VecDeque::from(result.to_vec())
+    }
+
+    fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 6);
+        self.asm.release(self.vr);
+        self.asm.finalize()
+    }
+}
+
 pub struct GrumpkinDivQAdv;
 
 impl InlineOp for GrumpkinDivQAdv {
@@ -104,5 +139,25 @@ impl InlineOp for GrumpkinDivRAdv {
 
     fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
         Some(GrumpkinDivAdv::advice(operands, false, cpu))
+    }
+}
+
+pub struct GrumpkinGlvrAdv;
+
+impl InlineOp for GrumpkinGlvrAdv {
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::GRUMPKIN_GLVR_ADV_FUNCT3;
+    const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
+    const NAME: &'static str = crate::GRUMPKIN_GLVR_ADV_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
+    }
+
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+        Some(GlvrAdvBuilder::advice(operands, cpu))
     }
 }

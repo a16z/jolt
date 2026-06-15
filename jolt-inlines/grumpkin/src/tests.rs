@@ -1,10 +1,14 @@
 mod sequence_tests {
-    use crate::sdk::{GrumpkinPoint, GrumpkinPointExt};
+    use crate::sdk::{
+        decode_glv_sign_word, GrumpkinFr, GrumpkinPoint, GrumpkinPointExt,
+        GRUMPKIN_ENDO_BETA_LIMBS, GRUMPKIN_GLV_LAMBDA_LIMBS,
+    };
     use crate::{
-        GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_DIVR_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE,
+        GrumpkinError, GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_DIVR_ADV_FUNCT3, GRUMPKIN_FUNCT7,
+        GRUMPKIN_GLVR_ADV_FUNCT3, INLINE_OPCODE,
     };
     use ark_ec::AffineRepr;
-    use ark_ff::{BigInt, Field};
+    use ark_ff::{BigInt, Field, One, PrimeField, Zero};
     use ark_grumpkin::{Fq, Fr};
     use std::ops::Mul;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
@@ -149,6 +153,136 @@ mod sequence_tests {
         ];
         for &scalar in scalars.iter() {
             scalar_mul_consistency_helper(scalar);
+        }
+    }
+
+    #[test]
+    fn test_grumpkin_double_and_add_other_is_neg_two_self() {
+        let p = GrumpkinPoint::generator();
+        let other = p.double().neg();
+        let res = p.double_and_add(&other);
+        assert!(res.is_infinity(), "2P + (-2P) must be infinity");
+    }
+
+    #[test]
+    fn test_decode_glv_sign_word() {
+        assert!(!decode_glv_sign_word(0).unwrap());
+        assert!(decode_glv_sign_word(1).unwrap());
+        assert!(matches!(
+            decode_glv_sign_word(2),
+            Err(GrumpkinError::InvalidGlvSignWord(2))
+        ));
+    }
+
+    #[test]
+    fn test_grumpkin_endo_beta_has_order_3_in_fq() {
+        let beta = Fq::new_unchecked(BigInt(GRUMPKIN_ENDO_BETA_LIMBS));
+        assert_ne!(beta, Fq::one(), "beta must not be 1");
+        assert_eq!(beta.square() * beta, Fq::one(), "beta^3 must equal 1");
+    }
+
+    #[test]
+    fn test_grumpkin_glv_lambda_satisfies_minpoly() {
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+        assert_ne!(lambda, Fr::one(), "lambda must not be 1");
+        assert!((lambda.square() + lambda + Fr::one()).is_zero());
+    }
+
+    #[test]
+    fn test_grumpkin_endomorphism_matches_scalar_mul_lambda_on_generator_multiples() {
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+        let scalars = [1u64, 2, 3, 5, 7, 0x123456789ABCDEF0];
+
+        for &s in &scalars {
+            let p = u64_point_mul(s, &GrumpkinPoint::generator());
+            let endo_p = p.endomorphism();
+            let expected_scalar = Fr::from(s) * lambda;
+            let expected =
+                ark_grumpkin::Affine::from(ark_grumpkin::Affine::generator().mul(expected_scalar));
+
+            assert_eq!(endo_p.x().fq(), expected.x);
+            assert_eq!(endo_p.y().fq(), expected.y);
+        }
+    }
+
+    fn assert_glv_recompose(k: Fr) {
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+        let decomp = GrumpkinFr::new(k).glv_decompose();
+        let mut k1 = Fr::from(decomp[0].1);
+        if decomp[0].0 {
+            k1 = -k1;
+        }
+        let mut k2 = Fr::from(decomp[1].1);
+        if decomp[1].0 {
+            k2 = -k2;
+        }
+        assert_eq!(k1 + k2 * lambda, k);
+    }
+
+    #[test]
+    fn test_grumpkin_glv_decomposition_recompose() {
+        for scalar in [
+            Fr::zero(),
+            Fr::one(),
+            -Fr::one(),
+            Fr::from(0x123456789ABCDEF0u64),
+            Fr::from(0x0FEDCBA987654321u64),
+            Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS)),
+        ] {
+            assert_glv_recompose(scalar);
+        }
+
+        let (a, c) = (6364136223846793005u64, 1442695040888963407u64);
+        let mut state = 0xA5A5_A5A5_5A5A_5A5Au64;
+        for _ in 0..256 {
+            let mut bytes = [0u8; 32];
+            for chunk in bytes.chunks_mut(8) {
+                state = state.wrapping_mul(a).wrapping_add(c);
+                chunk.copy_from_slice(&state.to_le_bytes());
+            }
+            assert_glv_recompose(Fr::from_le_bytes_mod_order(&bytes));
+        }
+    }
+
+    fn assert_glvr_trace_recompose(k: Fr) {
+        let layout = InlineMemoryLayout::two_inputs(32, 8, 48);
+        let mut harness = InlineTestHarness::new(layout);
+        harness.setup_registers();
+        harness.load_input64(&k.0 .0);
+        harness.load_input2_64(&[0u64]);
+        harness.execute_inline(InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            GRUMPKIN_GLVR_ADV_FUNCT3,
+            GRUMPKIN_FUNCT7,
+        ));
+
+        let out: [u64; 6] = harness
+            .read_output64(6)
+            .try_into()
+            .expect("expected 6 u64 outputs");
+        let sign1 = decode_glv_sign_word(out[0]).unwrap();
+        let sign2 = decode_glv_sign_word(out[3]).unwrap();
+        let lambda = Fr::new_unchecked(BigInt(GRUMPKIN_GLV_LAMBDA_LIMBS));
+        let mut k1 = Fr::from((out[1] as u128) | ((out[2] as u128) << 64));
+        if sign1 {
+            k1 = -k1;
+        }
+        let mut k2 = Fr::from((out[4] as u128) | ((out[5] as u128) << 64));
+        if sign2 {
+            k2 = -k2;
+        }
+        assert_eq!(k1 + k2 * lambda, k);
+    }
+
+    #[test]
+    fn test_grumpkin_glvr_direct_execution_recompose() {
+        for scalar in [
+            Fr::zero(),
+            Fr::one(),
+            Fr::from(2u64),
+            Fr::from(0x123456789ABCDEF0u64),
+        ] {
+            assert_glvr_trace_recompose(scalar);
         }
     }
 }
