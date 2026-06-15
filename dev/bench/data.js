@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1781331711813,
+  "lastUpdate": 1781560595383,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -113530,6 +113530,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864172,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b2edb717873508791fc72e0ff6d076edd438d936",
+          "message": "feat: port committed program verification to modular verifier (#1617)\n\n* feat: port committed bytecode foundation to jolt-claims (#1616)\n\n* feat: port committed bytecode foundation to jolt-claims\n\nMirror jolt-core #1583 in the modular verifier stack. Adds the\ncommitted-bytecode lane geometry and the BytecodeClaimReduction and\nProgramImageClaimReduction formulas/layouts on the shared\nPrecommittedClaimReduction schedule, with the per-chunk output weights\nand shifted-eq DP evaluation the verifier needs to compute their\npublics. Advice dimensions generalize into a shared\nPrecommittedReductionDimensions used by all precommitted reductions.\n\nFormulas are additive and mode-free: committed vs full program mode is\ndecided at runtime from preprocessing, so nothing here is wired into\nthe verifier stages yet (that is the next port step, mirroring #1584).\n\n* refactor: address review findings in committed bytecode formulas\n\n- Guard raw chunk_count in formula constructors (nonzero pow2 <= 256)\n- Share require_len and log2_power_of_two instead of per-file copies\n- Make eval_shifted_eq_poly_at_opening_point private (parity with core)\n- Cover DP wrap-around path in shifted-eq test\n- Document deliberate chunking-validation strengthening vs core and the\n  full-vs-address-only register point contract\n\n* refactor: address CI review comments\n\n- report OpeningPointLengthMismatch for the RdWa register points in\n  lane_weights (require_opening_point_len helper)\n- factor is_valid_chunk_count out of the chunking predicate and the\n  formula-constructor assert\n- consolidate the layout forwarder boilerplate into a shared\n  PrecommittedReductionLayout trait implemented by the advice, bytecode,\n  and program-image layouts\n\n* refactor: adapt layouts to fallible precommitted schedule construction\n\nBase made PrecommittedClaimReduction::new fallible; both new layout\nconstructors now propagate it, and InvalidBytecodeChunking moves to\nJoltFormulaPointError so construction errors share one type (matching\nadvice::balanced).\n\n* fix: import PrecommittedReductionLayout in core-fixtures tampering tests\n\n* Simplify eval_shifted_eq_poly_at_opening_point\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\n\n* feat: port committed program verification to modular verifier\n\nAdd committed-program mode to jolt-verifier, mirroring jolt-core's\nCommittedProgramPreprocessing: trusted bytecode-chunk and program-image\ncommitments replace the bytecode table and initial RAM image.\n\n- ProgramPreprocessing enum (Full | Committed) with mode detected from\n  the deserialized preprocessing, threaded through verifier validation\n- Stage 4/6/7 committed paths: bytecode chunk reductions (cycle +\n  address phases), program-image reduction, final per-chunk openings\n- BlindFold publics and constraints for the committed reductions so ZK\n  mode covers both program modes\n- jolt-claims: committed read-RAF cycle-phase formula with staged Val\n  openings and StageCycleEq publics; inputs-only RAM init segments for\n  the image-as-opening init evaluation\n- jolt-transcript: DigestTranscript, byte-compatible with jolt-core\n  hash transcripts, for verifying core-produced proofs\n- tests: committed muldiv core fixtures (standard + ZK), completeness\n  and soundness tampering coverage, BlindFold shape audit\n\n* refactor: address review findings in committed program port\n\n* refactor: deduplicate read-raf publics and weights after CI review\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2026-06-15T13:52:20-07:00",
+          "tree_id": "e5f61f1f34f936961fdf592586424e200cee4215",
+          "url": "https://github.com/a16z/jolt/commit/b2edb717873508791fc72e0ff6d076edd438d936"
+        },
+        "date": 1781560591136,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6612,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 863200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3202,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 502468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 506940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 507148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7214,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5954,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 511232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.0776,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 506828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.5788,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 195660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4624,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 867624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5711,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 509188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4696,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 507008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.5298,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.0008,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.6433,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1045980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.945,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 632996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 97.0061,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2124592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4985,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 504596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5638,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 509136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.0031,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 865004,
             "unit": "KB",
             "extra": ""
           }
