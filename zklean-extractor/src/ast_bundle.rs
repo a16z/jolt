@@ -375,7 +375,14 @@ impl AstBundle {
             }
             new_id[i] = new_nodes.len();
             let node = map_node_edges(self.nodes[i].clone(), &mut |e| match e {
-                Edge::NodeRef(id) => Edge::NodeRef(new_id[id]),
+                Edge::NodeRef(id) => {
+                    debug_assert_ne!(
+                        new_id[id],
+                        usize::MAX,
+                        "reachable node {i} references unreachable child {id}"
+                    );
+                    Edge::NodeRef(new_id[id])
+                }
                 atom => atom,
             });
             new_nodes.push(node);

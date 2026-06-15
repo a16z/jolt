@@ -267,7 +267,7 @@ pub fn symbolize_proof(
     // Exact integer log2, matching the real verifier (`proof.trace_length.log_2()`,
     // verifier.rs) — trace_length is a validated power of two. (code-review #5)
     use jolt_core::utils::math::Math;
-    #[allow(non_snake_case)] // Match VerifierOpeningAccumulator naming
+    #[expect(non_snake_case, reason = "matches VerifierOpeningAccumulator naming")]
     let log_T = real_proof.trace_length.log_2();
     let accumulator = AstOpeningAccumulator::new_with_claims(claims, log_T);
 
