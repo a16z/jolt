@@ -239,62 +239,6 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
         dispatch!(self, t => PrefixSuffixDecomposition::suffixes(t))
     }
 
-    pub fn required_prefixes(&self) -> &'static [Prefixes] {
-        use Prefixes::{
-            And, Andn, ChangeDivisor, ChangeDivisorW, DivByZero, Eq, LeftOperandIsZero,
-            LeftOperandMsb, LeftShift, LeftShiftHelper, LeftShiftW, LeftShiftWHelper, LessThan,
-            LowerHalfWord, LowerWord, Lsb, Or, OverflowBitsZero, Pow2, Pow2W, Rev8W, RightOperand,
-            RightOperandIsZero, RightOperandMsb, RightOperandW, RightShift, RightShiftW,
-            SignExtension, SignExtensionRightOperand, SignExtensionUpperHalf, TwoLsb, UpperWord,
-            Xor, XorRot16, XorRot24, XorRot32, XorRot63, XorRotW12, XorRotW16, XorRotW7, XorRotW8,
-        };
-
-        match self {
-            Self::RangeCheck(_) => &[LowerWord],
-            Self::RangeCheckAligned(_) => &[LowerWord, Lsb],
-            Self::And(_) => &[And],
-            Self::Andn(_) => &[Andn],
-            Self::Or(_) => &[Or],
-            Self::Xor(_) => &[Xor],
-            Self::Equal(_) => &[Eq],
-            Self::SignedGreaterThanEqual(_) => &[RightOperandMsb, LeftOperandMsb, LessThan, Eq],
-            Self::UnsignedGreaterThanEqual(_) => &[LessThan, Eq],
-            Self::NotEqual(_) => &[Eq],
-            Self::SignedLessThan(_) => &[LeftOperandMsb, RightOperandMsb, LessThan, Eq],
-            Self::UnsignedLessThan(_) => &[LessThan, Eq],
-            Self::SignMask(_) => &[LeftOperandMsb],
-            Self::UpperWord(_) => &[UpperWord],
-            Self::UnsignedLessThanEqual(_) => &[LessThan, Eq],
-            Self::ValidUnsignedRemainder(_) => &[RightOperandIsZero, LessThan, Eq],
-            Self::ValidDiv0(_) => &[LeftOperandIsZero, DivByZero],
-            Self::HalfwordAlignment(_) => &[Lsb],
-            Self::WordAlignment(_) => &[TwoLsb],
-            Self::LowerHalfWord(_) => &[LowerHalfWord],
-            Self::SignExtendHalfWord(_) => &[LowerHalfWord, SignExtensionUpperHalf],
-            Self::Pow2(_) => &[Pow2],
-            Self::Pow2W(_) => &[Pow2W],
-            Self::ShiftRightBitmask(_) => &[Pow2],
-            Self::VirtualRev8W(_) => &[Rev8W],
-            Self::VirtualSRL(_) => &[RightShift],
-            Self::VirtualSRA(_) => &[RightShift, LeftOperandMsb, SignExtension],
-            Self::VirtualROTR(_) => &[RightShift, LeftShiftHelper, LeftShift],
-            Self::VirtualROTRW(_) => &[RightShiftW, LeftShiftWHelper, LeftShiftW],
-            Self::VirtualChangeDivisor(_) => &[RightOperand, ChangeDivisor],
-            Self::VirtualChangeDivisorW(_) => {
-                &[RightOperandW, ChangeDivisorW, SignExtensionRightOperand]
-            }
-            Self::MulUNoOverflow(_) => &[OverflowBitsZero],
-            Self::VirtualXORROT32(_) => &[XorRot32],
-            Self::VirtualXORROT24(_) => &[XorRot24],
-            Self::VirtualXORROT16(_) => &[XorRot16],
-            Self::VirtualXORROT63(_) => &[XorRot63],
-            Self::VirtualXORROTW16(_) => &[XorRotW16],
-            Self::VirtualXORROTW12(_) => &[XorRotW12],
-            Self::VirtualXORROTW8(_) => &[XorRotW8],
-            Self::VirtualXORROTW7(_) => &[XorRotW7],
-        }
-    }
-
     pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         dispatch!(self, t => PrefixSuffixDecomposition::combine(t, prefixes, suffixes))
     }

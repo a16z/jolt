@@ -284,8 +284,12 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_ADD
         | SourceInstructionKind::FIELD_SUB
-        | SourceInstructionKind::FIELD_MUL
-        | SourceInstructionKind::FIELD_ASSERT_EQ => format_r_operands(word),
+        | SourceInstructionKind::FIELD_MUL => format_r_operands(word),
+        // FIELD_ASSERT_EQ has no destination register; decoding it with `rd: None`
+        // keeps the bytecode operands consistent with the tracer's parsed shape and
+        // avoids the rd=x0 virtual-register rewrite during expansion.
+        #[cfg(feature = "field-inline")]
+        SourceInstructionKind::FIELD_ASSERT_EQ => format_field_binary_no_rd_operands(word),
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_INV
         | SourceInstructionKind::FIELD_LOAD_FROM_X
@@ -309,6 +313,16 @@ fn format_field_unary_operands(word: u32) -> NormalizedOperands {
         rd: Some(rd(word)),
         rs1: Some(rs1(word)),
         rs2: None,
+        imm: 0,
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn format_field_binary_no_rd_operands(word: u32) -> NormalizedOperands {
+    NormalizedOperands {
+        rd: None,
+        rs1: Some(rs1(word)),
+        rs2: Some(rs2(word)),
         imm: 0,
     }
 }

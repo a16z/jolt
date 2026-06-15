@@ -289,58 +289,6 @@ impl JoltCycle for TraceRow {
     }
 }
 
-impl JoltCycle for &TraceRow {
-    type Instruction = JoltInstructionRow;
-
-    #[inline]
-    fn instruction(&self) -> Self::Instruction {
-        self.instruction
-    }
-
-    #[inline]
-    fn rs1_val(&self) -> Option<u64> {
-        self.registers.rs1.map(|read| read.value)
-    }
-
-    #[inline]
-    fn rs2_val(&self) -> Option<u64> {
-        self.registers.rs2.map(|read| read.value)
-    }
-
-    #[inline]
-    fn rd_vals(&self) -> Option<(u64, u64)> {
-        self.registers
-            .rd
-            .map(|write| (write.pre_value, write.post_value))
-    }
-
-    #[inline]
-    fn ram_access_address(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.address),
-            RamAccess::Write(write) => Some(write.address),
-            RamAccess::NoOp => None,
-        }
-    }
-
-    #[inline]
-    fn ram_read_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.value),
-            RamAccess::Write(write) => Some(write.pre_value),
-            RamAccess::NoOp => None,
-        }
-    }
-
-    #[inline]
-    fn ram_write_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Write(write) => Some(write.post_value),
-            RamAccess::Read(_) | RamAccess::NoOp => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct TraceOutput<T> {
     pub trace: T,
@@ -392,7 +340,12 @@ impl From<Vec<TraceRow>> for OwnedTrace {
 
 impl TraceSource for OwnedTrace {
     fn next_row(&mut self) -> Option<TraceRow> {
+        // `TraceRow` is `Copy` only without `field-inline` (which adds a non-`Copy` `Arc`
+        // field), so the row is copied or cloned to match the active build.
+        #[cfg(not(feature = "field-inline"))]
         let row = self.rows.get(self.next).copied();
+        #[cfg(feature = "field-inline")]
+        let row = self.rows.get(self.next).cloned();
         self.next += usize::from(row.is_some());
         row
     }

@@ -146,12 +146,7 @@ impl Valid for FieldInlineXRegisterRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialization",
-    derive(
-        CanonicalSerialize,
-        CanonicalDeserialize,
-        serde::Serialize,
-        serde::Deserialize
-    )
+    derive(CanonicalSerialize, serde::Serialize, serde::Deserialize)
 )]
 pub struct FieldRegister(pub u8);
 
@@ -166,6 +161,35 @@ impl FieldRegister {
 
     pub const fn index(self) -> u8 {
         self.0
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl Valid for FieldRegister {
+    fn check(&self) -> Result<(), SerializationError> {
+        // Enforce the `FieldRegister::new` bound on the deserialize path. The derived
+        // `Valid` is a no-op for the inner `u8`, which would otherwise admit out-of-range
+        // indices from untrusted bytes.
+        if self.0 < FIELD_REGISTER_COUNT {
+            Ok(())
+        } else {
+            Err(SerializationError::InvalidData)
+        }
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl CanonicalDeserialize for FieldRegister {
+    fn deserialize_with_mode<R: Read>(
+        reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = Self(u8::deserialize_with_mode(reader, compress, validate)?);
+        if let Validate::Yes = validate {
+            value.check()?;
+        }
+        Ok(value)
     }
 }
 
@@ -236,11 +260,14 @@ pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<Fi
 pub const fn field_inline_operand_shape(
     kind: crate::JoltInstructionKind,
 ) -> Option<FieldInlineOperandShape> {
-    let op = match field_inline_jolt_op(kind) {
-        Some(op) => op,
-        None => return None,
-    };
-    Some(match op {
+    match field_inline_jolt_op(kind) {
+        Some(op) => Some(field_inline_operand_shape_for_op(op)),
+        None => None,
+    }
+}
+
+pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInlineOperandShape {
+    match op {
         FieldInlineOp::Add | FieldInlineOp::Sub | FieldInlineOp::Mul => FieldInlineOperandShape {
             op,
             reads_fr_rs1: true,
@@ -289,5 +316,38 @@ pub const fn field_inline_operand_shape(
             bridge_x_register_role: None,
             has_immediate: true,
         },
-    })
+    }
+}
+
+#[cfg(all(test, feature = "serialization"))]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+
+    fn roundtrip(
+        register: FieldRegister,
+        validate: Validate,
+    ) -> Result<FieldRegister, SerializationError> {
+        let mut bytes = Vec::new();
+        register
+            .serialize_with_mode(&mut bytes, Compress::No)
+            .unwrap();
+        FieldRegister::deserialize_with_mode(&bytes[..], Compress::No, validate)
+    }
+
+    #[test]
+    fn field_register_roundtrips_in_range() {
+        let register = FieldRegister(FIELD_REGISTER_COUNT - 1);
+        assert_eq!(roundtrip(register, Validate::Yes).unwrap(), register);
+    }
+
+    #[test]
+    fn field_register_deserialize_rejects_out_of_range() {
+        // The inner field is `pub`, so an out-of-range value can be serialized directly,
+        // bypassing `FieldRegister::new`; the `Valid` check must reject it on the way back.
+        let register = FieldRegister(FIELD_REGISTER_COUNT);
+        assert!(roundtrip(register, Validate::Yes).is_err());
+        assert!(roundtrip(register, Validate::No).is_ok());
+    }
 }

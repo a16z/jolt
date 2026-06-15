@@ -119,16 +119,25 @@ impl Default for FieldRegisterFile {
 #[cfg(feature = "field-inline")]
 impl FieldRegisterFile {
     pub fn read(&self, register: u8) -> FieldEncodedValue {
-        self.registers
-            .get(register as usize)
-            .copied()
-            .unwrap_or_else(FieldEncodedValue::zero)
+        Self::check_register(register);
+        self.registers[register as usize]
     }
 
     pub fn write(&mut self, register: u8, value: FieldEncodedValue) {
-        if let Some(slot) = self.registers.get_mut(register as usize) {
-            *slot = value;
-        }
+        Self::check_register(register);
+        self.registers[register as usize] = value;
+    }
+
+    /// The 5-bit instruction encoding admits register indices the field register
+    /// file does not have. Preprocessing rejects such rows at metadata construction;
+    /// trapping here keeps the emulator and the proving pipeline in agreement instead
+    /// of silently reading zero / dropping writes for an out-of-range index.
+    fn check_register(register: u8) {
+        assert!(
+            (register as usize) < jolt_riscv::FIELD_REGISTER_COUNT as usize,
+            "field register index {register} is out of range (count {})",
+            jolt_riscv::FIELD_REGISTER_COUNT
+        );
     }
 }
 

@@ -120,19 +120,8 @@ impl InstructionFormat for FormatFieldInline {
 
 impl FormatFieldInline {
     fn x_register_role(self) -> Option<FieldInlineXRegisterRole> {
-        self.op.and_then(|op| {
-            jolt_riscv::field_inline_operand_shape(match op {
-                FieldInlineOp::Add => jolt_riscv::JoltInstructionKind::FIELD_ADD,
-                FieldInlineOp::Sub => jolt_riscv::JoltInstructionKind::FIELD_SUB,
-                FieldInlineOp::Mul => jolt_riscv::JoltInstructionKind::FIELD_MUL,
-                FieldInlineOp::Inv => jolt_riscv::JoltInstructionKind::FIELD_INV,
-                FieldInlineOp::AssertEq => jolt_riscv::JoltInstructionKind::FIELD_ASSERT_EQ,
-                FieldInlineOp::LoadFromX => jolt_riscv::JoltInstructionKind::FIELD_LOAD_FROM_X,
-                FieldInlineOp::StoreToX => jolt_riscv::JoltInstructionKind::FIELD_STORE_TO_X,
-                FieldInlineOp::LoadImm => jolt_riscv::JoltInstructionKind::FIELD_LOAD_IMM,
-            })
-            .and_then(|shape| shape.bridge_x_register_role)
-        })
+        self.op
+            .and_then(|op| jolt_riscv::field_inline_operand_shape_for_op(op).bridge_x_register_role)
     }
 }
 

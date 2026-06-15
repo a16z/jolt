@@ -274,9 +274,10 @@ macro_rules! for_each_jolt_instruction_kind {
 
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    field_inline_jolt_op, field_inline_operand_shape, field_inline_source_op, is_field_inline_jolt,
-    is_field_inline_source, FieldInlineOp, FieldInlineOperandShape, FieldInlineXRegisterRole,
-    FieldRegister, FIELD_INLINE_OPCODE, FIELD_REGISTER_COUNT, FIELD_REGISTER_LOG_K,
+    field_inline_jolt_op, field_inline_operand_shape, field_inline_operand_shape_for_op,
+    field_inline_source_op, is_field_inline_jolt, is_field_inline_source, FieldInlineOp,
+    FieldInlineOperandShape, FieldInlineXRegisterRole, FieldRegister, FIELD_INLINE_OPCODE,
+    FIELD_REGISTER_COUNT, FIELD_REGISTER_LOG_K,
 };
 pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,

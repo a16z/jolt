@@ -5,7 +5,9 @@
 //! concrete field belongs to witness generation.
 
 #[cfg(feature = "serialization")]
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{
+    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
+};
 use jolt_riscv::{
     field_inline_operand_shape, FieldInlineOp, FieldInlineXRegisterRole, FieldRegister,
     JoltInstructionRow, FIELD_REGISTER_LOG_K,
@@ -68,18 +70,52 @@ impl FieldValueEncoding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
-    derive(
-        CanonicalSerialize,
-        CanonicalDeserialize,
-        serde::Serialize,
-        serde::Deserialize
-    )
+    derive(CanonicalSerialize, serde::Serialize, serde::Deserialize)
 )]
 pub struct FieldInlineBytecodeMetadata {
     pub rows: Vec<FieldInlineBytecodeRow>,
     pub field_register_log_k: u8,
     pub value_encoding: FieldValueEncoding,
     pub profile_fingerprint: u64,
+}
+
+#[cfg(feature = "serialization")]
+impl Valid for FieldInlineBytecodeMetadata {
+    fn check(&self) -> Result<(), SerializationError> {
+        // Metadata loaded from disk would otherwise be trusted unvalidated. Re-run the
+        // structural checks (register bounds, value encoding, per-row operand shape) so a
+        // tampered artifact is rejected at deserialize time rather than during proving.
+        self.validate(self.rows.len())
+            .map_err(|_| SerializationError::InvalidData)
+    }
+}
+
+#[cfg(feature = "serialization")]
+impl CanonicalDeserialize for FieldInlineBytecodeMetadata {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        let value = Self {
+            rows: Vec::<FieldInlineBytecodeRow>::deserialize_with_mode(
+                &mut reader,
+                compress,
+                Validate::No,
+            )?,
+            field_register_log_k: u8::deserialize_with_mode(&mut reader, compress, Validate::No)?,
+            value_encoding: FieldValueEncoding::deserialize_with_mode(
+                &mut reader,
+                compress,
+                Validate::No,
+            )?,
+            profile_fingerprint: u64::deserialize_with_mode(&mut reader, compress, Validate::No)?,
+        };
+        if let Validate::Yes = validate {
+            value.check()?;
+        }
+        Ok(value)
+    }
 }
 
 impl FieldInlineBytecodeMetadata {
@@ -218,7 +254,7 @@ impl FieldInlineBytecodeRow {
                 });
             }
         }
-        let expected = shape_for_op(op);
+        let expected = jolt_riscv::field_inline_operand_shape_for_op(op);
         if expected.reads_fr_rs1 != self.rs1.is_some()
             || expected.reads_fr_rs2 != self.rs2.is_some()
             || expected.writes_fr_rd != self.rd.is_some()
@@ -342,57 +378,40 @@ fn encoded_immediate(value: i128) -> Result<FieldEncodedValue, FieldInlineMetada
     Ok(FieldEncodedValue::from_u64(value))
 }
 
-fn shape_for_op(op: FieldInlineOp) -> jolt_riscv::FieldInlineOperandShape {
-    match op {
-        FieldInlineOp::Add | FieldInlineOp::Sub | FieldInlineOp::Mul => {
-            jolt_riscv::FieldInlineOperandShape {
-                op,
-                reads_fr_rs1: true,
-                reads_fr_rs2: true,
-                writes_fr_rd: true,
-                bridge_x_register_role: None,
-                has_immediate: false,
-            }
-        }
-        FieldInlineOp::Inv => jolt_riscv::FieldInlineOperandShape {
-            op,
-            reads_fr_rs1: true,
-            reads_fr_rs2: false,
-            writes_fr_rd: true,
-            bridge_x_register_role: None,
-            has_immediate: false,
-        },
-        FieldInlineOp::AssertEq => jolt_riscv::FieldInlineOperandShape {
-            op,
-            reads_fr_rs1: true,
-            reads_fr_rs2: true,
-            writes_fr_rd: false,
-            bridge_x_register_role: None,
-            has_immediate: false,
-        },
-        FieldInlineOp::LoadFromX => jolt_riscv::FieldInlineOperandShape {
-            op,
-            reads_fr_rs1: false,
-            reads_fr_rs2: false,
-            writes_fr_rd: true,
-            bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1),
-            has_immediate: false,
-        },
-        FieldInlineOp::StoreToX => jolt_riscv::FieldInlineOperandShape {
-            op,
-            reads_fr_rs1: true,
-            reads_fr_rs2: false,
-            writes_fr_rd: false,
-            bridge_x_register_role: Some(FieldInlineXRegisterRole::WriteRd),
-            has_immediate: false,
-        },
-        FieldInlineOp::LoadImm => jolt_riscv::FieldInlineOperandShape {
-            op,
-            reads_fr_rs1: false,
-            reads_fr_rs2: false,
-            writes_fr_rd: true,
-            bridge_x_register_role: None,
-            has_immediate: true,
-        },
+#[cfg(all(test, feature = "serialization"))]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+
+    fn roundtrip(
+        metadata: &FieldInlineBytecodeMetadata,
+        validate: Validate,
+    ) -> Result<FieldInlineBytecodeMetadata, SerializationError> {
+        let mut bytes = Vec::new();
+        metadata
+            .serialize_with_mode(&mut bytes, Compress::No)
+            .unwrap();
+        FieldInlineBytecodeMetadata::deserialize_with_mode(&bytes[..], Compress::No, validate)
+    }
+
+    #[test]
+    fn metadata_roundtrips() {
+        let metadata = FieldInlineBytecodeMetadata::from_bytecode(&[], 0).unwrap();
+        assert_eq!(roundtrip(&metadata, Validate::Yes).unwrap(), metadata);
+    }
+
+    #[test]
+    fn metadata_deserialize_reruns_validation() {
+        // `from_bytecode` is the only validated constructor; a metadata assembled directly
+        // with an invalid field-register width must still be rejected when deserialized.
+        let tampered = FieldInlineBytecodeMetadata {
+            rows: Vec::new(),
+            field_register_log_k: FIELD_REGISTER_LOG_K + 1,
+            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            profile_fingerprint: 0,
+        };
+        assert!(roundtrip(&tampered, Validate::Yes).is_err());
+        assert!(roundtrip(&tampered, Validate::No).is_ok());
     }
 }

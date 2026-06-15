@@ -191,6 +191,11 @@ fn execute_inverse(
     let rd_register = operands.rd.unwrap_or(0);
     let rs1_value = cpu.field_registers.read(rs1_register);
     let pre_value = cpu.field_registers.read(rd_register);
+    // inv(0) protocol: the inverse of zero is undefined, so rd is set to 0 and the
+    // recorded `inv_product = rs1 * rd` is 0 (it is 1 for every non-zero input). A
+    // downstream constraint of the form `rs1 * rd == inv_product` is therefore always
+    // satisfiable, and `inv_product == 0` holds iff `rs1 == 0`, which lets the verifier
+    // distinguish the inv(0) case rather than leaving rd unconstrained.
     let inverse = decode_field(rs1_value)
         .inverse()
         .unwrap_or_else(|| Fr::from(0u64));
@@ -275,6 +280,10 @@ fn execute_store_to_x(
     let field_register = operands.rs1.unwrap_or(0);
     let x_register = operands.rd.unwrap_or(0);
     let field_value = cpu.field_registers.read(field_register);
+    // store-to-x bridges a field register into a 64-bit x register. A field value that
+    // does not fit in u64 is reduced modulo 2^64 (its low 64 canonical bits): the trace
+    // records both the full `field_value` and the truncated `x_value`, so any constraint
+    // binding this bridge must enforce that `x_value == field_value mod 2^64`.
     let x_value = decode_field(field_value)
         .to_canonical_u64_checked()
         .unwrap_or_else(|| {
