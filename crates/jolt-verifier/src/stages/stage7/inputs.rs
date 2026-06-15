@@ -42,6 +42,12 @@ pub fn deps<'a, F: Field, C>(
 pub struct Stage7Claims<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims<F>,
     pub advice_address_phase: Stage7AdviceAddressPhaseClaims<F>,
+    /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
+    /// address phase; present only when that phase runs.
+    pub bytecode_address_phase: Option<BytecodeAddressPhaseOutputClaims<F>>,
+    /// Final `ProgramImageInit` claim from the program-image reduction's
+    /// address phase; present only when that phase runs.
+    pub program_image_address_phase: Option<ProgramImageAddressPhaseOutputClaim<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,5 +68,17 @@ pub struct Stage7AdviceAddressPhaseClaims<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct AdviceAddressPhaseOutputClaim<F: Field> {
+    pub opening_claim: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct BytecodeAddressPhaseOutputClaims<F: Field> {
+    pub chunks: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct ProgramImageAddressPhaseOutputClaim<F: Field> {
     pub opening_claim: F,
 }

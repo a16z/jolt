@@ -75,8 +75,14 @@ use jolt_claims::{
     protocols::jolt::{
         formulas::{
             booleanity::{self, BooleanityDimensions},
-            bytecode::{self, BytecodeReadRafEvaluationInputs},
-            claim_reductions::{advice, hamming_weight, increments},
+            bytecode::{
+                self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafEvaluationInputs,
+            },
+            claim_reductions::{
+                advice,
+                bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
+                hamming_weight, increments, program_image,
+            },
             dimensions::{JoltFormulaDimensions, JoltSumcheckSpec, REGISTER_ADDRESS_BITS},
             instruction, ram, registers,
             spartan::{
@@ -87,16 +93,18 @@ use jolt_claims::{
             },
         },
         AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
-        BooleanityPublic, BytecodeReadRafChallenge, BytecodeReadRafPublic,
+        BooleanityPublic, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
+        BytecodeClaimReductionPublic, BytecodeReadRafChallenge, BytecodeReadRafPublic,
         HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
         IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
         InstructionInputChallenge, InstructionRaVirtualizationChallenge,
         InstructionReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial,
         JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-        JoltSumcheckDomain, PrecommittedReductionLayout, RamHammingBooleanityChallenge,
-        RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
-        RamRaVirtualizationChallenge, RamRafEvaluationPublic, RamReadWriteChallenge,
-        RamValCheckChallenge, RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
+        JoltSumcheckDomain, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+        ProgramImageClaimReductionPublic, RamHammingBooleanityChallenge, RamOutputCheckPublic,
+        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationChallenge,
+        RamRafEvaluationPublic, RamReadWriteChallenge, RamValCheckChallenge,
+        RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
         RegistersValEvaluationChallenge, SpartanShiftChallenge, SpartanShiftPublic,
     },
     public, Expr, Source, Term,
@@ -130,6 +138,7 @@ use super::{
 };
 use crate::stages::{
     stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
+    stage6::{outputs::BytecodeReductionWeights, verify_b},
     stage8::outputs::Stage8OpeningId,
 };
 use crate::VerifierError;
@@ -533,7 +542,7 @@ where
     JoltFormulaDimensions::try_from(input.proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        input.preprocessing.program.bytecode.code_size,
+        input.preprocessing.program.bytecode_len(),
         input.checked.ram_K,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -601,18 +610,25 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let r_address = ram_val_check_address(input)?;
-    let mut advice_contributions = Vec::new();
+    // WARNING: contribution order and selectors must stay in lockstep with the
+    // clear-path decomposition in stage4/verify.rs.
+    let mut contributions = Vec::new();
+    if input.checked.precommitted.program_image.is_some() {
+        contributions.push(ram::RamValCheckInitContribution::program_image(
+            -PCS::Field::one(),
+        ));
+    }
     if input.proof.untrusted_advice_commitment.is_some() {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
-        advice_contributions.push(ram::RamValCheckAdviceContribution::untrusted(-selector.0));
+        contributions.push(ram::RamValCheckInitContribution::untrusted(-selector.0));
     }
     if input.checked.trusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Trusted, &r_address)?;
-        advice_contributions.push(ram::RamValCheckAdviceContribution::trusted(-selector.0));
+        contributions.push(ram::RamValCheckInitContribution::trusted(-selector.0));
     }
     Ok(ram::RamValCheckInit::decomposed(
         input.stage4.ram_val_check_public_eval,
-        advice_contributions,
+        contributions,
     ))
 }
 
@@ -860,66 +876,105 @@ where
     let entry_bytecode_index = input
         .preprocessing
         .program
-        .bytecode
         .entry_bytecode_index()
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let bytecode_public_values =
-        bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-            bytecode: &input.preprocessing.program.bytecode.bytecode,
-            r_address: &bytecode_r_address,
-            r_cycle: &bytecode_r_cycle,
-            stage_cycle_points: [
-                &stage1_cycle,
-                &stage2_cycle,
-                &stage3_cycle,
-                stage4_cycle,
-                stage5_cycle,
-            ],
-            register_read_write_point: &input.stage4.registers_read_write_opening_point
-                [..REGISTER_ADDRESS_BITS],
-            register_val_evaluation_point: &input.stage5.registers_val_evaluation.opening_point
-                [..REGISTER_ADDRESS_BITS],
-            entry_bytecode_index,
-            stage1_gammas: &input.stage6.public.stage1_gammas,
-            stage2_gammas: &input.stage6.public.stage2_gammas,
-            stage3_gammas: &input.stage6.public.stage3_gammas,
-            stage4_gammas: &input.stage6.public.stage4_gammas,
-            stage5_gammas: &input.stage6.public.stage5_gammas,
-        })
-        .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
-    #[cfg(feature = "field-inline")]
-    let bytecode_public_values = {
-        let mut bytecode_public_values = bytecode_public_values;
-        let field_inline_bytecode = input
-            .preprocessing
-            .field_inline_bytecode
-            .as_deref()
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+    if input.checked.precommitted.bytecode.is_some() {
+        let committed_public_values = bytecode::read_raf_committed_public_values::<PCS::Field>(
+            BytecodeReadRafCommittedEvaluationInputs {
+                r_address: &bytecode_r_address,
+                r_cycle: &bytecode_r_cycle,
+                stage_cycle_points: [
+                    &stage1_cycle,
+                    &stage2_cycle,
+                    &stage3_cycle,
+                    stage4_cycle,
+                    stage5_cycle,
+                ],
+                entry_bytecode_index,
+            },
+        );
+        for (index, stage_cycle_eq) in committed_public_values.stage_cycle_eqs.iter().enumerate() {
+            values.public(
+                JoltPublicId::from(BytecodeReadRafPublic::StageCycleEq(index)),
+                *stage_cycle_eq,
+            )?;
+        }
+        values.public(
+            JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
+            committed_public_values.spartan_outer_raf,
+        )?;
+        values.public(
+            JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
+            committed_public_values.spartan_shift_raf,
+        )?;
+        values.public(
+            JoltPublicId::from(BytecodeReadRafPublic::Entry),
+            committed_public_values.entry,
+        )?;
+    } else {
+        let full_program = input.preprocessing.program.as_full().ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::BytecodeReadRaf,
-                reason: "field-inline bytecode metadata is missing".to_string(),
-            })?;
-        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
-        let field_read_write_opening = &input.stage4.field_registers_read_write_opening_point;
-        let field_val_evaluation_opening = &input
-            .stage5
-            .field_inline
-            .field_registers_val_evaluation
-            .opening_point;
-        if field_read_write_opening.len() != field_log_k + log_t {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: format!(
+                reason: "full bytecode table is unavailable".to_string(),
+            }
+        })?;
+        let bytecode_public_values =
+            bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
+                bytecode: &full_program.bytecode.bytecode,
+                r_address: &bytecode_r_address,
+                r_cycle: &bytecode_r_cycle,
+                stage_cycle_points: [
+                    &stage1_cycle,
+                    &stage2_cycle,
+                    &stage3_cycle,
+                    stage4_cycle,
+                    stage5_cycle,
+                ],
+                register_read_write_point: &input.stage4.registers_read_write_opening_point
+                    [..REGISTER_ADDRESS_BITS],
+                register_val_evaluation_point: &input.stage5.registers_val_evaluation.opening_point
+                    [..REGISTER_ADDRESS_BITS],
+                entry_bytecode_index,
+                stage1_gammas: &input.stage6.public.stage1_gammas,
+                stage2_gammas: &input.stage6.public.stage2_gammas,
+                stage3_gammas: &input.stage6.public.stage3_gammas,
+                stage4_gammas: &input.stage6.public.stage4_gammas,
+                stage5_gammas: &input.stage6.public.stage5_gammas,
+            })
+            .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
+        #[cfg(feature = "field-inline")]
+        let bytecode_public_values = {
+            let mut bytecode_public_values = bytecode_public_values;
+            let field_inline_bytecode = input
+                .preprocessing
+                .field_inline_bytecode
+                .as_deref()
+                .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: "field-inline bytecode metadata is missing".to_string(),
+                })?;
+            let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
+            let field_read_write_opening = &input.stage4.field_registers_read_write_opening_point;
+            let field_val_evaluation_opening = &input
+                .stage5
+                .field_inline
+                .field_registers_val_evaluation
+                .opening_point;
+            if field_read_write_opening.len() != field_log_k + log_t {
+                return Err(VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: format!(
                     "field-register read-write opening point length mismatch: expected {}, got {}",
                     field_log_k + log_t,
                     field_read_write_opening.len()
                 ),
-            });
-        }
-        if field_val_evaluation_opening.len() != field_log_k + log_t {
-            return Err(VerifierError::StageClaimPublicInputFailed {
+                });
+            }
+            if field_val_evaluation_opening.len() != field_log_k + log_t {
+                return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::BytecodeReadRaf,
                 reason: format!(
                     "field-register val-evaluation opening point length mismatch: expected {}, got {}",
@@ -927,55 +982,56 @@ where
                     field_val_evaluation_opening.len()
                 ),
             });
+            }
+            let (field_read_write_address, field_read_write_cycle) =
+                field_read_write_opening.split_at(field_log_k);
+            let (field_val_evaluation_address, field_val_evaluation_cycle) =
+                field_val_evaluation_opening.split_at(field_log_k);
+            let field_values = field_bytecode::read_raf_public_values(
+                field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
+                    bytecode: field_inline_bytecode,
+                    field_register_log_k: field_log_k,
+                    r_address: &bytecode_r_address,
+                    r_cycle: &bytecode_r_cycle,
+                    stage1_cycle_point: &stage1_cycle,
+                    field_register_read_write_point: field_read_write_address,
+                    field_register_read_write_cycle_point: field_read_write_cycle,
+                    field_register_val_evaluation_point: field_val_evaluation_address,
+                    field_register_val_evaluation_cycle_point: field_val_evaluation_cycle,
+                    stage1_gammas: &input.stage6.public.stage1_gammas,
+                    stage4_gammas: &input.stage6.public.stage4_gammas,
+                    stage5_gammas: &input.stage6.public.stage5_gammas,
+                },
+            )
+            .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
+            for (stage_value, field_value) in bytecode_public_values
+                .stage_values
+                .iter_mut()
+                .zip(field_values.stage_values)
+            {
+                *stage_value += field_value;
+            }
+            bytecode_public_values
+        };
+        for (index, stage_value) in bytecode_public_values.stage_values.iter().enumerate() {
+            values.public(
+                JoltPublicId::from(BytecodeReadRafPublic::StageValue(index)),
+                *stage_value,
+            )?;
         }
-        let (field_read_write_address, field_read_write_cycle) =
-            field_read_write_opening.split_at(field_log_k);
-        let (field_val_evaluation_address, field_val_evaluation_cycle) =
-            field_val_evaluation_opening.split_at(field_log_k);
-        let field_values = field_bytecode::read_raf_public_values(
-            field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
-                bytecode: field_inline_bytecode,
-                field_register_log_k: field_log_k,
-                r_address: &bytecode_r_address,
-                r_cycle: &bytecode_r_cycle,
-                stage1_cycle_point: &stage1_cycle,
-                field_register_read_write_point: field_read_write_address,
-                field_register_read_write_cycle_point: field_read_write_cycle,
-                field_register_val_evaluation_point: field_val_evaluation_address,
-                field_register_val_evaluation_cycle_point: field_val_evaluation_cycle,
-                stage1_gammas: &input.stage6.public.stage1_gammas,
-                stage4_gammas: &input.stage6.public.stage4_gammas,
-                stage5_gammas: &input.stage6.public.stage5_gammas,
-            },
-        )
-        .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
-        for (stage_value, field_value) in bytecode_public_values
-            .stage_values
-            .iter_mut()
-            .zip(field_values.stage_values)
-        {
-            *stage_value += field_value;
-        }
-        bytecode_public_values
-    };
-    for index in 0..5 {
         values.public(
-            JoltPublicId::from(BytecodeReadRafPublic::StageValue(index)),
-            bytecode_public_values.value(BytecodeReadRafPublic::StageValue(index)),
+            JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
+            bytecode_public_values.spartan_outer_raf,
+        )?;
+        values.public(
+            JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
+            bytecode_public_values.spartan_shift_raf,
+        )?;
+        values.public(
+            JoltPublicId::from(BytecodeReadRafPublic::Entry),
+            bytecode_public_values.entry,
         )?;
     }
-    values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-        bytecode_public_values.value(BytecodeReadRafPublic::SpartanOuterRaf),
-    )?;
-    values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-        bytecode_public_values.value(BytecodeReadRafPublic::SpartanShiftRaf),
-    )?;
-    values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::Entry),
-        bytecode_public_values.value(BytecodeReadRafPublic::Entry),
-    )?;
 
     let booleanity_address_point = input
         .stage6
@@ -1098,6 +1154,163 @@ where
     )?;
 
     Ok(())
+}
+
+fn bytecode_reduction_weights<PCS, VC, ZkProof>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+    layout: &BytecodeClaimReductionLayout,
+) -> Result<BytecodeReductionWeights<PCS::Field>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
+        VerifierError::MissingStageClaimChallenge {
+            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+        }
+    })?;
+    verify_b::bytecode_reduction_weights(
+        layout,
+        verify_b::BytecodeReductionWeightInputs {
+            eta,
+            stage1_gammas: &input.stage6.public.stage1_gammas,
+            stage2_gammas: &input.stage6.public.stage2_gammas,
+            stage3_gammas: &input.stage6.public.stage3_gammas,
+            stage4_gammas: &input.stage6.public.stage4_gammas,
+            stage5_gammas: &input.stage6.public.stage5_gammas,
+            register_read_write_point: &input.stage4.registers_read_write_opening_point
+                [..REGISTER_ADDRESS_BITS],
+            register_val_evaluation_point: &input.stage5.registers_val_evaluation.opening_point
+                [..REGISTER_ADDRESS_BITS],
+            bytecode_r_address: &input.stage6.bytecode_read_raf_address.opening_point,
+        },
+    )
+}
+
+fn add_bytecode_chunk_weight_publics<F: Field>(
+    values: &mut SourceValues<F>,
+    chunk_weights: Vec<F>,
+) -> Result<(), VerifierError> {
+    for (chunk_idx, weight) in chunk_weights.into_iter().enumerate() {
+        values.public(
+            JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx)),
+            weight,
+        )?;
+    }
+    Ok(())
+}
+
+fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+    values: &mut SourceValues<PCS::Field>,
+    layout: &BytecodeClaimReductionLayout,
+    public: &crate::stages::stage6::outputs::CommittedReductionCyclePhasePublicOutput<PCS::Field>,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    if layout.dimensions().has_address_phase() {
+        return Ok(());
+    }
+    let weights = bytecode_reduction_weights(input, layout)?;
+    let chunk_weights = layout
+        .cycle_phase_final_output_weights(
+            BytecodeOutputWeightInputs {
+                r_bc: &weights.r_bc,
+                chunk_rbc_weights: &weights.chunk_rbc_weights,
+                lane_weights: &weights.lane_weights,
+            },
+            &public.sumcheck_point,
+        )
+        .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
+    add_bytecode_chunk_weight_publics(values, chunk_weights)
+}
+
+fn add_bytecode_reduction_address_publics<PCS, VC, ZkProof>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+    values: &mut SourceValues<PCS::Field>,
+    layout: &BytecodeClaimReductionLayout,
+    public: &crate::stages::stage7::outputs::CommittedReductionAddressPhasePublicOutput<PCS::Field>,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let cycle_phase = input.stage6.bytecode_cycle_phase.as_ref().ok_or_else(|| {
+        VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+        }
+    })?;
+    let weights = bytecode_reduction_weights(input, layout)?;
+    let chunk_weights = layout
+        .address_phase_final_output_weights(
+            BytecodeOutputWeightInputs {
+                r_bc: &weights.r_bc,
+                chunk_rbc_weights: &weights.chunk_rbc_weights,
+                lane_weights: &weights.lane_weights,
+            },
+            &cycle_phase.cycle_phase_variables,
+            &public.sumcheck_point,
+        )
+        .map_err(|error| public_error(JoltRelationId::BytecodeClaimReduction, error))?;
+    add_bytecode_chunk_weight_publics(values, chunk_weights)
+}
+
+fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+    values: &mut SourceValues<PCS::Field>,
+    layout: &ProgramImageClaimReductionLayout,
+    public: &crate::stages::stage6::outputs::CommittedReductionCyclePhasePublicOutput<PCS::Field>,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    if layout.dimensions().has_address_phase() {
+        return Ok(());
+    }
+    let r_addr_rw = ram_val_check_address(input)?;
+    let scale = layout
+        .cycle_phase_final_output_scale(&r_addr_rw, &public.sumcheck_point)
+        .map_err(|error| {
+            public_error(JoltRelationId::ProgramImageClaimReductionCyclePhase, error)
+        })?;
+    values.public(
+        JoltPublicId::from(ProgramImageClaimReductionPublic::FinalScale),
+        scale,
+    )
+}
+
+fn add_program_image_reduction_address_publics<PCS, VC, ZkProof>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+    values: &mut SourceValues<PCS::Field>,
+    layout: &ProgramImageClaimReductionLayout,
+    public: &crate::stages::stage7::outputs::CommittedReductionAddressPhasePublicOutput<PCS::Field>,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let cycle_phase = input
+        .stage6
+        .program_image_cycle_phase
+        .as_ref()
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+            id: program_image::cycle_phase_program_image_opening(),
+        })?;
+    let r_addr_rw = ram_val_check_address(input)?;
+    let scale = layout
+        .address_phase_final_output_scale(
+            &r_addr_rw,
+            &cycle_phase.cycle_phase_variables,
+            &public.sumcheck_point,
+        )
+        .map_err(|error| public_error(JoltRelationId::ProgramImageClaimReduction, error))?;
+    values.public(
+        JoltPublicId::from(ProgramImageClaimReductionPublic::FinalScale),
+        scale,
+    )
 }
 
 fn add_advice_cycle_publics<PCS, VC, ZkProof>(

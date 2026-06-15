@@ -71,6 +71,9 @@ pub enum VerifierError {
     #[error("invalid precommitted claim-reduction schedule: {reason}")]
     InvalidPrecommittedSchedule { reason: String },
 
+    #[error("invalid committed program preprocessing: {reason}")]
+    InvalidCommittedProgram { reason: String },
+
     #[error("missing stage claim opening input {id:?}")]
     MissingStageClaimOpening { id: JoltOpeningId },
 

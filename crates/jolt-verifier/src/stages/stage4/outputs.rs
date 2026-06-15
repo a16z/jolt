@@ -68,6 +68,7 @@ pub struct VerifiedStage4Sumcheck<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInitialEvaluation<F: Field> {
     pub public_eval: F,
+    pub program_image_contribution: Option<VerifiedRamValCheckProgramImageContribution<F>>,
     pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
     pub full_eval: F,
 }
@@ -76,6 +77,15 @@ pub struct RamValCheckInitialEvaluation<F: Field> {
 pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
     pub kind: JoltAdviceKind,
     pub selector: F,
+    pub opening_claim: F,
+    pub opening_point: Vec<F>,
+}
+
+/// Staged program-image contribution to `Val_init(r_address)` in committed
+/// program mode: the scalar opening claim and the full RAM address point it
+/// was staged at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedRamValCheckProgramImageContribution<F: Field> {
     pub opening_claim: F,
     pub opening_point: Vec<F>,
 }

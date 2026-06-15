@@ -27,11 +27,11 @@ fn tampered_output_claim_reject() {
     let dimensions = JoltFormulaDimensions::try_from(base.proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        base.preprocessing.program.bytecode.code_size,
+        base.preprocessing.program.bytecode_len(),
         base.proof.ram_K,
     ))
     .expect("core fixture has invalid dimensions");
-    let id = final_opening_ids(dimensions.ra_layout, false, false)[0];
+    let id = final_opening_ids(dimensions.ra_layout, false, false, None)[0];
 
     tamper_manifest::assert_core_tamper_rejects(
         tamper_manifest::required_target("stage8.opening_claim_values"),

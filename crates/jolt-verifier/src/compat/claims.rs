@@ -27,13 +27,15 @@ use crate::{
         },
         stage6::inputs::{
             AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims,
-            BytecodeReadRafOutputOpeningClaims, IncClaimReductionOutputOpeningClaims,
-            InstructionRaVirtualizationOutputOpeningClaims,
-            RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
-            Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6Claims,
+            BytecodeCyclePhaseOutputClaims, BytecodeReadRafOutputOpeningClaims,
+            IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
+            ProgramImageCyclePhaseOutputClaim, RamHammingBooleanityOutputOpeningClaims,
+            RamRaVirtualizationOutputOpeningClaims, Stage6AddressPhaseClaims,
+            Stage6AdviceCyclePhaseClaims, Stage6Claims,
         },
         stage7::inputs::{
-            AdviceAddressPhaseOutputClaim, HammingWeightClaimReductionOutputOpeningClaims,
+            AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
+            HammingWeightClaimReductionOutputOpeningClaims, ProgramImageAddressPhaseOutputClaim,
             Stage7AdviceAddressPhaseClaims, Stage7Claims,
         },
     },
@@ -46,7 +48,10 @@ use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity, bytecode,
         claim_reductions::registers as registers_claim_reduction,
-        claim_reductions::{advice, increments, instruction as instruction_claim_reduction},
+        claim_reductions::{
+            advice, bytecode as bytecode_claim_reduction, increments,
+            instruction as instruction_claim_reduction, program_image,
+        },
         instruction, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_remainder_output_openings,
@@ -253,6 +258,7 @@ fn stage4_claims_from_native<F: Field>(
             untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
             trusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
         },
+        program_image_contribution: claims.get(program_image::ram_val_check_contribution_opening()),
         registers_read_write: RegistersReadWriteOutputOpeningClaims {
             registers_val: claims.require(registers_val)?,
             rs1_ra: claims.require(rs1_ra)?,
@@ -410,6 +416,7 @@ fn stage6_claims_from_native<F: Field>(
         address_phase: Stage6AddressPhaseClaims {
             bytecode_read_raf: claims.require(bytecode_read_raf_address)?,
             booleanity: claims.require(booleanity_address)?,
+            bytecode_val_stages: bytecode_val_stage_claims_from_native(claims)?,
         },
         bytecode_read_raf: BytecodeReadRafOutputOpeningClaims { bytecode_ra },
         booleanity: BooleanityOutputOpeningClaims {
@@ -432,6 +439,11 @@ fn stage6_claims_from_native<F: Field>(
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
         },
+        bytecode_claim_reduction: bytecode_cycle_phase_claims_from_native(claims),
+        program_image_claim_reduction: claims
+            .get(program_image::cycle_phase_program_image_opening())
+            .or_else(|| claims.get(program_image::final_program_image_opening()))
+            .map(|opening_claim| ProgramImageCyclePhaseOutputClaim { opening_claim }),
     })
 }
 
@@ -443,6 +455,48 @@ fn advice_cycle_phase_claim_from_native<F: Field>(
         .get(advice::cycle_phase_advice_opening(kind))
         .or_else(|| claims.get(advice::final_advice_opening(kind)))
         .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim })
+}
+
+fn bytecode_val_stage_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Option<[F; bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES]>, VerifierError> {
+    if claims
+        .get(bytecode_claim_reduction::bytecode_val_stage_opening(0))
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let mut stage_claims = [F::zero(); bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES];
+    for (stage, stage_claim) in stage_claims.iter_mut().enumerate() {
+        *stage_claim =
+            claims.require(bytecode_claim_reduction::bytecode_val_stage_opening(stage))?;
+    }
+    Ok(Some(stage_claims))
+}
+
+fn bytecode_cycle_phase_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Option<BytecodeCyclePhaseOutputClaims<F>> {
+    if let Some(intermediate) =
+        claims.get(bytecode_claim_reduction::cycle_phase_intermediate_opening())
+    {
+        return Some(BytecodeCyclePhaseOutputClaims::Intermediate(intermediate));
+    }
+    let chunks = final_bytecode_chunk_claims_from_native(claims);
+    (!chunks.is_empty()).then_some(BytecodeCyclePhaseOutputClaims::Chunks(chunks))
+}
+
+fn final_bytecode_chunk_claims_from_native<F: Field>(claims: &NativeOpeningClaims<F>) -> Vec<F> {
+    let mut chunks = Vec::new();
+    for chunk_idx in 0.. {
+        let Some(opening_claim) = claims.get(
+            bytecode_claim_reduction::final_bytecode_chunk_opening(chunk_idx),
+        ) else {
+            break;
+        };
+        chunks.push(opening_claim);
+    }
+    chunks
 }
 
 fn stage7_claims_from_native<F: Field>(
@@ -500,6 +554,8 @@ fn stage7_claims_from_native<F: Field>(
             trusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
         },
+        bytecode_address_phase: bytecode_address_phase_claims_from_native(claims),
+        program_image_address_phase: program_image_address_phase_claim_from_native(claims),
     })
 }
 
@@ -511,6 +567,23 @@ fn advice_address_phase_claim_from_native<F: Field>(
     claims
         .get(advice::final_advice_opening(kind))
         .map(|opening_claim| AdviceAddressPhaseOutputClaim { opening_claim })
+}
+
+fn bytecode_address_phase_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Option<BytecodeAddressPhaseOutputClaims<F>> {
+    let _ = claims.get(bytecode_claim_reduction::cycle_phase_intermediate_opening())?;
+    let chunks = final_bytecode_chunk_claims_from_native(claims);
+    (!chunks.is_empty()).then_some(BytecodeAddressPhaseOutputClaims { chunks })
+}
+
+fn program_image_address_phase_claim_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Option<ProgramImageAddressPhaseOutputClaim<F>> {
+    let _ = claims.get(program_image::cycle_phase_program_image_opening())?;
+    claims
+        .get(program_image::final_program_image_opening())
+        .map(|opening_claim| ProgramImageAddressPhaseOutputClaim { opening_claim })
 }
 
 #[derive(Clone, Debug)]
@@ -623,6 +696,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 untrusted: None,
                 trusted: None,
             },
+            program_image_contribution: None,
             registers_read_write: RegistersReadWriteOutputOpeningClaims {
                 registers_val: zero,
                 rs1_ra: zero,
@@ -651,6 +725,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             address_phase: Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
+                bytecode_val_stages: None,
             },
             bytecode_read_raf: BytecodeReadRafOutputOpeningClaims {
                 bytecode_ra: vec![zero],
@@ -675,6 +750,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 trusted: None,
                 untrusted: None,
             },
+            bytecode_claim_reduction: None,
+            program_image_claim_reduction: None,
         },
         stage7: Stage7Claims {
             hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims {
@@ -686,6 +763,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 trusted: None,
                 untrusted: None,
             },
+            bytecode_address_phase: None,
+            program_image_address_phase: None,
         },
     }
 }

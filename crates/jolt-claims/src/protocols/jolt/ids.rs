@@ -125,6 +125,10 @@ pub enum BytecodeReadRafChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BytecodeReadRafPublic {
     StageValue(usize),
+    /// Committed program mode: `eq(stage_cycle_point_s, r_cycle)` factor
+    /// multiplying the staged `BytecodeValStage(s)` opening. In full mode this
+    /// factor is folded into `StageValue(s)` instead.
+    StageCycleEq(usize),
     SpartanOuterRaf,
     SpartanShiftRaf,
     Entry,

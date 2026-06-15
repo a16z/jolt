@@ -18,6 +18,7 @@
 #![deny(missing_docs)]
 
 mod codec;
+mod digest;
 mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
@@ -26,6 +27,7 @@ mod setup;
 mod verifier;
 
 pub use codec::BytesMsg;
+pub use digest::DigestTranscript;
 pub use legacy::{
     AppendToTranscript, Label, LabelWithCount, SpongeTranscript, Transcript, U64Word, MAX_LABEL_LEN,
 };
@@ -47,6 +49,13 @@ pub use verifier::VerifierTranscript;
 #[cfg(feature = "transcript-blake2b")]
 pub type Blake2bTranscript<F = jolt_field::Fr> =
     SpongeTranscript<spongefish::instantiations::Blake2b512, F>;
+
+/// Blake2b-256 chained-digest transcript, byte-compatible with `jolt-core`'s
+/// `Blake2bTranscript`. Required to verify proofs produced by `jolt-core`
+/// provers; new modular protocols should use [`Blake2bTranscript`] instead.
+#[cfg(feature = "transcript-blake2b")]
+pub type LegacyBlake2bTranscript<F = jolt_field::Fr> =
+    DigestTranscript<blake2::Blake2b<blake2::digest::consts::U32>, F>;
 
 /// Fiat-Shamir transcript backed by Keccak-f1600 (spongefish duplex sponge).
 #[cfg(feature = "transcript-keccak")]

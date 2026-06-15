@@ -8,7 +8,7 @@ pub mod outputs_a;
 pub mod outputs_b;
 pub mod verify;
 mod verify_a;
-mod verify_b;
+pub(crate) mod verify_b;
 
 pub use inputs::{deps, Deps};
 pub use outputs::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput};

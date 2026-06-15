@@ -58,7 +58,8 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
         | FixtureId::Sha2Small
         | FixtureId::MulDivZkSmall
         | FixtureId::ZkStage1Prefix
-        | FixtureId::AdviceConsumer => FixtureMetadata {
+        | FixtureId::AdviceConsumer
+        | FixtureId::CommittedMulDivSmall => FixtureMetadata {
             id,
             name: "completeness-only fixture",
             zk: matches!(id, FixtureId::MulDivZkSmall | FixtureId::ZkStage1Prefix),

@@ -2,10 +2,10 @@
 use jolt_claims::protocols::field_inline::formulas::registers as field_registers;
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::registers as registers_claim_reduction,
+        claim_reductions::{program_image, registers as registers_claim_reduction},
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram,
-        ram::{RamValCheckAdviceContribution as FormulaAdviceContribution, RamValCheckInit},
+        ram::{RamValCheckInit, RamValCheckInitContribution as FormulaInitContribution},
         registers,
     },
     JoltAdviceKind, JoltChallengeId, JoltRelationId, JoltSumcheckDomain, RamValCheckChallenge,
@@ -18,13 +18,14 @@ use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb, try_eq_mle, LtP
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::{LabelWithCount, Transcript};
+use num_traits::One;
 
 use super::{
     inputs::{Deps, Stage4Claims},
     outputs::{
         RamValCheckInitialEvaluation, Stage4ClearOutput, Stage4Output, Stage4PublicOutput,
-        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution, VerifiedStage4Batch,
-        VerifiedStage4Sumcheck,
+        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution,
+        VerifiedRamValCheckProgramImageContribution, VerifiedStage4Batch, VerifiedStage4Sumcheck,
     },
 };
 use crate::{
@@ -278,23 +279,23 @@ where
         ram_val_check_public_eval,
     )?;
 
+    // WARNING: contribution order and selectors must stay in lockstep with
+    // `ram_val_check_init` in zk/blindfold/mod.rs — the BlindFold constraint
+    // is built from the same decomposition.
+    let mut init_contributions = Vec::new();
+    if ram_val_check_init.program_image_contribution.is_some() {
+        init_contributions.push(FormulaInitContribution::program_image(-PCS::Field::one()));
+    }
+    for contribution in &ram_val_check_init.advice_contributions {
+        let neg_selector = -contribution.selector;
+        init_contributions.push(match contribution.kind {
+            JoltAdviceKind::Trusted => FormulaInitContribution::trusted(neg_selector),
+            JoltAdviceKind::Untrusted => FormulaInitContribution::untrusted(neg_selector),
+        });
+    }
     let ram_val_check_claims = ram::val_check::<PCS::Field>(
         trace_dimensions,
-        RamValCheckInit::decomposed(
-            ram_val_check_init.public_eval,
-            ram_val_check_init
-                .advice_contributions
-                .iter()
-                .map(|contribution| {
-                    let neg_selector = -contribution.selector;
-                    match contribution.kind {
-                        JoltAdviceKind::Trusted => FormulaAdviceContribution::trusted(neg_selector),
-                        JoltAdviceKind::Untrusted => {
-                            FormulaAdviceContribution::untrusted(neg_selector)
-                        }
-                    }
-                }),
-        ),
+        RamValCheckInit::decomposed(ram_val_check_init.public_eval, init_contributions),
     );
 
     let [_right_operand_is_rs2, rs2_value_instruction, _right_operand_is_imm, _imm, _left_operand_is_rs1, rs1_value_instruction, _left_operand_is_pc, _unexpanded_pc] =
@@ -356,6 +357,9 @@ where
             |id| match *id {
                 id if id == ram_val => Ok(stage2.output_claims.ram_read_write.val),
                 id if id == ram_val_final => Ok(stage2.output_claims.ram_output_check),
+                id if id == program_image::ram_val_check_contribution_opening() => claims
+                    .program_image_contribution
+                    .ok_or(VerifierError::MissingOpeningClaim { id }),
                 id if id == ram::val_check_advice_opening(JoltAdviceKind::Untrusted) => claims
                     .advice
                     .untrusted
@@ -564,6 +568,7 @@ where
         transcript,
         proof.untrusted_advice_commitment.is_some(),
         checked.trusted_advice_commitment_present,
+        checked.precommitted.program_image.is_some(),
         claims,
     )?;
 
@@ -614,6 +619,12 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let mut full_eval = public_eval;
+    let program_image_contribution = collect_program_image_contribution(
+        checked.precommitted.program_image.is_some(),
+        claims.program_image_contribution,
+        r_address,
+        &mut full_eval,
+    )?;
     let mut advice_contributions = Vec::new();
     let untrusted_present = proof.untrusted_advice_commitment.is_some();
     collect_advice_contribution(
@@ -637,9 +648,32 @@ where
 
     Ok(RamValCheckInitialEvaluation {
         public_eval,
+        program_image_contribution,
         advice_contributions,
         full_eval,
     })
+}
+
+fn collect_program_image_contribution<F: Field>(
+    committed_program: bool,
+    opening_claim: Option<F>,
+    r_address: &[F],
+    full_eval: &mut F,
+) -> Result<Option<VerifiedRamValCheckProgramImageContribution<F>>, VerifierError> {
+    let opening = program_image::ram_val_check_contribution_opening();
+    if !committed_program {
+        if opening_claim.is_some() {
+            return Err(VerifierError::UnexpectedOpeningClaim { id: opening });
+        }
+        return Ok(None);
+    }
+
+    let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
+    *full_eval += opening_claim;
+    Ok(Some(VerifiedRamValCheckProgramImageContribution {
+        opening_claim,
+        opening_point: r_address.to_vec(),
+    }))
 }
 
 fn public_initial_ram_evaluation<PCS, VC>(
@@ -651,11 +685,16 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let public_initial_ram = PublicInitialRam::new(&preprocessing.program.ram, &checked.public_io)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: error.to_string(),
-        })?;
+    // In committed program mode the image words are bound via the staged
+    // `ProgramImageInitContributionRw` opening, so only inputs are public here.
+    let public_initial_ram = match preprocessing.program.as_full() {
+        Some(full) => PublicInitialRam::new(&full.ram, &checked.public_io),
+        None => PublicInitialRam::inputs_only(&checked.public_io),
+    }
+    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::RamValCheck,
+        reason: error.to_string(),
+    })?;
     for segment in &public_initial_ram.segments {
         let end = segment.start_index + segment.words.len();
         if end > checked.ram_K {
@@ -690,6 +729,7 @@ where
         + STAGE4_BATCH_FIELD_INLINE_OUTPUT_CLAIMS
         + usize::from(proof.untrusted_advice_commitment.is_some())
         + usize::from(checked.trusted_advice_commitment_present)
+        + usize::from(checked.precommitted.program_image.is_some())
 }
 
 fn collect_advice_contribution<F: Field>(
@@ -754,6 +794,7 @@ fn append_stage4_opening_claims<F, T>(
     transcript: &mut T,
     untrusted_advice_commitment_present: bool,
     trusted_advice_commitment_present: bool,
+    committed_program: bool,
     claims: &Stage4Claims<F>,
 ) -> Result<(), VerifierError>
 where
@@ -773,6 +814,13 @@ where
         let opening_claim = claims
             .advice
             .trusted
+            .ok_or(VerifierError::MissingOpeningClaim { id })?;
+        transcript.append_labeled(b"opening_claim", &opening_claim);
+    }
+    if committed_program {
+        let id = program_image::ram_val_check_contribution_opening();
+        let opening_claim = claims
+            .program_image_contribution
             .ok_or(VerifierError::MissingOpeningClaim { id })?;
         transcript.append_labeled(b"opening_claim", &opening_claim);
     }
@@ -845,7 +893,7 @@ mod tests {
         let claims = test_claims();
         let mut transcript = RecordingTranscript::new(b"stage4-openings");
 
-        let result = append_stage4_opening_claims(&mut transcript, false, false, &claims);
+        let result = append_stage4_opening_claims(&mut transcript, false, false, false, &claims);
         assert!(result.is_ok(), "stage 4 openings should append: {result:?}");
 
         let expected = [
@@ -893,6 +941,7 @@ mod tests {
                 untrusted: Some(Fr::from_u64(1)),
                 trusted: Some(Fr::from_u64(2)),
             },
+            program_image_contribution: None,
             registers_read_write: RegistersReadWriteOutputOpeningClaims {
                 registers_val: Fr::from_u64(3),
                 rs1_ra: Fr::from_u64(4),

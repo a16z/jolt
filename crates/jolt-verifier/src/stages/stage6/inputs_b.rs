@@ -54,3 +54,22 @@ pub struct Stage6AdviceCyclePhaseClaims<F: Field> {
 pub struct AdviceCyclePhaseOutputClaim<F: Field> {
     pub opening_claim: F,
 }
+
+/// Openings cached when the committed-bytecode claim reduction's cycle phase
+/// completes: the intermediate claim when address-phase rounds remain, or the
+/// per-chunk `BytecodeChunk(i)` claims when the reduction finishes in the
+/// cycle phase.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub enum BytecodeCyclePhaseOutputClaims<F: Field> {
+    Intermediate(F),
+    Chunks(Vec<F>),
+}
+
+/// Opening cached when the program-image claim reduction's cycle phase
+/// completes (the intermediate or final `ProgramImageInit` claim).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct ProgramImageCyclePhaseOutputClaim<F: Field> {
+    pub opening_claim: F,
+}

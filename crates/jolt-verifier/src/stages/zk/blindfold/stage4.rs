@@ -126,6 +126,11 @@ where
             JoltAdviceKind::Trusted,
         )));
     }
+    if input.checked.precommitted.program_image.is_some() {
+        output_ids.push(VerifierOpeningId::Jolt(
+            program_image::ram_val_check_contribution_opening(),
+        ));
+    }
     output_ids.extend(map_jolt_opening_ids(
         registers::read_write_checking_output_openings().to_vec(),
     ));

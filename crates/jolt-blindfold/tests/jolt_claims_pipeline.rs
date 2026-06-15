@@ -8,7 +8,7 @@ use jolt_claims::protocols::jolt::{
         booleanity::{booleanity, BooleanityDimensions},
         claim_reductions::increments,
         ra::JoltRaPolynomialLayout,
-        ram::{self, RamValCheckAdviceContribution, RamValCheckInit},
+        ram::{self, RamValCheckInit, RamValCheckInitContribution},
         registers,
     },
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
@@ -207,8 +207,8 @@ fn jolt_claims_pipeline_lowers_ram_val_check_with_decomposed_advice() {
     let init = RamValCheckInit::decomposed(
         f(17),
         [
-            RamValCheckAdviceContribution::trusted(f(3)),
-            RamValCheckAdviceContribution::untrusted(f(7)),
+            RamValCheckInitContribution::trusted(f(3)),
+            RamValCheckInitContribution::untrusted(f(7)),
         ],
     );
     let stage = ram::val_check::<F>(TraceDimensions::new(3), init);

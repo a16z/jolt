@@ -34,3 +34,19 @@ impl JoltProgramPreprocessing {
         })
     }
 }
+
+/// Verifier-side program shape for committed program mode: the trusted
+/// commitments replace the bytecode table and program image, so only this
+/// metadata accompanies them. Mirrors `jolt-core`'s `ProgramMetadata`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct ProgramMetadata {
+    pub entry_address: u64,
+    pub min_bytecode_address: u64,
+    pub entry_bytecode_index: usize,
+    pub program_image_len_words: usize,
+    pub bytecode_len: usize,
+}

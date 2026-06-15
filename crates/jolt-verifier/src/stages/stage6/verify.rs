@@ -1,14 +1,17 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{self, BooleanityDimensions},
-        bytecode::{self, BytecodeReadRafEvaluationInputs},
-        claim_reductions::{advice, increments},
+        bytecode::{
+            self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafEvaluationInputs,
+        },
+        claim_reductions::{advice, bytecode as bytecode_reduction, increments, program_image},
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram,
     },
-    BooleanityChallenge, BooleanityPublic, BytecodeReadRafChallenge, IncClaimReductionChallenge,
-    IncClaimReductionPublic, InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId,
-    JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
+    BooleanityChallenge, BooleanityPublic, BytecodeClaimReductionChallenge,
+    BytecodeReadRafChallenge, IncClaimReductionChallenge, IncClaimReductionPublic,
+    InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId,
+    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
     PrecommittedReductionLayout, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
 };
 use jolt_crypto::VectorCommitment;
@@ -51,6 +54,8 @@ struct Stage6BatchInputClaims<F: Field> {
     inc_claim_reduction: F,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
+    bytecode_claim_reduction: Option<F>,
+    program_image_claim_reduction: Option<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +70,8 @@ struct Stage6BatchExpectedOutputClaims<F: Field> {
     inc_claim_reduction: F,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
+    bytecode_claim_reduction: Option<F>,
+    program_image_claim_reduction: Option<F>,
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -96,7 +103,7 @@ where
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        preprocessing.program.bytecode.code_size,
+        preprocessing.program.bytecode_len(),
         checked.ram_K,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -104,10 +111,17 @@ where
         reason: error.to_string(),
     })?;
 
+    let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
+    let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
+    let committed_program = bytecode_reduction_layout.is_some();
+
     let bytecode_address_claims =
         bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
-    let bytecode_claims =
-        bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
+    let bytecode_claims = if committed_program {
+        bytecode::read_raf_cycle_phase_committed::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+    } else {
+        bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+    };
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
@@ -132,6 +146,11 @@ where
     let untrusted_advice_claims = untrusted_advice_layout.map(|layout| {
         advice::cycle_phase::<PCS::Field>(JoltAdviceKind::Untrusted, layout.dimensions())
     });
+    let bytecode_reduction_claims = bytecode_reduction_layout.map(|layout| {
+        bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
+    });
+    let program_image_reduction_claims = program_image_reduction_layout
+        .map(|layout| program_image::cycle_phase::<PCS::Field>(layout.dimensions()));
 
     for claim in [
         &bytecode_address_claims,
@@ -145,10 +164,15 @@ where
     ] {
         validate_compressed_stage_claim(claim)?;
     }
-    if let Some(claim) = &trusted_advice_claims {
-        validate_compressed_stage_claim(claim)?;
-    }
-    if let Some(claim) = &untrusted_advice_claims {
+    for claim in [
+        &trusted_advice_claims,
+        &untrusted_advice_claims,
+        &bytecode_reduction_claims,
+        &program_image_reduction_claims,
+    ]
+    .into_iter()
+    .flatten()
+    {
         validate_compressed_stage_claim(claim)?;
     }
 
@@ -191,6 +215,7 @@ where
 
     let public = |instruction_ra_gamma_powers: Vec<PCS::Field>,
                   inc_gamma: PCS::Field,
+                  eta: Option<PCS::Field>,
                   address_phase_challenges: Vec<PCS::Field>,
                   address_phase_batching_coefficients: Vec<PCS::Field>,
                   challenges: Vec<PCS::Field>,
@@ -210,6 +235,7 @@ where
         booleanity_gamma,
         instruction_ra_gamma_powers: instruction_ra_gamma_powers.clone(),
         inc_gamma,
+        bytecode_reduction_eta: eta,
     };
 
     if checked.zk {
@@ -230,6 +256,7 @@ where
                 .num_virtual_ra_polys(),
         );
         let inc_gamma = transcript.challenge_scalar();
+        let eta = committed_program.then(|| transcript.challenge_scalar());
 
         let mut statements = vec![
             SumcheckStatement::new(
@@ -258,6 +285,18 @@ where
             ));
         }
         if let Some(claim) = &untrusted_advice_claims {
+            statements.push(SumcheckStatement::new(
+                claim.sumcheck.rounds,
+                claim.sumcheck.degree,
+            ));
+        }
+        if let Some(claim) = &bytecode_reduction_claims {
+            statements.push(SumcheckStatement::new(
+                claim.sumcheck.rounds,
+                claim.sumcheck.degree,
+            ));
+        }
+        if let Some(claim) = &program_image_reduction_claims {
             statements.push(SumcheckStatement::new(
                 claim.sumcheck.rounds,
                 claim.sumcheck.degree,
@@ -416,6 +455,32 @@ where
         } else {
             None
         };
+        let bytecode_cycle_phase = if let (Some(layout), Some(claim)) = (
+            bytecode_reduction_layout,
+            bytecode_reduction_claims.as_ref(),
+        ) {
+            Some(verify_b::committed_reduction_cycle_phase_public(
+                &consistency,
+                claim,
+                layout.precommitted(),
+                JoltRelationId::BytecodeClaimReductionCyclePhase,
+            )?)
+        } else {
+            None
+        };
+        let program_image_cycle_phase = if let (Some(layout), Some(claim)) = (
+            program_image_reduction_layout,
+            program_image_reduction_claims.as_ref(),
+        ) {
+            Some(verify_b::committed_reduction_cycle_phase_public(
+                &consistency,
+                claim,
+                layout.precommitted(),
+                JoltRelationId::ProgramImageClaimReductionCyclePhase,
+            )?)
+        } else {
+            None
+        };
 
         let bytecode_output_openings =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
@@ -431,6 +496,17 @@ where
             &bytecode_ra_opening_points,
             &booleanity_opening_point,
         );
+        let bytecode_reduction_output_claims = bytecode_reduction_layout.map_or(0, |layout| {
+            bytecode_reduction::cycle_phase_output_openings(
+                layout.dimensions(),
+                layout.chunk_count(),
+            )
+            .len()
+        });
+        let program_image_reduction_output_claims = program_image_reduction_layout
+            .map_or(0, |layout| {
+                program_image::cycle_phase_output_openings(layout.dimensions()).len()
+            });
         let committed_output_claims = bytecode_output_openings.bytecode_ra.len()
             + booleanity_output_openings.len()
             - aliased_bytecode_ra_openings
@@ -439,7 +515,9 @@ where
             + flat_instruction_ra_output_openings.len()
             + 2
             + usize::from(trusted_advice_claims.is_some())
-            + usize::from(untrusted_advice_claims.is_some());
+            + usize::from(untrusted_advice_claims.is_some())
+            + bytecode_reduction_output_claims
+            + program_image_reduction_output_claims;
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
@@ -453,6 +531,7 @@ where
             public: public(
                 instruction_ra_gamma_powers,
                 inc_gamma,
+                eta,
                 stage6a.address_phase_consistency.challenges(),
                 stage6a
                     .address_phase_consistency
@@ -508,6 +587,8 @@ where
             },
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
+            bytecode_cycle_phase,
+            program_image_cycle_phase,
         }));
     }
 
@@ -522,6 +603,15 @@ where
         return Err(VerifierError::ExpectedClearProof { field: "stage5" });
     };
     let claims = &proof.clear_claims()?.stage6;
+    if committed_program != claims.address_phase.bytecode_val_stages.is_some() {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: format!(
+                "bytecode Val-stage claims presence ({}) does not match committed program mode ({committed_program})",
+                claims.address_phase.bytecode_val_stages.is_some()
+            ),
+        });
+    }
 
     let bytecode_input_openings = bytecode::read_raf_input_openings();
     let [(spartan_shift_unexpanded_pc, instruction_input_unexpanded_pc)] =
@@ -706,6 +796,16 @@ where
             id: advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
         });
     }
+    if bytecode_reduction_claims.is_none() && claims.bytecode_claim_reduction.is_some() {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+        });
+    }
+    if program_image_reduction_claims.is_none() && claims.program_image_claim_reduction.is_some() {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: program_image::cycle_phase_program_image_opening(),
+        });
+    }
 
     let stage6a = verify_a::verify_clear(
         proof,
@@ -732,6 +832,7 @@ where
         .copied()
         .unwrap_or_else(PCS::Field::one);
     let inc_gamma = transcript.challenge_scalar();
+    let eta = committed_program.then(|| transcript.challenge_scalar());
 
     let input_claims = Stage6BatchInputClaims {
         bytecode_read_raf_address: stage6a.bytecode_read_raf_input,
@@ -812,6 +913,56 @@ where
                 )
             })
             .transpose()?,
+        bytecode_claim_reduction: bytecode_reduction_claims
+            .as_ref()
+            .map(|claim| {
+                let stage_claims = claims.address_phase.bytecode_val_stages.as_ref().ok_or(
+                    VerifierError::MissingOpeningClaim {
+                        id: bytecode_reduction::bytecode_val_stage_opening(0),
+                    },
+                )?;
+                claim.input.expression().try_evaluate(
+                    |id| {
+                        for (stage, stage_claim) in stage_claims.iter().enumerate() {
+                            if *id == bytecode_reduction::bytecode_val_stage_opening(stage) {
+                                return Ok(*stage_claim);
+                            }
+                        }
+                        Err(VerifierError::MissingOpeningClaim { id: *id })
+                    },
+                    |id| match id {
+                        JoltChallengeId::BytecodeClaimReduction(
+                            BytecodeClaimReductionChallenge::Eta,
+                        ) => eta.ok_or(VerifierError::MissingStageClaimChallenge { id: *id }),
+                        _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    },
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
+        program_image_claim_reduction: program_image_reduction_claims
+            .as_ref()
+            .map(|claim| {
+                let contribution = stage4
+                    .ram_val_check_init
+                    .program_image_contribution
+                    .as_ref()
+                    .ok_or(VerifierError::MissingOpeningClaim {
+                        id: program_image::ram_val_check_contribution_opening(),
+                    })?;
+                claim.input.expression().try_evaluate(
+                    |id| {
+                        if *id == program_image::ram_val_check_contribution_opening() {
+                            Ok(contribution.opening_claim)
+                        } else {
+                            Err(VerifierError::MissingOpeningClaim { id: *id })
+                        }
+                    },
+                    |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
     };
 
     let mut sumcheck_claims = vec![
@@ -859,6 +1010,26 @@ where
     if let (Some(claim), Some(input_claim)) = (
         &untrusted_advice_claims,
         input_claims.untrusted_advice_cycle_phase,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &bytecode_reduction_claims,
+        input_claims.bytecode_claim_reduction,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &program_image_reduction_claims,
+        input_claims.program_image_claim_reduction,
     ) {
         sumcheck_claims.push(SumcheckClaim::new(
             claim.sumcheck.rounds,
@@ -926,57 +1097,109 @@ where
         .split_at(REGISTER_ADDRESS_BITS);
     let entry_bytecode_index = preprocessing
         .program
-        .bytecode
         .entry_bytecode_index()
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let bytecode_public_values =
-        bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-            bytecode: &preprocessing.program.bytecode.bytecode,
-            r_address: &bytecode_r_address,
-            r_cycle: &bytecode_r_cycle,
-            stage_cycle_points: [
-                &stage1_cycle,
-                &stage2_cycle,
-                &stage3_cycle,
-                stage4_cycle,
-                stage5_cycle,
-            ],
-            register_read_write_point: stage4_register_address,
-            register_val_evaluation_point: stage5_register_address,
-            entry_bytecode_index,
-            stage1_gammas: &stage1_gammas,
-            stage2_gammas: &stage2_gammas,
-            stage3_gammas: &stage3_gammas,
-            stage4_gammas: &stage4_gammas,
-            stage5_gammas: &stage5_gammas,
-        })
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: error.to_string(),
-        })?;
-    let bytecode_output = bytecode_claims.output.expression().try_evaluate(
-        |id| {
-            for (index, opening) in bytecode_output_openings.bytecode_ra.iter().enumerate() {
-                if *id == *opening {
-                    return Ok(claims.bytecode_read_raf.bytecode_ra[index]);
+    let evaluate_bytecode_ra_claim = |id: &jolt_claims::protocols::jolt::JoltOpeningId| {
+        for (index, opening) in bytecode_output_openings.bytecode_ra.iter().enumerate() {
+            if *id == *opening {
+                return Ok(claims.bytecode_read_raf.bytecode_ra[index]);
+            }
+        }
+        Err(VerifierError::MissingOpeningClaim { id: *id })
+    };
+    let bytecode_output = if committed_program {
+        let bytecode_public_values = bytecode::read_raf_committed_public_values::<PCS::Field>(
+            BytecodeReadRafCommittedEvaluationInputs {
+                r_address: &bytecode_r_address,
+                r_cycle: &bytecode_r_cycle,
+                stage_cycle_points: [
+                    &stage1_cycle,
+                    &stage2_cycle,
+                    &stage3_cycle,
+                    stage4_cycle,
+                    stage5_cycle,
+                ],
+                entry_bytecode_index,
+            },
+        );
+        let stage_claims = claims.address_phase.bytecode_val_stages.as_ref().ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::bytecode_val_stage_opening(0),
+            },
+        )?;
+        bytecode_claims.output.expression().try_evaluate(
+            |id| {
+                for (stage, stage_claim) in stage_claims.iter().enumerate() {
+                    if *id == bytecode_reduction::bytecode_val_stage_opening(stage) {
+                        return Ok(*stage_claim);
+                    }
                 }
+                evaluate_bytecode_ra_claim(id)
+            },
+            |id| match id {
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
+                    Ok(bytecode_gamma)
+                }
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| match id {
+                JoltPublicId::BytecodeReadRaf(public_id) => bytecode_public_values
+                    .value(*public_id)
+                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            },
+        )?
+    } else {
+        let full_program = preprocessing.program.as_full().ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "full bytecode table is unavailable".to_string(),
             }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
-        },
-        |id| match id {
-            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(bytecode_gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| match id {
-            JoltPublicId::BytecodeReadRaf(public_id) => {
-                Ok(bytecode_public_values.value(*public_id))
-            }
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )?;
+        })?;
+        let bytecode_public_values =
+            bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
+                bytecode: &full_program.bytecode.bytecode,
+                r_address: &bytecode_r_address,
+                r_cycle: &bytecode_r_cycle,
+                stage_cycle_points: [
+                    &stage1_cycle,
+                    &stage2_cycle,
+                    &stage3_cycle,
+                    stage4_cycle,
+                    stage5_cycle,
+                ],
+                register_read_write_point: stage4_register_address,
+                register_val_evaluation_point: stage5_register_address,
+                entry_bytecode_index,
+                stage1_gammas: &stage1_gammas,
+                stage2_gammas: &stage2_gammas,
+                stage3_gammas: &stage3_gammas,
+                stage4_gammas: &stage4_gammas,
+                stage5_gammas: &stage5_gammas,
+            })
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: error.to_string(),
+            })?;
+        bytecode_claims.output.expression().try_evaluate(
+            evaluate_bytecode_ra_claim,
+            |id| match id {
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
+                    Ok(bytecode_gamma)
+                }
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| match id {
+                JoltPublicId::BytecodeReadRaf(public_id) => bytecode_public_values
+                    .value(*public_id)
+                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            },
+        )?
+    };
     let bytecode_ra_opening_points = proof
         .one_hot_config
         .committed_address_chunks(&bytecode_r_address)
@@ -1363,6 +1586,78 @@ where
             });
         }
     }
+    let bytecode_cycle_phase =
+        if let (Some(layout), Some(claim)) = (
+            bytecode_reduction_layout,
+            bytecode_reduction_claims.as_ref(),
+        ) {
+            let output_claims = claims.bytecode_claim_reduction.as_ref().ok_or(
+                VerifierError::MissingOpeningClaim {
+                    id: bytecode_reduction::cycle_phase_output_openings(
+                        layout.dimensions(),
+                        layout.chunk_count(),
+                    )[0],
+                },
+            )?;
+            let eta = eta.ok_or(VerifierError::MissingStageClaimChallenge {
+                id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+            })?;
+            let weights = verify_b::bytecode_reduction_weights(
+                layout,
+                verify_b::BytecodeReductionWeightInputs {
+                    eta,
+                    stage1_gammas: &stage1_gammas,
+                    stage2_gammas: &stage2_gammas,
+                    stage3_gammas: &stage3_gammas,
+                    stage4_gammas: &stage4_gammas,
+                    stage5_gammas: &stage5_gammas,
+                    register_read_write_point: stage4_register_address,
+                    register_val_evaluation_point: stage5_register_address,
+                    bytecode_r_address: &bytecode_r_address,
+                },
+            )?;
+            let input_claim = input_claims.bytecode_claim_reduction.ok_or(
+                VerifierError::MissingOpeningClaim {
+                    id: bytecode_reduction::bytecode_val_stage_opening(0),
+                },
+            )?;
+            Some(verify_b::verify_bytecode_cycle_phase(
+                &batch,
+                claim,
+                layout,
+                output_claims,
+                weights,
+                input_claim,
+            )?)
+        } else {
+            None
+        };
+    let program_image_cycle_phase = if let (Some(layout), Some(claim)) = (
+        program_image_reduction_layout,
+        program_image_reduction_claims.as_ref(),
+    ) {
+        let output_claim = claims.program_image_claim_reduction.as_ref().ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: program_image::cycle_phase_output_openings(layout.dimensions())[0],
+            },
+        )?;
+        let r_addr_rw = &stage4.batch.ram_val_check.opening_point[..log_k];
+        let input_claim = input_claims.program_image_claim_reduction.ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: program_image::ram_val_check_contribution_opening(),
+            },
+        )?;
+        Some(verify_b::verify_program_image_cycle_phase(
+            &batch,
+            claim,
+            layout,
+            output_claim,
+            r_addr_rw,
+            input_claim,
+        )?)
+    } else {
+        None
+    };
 
     let expected_outputs = Stage6BatchExpectedOutputClaims {
         bytecode_read_raf_address: claims.address_phase.bytecode_read_raf,
@@ -1379,6 +1674,12 @@ where
         untrusted_advice_cycle_phase: untrusted_advice
             .as_ref()
             .map(|verified| verified.expected_output_claim),
+        bytecode_claim_reduction: bytecode_cycle_phase
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        program_image_claim_reduction: program_image_cycle_phase
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
     };
     let mut expected_outputs_in_order = vec![
         expected_outputs.bytecode_read_raf,
@@ -1392,6 +1693,12 @@ where
         expected_outputs_in_order.push(output_claim);
     }
     if let Some(output_claim) = expected_outputs.untrusted_advice_cycle_phase {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.bytecode_claim_reduction {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.program_image_claim_reduction {
         expected_outputs_in_order.push(output_claim);
     }
     if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
@@ -1427,6 +1734,7 @@ where
         public: public(
             instruction_ra_gamma_powers,
             inc_gamma,
+            eta,
             address_batch.reduction.point.as_slice().to_vec(),
             address_batch.batching_coefficients.clone(),
             batch.reduction.point.as_slice().to_vec(),
@@ -1501,6 +1809,8 @@ where
             },
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
+            bytecode_cycle_phase,
+            program_image_cycle_phase,
         },
     }))
 }

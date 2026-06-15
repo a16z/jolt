@@ -72,24 +72,24 @@ impl RamRaVirtualizationDimensions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInit<F> {
     public_eval: F,
-    advice_contributions: Vec<RamValCheckAdviceContribution<F>>,
+    contributions: Vec<RamValCheckInitContribution<F>>,
 }
 
 impl<F> RamValCheckInit<F> {
     pub fn full(init_eval: F) -> Self {
         Self {
             public_eval: init_eval,
-            advice_contributions: Vec::new(),
+            contributions: Vec::new(),
         }
     }
 
-    pub fn decomposed<I>(public_eval: F, advice_contributions: I) -> Self
+    pub fn decomposed<I>(public_eval: F, contributions: I) -> Self
     where
-        I: IntoIterator<Item = RamValCheckAdviceContribution<F>>,
+        I: IntoIterator<Item = RamValCheckInitContribution<F>>,
     {
         Self {
             public_eval,
-            advice_contributions: advice_contributions.into_iter().collect(),
+            contributions: contributions.into_iter().collect(),
         }
     }
 }
@@ -100,13 +100,17 @@ impl<F> From<F> for RamValCheckInit<F> {
     }
 }
 
+/// One staged-opening contribution to `Val_init(r_address)`: the init
+/// evaluation gains `-neg_selector * opening`. Advice polynomials contribute
+/// with their block-selector weight; in committed program mode the program
+/// image contributes its staged scalar with weight one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RamValCheckAdviceContribution<F> {
+pub struct RamValCheckInitContribution<F> {
     pub neg_selector: F,
     pub opening: JoltOpeningId,
 }
 
-impl<F> RamValCheckAdviceContribution<F> {
+impl<F> RamValCheckInitContribution<F> {
     pub fn new(neg_selector: F, opening: JoltOpeningId) -> Self {
         Self {
             neg_selector,
@@ -125,6 +129,13 @@ impl<F> RamValCheckAdviceContribution<F> {
         Self::new(
             neg_selector,
             JoltOpeningId::trusted_advice(JoltRelationId::RamValCheck),
+        )
+    }
+
+    pub fn program_image(neg_selector: F) -> Self {
+        Self::new(
+            neg_selector,
+            super::claim_reductions::program_image::ram_val_check_contribution_opening(),
         )
     }
 }
@@ -474,7 +485,7 @@ where
     F: RingCore,
 {
     let mut eval = JoltExpr::constant(init.public_eval);
-    for contribution in init.advice_contributions {
+    for contribution in init.contributions {
         eval = eval - JoltExpr::constant(contribution.neg_selector) * opening(contribution.opening);
     }
     eval
@@ -1183,8 +1194,8 @@ mod tests {
         let init = RamValCheckInit::decomposed(
             Fr::from_u64(3),
             [
-                RamValCheckAdviceContribution::untrusted(-Fr::from_u64(5)),
-                RamValCheckAdviceContribution::trusted(-Fr::from_u64(7)),
+                RamValCheckInitContribution::untrusted(-Fr::from_u64(5)),
+                RamValCheckInitContribution::trusted(-Fr::from_u64(7)),
             ],
         );
         let claims = val_check::<Fr>(trace_dimensions(), init);
@@ -1301,8 +1312,8 @@ mod tests {
         let init = RamValCheckInit::decomposed(
             public_eval,
             [
-                RamValCheckAdviceContribution::untrusted(untrusted_neg_selector),
-                RamValCheckAdviceContribution::trusted(trusted_neg_selector),
+                RamValCheckInitContribution::untrusted(untrusted_neg_selector),
+                RamValCheckInitContribution::trusted(trusted_neg_selector),
             ],
         );
         let claims = val_check::<Fr>(trace_dimensions(), init);

@@ -648,6 +648,14 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice opening consumed by RAM value check",
     ),
+    checked_standard(
+        "stage4.claims.program_image_contribution",
+        "claims.stage4.program_image_contribution",
+        VerifierPhase::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets the staged program-image init contribution",
+    ),
 ];
 
 pub const STAGE5_TARGETS: &[TamperTarget] = &[
@@ -870,6 +878,30 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice cycle-phase output claim",
     ),
+    checked_standard(
+        "stage6.claims.address_phase.bytecode_val_stages",
+        "claims.stage6.address_phase.bytecode_val_stages",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets each staged bytecode Val-stage claim",
+    ),
+    checked_standard(
+        "stage6.claims.bytecode_claim_reduction",
+        "claims.stage6.bytecode_claim_reduction.Intermediate",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets the bytecode reduction cycle-phase output claim",
+    ),
+    checked_standard(
+        "stage6.claims.program_image_claim_reduction",
+        "claims.stage6.program_image_claim_reduction.opening_claim",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets the program-image reduction cycle-phase output claim",
+    ),
 ];
 
 pub const STAGE7_TARGETS: &[TamperTarget] = &[
@@ -936,6 +968,22 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice address-phase output claim",
+    ),
+    checked_standard(
+        "stage7.claims.bytecode_address_phase.chunks",
+        "claims.stage7.bytecode_address_phase.chunks",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets each final bytecode chunk claim",
+    ),
+    checked_standard(
+        "stage7.claims.program_image_address_phase",
+        "claims.stage7.program_image_address_phase.opening_claim",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "committed fixture test offsets the final program-image claim",
     ),
 ];
 
@@ -1329,6 +1377,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 untrusted: Some(zero),
                 trusted: Some(zero),
             },
+            program_image_contribution: None,
             registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
                 registers_val: zero,
                 rs1_ra: zero,
@@ -1359,6 +1408,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
+                bytecode_val_stages: Some([zero; 5]),
             },
             bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
                 bytecode_ra: vec![zero],
@@ -1390,6 +1440,14 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     opening_claim: zero,
                 }),
             },
+            bytecode_claim_reduction: Some(
+                stage6::inputs::BytecodeCyclePhaseOutputClaims::Intermediate(zero),
+            ),
+            program_image_claim_reduction: Some(
+                stage6::inputs::ProgramImageCyclePhaseOutputClaim {
+                    opening_claim: zero,
+                },
+            ),
         },
         stage7: stage7::inputs::Stage7Claims {
             hamming_weight_claim_reduction:
@@ -1406,6 +1464,14 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     opening_claim: zero,
                 }),
             },
+            bytecode_address_phase: Some(stage7::inputs::BytecodeAddressPhaseOutputClaims {
+                chunks: vec![zero],
+            }),
+            program_image_address_phase: Some(
+                stage7::inputs::ProgramImageAddressPhaseOutputClaim {
+                    opening_claim: zero,
+                },
+            ),
         },
     }
 }

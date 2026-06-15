@@ -85,7 +85,7 @@ where
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        preprocessing.program.bytecode.code_size,
+        preprocessing.program.bytecode_len(),
         checked.ram_K,
     ))
     .map_err(|error| VerifierError::FinalOpeningBatchFailed {
@@ -134,6 +134,7 @@ where
     let pcs_opening_point = Point::high_to_low(opening_point.clone());
 
     let entries = batch_entries(
+        preprocessing,
         proof,
         layout,
         trusted_advice_commitment,
@@ -256,6 +257,7 @@ where
     reason = "gathers per-polynomial sources from several stages"
 )]
 fn batch_entries<'a, F, PCS, VC, ZkProof>(
+    preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
     proof: &'a JoltProof<PCS, VC, ZkProof>,
     layout: JoltRaPolynomialLayout,
     trusted_advice_commitment: Option<&'a PCS::Output>,
@@ -270,14 +272,20 @@ where
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
 {
-    let advice_final = |polynomial: JoltCommittedPolynomial| {
+    let precommitted_final = |polynomial: JoltCommittedPolynomial| {
         precommitted_finals
             .iter()
             .find(|opening| opening.polynomial == polynomial)
     };
-    let include_trusted = advice_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
-    let include_untrusted = advice_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
-    let order = final_opening_polynomial_order(layout, include_trusted, include_untrusted);
+    let include_trusted = precommitted_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
+    let include_untrusted = precommitted_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
+    let committed_program = preprocessing.program.committed();
+    let order = final_opening_polynomial_order(
+        layout,
+        include_trusted,
+        include_untrusted,
+        committed_program.map(|committed| committed.bytecode_chunk_count()),
+    );
 
     let mut entries = Vec::with_capacity(order.len() + field_inline_final_opening_count());
     // Core's final PCS batch order intentionally differs from proof payload order.
@@ -353,14 +361,14 @@ where
                     },
                 ),
                 JoltCommittedPolynomial::TrustedAdvice => {
-                    let opening = advice_final(polynomial)
+                    let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = trusted_advice_commitment
                         .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
                 JoltCommittedPolynomial::UntrustedAdvice => {
-                    let opening = advice_final(polynomial)
+                    let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
                     let commitment = proof
                         .untrusted_advice_commitment
@@ -368,14 +376,21 @@ where
                         .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
-                // Committed-program polynomials (bytecode chunks, program
-                // image) are not wired into the final batch yet.
-                polynomial => {
-                    return Err(VerifierError::FinalOpeningBatchFailed {
-                        reason: format!(
-                            "unsupported polynomial in final opening batch: {polynomial:?}"
-                        ),
-                    });
+                JoltCommittedPolynomial::BytecodeChunk(index) => {
+                    let opening = precommitted_final(polynomial)
+                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
+                    let commitment = committed_program
+                        .and_then(|committed| committed.bytecode_chunk_commitments.get(index))
+                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+                    (commitment, opening.point.as_slice(), opening.opening_claim)
+                }
+                JoltCommittedPolynomial::ProgramImageInit => {
+                    let opening = precommitted_final(polynomial)
+                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
+                    let commitment = committed_program
+                        .map(|committed| &committed.program_image_commitment)
+                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+                    (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
             };
         entries.push(Stage8BatchEntry {

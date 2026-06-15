@@ -92,7 +92,7 @@ where
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        preprocessing.program.bytecode.code_size,
+        preprocessing.program.bytecode_len(),
         checked.ram_K,
     ))
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {

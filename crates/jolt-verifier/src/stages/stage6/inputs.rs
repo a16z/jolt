@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 pub use super::inputs_a::Stage6AddressPhaseClaims;
 pub use super::inputs_b::{
-    AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims, BytecodeReadRafOutputOpeningClaims,
-    IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
+    AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims, BytecodeCyclePhaseOutputClaims,
+    BytecodeReadRafOutputOpeningClaims, IncClaimReductionOutputOpeningClaims,
+    InstructionRaVirtualizationOutputOpeningClaims, ProgramImageCyclePhaseOutputClaim,
     RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
     Stage6AdviceCyclePhaseClaims,
 };
@@ -80,4 +81,8 @@ pub struct Stage6Claims<F: Field> {
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
     pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
+    /// Committed program mode only.
+    pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
+    /// Committed program mode only.
+    pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<F>>,
 }
