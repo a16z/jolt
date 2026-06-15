@@ -129,12 +129,29 @@ impl<'a> CudaDenseOuterState<'a> {
         })
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn from_row_dots(
         ctx: &'a CudaKernelContext,
         inputs: DenseOuterInputs<'_>,
     ) -> Result<Self, CudaError> {
-        todo!()
+        let (eq, az, bz) = ctx.dense_outer_construct(
+            inputs.eq_evals,
+            inputs.scale,
+            inputs.weights,
+            inputs.row_dots_a,
+            inputs.row_dots_b,
+            inputs.row_count,
+            inputs.first_group_rows,
+            inputs.second_group_rows,
+        )?;
+        Ok(Self {
+            ctx,
+            eq,
+            az,
+            bz,
+            eq_scratch: ctx.upload(&[])?,
+            az_scratch: ctx.upload(&[])?,
+            bz_scratch: ctx.upload(&[])?,
+        })
     }
 
     pub fn round_poly(&self) -> Result<UnivariatePoly<Fr>, CudaError> {
@@ -251,7 +268,6 @@ mod tests {
 
     proptest! {
         #[test]
-        #[ignore = "CudaDenseOuterState::from_row_dots is todo!()"]
         fn cuda_from_row_dots_matches_cpu(
             num_vars in 1usize..10,
             scale in fr_strategy(),

@@ -163,6 +163,69 @@ extern "C" __global__ void bind_kernel(u64 *__restrict__ out, const u64 *__restr
     }
 }
 
+__device__ __forceinline__ void group_matvec(
+    const u64 *__restrict__ dots,
+    const u64 *__restrict__ weights,
+    const unsigned int *__restrict__ rows,
+    unsigned int group_len,
+    u64 *acc
+) {
+    for (int k = 0; k < 4; k++) acc[k] = 0;
+    for (unsigned int j = 0; j < group_len; j++) {
+        u64 d[4], w[4], p[4];
+        load4(dots + rows[j] * 4, d);
+        load4(weights + j * 4, w);
+        fr_mul(w, d, p);
+        u64 t[4];
+        fr_add(acc, p, t);
+        for (int k = 0; k < 4; k++) acc[k] = t[k];
+    }
+}
+
+extern "C" __global__ void dense_outer_kernel(
+    u64 *__restrict__ eq_out,
+    u64 *__restrict__ az_out,
+    u64 *__restrict__ bz_out,
+    const u64 *__restrict__ eq_evals,
+    const u64 *__restrict__ scale,
+    const u64 *__restrict__ weights,
+    const u64 *__restrict__ row_dots_a,
+    const u64 *__restrict__ row_dots_b,
+    const unsigned int *__restrict__ first_rows,
+    const unsigned int *__restrict__ second_rows,
+    unsigned int first_len,
+    unsigned int second_len,
+    unsigned long row_count,
+    unsigned long cycles
+) {
+    unsigned long cycle = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (cycle < cycles) {
+        unsigned long index = cycle * 2;
+        const u64 *a = row_dots_a + cycle * row_count * 4;
+        const u64 *b = row_dots_b + cycle * row_count * 4;
+
+        u64 s[4];
+        load4(scale, s);
+        u64 e0[4], e1[4], r[4];
+        load4(eq_evals + index * 4, e0);
+        load4(eq_evals + (index + 1) * 4, e1);
+        fr_mul(e0, s, r);
+        store4(eq_out + index * 4, r);
+        fr_mul(e1, s, r);
+        store4(eq_out + (index + 1) * 4, r);
+
+        u64 az0[4], bz0[4], az1[4], bz1[4];
+        group_matvec(a, weights, first_rows, first_len, az0);
+        group_matvec(b, weights, first_rows, first_len, bz0);
+        group_matvec(a, weights, second_rows, second_len, az1);
+        group_matvec(b, weights, second_rows, second_len, bz1);
+        store4(az_out + index * 4, az0);
+        store4(bz_out + index * 4, bz0);
+        store4(az_out + (index + 1) * 4, az1);
+        store4(bz_out + (index + 1) * 4, bz1);
+    }
+}
+
 __device__ __forceinline__ void cubic_coeffs(
     const u64 *eq0, const u64 *eq1,
     const u64 *az0, const u64 *az1,
@@ -359,6 +422,7 @@ pub struct CudaKernelContext {
     mul: CudaFunction,
     fma: CudaFunction,
     bind: CudaFunction,
+    dense_outer: CudaFunction,
     cubic_pairs: CudaFunction,
     cubic_tuple_reduce: CudaFunction,
     sum_reduce: CudaFunction,
@@ -518,6 +582,7 @@ impl CudaKernelContext {
             mul: module.load_function("mul_kernel")?,
             fma: module.load_function("fma_kernel")?,
             bind: module.load_function("bind_kernel")?,
+            dense_outer: module.load_function("dense_outer_kernel")?,
             cubic_pairs: module.load_function("cubic_pairs")?,
             cubic_tuple_reduce: module.load_function("cubic_tuple_reduce")?,
             sum_reduce: module.load_function("sum_reduce")?,
@@ -548,6 +613,77 @@ impl CudaKernelContext {
             len: values.len(),
             staging: self.staging.clone(),
         })
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub fn dense_outer_construct(
+        &self,
+        eq_evals: &[Fr],
+        scale: Fr,
+        weights: &[Fr],
+        row_dots_a: &[Fr],
+        row_dots_b: &[Fr],
+        row_count: usize,
+        first_group_rows: &[u32],
+        second_group_rows: &[u32],
+    ) -> Result<(DeviceFrVec, DeviceFrVec, DeviceFrVec), CudaError> {
+        let len = eq_evals.len();
+        let cycles = len / 2;
+
+        let mut eq: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
+        let mut az: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
+        let mut bz: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
+
+        if cycles > 0 {
+            let eq_evals = self.upload(eq_evals)?;
+            let scale = self.upload(&[scale])?;
+            let weights = self.upload(weights)?;
+            let row_dots_a = self.upload(row_dots_a)?;
+            let row_dots_b = self.upload(row_dots_b)?;
+            let first = self.stream.clone_htod(first_group_rows)?;
+            let second = self.stream.clone_htod(second_group_rows)?;
+
+            let first_len = first_group_rows.len() as u32;
+            let second_len = second_group_rows.len() as u32;
+            let row_count_arg = row_count as u64;
+            let cycles_arg = cycles as u64;
+            let cfg = LaunchConfig {
+                grid_dim: ((cycles as u32).div_ceil(BLOCK), 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            let f = self.dense_outer.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut eq)
+                .arg(&mut az)
+                .arg(&mut bz)
+                .arg(&eq_evals.buf)
+                .arg(&scale.buf)
+                .arg(&weights.buf)
+                .arg(&row_dots_a.buf)
+                .arg(&row_dots_b.buf)
+                .arg(&first)
+                .arg(&second)
+                .arg(&first_len)
+                .arg(&second_len)
+                .arg(&row_count_arg)
+                .arg(&cycles_arg);
+            // SAFETY: one thread per cycle reads eq_evals[2c..2c+2], the scale, the
+            // weights, and the per-cycle row_count dots from a/b, writing the two
+            // output pairs at 2c/2c+1 in eq/az/bz. All device buffers are sized for
+            // `len` field elements (cycles * row_count for the dot tables).
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()?;
+        }
+
+        let make = |buf, len| DeviceFrVec {
+            stream: self.stream.clone(),
+            buf,
+            len,
+            staging: self.staging.clone(),
+        };
+        Ok((make(eq, len), make(az, len), make(bz, len)))
     }
 
     fn map(&self, func: &CudaFunction, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
