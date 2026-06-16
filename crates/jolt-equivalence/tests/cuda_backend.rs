@@ -22,9 +22,7 @@ fn with_cuda_backend(plan: &'static Stage1CpuProgramPlan) -> &'static Stage1CpuP
         .iter()
         .map(|kernel| {
             let mut kernel = *kernel;
-            if kernel.abi == "jolt_stage1_outer_remaining" {
-                kernel.backend = "cuda";
-            }
+            kernel.backend = "cuda";
             kernel
         })
         .collect();
@@ -35,57 +33,31 @@ fn with_cuda_backend(plan: &'static Stage1CpuProgramPlan) -> &'static Stage1CpuP
     }))
 }
 
-#[test]
-fn stage1_cuda_backend_matches_cpu_backend() {
-    let fixture = core_muldiv_commitment_fixture();
-    let (cpu_plan, _verifier_plan) = bolt_stage1_programs_with_params(&fixture.params);
-    let cpu_plan = leak_stage1_program(&cpu_plan);
-    let cuda_plan = with_cuda_backend(cpu_plan);
-
-    let r1cs_key = fixture.r1cs_key();
-    let data = fixture.stage1_outer_rv64_data(&r1cs_key);
-    let num_cycle_vars = r1cs_key.num_cycle_vars();
-
-    let mut cpu_transcript = Blake2bTranscript::<Fr>::new(b"stage1.cuda.equivalence");
-    let cpu_artifacts = jolt_prover::prove_stage1_outer_with_witness_inputs(
-        cpu_plan,
-        num_cycle_vars,
-        &data,
-        &mut cpu_transcript,
-    )
-    .expect("cpu stage1 prover succeeds");
-
-    let mut cuda_transcript = Blake2bTranscript::<Fr>::new(b"stage1.cuda.equivalence");
-    let cuda_artifacts = jolt_prover::prove_stage1_outer_with_witness_inputs(
-        cuda_plan,
-        num_cycle_vars,
-        &data,
-        &mut cuda_transcript,
-    )
-    .expect("cuda stage1 prover succeeds");
-
-    assert_eq!(
-        cpu_transcript.state(),
-        cuda_transcript.state(),
-        "cuda backend must produce an identical Fiat-Shamir transcript"
-    );
-
-    assert_eq!(cpu_artifacts.sumchecks.len(), cuda_artifacts.sumchecks.len());
-    for (cpu, cuda) in cpu_artifacts
-        .sumchecks
-        .iter()
-        .zip(cuda_artifacts.sumchecks.iter())
-    {
-        assert_eq!(cpu.driver, cuda.driver);
-        assert_eq!(cpu.point, cuda.point);
-        assert_eq!(
-            cpu.proof.round_polynomials,
-            cuda.proof.round_polynomials,
-            "round polynomials must match for driver {}",
-            cpu.driver
-        );
-    }
+macro_rules! stage_cuda_backend_test {
+    ($test:ident, $programs:ident) => {
+        #[test]
+        fn $test() {
+            use jolt_equivalence::cuda_backend_oracle::{
+                all_cpu_programs, bolt_prover_transcript_state, $programs,
+            };
+            let fixture = core_muldiv_commitment_fixture();
+            let cpu_state = bolt_prover_transcript_state(&fixture, all_cpu_programs(&fixture));
+            let cuda_state = bolt_prover_transcript_state(&fixture, $programs(&fixture));
+            assert_eq!(
+                cpu_state, cuda_state,
+                "cuda backend must produce an identical Fiat-Shamir transcript"
+            );
+        }
+    };
 }
+
+stage_cuda_backend_test!(stage1_cuda_backend_matches_cpu_backend, programs_with_stage1_cuda);
+stage_cuda_backend_test!(stage2_cuda_backend_matches_cpu_backend, programs_with_stage2_cuda);
+stage_cuda_backend_test!(stage3_cuda_backend_matches_cpu_backend, programs_with_stage3_cuda);
+stage_cuda_backend_test!(stage4_cuda_backend_matches_cpu_backend, programs_with_stage4_cuda);
+stage_cuda_backend_test!(stage5_cuda_backend_matches_cpu_backend, programs_with_stage5_cuda);
+stage_cuda_backend_test!(stage6_cuda_backend_matches_cpu_backend, programs_with_stage6_cuda);
+stage_cuda_backend_test!(stage7_cuda_backend_matches_cpu_backend, programs_with_stage7_cuda);
 
 fn prove_stage1(
     plan: &'static Stage1CpuProgramPlan,

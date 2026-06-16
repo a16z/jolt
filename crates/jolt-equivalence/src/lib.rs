@@ -11,6 +11,8 @@ pub mod bolt_programs;
 pub mod checkpoint;
 pub mod checks;
 pub mod commitment_oracle;
+#[cfg(feature = "cuda")]
+pub mod cuda_backend_oracle;
 pub mod core_conversion;
 mod core_opening_ids;
 pub mod core_oracle;
