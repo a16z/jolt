@@ -588,6 +588,8 @@ macro_rules! p256_mulq_op {
         pub struct $name;
 
         impl InlineOp for $name {
+            type Advice = VecDeque<u64>;
+
             const OPCODE: u32 = crate::INLINE_OPCODE;
             const FUNCT3: u32 = $funct3;
             const FUNCT7: u32 = crate::P256_FUNCT7;
@@ -600,8 +602,8 @@ macro_rules! p256_mulq_op {
                 P256Mulq::new(asm, operands, $mul_type, $is_scalar)?.inline_sequence()
             }
 
-            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-                Some(P256Mulq::advice(operands, cpu, $is_scalar, &$mul_type))
+            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+                P256Mulq::advice(operands, cpu, $is_scalar, &$mul_type)
             }
         }
     };
@@ -703,6 +705,8 @@ impl FakeGlvAdvBuilder {
 pub struct P256FakeGlvAdv;
 
 impl InlineOp for P256FakeGlvAdv {
+    type Advice = VecDeque<u64>;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::P256_FAKE_GLV_ADV_FUNCT3;
     const FUNCT7: u32 = crate::P256_FUNCT7;
@@ -715,7 +719,7 @@ impl InlineOp for P256FakeGlvAdv {
         FakeGlvAdvBuilder::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Some(FakeGlvAdvBuilder::advice(operands, cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+        FakeGlvAdvBuilder::advice(operands, cpu)
     }
 }

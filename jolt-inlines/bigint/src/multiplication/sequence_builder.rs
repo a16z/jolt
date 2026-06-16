@@ -64,11 +64,6 @@ impl BigIntMulSequenceBuilder {
                 .emit_ld::<LD>(self.b(i), self.operands.rs2, i as i64 * 8);
         }
 
-        // Initialize result accumulator registers to zero
-        for i in 0..OUTPUT_LIMBS {
-            self.asm.emit_r::<ADD>(self.s(i), 0, 0); // s[i] = 0 + 0
-        }
-
         for i in 0..INPUT_LIMBS {
             for j in 0..INPUT_LIMBS {
                 self.mul_and_accumulate(i, j); // A[i] × B[j] → R[i+j]
@@ -148,6 +143,8 @@ impl BigIntMulSequenceBuilder {
 pub struct BigintMul256;
 
 impl InlineOp for BigintMul256 {
+    type Advice = ();
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BIGINT256_MUL_FUNCT3;
     const FUNCT7: u32 = crate::BIGINT256_MUL_FUNCT7;

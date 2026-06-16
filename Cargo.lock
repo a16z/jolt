@@ -3015,7 +3015,6 @@ dependencies = [
 name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
- "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "jolt-inlines-sdk",
  "rand 0.8.5",
  "tracer",
@@ -3084,6 +3083,7 @@ version = "0.1.0"
 dependencies = [
  "hex-literal",
  "jolt-inlines-sdk",
+ "rand 0.8.5",
  "sha3 0.11.0-rc.9",
  "tracer",
 ]
@@ -3113,6 +3113,7 @@ dependencies = [
  "jolt-program",
  "jolt-riscv",
  "num-bigint",
+ "rand 0.8.5",
  "tracer",
 ]
 
@@ -3134,6 +3135,7 @@ name = "jolt-inlines-sha2"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",
+ "rand 0.8.5",
  "sha2 0.11.0",
  "tracer",
 ]

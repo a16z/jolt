@@ -1,23 +1,3 @@
-use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
-
-pub fn create_sha256_harness() -> InlineTestHarness {
-    let layout = InlineMemoryLayout::single_input(64, 32);
-    InlineTestHarness::new(layout)
-}
-
-pub fn instruction_sha256() -> tracer::instruction::inline::INLINE {
-    InlineTestHarness::create_default_instruction(INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7)
-}
-
-pub fn instruction_sha256init() -> tracer::instruction::inline::INLINE {
-    InlineTestHarness::create_default_instruction(
-        INLINE_OPCODE,
-        SHA256_INIT_FUNCT3,
-        SHA256_INIT_FUNCT7,
-    )
-}
-
 mod exec_functions {
     use crate::exec::{execute_sha256_compression, execute_sha256_compression_initial};
     use crate::sequence_builder::BLOCK;
@@ -102,43 +82,29 @@ mod exec_functions {
 }
 
 mod sequence_tests {
-    use super::*;
-    use crate::test_constants::TestVectors;
+    use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial};
+    use jolt_inlines_sdk::{
+        assert_edge_cases_match_reference, assert_random_cases_match_reference,
+    };
 
     #[test]
     fn test_sha256_direct_execution() {
-        for (desc, block, initial_state, expected) in TestVectors::get_standard_test_vectors() {
-            let mut harness = create_sha256_harness();
-            harness.setup_registers();
-            harness.load_input32(&block);
-            harness.load_state32(&initial_state);
-            harness.execute_inline(instruction_sha256());
-
-            let result: [u32; 8] = harness.read_output32(8).try_into().unwrap();
-
-            assert_eq!(
-                &expected, &result,
-                "SHA256 direct execution: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
-            );
-        }
+        assert_edge_cases_match_reference::<Sha256Compression>();
     }
 
     #[test]
     fn test_sha256init_direct_execution() {
-        for (desc, block, _initial_state, expected) in TestVectors::get_standard_test_vectors() {
-            let mut harness = create_sha256_harness();
-            harness.setup_registers();
-            harness.load_input32(&block);
-            harness.execute_inline(instruction_sha256init());
+        assert_edge_cases_match_reference::<Sha256CompressionInitial>();
+    }
 
-            let result: [u32; 8] = harness.read_output32(8).try_into().unwrap();
+    #[test]
+    fn test_sha256_random_direct_execution() {
+        assert_random_cases_match_reference::<Sha256Compression>(0x5A256, 100);
+    }
 
-            assert_eq!(
-                &expected,
-                &result,
-                "SHA256INIT direct execution: {desc}, expected: {expected:08x?}, actual: {result:08x?}",
-            );
-        }
+    #[test]
+    fn test_sha256init_random_direct_execution() {
+        assert_random_cases_match_reference::<Sha256CompressionInitial>(0x1256, 100);
     }
 }
 

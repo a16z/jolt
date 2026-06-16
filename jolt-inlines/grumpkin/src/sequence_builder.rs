@@ -105,6 +105,8 @@ impl GlvrAdvBuilder {
 pub struct GrumpkinDivQAdv;
 
 impl InlineOp for GrumpkinDivQAdv {
+    type Advice = VecDeque<u64>;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
@@ -117,14 +119,16 @@ impl InlineOp for GrumpkinDivQAdv {
         GrumpkinDivAdv::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Some(GrumpkinDivAdv::advice(operands, true, cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+        GrumpkinDivAdv::advice(operands, true, cpu)
     }
 }
 
 pub struct GrumpkinDivRAdv;
 
 impl InlineOp for GrumpkinDivRAdv {
+    type Advice = VecDeque<u64>;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
@@ -137,14 +141,16 @@ impl InlineOp for GrumpkinDivRAdv {
         GrumpkinDivAdv::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Some(GrumpkinDivAdv::advice(operands, false, cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+        GrumpkinDivAdv::advice(operands, false, cpu)
     }
 }
 
 pub struct GrumpkinGlvrAdv;
 
 impl InlineOp for GrumpkinGlvrAdv {
+    type Advice = VecDeque<u64>;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_GLVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::GRUMPKIN_FUNCT7;
@@ -157,7 +163,7 @@ impl InlineOp for GrumpkinGlvrAdv {
         GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Some(GlvrAdvBuilder::advice(operands, cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+        GlvrAdvBuilder::advice(operands, cpu)
     }
 }

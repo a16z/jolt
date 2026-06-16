@@ -162,7 +162,26 @@ pub fn mulq_advice(
 ///
 /// Implement this for each sub-inline (e.g. `Sha256Compression`, `Secp256k1MulQ`),
 /// then pass the types to [`register_inlines!`] to generate registration boilerplate.
+pub trait InlineAdvice: Default {
+    fn into_runtime_advice(self) -> Option<VecDeque<u64>>;
+}
+
+impl InlineAdvice for () {
+    fn into_runtime_advice(self) -> Option<VecDeque<u64>> {
+        None
+    }
+}
+
+impl InlineAdvice for VecDeque<u64> {
+    fn into_runtime_advice(self) -> Option<VecDeque<u64>> {
+        Some(self)
+    }
+}
+
 pub trait InlineOp: Send + Sync {
+    /// Typed runtime advice values produced by this inline.
+    type Advice: InlineAdvice;
+
     /// RISC-V custom opcode used to identify this inline.
     const OPCODE: u32;
     /// RISC-V funct3 selector used with `OPCODE`.
@@ -188,8 +207,12 @@ pub trait InlineOp: Send + Sync {
     /// The returned values are consumed in order by `VirtualAdvice` rows emitted
     /// by `build_sequence`. Returning `None` means the static recipe contains no
     /// runtime-advice rows.
-    fn build_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        None
+    fn build_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Self::Advice {
+        Self::Advice::default()
+    }
+
+    fn build_runtime_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
+        Self::build_advice(operands, cpu).into_runtime_advice()
     }
 }
 
@@ -211,11 +234,21 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 
-/// Extension trait adding paired u32 load/store helpers to [`InlineExpansionBuilder`].
+/// Extension trait adding common load/store helpers to [`InlineExpansionBuilder`].
 ///
-/// These combine two adjacent u32 values into a single 64-bit memory access,
-/// halving the number of load/store instructions for u32 arrays on RV64.
+/// Paired u32 helpers combine two adjacent u32 values into a single 64-bit
+/// memory access, halving the number of load/store instructions for u32 arrays
+/// on RV64.
 pub trait InlineBuilderExt {
+    fn load_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]);
+    fn store_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]);
+    fn load_u32_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]);
+    fn load_paired_u32_range_dirty(
+        &mut self,
+        base: u8,
+        offset_start: i64,
+        registers: &[InlineRegister],
+    );
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8);
@@ -226,6 +259,43 @@ pub trait InlineBuilderExt {
 }
 
 impl InlineBuilderExt for InlineExpansionBuilder {
+    fn load_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
+        use instruction::ld::LD;
+        for (i, register) in registers.iter().enumerate() {
+            self.emit_ld::<LD>(**register, base, offset_start + i as i64 * 8);
+        }
+    }
+
+    fn store_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
+        use instruction::sd::SD;
+        for (i, register) in registers.iter().enumerate() {
+            self.emit_s::<SD>(base, **register, offset_start + i as i64 * 8);
+        }
+    }
+
+    fn load_u32_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
+        use instruction::lw::LW;
+        for (i, register) in registers.iter().enumerate() {
+            self.emit_ld::<LW>(**register, base, offset_start + i as i64 * 4);
+        }
+    }
+
+    fn load_paired_u32_range_dirty(
+        &mut self,
+        base: u8,
+        offset_start: i64,
+        registers: &[InlineRegister],
+    ) {
+        assert_eq!(
+            registers.len() % 2,
+            0,
+            "paired u32 range requires an even register count"
+        );
+        for (i, pair) in registers.chunks_exact(2).enumerate() {
+            self.load_paired_u32_dirty(base, offset_start + i as i64 * 8, *pair[0], *pair[1]);
+        }
+    }
+
     /// Load two packed u32 from 8-byte aligned `base+offset` into `vr_lo` and `vr_hi`.
     /// Clean extraction: `vr_lo` gets zero-extended low 32 bits; `vr_hi` gets high 32 bits.
     /// Clobbers `temp` for the intermediate 64-bit load.
@@ -465,8 +535,43 @@ macro_rules! __submit_inline_op {
             extension: $extension,
             name: <$op as $crate::host::InlineOp>::NAME,
             build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
-            build_advice: <$op as $crate::host::InlineOp>::build_advice,
+            build_advice: <$op as $crate::host::InlineOp>::build_runtime_advice,
         }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InlineAdvice;
+    use super::{InlineBuilderExt, InlineExpansionBuilder, InlineRegister};
+    use std::collections::VecDeque;
+
+    #[test]
+    fn unit_advice_converts_to_no_runtime_queue() {
+        assert!(().into_runtime_advice().is_none());
+    }
+
+    #[test]
+    fn queue_advice_converts_to_runtime_queue() {
+        let advice = VecDeque::from([7, 11]);
+
+        assert_eq!(advice.into_runtime_advice(), Some(VecDeque::from([7, 11])));
+    }
+
+    #[test]
+    fn range_helpers_accept_register_slices() {
+        fn assert_methods(
+            asm: &mut InlineExpansionBuilder,
+            base: u8,
+            registers: &[InlineRegister],
+        ) {
+            asm.load_u64_range(base, 0, registers);
+            asm.store_u64_range(base, 0, registers);
+            asm.load_u32_range(base, 0, registers);
+            asm.load_paired_u32_range_dirty(base, 0, registers);
+        }
+
+        let _ = assert_methods;
+    }
 }

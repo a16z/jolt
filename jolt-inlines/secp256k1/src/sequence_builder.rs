@@ -457,6 +457,8 @@ macro_rules! secp256k1_mulq_op {
     ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: $mul_type:expr, is_scalar: $is_scalar:expr) => {
         pub struct $name;
         impl InlineOp for $name {
+            type Advice = VecDeque<u64>;
+
             const OPCODE: u32 = crate::INLINE_OPCODE;
             const FUNCT3: u32 = $funct3;
             const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
@@ -467,8 +469,8 @@ macro_rules! secp256k1_mulq_op {
             ) -> Result<ExpandedInstructionSequence, ExpansionError> {
                 MulqBuilder::new(asm, operands, $mul_type, $is_scalar)?.inline_sequence()
             }
-            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-                Some(MulqBuilder::advice(operands, cpu, $is_scalar, &$mul_type))
+            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+                MulqBuilder::advice(operands, cpu, $is_scalar, &$mul_type)
             }
         }
     };
@@ -483,6 +485,8 @@ secp256k1_mulq_op!(Secp256k1DivR,     funct3: crate::SECP256K1_DIVR_FUNCT3,    n
 
 pub struct Secp256k1GlvrAdv;
 impl InlineOp for Secp256k1GlvrAdv {
+    type Advice = VecDeque<u64>;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::SECP256K1_GLVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
@@ -493,7 +497,7 @@ impl InlineOp for Secp256k1GlvrAdv {
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
     }
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Some(GlvrAdvBuilder::advice(operands, cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+        GlvrAdvBuilder::advice(operands, cpu)
     }
 }

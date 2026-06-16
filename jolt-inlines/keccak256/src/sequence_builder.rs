@@ -15,9 +15,9 @@
 
 use crate::NUM_LANES;
 use jolt_inlines_sdk::host::{
-    instruction::{andn::ANDN, ld::LD, sd::SD},
-    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
-    InlineRegister,
+    instruction::andn::ANDN,
+    ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
+    InlineOp, InlineOperands, InlineRegister,
     Value::{Imm, Reg},
 };
 
@@ -130,18 +130,14 @@ impl Keccak256SequenceBuilder {
     /// Load the initial Keccak state from memory into virtual registers.
     /// Keccak state is NUM_LANES lanes of 64 bits each (200 bytes total).
     fn load_state(&mut self) {
-        (0..NUM_LANES).for_each(|i| {
-            self.asm
-                .emit_ld::<LD>(*self.vr[i], self.operands.rs1, (i * 8) as i64)
-        });
+        self.asm
+            .load_u64_range(self.operands.rs1, 0, &self.vr[..NUM_LANES]);
     }
 
     /// Store the final Keccak state from virtual registers back to memory.
     fn store_state(&mut self) {
-        (0..NUM_LANES).for_each(|i| {
-            self.asm
-                .emit_s::<SD>(self.operands.rs1, *self.vr[i], (i * 8) as i64)
-        });
+        self.asm
+            .store_u64_range(self.operands.rs1, 0, &self.vr[..NUM_LANES]);
     }
 
     /// Get the register index for a given lane in the state matrix.
@@ -255,6 +251,8 @@ impl Keccak256SequenceBuilder {
 pub struct Keccak256Permutation;
 
 impl InlineOp for Keccak256Permutation {
+    type Advice = ();
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
     const FUNCT7: u32 = crate::KECCAK256_FUNCT7;

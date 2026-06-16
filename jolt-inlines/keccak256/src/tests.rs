@@ -1,25 +1,19 @@
 #![cfg(all(test, feature = "host"))]
 
 mod exec {
-    use crate::test_utils::*;
+    use crate::sequence_builder::Keccak256Permutation;
+    use jolt_inlines_sdk::{
+        assert_edge_cases_match_reference, assert_random_cases_match_reference,
+    };
 
     #[test]
     fn test_keccak256_direct_execution() {
-        for (i, test_case) in keccak_test_vectors().iter().enumerate() {
-            let mut harness = create_keccak_harness();
-            harness.setup_registers();
-            harness.load_state64(&test_case.input);
-            let instruction = instruction();
-            harness.execute_inline(instruction);
-            let result_vec = harness.read_output64(25);
-            let mut result = [0u64; 25];
-            result.copy_from_slice(&result_vec);
-            assert_eq!(
-                result, test_case.expected,
-                "Keccak256 direct execution test case {} failed: {}\nInput: {:016x?}\nExpected: {:016x?}\nActual: {:016x?}",
-                i + 1, test_case.description, test_case.input, test_case.expected, result
-            );
-        }
+        assert_edge_cases_match_reference::<Keccak256Permutation>();
+    }
+
+    #[test]
+    fn test_keccak256_random_direct_execution() {
+        assert_random_cases_match_reference::<Keccak256Permutation>(0xEC_CAC, 100);
     }
 
     #[test]
@@ -47,24 +41,15 @@ mod exec {
 }
 
 mod exec_trace_equivalence {
-    use crate::test_constants::*;
-    use crate::test_utils::*;
+    use crate::exec::execute_keccak_f;
+    use crate::test_constants::xkcp_vectors;
 
     #[test]
     fn test_keccak_against_reference() {
         let initial_state = [0u64; 25];
-        let expected_final_state = xkcp_vectors::AFTER_ONE_PERMUTATION;
-        let mut harness = create_keccak_harness();
-        harness.setup_registers();
-        harness.load_state64(&initial_state);
-        let instruction = instruction();
-        harness.execute_inline(instruction);
-        let trace_result_vec = harness.read_output64(25);
-        let mut trace_result = [0u64; 25];
-        trace_result.copy_from_slice(&trace_result_vec);
-        for i in 0..25 {
-            assert_eq!(trace_result[i], expected_final_state[i]);
-        }
+        let mut state = initial_state;
+        execute_keccak_f(&mut state);
+        assert_eq!(state, xkcp_vectors::AFTER_ONE_PERMUTATION);
     }
 }
 

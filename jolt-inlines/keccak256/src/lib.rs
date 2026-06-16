@@ -25,8 +25,8 @@ mod host;
 pub use host::*;
 
 #[cfg(all(test, feature = "host"))]
-pub mod test_constants;
+pub mod spec;
 #[cfg(all(test, feature = "host"))]
-pub mod test_utils;
+pub mod test_constants;
 #[cfg(all(test, feature = "host"))]
 mod tests;
