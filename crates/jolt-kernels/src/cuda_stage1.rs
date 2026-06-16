@@ -5,7 +5,7 @@ use jolt_field::{Field, Fr};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 
-use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec};
+use crate::cuda::{CudaError, CudaKernelContext, DeviceFrVec, FusedOuterInputs};
 use crate::dense::bind_dense_evals_reuse_cuda;
 use crate::stage1::{
     Stage1KernelError, Stage1OuterR1csData, Stage1OuterRemainingContext, Stage1RemainingRoundProof,
@@ -63,29 +63,62 @@ pub fn prove_remaining_rounds_cuda<F: Field>(
     let weights = lagrange_evals(OUTER_UNISKIP_BASE_START, OUTER_UNISKIP_DOMAIN_SIZE, context.r0);
     let scale = lagrange_tau_r0 * batching_coeff;
     let eq_evals = EqPolynomial::new(tau_low.to_vec()).evaluations();
-    let first_group_rows: Vec<u32> = OUTER_FIRST_GROUP_ROWS.iter().map(|&r| r as u32).collect();
-    let second_group_rows: Vec<u32> = OUTER_SECOND_GROUP_ROWS.iter().map(|&r| r as u32).collect();
 
-    let row_dots = &data.row_dots;
+    // Build weighted CSR for each matrix: the row groups concatenated (first then
+    // second), with each row's coefficients pre-scaled by its lagrange weight, so
+    // the kernel does plain dot products and never touches the row-dots table.
+    // Each group weights its rows by position within the group (matching the CPU
+    // `rows.iter().zip(weights.iter())`), so the weight index resets per group.
+    let group_order: Vec<usize> = OUTER_FIRST_GROUP_ROWS
+        .iter()
+        .chain(OUTER_SECOND_GROUP_ROWS.iter())
+        .copied()
+        .collect();
+    let split = OUTER_FIRST_GROUP_ROWS.len();
+    let weighted_csr = |matrix: &[Vec<(usize, F)>]| -> (Vec<u32>, Vec<u32>, Vec<F>) {
+        let mut offsets = vec![0u32];
+        let mut vars = Vec::new();
+        let mut coeffs = Vec::new();
+        for (idx, &row) in group_order.iter().enumerate() {
+            let weight = if idx < split {
+                weights[idx]
+            } else {
+                weights[idx - split]
+            };
+            for &(var, coeff) in &matrix[row] {
+                vars.push(var as u32);
+                coeffs.push(coeff * weight);
+            }
+            offsets.push(vars.len() as u32);
+        }
+        (offsets, vars, coeffs)
+    };
+    let (a_offsets, a_vars, a_coeffs) = weighted_csr(&data.key.matrices.a);
+    let (b_offsets, b_vars, b_coeffs) = weighted_csr(&data.key.matrices.b);
+
     let eq_evals = as_fr_slice(&eq_evals)?;
     let scale = into_fr(scale)?;
-    let weights = as_fr_slice(&weights)?;
-    let row_dots_a = as_fr_slice(row_dots.a())?;
-    let row_dots_b = as_fr_slice(row_dots.b())?;
+    let witness = as_fr_slice(data.witness)?;
+    let a_coeffs = as_fr_slice(&a_coeffs)?;
+    let b_coeffs = as_fr_slice(&b_coeffs)?;
 
-    let mut state = match CudaDenseOuterState::from_row_dots(
-        ctx,
-        DenseOuterInputs {
-            eq_evals,
-            scale,
-            weights,
-            row_dots_a,
-            row_dots_b,
-            row_count: row_dots.row_count(),
-            first_group_rows: &first_group_rows,
-            second_group_rows: &second_group_rows,
-        },
-    ) {
+    let (eq, az, bz) = match ctx.dense_outer_fused(FusedOuterInputs {
+        eq_evals,
+        scale,
+        witness,
+        a_offsets: &a_offsets,
+        a_vars: &a_vars,
+        a_coeffs,
+        b_offsets: &b_offsets,
+        b_vars: &b_vars,
+        b_coeffs,
+        split,
+        num_vars_padded: data.key.num_vars_padded,
+    }) {
+        Ok(buffers) => buffers,
+        Err(error) => return Some(Err(cuda_error(error))),
+    };
+    let mut state = match CudaDenseOuterState::from_device(ctx, eq, az, bz) {
         Ok(state) => state,
         Err(error) => return Some(Err(cuda_error(error))),
     };
@@ -160,6 +193,23 @@ impl<'a> CudaDenseOuterState<'a> {
             eq: ctx.upload(eq)?,
             az: ctx.upload(az)?,
             bz: ctx.upload(bz)?,
+            eq_scratch: ctx.upload(&[])?,
+            az_scratch: ctx.upload(&[])?,
+            bz_scratch: ctx.upload(&[])?,
+        })
+    }
+
+    fn from_device(
+        ctx: &'a CudaKernelContext,
+        eq: DeviceFrVec,
+        az: DeviceFrVec,
+        bz: DeviceFrVec,
+    ) -> Result<Self, CudaError> {
+        Ok(Self {
+            ctx,
+            eq,
+            az,
+            bz,
             eq_scratch: ctx.upload(&[])?,
             az_scratch: ctx.upload(&[])?,
             bz_scratch: ctx.upload(&[])?,

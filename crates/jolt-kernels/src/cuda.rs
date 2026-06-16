@@ -182,6 +182,124 @@ __device__ __forceinline__ void group_matvec(
     }
 }
 
+__device__ __forceinline__ void csr_row_dot(
+    const u64 *__restrict__ coeffs,
+    const unsigned int *__restrict__ vars,
+    unsigned int start,
+    unsigned int end,
+    const u64 *__restrict__ witness_row,
+    u64 *acc
+) {
+    for (int k = 0; k < 4; k++) acc[k] = 0;
+    for (unsigned int k = start; k < end; k++) {
+        u64 coeff[4], w[4], p[4];
+        load4(coeffs + k * 4, coeff);
+        load4(witness_row + vars[k] * 4, w);
+        fr_mul(coeff, w, p);
+        u64 t[4];
+        fr_add(acc, p, t);
+        for (int i = 0; i < 4; i++) acc[i] = t[i];
+    }
+}
+
+extern "C" __global__ void row_dots_kernel(
+    u64 *__restrict__ a_out,
+    u64 *__restrict__ b_out,
+    const u64 *__restrict__ witness,
+    const unsigned int *__restrict__ a_offsets,
+    const unsigned int *__restrict__ a_vars,
+    const u64 *__restrict__ a_coeffs,
+    const unsigned int *__restrict__ b_offsets,
+    const unsigned int *__restrict__ b_vars,
+    const u64 *__restrict__ b_coeffs,
+    unsigned long row_count,
+    unsigned long num_vars_padded,
+    unsigned long total
+) {
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < total) {
+        unsigned long cycle = i / row_count;
+        unsigned long row = i % row_count;
+        const u64 *witness_row = witness + cycle * num_vars_padded * 4;
+
+        u64 acc[4];
+        csr_row_dot(a_coeffs, a_vars, a_offsets[row], a_offsets[row + 1], witness_row, acc);
+        store4(a_out + i * 4, acc);
+        csr_row_dot(b_coeffs, b_vars, b_offsets[row], b_offsets[row + 1], witness_row, acc);
+        store4(b_out + i * 4, acc);
+    }
+}
+
+__device__ __forceinline__ void csr_group_dot(
+    const u64 *__restrict__ coeffs,
+    const unsigned int *__restrict__ vars,
+    const unsigned int *__restrict__ offsets,
+    unsigned int entry_start,
+    unsigned int entry_end,
+    const u64 *__restrict__ witness_row,
+    u64 *acc
+) {
+    for (int k = 0; k < 4; k++) acc[k] = 0;
+    for (unsigned int e = entry_start; e < entry_end; e++) {
+        unsigned int start = offsets[e];
+        unsigned int end = offsets[e + 1];
+        for (unsigned int k = start; k < end; k++) {
+            u64 coeff[4], w[4], p[4];
+            load4(coeffs + k * 4, coeff);
+            load4(witness_row + vars[k] * 4, w);
+            fr_mul(coeff, w, p);
+            u64 t[4];
+            fr_add(acc, p, t);
+            for (int i = 0; i < 4; i++) acc[i] = t[i];
+        }
+    }
+}
+
+extern "C" __global__ void dense_outer_fused_kernel(
+    u64 *__restrict__ eq_out,
+    u64 *__restrict__ az_out,
+    u64 *__restrict__ bz_out,
+    const u64 *__restrict__ eq_evals,
+    const u64 *__restrict__ scale,
+    const u64 *__restrict__ witness,
+    const unsigned int *__restrict__ a_offsets,
+    const unsigned int *__restrict__ a_vars,
+    const u64 *__restrict__ a_coeffs,
+    const unsigned int *__restrict__ b_offsets,
+    const unsigned int *__restrict__ b_vars,
+    const u64 *__restrict__ b_coeffs,
+    unsigned int split,
+    unsigned int total_entries,
+    unsigned long num_vars_padded,
+    unsigned long cycles
+) {
+    unsigned long cycle = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (cycle < cycles) {
+        unsigned long index = cycle * 2;
+        const u64 *witness_row = witness + cycle * num_vars_padded * 4;
+
+        u64 s[4];
+        load4(scale, s);
+        u64 e0[4], e1[4], r[4];
+        load4(eq_evals + index * 4, e0);
+        load4(eq_evals + (index + 1) * 4, e1);
+        fr_mul(e0, s, r);
+        store4(eq_out + index * 4, r);
+        fr_mul(e1, s, r);
+        store4(eq_out + (index + 1) * 4, r);
+
+        u64 az0[4], az1[4], bz0[4], bz1[4];
+        csr_group_dot(a_coeffs, a_vars, a_offsets, 0, split, witness_row, az0);
+        csr_group_dot(a_coeffs, a_vars, a_offsets, split, total_entries, witness_row, az1);
+        csr_group_dot(b_coeffs, b_vars, b_offsets, 0, split, witness_row, bz0);
+        csr_group_dot(b_coeffs, b_vars, b_offsets, split, total_entries, witness_row, bz1);
+        store4(az_out + index * 4, az0);
+        store4(az_out + (index + 1) * 4, az1);
+        store4(bz_out + index * 4, bz0);
+        store4(bz_out + (index + 1) * 4, bz1);
+    }
+}
+
 extern "C" __global__ void dense_outer_kernel(
     u64 *__restrict__ eq_out,
     u64 *__restrict__ az_out,
@@ -423,6 +541,8 @@ pub struct CudaKernelContext {
     fma: CudaFunction,
     bind: CudaFunction,
     dense_outer: CudaFunction,
+    dense_outer_fused: CudaFunction,
+    row_dots: CudaFunction,
     cubic_pairs: CudaFunction,
     cubic_tuple_reduce: CudaFunction,
     sum_reduce: CudaFunction,
@@ -566,6 +686,25 @@ fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Inputs to the fused dense-outer construction: builds `eq/az/bz` directly from
+/// the witness, so the large per-cycle row-dots never cross PCIe. `a`/`b` are
+/// weighted-CSR sparse matrices (the lagrange weights pre-folded into the coeffs)
+/// over both row groups concatenated; `split` is the CSR-row index where the
+/// second group begins.
+pub struct FusedOuterInputs<'a> {
+    pub eq_evals: &'a [Fr],
+    pub scale: Fr,
+    pub witness: &'a [Fr],
+    pub a_offsets: &'a [u32],
+    pub a_vars: &'a [u32],
+    pub a_coeffs: &'a [Fr],
+    pub b_offsets: &'a [u32],
+    pub b_vars: &'a [u32],
+    pub b_coeffs: &'a [Fr],
+    pub split: usize,
+    pub num_vars_padded: usize,
+}
+
 impl CudaKernelContext {
     pub fn new(ordinal: usize) -> Result<Self, CudaError> {
         let ctx = CudaContext::new(ordinal)?;
@@ -583,6 +722,8 @@ impl CudaKernelContext {
             fma: module.load_function("fma_kernel")?,
             bind: module.load_function("bind_kernel")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
+            dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
+            row_dots: module.load_function("row_dots_kernel")?,
             cubic_pairs: module.load_function("cubic_pairs")?,
             cubic_tuple_reduce: module.load_function("cubic_tuple_reduce")?,
             sum_reduce: module.load_function("sum_reduce")?,
@@ -686,7 +827,73 @@ impl CudaKernelContext {
         Ok((make(eq, len), make(az, len), make(bz, len)))
     }
 
-    #[expect(clippy::todo, clippy::too_many_arguments, unused_variables)]
+    pub fn dense_outer_fused(
+        &self,
+        inputs: FusedOuterInputs<'_>,
+    ) -> Result<(DeviceFrVec, DeviceFrVec, DeviceFrVec), CudaError> {
+        let len = inputs.eq_evals.len();
+        let cycles = len / 2;
+
+        let mut eq: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
+        let mut az: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
+        let mut bz: CudaSlice<u64> = self.stream.alloc_zeros(len * LIMBS)?;
+
+        if cycles > 0 {
+            let eq_evals = self.upload(inputs.eq_evals)?;
+            let scale = self.upload(&[inputs.scale])?;
+            let witness = self.upload(inputs.witness)?;
+            let a_coeffs = self.upload(inputs.a_coeffs)?;
+            let b_coeffs = self.upload(inputs.b_coeffs)?;
+            let a_offsets = self.stream.clone_htod(inputs.a_offsets)?;
+            let a_vars = self.stream.clone_htod(inputs.a_vars)?;
+            let b_offsets = self.stream.clone_htod(inputs.b_offsets)?;
+            let b_vars = self.stream.clone_htod(inputs.b_vars)?;
+
+            let split = inputs.split as u32;
+            let total_entries = (inputs.a_offsets.len() - 1) as u32;
+            let num_vars_padded_arg = inputs.num_vars_padded as u64;
+            let cycles_arg = cycles as u64;
+            let cfg = LaunchConfig {
+                grid_dim: ((cycles as u32).div_ceil(BLOCK), 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            let f = self.dense_outer_fused.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut eq)
+                .arg(&mut az)
+                .arg(&mut bz)
+                .arg(&eq_evals.buf)
+                .arg(&scale.buf)
+                .arg(&witness.buf)
+                .arg(&a_offsets)
+                .arg(&a_vars)
+                .arg(&a_coeffs.buf)
+                .arg(&b_offsets)
+                .arg(&b_vars)
+                .arg(&b_coeffs.buf)
+                .arg(&split)
+                .arg(&total_entries)
+                .arg(&num_vars_padded_arg)
+                .arg(&cycles_arg);
+            // SAFETY: one thread per cycle reads eq_evals[2c..2c+2], the scale, its
+            // witness slice, and the two weighted-CSR groups (entries 0..split and
+            // split..total), writing the output pairs at 2c/2c+1 in eq/az/bz.
+            let _ = unsafe { launch.launch(cfg) }?;
+            self.stream.synchronize()?;
+        }
+
+        let make = |buf, len| DeviceFrVec {
+            stream: self.stream.clone(),
+            buf,
+            len,
+            staging: self.staging.clone(),
+        };
+        Ok((make(eq, len), make(az, len), make(bz, len)))
+    }
+
+    #[expect(clippy::too_many_arguments)]
     pub fn compute_row_dots(
         &self,
         witness: &[Fr],
@@ -700,7 +907,53 @@ impl CudaKernelContext {
         num_vars_padded: usize,
         num_cycles: usize,
     ) -> Result<(Vec<Fr>, Vec<Fr>), CudaError> {
-        todo!()
+        let total = num_cycles * row_count;
+        if total == 0 {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
+        let witness_dev = self.upload(witness)?;
+        let a_coeffs_dev = self.upload(a_coeffs)?;
+        let b_coeffs_dev = self.upload(b_coeffs)?;
+        let a_offsets_dev = self.stream.clone_htod(a_offsets)?;
+        let a_vars_dev = self.stream.clone_htod(a_vars)?;
+        let b_offsets_dev = self.stream.clone_htod(b_offsets)?;
+        let b_vars_dev = self.stream.clone_htod(b_vars)?;
+        let mut a_out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+        let mut b_out: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+
+        let row_count_arg = row_count as u64;
+        let num_vars_padded_arg = num_vars_padded as u64;
+        let total_arg = total as u64;
+        let cfg = LaunchConfig {
+            grid_dim: ((total as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let f = self.row_dots.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut a_out)
+            .arg(&mut b_out)
+            .arg(&witness_dev.buf)
+            .arg(&a_offsets_dev)
+            .arg(&a_vars_dev)
+            .arg(&a_coeffs_dev.buf)
+            .arg(&b_offsets_dev)
+            .arg(&b_vars_dev)
+            .arg(&b_coeffs_dev.buf)
+            .arg(&row_count_arg)
+            .arg(&num_vars_padded_arg)
+            .arg(&total_arg);
+        // SAFETY: one thread per (cycle, row) of `total` reads its CSR row's
+        // nonzeros (bounded by the offsets) from the coeff/var arrays and the
+        // matching witness slice, writing one element to a_out/b_out (total each).
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        let a_raw = self.stream.clone_dtoh(&a_out)?;
+        let b_raw = self.stream.clone_dtoh(&b_out)?;
+        Ok((unflatten(&a_raw), unflatten(&b_raw)))
     }
 
     fn map(&self, func: &CudaFunction, a: &mut DeviceFrVec, b: &DeviceFrVec) -> Result<(), CudaError> {
@@ -1161,7 +1414,6 @@ mod tests {
 
     proptest! {
         #[test]
-        #[ignore = "CudaKernelContext::compute_row_dots is todo!()"]
         fn compute_row_dots_matches_cpu(
             log_cycles in 0usize..8,
             a_rows in prop::collection::vec(row_strategy(), 1..24),
