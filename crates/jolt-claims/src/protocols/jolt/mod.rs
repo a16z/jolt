@@ -18,10 +18,10 @@ pub use formulas::{
     },
     error::{JoltFormulaDimensionsError, JoltFormulaPointError},
     lattice::{
-        byte_decode_terms, final_opening_lattice_requirement, little_endian_byte_decode_terms,
-        symbol_decode_terms, weighted_byte_decode_terms, weighted_symbol_terms,
-        LatticeFinalOpeningRequirement, LatticePackedFamilyId, LatticePackedViewFormula,
-        LatticePackedViewTerm,
+        byte_decode_terms, bytecode_chunk_lattice_view_formula, final_opening_lattice_requirement,
+        little_endian_byte_decode_terms, symbol_decode_terms, weighted_byte_decode_terms,
+        weighted_symbol_terms, LatticeFinalOpeningRequirement, LatticePackedFamilyId,
+        LatticePackedViewFormula, LatticePackedViewTerm,
     },
 };
 pub use ids::{
