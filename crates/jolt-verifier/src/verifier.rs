@@ -147,6 +147,91 @@ where
     Ok(())
 }
 
+pub fn stage8_batch_statement<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    zk: bool,
+) -> Result<stage8::Stage8BatchStatement<F, PCS::Output>, VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        zk,
+    )?;
+    validate_proof_consistency(proof, checked.zk)?;
+    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+    );
+
+    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
+    let stage2 = stage2::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage2::deps(&stage1),
+    )?;
+    let stage3 = stage3::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage3::deps(&stage1, &stage2)?,
+    )?;
+    let stage4 = stage4::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage4::deps(&stage2, &stage3)?,
+    )?;
+    let stage5 = stage5::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage5::deps(&stage2, &stage4)?,
+    )?;
+    let stage6 = stage6::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+    )?;
+    let stage7 = stage7::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage7::deps(&stage4, &stage6)?,
+    )?;
+    stage8::batch_statement(
+        &checked,
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        stage8::deps(&stage6, &stage7)?,
+    )
+}
+
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedInputs {

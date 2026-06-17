@@ -19,4 +19,4 @@ pub use preprocessing::{
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "field-inline")]
 pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};
-pub use verifier::{verify, CheckedInputs};
+pub use verifier::{stage8_batch_statement, verify, CheckedInputs};

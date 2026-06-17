@@ -1,6 +1,9 @@
 use super::{
     inputs::Deps,
-    outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput},
+    outputs::{
+        Stage8BatchStatement, Stage8ClearBatchStatement, Stage8ClearOutput, Stage8OpeningId,
+        Stage8Output, Stage8ZkBatchStatement, Stage8ZkOutput,
+    },
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -71,6 +74,74 @@ where
     PCS::Output: Clone,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
+{
+    match batch_statement(
+        checked,
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        deps,
+    )? {
+        Stage8BatchStatement::Zk(batch) => {
+            if !checked.zk {
+                return Err(VerifierError::ExpectedClearProof { field: "stage8" });
+            }
+            let batch_result = PCS::verify_batch_zk(
+                &preprocessing.pcs_setup,
+                transcript,
+                &batch.statement,
+                &proof.joint_opening_proof,
+            )
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?;
+
+            Ok(Stage8Output::Zk(Stage8ZkOutput {
+                opening_ids: batch.opening_ids,
+                constraint_coefficients: batch_result.coefficients,
+                pcs_opening_point: batch.pcs_opening_point,
+                joint_commitment: batch_result.joint_commitment,
+                hiding_evaluation_commitment: batch_result.reduced_opening,
+            }))
+        }
+        Stage8BatchStatement::Clear(batch) => {
+            if checked.zk {
+                return Err(VerifierError::ExpectedCommittedProof { field: "stage8" });
+            }
+            let batch_result = PCS::verify_batch(
+                &preprocessing.pcs_setup,
+                transcript,
+                &batch.statement,
+                &proof.joint_opening_proof,
+            )
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?;
+
+            Ok(Stage8Output::Clear(Stage8ClearOutput {
+                opening_claims: batch.opening_claims,
+                opening_ids: batch.opening_ids,
+                constraint_coefficients: batch_result.coefficients,
+                pcs_opening_point: batch.pcs_opening_point,
+                joint_claim: batch_result.reduced_opening,
+                joint_commitment: batch_result.joint_commitment,
+            }))
+        }
+    }
+}
+
+pub fn batch_statement<F, PCS, VC, ZkProof>(
+    checked: &CheckedInputs,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    deps: Deps<'_, F, VC::Output>,
+) -> Result<Stage8BatchStatement<F, PCS::Output>, VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: Clone,
+    VC: VectorCommitment<Field = F>,
 {
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {
@@ -147,9 +218,10 @@ where
     )?;
     let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
     let layout_digest = stage8_layout_digest(preprocessing);
+    let point = pcs_opening_point.as_slice().to_vec();
 
     if checked.zk {
-        let batch_claims = entries
+        let claims = entries
             .iter()
             .map(|entry| BatchOpeningClaim {
                 id: entry.id,
@@ -160,33 +232,20 @@ where
                 scale: entry.scale,
             })
             .collect::<Vec<_>>();
-        let statement = BatchOpeningStatement {
-            logical_point: pcs_opening_point.as_slice().to_vec(),
-            pcs_point: pcs_opening_point.as_slice().to_vec(),
-            layout_digest,
-            claims: batch_claims,
-        };
-        let batch_result = PCS::verify_batch_zk(
-            &preprocessing.pcs_setup,
-            transcript,
-            &statement,
-            &proof.joint_opening_proof,
-        )
-        .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-            reason: error.to_string(),
-        })?;
-
-        return Ok(Stage8Output::Zk(Stage8ZkOutput {
+        return Ok(Stage8BatchStatement::Zk(Stage8ZkBatchStatement {
             opening_ids,
-            constraint_coefficients: batch_result.coefficients,
             pcs_opening_point,
-            joint_commitment: batch_result.joint_commitment,
-            hiding_evaluation_commitment: batch_result.reduced_opening,
+            statement: BatchOpeningStatement {
+                logical_point: point.clone(),
+                pcs_point: point,
+                layout_digest,
+                claims,
+            },
         }));
     }
 
     let mut opening_claims = Vec::with_capacity(entries.len());
-    let mut batch_claims = Vec::with_capacity(entries.len());
+    let mut claims = Vec::with_capacity(entries.len());
     for entry in &entries {
         let opening_claim =
             entry
@@ -201,7 +260,7 @@ where
                 opening_claim * entry.scale,
             ),
         });
-        batch_claims.push(BatchOpeningClaim {
+        claims.push(BatchOpeningClaim {
             id: entry.id,
             relation: entry.id,
             commitment: entry.commitment.clone(),
@@ -210,29 +269,16 @@ where
             scale: entry.scale,
         });
     }
-    let statement = BatchOpeningStatement {
-        logical_point: pcs_opening_point.as_slice().to_vec(),
-        pcs_point: pcs_opening_point.as_slice().to_vec(),
-        layout_digest,
-        claims: batch_claims,
-    };
-    let batch_result = PCS::verify_batch(
-        &preprocessing.pcs_setup,
-        transcript,
-        &statement,
-        &proof.joint_opening_proof,
-    )
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })?;
-
-    Ok(Stage8Output::Clear(Stage8ClearOutput {
-        opening_claims,
+    Ok(Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
         opening_ids,
-        constraint_coefficients: batch_result.coefficients,
+        opening_claims,
         pcs_opening_point,
-        joint_claim: batch_result.reduced_opening,
-        joint_commitment: batch_result.joint_commitment,
+        statement: BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest,
+            claims,
+        },
     }))
 }
 
