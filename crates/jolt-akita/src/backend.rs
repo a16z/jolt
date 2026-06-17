@@ -132,7 +132,9 @@ fn validate_commit_polynomials(
     Ok(num_vars)
 }
 
-fn packed_source_polynomial<S>(source: &S) -> Result<Polynomial<AkitaField>, OpeningsError>
+pub(crate) fn packed_source_polynomial<S>(
+    source: &S,
+) -> Result<Polynomial<AkitaField>, OpeningsError>
 where
     S: PackedWitnessSource<AkitaField>,
 {

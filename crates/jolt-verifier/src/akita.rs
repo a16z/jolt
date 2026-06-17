@@ -10,9 +10,11 @@ use crate::{
     VerifierError,
 };
 use jolt_akita::{
-    AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaProverHint, AkitaProverSetup,
-    PackedAdviceKind, PackedFamilyId, PackedWitnessLayout, PackedWitnessSource,
+    AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
+    AkitaProverSetup, PackedAdviceKind, PackedFamilyId, PackedWitnessLayout, PackedWitnessSource,
 };
+use jolt_openings::BatchOpeningStatement;
+use jolt_transcript::Transcript;
 
 #[derive(Clone, Debug)]
 pub struct AkitaPackedWitnessArtifacts {
@@ -92,6 +94,56 @@ where
     })
 }
 
+pub fn prove_akita_packed_openings<T, OpeningId, RelationId, S>(
+    setup: &AkitaProverSetup,
+    transcript: &mut T,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+) -> Result<AkitaPackedBatchProof, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    if source.layout() != &artifacts.layout {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita packed opening source layout does not match committed artifact"
+                .to_string(),
+        });
+    }
+    if statement.layout_digest != artifacts.layout.digest {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason:
+                "Akita packed opening statement layout digest does not match committed artifact"
+                    .to_string(),
+        });
+    }
+    let payload = artifacts
+        .payload()
+        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita packed opening artifacts do not carry an Akita payload".to_string(),
+        })?;
+    for claim in &statement.claims {
+        if claim.commitment != payload.packed_witness {
+            return Err(VerifierError::FinalOpeningBatchFailed {
+                reason: "Akita packed opening statement references a non-artifact commitment"
+                    .to_string(),
+            });
+        }
+    }
+
+    AkitaPackedScheme::prove_packed_source_batch(
+        setup,
+        transcript,
+        statement,
+        source,
+        artifacts.hint.clone(),
+    )
+    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+        reason: error.to_string(),
+    })
+}
+
 fn layout_has_field_rd_inc(layout: &PackedWitnessLayout) -> bool {
     layout.families.iter().any(|family| {
         matches!(
@@ -129,7 +181,6 @@ mod tests {
         BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
         PackedLinearTerm, PhysicalView,
     };
-    use jolt_poly::Polynomial;
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
     fn tiny_layout() -> PackedWitnessLayout {
@@ -157,17 +208,6 @@ mod tests {
             limb: 0,
             symbol,
         }
-    }
-
-    fn packed_polynomial(
-        layout: &PackedWitnessLayout,
-        entries: &[(usize, AkitaField)],
-    ) -> Polynomial<AkitaField> {
-        let mut evals = vec![AkitaField::zero(); 1usize << layout.dimension];
-        for &(rank, value) in entries {
-            evals[rank] = value;
-        }
-        Polynomial::new(evals)
     }
 
     #[test]
@@ -234,7 +274,6 @@ mod tests {
             ],
         )
         .expect("source should build");
-        let poly = packed_polynomial(&layout, source.entries());
         let artifact = commit_akita_packed_witness(&prover_setup, &source)
             .expect("packed witness should commit");
         let commitment = artifact
@@ -287,14 +326,30 @@ mod tests {
         };
 
         let mut prover_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
-        let proof = <AkitaPackedScheme as BatchOpeningScheme>::prove_batch(
+        let proof = prove_akita_packed_openings(
             &prover_setup,
             &mut prover_transcript,
+            &artifact,
+            &source,
             &statement,
-            std::slice::from_ref(&poly),
-            vec![artifact.hint],
         )
         .expect("packed batch proof should be produced");
+
+        let mut wrong_statement = statement.clone();
+        wrong_statement.claims[0].commitment.layout_digest = [9; 32];
+        let mut wrong_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
+        let error = prove_akita_packed_openings(
+            &prover_setup,
+            &mut wrong_transcript,
+            &artifact,
+            &source,
+            &wrong_statement,
+        )
+        .expect_err("non-artifact commitment should reject");
+        assert!(matches!(
+            error,
+            VerifierError::FinalOpeningBatchFailed { .. }
+        ));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
         let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(

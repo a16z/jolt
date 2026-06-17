@@ -13,7 +13,8 @@ pub mod verifier;
 #[cfg(feature = "akita")]
 pub use akita::{
     akita_lattice_protocol_config_for_layout, commit_akita_packed_witness,
-    commit_akita_packed_witness_with_config, AkitaPackedWitnessArtifacts,
+    commit_akita_packed_witness_with_config, prove_akita_packed_openings,
+    AkitaPackedWitnessArtifacts,
 };
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,

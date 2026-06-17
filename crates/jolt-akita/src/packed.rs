@@ -8,6 +8,7 @@ use jolt_poly::{EqPolynomial, MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
+use crate::backend::packed_source_polynomial;
 use crate::layout::{PackedCellAddress, PackedFamily, PackedWitnessLayout, PackedWitnessSource};
 use crate::types::{
     append_field_slice, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaHidingCommitment,
@@ -35,6 +36,27 @@ impl AkitaPackedScheme {
         S: PackedWitnessSource<AkitaField>,
     {
         AkitaScheme::commit_packed_source(setup, source)
+    }
+
+    pub fn prove_packed_source_batch<T, OpeningId, RelationId, S>(
+        setup: &AkitaProverSetup,
+        transcript: &mut T,
+        statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+        source: &S,
+        hint: AkitaProverHint,
+    ) -> Result<AkitaPackedBatchProof, OpeningsError>
+    where
+        T: Transcript<Challenge = AkitaField>,
+        S: PackedWitnessSource<AkitaField>,
+    {
+        let polynomial = packed_source_polynomial(source)?;
+        <Self as BatchOpeningScheme>::prove_batch(
+            setup,
+            transcript,
+            statement,
+            std::slice::from_ref(&polynomial),
+            vec![hint],
+        )
     }
 }
 

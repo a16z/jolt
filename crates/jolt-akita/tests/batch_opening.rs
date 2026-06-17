@@ -543,7 +543,6 @@ fn akita_packed_scheme_reduces_packed_views_to_native_opening() {
             ],
         )
         .expect("packed witness should be valid");
-        let poly = packed_polynomial(&layout, witness.entries());
         let (prover_setup, verifier_setup) =
             AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
         let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
@@ -567,12 +566,12 @@ fn akita_packed_scheme_reduces_packed_views_to_native_opening() {
         );
 
         let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-reduction");
-        let proof = <AkitaPackedScheme as BatchOpeningScheme>::prove_batch(
+        let proof = AkitaPackedScheme::prove_packed_source_batch(
             &prover_setup,
             &mut prover_transcript,
             &statement,
-            std::slice::from_ref(&poly),
-            vec![hint],
+            &witness,
+            hint,
         )
         .expect("packed reduction proof should be produced");
         assert!(
@@ -617,7 +616,6 @@ fn akita_packed_scheme_rejects_tampered_packed_statement() {
             ],
         )
         .expect("packed witness should be valid");
-        let poly = packed_polynomial(&layout, witness.entries());
         let (prover_setup, verifier_setup) =
             AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
         let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
@@ -635,12 +633,12 @@ fn akita_packed_scheme_rejects_tampered_packed_statement() {
         );
 
         let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-tamper");
-        let proof = <AkitaPackedScheme as BatchOpeningScheme>::prove_batch(
+        let proof = AkitaPackedScheme::prove_packed_source_batch(
             &prover_setup,
             &mut prover_transcript,
             &statement,
-            std::slice::from_ref(&poly),
-            vec![hint],
+            &witness,
+            hint,
         )
         .expect("packed reduction proof should be produced");
 
