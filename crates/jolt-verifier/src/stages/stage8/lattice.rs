@@ -8,7 +8,7 @@ use jolt_akita::{
     PackedFamilySpec, PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
 };
 use jolt_claims::protocols::jolt::{
-    byte_decode_terms,
+    byte_decode_terms, bytecode_chunk_lattice_view_formula,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     little_endian_byte_decode_terms, weighted_symbol_terms, AdviceClaimReductionLayout,
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
@@ -141,6 +141,7 @@ pub fn validate_akita_packed_witness_layout_config(
 pub fn jolt_lattice_view_formulas<F>(
     logical: &Stage8LogicalManifest<F>,
     log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
 ) -> Result<Vec<(JoltOpeningId, LatticePackedViewFormula<F>)>, VerifierError>
 where
     F: Field,
@@ -152,7 +153,7 @@ where
             let id = stage8_jolt_opening_id(opening.id)?;
             Ok((
                 id,
-                jolt_lattice_view_formula(id, &opening.point, log_k_chunk)?,
+                jolt_lattice_view_formula(id, &opening.point, log_k_chunk, precommitted)?,
             ))
         })
         .collect()
@@ -162,11 +163,12 @@ pub fn jolt_lattice_physical_manifest<F>(
     logical: &Stage8LogicalManifest<F>,
     layout: &PackedWitnessLayout,
     log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
 ) -> Result<Stage8PhysicalManifest<F>, VerifierError>
 where
     F: Field,
 {
-    let formulas = jolt_lattice_view_formulas(logical, log_k_chunk)?;
+    let formulas = jolt_lattice_view_formulas(logical, log_k_chunk, precommitted)?;
     Stage8PhysicalManifest::from_jolt_lattice_view_formulas(logical, layout, formulas)
         .map_err(lattice_view_resolution_error)
 }
@@ -191,6 +193,7 @@ pub fn jolt_lattice_view_formula<F>(
     id: JoltOpeningId,
     point: &[F],
     log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
 ) -> Result<LatticePackedViewFormula<F>, VerifierError>
 where
     F: Field,
@@ -199,7 +202,7 @@ where
         JoltOpeningId::Polynomial {
             polynomial: JoltPolynomialId::Committed(polynomial),
             relation,
-        } => committed_lattice_view_formula(polynomial, relation, point, log_k_chunk),
+        } => committed_lattice_view_formula(polynomial, relation, point, log_k_chunk, precommitted),
         JoltOpeningId::TrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
         } => Ok(advice_lattice_view_formula(JoltAdviceKind::Trusted)),
@@ -279,6 +282,7 @@ fn committed_lattice_view_formula<F>(
     relation: JoltRelationId,
     point: &[F],
     log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
 ) -> Result<LatticePackedViewFormula<F>, VerifierError>
 where
     F: Field,
@@ -321,9 +325,29 @@ where
             Ok(advice_lattice_view_formula(JoltAdviceKind::Untrusted))
         }
         (JoltCommittedPolynomial::BytecodeChunk(index), JoltRelationId::BytecodeClaimReduction) => {
-            Err(unsupported_lattice_view(format!(
-                "BytecodeChunk({index}) lattice view requires committed-bytecode lane byte policy"
-            )))
+            let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+                unsupported_lattice_view(format!(
+                    "BytecodeChunk({index}) lattice view requires committed-bytecode layout"
+                ))
+            })?;
+            if index >= layout.chunk_count() {
+                return Err(unsupported_lattice_view(format!(
+                    "BytecodeChunk({index}) is outside committed-bytecode chunk count {}",
+                    layout.chunk_count()
+                )));
+            }
+            bytecode_chunk_lattice_view_formula(
+                index,
+                point,
+                layout.trace_order(),
+                layout.log_bytecode_chunk_size(),
+                AkitaField::NUM_BYTES,
+            )
+            .map_err(|error| {
+                unsupported_lattice_view(format!(
+                    "BytecodeChunk({index}) lattice view formula failed: {error}"
+                ))
+            })
         }
         _ => Err(unsupported_lattice_view(format!(
             "committed polynomial {polynomial:?} under relation {relation:?} has no supported lattice packed view"
@@ -565,12 +589,14 @@ mod tests {
         config::{IncrementCommitmentMode, PackedWitnessConfig, ProgramMode},
         stages::CommittedProgramSchedule,
     };
+    use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode;
     use jolt_claims::protocols::jolt::{
         byte_decode_terms, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
-        LatticePackedFamilyId, LatticePackedViewFormula, TracePolynomialOrder,
+        LatticePackedFamilyId, LatticePackedViewFormula, LatticePackedViewTerm,
+        TracePolynomialOrder,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_openings::PhysicalView;
+    use jolt_openings::{PackedLinearTerm, PhysicalView};
     use jolt_poly::{EqPolynomial, Point};
 
     fn lattice_config() -> JoltProtocolConfig {
@@ -611,6 +637,11 @@ mod tests {
         .unwrap_or_else(|error| panic!("precommitted schedule should build: {error}"))
     }
 
+    fn precommitted_schedule_without_committed_program() -> PrecommittedSchedule {
+        PrecommittedSchedule::new(TracePolynomialOrder::CycleMajor, 2, 8, None, None, None)
+            .unwrap_or_else(|error| panic!("precommitted schedule should build: {error}"))
+    }
+
     fn ra_layout() -> JoltRaPolynomialLayout {
         JoltRaPolynomialLayout::new(2, 1, 1)
             .unwrap_or_else(|error| panic!("RA layout should build: {error}"))
@@ -626,6 +657,49 @@ mod tests {
             }],
             pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
         }
+    }
+
+    fn bytecode_chunk_opening_point() -> (Vec<Fr>, Vec<Fr>) {
+        let lane_vars = bytecode::committed_lane_vars();
+        let lane_point = (1..=lane_vars as u64).map(Fr::from_u64).collect::<Vec<_>>();
+        let mut point = lane_point.clone();
+        point.extend([Fr::from_u64(101), Fr::from_u64(103), Fr::from_u64(107)]);
+        let lane_weights = EqPolynomial::<Fr>::evals(&lane_point, None);
+        (point, lane_weights)
+    }
+
+    fn linear_decoded_terms(
+        formula: &LatticePackedViewFormula<Fr>,
+    ) -> &[LatticePackedViewTerm<Fr>] {
+        match formula {
+            LatticePackedViewFormula::LinearDecoded { terms } => terms,
+            _ => panic!("expected linear decoded formula"),
+        }
+    }
+
+    fn find_lattice_term(
+        terms: &[LatticePackedViewTerm<Fr>],
+        family: LatticePackedFamilyId,
+        limb: usize,
+        symbol: usize,
+    ) -> &LatticePackedViewTerm<Fr> {
+        terms
+            .iter()
+            .find(|term| term.family == family && term.limb == limb && term.symbol == symbol)
+            .unwrap_or_else(|| panic!("missing lattice term"))
+    }
+
+    fn find_physical_term(
+        terms: &[PackedLinearTerm<Fr>],
+        family: PackedFamilyId,
+        limb: usize,
+        symbol: usize,
+    ) -> &PackedLinearTerm<Fr> {
+        let family = family.physical_ref();
+        terms
+            .iter()
+            .find(|term| term.family == family && term.limb == limb && term.symbol == symbol)
+            .unwrap_or_else(|| panic!("missing physical term"))
     }
 
     #[test]
@@ -767,8 +841,12 @@ mod tests {
         );
         let point = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
         let expected_weights = EqPolynomial::<Fr>::evals(&point[..2], None);
-        let formulas = jolt_lattice_view_formulas(&logical_manifest(id, point), 2)
-            .unwrap_or_else(|error| panic!("RA lattice formula should resolve: {error}"));
+        let formulas = jolt_lattice_view_formulas(
+            &logical_manifest(id, point),
+            2,
+            &precommitted_schedule(None),
+        )
+        .unwrap_or_else(|error| panic!("RA lattice formula should resolve: {error}"));
 
         assert_eq!(formulas[0].0, id);
         assert!(matches!(
@@ -790,7 +868,8 @@ mod tests {
             JoltRelationId::ProgramImageClaimReduction,
         );
 
-        let trusted_formula = jolt_lattice_view_formula(trusted, &[Fr::from_u64(1)], 8)
+        let schedule = precommitted_schedule(None);
+        let trusted_formula = jolt_lattice_view_formula(trusted, &[Fr::from_u64(1)], 8, &schedule)
             .unwrap_or_else(|error| panic!("trusted advice view should resolve: {error}"));
         assert!(matches!(
             trusted_formula,
@@ -805,8 +884,9 @@ mod tests {
                     && terms[7].symbol == 7
         ));
 
-        let program_image_formula = jolt_lattice_view_formula(program_image, &[Fr::from_u64(1)], 8)
-            .unwrap_or_else(|error| panic!("program image view should resolve: {error}"));
+        let program_image_formula =
+            jolt_lattice_view_formula(program_image, &[Fr::from_u64(1)], 8, &schedule)
+                .unwrap_or_else(|error| panic!("program image view should resolve: {error}"));
         assert!(matches!(
             program_image_formula,
             LatticePackedViewFormula::LinearDecoded { terms }
@@ -825,20 +905,63 @@ mod tests {
             JoltRelationId::IncClaimReduction,
         );
         assert!(matches!(
-            jolt_lattice_view_formula(id, &[Fr::from_u64(1)], 8)
+            jolt_lattice_view_formula(id, &[Fr::from_u64(1)], 8, &precommitted_schedule(None))
                 .unwrap_or_else(|error| panic!("increment view should resolve: {error}")),
             LatticePackedViewFormula::MaskedDecoded
         ));
     }
 
     #[test]
-    fn jolt_lattice_resolver_rejects_bytecode_chunks_until_lane_policy_exists() {
+    fn jolt_lattice_resolver_decodes_bytecode_chunk_lanes() {
+        let schedule = precommitted_schedule(None);
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltRelationId::BytecodeClaimReduction,
+        );
+        let (point, lane_weights) = bytecode_chunk_opening_point();
+        let formula = jolt_lattice_view_formula(id, &point, 8, &schedule)
+            .unwrap_or_else(|error| panic!("bytecode view should resolve: {error}"));
+        let terms = linear_decoded_terms(&formula);
+        let lane_layout = bytecode::BYTECODE_LANE_LAYOUT;
+
+        assert_eq!(
+            find_lattice_term(
+                terms,
+                LatticePackedFamilyId::BytecodeRegisterSelector {
+                    chunk: 0,
+                    selector: 1,
+                },
+                0,
+                5,
+            )
+            .coefficient,
+            lane_weights[lane_layout.rs2_start + 5]
+        );
+        assert_eq!(
+            find_lattice_term(
+                terms,
+                LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 },
+                1,
+                7,
+            )
+            .coefficient,
+            lane_weights[lane_layout.imm_idx] * Fr::from_u64(256 * 7)
+        );
+    }
+
+    #[test]
+    fn jolt_lattice_resolver_rejects_bytecode_chunks_without_layout() {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::BytecodeChunk(0),
             JoltRelationId::BytecodeClaimReduction,
         );
         assert!(matches!(
-            jolt_lattice_view_formula::<Fr>(id, &[Fr::from_u64(1)], 8),
+            jolt_lattice_view_formula::<Fr>(
+                id,
+                &[Fr::from_u64(1)],
+                8,
+                &precommitted_schedule_without_committed_program(),
+            ),
             Err(VerifierError::FinalOpeningBatchFailed { reason })
                 if reason.contains("BytecodeChunk")
         ));
@@ -861,8 +984,9 @@ mod tests {
         )])
         .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
 
-        let physical = jolt_lattice_physical_manifest(&logical, &layout, 2)
-            .unwrap_or_else(|error| panic!("physical manifest should resolve: {error}"));
+        let physical =
+            jolt_lattice_physical_manifest(&logical, &layout, 2, &precommitted_schedule(None))
+                .unwrap_or_else(|error| panic!("physical manifest should resolve: {error}"));
 
         assert_eq!(physical.layout_digest, layout.digest);
         assert_eq!(physical.openings[0].id, Stage8OpeningId::from(id));
@@ -881,6 +1005,42 @@ mod tests {
     }
 
     #[test]
+    fn jolt_lattice_physical_manifest_lowers_bytecode_chunk_view() {
+        let schedule = precommitted_schedule(None);
+        let layout =
+            derive_akita_packed_witness_layout(&lattice_config(), 2, 8, ra_layout(), &schedule)
+                .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltRelationId::BytecodeClaimReduction,
+        );
+        let (point, lane_weights) = bytecode_chunk_opening_point();
+        let logical = logical_manifest(id, point);
+        let physical = jolt_lattice_physical_manifest(&logical, &layout, 8, &schedule)
+            .unwrap_or_else(|error| panic!("physical manifest should resolve: {error}"));
+
+        assert_eq!(physical.layout_digest, layout.digest);
+        assert_eq!(physical.openings[0].id, Stage8OpeningId::from(id));
+        match &physical.openings[0].view {
+            PhysicalView::PackedLinear {
+                layout_digest,
+                terms,
+            } => {
+                assert_eq!(*layout_digest, layout.digest);
+                assert_eq!(
+                    find_physical_term(terms, PackedFamilyId::BytecodeImmBytes { chunk: 0 }, 1, 7,)
+                        .coefficient,
+                    lane_weights[bytecode::BYTECODE_LANE_LAYOUT.imm_idx] * Fr::from_u64(256 * 7)
+                );
+                assert!(layout
+                    .family(&PackedFamilyId::BytecodeChunk { index: 0 })
+                    .is_none());
+            }
+            PhysicalView::Direct => panic!("expected packed linear view"),
+        }
+    }
+
+    #[test]
     fn jolt_lattice_physical_manifest_rejects_masked_increment_view() {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::RamInc,
@@ -895,7 +1055,12 @@ mod tests {
         .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
 
         assert!(matches!(
-            jolt_lattice_physical_manifest(&logical_manifest(id, vec![Fr::from_u64(1)]), &layout, 8),
+            jolt_lattice_physical_manifest(
+                &logical_manifest(id, vec![Fr::from_u64(1)]),
+                &layout,
+                8,
+                &precommitted_schedule(None),
+            ),
             Err(VerifierError::FinalOpeningBatchFailed { reason })
                 if reason.contains("masked packed view")
         ));
