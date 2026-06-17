@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::claim_reductions::bytecode;
 use super::dimensions::{JoltFormulaPointError, TracePolynomialOrder, REGISTER_ADDRESS_BITS};
+use jolt_riscv::CircuitFlags;
+
+pub const FUSED_INCREMENT_BYTE_LIMBS: usize = 8;
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LatticePackedFamilyId {
@@ -85,6 +88,80 @@ impl<F> LatticePackedViewTerm<F> {
             symbol,
         }
     }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum LatticeFusedIncrementTarget {
+    Ram,
+    Rd,
+}
+
+pub fn fused_increment_translation_relation() -> JoltRelationId {
+    JoltRelationId::FusedIncrementTranslation
+}
+
+pub fn fused_increment_translation_input_opening(
+    target: LatticeFusedIncrementTarget,
+) -> JoltOpeningId {
+    let polynomial = match target {
+        LatticeFusedIncrementTarget::Ram => JoltCommittedPolynomial::RamInc,
+        LatticeFusedIncrementTarget::Rd => JoltCommittedPolynomial::RdInc,
+    };
+    JoltOpeningId::committed(polynomial, JoltRelationId::IncClaimReduction)
+}
+
+pub fn fused_increment_source_lattice_view_formula<F: Field>(
+    target: LatticeFusedIncrementTarget,
+    bytecode_chunk: usize,
+) -> LatticePackedViewFormula<F> {
+    match target {
+        LatticeFusedIncrementTarget::Ram => {
+            bytecode_store_flag_lattice_view_formula(bytecode_chunk)
+        }
+        LatticeFusedIncrementTarget::Rd => bytecode_rd_present_lattice_view_formula(bytecode_chunk),
+    }
+}
+
+pub fn bytecode_store_flag_lattice_view_formula<F>(chunk: usize) -> LatticePackedViewFormula<F> {
+    LatticePackedViewFormula::direct(
+        LatticePackedFamilyId::BytecodeCircuitFlag {
+            chunk,
+            flag: CircuitFlags::Store as usize,
+        },
+        0,
+        1,
+    )
+}
+
+pub fn bytecode_rd_present_lattice_view_formula<F: Field>(
+    chunk: usize,
+) -> LatticePackedViewFormula<F> {
+    LatticePackedViewFormula::linear_decoded(weighted_symbol_terms(
+        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+        0,
+        [F::one(); 1 << REGISTER_ADDRESS_BITS],
+    ))
+}
+
+pub fn fused_increment_magnitude_lattice_view_formula<F: Field>() -> LatticePackedViewFormula<F> {
+    LatticePackedViewFormula::linear_decoded(fused_increment_magnitude_terms())
+}
+
+pub fn fused_increment_magnitude_terms<F: Field>() -> Vec<LatticePackedViewTerm<F>> {
+    let mut terms = Vec::with_capacity(FUSED_INCREMENT_BYTE_LIMBS * 256);
+    let mut place = F::one();
+    for index in 0..FUSED_INCREMENT_BYTE_LIMBS {
+        terms.extend(weighted_byte_decode_terms(
+            LatticePackedFamilyId::IncByte { index },
+            [(0, place)],
+        ));
+        place *= F::from_u64(256);
+    }
+    terms
+}
+
+pub fn fused_increment_sign_lattice_view_formula<F>() -> LatticePackedViewFormula<F> {
+    LatticePackedViewFormula::direct(LatticePackedFamilyId::IncSign, 0, 1)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,6 +424,98 @@ mod tests {
                 family: LatticePackedFamilyId::ProgramImageInit,
                 relation: JoltRelationId::ProgramImageClaimReduction,
             }
+        );
+    }
+
+    #[test]
+    fn fused_increment_translation_names_existing_inc_claim_outputs() {
+        assert_eq!(
+            fused_increment_translation_relation(),
+            JoltRelationId::FusedIncrementTranslation
+        );
+        assert_eq!(
+            fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Ram),
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamInc,
+                JoltRelationId::IncClaimReduction
+            )
+        );
+        assert_eq!(
+            fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Rd),
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::RdInc,
+                JoltRelationId::IncClaimReduction
+            )
+        );
+    }
+
+    #[test]
+    fn fused_increment_source_formulas_use_committed_bytecode_lanes() {
+        assert_eq!(
+            fused_increment_source_lattice_view_formula::<Fr>(LatticeFusedIncrementTarget::Ram, 3),
+            LatticePackedViewFormula::direct(
+                LatticePackedFamilyId::BytecodeCircuitFlag {
+                    chunk: 3,
+                    flag: CircuitFlags::Store as usize,
+                },
+                0,
+                1
+            )
+        );
+
+        let rd_present =
+            fused_increment_source_lattice_view_formula::<Fr>(LatticeFusedIncrementTarget::Rd, 2);
+        let terms = linear_decoded_terms(&rd_present);
+        assert_eq!(terms.len(), 1 << REGISTER_ADDRESS_BITS);
+        assert_eq!(
+            find_term(
+                terms,
+                LatticePackedFamilyId::BytecodeRegisterSelector {
+                    chunk: 2,
+                    selector: 2,
+                },
+                0,
+                0
+            )
+            .coefficient,
+            Fr::from_u64(1)
+        );
+        assert_eq!(
+            find_term(
+                terms,
+                LatticePackedFamilyId::BytecodeRegisterSelector {
+                    chunk: 2,
+                    selector: 2,
+                },
+                0,
+                (1 << REGISTER_ADDRESS_BITS) - 1
+            )
+            .coefficient,
+            Fr::from_u64(1)
+        );
+    }
+
+    #[test]
+    fn fused_increment_decode_formulas_use_sign_magnitude_families() {
+        assert_eq!(
+            fused_increment_sign_lattice_view_formula::<Fr>(),
+            LatticePackedViewFormula::direct(LatticePackedFamilyId::IncSign, 0, 1)
+        );
+
+        let magnitude = fused_increment_magnitude_lattice_view_formula::<Fr>();
+        let terms = linear_decoded_terms(&magnitude);
+        assert_eq!(terms.len(), FUSED_INCREMENT_BYTE_LIMBS * 256);
+        assert_eq!(
+            find_term(terms, LatticePackedFamilyId::IncByte { index: 0 }, 0, 7).coefficient,
+            Fr::from_u64(7)
+        );
+        assert_eq!(
+            find_term(terms, LatticePackedFamilyId::IncByte { index: 1 }, 0, 3).coefficient,
+            Fr::from_u64(256 * 3)
+        );
+        assert_eq!(
+            find_term(terms, LatticePackedFamilyId::IncByte { index: 7 }, 0, 2).coefficient,
+            Fr::from_u64(1u64 << 57)
         );
     }
 

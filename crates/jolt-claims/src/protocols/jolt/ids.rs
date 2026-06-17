@@ -30,6 +30,7 @@ pub enum JoltRelationId {
     ProgramImageClaimReductionCyclePhase,
     ProgramImageClaimReduction,
     IncClaimReduction,
+    FusedIncrementTranslation,
     HammingWeightClaimReduction,
 }
 
