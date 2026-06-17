@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1781714420468,
+  "lastUpdate": 1781715280329,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -114286,6 +114286,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 872016,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "423dff0b67225b4af2d32609d4b1c973779a6c76",
+          "message": "feat: add field-inline tracing support (#1596)\n\n* feat: add field-inline tracing support\n\n* fix: CI failures — restore clobbered main changes, lint compliance\n\n- impl_inline_instruction: accept cfg attrs from for_each_instruction_kind\n- jolt-riscv: restore trace_row module/exports, from_bits, thiserror dep\n  (accidentally dropped while rebasing onto JoltTraceRow foundation)\n- jolt-riscv: drop dead test-utils feature and unused rand dep (machete)\n- jolt-sdk/macros: restore committed-bytecode preprocessing from main,\n  re-apply field-inline hook additively\n- tracer/cpu: restore interrupt_enabled match from main\n- guests: declare field-inline feature (silences unexpected_cfgs)\n- jolt-lookup-tables prefixes: lint-clean ported prefix_mle code\n  (unwrap_or defaults, let-else, redundant else, unreachable!)\n- taplo fmt\n\n* fix: declare field-inline feature in jolt new guest templates\n\n* refactor(jolt-lookup-tables): drop legacy prefix checkpoint mechanism\n\nRemove prefix_mle and update_prefix_checkpoint from SparseDensePrefix,\nthe Prefixes dispatch, and all 40 prefix implementations, along with the\nOption-based PrefixCheckpoint alias. Prefixes are now computed solely via\nper-phase materialization: evaluate() at binary points builds a dense\ntable at phase start, the table is bound during the phase's sumcheck\nrounds, and the fully bound value becomes the next phase's checkpoint.\n\nRewrite prefix_suffix_test to exercise that flow end-to-end: materialize,\nbind HighToLow with random challenges, check combine(prefixes, suffixes)\nagainst the table MLE every round at c in {0,2}, chain checkpoints from\nbound values, and compare the final claim against evaluate_mle over the\nfull 128-variable point, for both RPP=16 and RPP=8 prover configs.\n\n* fix(field-inline): address PR review comments\n\n- Decode FIELD_ASSERT_EQ with rd:None to match the tracer shape and avoid the\n  rd=x0 virtual-register rewrite (bytecode/trace operand divergence).\n- Add FIELD_STORE_TO_X to field_inline_handles_rd_zero so store-to-x0 stays a\n  legal no-op instead of producing an out-of-range x-register.\n- Reject out-of-range field-register indices in the emulator (was silently\n  clamping, hiding fr16-31 misuse until proving).\n- Deduplicate the operand-shape match: expose field_inline_operand_shape_for_op\n  in jolt-riscv; jolt-program and the tracer x_register_role delegate to it.\n- Replace the duplicated &TraceRow JoltCycle impl with a blanket impl for &T.\n- Delete the orphaned tracer inline_helpers.rs (undeclared, dead InstrAssembler).\n- Drop the unused centralized LookupTables::required_prefixes table.\n- Document the inv(0) and store-to-x truncation trace contracts.\n- Enforce the FieldRegister bound on deserialize via a real Valid::check and\n  re-run FieldInlineBytecodeMetadata::validate() on the deserialize path.\n- Fix OwnedTrace::next_row so the field-inline feature actually compiles\n  (TraceRow is not Copy under field-inline).\n\n* ci: build and test the field-inline feature\n\nThe field-inline feature is not part of host/zk/default, so no existing CI\njob compiled or tested it — the feature could regress while CI stayed green.\nAdd an explicit clippy invocation and a nextest run over the crates that\ndefine it (tracer, jolt-program, jolt-riscv, jolt-lookup-tables).\n\n---------\n\nCo-authored-by: Markos Georghiades <53157953+Markos-The-G@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-06-17T11:53:06-04:00",
+          "tree_id": "95e42ee2e304e86d48a4f47ec8871d8b506b854f",
+          "url": "https://github.com/a16z/jolt/commit/423dff0b67225b4af2d32609d4b1c973779a6c76"
+        },
+        "date": 1781715277409,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.5603,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 871416,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3085,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 509144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 502332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7248,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 497968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5865,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 504832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.6037,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.3107,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 192548,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4349,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 869220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5556,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 509160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4612,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 507280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.377,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.9996,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 502116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.6951,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1044472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.0047,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 639084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 95.6327,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2122120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4892,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 504496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5304,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.7674,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 871204,
             "unit": "KB",
             "extra": ""
           }
