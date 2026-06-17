@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
-    proof::{JoltCommitments, JoltProof},
+    proof::{CommitmentPayload, JoltCommitments, JoltProof},
     stages::{
         stage6::inputs::Stage6Claims,
         stage7::{inputs::Stage7Claims, outputs::PrecommittedFinalOpening},
@@ -167,6 +167,7 @@ where
         reason: error.to_string(),
     })?;
     let layout = formula_dimensions.ra_layout;
+    require_stage8_curve_payload(&proof.commitments)?;
 
     let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
         Deps::Clear { stage6, stage7 } => (
@@ -518,4 +519,48 @@ fn require_commitment_layout<C>(
         });
     }
     Ok(())
+}
+
+fn require_stage8_curve_payload<C>(payload: &CommitmentPayload<C>) -> Result<(), VerifierError> {
+    if let CommitmentPayload::Akita(_) = payload {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: "lattice Stage 8 requires packed view resolution before final opening dispatch"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proof::{AkitaCommitmentPayload, JoltRaCommitments};
+
+    fn dory_payload() -> CommitmentPayload<u64> {
+        CommitmentPayload::Dory(JoltCommitments::new(
+            1,
+            2,
+            JoltRaCommitments::new(vec![3], vec![4], vec![5]),
+            #[cfg(feature = "field-inline")]
+            crate::proof::FieldInlineCommitments::new(
+                crate::proof::FieldRegistersCommitments::new(6),
+            ),
+        ))
+    }
+
+    #[test]
+    fn stage8_curve_payload_guard_accepts_dory_payloads() {
+        assert!(require_stage8_curve_payload(&dory_payload()).is_ok());
+    }
+
+    #[test]
+    fn stage8_curve_payload_guard_rejects_akita_payloads() {
+        let payload = CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [7; 32], 43));
+
+        assert!(matches!(
+            require_stage8_curve_payload(&payload),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("lattice Stage 8")
+        ));
+    }
 }
