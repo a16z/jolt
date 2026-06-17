@@ -80,9 +80,25 @@ pub struct Stage6Claims<F: Field> {
     pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
     pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage6Claims<F>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
     /// Committed program mode only.
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
     /// Committed program mode only.
     pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<F>>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldInlineStage6Claims<F: Field> {
+    pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputOpeningClaims<F>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct FieldRegistersIncClaimReductionOutputOpeningClaims<F: Field> {
+    pub field_rd_inc: F,
 }
