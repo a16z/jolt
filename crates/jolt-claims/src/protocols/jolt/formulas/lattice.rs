@@ -45,9 +45,11 @@ pub enum LatticePackedViewFormula<F> {
     },
     ReducedMasked {
         relation: JoltRelationId,
-        output_openings: Vec<JoltOpeningId>,
+        terms: Vec<LatticePackedViewTerm<F>>,
     },
-    MaskedDecoded,
+    MaskedDecoded {
+        relation: JoltRelationId,
+    },
 }
 
 impl<F> LatticePackedViewFormula<F> {
@@ -63,11 +65,12 @@ impl<F> LatticePackedViewFormula<F> {
         Self::LinearDecoded { terms }
     }
 
-    pub fn reduced_masked(relation: JoltRelationId, output_openings: Vec<JoltOpeningId>) -> Self {
-        Self::ReducedMasked {
-            relation,
-            output_openings,
-        }
+    pub fn reduced_masked(relation: JoltRelationId, terms: Vec<LatticePackedViewTerm<F>>) -> Self {
+        Self::ReducedMasked { relation, terms }
+    }
+
+    pub fn masked_decoded(relation: JoltRelationId) -> Self {
+        Self::MaskedDecoded { relation }
     }
 }
 
@@ -181,7 +184,7 @@ pub fn final_opening_lattice_requirement(
     match polynomial {
         JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
             LatticeFinalOpeningRequirement::RequiresTranslation {
-                relation: JoltRelationId::IncClaimReduction,
+                relation: JoltRelationId::FusedIncrementTranslation,
             }
         }
         JoltCommittedPolynomial::InstructionRa(index) => packed_family_requirement(
@@ -398,13 +401,13 @@ mod tests {
         assert_eq!(
             final_opening_lattice_requirement(JoltCommittedPolynomial::RamInc),
             LatticeFinalOpeningRequirement::RequiresTranslation {
-                relation: JoltRelationId::IncClaimReduction
+                relation: JoltRelationId::FusedIncrementTranslation
             }
         );
         assert_eq!(
             final_opening_lattice_requirement(JoltCommittedPolynomial::RdInc),
             LatticeFinalOpeningRequirement::RequiresTranslation {
-                relation: JoltRelationId::IncClaimReduction
+                relation: JoltRelationId::FusedIncrementTranslation
             }
         );
     }

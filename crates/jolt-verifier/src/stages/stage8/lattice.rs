@@ -307,7 +307,9 @@ where
             )
         }
         (JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc, JoltRelationId::IncClaimReduction) => {
-            Ok(LatticePackedViewFormula::MaskedDecoded)
+            Ok(LatticePackedViewFormula::masked_decoded(
+                JoltRelationId::FusedIncrementTranslation,
+            ))
         }
         (JoltCommittedPolynomial::ProgramImageInit, JoltRelationId::ProgramImageClaimReduction) => {
             Ok(LatticePackedViewFormula::linear_decoded(
@@ -418,8 +420,22 @@ where
                 })
                 .collect(),
         )),
-        LatticePackedViewFormula::ReducedMasked { .. }
-        | LatticePackedViewFormula::MaskedDecoded => {
+        LatticePackedViewFormula::ReducedMasked { terms, .. } => {
+            Ok(PackedViewFormula::reduced_masked(
+                terms
+                    .iter()
+                    .map(|term| {
+                        PackedViewTerm::new(
+                            term.coefficient,
+                            akita_packed_family_id(&term.family),
+                            term.limb,
+                            term.symbol,
+                        )
+                    })
+                    .collect(),
+            ))
+        }
+        LatticePackedViewFormula::MaskedDecoded { .. } => {
             Err(PackedViewError::MaskedViewRequiresTranslation)
         }
     }
@@ -817,15 +833,32 @@ mod tests {
     #[test]
     fn lattice_masked_views_require_prior_translation() {
         assert!(matches!(
-            akita_packed_view_formula::<Fr>(&LatticePackedViewFormula::MaskedDecoded),
-            Err(PackedViewError::MaskedViewRequiresTranslation)
-        ));
-        assert!(matches!(
-            akita_packed_view_formula::<Fr>(&LatticePackedViewFormula::reduced_masked(
-                jolt_claims::protocols::jolt::JoltRelationId::IncClaimReduction,
-                Vec::new(),
+            akita_packed_view_formula::<Fr>(&LatticePackedViewFormula::masked_decoded(
+                JoltRelationId::FusedIncrementTranslation,
             )),
             Err(PackedViewError::MaskedViewRequiresTranslation)
+        ));
+    }
+
+    #[test]
+    fn lattice_reduced_masked_view_converts_terms_to_akita_formula() {
+        let formula = LatticePackedViewFormula::reduced_masked(
+            JoltRelationId::FusedIncrementTranslation,
+            vec![jolt_claims::protocols::jolt::LatticePackedViewTerm::new(
+                Fr::from_u64(9),
+                LatticePackedFamilyId::IncSign,
+                0,
+                1,
+            )],
+        );
+        assert!(matches!(
+            akita_packed_view_formula::<Fr>(&formula),
+            Ok(PackedViewFormula::ReducedMasked { terms })
+                if terms.len() == 1
+                    && terms[0].coefficient == Fr::from_u64(9)
+                    && terms[0].family == PackedFamilyId::IncSign
+                    && terms[0].limb == 0
+                    && terms[0].symbol == 1
         ));
     }
 
@@ -903,7 +936,9 @@ mod tests {
         assert!(matches!(
             jolt_lattice_view_formula(id, &[Fr::from_u64(1)], 8, &precommitted_schedule(None))
                 .unwrap_or_else(|error| panic!("increment view should resolve: {error}")),
-            LatticePackedViewFormula::MaskedDecoded
+            LatticePackedViewFormula::MaskedDecoded {
+                relation: JoltRelationId::FusedIncrementTranslation
+            }
         ));
     }
 

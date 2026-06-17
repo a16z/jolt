@@ -462,7 +462,12 @@ mod tests {
             Stage8PhysicalManifest::from_jolt_lattice_view_formulas(
                 &logical,
                 &layout,
-                [(jolt_id, LatticePackedViewFormula::<Fr>::MaskedDecoded)],
+                [(
+                    jolt_id,
+                    LatticePackedViewFormula::<Fr>::masked_decoded(
+                        JoltRelationId::FusedIncrementTranslation,
+                    ),
+                )],
             ),
             Err(PackedViewError::MaskedViewRequiresTranslation)
         ));
