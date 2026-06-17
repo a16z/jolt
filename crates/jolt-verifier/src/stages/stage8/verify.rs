@@ -10,7 +10,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{CommitmentPayload, JoltCommitments, JoltProof},
     stages::{
-        stage6::inputs::Stage6Claims,
+        stage6::{inputs::Stage6Claims, outputs::VerifiedStage6Sumcheck},
         stage7::{inputs::Stage7Claims, outputs::PrecommittedFinalOpening},
     },
     verifier::CheckedInputs,
@@ -27,7 +27,8 @@ use jolt_claims::protocols::jolt::{
         dimensions::JoltFormulaDimensions,
         ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial,
+    fused_increment_magnitude_opening, fused_increment_sign_opening,
+    fused_increment_source_opening, JoltCommittedPolynomial, LatticeFusedIncrementTarget,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -167,7 +168,13 @@ where
         reason: error.to_string(),
     })?;
     let layout = formula_dimensions.ra_layout;
-    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
+    let (
+        hamming_opening_point,
+        inc_opening_point,
+        precommitted_finals,
+        clear_claims,
+        fused_increment_translation,
+    ) = match deps {
         Deps::Clear { stage6, stage7 } => (
             stage7
                 .batch
@@ -177,6 +184,7 @@ where
             stage6.batch.inc_claim_reduction.opening_point.as_slice(),
             stage7.precommitted_final_openings.as_slice(),
             Some((&stage6.output_claims, &stage7.output_claims)),
+            stage6.batch.fused_increment_translation.as_ref(),
         ),
         Deps::Zk { stage6, stage7 } => (
             stage7
@@ -185,6 +193,7 @@ where
                 .as_slice(),
             stage6.inc_claim_reduction.opening_point.as_slice(),
             stage7.precommitted_final_openings.as_slice(),
+            None,
             None,
         ),
     };
@@ -221,6 +230,7 @@ where
                 inc_opening_point,
                 precommitted_finals,
                 clear_claims,
+                false,
                 |polynomial| {
                     dory_final_commitment(
                         preprocessing,
@@ -234,18 +244,28 @@ where
                 Some(&commitments.field_inline.field_registers.rd_inc),
             )?
         }
-        CommitmentPayload::Akita(payload) => batch_entries(
-            layout,
-            committed_bytecode_chunk_count,
-            &opening_point,
-            hamming_opening_point,
-            inc_opening_point,
-            precommitted_finals,
-            clear_claims,
-            |_| Ok(&payload.packed_witness),
-            #[cfg(feature = "field-inline")]
-            Some(&payload.packed_witness),
-        )?,
+        CommitmentPayload::Akita(payload) => {
+            let mut entries = akita_fused_increment_entries(
+                &opening_point,
+                &payload.packed_witness,
+                fused_increment_translation,
+                clear_claims.map(|(stage6, _)| stage6),
+            )?;
+            entries.extend(batch_entries(
+                layout,
+                committed_bytecode_chunk_count,
+                &opening_point,
+                hamming_opening_point,
+                inc_opening_point,
+                precommitted_finals,
+                clear_claims,
+                true,
+                |_| Ok(&payload.packed_witness),
+                #[cfg(feature = "field-inline")]
+                Some(&payload.packed_witness),
+            )?);
+            entries
+        }
     };
     let logical_manifest = logical_manifest(&entries, pcs_opening_point.clone());
     let opening_ids = logical_manifest.opening_ids();
@@ -349,6 +369,7 @@ fn batch_entries<'a, F, C, CommitmentFor>(
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
     clear_claims: Option<(&Stage6Claims<F>, &Stage7Claims<F>)>,
+    skip_increment_openings: bool,
     mut commitment_for: CommitmentFor,
     #[cfg(feature = "field-inline")] field_rd_inc_commitment: &'a C,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, C>>, VerifierError>
@@ -373,6 +394,14 @@ where
     let mut entries = Vec::with_capacity(order.len() + field_inline_final_opening_count());
     // Core's final PCS batch order intentionally differs from proof payload order.
     for polynomial in order {
+        if skip_increment_openings
+            && matches!(
+                polynomial,
+                JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc
+            )
+        {
+            continue;
+        }
         let id = final_opening_id(polynomial);
         let (own_point, opening_claim): (&[F], Option<F>) = match polynomial {
             JoltCommittedPolynomial::RamInc => (
@@ -468,6 +497,60 @@ where
         }
     }
     Ok(entries)
+}
+
+fn akita_fused_increment_entries<'a, F, C>(
+    opening_point: &[F],
+    packed_witness: &'a C,
+    verified: Option<&VerifiedStage6Sumcheck<F>>,
+    stage6_claims: Option<&Stage6Claims<F>>,
+) -> Result<Vec<Stage8BatchEntry<'a, F, C>>, VerifierError>
+where
+    F: Field,
+{
+    let verified = verified.ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+        reason: "Akita final batch requires verified fused increment translation claims"
+            .to_string(),
+    })?;
+    let output_claims = stage6_claims
+        .and_then(|stage6| stage6.fused_increment_translation.as_ref())
+        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita final batch requires fused increment translation output claims"
+                .to_string(),
+        })?;
+    let own_point = verified.opening_point.as_slice();
+    let scale = commitment_embedding_scale(opening_point, own_point);
+
+    Ok(vec![
+        Stage8BatchEntry {
+            id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram).into(),
+            commitment: packed_witness,
+            opening_claim: Some(output_claims.ram_source),
+            own_point: own_point.to_vec(),
+            scale,
+        },
+        Stage8BatchEntry {
+            id: fused_increment_magnitude_opening().into(),
+            commitment: packed_witness,
+            opening_claim: Some(output_claims.magnitude),
+            own_point: own_point.to_vec(),
+            scale,
+        },
+        Stage8BatchEntry {
+            id: fused_increment_sign_opening().into(),
+            commitment: packed_witness,
+            opening_claim: Some(output_claims.sign),
+            own_point: own_point.to_vec(),
+            scale,
+        },
+        Stage8BatchEntry {
+            id: fused_increment_source_opening(LatticeFusedIncrementTarget::Rd).into(),
+            commitment: packed_witness,
+            opening_claim: Some(output_claims.rd_source),
+            own_point: own_point.to_vec(),
+            scale,
+        },
+    ])
 }
 
 fn dory_final_commitment<'a, PCS, VC>(
@@ -624,4 +707,144 @@ fn require_commitment_layout<C>(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "test setup should fail loudly when helper contracts change"
+    )]
+
+    use super::*;
+    use crate::stages::stage6::inputs::{
+        BooleanityOutputOpeningClaims, BytecodeReadRafOutputOpeningClaims,
+        FusedIncrementTranslationOutputClaims, IncClaimReductionOutputOpeningClaims,
+        InstructionRaVirtualizationOutputOpeningClaims, RamHammingBooleanityOutputOpeningClaims,
+        RamRaVirtualizationOutputOpeningClaims, Stage6AddressPhaseClaims,
+        Stage6AdviceCyclePhaseClaims,
+    };
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    #[test]
+    fn akita_fused_increment_entries_use_verified_translation_outputs() {
+        let packed_witness = 9_u64;
+        let opening_point = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)];
+        let verified = VerifiedStage6Sumcheck {
+            input_claim: Fr::from_u64(4),
+            sumcheck_point: vec![Fr::from_u64(5), Fr::from_u64(6)],
+            opening_point: vec![Fr::from_u64(1), Fr::from_u64(2)],
+            expected_output_claim: Fr::from_u64(7),
+        };
+        let claims = stage6_claims_with_fused_outputs(
+            Fr::from_u64(10),
+            Fr::from_u64(11),
+            Fr::from_u64(12),
+            Fr::from_u64(13),
+        );
+
+        let entries = akita_fused_increment_entries(
+            &opening_point,
+            &packed_witness,
+            Some(&verified),
+            Some(&claims),
+        )
+        .expect("fused entries should build");
+
+        assert_eq!(
+            entries.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+            vec![
+                fused_increment_source_opening(LatticeFusedIncrementTarget::Ram).into(),
+                fused_increment_magnitude_opening().into(),
+                fused_increment_sign_opening().into(),
+                fused_increment_source_opening(LatticeFusedIncrementTarget::Rd).into(),
+            ]
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.opening_claim)
+                .collect::<Vec<_>>(),
+            vec![
+                Some(Fr::from_u64(10)),
+                Some(Fr::from_u64(11)),
+                Some(Fr::from_u64(12)),
+                Some(Fr::from_u64(13)),
+            ]
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| entry.commitment == &packed_witness
+                && entry.own_point == verified.opening_point));
+    }
+
+    #[test]
+    fn akita_fused_increment_entries_require_verified_stage6_outputs() {
+        let packed_witness = 9_u64;
+        let claims = stage6_claims_with_fused_outputs(
+            Fr::from_u64(10),
+            Fr::from_u64(11),
+            Fr::from_u64(12),
+            Fr::from_u64(13),
+        );
+
+        let error = akita_fused_increment_entries::<Fr, _>(
+            &[Fr::from_u64(1)],
+            &packed_witness,
+            None,
+            Some(&claims),
+        )
+        .err()
+        .expect("missing verified sumcheck should fail");
+        assert!(error
+            .to_string()
+            .contains("verified fused increment translation claims"));
+    }
+
+    fn stage6_claims_with_fused_outputs(
+        ram_source: Fr,
+        magnitude: Fr,
+        sign: Fr,
+        rd_source: Fr,
+    ) -> Stage6Claims<Fr> {
+        let zero = Fr::from_u64(0);
+        Stage6Claims {
+            address_phase: Stage6AddressPhaseClaims {
+                bytecode_read_raf: zero,
+                booleanity: zero,
+                bytecode_val_stages: None,
+            },
+            bytecode_read_raf: BytecodeReadRafOutputOpeningClaims {
+                bytecode_ra: Vec::new(),
+            },
+            booleanity: BooleanityOutputOpeningClaims {
+                instruction_ra: Vec::new(),
+                bytecode_ra: Vec::new(),
+                ram_ra: Vec::new(),
+            },
+            ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
+                ram_hamming_weight: zero,
+            },
+            ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims { ram_ra: Vec::new() },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
+                committed_instruction_ra: Vec::new(),
+            },
+            inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+                ram_inc: zero,
+                rd_inc: zero,
+            },
+            fused_increment_translation: Some(FusedIncrementTranslationOutputClaims {
+                ram_source,
+                magnitude,
+                sign,
+                rd_source,
+            }),
+            advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+                trusted: None,
+                untrusted: None,
+            },
+            bytecode_claim_reduction: None,
+            program_image_claim_reduction: None,
+        }
+    }
 }

@@ -10,9 +10,12 @@ use jolt_akita::{
 use jolt_claims::protocols::jolt::{
     byte_decode_terms, bytecode_chunk_lattice_view_formula,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    little_endian_byte_decode_terms, weighted_symbol_terms, AdviceClaimReductionLayout,
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-    LatticePackedFamilyId, LatticePackedViewFormula, ProgramImageClaimReductionLayout,
+    fused_increment_magnitude_lattice_view_formula, fused_increment_magnitude_opening,
+    fused_increment_sign_lattice_view_formula, fused_increment_sign_opening,
+    fused_increment_source_opening, little_endian_byte_decode_terms, weighted_symbol_terms,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
+    LatticePackedViewFormula, ProgramImageClaimReductionLayout,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -209,6 +212,19 @@ where
         JoltOpeningId::UntrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
         } => Ok(advice_lattice_view_formula(JoltAdviceKind::Untrusted)),
+        id if id == fused_increment_magnitude_opening() => {
+            Ok(fused_increment_magnitude_lattice_view_formula())
+        }
+        id if id == fused_increment_sign_opening() => {
+            Ok(fused_increment_sign_lattice_view_formula())
+        }
+        id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
+            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) =>
+        {
+            Err(unsupported_lattice_view(
+                "fused increment source outputs require a bytecode-derived packed view relation",
+            ))
+        }
         _ => Err(unsupported_lattice_view(format!(
             "final opening {id:?} has no supported lattice packed view"
         ))),
@@ -940,6 +956,59 @@ mod tests {
                 relation: JoltRelationId::FusedIncrementTranslation
             }
         ));
+    }
+
+    #[test]
+    fn jolt_lattice_resolver_lowers_fused_increment_decode_outputs() {
+        let magnitude = jolt_lattice_view_formula(
+            fused_increment_magnitude_opening(),
+            &[Fr::from_u64(1)],
+            8,
+            &precommitted_schedule(None),
+        )
+        .unwrap_or_else(|error| panic!("magnitude view should resolve: {error}"));
+        let magnitude_terms = linear_decoded_terms(&magnitude);
+        assert_eq!(
+            find_lattice_term(
+                magnitude_terms,
+                LatticePackedFamilyId::IncByte { index: 7 },
+                0,
+                3,
+            )
+            .coefficient,
+            Fr::from_u64(256_u64.pow(7) * 3)
+        );
+
+        assert!(matches!(
+            jolt_lattice_view_formula(
+                fused_increment_sign_opening(),
+                &[Fr::from_u64(1)],
+                8,
+                &precommitted_schedule(None),
+            )
+            .unwrap_or_else(|error| panic!("sign view should resolve: {error}")),
+            LatticePackedViewFormula::Direct {
+                family: LatticePackedFamilyId::IncSign,
+                limb: 0,
+                symbol: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn jolt_lattice_resolver_rejects_fused_increment_source_until_bytecode_relation() {
+        let error = match jolt_lattice_view_formula::<Fr>(
+            fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+            &[Fr::from_u64(1)],
+            8,
+            &precommitted_schedule(None),
+        ) {
+            Ok(_) => panic!("source view should require a bytecode-derived relation"),
+            Err(error) => error,
+        };
+        assert!(error
+            .to_string()
+            .contains("bytecode-derived packed view relation"));
     }
 
     #[test]
