@@ -211,17 +211,12 @@ impl JoltPackedWitnessBuilder {
         match first_byte_family {
             PackedFamilyId::IncByte { .. } => {
                 for (index, byte) in bytes.iter().copied().enumerate() {
-                    self.emit_byte_if_nonzero(PackedFamilyId::IncByte { index }, row, 0, byte)?;
+                    self.emit_byte(PackedFamilyId::IncByte { index }, row, 0, byte)?;
                 }
             }
             PackedFamilyId::FieldRdIncByte { .. } => {
                 for (index, byte) in bytes.iter().copied().enumerate() {
-                    self.emit_byte_if_nonzero(
-                        PackedFamilyId::FieldRdIncByte { index },
-                        row,
-                        0,
-                        byte,
-                    )?;
+                    self.emit_byte(PackedFamilyId::FieldRdIncByte { index }, row, 0, byte)?;
                 }
             }
             _ => {}
@@ -341,22 +336,19 @@ impl JoltPackedWitnessBuilder {
         bytes: &[u8],
     ) -> Result<(), JoltPackedWitnessError> {
         for (limb, byte) in bytes.iter().copied().enumerate() {
-            self.emit_byte_if_nonzero(family.clone(), row, limb, byte)?;
+            self.emit_byte(family.clone(), row, limb, byte)?;
         }
         Ok(())
     }
 
-    fn emit_byte_if_nonzero(
+    fn emit_byte(
         &mut self,
         family: PackedFamilyId,
         row: usize,
         limb: usize,
         byte: u8,
     ) -> Result<(), JoltPackedWitnessError> {
-        if byte != 0 {
-            self.emit_one(family, row, limb, byte as usize)?;
-        }
-        Ok(())
+        self.emit_one(family, row, limb, byte as usize)
     }
 
     fn emit_one(
@@ -753,6 +745,119 @@ mod tests {
     }
 
     #[test]
+    fn fused_increment_emits_canonical_zero_byte_symbols() {
+        let layout = increment_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::ADD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 0,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 10,
+                    rd_write_value: 10,
+                }),
+                9,
+            ),
+            trace_row(
+                JoltInstructionKind::ADD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 0,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 7,
+                    rd_write_value: 7,
+                }),
+                11,
+            ),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |_, _| None)
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        for index in 0..8 {
+            assert_eq!(
+                get(&witness, PackedFamilyId::IncByte { index }, 0, 0, 0),
+                AkitaField::one()
+            );
+        }
+        assert!(get(&witness, PackedFamilyId::IncSign, 0, 0, 1).is_zero());
+    }
+
+    #[test]
+    fn negative_increment_emits_sign_and_zero_high_bytes() {
+        let layout = increment_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::ADD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 0,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 10,
+                    rd_write_value: 3,
+                }),
+                9,
+            ),
+            trace_row(
+                JoltInstructionKind::ADD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 0,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 7,
+                    rd_write_value: 7,
+                }),
+                11,
+            ),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |_, _| None)
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        assert_eq!(
+            get(&witness, PackedFamilyId::IncByte { index: 0 }, 0, 0, 7),
+            AkitaField::one()
+        );
+        for index in 1..8 {
+            assert_eq!(
+                get(&witness, PackedFamilyId::IncByte { index }, 0, 0, 0),
+                AkitaField::one()
+            );
+        }
+        assert_eq!(
+            get(&witness, PackedFamilyId::IncSign, 0, 0, 1),
+            AkitaField::one()
+        );
+    }
+
+    #[test]
     fn packs_committed_bytecode_facts() {
         let layout = PackedWitnessLayout::new([
             PackedFamilySpec::direct(
@@ -920,5 +1025,25 @@ mod tests {
             get(&witness, PackedFamilyId::ProgramImageInit, 1, 1, 4),
             AkitaField::one()
         );
+    }
+
+    fn increment_layout() -> PackedWitnessLayout {
+        let mut specs = (0..8)
+            .map(|index| {
+                PackedFamilySpec::direct(
+                    PackedFamilyId::IncByte { index },
+                    trace_domain(),
+                    1,
+                    PackedAlphabet::Byte,
+                )
+            })
+            .collect::<Vec<_>>();
+        specs.push(PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            trace_domain(),
+            1,
+            PackedAlphabet::Bit,
+        ));
+        PackedWitnessLayout::new(specs).expect("layout should build")
     }
 }
