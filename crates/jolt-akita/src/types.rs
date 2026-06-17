@@ -93,6 +93,7 @@ impl AppendToTranscript for AkitaCommitment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaBatchProof {
     pub commitment: AkitaCommitment,
+    pub statement_bridge: Vec<u8>,
     pub proof_shape: Vec<u8>,
     pub proof: Vec<u8>,
 }

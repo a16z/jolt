@@ -5,6 +5,7 @@ use akita_pcs::{
     CpuBackend,
 };
 use akita_prover::{CommittedPolynomials, ProverClaims};
+use akita_transcript::Transcript as AkitaNativeTranscript;
 use akita_types::{
     BasisMode, CommitmentVerifier, CommittedOpenings, SetupContributionMode, VerifierClaims,
 };
@@ -222,6 +223,8 @@ impl BatchOpeningScheme for AkitaScheme {
         let normalized = normalize_clear_batch(statement)?;
         validate_prover_inputs(setup, &normalized.commitment, polynomials, &hints)?;
         bind_batch_statement(statement, &normalized, transcript);
+        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
+        let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
 
         let native_commitment =
             deserialize_akita::<NativeCommitment>(&normalized.commitment.native, &())?;
@@ -241,7 +244,6 @@ impl BatchOpeningScheme for AkitaScheme {
             }],
         );
 
-        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
         let native_proof = NativeScheme::batched_prove(
             &setup.native,
             &CpuBackend,
@@ -255,6 +257,7 @@ impl BatchOpeningScheme for AkitaScheme {
         let proof_shape = native_proof.shape();
         let proof = AkitaBatchProof {
             commitment: normalized.commitment,
+            statement_bridge,
             proof_shape: serialize_akita(&proof_shape)?,
             proof: serialize_akita(&native_proof)?,
         };
@@ -277,6 +280,11 @@ impl BatchOpeningScheme for AkitaScheme {
         }
         validate_verifier_setup(setup, &normalized.commitment)?;
         bind_batch_statement(statement, &normalized, transcript);
+        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
+        let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
+        if proof.statement_bridge != statement_bridge {
+            return Err(OpeningsError::VerificationFailed);
+        }
         bind_proof_bytes(proof, transcript);
 
         let native_verifier = deserialize_akita::<NativeVerifier>(&setup.native, &())?;
@@ -296,7 +304,6 @@ impl BatchOpeningScheme for AkitaScheme {
                 commitment: &native_commitment,
             }],
         );
-        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
         NativeScheme::batched_verify(
             &native_proof,
             &native_verifier,
@@ -553,10 +560,27 @@ fn bind_batch_statement<OpeningId, RelationId, T>(
     normalized.reduced_opening.append_to_transcript(transcript);
 }
 
+fn bind_jolt_transcript_bridge<T>(
+    jolt_transcript: &mut T,
+    akita_transcript: &mut AkitaTranscript<AkitaField>,
+) -> Vec<u8>
+where
+    T: Transcript<Challenge = AkitaField>,
+{
+    let bridge = jolt_transcript.challenge_scalar();
+    akita_transcript.append_field(b"jolt_statement_bridge", &bridge);
+    field_bytes(bridge)
+}
+
 fn bind_proof_bytes<T>(proof: &AkitaBatchProof, transcript: &mut T)
 where
     T: Transcript<Challenge = AkitaField>,
 {
+    transcript.append(&LabelWithCount(
+        b"akita_stmt_bridge",
+        proof.statement_bridge.len() as u64,
+    ));
+    transcript.append_bytes(&proof.statement_bridge);
     transcript.append(&LabelWithCount(
         b"akita_proof_shape",
         proof.proof_shape.len() as u64,

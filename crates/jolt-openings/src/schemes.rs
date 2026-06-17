@@ -1382,6 +1382,62 @@ mod tests {
     }
 
     #[test]
+    fn packed_combine_binds_view_coefficients_before_inner_batch() {
+        let (polynomials, point) = batch_polynomials();
+        let polynomial = polynomials[0].clone();
+        let statement = packed_batch_statement(&polynomial, &point);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"packed-coeffs-bound");
+        let proof = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
+            &(),
+            &mut prover_transcript,
+            &statement,
+            &[polynomial.clone(), polynomial.clone()],
+            vec![(), ()],
+        )
+        .expect("packed batch proof should be produced");
+
+        let mut tampered = statement;
+        tampered.claims[0].view = PhysicalView::PackedLinear {
+            layout_digest: [44; 32],
+            coefficients: vec![fr(1), fr(1)],
+        };
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"packed-coeffs-bound");
+        let result = <PackedMockPCS as BatchOpeningScheme>::verify_batch(
+            &(),
+            &mut verifier_transcript,
+            &tampered,
+            &proof,
+        );
+        assert!(
+            result.is_err(),
+            "changed coefficients should fail even when their sum is unchanged"
+        );
+    }
+
+    #[test]
+    fn packed_combine_rejects_empty_linear_view() {
+        let (polynomials, point) = batch_polynomials();
+        let polynomial = polynomials[0].clone();
+        let mut statement = packed_batch_statement(&polynomial, &point);
+        statement.claims[0].view = PhysicalView::PackedLinear {
+            layout_digest: [44; 32],
+            coefficients: Vec::new(),
+        };
+
+        let mut transcript = Blake2bTranscript::new(b"packed-empty-view");
+        let result = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
+            &(),
+            &mut transcript,
+            &statement,
+            &[polynomial.clone(), polynomial],
+            vec![(), ()],
+        );
+        assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
+    }
+
+    #[test]
     fn packed_combine_can_wrap_non_homomorphic_batch_scheme() {
         fn assert_batch_scheme<PCS: BatchOpeningScheme>() {}
         assert_batch_scheme::<PackedCombine<NonHomomorphicBatchPCS>>();

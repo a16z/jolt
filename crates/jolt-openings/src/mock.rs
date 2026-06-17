@@ -6,7 +6,7 @@ use jolt_crypto::Commitment;
 use jolt_field::Field;
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use jolt_crypto::HomomorphicCommitment;
 
@@ -19,7 +19,7 @@ pub struct MockCommitmentScheme<F: Field>(PhantomData<F>);
 
 /// Stores the full evaluation table so `combine` is truly homomorphic.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
 pub struct MockCommitment<F: Field> {
     evaluations: Vec<F>,
 }
@@ -33,7 +33,7 @@ impl<F: Field> Default for MockCommitment<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
 pub struct MockProof<F: Field> {
     evaluations: Vec<F>,
 }
@@ -51,11 +51,17 @@ impl<F: Field> AppendToTranscript for MockCommitment<F> {
     }
 }
 
-impl<F: Field> Commitment for MockCommitmentScheme<F> {
+impl<F> Commitment for MockCommitmentScheme<F>
+where
+    F: Field + Serialize + DeserializeOwned,
+{
     type Output = MockCommitment<F>;
 }
 
-impl<F: Field> CommitmentScheme for MockCommitmentScheme<F> {
+impl<F> CommitmentScheme for MockCommitmentScheme<F>
+where
+    F: Field + Serialize + DeserializeOwned,
+{
     type Field = F;
     type Proof = MockProof<F>;
     type ProverSetup = ();
@@ -145,7 +151,10 @@ impl<F: Field> HomomorphicCommitment<F> for MockCommitment<F> {
     }
 }
 
-impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
+impl<F> AdditivelyHomomorphic for MockCommitmentScheme<F>
+where
+    F: Field + Serialize + DeserializeOwned,
+{
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
         let len = commitments.first().map_or(0, |c| c.evaluations.len());
@@ -164,7 +173,7 @@ impl<F: Field> AdditivelyHomomorphic for MockCommitmentScheme<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
 pub struct MockHidingCommitment<F: Field> {
     pub eval: F,
 }
@@ -175,7 +184,10 @@ impl<F: Field> AppendToTranscript for MockHidingCommitment<F> {
     }
 }
 
-impl<F: Field> ZkOpeningScheme for MockCommitmentScheme<F> {
+impl<F> ZkOpeningScheme for MockCommitmentScheme<F>
+where
+    F: Field + Serialize + DeserializeOwned,
+{
     type HidingCommitment = MockHidingCommitment<F>;
     type Blind = ();
 

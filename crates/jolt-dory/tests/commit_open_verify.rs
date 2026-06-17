@@ -207,6 +207,66 @@ fn packed_combine_dory_many_claims_one_commitment_verifies() {
 }
 
 #[test]
+fn packed_combine_dory_rejects_tampered_packed_coefficients() {
+    type PackedDory = PackedCombine<DoryScheme>;
+
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(227);
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let polynomial = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let eval = polynomial.evaluate(&point);
+    let (commitment, hint) = DoryScheme::commit(polynomial.evaluations(), &prover_setup);
+    let decode = Fr::from_u64(2);
+    let statement = BatchOpeningStatement {
+        logical_point: point.clone(),
+        pcs_point: point,
+        layout_digest: [12; 32],
+        claims: vec![BatchOpeningClaim {
+            id: 0,
+            relation: (),
+            commitment,
+            claim: eval * decode.inverse().expect("decode is nonzero"),
+            view: PhysicalView::PackedLinear {
+                layout_digest: [12; 32],
+                coefficients: vec![decode],
+            },
+            scale: Fr::from_u64(1),
+        }],
+    };
+
+    let mut prover_transcript = Blake2bTranscript::new(b"dory-packed-coeffs");
+    let proof = <PackedDory as BatchOpeningScheme>::prove_batch(
+        &prover_setup,
+        &mut prover_transcript,
+        &statement,
+        std::slice::from_ref(&polynomial),
+        vec![hint],
+    )
+    .expect("Dory packed batch proof should be produced");
+
+    let mut tampered = statement;
+    tampered.claims[0].view = PhysicalView::PackedLinear {
+        layout_digest: [12; 32],
+        coefficients: vec![Fr::from_u64(1), Fr::from_u64(1)],
+    };
+    let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-coeffs");
+    let result = <PackedDory as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        &mut verifier_transcript,
+        &tampered,
+        &proof,
+    );
+    assert!(
+        result.is_err(),
+        "changed packed coefficients should fail even when their sum is unchanged"
+    );
+}
+
+#[test]
 fn streaming_equals_direct_various_sizes() {
     for num_vars in [2usize, 4, 6] {
         let sigma = num_vars.div_ceil(2);
