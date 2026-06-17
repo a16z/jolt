@@ -95,6 +95,11 @@ pub enum IncClaimReductionChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FusedIncrementTranslationChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IncClaimReductionPublic {
     EqRamReadWrite,
     EqRamValCheck,
@@ -242,6 +247,7 @@ pub enum JoltChallengeId {
     RamHammingBooleanity(RamHammingBooleanityChallenge),
     Booleanity(BooleanityChallenge),
     IncClaimReduction(IncClaimReductionChallenge),
+    FusedIncrementTranslation(FusedIncrementTranslationChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
     BytecodeClaimReduction(BytecodeClaimReductionChallenge),
@@ -336,6 +342,10 @@ pub enum JoltOpeningId {
     TrustedAdvice {
         relation: JoltRelationId,
     },
+    Lattice {
+        relation: JoltRelationId,
+        index: usize,
+    },
 }
 
 impl JoltOpeningId {
@@ -360,6 +370,10 @@ impl JoltOpeningId {
 
     pub fn trusted_advice(relation: JoltRelationId) -> Self {
         Self::TrustedAdvice { relation }
+    }
+
+    pub fn lattice(relation: JoltRelationId, index: usize) -> Self {
+        Self::Lattice { relation, index }
     }
 }
 

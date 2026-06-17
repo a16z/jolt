@@ -1,12 +1,19 @@
-use jolt_field::Field;
+use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use serde::{Deserialize, Serialize};
 
+use crate::{challenge, opening};
+
+use super::super::{
+    FusedIncrementTranslationChallenge, JoltChallengeId, JoltExpr, JoltRelationClaims,
+};
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::claim_reductions::bytecode;
-use super::dimensions::{JoltFormulaPointError, TracePolynomialOrder, REGISTER_ADDRESS_BITS};
+use super::dimensions::{
+    JoltFormulaPointError, TraceDimensions, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
+};
 use jolt_riscv::CircuitFlags;
 
 pub const FUSED_INCREMENT_BYTE_LIMBS: usize = 8;
@@ -103,6 +110,35 @@ pub fn fused_increment_translation_relation() -> JoltRelationId {
     JoltRelationId::FusedIncrementTranslation
 }
 
+pub fn fused_increment_translation_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    let gamma = fused_increment_translation_challenge(FusedIncrementTranslationChallenge::Gamma);
+    let input = opening(fused_increment_translation_input_opening(
+        LatticeFusedIncrementTarget::Ram,
+    )) + gamma.clone()
+        * opening(fused_increment_translation_input_opening(
+            LatticeFusedIncrementTarget::Rd,
+        ));
+    let output = signed_source_output(LatticeFusedIncrementTarget::Ram)
+        + gamma * signed_source_output(LatticeFusedIncrementTarget::Rd);
+
+    JoltRelationClaims::new(
+        JoltRelationId::FusedIncrementTranslation,
+        dimensions.sumcheck(4),
+        input,
+        output,
+    )
+}
+
+fn fused_increment_translation_challenge<F>(id: FusedIncrementTranslationChallenge) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    challenge(JoltChallengeId::from(id))
+}
+
 pub fn fused_increment_translation_input_opening(
     target: LatticeFusedIncrementTarget,
 ) -> JoltOpeningId {
@@ -111,6 +147,46 @@ pub fn fused_increment_translation_input_opening(
         LatticeFusedIncrementTarget::Rd => JoltCommittedPolynomial::RdInc,
     };
     JoltOpeningId::committed(polynomial, JoltRelationId::IncClaimReduction)
+}
+
+pub fn fused_increment_translation_output_openings() -> [JoltOpeningId; 4] {
+    [
+        fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+        fused_increment_magnitude_opening(),
+        fused_increment_sign_opening(),
+        fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
+    ]
+}
+
+pub fn fused_increment_source_opening(target: LatticeFusedIncrementTarget) -> JoltOpeningId {
+    JoltOpeningId::lattice(
+        JoltRelationId::FusedIncrementTranslation,
+        match target {
+            LatticeFusedIncrementTarget::Ram => 0,
+            LatticeFusedIncrementTarget::Rd => 1,
+        },
+    )
+}
+
+pub fn fused_increment_magnitude_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 2)
+}
+
+pub fn fused_increment_sign_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 3)
+}
+
+fn signed_source_output<F>(target: LatticeFusedIncrementTarget) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    let source = opening(fused_increment_source_opening(target));
+    let magnitude = opening(fused_increment_magnitude_opening());
+    let sign = opening(fused_increment_sign_opening());
+
+    let source_magnitude = source.clone() * magnitude.clone();
+    let sign_correction = source * sign * magnitude;
+    source_magnitude - sign_correction.clone() - sign_correction
 }
 
 pub fn fused_increment_source_lattice_view_formula<F: Field>(
@@ -450,6 +526,111 @@ mod tests {
                 JoltRelationId::IncClaimReduction
             )
         );
+        assert_eq!(
+            fused_increment_translation_output_openings(),
+            [
+                fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+                fused_increment_magnitude_opening(),
+                fused_increment_sign_opening(),
+                fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
+            ]
+        );
+        assert_eq!(
+            fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+            JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 0)
+        );
+        assert_eq!(
+            fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
+            JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 1)
+        );
+    }
+
+    #[test]
+    fn fused_increment_translation_claim_batches_ram_and_rd() {
+        let claims = fused_increment_translation_claim::<Fr>(TraceDimensions::new(5));
+
+        assert_eq!(claims.id, JoltRelationId::FusedIncrementTranslation);
+        assert_eq!(claims.sumcheck, TraceDimensions::new(5).sumcheck(4));
+        assert_eq!(
+            claims.input.required_openings,
+            vec![
+                fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Ram),
+                fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Rd),
+            ]
+        );
+        assert_eq!(
+            claims.output.required_openings,
+            fused_increment_translation_output_openings()
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![JoltChallengeId::from(
+                FusedIncrementTranslationChallenge::Gamma
+            )]
+        );
+    }
+
+    #[test]
+    fn fused_increment_translation_claim_evaluates_signed_source_formula() {
+        let claims = fused_increment_translation_claim::<Fr>(TraceDimensions::new(5));
+        let ram_inc = Fr::from_u64(11);
+        let rd_inc = Fr::from_u64(13);
+        let ram_source = Fr::from_u64(1);
+        let rd_source = Fr::from_u64(0);
+        let magnitude = Fr::from_u64(19);
+        let sign = Fr::from_u64(1);
+        let gamma = Fr::from_u64(23);
+        let zero = Fr::from_u64(0);
+
+        let input = claims.input.expression().evaluate(
+            |id| match *id {
+                id if id
+                    == fused_increment_translation_input_opening(
+                        LatticeFusedIncrementTarget::Ram,
+                    ) =>
+                {
+                    ram_inc
+                }
+                id if id
+                    == fused_increment_translation_input_opening(
+                        LatticeFusedIncrementTarget::Rd,
+                    ) =>
+                {
+                    rd_inc
+                }
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::FusedIncrementTranslation(
+                    FusedIncrementTranslationChallenge::Gamma,
+                ) => gamma,
+                _ => zero,
+            },
+            |_| zero,
+        );
+        let output = claims.output.expression().evaluate(
+            |id| match *id {
+                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) => {
+                    ram_source
+                }
+                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) => {
+                    rd_source
+                }
+                id if id == fused_increment_magnitude_opening() => magnitude,
+                id if id == fused_increment_sign_opening() => sign,
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::FusedIncrementTranslation(
+                    FusedIncrementTranslationChallenge::Gamma,
+                ) => gamma,
+                _ => zero,
+            },
+            |_| zero,
+        );
+
+        assert_eq!(input, ram_inc + gamma * rd_inc);
+        assert_eq!(output, -magnitude);
     }
 
     #[test]

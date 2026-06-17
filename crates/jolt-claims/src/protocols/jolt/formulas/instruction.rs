@@ -769,7 +769,8 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
             },
             |_| zero,
         );
@@ -807,7 +808,8 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
             },
             |_| zero,
         );
@@ -990,7 +992,8 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
             },
             |_| zero,
         );
@@ -1034,7 +1037,8 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
             },
             |_| zero,
         );
@@ -1203,7 +1207,8 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
             },
             |_| zero,
         );
@@ -1240,7 +1245,8 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
             },
             |_| zero,
         );
