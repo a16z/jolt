@@ -48,6 +48,9 @@ Assumptions:
 - PCS implementations own the physical opening strategy.
 - Akita lattice mode uses one PackedWitness commitment for all supported
   lattice-visible committed facts.
+- The packed-view reduction is generic with respect to the PCS family. Akita is
+  one backend that can satisfy it; later hash-based PCS modes may also use the
+  packed option.
 ```
 
 ## Architecture
@@ -56,23 +59,46 @@ Trait sketch:
 
 ```rust
 pub trait BatchOpeningScheme: CommitmentScheme {
-    type BatchProof;
-    type BatchProverHint;
-
-    fn prove_batch<T>(
+    /// Prove many logical openings at one verifier point.
+    fn prove_batch<T, OpeningId, RelationId>(
         setup: &Self::ProverSetup,
         transcript: &mut T,
-        prover_input: BatchOpeningProverInput<Self::Field, Self::Output, Self::BatchProverHint>,
-    ) -> Result<(Self::BatchProof, BatchOpeningResult<Self::Field, Self::Output>), OpeningsError>
+        statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+        polynomials: &[Self::Polynomial],
+        hints: Vec<Self::OpeningHint>,
+    ) -> Result<Self::Proof, OpeningsError>
     where
         T: Transcript<Challenge = Self::Field>;
 
-    fn verify_batch<T>(
+    /// Verify many logical openings at one verifier point.
+    fn verify_batch<T, OpeningId, RelationId>(
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        statement: BatchOpeningStatement<Self::Field, Self::Output>,
-        proof: &Self::BatchProof,
+        statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+        proof: &Self::Proof,
     ) -> Result<BatchOpeningResult<Self::Field, Self::Output>, OpeningsError>
+    where
+        T: Transcript<Challenge = Self::Field>;
+}
+
+pub trait ZkBatchOpeningScheme: BatchOpeningScheme + ZkOpeningScheme {
+    fn prove_batch_zk<T, OpeningId, RelationId>(
+        setup: &Self::ProverSetup,
+        transcript: &mut T,
+        statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId, ()>,
+        evals: &[Self::Field],
+        polynomials: &[Self::Polynomial],
+        hints: Vec<Self::OpeningHint>,
+    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>
+    where
+        T: Transcript<Challenge = Self::Field>;
+
+    fn verify_batch_zk<T, OpeningId, RelationId>(
+        setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId, ()>,
+        proof: &Self::Proof,
+    ) -> Result<BatchOpeningResult<Self::Field, Self::Output, Self::HidingCommitment>, OpeningsError>
     where
         T: Transcript<Challenge = Self::Field>;
 }
@@ -81,14 +107,15 @@ pub trait BatchOpeningScheme: CommitmentScheme {
 Verifier statement:
 
 ```text
-point:
+points:
   logical Jolt opening point.
+  PCS physical opening point.
 
 opening claims:
   opening ID
   relation ID
   commitment reference
-  claimed value, or hidden claim handle in ZK mode
+  clear claimed value in clear mode; no claim payload in ZK verifier statements
   physical view formula
   optional embedding scale from prior reductions
 
@@ -99,35 +126,39 @@ layout:
   PackedWitness layout digest when the PCS family is lattice
 ```
 
-Prover opening input:
+Prover method inputs:
 
 ```text
-all verifier statement fields
-opening hints/witness handles for physical commitments
+verifier statement
+polynomials for the logical openings
+opening hints or witness handles for the PCS's physical batch-opening strategy
 optional PackedWitness source handle for Akita
 ```
 
-Result:
+Implementation-owned reductions:
 
 ```text
 logical_coefficients:
-  coefficients multiplying raw Jolt logical claims.
+  coefficients multiplying raw Jolt logical claims; returned so Stage 8 can
+  keep the existing clear and BlindFold constraint binding.
 
 joint_statement:
-  PCS-specific verified statement.
+  PCS-specific statement verified internally.
 
 joint_claim:
-  optional PCS-reduced evaluation used by Dory-style compatibility checks.
+  optional PCS-reduced evaluation used by Dory-style compatibility checks
+  returned by clear verification for current Stage 8 compatibility.
 
 joint_commitment:
-  optional PCS-reduced commitment used by homomorphic implementations.
+  PCS-reduced commitment returned for current Stage 8 compatibility.
 
 hidden_claim_commitment:
-  optional Dory ZK evaluation-hiding commitment. Akita lattice mode rejects ZK
-  until a lattice hiding protocol is specified.
+  Dory ZK evaluation-hiding commitment returned by verify_batch_zk. Akita
+  lattice mode rejects ZK until a lattice hiding protocol is specified.
 
 transcript_binding:
-  PCS-specific opening inputs to bind after verification.
+  use existing bind_opening_inputs and bind_zk_opening_inputs hooks unless the
+  implementation proves they are insufficient.
 
 opening_ids:
   IDs used by the clear verifier path and future ZK verifier constraints.
@@ -150,25 +181,38 @@ Dory implementation:
   uses additive homomorphism internally.
 
 Akita implementation:
-  uses PackedWitness layouts and view formulas internally.
+  uses the generic packed-view reduction and supplies the Akita-specific
+  physical proof backend.
 ```
 
 Batching strategy taxonomy:
 
 ```text
 BatchOpeningScheme:
-  PCS-level interface used by Stage 8.
+  PCS-level extension trait used by Stage 8.
+  proves and verifies many logical polynomial openings at the same verifier
+  point.
+  uses the PCS's existing Self::Proof type.
+
+ZkBatchOpeningScheme:
+  ZK companion extension trait mirroring ZkOpeningScheme.
+  uses Self::Proof, Self::HidingCommitment, and Self::Blind.
 
 HomomorphicBatching:
-  generic implementation for PCS modes that implement AdditivelyHomomorphic.
+  implementation pattern for PCS modes that implement AdditivelyHomomorphic.
   reduces m same-point claims to one joint claim by RLC.
   Dory uses this path.
+  If implemented as a Rust blanket impl, alternate implementations for an
+  additively homomorphic PCS must use a wrapper/newtype to avoid coherence
+  conflicts.
 
 PackedViewBatching:
-  generic implementation for PCS modes whose physical commitment already
+  implementation pattern for PCS modes whose physical commitment already
   encodes many logical objects.
   reduces m same-point logical claims to one packed-view opening relation.
-  Akita uses this path.
+  generic with respect to the PCS family.
+  Akita and later hash PCS modes may use this path.
+  This is not a required public trait in spec 01.
 
 Stage 8:
   sees BatchOpeningScheme only.
@@ -183,7 +227,7 @@ Dory implementation:
 3. combine commitments homomorphically.
 4. combine claimed evaluations linearly.
 5. verify one Dory opening.
-6. return gamma_i * embedding_scale_i as logical coefficients.
+6. derive gamma_i * embedding_scale_i as internal logical coefficients.
 ```
 
 Dory formula:
@@ -211,9 +255,10 @@ Akita implementation:
 
 ```text
 1. transcript-bind PackedWitness layout, physical views, point, and claims.
-2. reduce logical claims to one Akita packed-view opening relation.
-3. verify Akita batch proof.
-4. return logical coefficients for verifier binding.
+2. use the generic packed-view reduction to form one packed-view opening
+   relation.
+3. verify the Akita physical proof for that relation.
+4. derive logical coefficients internally for claim binding.
 ```
 
 Akita non-requirements:
@@ -236,7 +281,8 @@ The PCS may internally open:
   a derived packed point,
   or a reduced relation point.
 
-The returned logical coefficients still bind the original Jolt claims.
+The PCS implementation's logical coefficients still bind the original Jolt
+claims.
 ```
 
 Commit planning:
@@ -272,21 +318,20 @@ Implementation plan:
 
 ```text
 jolt-openings:
-  introduce BatchOpeningScheme.
-  introduce HomomorphicBatching as the blanket implementation for PCS modes
-  with AdditivelyHomomorphic.
-  introduce PackedViewBatching as the implementation hook for packed physical
-  commitments.
-  introduce BatchOpeningStatement and BatchOpeningProverInput.
+  define BatchOpeningScheme and ZkBatchOpeningScheme in schemes.rs.
+  introduce BatchOpeningStatement.
   introduce BatchOpeningClaim.
-  introduce BatchOpeningResult.
+  introduce PhysicalView as the only new small enum.
+  implement the homomorphic/Dory path behind BatchOpeningScheme for PCS modes
+  with AdditivelyHomomorphic.
   keep AdditivelyHomomorphic as an optional capability.
+  do not introduce a PackedWitness trait, PackedViewBatching trait, or generic
+  ID trait unless a later spec requires one.
 
 jolt-verifier:
   replace direct Stage 8 PCS::combine calls with BatchOpeningScheme.
   build the logical final-opening manifest before the PCS call.
   pass relation IDs and view formulas with every opening claim.
-  consume returned logical_coefficients for clear mode.
 
 Dory:
   implement BatchOpeningScheme using existing RLC, commitment combine, and
@@ -294,9 +339,99 @@ Dory:
   preserve current transcript labels and claim order.
 
 Akita:
-  implement BatchOpeningScheme without AdditivelyHomomorphic.
+  implement BatchOpeningScheme without AdditivelyHomomorphic by satisfying the
+  generic packed-view reduction.
   reject unsupported view formulas until PackedWitness layout and logical-view
   formulas exist.
+```
+
+Implementation sequence:
+
+```text
+1. Characterize current Stage 8:
+   add or confirm tests for final-opening order, scaled claims, gamma powers,
+   dense-increment scale, joint claim, and tampered-claim rejection.
+   verify with the narrow Stage 8 and opening tests.
+
+2. Add the minimum batch-opening API:
+   define BatchOpeningScheme plus BatchOpeningStatement,
+   BatchOpeningClaim, and PhysicalView in jolt-openings/src/schemes.rs.
+   define ZkBatchOpeningScheme to mirror ZkOpeningScheme if Dory ZK Stage 8 is
+   migrated in the same pass.
+   use Self::Proof for batch proofs.
+   keep IDs as existing protocol IDs at Stage 8 boundaries; avoid a new ID trait.
+
+3. Implement the homomorphic/Dory-compatible path:
+   move the current RLC transcript binding, gamma sampling, commitment combine,
+   claim combine, opening verify/open, and transcript binding behind
+   BatchOpeningScheme.
+   preserve current labels, ordering, and formula.
+
+4. Build the Stage 8 logical manifest:
+   reuse stage8_final_opening_order and existing final-claim helpers.
+   attach opening ID, relation ID, raw claim, commitment handle,
+   physical view, and scale to each logical opening.
+
+5. Wire verifier clear mode:
+   call BatchOpeningScheme::verify_batch instead of PCS::combine and PCS::verify.
+
+6. Wire prover clear mode:
+   call BatchOpeningScheme::prove_batch instead of directly combining hints and
+   opening a Stage 8-owned joint proof.
+   mirror the AdditivelyHomomorphic style: the PCS-side batch implementation owns
+   how hints or physical opening witnesses are combined.
+
+7. Wire Dory ZK mode:
+   use ZkBatchOpeningScheme for open_zk/verify_zk-style batch openings and
+   hidden evaluation commitments.
+   use BatchOpeningStatement with an empty claim payload for verifier-side ZK
+   statements; pass hidden evals only to the prover method.
+   Akita lattice ZK remains explicitly rejected.
+
+8. Relax Stage 8 trait bounds:
+   remove AdditivelyHomomorphic from Stage 8-facing bounds once both Dory paths
+   compile and pass.
+   keep AdditivelyHomomorphic bounds only inside the Dory/homomorphic adapter.
+
+9. Add a packed-combine implementation path:
+   implement a PCS-generic PackedCombine-style batch adapter that satisfies
+   BatchOpeningScheme without exposing AdditivelyHomomorphic to Stage 8.
+   use a wrapper/newtype when the underlying PCS also satisfies the homomorphic
+   blanket impl.
+   use Dory where appropriate to exercise the generic packed interface shape
+   before jolt-akita exists: one physical commitment handle, many logical
+   claims, deterministic IDs, and clean rejection of unsupported views.
+   this does not claim to test Akita's real PackedWitness relation.
+```
+
+Minimal abstraction set:
+
+```text
+Public trait:
+  BatchOpeningScheme.
+  ZkBatchOpeningScheme, mirroring ZkOpeningScheme.
+
+Required data types:
+  BatchOpeningStatement.
+  BatchOpeningClaim.
+
+Small enums/value types:
+  PhysicalView.
+  BatchOpeningResult, because Stage 8 still needs the verified joint commitment,
+  reduced opening, and logical coefficients.
+
+Optional existing capability:
+  AdditivelyHomomorphic remains a separate optional PCS capability used by the
+  Dory/homomorphic adapter only.
+
+Not introduced in spec 01:
+  PackedWitness trait.
+  PackedViewBatching public trait.
+  HomomorphicBatching public trait, unless Rust coherence forces a newtype.
+  generic opening-ID or relation-ID trait.
+  multipoint opening abstraction.
+  Akita ZK abstraction.
+  separate batch proof associated type.
 ```
 
 Proposed Rust data model:
@@ -304,6 +439,7 @@ Proposed Rust data model:
 ```rust
 pub struct BatchOpeningStatement<F, C> {
     pub logical_point: Vec<F>,
+    pub pcs_point: Vec<F>,
     pub layout_digest: [u8; 32],
     pub claims: Vec<BatchOpeningClaim<F, C>>,
 }
@@ -312,23 +448,16 @@ pub struct BatchOpeningClaim<F, C> {
     pub id: OpeningId,
     pub relation: RelationId,
     pub commitment: C,
-    pub claim: BatchClaim<F>,
+    pub claim: F,
     pub view: PhysicalView,
     pub scale: F,
 }
 
-pub enum BatchClaim<F> {
-    Clear(F),
-    Hidden { index: usize },
-}
-
-pub struct BatchOpeningResult<F, C, H = ()> {
-    pub opening_ids: Vec<OpeningId>,
-    pub logical_coefficients: Vec<F>,
-    pub verified_commitment: Option<C>,
-    pub reduced_claim: Option<F>,
-    pub hidden_claim_commitment: Option<H>,
-    pub transcript_binding: BatchTranscriptBinding<F, C>,
+// ZK verifier statements use the same struct shape with claim: ().
+pub struct BatchOpeningResult<F, C, R = F> {
+    pub coefficients: Vec<F>,
+    pub joint_commitment: C,
+    pub reduced_opening: R,
 }
 ```
 
@@ -336,20 +465,25 @@ Open API decisions:
 
 ```text
 generic IDs:
-  either use protocol-specific associated ID types or a small trait for
-  opening/relation IDs.
+  default to existing protocol ID types at Stage 8 boundaries.
+  add associated ID types only if jolt-openings must own serialization of
+  protocol-independent statements.
+  do not add a generic ID trait in spec 01.
 
 commitment ownership:
   statement may borrow commitments to avoid clones, but proof serialization may
   require owned payloads elsewhere.
 
 clear vs ZK:
-  one statement type is simpler if BatchClaim represents hidden claims.
-  separate statement types are stricter if ZK needs different transcript labels.
+  one statement type is kept by making the claim payload generic.
+  clear verifier statements use claim: F.
+  ZK verifier statements use claim: () and receive the hiding commitment from
+  verify_batch_zk.
 
 transcript binding:
-  result can return data for Stage 8 to bind, or trait method can perform all
-  binding internally. The first option is easier to audit.
+  use existing CommitmentScheme and ZkOpeningScheme binding hooks first.
+  add a returned binding object only if the batch path cannot be expressed with
+  those hooks without changing transcript semantics.
 ```
 
 ## Invariants
@@ -357,12 +491,12 @@ transcript binding:
 ```text
 - Stage 8 does not require AdditivelyHomomorphic.
 - Dory Stage 8 accepts and rejects the same proofs as before.
-- logical_coefficients multiply raw Jolt logical claim values.
+- batch coefficients multiply raw Jolt logical claim values inside the PCS
+  implementation.
 - statement ordering is deterministic.
 - PCS-specific proof verification cannot change the Jolt relation ID attached
   to an opening claim.
-- Clear-mode opening IDs and coefficients match the logical claims produced by
-  the prior stages.
+- Clear-mode opening IDs match the logical claims produced by the prior stages.
 - Prover and verifier derive identical statement layouts from public config and
   transcript-bound commitments.
 - Dory's BatchOpening implementation is a refactor of the existing Stage 8
@@ -392,8 +526,8 @@ dory_batch_opening_rejects_tampered_claim:
 stage8_does_not_call_pcs_combine_directly:
   verifier uses BatchOpeningScheme.
 
-batch_result_coefficients_bind_raw_claims:
-  returned coefficients reconstruct current Stage 8 relation.
+batch_coefficients_bind_raw_claims:
+  internally derived coefficients reconstruct current Stage 8 relation.
 
 batch_statement_order_is_deterministic:
   identical inputs produce identical opening-claim order.
@@ -402,24 +536,48 @@ batch_statement_includes_relation_ids:
   same polynomial opened by different relations remains distinguishable.
 
 clear_opening_ids_match_coefficients:
-  every returned coefficient has the corresponding opening ID.
+  every internally derived coefficient has the corresponding opening ID.
 
 akita_mock_batch_opening_requires_no_combine:
-  a non-homomorphic mock PCS can satisfy the trait.
+  a non-homomorphic mock PCS or wrapper can satisfy BatchOpeningScheme.
+
+packed_combine_requires_no_stage8_combine:
+  a PackedCombine-style adapter exposes no AdditivelyHomomorphic bound to
+  Stage 8.
+
+packed_combine_many_claims_one_commitment:
+  the packed-style statement can represent many logical claims behind one
+  physical commitment handle. Dory may be used to exercise this path before
+  jolt-akita exists.
+
+packed_combine_binds_logical_coefficients:
+  internally derived coefficients bind the original logical claims even though
+  Stage 8 does not see a Dory-style joint commitment.
+
+packed_view_rejects_unsupported_formula:
+  unsupported PhysicalView variants fail before proof verification.
 
 akita_packed_view_statement_has_one_commitment:
-  lattice-family statement has one PackedWitness commitment and no Dory-style
-  joint commitment.
+  lattice-family statement has one PackedWitness commitment and no Stage 8
+  Dory-style joint commitment requirement.
 
 akita_increment_views_do_not_use_dense_scale:
   fused RamInc/RdInc claims have no Dory dense-increment embedding scale.
+```
+
+Scope note:
+
+```text
+The Dory-backed PackedCombine path tests the packed interface boundary only. It
+does not test Akita's real PackedWitness short-witness relation, which requires
+later PIOP and jolt-akita specs.
 ```
 
 Targeted command filters:
 
 ```bash
 cargo nextest run -p jolt-openings batch_opening --cargo-quiet
-cargo nextest run -p jolt-verifier stage8 --cargo-quiet --features host
+cargo nextest run -p jolt-verifier stage8 --cargo-quiet
 ```
 
 ## Performance
@@ -435,6 +593,10 @@ Akita:
   no additive-combine requirement.
   physical proof cost is delegated to jolt-akita.
   logical batching cost is one packed-view relation over W_pack.
+
+Hash PCS:
+  may reuse the same generic packed-view reduction if it can prove the resulting
+  packed relation.
 ```
 
 Rejected:
@@ -452,19 +614,20 @@ Rejected:
   openings unless the backend proves the corresponding linear view relation.
 ```
 
-## Questions
+## Resolved API Decisions
 
 ```text
-1. Should BatchProof replace PCS::Proof, or should CommitmentScheme expose an
-   associated final-opening proof type?
-2. Should ZK and non-ZK batch statements share one type with hidden claims, or use
-   separate statement types?
-3. Should `BatchOpeningResult` carry PCS-specific transcript binding data as an
-   enum, associated type, or callback?
-4. Should prover hints live in the commitment payload or a separate
-   `BatchProverHint` map keyed by opening ID?
-5. Does the Akita backend expose packed linear-view statements directly, or does
-   `jolt-akita` own the reduction from packed views to backend point openings?
+- batch proof type is Self::Proof.
+- clear batch openings use BatchOpeningScheme.
+- ZK batch openings mirror ZkOpeningScheme through ZkBatchOpeningScheme.
+- batch opening APIs live in jolt-openings/src/schemes.rs unless the file
+  becomes unwieldy.
+- transcript binding uses existing PCS hooks unless proven insufficient.
+- no new generic ID types or ID traits in spec 01.
+- prover hints/witness handles mirror the AdditivelyHomomorphic extension-trait
+  style instead of adding Stage 8-specific plumbing to jolt-openings.
+- packed-view reduction is generic with respect to the PCS family; jolt-akita
+  does not own this reduction, it supplies an Akita backend for it.
 ```
 
 ## References

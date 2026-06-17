@@ -12,8 +12,9 @@
 //! - **Reduction is separate from proving.** [`reduce_prover`] /
 //!   [`reduce_verifier`] transform claims (many → fewer) via RLC.
 //!   The PCS opens the reduced claims.
-//! - **No batching in PCS traits.** Batching is a reduction concern, not a
-//!   PCS property.
+//! - **Same-point batch openings are an extension trait.**
+//!   [`BatchOpeningScheme`] lets a PCS own its physical batching strategy while
+//!   preserving the ordinary single-opening API.
 //!
 //! # Trait Hierarchy
 //!
@@ -21,12 +22,11 @@
 //!                 Commitment              (jolt-crypto: Output type)
 //!                     │
 //!             CommitmentScheme            (+ Field, Proof, commit/open/verify)
-//!                ╱        ╲
-//! AdditivelyHomomorphic   ZkOpeningScheme
-//!       (+ combine)        (+ commit_zk/open_zk/verify_zk)
-//!             │
+//!        ╱         │         ╲
+//! Additively   BatchOpening   ZkOpeningScheme
+//! Homomorphic      Scheme          │
+//!       │            │        ZkBatchOpeningScheme
 //!   StreamingCommitment
-//!     (+ begin/feed/finish)
 //! ```
 
 mod claims;
@@ -40,4 +40,8 @@ pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 
-pub use schemes::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
+pub use schemes::{
+    AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme,
+    BatchOpeningStatement, CommitmentScheme, PhysicalView, StreamingCommitment,
+    ZkBatchOpeningScheme, ZkOpeningScheme,
+};

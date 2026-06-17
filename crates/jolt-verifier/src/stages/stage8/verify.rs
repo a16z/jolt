@@ -25,14 +25,15 @@ use jolt_claims::protocols::jolt::{
     },
     JoltCommittedPolynomial,
 };
-use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim, ZkOpeningScheme,
+    BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
+    EvaluationClaim, PhysicalView, VerifierOpeningClaim, ZkBatchOpeningScheme,
 };
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::Transcript;
 
 struct Stage8BatchEntry<'a, F: Field, C> {
     id: Stage8OpeningId,
@@ -65,9 +66,9 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>
-        + AdditivelyHomomorphic
-        + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: Clone + HomomorphicCommitment<F>,
+        + BatchOpeningScheme
+        + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: Clone,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -147,105 +148,90 @@ where
     let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
 
     if checked.zk {
-        let gamma_powers = transcript.challenge_scalar_powers(entries.len());
-        let commitments: Vec<PCS::Output> = entries
+        let batch_claims = entries
             .iter()
-            .map(|entry| entry.commitment.clone())
-            .collect();
-        let joint_commitment = PCS::combine(&commitments, &gamma_powers);
-        let constraint_coefficients = gamma_powers
-            .iter()
-            .zip(&entries)
-            .map(|(gamma, entry)| *gamma * entry.scale)
+            .map(|entry| BatchOpeningClaim {
+                id: entry.id,
+                relation: entry.id,
+                commitment: entry.commitment.clone(),
+                claim: (),
+                view: PhysicalView::Direct,
+                scale: entry.scale,
+            })
             .collect::<Vec<_>>();
-
-        let hiding_evaluation_commitment = PCS::verify_zk(
-            &joint_commitment,
-            pcs_opening_point.as_slice(),
-            &proof.joint_opening_proof,
+        let statement = BatchOpeningStatement {
+            logical_point: pcs_opening_point.as_slice().to_vec(),
+            pcs_point: pcs_opening_point.as_slice().to_vec(),
+            layout_digest: [0; 32],
+            claims: batch_claims,
+        };
+        let batch_result = PCS::verify_batch_zk(
             &preprocessing.pcs_setup,
             transcript,
+            &statement,
+            &proof.joint_opening_proof,
         )
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
         })?;
-        PCS::bind_zk_opening_inputs(
-            transcript,
-            pcs_opening_point.as_slice(),
-            &hiding_evaluation_commitment,
-        );
 
         return Ok(Stage8Output::Zk(Stage8ZkOutput {
             opening_ids,
-            constraint_coefficients,
+            constraint_coefficients: batch_result.coefficients,
             pcs_opening_point,
-            joint_commitment,
-            hiding_evaluation_commitment,
+            joint_commitment: batch_result.joint_commitment,
+            hiding_evaluation_commitment: batch_result.reduced_opening,
         }));
     }
 
-    let opening_claims = entries
-        .iter()
-        .map(|entry| {
-            let opening_claim =
-                entry
-                    .opening_claim
-                    .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-                        reason: "missing clear opening claim in final batch".to_string(),
-                    })?;
-            Ok(VerifierOpeningClaim {
-                commitment: entry.commitment.clone(),
-                evaluation: EvaluationClaim::new(
-                    pcs_opening_point.clone(),
-                    opening_claim * entry.scale,
-                ),
-            })
-        })
-        .collect::<Result<Vec<_>, VerifierError>>()?;
-
-    transcript.append(&LabelWithCount(b"rlc_claims", opening_claims.len() as u64));
-    for claim in &opening_claims {
-        claim.evaluation.value.append_to_transcript(transcript);
-    }
-    let gamma_powers = transcript.challenge_scalar_powers(opening_claims.len());
-
-    let joint_claim = gamma_powers
-        .iter()
-        .zip(&opening_claims)
-        .fold(PCS::Field::zero(), |claim, (gamma, opening)| {
-            claim + *gamma * opening.evaluation.value
+    let mut opening_claims = Vec::with_capacity(entries.len());
+    let mut batch_claims = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let opening_claim =
+            entry
+                .opening_claim
+                .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+                    reason: "missing clear opening claim in final batch".to_string(),
+                })?;
+        opening_claims.push(VerifierOpeningClaim {
+            commitment: entry.commitment.clone(),
+            evaluation: EvaluationClaim::new(
+                pcs_opening_point.clone(),
+                opening_claim * entry.scale,
+            ),
         });
-    let commitments = opening_claims
-        .iter()
-        .map(|claim| claim.commitment.clone())
-        .collect::<Vec<_>>();
-    let joint_commitment = PCS::combine(&commitments, &gamma_powers);
-    let constraint_coefficients = gamma_powers
-        .iter()
-        .zip(&entries)
-        .map(|(gamma, entry)| *gamma * entry.scale)
-        .collect::<Vec<_>>();
-
-    PCS::verify(
-        &joint_commitment,
-        pcs_opening_point.as_slice(),
-        joint_claim,
-        &proof.joint_opening_proof,
+        batch_claims.push(BatchOpeningClaim {
+            id: entry.id,
+            relation: entry.id,
+            commitment: entry.commitment.clone(),
+            claim: opening_claim,
+            view: PhysicalView::Direct,
+            scale: entry.scale,
+        });
+    }
+    let statement = BatchOpeningStatement {
+        logical_point: pcs_opening_point.as_slice().to_vec(),
+        pcs_point: pcs_opening_point.as_slice().to_vec(),
+        layout_digest: [0; 32],
+        claims: batch_claims,
+    };
+    let batch_result = PCS::verify_batch(
         &preprocessing.pcs_setup,
         transcript,
+        &statement,
+        &proof.joint_opening_proof,
     )
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
-    PCS::bind_opening_inputs(transcript, pcs_opening_point.as_slice(), &joint_claim);
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
         opening_claims,
         opening_ids,
-        constraint_coefficients,
+        constraint_coefficients: batch_result.coefficients,
         pcs_opening_point,
-        joint_claim,
-        joint_commitment,
+        joint_claim: batch_result.reduced_opening,
+        joint_commitment: batch_result.joint_commitment,
     }))
 }
 
