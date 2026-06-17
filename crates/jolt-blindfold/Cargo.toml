@@ -16,6 +16,8 @@ jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck = { workspace = true, features = ["r1cs"] }
 jolt-transcript.workspace = true
+rand_core.workspace = true
+rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 

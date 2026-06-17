@@ -25,6 +25,14 @@ pub struct OneHotPolynomial {
     k: usize,
     indices: Vec<Option<u8>>,
     num_vars: usize,
+    index_order: OneHotIndexOrder,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OneHotIndexOrder {
+    #[default]
+    RowMajor,
+    ColumnMajor,
 }
 
 impl OneHotPolynomial {
@@ -34,6 +42,23 @@ impl OneHotPolynomial {
     ///
     /// Panics if `k * indices.len()` is not a power of two.
     pub fn new(k: usize, indices: Vec<Option<u8>>) -> Self {
+        Self::new_with_index_order(k, indices, OneHotIndexOrder::RowMajor)
+    }
+
+    /// Creates a one-hot polynomial with an explicit coefficient order.
+    ///
+    /// `RowMajor` stores each cycle contiguously as `cycle * k + column`.
+    /// `ColumnMajor` stores each column contiguously as `column * T + cycle`,
+    /// matching the legacy core Dory cycle-major RA commitment layout.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `k * indices.len()` is not a power of two.
+    pub fn new_with_index_order(
+        k: usize,
+        indices: Vec<Option<u8>>,
+        index_order: OneHotIndexOrder,
+    ) -> Self {
         assert!(
             k <= u8::MAX as usize + 1,
             "k exceeds u8 index range ({k} > 256)"
@@ -48,6 +73,7 @@ impl OneHotPolynomial {
             k,
             indices,
             num_vars,
+            index_order,
         }
     }
 
@@ -74,6 +100,19 @@ impl OneHotPolynomial {
     pub fn num_vars(&self) -> usize {
         self.num_vars
     }
+
+    #[inline]
+    pub const fn index_order(&self) -> OneHotIndexOrder {
+        self.index_order
+    }
+
+    #[inline]
+    fn flat_index(&self, row: usize, col: u8) -> usize {
+        match self.index_order {
+            OneHotIndexOrder::RowMajor => row * self.k + col as usize,
+            OneHotIndexOrder::ColumnMajor => col as usize * self.indices.len() + row,
+        }
+    }
 }
 
 impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
@@ -88,7 +127,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
         let mut result = F::zero();
         for (row, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
-                result += eq_evals[row * self.k + col as usize];
+                result += eq_evals[self.flat_index(row, col)];
             }
         }
         result
@@ -103,7 +142,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
         let mut row_hot_cols: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
-                let flat = cycle * self.k + col as usize;
+                let flat = self.flat_index(cycle, col);
                 row_hot_cols[flat / num_cols].push(flat % num_cols);
             }
         }
@@ -125,7 +164,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
         let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
-                let flat = cycle * self.k + col as usize;
+                let flat = self.flat_index(cycle, col);
                 result[flat % num_cols] += left[flat / num_cols];
             }
         }
@@ -137,10 +176,25 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
         true
     }
 
+    #[inline]
+    fn one_hot_k(&self) -> Option<usize> {
+        Some(self.k)
+    }
+
+    #[inline]
+    fn one_hot_indices(&self) -> Option<&[Option<u8>]> {
+        Some(&self.indices)
+    }
+
+    #[inline]
+    fn one_hot_index_order(&self) -> Option<OneHotIndexOrder> {
+        Some(self.index_order)
+    }
+
     fn for_each_one(&self, f: &mut dyn FnMut(usize)) {
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
-                f(cycle * self.k + col as usize);
+                f(self.flat_index(cycle, col));
             }
         }
     }
@@ -164,7 +218,7 @@ mod tests {
         let mut table = vec![F::zero(); total];
         for (row, &opt_col) in oh.indices.iter().enumerate() {
             if let Some(col) = opt_col {
-                table[row * oh.k + col as usize] = F::one();
+                table[oh.flat_index(row, col)] = F::one();
             }
         }
         Polynomial::new(table)
@@ -242,6 +296,18 @@ mod tests {
         assert_eq!(entries[0], 2);
         assert_eq!(entries[1], 2 * 4);
         assert_eq!(entries[2], 3 * 4 + 3);
+    }
+
+    #[test]
+    fn column_major_order_groups_cycles_by_column() {
+        let k = 4;
+        let indices = vec![Some(2), None, Some(0), Some(3)];
+        let oh = OneHotPolynomial::new_with_index_order(k, indices, OneHotIndexOrder::ColumnMajor);
+
+        let mut entries = Vec::new();
+        <OneHotPolynomial as MultilinearPoly<Fr>>::for_each_one(&oh, &mut |idx| entries.push(idx));
+
+        assert_eq!(entries, vec![2 * 4, 2, 3 * 4 + 3]);
     }
 
     #[test]

@@ -23,6 +23,8 @@ mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod prover;
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
 mod setup;
 mod verifier;
 

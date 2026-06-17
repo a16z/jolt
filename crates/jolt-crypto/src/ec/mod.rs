@@ -11,3 +11,6 @@ pub use pedersen::{Pedersen, PedersenSetup};
 
 #[cfg(feature = "bn254")]
 pub mod bn254;
+
+#[cfg(feature = "grumpkin")]
+pub mod grumpkin;

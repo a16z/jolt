@@ -17,6 +17,7 @@ use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use num_traits::{One, Zero};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::error::HyperKZGError;
 use crate::kzg::{self, kzg_open_batch, kzg_verify_batch};
@@ -26,8 +27,9 @@ use crate::types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, Hyper
 ///
 /// Generic over `P: PairingGroup`. Implements [`CommitmentScheme`] and
 /// [`AdditivelyHomomorphic`] from `jolt-openings`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HyperKZGScheme<P: PairingGroup> {
+    #[serde(skip)]
     _phantom: PhantomData<P>,
 }
 

@@ -112,8 +112,9 @@ pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, Sumchec
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints,
-    append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
-    SumcheckR1csRound, SumcheckR1csRoundLayout,
+    append_sumcheck_r1cs_constraints_for_domain, append_sumcheck_r1cs_gadget_constraints,
+    append_sumcheck_r1cs_gadget_constraints_for_domain, SumcheckR1csError, SumcheckR1csGadgetRound,
+    SumcheckR1csLayout, SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
 pub use scalar::SumcheckScalar;

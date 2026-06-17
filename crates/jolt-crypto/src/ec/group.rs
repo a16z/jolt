@@ -37,6 +37,9 @@ pub trait JoltGroup:
     + for<'de> Deserialize<'de>
     + AppendToTranscript
 {
+    /// Scalar field used for scalar multiplication in this group.
+    type ScalarField: Field;
+
     /// Group identity element.
     #[must_use]
     fn identity() -> Self;
@@ -51,7 +54,7 @@ pub trait JoltGroup:
 
     /// Scalar multiplication: `scalar * self`.
     #[must_use]
-    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self;
+    fn scalar_mul(&self, scalar: &Self::ScalarField) -> Self;
 
     /// Multi-scalar multiplication: `Σᵢ scalars[i] * bases[i]`.
     ///
@@ -59,5 +62,5 @@ pub trait JoltGroup:
     ///
     /// Debug-asserts that `bases.len() == scalars.len()`.
     #[must_use]
-    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self;
+    fn msm(bases: &[Self], scalars: &[Self::ScalarField]) -> Self;
 }
