@@ -62,7 +62,7 @@ mod univariate;
 pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
 pub use dense::Polynomial;
-pub use eq::{eq_index_msb, try_eq_mle, EqPolynomial};
+pub use eq::{boolean_index_msb, boolean_point_msb, eq_index_msb, try_eq_mle, EqPolynomial};
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
 pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;

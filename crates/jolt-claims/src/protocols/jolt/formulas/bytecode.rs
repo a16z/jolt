@@ -294,6 +294,13 @@ pub struct BytecodeReadRafOutputOpenings {
     pub bytecode_ra: Vec<JoltOpeningId>,
 }
 
+pub fn bytecode_read_raf_address_phase_opening() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::BytecodeReadRafAddrClaim,
+        JoltRelationId::BytecodeReadRaf,
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafPublicValues<F: Field> {
     pub stage_values: [F; 5],
@@ -756,10 +763,7 @@ where
         inputs.stage5_gammas,
     );
 
-    for (stage_value, stage_cycle_point) in stage_values
-        .iter_mut()
-        .zip(inputs.stage_cycle_points.into_iter())
-    {
+    for (stage_value, stage_cycle_point) in stage_values.iter_mut().zip(inputs.stage_cycle_points) {
         *stage_value *= eq_index_msb(stage_cycle_point, cycle_index);
     }
 

@@ -145,6 +145,33 @@ pub fn eq_index_msb<F: Field>(point: &[F], index: usize) -> F {
     eq
 }
 
+pub fn boolean_point_msb<F: Field>(num_vars: usize, index: usize) -> Vec<F> {
+    (0..num_vars)
+        .map(|position| {
+            let shift = num_vars - 1 - position;
+            let bit = if shift < usize::BITS as usize {
+                (index >> shift) & 1
+            } else {
+                0
+            };
+            F::from_u64(bit as u64)
+        })
+        .collect()
+}
+
+pub fn boolean_index_msb<F: Field>(point: &[F]) -> Option<usize> {
+    let mut index = 0usize;
+    for value in point {
+        index = index.checked_shl(1)?;
+        if value.is_one() {
+            index |= 1;
+        } else if !value.is_zero() {
+            return None;
+        }
+    }
+    Some(index)
+}
+
 /// Static (point-free) evaluation methods for eq polynomial tables.
 ///
 /// These accept challenge or field-element slices and produce materialized
