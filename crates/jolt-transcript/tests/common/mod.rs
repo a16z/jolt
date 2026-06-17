@@ -2,60 +2,45 @@
 
 /// Standardized test suite macro for any `Transcript` implementation.
 ///
-/// This macro generates a comprehensive test suite that verifies the core
-/// properties required of any Fiat-Shamir transcript implementation:
-///
-/// - Determinism: Same inputs produce same outputs
-/// - Domain separation: Different labels produce different transcripts
-/// - Challenge uniqueness: Sequential challenges are unique
-/// - State mutation: Appending data changes the state
-/// - Prover/verifier consistency: Both sides derive identical challenges
+/// All comparisons are done through `challenge()` outputs since the
+/// underlying spongefish duplex sponges do not expose internal state.
 #[macro_export]
 macro_rules! transcript_tests {
     ($transcript_type:ty) => {
         use jolt_transcript::Transcript;
         use std::collections::HashSet;
 
+        // Helper: drive a transcript through a closure and squeeze a challenge.
+        fn challenge_after<F: FnOnce(&mut $transcript_type)>(
+            label: &'static [u8],
+            f: F,
+        ) -> <$transcript_type as Transcript>::Challenge {
+            let mut t = <$transcript_type>::new(label);
+            f(&mut t);
+            t.challenge()
+        }
+
         #[test]
         fn test_determinism() {
-            let mut t1 = <$transcript_type>::new(b"determinism_test");
-            let mut t2 = <$transcript_type>::new(b"determinism_test");
-
-            t1.append_bytes(&42u64.to_be_bytes());
-            t2.append_bytes(&42u64.to_be_bytes());
+            let c1 = challenge_after(b"determinism_test", |t| {
+                t.append_bytes(&42u64.to_be_bytes());
+                t.append_bytes(b"hello world");
+            });
+            let c2 = challenge_after(b"determinism_test", |t| {
+                t.append_bytes(&42u64.to_be_bytes());
+                t.append_bytes(b"hello world");
+            });
             assert_eq!(
-                t1.state(),
-                t2.state(),
-                "States should match after identical operations"
-            );
-
-            t1.append_bytes(b"hello world");
-            t2.append_bytes(b"hello world");
-            assert_eq!(t1.state(), t2.state());
-
-            assert_eq!(
-                t1.challenge(),
-                t2.challenge(),
-                "Challenges should be identical for identical transcripts"
+                c1, c2,
+                "Identical operations must yield identical challenges"
             );
         }
 
         #[test]
         fn test_domain_separation() {
-            let mut t1 = <$transcript_type>::new(b"protocol_a");
-            let mut t2 = <$transcript_type>::new(b"protocol_b");
-
-            assert_ne!(
-                t1.state(),
-                t2.state(),
-                "Different labels should produce different initial states"
-            );
-
-            assert_ne!(
-                t1.challenge(),
-                t2.challenge(),
-                "Different labels should produce different challenges"
-            );
+            let c1 = challenge_after(b"protocol_a", |_| {});
+            let c2 = challenge_after(b"protocol_b", |_| {});
+            assert_ne!(c1, c2, "Different labels must produce different challenges");
         }
 
         #[test]
@@ -74,86 +59,55 @@ macro_rules! transcript_tests {
 
         #[test]
         fn test_append_changes_state() {
-            let mut transcript = <$transcript_type>::new(b"mutation_test");
-            let initial_state = *transcript.state();
-
-            transcript.append_bytes(&1u64.to_be_bytes());
+            let baseline = challenge_after(b"mutation_test", |_| {});
+            let after_append = challenge_after(b"mutation_test", |t| {
+                t.append_bytes(&1u64.to_be_bytes());
+            });
             assert_ne!(
-                *transcript.state(),
-                initial_state,
-                "append should change state"
-            );
-
-            let state_after_append = *transcript.state();
-            transcript.append_bytes(b"test");
-            assert_ne!(
-                *transcript.state(),
-                state_after_append,
-                "append_bytes should change state"
-            );
-        }
-
-        #[test]
-        fn test_challenge_changes_state() {
-            let mut transcript = <$transcript_type>::new(b"challenge_mutation");
-            let initial_state = *transcript.state();
-
-            let _ = transcript.challenge();
-            assert_ne!(
-                *transcript.state(),
-                initial_state,
-                "challenge should change state"
+                baseline, after_append,
+                "append must change observable challenge"
             );
         }
 
         #[test]
         fn test_order_matters() {
-            let mut t1 = <$transcript_type>::new(b"order_test");
-            let mut t2 = <$transcript_type>::new(b"order_test");
-
-            t1.append_bytes(&1u64.to_be_bytes());
-            t1.append_bytes(&2u64.to_be_bytes());
-
-            t2.append_bytes(&2u64.to_be_bytes());
-            t2.append_bytes(&1u64.to_be_bytes());
-
-            assert_ne!(
-                t1.state(),
-                t2.state(),
-                "Order of operations should affect state"
-            );
+            let c1 = challenge_after(b"order_test", |t| {
+                t.append_bytes(&1u64.to_be_bytes());
+                t.append_bytes(&2u64.to_be_bytes());
+            });
+            let c2 = challenge_after(b"order_test", |t| {
+                t.append_bytes(&2u64.to_be_bytes());
+                t.append_bytes(&1u64.to_be_bytes());
+            });
+            assert_ne!(c1, c2, "Order of appends must affect challenge");
         }
 
         #[test]
         fn test_data_sensitivity() {
-            let mut t1 = <$transcript_type>::new(b"data_test");
-            let mut t2 = <$transcript_type>::new(b"data_test");
-
-            t1.append_bytes(&0u64.to_be_bytes());
-            t2.append_bytes(&1u64.to_be_bytes());
-
-            assert_ne!(
-                t1.state(),
-                t2.state(),
-                "Different data should produce different states"
-            );
+            let c1 = challenge_after(b"data_test", |t| {
+                t.append_bytes(&0u64.to_be_bytes());
+            });
+            let c2 = challenge_after(b"data_test", |t| {
+                t.append_bytes(&1u64.to_be_bytes());
+            });
+            assert_ne!(c1, c2, "Different data must produce different challenges");
         }
 
         #[test]
         fn test_empty_bytes() {
-            let mut t1 = <$transcript_type>::new(b"empty_test");
-            let mut t2 = <$transcript_type>::new(b"empty_test");
-            let initial_state = *t1.state();
-
-            t1.append_bytes(&[]);
+            let baseline = challenge_after(b"empty_test", |_| {});
+            let with_empty = challenge_after(b"empty_test", |t| {
+                t.append_bytes(&[]);
+            });
             assert_ne!(
-                *t1.state(),
-                initial_state,
-                "Empty bytes should change state"
+                baseline, with_empty,
+                "append_bytes(&[]) must observably change challenge"
             );
-
-            t2.append_bytes(&[]);
-            assert_eq!(t1.state(), t2.state());
+            // Determinism for empty appends.
+            let with_empty_again = challenge_after(b"empty_test", |t| {
+                t.append_bytes(&[]);
+            });
+            assert_eq!(with_empty, with_empty_again);
         }
 
         #[test]
@@ -179,61 +133,18 @@ macro_rules! transcript_tests {
 
             assert_eq!(
                 prover_challenge, verifier_challenge,
-                "Prover and verifier should derive identical challenges"
-            );
-        }
-
-        #[test]
-        fn test_clone_independence() {
-            let mut original = <$transcript_type>::new(b"clone_test");
-            original.append_bytes(&1u64.to_be_bytes());
-
-            let mut cloned = original.clone();
-
-            cloned.append_bytes(&2u64.to_be_bytes());
-
-            let original_challenge = original.challenge();
-
-            let mut fresh = <$transcript_type>::new(b"clone_test");
-            fresh.append_bytes(&1u64.to_be_bytes());
-            fresh.append_bytes(&2u64.to_be_bytes());
-            let fresh_challenge = fresh.challenge();
-
-            assert_ne!(
-                original_challenge, fresh_challenge,
-                "Clone mutation should not affect original"
-            );
-        }
-
-        #[test]
-        fn test_debug_impl() {
-            let transcript = <$transcript_type>::new(b"debug_test");
-            let debug_str = format!("{:?}", transcript);
-
-            assert!(
-                debug_str.contains("state"),
-                "Debug output should contain state"
-            );
-            assert!(
-                debug_str.contains("n_rounds"),
-                "Debug output should contain n_rounds"
+                "Prover and verifier must derive identical challenges"
             );
         }
 
         #[test]
         fn test_default_delegates_to_new() {
-            let default_transcript = <$transcript_type>::default();
-            let new_transcript = <$transcript_type>::new(b"");
-
+            let mut default_transcript = <$transcript_type>::default();
+            let mut new_transcript = <$transcript_type>::new(b"");
             assert_eq!(
-                default_transcript.state(),
-                new_transcript.state(),
-                "Default should delegate to new(b\"\")"
-            );
-
-            assert!(
-                !default_transcript.state().iter().all(|&b| b == 0),
-                "Default should produce a non-zero initial state"
+                default_transcript.challenge(),
+                new_transcript.challenge(),
+                "Default must delegate to new(b\"\")"
             );
         }
 
@@ -247,8 +158,9 @@ macro_rules! transcript_tests {
         #[test]
         fn test_max_valid_label() {
             let max_label: &[u8; 32] = &[b'L'; 32];
-            let transcript = <$transcript_type>::new(max_label);
-            assert!(!transcript.state().iter().all(|&b| b == 0));
+            let mut t1 = <$transcript_type>::new(max_label);
+            let mut t2 = <$transcript_type>::new(max_label);
+            assert_eq!(t1.challenge(), t2.challenge());
         }
 
         #[test]

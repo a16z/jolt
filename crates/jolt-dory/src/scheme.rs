@@ -20,6 +20,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOp
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
@@ -78,7 +79,7 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     unsafe { std::mem::transmute(ark) }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoryScheme;
 
 impl DoryScheme {

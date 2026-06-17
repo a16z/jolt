@@ -2,7 +2,8 @@
 
 use dory::backends::arkworks::G1Routines;
 use dory::primitives::arithmetic::DoryRoutines;
-use jolt_field::Fr;
+use jolt_crypto::{Bn254G1, JoltGroup};
+use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_openings::StreamingCommitment;
 
 use crate::scheme::{
@@ -32,6 +33,8 @@ impl crate::DoryScheme {
 
 impl StreamingCommitment for crate::DoryScheme {
     type PartialCommitment = DoryPartialCommitment;
+    type OneHotChunkCommitment = Vec<Bn254G1>;
+    type OneHotStreamContext = usize;
 
     fn begin(_setup: &Self::ProverSetup) -> Self::PartialCommitment {
         DoryPartialCommitment {
@@ -62,6 +65,44 @@ impl StreamingCommitment for crate::DoryScheme {
         partial.row_commitments.push(ark_to_jolt_g1(row_commitment));
     }
 
+    fn begin_one_hot_column_major_stream(
+        _setup: &Self::ProverSetup,
+        _row_width: usize,
+    ) -> Self::OneHotStreamContext {
+        0
+    }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_one_hot_chunk")]
+    fn process_one_hot_chunk(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunk: &[Option<usize>],
+    ) -> Self::OneHotChunkCommitment {
+        assert!(
+            context.saturating_add(chunk.len()) <= setup.0.g1_vec.len(),
+            "one-hot chunk exceeds Dory SRS size"
+        );
+
+        let g1_bases = &setup.0.g1_vec[*context..*context + chunk.len()];
+        let mut row_commitments = vec![Bn254G1::identity(); one_hot_k];
+        for (row, row_commitment) in row_commitments.iter_mut().enumerate() {
+            let scalars: Vec<ArkFr> = chunk
+                .iter()
+                .map(|hot_row| {
+                    if *hot_row == Some(row) {
+                        jolt_fr_to_ark(&Fr::from_u64(1))
+                    } else {
+                        jolt_fr_to_ark(&Fr::from_u64(0))
+                    }
+                })
+                .collect();
+            *row_commitment = ark_to_jolt_g1(G1Routines::msm(g1_bases, &scalars));
+        }
+        *context += chunk.len();
+        row_commitments
+    }
+
     /// Aggregates row commitments into the final tier-2 commitment, matching
     /// [`DoryScheme::commit`](crate::DoryScheme::commit). Asserts that the
     /// streamed row count is a power of two (the layout `DoryScheme::commit`
@@ -74,6 +115,36 @@ impl StreamingCommitment for crate::DoryScheme {
         let ark_rows = jolt_g1_vec_to_ark(partial.row_commitments);
         let (tier_2, _) = commit_rows_tier_2::<dory::Transparent>(&ark_rows, setup);
         DoryCommitment(ark_to_jolt_gt(&tier_2))
+    }
+
+    #[tracing::instrument(skip_all, name = "DoryScheme::stream_one_hot_finish")]
+    fn finish_one_hot_column_major_chunks(
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        chunks: &[Self::OneHotChunkCommitment],
+    ) -> (Self::Output, Self::OpeningHint) {
+        assert!(
+            !chunks.is_empty(),
+            "one-hot stream must contain at least one chunk"
+        );
+        let mut row_commitments = vec![Bn254G1::identity(); one_hot_k];
+        for chunk in chunks {
+            assert_eq!(
+                chunk.len(),
+                one_hot_k,
+                "one-hot chunk row count must match one_hot_k"
+            );
+            for (row_commitment, chunk_commitment) in row_commitments.iter_mut().zip(chunk) {
+                *row_commitment += *chunk_commitment;
+            }
+        }
+        validate_row_count(row_commitments.len(), setup);
+        let ark_rows = jolt_g1_vec_to_ark(row_commitments);
+        let (tier_2, commit_blind) = commit_rows_tier_2::<dory::Transparent>(&ark_rows, setup);
+        (
+            DoryCommitment(ark_to_jolt_gt(&tier_2)),
+            DoryHint::new(ark_to_jolt_g1_vec(ark_rows), ark_to_jolt_fr(&commit_blind)),
+        )
     }
 }
 
