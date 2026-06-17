@@ -6,27 +6,15 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 
-use crate::config::JoltProtocolConfigSummary;
+use crate::config::JoltProtocolConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
     #[error("proof protocol config {got:?} does not match verifier config {expected:?}")]
     ProtocolConfigMismatch {
-        expected: JoltProtocolConfigSummary,
-        got: JoltProtocolConfigSummary,
+        expected: JoltProtocolConfig,
+        got: JoltProtocolConfig,
     },
-
-    #[error("PCS-assist verifier config requires a proof payload")]
-    MissingPcsAssistProof,
-
-    #[error("PCS-assist proof payload is present but this verifier config disables PCS assist")]
-    UnexpectedPcsAssistProof,
-
-    #[error("PCS-assist verifier config is missing for a PCS-assist build")]
-    MissingPcsAssistConfig,
-
-    #[error("PCS-assist verification failed: {reason}")]
-    PcsAssistVerificationFailed { reason: String },
 
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
@@ -74,8 +62,11 @@ pub enum VerifierError {
     #[error("invalid trace length {got}; expected a power of two no larger than {max}")]
     InvalidTraceLength { got: usize, max: usize },
 
-    #[error("invalid RAM domain size {got}; expected a power of two")]
-    InvalidRamK { got: usize },
+    #[error("invalid RAM domain size {got}; expected a power of two in [{min}, {max}]")]
+    InvalidRamK { got: usize, min: usize, max: usize },
+
+    #[error("invalid verifier memory layout: {reason}")]
+    InvalidMemoryLayout { reason: String },
 
     #[error("invalid precommitted claim-reduction schedule: {reason}")]
     InvalidPrecommittedSchedule { reason: String },
@@ -143,7 +134,4 @@ pub enum VerifierError {
 
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
-
-    #[error("verifier functionality has not been implemented yet")]
-    Unimplemented,
 }

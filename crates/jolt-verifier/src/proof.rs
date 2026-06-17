@@ -11,32 +11,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::JoltProtocolConfig,
-    pcs_assist::{NoPcsAssist, PcsProofAssist},
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "ZkProof: Serialize + serde::de::DeserializeOwned, PcsAssist::Config: Serialize, PcsAssist::Proof: Serialize",
-    deserialize = "ZkProof: Serialize + serde::de::DeserializeOwned, PcsAssist::Config: serde::de::DeserializeOwned, PcsAssist::Proof: serde::de::DeserializeOwned"
-))]
+#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
 pub struct JoltProof<
     PCS,
     VC,
     ZkProof = BlindFoldProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
-    PcsAssist = NoPcsAssist,
 > where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    PcsAssist: PcsProofAssist<PCS>,
 {
-    pub protocol: JoltProtocolConfig<PcsAssist::Config>,
+    pub protocol: JoltProtocolConfig,
     pub commitments: JoltCommitments<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
-    pub pcs_assist: Option<PcsAssist::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
@@ -46,7 +39,7 @@ pub struct JoltProof<
     pub trace_polynomial_order: TracePolynomialOrder,
 }
 
-impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof, NoPcsAssist>
+impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -73,7 +66,6 @@ where
             commitments,
             stages,
             joint_opening_proof,
-            pcs_assist: None,
             untrusted_advice_commitment,
             claims,
             trace_length,
@@ -83,14 +75,7 @@ where
             trace_polynomial_order,
         }
     }
-}
 
-impl<PCS, VC, ZkProof, PcsAssist> JoltProof<PCS, VC, ZkProof, PcsAssist>
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-    PcsAssist: PcsProofAssist<PCS>,
-{
     pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(claims) => Ok(claims),
@@ -233,6 +218,7 @@ where
     pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub stage6_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
 }

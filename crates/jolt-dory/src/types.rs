@@ -282,9 +282,9 @@ impl DoryProof {
         point: &[Fr],
     ) -> DoryVerifierTranscriptScalars
     where
-        T: Transcript<Challenge = Fr>,
+        T: Transcript<Challenge = Fr> + Clone,
     {
-        let mut fork = transcript.clone();
+        let mut fork = (*transcript).clone();
         let mut dory_transcript = crate::transcript::JoltToDoryTranscript::new(&mut fork);
         let proof = &self.0;
         let dory_point = point.iter().rev().copied().collect::<Vec<_>>();

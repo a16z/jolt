@@ -20,20 +20,19 @@ use super::outputs::{
     VerifiedSpartanOuterSumcheck,
 };
 use crate::{
-    pcs_assist::PcsProofAssist, preprocessing::JoltVerifierPreprocessing, proof::JoltProof,
-    stages::zk::committed, verifier::CheckedInputs, VerifierError,
+    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
+    verifier::CheckedInputs, VerifierError,
 };
 
-pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
+pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
 ) -> Result<Stage1Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     let stage = JoltRelationId::SpartanOuter;

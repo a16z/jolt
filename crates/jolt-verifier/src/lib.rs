@@ -3,7 +3,6 @@
 pub mod compat;
 pub mod config;
 pub mod error;
-pub mod pcs_assist;
 pub mod preprocessing;
 pub mod proof;
 pub mod stages;
@@ -14,10 +13,6 @@ pub use config::{
     SELECTED_FIELD_INLINE_CONFIG,
 };
 pub use error::VerifierError;
-pub use pcs_assist::{
-    NoPcsAssist, NoPcsAssistConfig, NoPcsAssistProof, PcsAssistClearInput, PcsAssistZkInput,
-    PcsProofAssist,
-};
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };

@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage4<PCS, VC, ZkProof, PcsAssist>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
+pub(super) fn add_stage4<PCS, VC, ZkProof>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -9,7 +9,6 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: Clone,
-    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     let log_k = input.checked.ram_K.ilog2() as usize;

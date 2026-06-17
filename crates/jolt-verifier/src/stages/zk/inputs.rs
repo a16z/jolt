@@ -4,7 +4,6 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
 
 use crate::{
-    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -23,15 +22,14 @@ pub(crate) struct CommittedOutputClaimInputs<'a, F: Field, C> {
     pub stage: JoltRelationId,
 }
 
-pub struct BlindFoldInputs<'a, PCS, VC, ZkProof, PcsAssist>
+pub(crate) struct BlindFoldInputs<'a, PCS, VC, ZkProof>
 where
     PCS: CommitmentScheme,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
-    PcsAssist: PcsProofAssist<PCS>,
 {
     pub checked: &'a CheckedInputs,
     pub preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    pub proof: &'a JoltProof<PCS, VC, ZkProof, PcsAssist>,
+    pub proof: &'a JoltProof<PCS, VC, ZkProof>,
     pub stage1: &'a Stage1ZkOutput<PCS::Field, VC::Output>,
     pub stage2: &'a Stage2ZkOutput<PCS::Field, VC::Output>,
     pub stage3: &'a Stage3ZkOutput<PCS::Field, VC::Output>,

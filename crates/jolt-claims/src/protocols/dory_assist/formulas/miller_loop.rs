@@ -325,8 +325,11 @@ where
 }
 
 fn double_step<F>(
-    state: G2HomState<F>,
-) -> (G2HomState<F>, [Fq2Expr<F>; MILLER_LOOP_LINE_COEFFICIENTS])
+    state: G2HomomorphismState<F>,
+) -> (
+    G2HomomorphismState<F>,
+    [Fq2Expr<F>; MILLER_LOOP_LINE_COEFFICIENTS],
+)
 where
     F: RingCore + FromPrimitiveInt,
 {
@@ -350,7 +353,7 @@ where
     let j = fq2_square(state.x);
     let e_square = fq2_square(e);
 
-    let next = G2HomState {
+    let next = G2HomomorphismState {
         x: fq2_mul(a, fq2_sub(b.clone(), f)),
         y: fq2_sub(
             fq2_square(g),
@@ -364,9 +367,12 @@ where
 }
 
 fn add_step<F>(
-    state: G2HomState<F>,
+    state: G2HomomorphismState<F>,
     addend: G2AffinePoint<F>,
-) -> (G2HomState<F>, [Fq2Expr<F>; MILLER_LOOP_LINE_COEFFICIENTS])
+) -> (
+    G2HomomorphismState<F>,
+    [Fq2Expr<F>; MILLER_LOOP_LINE_COEFFICIENTS],
+)
 where
     F: RingCore + FromPrimitiveInt,
 {
@@ -381,7 +387,7 @@ where
         fq2_add(e.clone(), f),
         fq2_scalar_mul(g.clone(), constant(F::from_u64(2))),
     );
-    let next = G2HomState {
+    let next = G2HomomorphismState {
         x: fq2_mul(lambda.clone(), h.clone()),
         y: fq2_sub(
             fq2_mul(theta.clone(), fq2_sub(g.clone(), h)),
@@ -416,11 +422,11 @@ where
     ]
 }
 
-fn line_state<F>(relation: DoryAssistRelationId) -> G2HomState<F>
+fn line_state<F>(relation: DoryAssistRelationId) -> G2HomomorphismState<F>
 where
     F: RingCore,
 {
-    G2HomState {
+    G2HomomorphismState {
         x: fq2_polynomial(
             MillerLoopPolynomial::G2LineStateX0,
             MillerLoopPolynomial::G2LineStateX1,
@@ -439,11 +445,11 @@ where
     }
 }
 
-fn line_shifted_state<F>(relation: DoryAssistRelationId) -> G2HomState<F>
+fn line_shifted_state<F>(relation: DoryAssistRelationId) -> G2HomomorphismState<F>
 where
     F: RingCore,
 {
-    G2HomState {
+    G2HomomorphismState {
         x: fq2_polynomial(
             MillerLoopPolynomial::G2LineShiftedStateX0,
             MillerLoopPolynomial::G2LineShiftedStateX1,
@@ -887,7 +893,7 @@ fn boundary_shifted_accumulator_opening(component: usize) -> DoryAssistOpeningId
 }
 
 #[derive(Clone)]
-struct G2HomState<F> {
+struct G2HomomorphismState<F> {
     x: Fq2Expr<F>,
     y: Fq2Expr<F>,
     z: Fq2Expr<F>,

@@ -184,6 +184,7 @@ impl AppendToTranscript for U64Word {
 ///
 /// Construction mirrors spongefish's `DomainSeparator` builder:
 /// `protocol_id || session(label) || instance(())` are absorbed in order.
+#[derive(Clone)]
 pub struct SpongeTranscript<H, F = jolt_field::Fr>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,

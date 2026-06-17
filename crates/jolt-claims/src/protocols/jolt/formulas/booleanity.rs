@@ -5,7 +5,7 @@ use crate::{challenge, opening, public};
 
 use super::super::{
     BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId,
+    JoltRelationClaims, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
@@ -28,6 +28,14 @@ impl BooleanityDimensions {
 
     pub const fn sumcheck(self) -> JoltSumcheckSpec {
         JoltSumcheckSpec::boolean(self.log_t + self.log_k_chunk, 3)
+    }
+
+    pub const fn address_sumcheck(self) -> JoltSumcheckSpec {
+        JoltSumcheckSpec::boolean(self.log_k_chunk, 3)
+    }
+
+    pub const fn cycle_sumcheck(self) -> JoltSumcheckSpec {
+        JoltSumcheckSpec::boolean(self.log_t, 3)
     }
 
     pub fn opening_point<F: Field>(
@@ -66,6 +74,44 @@ pub fn booleanity<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
+    JoltRelationClaims::new(
+        JoltRelationId::Booleanity,
+        dimensions.sumcheck(),
+        JoltExpr::zero(),
+        booleanity_cycle_output(dimensions),
+    )
+    .with_input_challenges([JoltChallengeId::from(BooleanityChallenge::Gamma)])
+}
+
+pub fn booleanity_address_phase<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    JoltRelationClaims::new(
+        JoltRelationId::Booleanity,
+        dimensions.address_sumcheck(),
+        JoltExpr::zero(),
+        opening(booleanity_address_phase_opening()),
+    )
+}
+
+pub fn booleanity_cycle_phase<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    JoltRelationClaims::new(
+        JoltRelationId::Booleanity,
+        dimensions.cycle_sumcheck(),
+        opening(booleanity_address_phase_opening()),
+        booleanity_cycle_output(dimensions),
+    )
+    .with_input_challenges([JoltChallengeId::from(BooleanityChallenge::Gamma)])
+}
+
+fn booleanity_cycle_output<F>(dimensions: BooleanityDimensions) -> JoltExpr<F>
+where
+    F: RingCore,
+{
     let gamma = booleanity_challenge(BooleanityChallenge::Gamma);
     let eq_address_cycle = booleanity_public(BooleanityPublic::EqAddressCycle);
     let mut output = JoltExpr::zero();
@@ -78,13 +124,7 @@ where
         output = output + gamma.clone().pow(2 * i) * (ra.clone() * ra.clone() - ra);
     }
 
-    JoltRelationClaims::new(
-        JoltRelationId::Booleanity,
-        dimensions.sumcheck(),
-        JoltExpr::zero(),
-        eq_address_cycle * output,
-    )
-    .with_input_challenges([JoltChallengeId::from(BooleanityChallenge::Gamma)])
+    eq_address_cycle * output
 }
 
 fn booleanity_challenge<F>(id: BooleanityChallenge) -> JoltExpr<F>
@@ -105,89 +145,11 @@ pub fn booleanity_output_openings(layout: JoltRaPolynomialLayout) -> Vec<JoltOpe
     layout.openings(JoltRelationId::Booleanity).collect()
 }
 
-pub fn eq_address_cycle_polynomial<F>(
-    reference_address: &[F],
-    reference_cycle: &[F],
-) -> Polynomial<F>
-where
-    F: Field,
-{
-    let eq_point = reference_address
-        .iter()
-        .rev()
-        .chain(reference_cycle.iter().rev())
-        .copied()
-        .collect::<Vec<_>>();
-    Polynomial::new(EqPolynomial::<F>::evals(&eq_point, None))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BooleanityRelationState<F: Field> {
-    eq_address_cycle: Polynomial<F>,
-    ra: Vec<Polynomial<F>>,
-    gamma_squared: F,
-}
-
-impl<F: Field> BooleanityRelationState<F> {
-    pub fn new(eq_address_cycle: Polynomial<F>, ra: Vec<Polynomial<F>>, gamma_squared: F) -> Self {
-        Self {
-            eq_address_cycle,
-            ra,
-            gamma_squared,
-        }
-    }
-
-    pub fn bind(&mut self, challenge: F) {
-        self.eq_address_cycle.bind(challenge);
-        for polynomial in &mut self.ra {
-            polynomial.bind(challenge);
-        }
-    }
-
-    pub fn round_rows(&self) -> usize {
-        self.eq_address_cycle.len() / 2
-    }
-
-    pub fn round_eval(&self, index: usize, point: F) -> F {
-        let eq = self.eq_address_cycle.sumcheck_round_eval(index, point);
-        let mut coeff = F::one();
-        let mut output = F::zero();
-        for polynomial in &self.ra {
-            let value = polynomial.sumcheck_round_eval(index, point);
-            output += coeff * (value * value - value);
-            coeff *= self.gamma_squared;
-        }
-        eq * output
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BooleanityOutputOpeningGroups {
-    pub instruction_ra: Vec<JoltOpeningId>,
-    pub bytecode_ra: Vec<JoltOpeningId>,
-    pub ram_ra: Vec<JoltOpeningId>,
-}
-
-impl BooleanityOutputOpeningGroups {
-    pub fn total_len(&self) -> usize {
-        self.instruction_ra.len() + self.bytecode_ra.len() + self.ram_ra.len()
-    }
-}
-
-pub fn booleanity_output_opening_groups(
-    layout: JoltRaPolynomialLayout,
-) -> BooleanityOutputOpeningGroups {
-    BooleanityOutputOpeningGroups {
-        instruction_ra: (0..layout.instruction())
-            .map(|index| JoltRaPolynomial::Instruction(index).opening(JoltRelationId::Booleanity))
-            .collect(),
-        bytecode_ra: (0..layout.bytecode())
-            .map(|index| JoltRaPolynomial::Bytecode(index).opening(JoltRelationId::Booleanity))
-            .collect(),
-        ram_ra: (0..layout.ram())
-            .map(|index| JoltRaPolynomial::Ram(index).opening(JoltRelationId::Booleanity))
-            .collect(),
-    }
+pub fn booleanity_address_phase_opening() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::BooleanityAddrClaim,
+        JoltRelationId::Booleanity,
+    )
 }
 
 pub fn eq_address_cycle_polynomial<F>(

@@ -23,10 +23,10 @@ mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
 mod prover;
-mod setup;
-mod verifier;
 #[cfg(feature = "r1cs")]
 pub mod r1cs;
+mod setup;
+mod verifier;
 
 pub use codec::BytesMsg;
 pub use digest::DigestTranscript;

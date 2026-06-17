@@ -28,7 +28,6 @@ jolt-poly.workspace = true
 jolt-program.workspace = true
 jolt-riscv.workspace = true
 rayon.workspace = true
-serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

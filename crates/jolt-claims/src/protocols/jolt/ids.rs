@@ -22,6 +22,10 @@ pub enum JoltRelationId {
     RegistersReadWriteChecking,
     RegistersValEvaluation,
     BytecodeReadRaf,
+    BytecodeClaimReductionCyclePhase,
+    BytecodeClaimReduction,
+    ProgramImageClaimReductionCyclePhase,
+    ProgramImageClaimReduction,
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
@@ -256,7 +260,9 @@ pub enum JoltCommittedPolynomial {
     RamInc,
     InstructionRa(usize),
     BytecodeRa(usize),
+    BytecodeChunk(usize),
     RamRa(usize),
+    ProgramImageInit,
     TrustedAdvice,
     UntrustedAdvice,
 }
@@ -302,6 +308,11 @@ pub enum JoltVirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
+    BytecodeReadRafAddrClaim,
+    BytecodeValStage(usize),
+    BytecodeClaimReductionIntermediate,
+    ProgramImageInitContributionRw,
+    BooleanityAddrClaim,
 }
 
 #[derive(

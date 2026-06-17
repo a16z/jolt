@@ -295,7 +295,7 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
         .enumerate()
         .for_each(|(row, row_commitments)| {
             for (chunk_index, chunk) in chunks.iter().enumerate() {
-                row_commitments[chunk_index] = chunk[row].clone();
+                row_commitments[chunk_index] = chunk[row];
             }
         });
     validate_row_count(row_commitments.len(), setup);
@@ -537,7 +537,7 @@ mod tests {
         let num_vars = (trace_rows * one_hot_k).ilog2() as usize;
         let chunk_width = 1usize << num_vars.div_ceil(2);
         let prover_setup = DoryScheme::setup_prover(num_vars);
-        let indices = vec![
+        let indices = [
             Some(0),
             Some(3),
             None,
@@ -581,7 +581,7 @@ mod tests {
         let chunk_width = 1usize << num_vars.div_ceil(2);
         let prover_setup = DoryScheme::setup_prover(num_vars);
         let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
-        let indices = vec![
+        let indices = [
             Some(0),
             Some(3),
             None,

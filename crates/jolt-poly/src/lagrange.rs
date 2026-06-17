@@ -374,8 +374,8 @@ impl<F: Field> LagrangePolynomial<F> {
         let (dists_x, hit_x) = Self::distances::<N>(x);
         let (dists_y, hit_y) = Self::distances::<N>(y);
 
-        if let (Some(ix), Some(iy)) = (hit_x, hit_y) {
-            return if ix == iy { F::one() } else { F::zero() };
+        if let (Some(ix), Some(y_index)) = (hit_x, hit_y) {
+            return if ix == y_index { F::one() } else { F::zero() };
         }
 
         let inv_denom = Self::inv_denom::<N>();
@@ -386,9 +386,9 @@ impl<F: Field> LagrangePolynomial<F> {
                     .inverse()
                     .expect("off-domain Lagrange term sum is invertible");
         }
-        if let Some(iy) = hit_y {
+        if let Some(y_index) = hit_y {
             let (terms_x, sum_x) = Self::bary_terms_from_dists::<N>(&dists_x, &inv_denom);
-            return terms_x[iy]
+            return terms_x[y_index]
                 * sum_x
                     .inverse()
                     .expect("off-domain Lagrange term sum is invertible");

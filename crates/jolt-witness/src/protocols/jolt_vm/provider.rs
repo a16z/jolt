@@ -45,6 +45,14 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
                     self.preprocessing.memory_layout.max_untrusted_advice_size as usize / 8,
                 )
             }
+            OracleKind::Committed(
+                JoltCommittedPolynomial::BytecodeChunk(_)
+                | JoltCommittedPolynomial::ProgramImageInit,
+            ) => {
+                return Err(WitnessError::UnknownOracle {
+                    namespace: JOLT_VM_NAMESPACE.name,
+                });
+            }
             OracleKind::Virtual(JoltVirtualPolynomial::RamVal | JoltVirtualPolynomial::RamRa) => {
                 self.ram_read_write_dimensions()?
             }

@@ -87,6 +87,8 @@ pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelati
         JoltCommittedPolynomial::InstructionRa(_)
         | JoltCommittedPolynomial::BytecodeRa(_)
         | JoltCommittedPolynomial::RamRa(_) => JoltRelationId::HammingWeightClaimReduction,
+        JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
+        JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
         JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice => {
             JoltRelationId::AdviceClaimReduction
         }
@@ -96,6 +98,13 @@ pub fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelati
 /// Lagrange factor for embedding a smaller polynomial's opening into the
 /// top-left block of the unified final opening point: `1` on variables the
 /// embedded point binds, `1 - r` on the rest.
+pub fn advice_commitment_embedding_scale<F: Field>(
+    opening_point: &[F],
+    embedded_opening_point: &[F],
+) -> F {
+    commitment_embedding_scale(opening_point, embedded_opening_point)
+}
+
 pub fn commitment_embedding_scale<F: Field>(
     opening_point: &[F],
     embedded_opening_point: &[F],

@@ -119,6 +119,10 @@ impl<T: TraceSource + Clone> TraceBackedJoltVmWitness<'_, T> {
             JoltCommittedPolynomial::UntrustedAdvice => {
                 self.advice_stream_kind(JoltVmAdviceStreamKind::Untrusted)
             }
+            JoltCommittedPolynomial::BytecodeChunk(_)
+            | JoltCommittedPolynomial::ProgramImageInit => Err(WitnessError::UnknownOracle {
+                namespace: JOLT_VM_NAMESPACE.name,
+            }),
         }
     }
 
