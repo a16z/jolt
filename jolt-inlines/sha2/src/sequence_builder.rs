@@ -1,7 +1,7 @@
 use jolt_inlines_sdk::host::{
     instruction::andn::ANDN,
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{self, Imm, Reg},
 };
 
@@ -329,6 +329,8 @@ impl Sha256SequenceBuilder {
 pub struct Sha256Compression;
 
 impl InlineOp for Sha256Compression {
+    type Advice = NoAdvice;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::SHA256_FUNCT3;
     const FUNCT7: u32 = crate::SHA256_FUNCT7;
@@ -345,6 +347,8 @@ impl InlineOp for Sha256Compression {
 pub struct Sha256CompressionInitial;
 
 impl InlineOp for Sha256CompressionInitial {
+    type Advice = NoAdvice;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::SHA256_INIT_FUNCT3;
     const FUNCT7: u32 = crate::SHA256_INIT_FUNCT7;

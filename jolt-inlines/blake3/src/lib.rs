@@ -23,6 +23,8 @@ mod host;
 pub use host::*;
 
 #[cfg(all(test, feature = "host"))]
+pub mod spec;
+#[cfg(all(test, feature = "host"))]
 pub mod test_utils;
 
 /// BLAKE3 initialization vector (IV)

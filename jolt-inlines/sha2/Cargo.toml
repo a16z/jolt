@@ -15,5 +15,7 @@ host = ["jolt-inlines-sdk/host"]
 jolt-inlines-sdk = { workspace = true, optional = true }
 
 [dev-dependencies]
+jolt-inlines-sdk = { workspace = true, features = ["test-utils"] }
+rand = { workspace = true, features = ["std", "std_rng"] }
 sha2.workspace = true
 tracer = { workspace = true, features = ["std", "test-utils"] }

@@ -16,6 +16,6 @@ pub mod exec;
 pub mod sequence_builder;
 
 #[cfg(all(test, feature = "host"))]
-pub mod test_utils;
+pub mod spec;
 #[cfg(all(test, feature = "host"))]
 pub mod tests;

@@ -12,12 +12,11 @@ use jolt_inlines_sdk::host::{
     instruction::{
         ld::LD,
         lui::LUI,
-        sd::SD,
         sub::SUB,
         virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     },
-    ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
-    InlineRegister,
+    ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
 };
 
@@ -80,20 +79,18 @@ impl Blake2SequenceBuilder {
     }
 
     fn load_hash_state(&mut self) {
-        self.load_data_range(
+        self.asm.load_u64_range(
             self.operands.rs1,
             0,
-            VR_HASH_STATE_START,
-            crate::STATE_VECTOR_LEN,
+            &self.vr[VR_HASH_STATE_START..VR_HASH_STATE_START + crate::STATE_VECTOR_LEN],
         );
     }
 
     fn load_message_blocks(&mut self) {
-        self.load_data_range(
+        self.asm.load_u64_range(
             self.operands.rs2,
             0,
-            VR_MESSAGE_BLOCK_START,
-            crate::MSG_BLOCK_LEN,
+            &self.vr[VR_MESSAGE_BLOCK_START..VR_MESSAGE_BLOCK_START + crate::MSG_BLOCK_LEN],
         );
     }
 
@@ -227,36 +224,19 @@ impl Blake2SequenceBuilder {
 
     /// Store the final hash state
     fn store_state(&mut self) {
-        for i in 0..crate::STATE_VECTOR_LEN {
-            self.asm.emit_s::<SD>(
-                self.operands.rs1,
-                *self.vr[VR_HASH_STATE_START + i],
-                (i * 8) as i64,
-            );
-        }
-    }
-
-    /// Load data from memory into virtual registers starting at a given offset
-    fn load_data_range(
-        &mut self,
-        base_register: u8,
-        memory_offset_start: usize,
-        vr_start: usize,
-        count: usize,
-    ) {
-        (0..count).for_each(|i| {
-            self.asm.emit_ld::<LD>(
-                *self.vr[vr_start + i],
-                base_register,
-                ((memory_offset_start + i) * 8) as i64,
-            );
-        });
+        self.asm.store_u64_range(
+            self.operands.rs1,
+            0,
+            &self.vr[VR_HASH_STATE_START..VR_HASH_STATE_START + crate::STATE_VECTOR_LEN],
+        );
     }
 }
 
 pub struct Blake2bCompression;
 
 impl InlineOp for Blake2bCompression {
+    type Advice = NoAdvice;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
     const FUNCT7: u32 = crate::BLAKE2_FUNCT7;
@@ -272,88 +252,42 @@ impl InlineOp for Blake2bCompression {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        test_utils::{create_blake2_harness, instruction, load_blake2_data, read_state},
-        IV,
+    use super::Blake2bCompression;
+    use crate::IV;
+    use jolt_inlines_sdk::{
+        assert_edge_cases_match_reference, assert_random_cases_match_reference,
+        assert_reference_matches_harness,
     };
 
-    fn generate_default_input() -> ([u64; crate::MSG_BLOCK_LEN], u64) {
-        // Message block with "abc" in little-endian
-        let mut message = [0u64; crate::MSG_BLOCK_LEN];
-        message[0] = 0x0000000000636261u64;
-        (message, 3)
-    }
-
-    fn generate_random_input() -> ([u64; crate::MSG_BLOCK_LEN], u64) {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-
-        let mut input = [0u64; crate::MSG_BLOCK_LEN];
-        for val in input.iter_mut() {
-            *val = rng.gen();
-        }
-        (input, 128)
-    }
-
-    fn compute_reference_blake2b_hash(
-        message: &[u64; crate::MSG_BLOCK_LEN],
-        message_len: usize,
-    ) -> [u64; crate::STATE_VECTOR_LEN] {
-        use blake2::{Blake2b512, Digest};
-        let mut message_bytes: Vec<u8> = message.iter().flat_map(|w| w.to_le_bytes()).collect();
-        let effective_len = core::cmp::min(message_len, message_bytes.len());
-        message_bytes.truncate(effective_len);
-
-        let hash_result = Blake2b512::digest(&message_bytes);
-
-        let mut state = [0u64; crate::STATE_VECTOR_LEN];
-        for (i, chunk) in hash_result.chunks_exact(8).enumerate() {
-            if i < crate::STATE_VECTOR_LEN {
-                state[i] = u64::from_le_bytes(chunk.try_into().unwrap());
-            }
-        }
+    fn initial_state() -> [u64; crate::STATE_VECTOR_LEN] {
+        let mut state = IV;
+        state[0] ^= 0x01010000 ^ 64u64;
         state
     }
 
-    fn generate_trace_result(
-        state: &[u64; crate::STATE_VECTOR_LEN],
-        message: &[u64; crate::MSG_BLOCK_LEN],
-        counter: u64,
-        is_final: bool,
-    ) -> [u64; crate::STATE_VECTOR_LEN] {
-        let mut harness = create_blake2_harness();
-        load_blake2_data(&mut harness, state, message, counter, is_final);
-        harness.execute_inline(instruction());
-        read_state(&mut harness)
-    }
-
-    /// Helper function to test blake2b compression with given input
-    fn verify_blake2b_compression(message_words: [u64; crate::MSG_BLOCK_LEN], message_len: u64) {
-        let mut initial_state = IV;
-        initial_state[0] ^= 0x01010000 ^ 64u64;
-
-        let expected_state = compute_reference_blake2b_hash(&message_words, message_len as usize);
-        let trace_result = generate_trace_result(&initial_state, &message_words, message_len, true);
-
-        assert_eq!(
-            &expected_state, &trace_result,
-            "\n❌ BLAKE2b Trace Verification Failed!\n\
-            Message: {message_words:016x?}"
-        );
+    fn default_input() -> (
+        [u64; crate::STATE_VECTOR_LEN],
+        [u64; crate::MSG_BLOCK_LEN],
+        u64,
+        bool,
+    ) {
+        let mut message = [0u64; crate::MSG_BLOCK_LEN];
+        message[0] = 0x0000000000636261u64;
+        (initial_state(), message, 3, true)
     }
 
     #[test]
     fn test_trace_result_with_default_input() {
-        let input = generate_default_input();
-        verify_blake2b_compression(input.0, input.1);
+        assert_reference_matches_harness::<Blake2bCompression>(&default_input());
+    }
+
+    #[test]
+    fn test_trace_result_with_edge_cases() {
+        assert_edge_cases_match_reference::<Blake2bCompression>();
     }
 
     #[test]
     fn test_trace_result_with_random_inputs() {
-        // Test with multiple random inputs
-        for _ in 0..10 {
-            let input = generate_random_input();
-            verify_blake2b_compression(input.0, input.1);
-        }
+        assert_random_cases_match_reference::<Blake2bCompression>(0xB1A2E2, 10);
     }
 }

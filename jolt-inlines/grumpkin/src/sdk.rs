@@ -3,6 +3,7 @@
 use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
 use ark_grumpkin::{Fq, Fr};
 
+use core::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 
 /// Returns `true` iff `x >= p` (Fq modulus), i.e., `x` is non-canonical.
@@ -102,158 +103,319 @@ pub(crate) fn decode_glv_sign_word(sign: u64) -> Result<bool, GrumpkinError> {
     jolt_inlines_sdk::decode_sign_word(sign).ok_or(GrumpkinError::InvalidGlvSignWord(sign))
 }
 
-/// Wrapper around ark_grumpkin::Fq with inline-accelerated division
-#[derive(Clone, PartialEq, Debug)]
-pub struct GrumpkinFq {
-    e: ark_grumpkin::Fq,
+pub trait GrumpkinFieldConfig {
+    type ArkField: AdditiveGroup + Field + PrimeField + Zero + Copy;
+
+    const DIV_FUNCT3: u32;
+
+    fn from_bigint(limbs: BigInt<4>) -> Option<Self::ArkField>;
+    fn new_unchecked(limbs: BigInt<4>) -> Self::ArkField;
+    fn limbs(e: &Self::ArkField) -> [u64; 4];
+    fn limbs_ptr(e: &Self::ArkField) -> *const u64;
+    fn limbs_mut_ptr(e: &mut Self::ArkField) -> *mut u64;
+    fn invalid_element_error() -> GrumpkinError;
+    fn div_by_zero_message() -> &'static str;
+
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    fn is_non_canonical(limbs: &[u64; 4]) -> bool;
 }
 
-impl GrumpkinFq {
-    #[inline(always)]
-    pub fn new(e: Fq) -> Self {
-        GrumpkinFq { e }
+#[derive(Clone)]
+pub struct GrumpkinFqConfig;
+
+impl GrumpkinFieldConfig for GrumpkinFqConfig {
+    type ArkField = Fq;
+
+    const DIV_FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
+
+    fn from_bigint(limbs: BigInt<4>) -> Option<Self::ArkField> {
+        Fq::from_bigint(limbs)
     }
-    /// Converts from standard form to Montgomery. Returns error if >= modulus.
+
+    fn new_unchecked(limbs: BigInt<4>) -> Self::ArkField {
+        Fq::new_unchecked(limbs)
+    }
+
+    fn limbs(e: &Self::ArkField) -> [u64; 4] {
+        e.0 .0
+    }
+
+    fn limbs_ptr(e: &Self::ArkField) -> *const u64 {
+        e.0 .0.as_ptr()
+    }
+
+    fn limbs_mut_ptr(e: &mut Self::ArkField) -> *mut u64 {
+        e.0 .0.as_mut_ptr()
+    }
+
+    fn invalid_element_error() -> GrumpkinError {
+        GrumpkinError::InvalidFqElement
+    }
+
+    fn div_by_zero_message() -> &'static str {
+        "division by zero in GrumpkinFq::div"
+    }
+
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    fn is_non_canonical(limbs: &[u64; 4]) -> bool {
+        is_fq_non_canonical(limbs)
+    }
+}
+
+#[derive(Clone)]
+pub struct GrumpkinFrConfig;
+
+impl GrumpkinFieldConfig for GrumpkinFrConfig {
+    type ArkField = Fr;
+
+    const DIV_FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
+
+    fn from_bigint(limbs: BigInt<4>) -> Option<Self::ArkField> {
+        Fr::from_bigint(limbs)
+    }
+
+    fn new_unchecked(limbs: BigInt<4>) -> Self::ArkField {
+        Fr::new_unchecked(limbs)
+    }
+
+    fn limbs(e: &Self::ArkField) -> [u64; 4] {
+        e.0 .0
+    }
+
+    fn limbs_ptr(e: &Self::ArkField) -> *const u64 {
+        e.0 .0.as_ptr()
+    }
+
+    fn limbs_mut_ptr(e: &mut Self::ArkField) -> *mut u64 {
+        e.0 .0.as_mut_ptr()
+    }
+
+    fn invalid_element_error() -> GrumpkinError {
+        GrumpkinError::InvalidFrElement
+    }
+
+    fn div_by_zero_message() -> &'static str {
+        "division by zero in GrumpkinFr::div"
+    }
+
+    #[cfg(all(
+        not(feature = "host"),
+        any(target_arch = "riscv32", target_arch = "riscv64")
+    ))]
+    fn is_non_canonical(limbs: &[u64; 4]) -> bool {
+        is_fr_non_canonical(limbs)
+    }
+}
+
+pub struct GrumpkinField<C: GrumpkinFieldConfig> {
+    e: C::ArkField,
+    _phantom: PhantomData<C>,
+}
+
+pub type GrumpkinFq = GrumpkinField<GrumpkinFqConfig>;
+pub type GrumpkinFr = GrumpkinField<GrumpkinFrConfig>;
+
+impl<C: GrumpkinFieldConfig> Clone for GrumpkinField<C> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self {
+            e: self.e,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<C: GrumpkinFieldConfig> PartialEq for GrumpkinField<C> {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.e == other.e
+    }
+}
+
+impl<C: GrumpkinFieldConfig> core::fmt::Debug for GrumpkinField<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GrumpkinField")
+            .field("e", &C::limbs(&self.e))
+            .finish()
+    }
+}
+
+impl<C: GrumpkinFieldConfig> GrumpkinField<C> {
+    #[inline(always)]
+    pub fn new(e: C::ArkField) -> Self {
+        Self {
+            e,
+            _phantom: PhantomData,
+        }
+    }
+
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, GrumpkinError> {
-        Fq::from_bigint(BigInt(*arr))
-            .map(|e| GrumpkinFq { e })
-            .ok_or(GrumpkinError::InvalidFqElement)
+        C::from_bigint(BigInt(*arr))
+            .map(Self::new)
+            .ok_or(C::invalid_element_error())
     }
-    /// SAFETY: input must be in canonical Montgomery form
+
     #[inline(always)]
     pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
-        GrumpkinFq {
-            e: Fq::new_unchecked(BigInt(*arr)),
-        }
+        Self::new(C::new_unchecked(BigInt(*arr)))
     }
-    #[inline(always)]
-    pub fn fq(&self) -> Fq {
-        self.e
-    }
+
     #[inline(always)]
     pub fn zero() -> Self {
-        GrumpkinFq { e: Fq::zero() }
+        Self::new(C::ArkField::zero())
     }
-    /// Precomputed -17 for curve equation y² = x³ - 17
-    #[inline(always)]
-    pub fn negative_seventeen() -> Self {
-        GrumpkinFq {
-            e: Fq::new_unchecked(BigInt([
-                0xdd7056026000005a,
-                0x223fa97acb319311,
-                0xcc388229877910c0,
-                0x34394632b724eaa,
-            ])),
-        }
-    }
+
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
         self.e.is_zero()
     }
+
     #[inline(always)]
     pub fn neg(&self) -> Self {
-        GrumpkinFq { e: -self.e }
+        Self::new(-self.e)
     }
+
     #[inline(always)]
-    pub fn add(&self, other: &GrumpkinFq) -> Self {
-        GrumpkinFq {
-            e: self.e + other.e,
-        }
+    pub fn add(&self, other: &Self) -> Self {
+        Self::new(self.e + other.e)
     }
+
     #[inline(always)]
-    pub fn sub(&self, other: &GrumpkinFq) -> Self {
-        GrumpkinFq {
-            e: self.e - other.e,
-        }
+    pub fn sub(&self, other: &Self) -> Self {
+        Self::new(self.e - other.e)
     }
+
     #[inline(always)]
     pub fn dbl(&self) -> Self {
-        GrumpkinFq { e: self.e.double() }
+        Self::new(self.e.double())
     }
+
     #[inline(always)]
     pub fn tpl(&self) -> Self {
-        GrumpkinFq {
-            e: self.e.double() + self.e,
-        }
+        Self::new(self.e.double() + self.e)
     }
+
     #[inline(always)]
-    pub fn mul(&self, other: &GrumpkinFq) -> Self {
-        GrumpkinFq {
-            e: self.e * other.e,
-        }
+    pub fn mul(&self, other: &Self) -> Self {
+        Self::new(self.e * other.e)
     }
+
     #[inline(always)]
     pub fn square(&self) -> Self {
-        GrumpkinFq { e: self.e.square() }
+        Self::new(self.e.square())
     }
-    /// SAFETY: caller must ensure other != 0
+
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div_assume_nonzero(&self, other: &GrumpkinFq) -> Self {
-        let mut c = GrumpkinFq::zero();
+    pub fn div_assume_nonzero(&self, other: &Self) -> Self {
+        let mut c = Self::zero();
         unsafe {
-            use crate::{GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
+            use crate::{GRUMPKIN_FUNCT7, INLINE_OPCODE};
             core::arch::asm!(
                 ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
                 opcode = const INLINE_OPCODE,
-                funct3 = const GRUMPKIN_DIVQ_ADV_FUNCT3,
+                funct3 = const C::DIV_FUNCT3,
                 funct7 = const GRUMPKIN_FUNCT7,
-                rd = in(reg) c.e.0.0.as_mut_ptr(),
-                rs1 = in(reg) self.e.0.0.as_ptr(),
-                rs2 = in(reg) other.e.0.0.as_ptr(),
+                rd = in(reg) C::limbs_mut_ptr(&mut c.e),
+                rs1 = in(reg) C::limbs_ptr(&self.e),
+                rs2 = in(reg) C::limbs_ptr(&other.e),
                 options(nostack)
             );
         }
         let tmp = other.mul(&c);
-        // Verify advice: c must be canonical and other * c == self
-        if is_fq_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            spoil_proof(); // Spoils proof - assert_eq! alone doesn't suffice
+        if C::is_non_canonical(&C::limbs(&c.e))
+            || is_not_equal(&C::limbs(&tmp.e), &C::limbs(&self.e))
+        {
+            spoil_proof();
         }
         c
     }
+
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
     ))]
     #[inline(always)]
-    pub fn div(&self, other: &GrumpkinFq) -> Self {
+    pub fn div(&self, other: &Self) -> Self {
         if other.is_zero() {
             spoil_proof();
         }
         self.div_assume_nonzero(other)
     }
+
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn div_assume_nonzero(&self, _other: &GrumpkinFq) -> Self {
-        panic!("GrumpkinFq::div_assume_nonzero called on non-RISC-V target without host feature");
+    pub fn div_assume_nonzero(&self, _other: &Self) -> Self {
+        panic!(
+            "GrumpkinField::div_assume_nonzero called on non-RISC-V target without host feature"
+        );
     }
+
     #[cfg(all(
         not(feature = "host"),
         not(any(target_arch = "riscv32", target_arch = "riscv64"))
     ))]
-    pub fn div(&self, _other: &GrumpkinFq) -> Self {
-        panic!("GrumpkinFq::div called on non-RISC-V target without host feature");
+    pub fn div(&self, _other: &Self) -> Self {
+        panic!("GrumpkinField::div called on non-RISC-V target without host feature");
     }
+
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div_assume_nonzero(&self, other: &GrumpkinFq) -> Self {
-        GrumpkinFq {
-            e: self.e / other.e,
-        }
+    pub fn div_assume_nonzero(&self, other: &Self) -> Self {
+        Self::new(self.e / other.e)
     }
+
     #[cfg(feature = "host")]
     #[inline(always)]
-    pub fn div(&self, other: &GrumpkinFq) -> Self {
+    pub fn div(&self, other: &Self) -> Self {
         if other.is_zero() {
-            panic!("division by zero in GrumpkinFq::div");
+            panic!("{}", C::div_by_zero_message());
         }
         self.div_assume_nonzero(other)
+    }
+}
+
+impl GrumpkinFq {
+    #[inline(always)]
+    pub fn fq(&self) -> Fq {
+        self.e
+    }
+
+    #[inline(always)]
+    pub fn negative_seventeen() -> Self {
+        Self::new(Fq::new_unchecked(BigInt([
+            0xdd7056026000005a,
+            0x223fa97acb319311,
+            0xcc388229877910c0,
+            0x34394632b724eaa,
+        ])))
+    }
+}
+
+impl GrumpkinFr {
+    #[inline(always)]
+    pub fn fr(&self) -> Fr {
+        self.e
+    }
+
+    /// GLV scalar decomposition: returns (k1, k2) such that
+    /// self = k1 + k2 * lambda (mod r) and |k1|, |k2| < 2^128.
+    /// Each entry is (is_negative, abs_value).
+    #[inline(always)]
+    pub fn glv_decompose(&self) -> [(bool, u128); 2] {
+        decompose_scalar_impl(self)
     }
 }
 
@@ -314,147 +476,6 @@ impl ECField for GrumpkinFq {
     #[inline(always)]
     fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Self::from_u64_arr_unchecked(arr)
-    }
-}
-
-/// Wrapper around ark_grumpkin::Fr with inline-accelerated division
-#[derive(Clone, PartialEq, Debug)]
-pub struct GrumpkinFr {
-    e: ark_grumpkin::Fr,
-}
-
-impl GrumpkinFr {
-    #[inline(always)]
-    pub fn new(e: Fr) -> Self {
-        GrumpkinFr { e }
-    }
-    /// Converts from standard form to Montgomery. Returns error if >= modulus.
-    #[inline(always)]
-    pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, GrumpkinError> {
-        Fr::from_bigint(BigInt(*arr))
-            .map(|e| GrumpkinFr { e })
-            .ok_or(GrumpkinError::InvalidFrElement)
-    }
-    /// SAFETY: input must be in canonical Montgomery form
-    #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
-        GrumpkinFr {
-            e: Fr::new_unchecked(BigInt(*arr)),
-        }
-    }
-    #[inline(always)]
-    pub fn fr(&self) -> Fr {
-        self.e
-    }
-    #[inline(always)]
-    pub fn zero() -> Self {
-        GrumpkinFr { e: Fr::zero() }
-    }
-    #[inline(always)]
-    pub fn is_zero(&self) -> bool {
-        self.e.is_zero()
-    }
-    #[inline(always)]
-    pub fn neg(&self) -> Self {
-        GrumpkinFr { e: -self.e }
-    }
-    #[inline(always)]
-    pub fn add(&self, other: &GrumpkinFr) -> Self {
-        GrumpkinFr {
-            e: self.e + other.e,
-        }
-    }
-    #[inline(always)]
-    pub fn sub(&self, other: &GrumpkinFr) -> Self {
-        GrumpkinFr {
-            e: self.e - other.e,
-        }
-    }
-    #[inline(always)]
-    pub fn mul(&self, other: &GrumpkinFr) -> Self {
-        GrumpkinFr {
-            e: self.e * other.e,
-        }
-    }
-    #[inline(always)]
-    pub fn square(&self) -> Self {
-        GrumpkinFr { e: self.e.square() }
-    }
-    /// SAFETY: caller must ensure other != 0
-    #[cfg(all(
-        not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
-    ))]
-    #[inline(always)]
-    pub fn div_assume_nonzero(&self, other: &GrumpkinFr) -> Self {
-        let mut c = GrumpkinFr::zero();
-        unsafe {
-            use crate::{GRUMPKIN_DIVR_ADV_FUNCT3, GRUMPKIN_FUNCT7, INLINE_OPCODE};
-            core::arch::asm!(
-                ".insn r {opcode}, {funct3}, {funct7}, {rd}, {rs1}, {rs2}",
-                opcode = const INLINE_OPCODE,
-                funct3 = const GRUMPKIN_DIVR_ADV_FUNCT3,
-                funct7 = const GRUMPKIN_FUNCT7,
-                rd = in(reg) c.e.0.0.as_mut_ptr(),
-                rs1 = in(reg) self.e.0.0.as_ptr(),
-                rs2 = in(reg) other.e.0.0.as_ptr(),
-                options(nostack)
-            );
-        }
-        let tmp = other.mul(&c);
-        // Verify advice: c must be canonical and other * c == self
-        if is_fr_non_canonical(&c.e.0 .0) || is_not_equal(&tmp.e.0 .0, &self.e.0 .0) {
-            spoil_proof(); // Spoils proof - assert_eq! alone doesn't suffice
-        }
-        c
-    }
-    #[cfg(all(
-        not(feature = "host"),
-        any(target_arch = "riscv32", target_arch = "riscv64")
-    ))]
-    #[inline(always)]
-    pub fn div(&self, other: &GrumpkinFr) -> Self {
-        if other.is_zero() {
-            spoil_proof();
-        }
-        self.div_assume_nonzero(other)
-    }
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div_assume_nonzero(&self, _other: &GrumpkinFr) -> Self {
-        panic!("GrumpkinFr::div_assume_nonzero called on non-RISC-V target without host feature");
-    }
-    #[cfg(all(
-        not(feature = "host"),
-        not(any(target_arch = "riscv32", target_arch = "riscv64"))
-    ))]
-    pub fn div(&self, _other: &GrumpkinFr) -> Self {
-        panic!("GrumpkinFr::div called on non-RISC-V target without host feature");
-    }
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn div_assume_nonzero(&self, other: &GrumpkinFr) -> Self {
-        GrumpkinFr {
-            e: self.e / other.e,
-        }
-    }
-    #[cfg(feature = "host")]
-    #[inline(always)]
-    pub fn div(&self, other: &GrumpkinFr) -> Self {
-        if other.is_zero() {
-            panic!("division by zero in GrumpkinFr::div");
-        }
-        self.div_assume_nonzero(other)
-    }
-
-    /// GLV scalar decomposition: returns (k1, k2) such that
-    /// self = k1 + k2 * lambda (mod r) and |k1|, |k2| < 2^128.
-    /// Each entry is (is_negative, abs_value).
-    #[inline(always)]
-    pub fn glv_decompose(&self) -> [(bool, u128); 2] {
-        decompose_scalar_impl(self)
     }
 }
 

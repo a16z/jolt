@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256k1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
@@ -8,8 +6,10 @@ use jolt_inlines_sdk::host::{
         virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_advice, Cpu, ExpandedInstructionSequence, ExpansionError, FormatInline,
-    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister, MulqType,
+    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
+    ExpandedInstructionSequence, ExpansionError, FormatInline, GlvDecompositionAdvice,
+    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
+    ModularDivisionAdvice, MulqType, QuotientAdvice,
 };
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
@@ -27,7 +27,7 @@ impl GlvrAdvBuilder {
         let vr = asm.allocate_for_inline()?;
         Ok(GlvrAdvBuilder { asm, vr, operands })
     }
-    fn advice(operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+    fn advice(operands: FormatInline, cpu: &mut Cpu) -> GlvDecompositionAdvice {
         let k_addr = cpu.x[operands.rs1 as usize] as u64;
         let kr = [
             cpu.mmu.load_doubleword(k_addr).unwrap().0,
@@ -36,8 +36,7 @@ impl GlvrAdvBuilder {
             cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
         ];
         let k = Fr::new(BigInt(kr)).into_bigint().into();
-        let result = crate::glv::decompose_scalar_to_u64s(k);
-        VecDeque::from(result.to_vec())
+        GlvDecompositionAdvice::from_sign_abs(crate::glv::decompose_scalar(k))
     }
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 6);
@@ -75,6 +74,14 @@ struct MulqBuilder {
     operands: InlineOperands,
     op_type: MulqType,
     is_scalar_field: bool,
+}
+
+fn secp256k1_modulus(is_scalar_field: bool) -> jolt_inlines_sdk::host::NBigUint {
+    if is_scalar_field {
+        Fr::MODULUS.into()
+    } else {
+        Fq::MODULUS.into()
+    }
 }
 
 impl MulqBuilder {
@@ -117,24 +124,25 @@ impl MulqBuilder {
             is_scalar_field,
         })
     }
-    fn advice(
+    fn quotient_advice(
         operands: FormatInline,
         cpu: &mut Cpu,
         is_scalar_field: bool,
         op_type: &MulqType,
-    ) -> VecDeque<u64> {
-        mulq_advice(
+    ) -> QuotientAdvice {
+        mulq_quotient_advice(&operands, cpu, is_scalar_field, op_type, secp256k1_modulus)
+    }
+
+    fn division_advice(
+        operands: FormatInline,
+        cpu: &mut Cpu,
+        is_scalar_field: bool,
+    ) -> ModularDivisionAdvice {
+        mulq_division_advice(
             &operands,
             cpu,
             is_scalar_field,
-            op_type,
-            |is_scalar| {
-                if is_scalar {
-                    Fr::MODULUS.into()
-                } else {
-                    Fq::MODULUS.into()
-                }
-            },
+            secp256k1_modulus,
             |b, a| {
                 limbs_to_nbiguint(
                     &if is_scalar_field {
@@ -454,9 +462,31 @@ impl MulqBuilder {
 }
 
 macro_rules! secp256k1_mulq_op {
+    ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: MulqType::Div, is_scalar: $is_scalar:expr) => {
+        pub struct $name;
+        impl InlineOp for $name {
+            type Advice = ModularDivisionAdvice;
+
+            const OPCODE: u32 = crate::INLINE_OPCODE;
+            const FUNCT3: u32 = $funct3;
+            const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
+            const NAME: &'static str = $op_name;
+            fn build_sequence(
+                asm: InlineExpansionBuilder,
+                operands: InlineOperands,
+            ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+                MulqBuilder::new(asm, operands, MulqType::Div, $is_scalar)?.inline_sequence()
+            }
+            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+                MulqBuilder::division_advice(operands, cpu, $is_scalar)
+            }
+        }
+    };
     ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: $mul_type:expr, is_scalar: $is_scalar:expr) => {
         pub struct $name;
         impl InlineOp for $name {
+            type Advice = QuotientAdvice;
+
             const OPCODE: u32 = crate::INLINE_OPCODE;
             const FUNCT3: u32 = $funct3;
             const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
@@ -467,8 +497,8 @@ macro_rules! secp256k1_mulq_op {
             ) -> Result<ExpandedInstructionSequence, ExpansionError> {
                 MulqBuilder::new(asm, operands, $mul_type, $is_scalar)?.inline_sequence()
             }
-            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-                Some(MulqBuilder::advice(operands, cpu, $is_scalar, &$mul_type))
+            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+                MulqBuilder::quotient_advice(operands, cpu, $is_scalar, &$mul_type)
             }
         }
     };
@@ -483,6 +513,8 @@ secp256k1_mulq_op!(Secp256k1DivR,     funct3: crate::SECP256K1_DIVR_FUNCT3,    n
 
 pub struct Secp256k1GlvrAdv;
 impl InlineOp for Secp256k1GlvrAdv {
+    type Advice = GlvDecompositionAdvice;
+
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::SECP256K1_GLVR_ADV_FUNCT3;
     const FUNCT7: u32 = crate::SECP256K1_FUNCT7;
@@ -493,7 +525,7 @@ impl InlineOp for Secp256k1GlvrAdv {
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
     }
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Some(GlvrAdvBuilder::advice(operands, cpu))
+    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+        GlvrAdvBuilder::advice(operands, cpu)
     }
 }

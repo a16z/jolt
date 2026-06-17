@@ -1,6 +1,6 @@
 mod sequence_tests {
     use crate::sdk::{
-        decode_glv_sign_word, GrumpkinFr, GrumpkinPoint, GrumpkinPointExt,
+        decode_glv_sign_word, GrumpkinFq, GrumpkinFr, GrumpkinPoint, GrumpkinPointExt,
         GRUMPKIN_ENDO_BETA_LIMBS, GRUMPKIN_GLV_LAMBDA_LIMBS,
     };
     use crate::{
@@ -172,6 +172,17 @@ mod sequence_tests {
             decode_glv_sign_word(2),
             Err(GrumpkinError::InvalidGlvSignWord(2))
         ));
+    }
+
+    #[test]
+    fn test_grumpkin_field_aliases_use_configured_wrapper() {
+        use crate::sdk::{GrumpkinField, GrumpkinFqConfig, GrumpkinFrConfig};
+
+        let fq: GrumpkinField<GrumpkinFqConfig> = GrumpkinFq::zero();
+        let fr: GrumpkinField<GrumpkinFrConfig> = GrumpkinFr::zero();
+
+        assert!(fq.is_zero());
+        assert!(fr.is_zero());
     }
 
     #[test]
