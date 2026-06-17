@@ -703,13 +703,7 @@ fn akita_packed_scheme_requires_one_packed_witness_commitment() {
         let claim_a = packed_view_eval(&layout, &witness, &terms_a);
         let claim_b = packed_view_eval(&layout, &witness, &terms_b);
         let statement = packed_reduction_statement(
-            &layout,
-            commitment,
-            &row_point,
-            terms_a,
-            claim_a,
-            terms_b,
-            claim_b,
+            &layout, commitment, &row_point, terms_a, claim_a, terms_b, claim_b,
         );
 
         let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-single-witness");

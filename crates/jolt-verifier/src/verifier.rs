@@ -878,9 +878,22 @@ mod tests {
         JoltStageProofs,
     };
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    #[cfg(feature = "akita")]
+    use jolt_claims::protocols::jolt::{
+        formulas::{
+            claim_reductions::bytecode, dimensions::JoltFormulaDimensions,
+            ra::JoltRaPolynomialLayout,
+        },
+        fused_increment_bytecode_source_opening, fused_increment_magnitude_opening,
+        fused_increment_sign_opening, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId,
+        JoltPolynomialId, JoltReadWriteConfig, JoltRelationId, LatticeFusedIncrementTarget,
+    };
+    #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::Fr;
+    #[cfg(feature = "akita")]
+    use jolt_openings::PhysicalView;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
     use jolt_program::preprocess::{
@@ -1153,6 +1166,134 @@ mod tests {
             validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
             Err(VerifierError::InvalidProtocolConfig { .. })
         ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn akita_stage8_batch_statement_snapshot_uses_packed_witness_views() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
+        let config = lattice_config(layout.digest, layout.dimension);
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+        let bytecode_address_point = field_zeros(
+            checked
+                .precommitted
+                .bytecode
+                .as_ref()
+                .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+                .log_bytecode_chunk_size()
+                + 1,
+        );
+        let stage6 = akita_snapshot_stage6_output(
+            formula_dimensions.ra_layout.bytecode(),
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            bytecode_address_point,
+        );
+        let stage7 = akita_snapshot_stage7_output(
+            formula_dimensions.ra_layout,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        );
+
+        let stage8::Stage8BatchStatement::Clear(batch) = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        )
+        .unwrap_or_else(|error| panic!("Akita Stage 8 statement should build: {error}")) else {
+            panic!("Akita clear proof should build a clear Stage 8 statement");
+        };
+
+        let expected_ids =
+            akita_snapshot_opening_ids(formula_dimensions.ra_layout, &checked.precommitted);
+        assert_eq!(batch.opening_ids, expected_ids);
+        assert_eq!(batch.statement.claims.len(), expected_ids.len());
+        assert_eq!(batch.statement.layout_digest, layout.digest);
+        assert_eq!(batch.physical_manifest.layout_digest, layout.digest);
+        assert!(batch
+            .statement
+            .claims
+            .iter()
+            .all(|claim| claim.commitment == TestCommitment));
+        assert!(batch.statement.claims.iter().all(|claim| {
+            matches!(
+                &claim.view,
+                PhysicalView::PackedLinear {
+                    layout_digest,
+                    terms
+                } if *layout_digest == layout.digest && !terms.is_empty()
+            )
+        }));
+
+        assert_eq!(
+            first_row_point_len(
+                &batch,
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::InstructionRa(0),
+                    JoltRelationId::HammingWeightClaimReduction,
+                )
+                .into(),
+            ),
+            log_t
+        );
+        assert_eq!(
+            first_row_point_len(
+                &batch,
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeChunk(0),
+                    JoltRelationId::BytecodeClaimReduction,
+                )
+                .into(),
+            ),
+            checked
+                .precommitted
+                .bytecode
+                .as_ref()
+                .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+                .log_bytecode_chunk_size()
+        );
+        assert_eq!(
+            first_row_point_len(
+                &batch,
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::ProgramImageInit,
+                    JoltRelationId::ProgramImageClaimReduction,
+                )
+                .into(),
+            ),
+            checked
+                .precommitted
+                .program_image
+                .as_ref()
+                .unwrap_or_else(|| panic!("program image schedule should exist"))
+                .image_shape()
+                .row_vars()
+        );
     }
 
     #[cfg(not(feature = "akita"))]
@@ -1690,6 +1831,317 @@ mod tests {
             d_pack,
         ));
         proof
+    }
+
+    #[cfg(feature = "akita")]
+    fn akita_snapshot_stage6_output(
+        bytecode_ra_count: usize,
+        log_t: usize,
+        log_k_chunk: usize,
+        bytecode_address_point: Vec<Fr>,
+    ) -> stage6::Stage6ClearOutput<Fr> {
+        let zero = Fr::zero();
+        let trace_point = field_zeros(log_t);
+        let ra_point = field_zeros(log_k_chunk + log_t);
+        let mut output_claims = clear_claim_payload().stage6;
+        output_claims.fused_increment_translation =
+            Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
+                ram_source: zero,
+                magnitude: zero,
+                sign: zero,
+                rd_source: zero,
+            });
+        output_claims.fused_increment_source_link =
+            Some(stage6::inputs::FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: field_zeros(bytecode_ra_count),
+                store_flag: zero,
+                rd_present: zero,
+            });
+
+        stage6::Stage6ClearOutput {
+            public: stage6::outputs::Stage6PublicOutput {
+                address_phase_challenges: Vec::new(),
+                address_phase_batching_coefficients: Vec::new(),
+                challenges: Vec::new(),
+                batching_coefficients: Vec::new(),
+                bytecode_gamma_powers: Vec::new(),
+                stage1_gammas: Vec::new(),
+                stage2_gammas: Vec::new(),
+                stage3_gammas: Vec::new(),
+                stage4_gammas: Vec::new(),
+                stage5_gammas: Vec::new(),
+                booleanity_reference_address: Vec::new(),
+                booleanity_reference_cycle: Vec::new(),
+                booleanity_gamma: zero,
+                instruction_ra_gamma_powers: Vec::new(),
+                inc_gamma: zero,
+                bytecode_reduction_eta: None,
+            },
+            output_claims,
+            batch: stage6::outputs::VerifiedStage6Batch {
+                address_phase_batching_coefficients: Vec::new(),
+                address_phase_sumcheck_point: jolt_poly::Point::high_to_low(Vec::new()),
+                address_phase_sumcheck_final_claim: zero,
+                address_phase_expected_final_claim: zero,
+                bytecode_read_raf_address: verified_stage6_address_sumcheck(Vec::new()),
+                booleanity_address: verified_stage6_address_sumcheck(Vec::new()),
+                batching_coefficients: Vec::new(),
+                sumcheck_point: jolt_poly::Point::high_to_low(Vec::new()),
+                sumcheck_final_claim: zero,
+                expected_final_claim: zero,
+                bytecode_read_raf: verified_bytecode_read_raf(Vec::new(), Vec::new(), Vec::new()),
+                booleanity: stage6::outputs::VerifiedBooleanitySumcheck {
+                    input_claim: zero,
+                    sumcheck_point: Vec::new(),
+                    r_address: Vec::new(),
+                    r_cycle: Vec::new(),
+                    opening_point: Vec::new(),
+                    reference_address: Vec::new(),
+                    reference_cycle: Vec::new(),
+                    expected_output_claim: zero,
+                },
+                ram_hamming_booleanity: verified_stage6_sumcheck(Vec::new()),
+                ram_ra_virtualization: stage6::outputs::VerifiedRamRaVirtualizationSumcheck {
+                    input_claim: zero,
+                    sumcheck_point: Vec::new(),
+                    opening_point: Vec::new(),
+                    ram_ra_opening_points: Vec::new(),
+                    expected_output_claim: zero,
+                },
+                instruction_ra_virtualization:
+                    stage6::outputs::VerifiedInstructionRaVirtualizationSumcheck {
+                        input_claim: zero,
+                        sumcheck_point: Vec::new(),
+                        opening_point: Vec::new(),
+                        instruction_ra_opening_points: Vec::new(),
+                        expected_output_claim: zero,
+                    },
+                inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
+                fused_increment_translation: Some(verified_stage6_sumcheck(trace_point.clone())),
+                fused_increment_source_link: Some(verified_bytecode_read_raf(
+                    bytecode_address_point.clone(),
+                    trace_point,
+                    vec![ra_point; bytecode_ra_count],
+                )),
+                trusted_advice_cycle_phase: None,
+                untrusted_advice_cycle_phase: None,
+                bytecode_cycle_phase: None,
+                program_image_cycle_phase: None,
+            },
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn akita_snapshot_stage7_output(
+        ra_layout: JoltRaPolynomialLayout,
+        log_t: usize,
+        log_k_chunk: usize,
+        precommitted: &PrecommittedSchedule,
+    ) -> stage7::Stage7ClearOutput<Fr> {
+        let zero = Fr::zero();
+        let ra_point = field_zeros(log_k_chunk + log_t);
+        let mut output_claims = clear_claim_payload().stage7;
+        output_claims.hamming_weight_claim_reduction.instruction_ra =
+            field_zeros(ra_layout.instruction());
+        output_claims.hamming_weight_claim_reduction.bytecode_ra =
+            field_zeros(ra_layout.bytecode());
+        output_claims.hamming_weight_claim_reduction.ram_ra = field_zeros(ra_layout.ram());
+
+        let bytecode_layout = precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"));
+        let bytecode_point = field_zeros(
+            bytecode::committed_lane_vars() + bytecode_layout.log_bytecode_chunk_size(),
+        );
+        let mut precommitted_final_openings = (0..bytecode_layout.chunk_count())
+            .map(|index| stage7::outputs::PrecommittedFinalOpening {
+                polynomial: JoltCommittedPolynomial::BytecodeChunk(index),
+                point: bytecode_point.clone(),
+                opening_claim: Some(zero),
+            })
+            .collect::<Vec<_>>();
+        let program_image_layout = precommitted
+            .program_image
+            .as_ref()
+            .unwrap_or_else(|| panic!("program image schedule should exist"));
+        precommitted_final_openings.push(stage7::outputs::PrecommittedFinalOpening {
+            polynomial: JoltCommittedPolynomial::ProgramImageInit,
+            point: field_zeros(program_image_layout.image_shape().row_vars()),
+            opening_claim: Some(zero),
+        });
+
+        stage7::Stage7ClearOutput {
+            public: stage7::outputs::Stage7PublicOutput {
+                challenges: Vec::new(),
+                batching_coefficients: Vec::new(),
+                hamming_gamma: zero,
+            },
+            output_claims,
+            batch: stage7::outputs::VerifiedStage7Batch {
+                batching_coefficients: Vec::new(),
+                sumcheck_point: jolt_poly::Point::high_to_low(Vec::new()),
+                sumcheck_final_claim: zero,
+                expected_final_claim: zero,
+                hamming_weight_claim_reduction:
+                    stage7::outputs::VerifiedHammingWeightClaimReductionSumcheck {
+                        input_claim: zero,
+                        sumcheck_point: Vec::new(),
+                        opening_point: ra_point.clone(),
+                        instruction_ra_opening_points: vec![
+                            ra_point.clone();
+                            ra_layout.instruction()
+                        ],
+                        bytecode_ra_opening_points: vec![ra_point.clone(); ra_layout.bytecode()],
+                        ram_ra_opening_points: vec![ra_point; ra_layout.ram()],
+                        expected_output_claim: zero,
+                    },
+                trusted_advice_address_phase: None,
+                untrusted_advice_address_phase: None,
+                bytecode_address_phase: None,
+                program_image_address_phase: None,
+            },
+            precommitted_final_openings,
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn akita_snapshot_opening_ids(
+        ra_layout: JoltRaPolynomialLayout,
+        precommitted: &PrecommittedSchedule,
+    ) -> Vec<stage8::Stage8OpeningId> {
+        let mut ids = vec![
+            stage8_opening(fused_increment_magnitude_opening()),
+            stage8_opening(fused_increment_sign_opening()),
+        ];
+        ids.extend((0..ra_layout.bytecode()).map(|index| {
+            stage8_opening(JoltOpeningId::Polynomial {
+                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+                relation: JoltRelationId::FusedIncrementSourceLink,
+            })
+        }));
+        ids.extend([
+            stage8_opening(fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            )),
+            stage8_opening(fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Rd,
+            )),
+        ]);
+        ids.extend((0..ra_layout.instruction()).map(|index| {
+            stage8_opening(JoltOpeningId::committed(
+                JoltCommittedPolynomial::InstructionRa(index),
+                JoltRelationId::HammingWeightClaimReduction,
+            ))
+        }));
+        ids.extend((0..ra_layout.bytecode()).map(|index| {
+            stage8_opening(JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltRelationId::HammingWeightClaimReduction,
+            ))
+        }));
+        ids.extend((0..ra_layout.ram()).map(|index| {
+            stage8_opening(JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamRa(index),
+                JoltRelationId::HammingWeightClaimReduction,
+            ))
+        }));
+        let bytecode_chunk_count = precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+            .chunk_count();
+        ids.extend((0..bytecode_chunk_count).map(|index| {
+            stage8_opening(JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeChunk(index),
+                JoltRelationId::BytecodeClaimReduction,
+            ))
+        }));
+        ids.push(stage8_opening(JoltOpeningId::committed(
+            JoltCommittedPolynomial::ProgramImageInit,
+            JoltRelationId::ProgramImageClaimReduction,
+        )));
+        ids
+    }
+
+    #[cfg(feature = "akita")]
+    fn stage8_opening(id: JoltOpeningId) -> stage8::Stage8OpeningId {
+        stage8::Stage8OpeningId::from(id)
+    }
+
+    #[cfg(feature = "akita")]
+    fn first_row_point_len(
+        batch: &stage8::Stage8ClearBatchStatement<Fr, TestCommitment>,
+        id: stage8::Stage8OpeningId,
+    ) -> usize {
+        let claim = batch
+            .statement
+            .claims
+            .iter()
+            .find(|claim| claim.id == id)
+            .unwrap_or_else(|| panic!("missing Stage 8 opening {id:?}"));
+        match &claim.view {
+            PhysicalView::PackedLinear { terms, .. } => terms
+                .first()
+                .unwrap_or_else(|| panic!("packed view should contain terms"))
+                .row_point
+                .len(),
+            PhysicalView::Direct => panic!("Akita snapshot should use packed views"),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn verified_stage6_address_sumcheck(
+        opening_point: Vec<Fr>,
+    ) -> stage6::outputs::VerifiedStage6AddressPhaseSumcheck<Fr> {
+        stage6::outputs::VerifiedStage6AddressPhaseSumcheck {
+            input_claim: Fr::zero(),
+            sumcheck_point: Vec::new(),
+            opening_point,
+            expected_output_claim: Fr::zero(),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn verified_stage6_sumcheck(
+        opening_point: Vec<Fr>,
+    ) -> stage6::outputs::VerifiedStage6Sumcheck<Fr> {
+        stage6::outputs::VerifiedStage6Sumcheck {
+            input_claim: Fr::zero(),
+            sumcheck_point: Vec::new(),
+            opening_point,
+            expected_output_claim: Fr::zero(),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn verified_bytecode_read_raf(
+        r_address: Vec<Fr>,
+        r_cycle: Vec<Fr>,
+        bytecode_ra_opening_points: Vec<Vec<Fr>>,
+    ) -> stage6::outputs::VerifiedBytecodeReadRafSumcheck<Fr> {
+        stage6::outputs::VerifiedBytecodeReadRafSumcheck {
+            input_claim: Fr::zero(),
+            sumcheck_point: Vec::new(),
+            full_opening_point: [r_address.as_slice(), r_cycle.as_slice()].concat(),
+            r_address,
+            r_cycle,
+            bytecode_ra_opening_points,
+            expected_output_claim: Fr::zero(),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn clear_claim_payload() -> ClearProofClaims<Fr> {
+        match clear_claims() {
+            JoltProofClaims::Clear(claims) => claims,
+            JoltProofClaims::Zk { .. } => panic!("test clear claims helper returned ZK claims"),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn field_zeros(len: usize) -> Vec<Fr> {
+        vec![Fr::zero(); len]
     }
 
     fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {

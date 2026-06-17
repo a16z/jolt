@@ -932,8 +932,7 @@ mod tests {
 
     #[test]
     fn committed_program_batch_entries_require_final_openings() {
-        let layout =
-            JoltRaPolynomialLayout::new(1, 0, 0).expect("test RA layout should be valid");
+        let layout = JoltRaPolynomialLayout::new(1, 0, 0).expect("test RA layout should be valid");
         let opening_point = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)];
         let hamming_opening_point = vec![Fr::from_u64(1)];
         let inc_opening_point = vec![Fr::from_u64(1)];
