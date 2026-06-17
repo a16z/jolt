@@ -5,7 +5,7 @@ use jolt_field::Field;
 use jolt_openings::{BatchOpeningStatement, PhysicalView, VerifierOpeningClaim};
 use jolt_poly::{Point, HIGH_TO_LOW};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Stage8OpeningId {
     Jolt(JoltOpeningId),
     #[cfg(feature = "field-inline")]
@@ -92,6 +92,31 @@ impl<F: Field> Stage8PhysicalManifest<F> {
             layout_digest,
         }
     }
+
+    #[cfg(feature = "akita")]
+    pub fn from_packed_view_catalog(
+        logical: &Stage8LogicalManifest<F>,
+        layout: &jolt_akita::PackedWitnessLayout,
+        catalog: &jolt_akita::PackedViewCatalog<Stage8OpeningId, Stage8OpeningId, F>,
+    ) -> Result<Self, jolt_akita::PackedViewError> {
+        let openings = logical
+            .openings
+            .iter()
+            .map(|opening| {
+                let formula = catalog.lookup(&opening.id, &opening.id)?;
+                Ok(Stage8PhysicalOpening {
+                    id: opening.id,
+                    relation: opening.id,
+                    view: formula.physical_view(layout)?,
+                })
+            })
+            .collect::<Result<Vec<_>, jolt_akita::PackedViewError>>()?;
+
+        Ok(Self {
+            openings,
+            layout_digest: layout.digest,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +171,11 @@ pub enum Stage8Output<F: Field, C, H> {
 
 #[cfg(test)]
 mod tests {
+    #![cfg_attr(
+        feature = "akita",
+        expect(clippy::panic, reason = "tests fail loudly on setup errors")
+    )]
+
     use super::*;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -203,5 +233,59 @@ mod tests {
         assert_eq!(physical.openings[0].id, id);
         assert_eq!(physical.openings[0].relation, id);
         assert!(matches!(physical.openings[0].view, PhysicalView::Direct));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn physical_manifest_resolves_akita_packed_views_from_catalog() {
+        use jolt_akita::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedViewCatalog,
+            PackedViewEntry, PackedViewFormula, PackedWitnessLayout,
+        };
+
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::RamInc,
+            JoltRelationId::IncClaimReduction,
+        ));
+        let logical = Stage8LogicalManifest {
+            openings: vec![Stage8LogicalOpening {
+                id,
+                point: vec![Fr::from_u64(1)],
+                claim: Some(Fr::from_u64(2)),
+                scale: Fr::from_u64(3),
+            }],
+            pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
+        };
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            PackedFactDomain::TraceRows { log_t: 0 },
+            1,
+            PackedAlphabet::Bit,
+        )])
+        .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
+        let catalog = PackedViewCatalog::new(
+            &layout,
+            [PackedViewEntry::new(
+                id,
+                id,
+                PackedViewFormula::direct(PackedFamilyId::IncSign, 0, 1),
+            )],
+        )
+        .unwrap_or_else(|error| panic!("test catalog should be valid: {error}"));
+
+        let physical =
+            Stage8PhysicalManifest::from_packed_view_catalog(&logical, &layout, &catalog)
+                .unwrap_or_else(|error| panic!("packed view resolution should succeed: {error}"));
+
+        assert_eq!(physical.layout_digest, layout.digest);
+        assert_eq!(physical.openings[0].id, id);
+        assert_eq!(physical.openings[0].relation, id);
+        assert!(matches!(
+            &physical.openings[0].view,
+            PhysicalView::PackedLinear {
+                layout_digest,
+                coefficients
+            } if *layout_digest == layout.digest && *coefficients == vec![Fr::from_u64(1)]
+        ));
     }
 }
