@@ -2814,6 +2814,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-akita"
+version = "0.1.0"
+dependencies = [
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "serde",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [

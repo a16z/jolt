@@ -1,0 +1,17 @@
+[package]
+name = "jolt-akita"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Akita batch opening adapter for the Jolt zkVM"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-crypto.workspace = true
+jolt-field.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-transcript.workspace = true
+serde = { workspace = true, features = ["derive"] }

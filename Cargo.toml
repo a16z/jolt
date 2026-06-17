@@ -25,6 +25,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 [workspace]
 members = [
   "crates/jolt-claims",
+  "crates/jolt-akita",
   "crates/jolt-blindfold",
   "crates/jolt-crypto",
   "crates/jolt-program",
@@ -385,6 +386,7 @@ tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
+jolt-akita = { path = "./crates/jolt-akita" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
