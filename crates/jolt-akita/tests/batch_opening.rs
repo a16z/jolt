@@ -1,6 +1,10 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-use jolt_akita::{AkitaCommitInput, AkitaCommitment, AkitaField, AkitaScheme, AkitaSetupParams};
+use jolt_akita::{
+    AkitaCommitInput, AkitaCommitment, AkitaField, AkitaScheme, AkitaSetupParams, PackedAlphabet,
+    PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedLayoutError,
+    PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
+};
 use jolt_field::Field;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
@@ -39,6 +43,71 @@ fn setup() -> (
     <AkitaScheme as CommitmentScheme>::VerifierSetup,
 ) {
     AkitaScheme::setup(AkitaSetupParams::new(4, 2, layout(7)))
+}
+
+fn packed_layout() -> PackedWitnessLayout {
+    PackedWitnessLayout::new([PackedFamilySpec::direct(
+        PackedFamilyId::Custom {
+            namespace: 1,
+            index: 0,
+        },
+        PackedFactDomain::TraceRows { log_t: 1 },
+        1,
+        PackedAlphabet::Fixed { size: 3 },
+    )])
+    .expect("packed layout should be valid")
+}
+
+fn packed_address(row: usize, symbol: usize) -> PackedCellAddress {
+    PackedCellAddress {
+        family: PackedFamilyId::Custom {
+            namespace: 1,
+            index: 0,
+        },
+        row,
+        limb: 0,
+        symbol,
+    }
+}
+
+fn packed_polynomial(
+    layout: &PackedWitnessLayout,
+    entries: &[(usize, AkitaField)],
+) -> Polynomial<AkitaField> {
+    let mut evals = vec![AkitaField::zero(); 1usize << layout.dimension];
+    for &(rank, value) in entries {
+        evals[rank] = value;
+    }
+    Polynomial::new(evals)
+}
+
+struct EmittingPackedSource {
+    layout: PackedWitnessLayout,
+    entries: Vec<(usize, AkitaField)>,
+}
+
+impl PackedWitnessSource<AkitaField> for EmittingPackedSource {
+    fn layout(&self) -> &PackedWitnessLayout {
+        &self.layout
+    }
+
+    fn for_each_nonzero(&self, mut f: impl FnMut(usize, AkitaField)) {
+        for &(rank, value) in &self.entries {
+            f(rank, value);
+        }
+    }
+
+    fn eval_direct_fact(
+        &self,
+        address: &PackedCellAddress,
+    ) -> Result<AkitaField, PackedLayoutError> {
+        let rank = self.layout.rank(address)?;
+        Ok(self
+            .entries
+            .iter()
+            .find(|(entry_rank, _)| *entry_rank == rank)
+            .map_or_else(AkitaField::zero, |(_, value)| *value))
+    }
 }
 
 fn direct_statement(
@@ -122,6 +191,89 @@ fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
 fn akita_field_satisfies_jolt_field_bundle() {
     fn assert_field<F: Field>() {}
     assert_field::<AkitaField>();
+}
+
+#[test]
+fn akita_commit_packed_source_roundtrip() {
+    run_on_large_stack(|| {
+        let layout = packed_layout();
+        assert!(layout.dummy_cell_count() > 0);
+        let witness = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [(packed_address(0, 1), f(7)), (packed_address(1, 2), f(11))],
+        )
+        .expect("sparse witness should be valid");
+        let poly = packed_polynomial(&layout, witness.entries());
+        let point = vec![f(2), f(3), f(5)];
+        let eval = poly.evaluate(&point);
+        let (prover_setup, verifier_setup) =
+            AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+
+        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            .expect("source commit should succeed");
+        assert_eq!(commitment.layout_digest, layout.digest);
+        assert_eq!(commitment.num_vars, layout.dimension);
+        assert_eq!(commitment.poly_count, 1);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-source");
+        let proof = AkitaScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut prover_transcript,
+        );
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-source");
+        AkitaScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+        )
+        .expect("source proof should verify");
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
+fn akita_commit_packed_source_rejects_malformed_emitters() {
+    let layout = packed_layout();
+    let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+
+    let dummy_rank = layout.cells;
+    let dummy_result = AkitaScheme::commit_packed_source(
+        &prover_setup,
+        &EmittingPackedSource {
+            layout: layout.clone(),
+            entries: vec![(dummy_rank, f(1))],
+        },
+    );
+    assert!(matches!(dummy_result, Err(OpeningsError::InvalidBatch(_))));
+
+    let duplicate_result = AkitaScheme::commit_packed_source(
+        &prover_setup,
+        &EmittingPackedSource {
+            layout: layout.clone(),
+            entries: vec![(0, f(1)), (0, f(2))],
+        },
+    );
+    assert!(matches!(
+        duplicate_result,
+        Err(OpeningsError::InvalidBatch(_))
+    ));
+
+    let zero_result = AkitaScheme::commit_packed_source(
+        &prover_setup,
+        &EmittingPackedSource {
+            layout,
+            entries: vec![(0, AkitaField::zero())],
+        },
+    );
+    assert!(matches!(zero_result, Err(OpeningsError::InvalidBatch(_))));
 }
 
 #[test]

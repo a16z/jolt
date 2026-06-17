@@ -19,6 +19,7 @@ use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use serde::{Deserialize, Serialize};
 
+use crate::layout::PackedWitnessSource;
 use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
@@ -66,6 +67,30 @@ impl AkitaScheme {
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         Self::commit_group(setup, input.layout_digest, &[input.polynomial])
     }
+
+    pub fn commit_packed_source<S>(
+        setup: &AkitaProverSetup,
+        source: &S,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+    where
+        S: PackedWitnessSource<AkitaField>,
+    {
+        let layout = source.layout();
+        if layout.dimension > setup.max_num_vars {
+            return Err(OpeningsError::PolynomialTooLarge {
+                poly_size: layout.dimension,
+                setup_max: setup.max_num_vars,
+            });
+        }
+        let polynomial = packed_source_polynomial(source)?;
+        Self::commit_packed_witness(
+            setup,
+            AkitaCommitInput {
+                layout_digest: layout.digest,
+                polynomial,
+            },
+        )
+    }
 }
 
 fn validate_commit_polynomials(
@@ -98,6 +123,65 @@ fn validate_commit_polynomials(
         }
     }
     Ok(num_vars)
+}
+
+fn packed_source_polynomial<S>(source: &S) -> Result<Polynomial<AkitaField>, OpeningsError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let layout = source.layout();
+    if layout.cells == 0 {
+        return Err(invalid_batch(
+            "Akita packed witness layout must contain at least one cell",
+        ));
+    }
+    if layout.dimension >= usize::BITS as usize {
+        return Err(invalid_batch(format!(
+            "Akita packed witness dimension {} exceeds usize bit width",
+            layout.dimension
+        )));
+    }
+    let domain_size = 1usize << layout.dimension;
+    if layout.cells > domain_size {
+        return Err(invalid_batch(format!(
+            "Akita packed witness has {} cells but dimension {} supports {domain_size}",
+            layout.cells, layout.dimension
+        )));
+    }
+
+    let mut evals = vec![AkitaField::zero(); domain_size];
+    let mut seen = vec![false; layout.cells];
+    let mut result = Ok(());
+    source.for_each_nonzero(|rank, value| {
+        if result.is_err() {
+            return;
+        }
+        if rank >= layout.cells {
+            result = Err(invalid_batch(format!(
+                "Akita packed witness source emitted rank {rank} outside {} real cells",
+                layout.cells
+            )));
+            return;
+        }
+        if seen[rank] {
+            result = Err(invalid_batch(format!(
+                "Akita packed witness source emitted rank {rank} more than once"
+            )));
+            return;
+        }
+        if value.is_zero() {
+            result = Err(invalid_batch(format!(
+                "Akita packed witness source emitted zero at rank {rank}"
+            )));
+            return;
+        }
+
+        seen[rank] = true;
+        evals[rank] = value;
+    });
+    result?;
+
+    Ok(Polynomial::new(evals))
 }
 
 impl Commitment for AkitaScheme {
