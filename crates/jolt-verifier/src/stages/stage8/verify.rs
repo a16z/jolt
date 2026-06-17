@@ -930,6 +930,68 @@ mod tests {
             .contains("verified fused increment translation claims"));
     }
 
+    #[test]
+    fn committed_program_batch_entries_require_final_openings() {
+        let layout =
+            JoltRaPolynomialLayout::new(1, 0, 0).expect("test RA layout should be valid");
+        let opening_point = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)];
+        let hamming_opening_point = vec![Fr::from_u64(1)];
+        let inc_opening_point = vec![Fr::from_u64(1)];
+        let commitment = 9_u64;
+
+        let program_image_only = vec![PrecommittedFinalOpening {
+            polynomial: JoltCommittedPolynomial::ProgramImageInit,
+            point: vec![Fr::from_u64(3)],
+            opening_claim: Some(Fr::from_u64(30)),
+        }];
+        let error = batch_entries(
+            layout,
+            Some(1),
+            &opening_point,
+            &hamming_opening_point,
+            &inc_opening_point,
+            &program_image_only,
+            None,
+            true,
+            |_| Ok(&commitment),
+            #[cfg(feature = "field-inline")]
+            &commitment,
+        )
+        .err()
+        .expect("missing bytecode chunk opening should fail");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == final_opening_id(JoltCommittedPolynomial::BytecodeChunk(0))
+        ));
+
+        let bytecode_only = vec![PrecommittedFinalOpening {
+            polynomial: JoltCommittedPolynomial::BytecodeChunk(0),
+            point: vec![Fr::from_u64(2)],
+            opening_claim: Some(Fr::from_u64(20)),
+        }];
+        let error = batch_entries(
+            layout,
+            Some(1),
+            &opening_point,
+            &hamming_opening_point,
+            &inc_opening_point,
+            &bytecode_only,
+            None,
+            true,
+            |_| Ok(&commitment),
+            #[cfg(feature = "field-inline")]
+            &commitment,
+        )
+        .err()
+        .expect("missing program image opening should fail");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == final_opening_id(JoltCommittedPolynomial::ProgramImageInit)
+        ));
+    }
+
     fn stage6_claims_with_fused_outputs(
         ram_source: Fr,
         magnitude: Fr,
