@@ -24,4 +24,7 @@ pub use proof::{
 };
 #[cfg(feature = "field-inline")]
 pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};
-pub use verifier::{stage8_batch_statement, verify, CheckedInputs};
+pub use verifier::{
+    stage8_batch_statement, stage8_batch_statement_with_config, verify, verify_with_config,
+    CheckedInputs,
+};

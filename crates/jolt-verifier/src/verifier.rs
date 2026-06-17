@@ -9,7 +9,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig},
+    config::{validate_proof_config, JoltProtocolConfig, ZkConfig},
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -38,6 +38,34 @@ where
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
+    verify_with_config::<F, PCS, VC, T>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        &JoltProtocolConfig::for_zk(zk),
+    )
+}
+
+pub fn verify_with_config<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<(), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F>
+        + BatchOpeningScheme
+        + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+{
+    let zk = config_zk(config);
     let checked = validate_inputs(
         preprocessing,
         public_io,
@@ -46,7 +74,7 @@ where
         zk,
     )?;
     validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+    validate_proof_config(config, proof)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -161,6 +189,30 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
+    stage8_batch_statement_with_config::<F, PCS, VC, T, ZkProof>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        &JoltProtocolConfig::for_zk(zk),
+    )
+}
+
+pub fn stage8_batch_statement_with_config<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<stage8::Stage8BatchStatement<F, PCS::Output>, VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F>,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let zk = config_zk(config);
     let checked = validate_inputs(
         preprocessing,
         public_io,
@@ -169,7 +221,7 @@ where
         zk,
     )?;
     validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+    validate_proof_config(config, proof)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -230,6 +282,10 @@ where
         trusted_advice_commitment,
         stage8::deps(&stage6, &stage7)?,
     )
+}
+
+fn config_zk(config: &JoltProtocolConfig) -> bool {
+    matches!(config.zk, ZkConfig::BlindFold)
 }
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
@@ -809,6 +865,37 @@ mod tests {
                 expected,
                 got,
             }) if expected == [7; 32] && got == [8; 32]
+        ));
+    }
+
+    #[test]
+    fn stage8_statement_with_config_uses_supplied_protocol_config() {
+        let mut config =
+            JoltProtocolConfig::for_zk(false).with_pcs_family(crate::config::PcsFamily::Lattice);
+        config.lattice.program_mode = crate::config::ProgramMode::Committed;
+        config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some([7; 32]);
+        config.lattice.packed_witness.d_pack = Some(43);
+
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        let result = stage8_batch_statement_with_config::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(&preprocessing, &public_io, &proof, None, &config);
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::ProtocolConfigMismatch { expected, got })
+                if expected == config && got == JoltProtocolConfig::for_zk(false)
         ));
     }
 
