@@ -14,6 +14,13 @@ impl RoundOffset {
     pub const ZERO: Self = Self { offset: 0 };
 }
 
+/// Witness material consumed by the reference backend, keyed by instance `label`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WitnessBinding<F: Field> {
+    None,
+    DenseMultilinear(Vec<F>),
+}
+
 /// One batched sumcheck instance before Fiat–Shamir batching coefficients are drawn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckInstance<F: Field> {
@@ -22,6 +29,7 @@ pub struct SumcheckInstance<F: Field> {
     pub num_vars: usize,
     pub degree: usize,
     pub alignment: RoundOffset,
+    pub bindings: WitnessBinding<F>,
 }
 
 impl<F: Field> SumcheckInstance<F> {
@@ -38,7 +46,13 @@ impl<F: Field> SumcheckInstance<F> {
             num_vars,
             degree,
             alignment,
+            bindings: WitnessBinding::None,
         }
+    }
+
+    pub fn with_dense_bindings(mut self, evals: Vec<F>) -> Self {
+        self.bindings = WitnessBinding::DenseMultilinear(evals);
+        self
     }
 
     pub fn is_active_at_round(&self, round: usize) -> bool {
