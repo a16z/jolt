@@ -58,7 +58,6 @@ where
 }
 
 impl<P: PairingGroup> HomomorphicCommitment<P::ScalarField> for HyperKZGCommitment<P> {
-
     #[inline]
     fn add(c1: &Self, c2: &Self) -> Self {
         Self {

@@ -73,7 +73,6 @@ struct V2Bases<P: PairingGroup> {
 /// [`AdditivelyHomomorphic`] from `jolt-openings`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-
 pub struct HyperKZGScheme<P: PairingGroup> {
     #[serde(skip)]
     _phantom: PhantomData<P>,
