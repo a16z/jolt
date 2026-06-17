@@ -3360,6 +3360,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-witness"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "jolt-claims",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-riscv",
+ "rayon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
