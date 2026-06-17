@@ -41,7 +41,7 @@ impl InstructionFormat for FormatFieldInline {
     type RegisterState = RegisterStateFormatFieldInline;
 
     fn parse(word: u32) -> Self {
-        let op = FieldInlineOp::from_funct3(((word >> 12) & 0x7) as u8);
+        let op = FieldInlineOp::from_word(word);
         let rd = ((word >> 7) & 0x1f) as u8;
         let rs1 = ((word >> 15) & 0x1f) as u8;
         let rs2 = ((word >> 20) & 0x1f) as u8;

@@ -23,29 +23,37 @@ pub const FUNCT3_ADVICE_LEN: u32 = 0b111; // Get number of remaining bytes in ad
 #[doc(hidden)]
 pub const FIELD_INLINE_OPCODE: u32 = 0x7b;
 #[doc(hidden)]
-pub const FIELD_INLINE_ADD: u32 = 0;
+pub const FIELD_INLINE_R_TYPE_FUNCT7: u32 = 0;
 #[doc(hidden)]
-pub const FIELD_INLINE_SUB: u32 = 1;
+pub const FIELD_INLINE_ADD_FUNCT3: u32 = 0;
 #[doc(hidden)]
-pub const FIELD_INLINE_MUL: u32 = 2;
+pub const FIELD_INLINE_SUB_FUNCT3: u32 = 1;
 #[doc(hidden)]
-pub const FIELD_INLINE_INV: u32 = 3;
+pub const FIELD_INLINE_MUL_FUNCT3: u32 = 2;
 #[doc(hidden)]
-pub const FIELD_INLINE_ASSERT_EQ: u32 = 4;
+pub const FIELD_INLINE_INV_FUNCT3: u32 = 3;
 #[doc(hidden)]
-pub const FIELD_INLINE_LOAD_FROM_X: u32 = 5;
+pub const FIELD_INLINE_ASSERT_EQ_FUNCT3: u32 = 4;
 #[doc(hidden)]
-pub const FIELD_INLINE_STORE_TO_X: u32 = 6;
+pub const FIELD_INLINE_LOAD_FROM_X_FUNCT3: u32 = 5;
 #[doc(hidden)]
-pub const FIELD_INLINE_LOAD_IMM: u32 = 7;
+pub const FIELD_INLINE_STORE_TO_X_FUNCT3: u32 = 6;
+#[doc(hidden)]
+pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u32 = 7;
 
 #[doc(hidden)]
-pub const fn field_inline_word(funct3: u32, rd: u32, rs1: u32, rs2_or_imm: u32) -> u32 {
+pub const fn field_inline_r_word(funct7: u32, funct3: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
     FIELD_INLINE_OPCODE
         | ((rd & 0x1f) << 7)
         | ((funct3 & 0x7) << 12)
         | ((rs1 & 0x1f) << 15)
-        | ((rs2_or_imm & 0xfff) << 20)
+        | ((rs2 & 0x1f) << 20)
+        | ((funct7 & 0x7f) << 25)
+}
+
+#[doc(hidden)]
+pub const fn field_inline_i_word(funct3: u32, rd: u32, imm: u32) -> u32 {
+    FIELD_INLINE_OPCODE | ((rd & 0x1f) << 7) | ((funct3 & 0x7) << 12) | ((imm & 0xfff) << 20)
 }
 
 #[doc(hidden)]
@@ -71,10 +79,9 @@ macro_rules! __field_inline_word {
 #[macro_export]
 macro_rules! field_load_imm {
     ($rd:literal, $imm:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_LOAD_IMM,
+        $crate::__field_inline_word!($crate::field_inline_i_word(
+            $crate::FIELD_INLINE_LOAD_IMM_FUNCT3,
             $rd,
-            0,
             $imm
         ))
     };
@@ -83,8 +90,9 @@ macro_rules! field_load_imm {
 #[macro_export]
 macro_rules! field_add {
     ($rd:literal, $rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_ADD,
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_ADD_FUNCT3,
             $rd,
             $rs1,
             $rs2
@@ -95,8 +103,9 @@ macro_rules! field_add {
 #[macro_export]
 macro_rules! field_sub {
     ($rd:literal, $rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_SUB,
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_SUB_FUNCT3,
             $rd,
             $rs1,
             $rs2
@@ -107,8 +116,9 @@ macro_rules! field_sub {
 #[macro_export]
 macro_rules! field_mul {
     ($rd:literal, $rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_MUL,
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_MUL_FUNCT3,
             $rd,
             $rs1,
             $rs2
@@ -119,8 +129,9 @@ macro_rules! field_mul {
 #[macro_export]
 macro_rules! field_inv {
     ($rd:literal, $rs1:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_INV,
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_INV_FUNCT3,
             $rd,
             $rs1,
             0
@@ -131,8 +142,9 @@ macro_rules! field_inv {
 #[macro_export]
 macro_rules! field_assert_eq {
     ($rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_ASSERT_EQ,
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_ASSERT_EQ_FUNCT3,
             0,
             $rs1,
             $rs2

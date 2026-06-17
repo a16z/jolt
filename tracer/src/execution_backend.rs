@@ -129,11 +129,16 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
-        u32::from(FIELD_INLINE_OPCODE)
-            | (u32::from(rd) << 7)
-            | (u32::from(op.funct3()) << 12)
-            | (u32::from(rs1) << 15)
-            | (u32::from(rs2_or_imm) << 20)
+        let base =
+            u32::from(FIELD_INLINE_OPCODE) | (u32::from(rd) << 7) | (u32::from(op.funct3()) << 12);
+        match op.funct7() {
+            Some(funct7) => {
+                base | (u32::from(rs1) << 15)
+                    | (u32::from(rs2_or_imm & 0x1f) << 20)
+                    | (u32::from(funct7) << 25)
+            }
+            None => base | (u32::from(rs2_or_imm & 0x0fff) << 20),
+        }
     }
 
     #[cfg(feature = "field-inline")]
