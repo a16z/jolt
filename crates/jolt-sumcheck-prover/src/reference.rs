@@ -100,11 +100,12 @@ pub(crate) fn validate_dense_binding<F: Field>(
     instance: &SumcheckInstance<F>,
     evals: &[F],
 ) -> Result<(), BackendError> {
-    let expected = 1usize
-        .checked_shl(instance.num_vars as u32)
-        .ok_or(BackendError::UnsupportedRelation {
-            label: instance.label,
-        })?;
+    let expected =
+        1usize
+            .checked_shl(instance.num_vars as u32)
+            .ok_or(BackendError::UnsupportedRelation {
+                label: instance.label,
+            })?;
     if evals.len() != expected {
         return Err(BackendError::BindingLengthMismatch {
             label: instance.label,
@@ -272,7 +273,13 @@ mod tests {
     fn missing_binding_is_rejected() {
         let spec = BatchedSumcheckSpec::new(
             "missing",
-            vec![SumcheckInstance::new("a", Fr::from_u64(10), 3, 1, RoundOffset::ZERO)],
+            vec![SumcheckInstance::new(
+                "a",
+                Fr::from_u64(10),
+                3,
+                1,
+                RoundOffset::ZERO,
+            )],
         );
         let mut backend = ReferenceSumcheckBackend::new();
         let mut transcript = Blake2bTranscript::new(b"sumcheck-test");
@@ -289,8 +296,10 @@ mod tests {
         let evals: Vec<Fr> = (1..=8).map(Fr::from_u64).collect();
         let spec = BatchedSumcheckSpec::new(
             "mismatch",
-            vec![SumcheckInstance::new("a", Fr::from_u64(0), 3, 1, RoundOffset::ZERO)
-                .with_dense_bindings(evals)],
+            vec![
+                SumcheckInstance::new("a", Fr::from_u64(0), 3, 1, RoundOffset::ZERO)
+                    .with_dense_bindings(evals),
+            ],
         );
         let mut backend = ReferenceSumcheckBackend::new();
         let mut transcript = Blake2bTranscript::new(b"sumcheck-test");

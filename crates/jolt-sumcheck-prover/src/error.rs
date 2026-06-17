@@ -23,9 +23,7 @@ pub enum BackendError {
     InvalidActiveIndex { index: usize, batch_size: usize },
     #[error("instance {label} is missing reference witness bindings")]
     MissingBinding { label: &'static str },
-    #[error(
-        "instance {label} dense binding has length {got}, expected 2^{num_vars} = {expected}"
-    )]
+    #[error("instance {label} dense binding has length {got}, expected 2^{num_vars} = {expected}")]
     BindingLengthMismatch {
         label: &'static str,
         num_vars: usize,
