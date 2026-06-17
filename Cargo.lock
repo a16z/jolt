@@ -3318,6 +3318,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-sumcheck-prover"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "jolt-poly",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [

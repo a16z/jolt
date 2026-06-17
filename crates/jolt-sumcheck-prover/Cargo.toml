@@ -1,0 +1,23 @@
+[package]
+name = "jolt-sumcheck-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Universal batched sumcheck prover handler for modular Jolt"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "sumcheck", "prover"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field.workspace = true
+jolt-poly.workspace = true
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+jolt-field = { workspace = true, features = ["bn254"] }
+jolt-transcript.workspace = true

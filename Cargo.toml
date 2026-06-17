@@ -32,6 +32,7 @@ members = [
   "crates/jolt-lookup-tables",
   "crates/jolt-r1cs",
   "crates/jolt-sumcheck",
+  "crates/jolt-sumcheck-prover",
   "crates/jolt-openings",
   "crates/jolt-verifier",
   "crates/jolt-witness",
@@ -397,6 +398,7 @@ jolt-hyrax = { path = "./crates/jolt-hyrax" }
 jolt-wrapper-verifier = { path = "./crates/jolt-wrapper-verifier" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-witness = { path = "./crates/jolt-witness" }
+jolt-sumcheck-prover = { path = "./crates/jolt-sumcheck-prover" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
