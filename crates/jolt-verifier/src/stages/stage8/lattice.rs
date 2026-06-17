@@ -4,18 +4,20 @@ use crate::{
     VerifierError,
 };
 use jolt_akita::{
-    PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec,
-    PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
+    AkitaField, PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId,
+    PackedFamilySpec, PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
 };
 use jolt_claims::protocols::jolt::{
     byte_decode_terms,
-    formulas::{claim_reductions::bytecode, ra::JoltRaPolynomialLayout},
+    formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     little_endian_byte_decode_terms, weighted_symbol_terms, AdviceClaimReductionLayout,
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
     LatticePackedFamilyId, LatticePackedViewFormula, ProgramImageClaimReductionLayout,
 };
-use jolt_field::Field;
+use jolt_field::{Field, FixedByteSize};
+use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::EqPolynomial;
+use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
 use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManifest};
 
@@ -101,14 +103,7 @@ pub fn derive_akita_packed_witness_layout(
         )
     })?;
     for index in 0..bytecode_layout.chunk_count() {
-        specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::BytecodeChunk { index },
-            PackedFactDomain::BytecodeRows {
-                log_bytecode: bytecode_layout.log_bytecode_chunk_size(),
-            },
-            bytecode::committed_lanes(),
-            PackedAlphabet::Byte,
-        ));
+        extend_bytecode_families(&mut specs, index, bytecode_layout.log_bytecode_chunk_size());
     }
 
     let program_image_layout = precommitted.program_image.as_ref().ok_or_else(|| {
@@ -429,6 +424,63 @@ fn advice_family(kind: PackedAdviceKind, layout: &AdviceClaimReductionLayout) ->
     )
 }
 
+fn extend_bytecode_families(specs: &mut Vec<PackedFamilySpec>, chunk: usize, log_bytecode: usize) {
+    let domain = PackedFactDomain::BytecodeRows { log_bytecode };
+    let register_alphabet = PackedAlphabet::Fixed {
+        size: 1usize << REGISTER_ADDRESS_BITS,
+    };
+    for selector in 0..3 {
+        specs.push(PackedFamilySpec::direct(
+            PackedFamilyId::BytecodeRegisterSelector { chunk, selector },
+            domain,
+            1,
+            register_alphabet,
+        ));
+    }
+    for flag in 0..NUM_CIRCUIT_FLAGS {
+        specs.push(PackedFamilySpec::direct(
+            PackedFamilyId::BytecodeCircuitFlag { chunk, flag },
+            domain,
+            1,
+            PackedAlphabet::Bit,
+        ));
+    }
+    for flag in 0..NUM_INSTRUCTION_FLAGS {
+        specs.push(PackedFamilySpec::direct(
+            PackedFamilyId::BytecodeInstructionFlag { chunk, flag },
+            domain,
+            1,
+            PackedAlphabet::Bit,
+        ));
+    }
+    specs.push(PackedFamilySpec::direct(
+        PackedFamilyId::BytecodeLookupSelector { chunk },
+        domain,
+        1,
+        PackedAlphabet::Fixed {
+            size: LookupTableKind::<RISCV_XLEN>::COUNT,
+        },
+    ));
+    specs.push(PackedFamilySpec::direct(
+        PackedFamilyId::BytecodeRafFlag { chunk },
+        domain,
+        1,
+        PackedAlphabet::Bit,
+    ));
+    specs.push(PackedFamilySpec::direct(
+        PackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
+        domain,
+        8,
+        PackedAlphabet::Byte,
+    ));
+    specs.push(PackedFamilySpec::direct(
+        PackedFamilyId::BytecodeImmBytes { chunk },
+        domain,
+        AkitaField::NUM_BYTES,
+        PackedAlphabet::Byte,
+    ));
+}
+
 fn program_image_family(
     layout: &ProgramImageClaimReductionLayout,
 ) -> Result<PackedFamilySpec, VerifierError> {
@@ -597,8 +649,20 @@ mod tests {
             .is_some());
         assert!(layout.family(&PackedFamilyId::IncSign).is_some());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeChunk { index: 0 })
+            .family(&PackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 0,
+            })
             .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeChunk { index: 0 })
+            .is_none());
         assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_some());
         assert_eq!(layout.audit().d_pack, layout.dimension);
 
@@ -955,12 +1019,31 @@ mod tests {
         ));
 
         let bytecode = layout
-            .family(&PackedFamilyId::BytecodeChunk { index: 0 })
-            .unwrap_or_else(|| panic!("bytecode chunk family should be present"));
+            .family(&PackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 0,
+            })
+            .unwrap_or_else(|| panic!("bytecode register selector family should be present"));
         assert_eq!(
             bytecode.domain,
             PackedFactDomain::BytecodeRows { log_bytecode: 3 }
         );
+        assert_eq!(
+            bytecode.alphabet,
+            PackedAlphabet::Fixed {
+                size: 1usize << REGISTER_ADDRESS_BITS,
+            }
+        );
+
+        let imm = layout
+            .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
+            .unwrap_or_else(|| panic!("bytecode immediate byte family should be present"));
+        assert_eq!(
+            imm.domain,
+            PackedFactDomain::BytecodeRows { log_bytecode: 3 }
+        );
+        assert_eq!(imm.limbs, AkitaField::NUM_BYTES);
+        assert_eq!(imm.alphabet, PackedAlphabet::Byte);
 
         let program_image = layout
             .family(&PackedFamilyId::ProgramImageInit)
