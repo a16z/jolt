@@ -3,7 +3,10 @@
 use jolt_claims::protocols::field_inline::FieldInlineConfig;
 use serde::{Deserialize, Serialize};
 
-use crate::{proof::JoltProof, VerifierError};
+use crate::{
+    proof::{validate_commitment_payload_config, JoltProof},
+    VerifierError,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZkConfig {
@@ -264,6 +267,7 @@ where
             got: proof.protocol,
         });
     }
+    validate_commitment_payload_config(config, &proof.commitments)?;
 
     Ok(())
 }

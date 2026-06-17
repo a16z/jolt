@@ -55,7 +55,7 @@ where
         proof,
         trusted_advice_commitment,
         &mut transcript,
-    );
+    )?;
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
     let stage2 = stage2::verify(
@@ -178,7 +178,7 @@ where
         proof,
         trusted_advice_commitment,
         &mut transcript,
-    );
+    )?;
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
     let stage2 = stage2::verify(
@@ -471,25 +471,27 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-) where
+) -> Result<(), VerifierError>
+where
     PCS: CommitmentScheme,
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
+    let commitments = proof.dory_commitments()?;
     let mut absorb_commitment = |commitment: &PCS::Output| {
         append_payload_label(transcript, b"commitment", commitment);
         transcript.append(commitment);
     };
-    absorb_commitment(&proof.commitments.rd_inc);
-    absorb_commitment(&proof.commitments.ram_inc);
-    for commitment in &proof.commitments.ra.instruction {
+    absorb_commitment(&commitments.rd_inc);
+    absorb_commitment(&commitments.ram_inc);
+    for commitment in &commitments.ra.instruction {
         absorb_commitment(commitment);
     }
-    for commitment in &proof.commitments.ra.ram {
+    for commitment in &commitments.ra.ram {
         absorb_commitment(commitment);
     }
-    for commitment in &proof.commitments.ra.bytecode {
+    for commitment in &commitments.ra.bytecode {
         absorb_commitment(commitment);
     }
     if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
@@ -512,6 +514,7 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         );
         transcript.append(&committed.program_image_commitment);
     }
+    Ok(())
 }
 
 fn append_payload_label<T, A>(transcript: &mut T, label: &'static [u8], payload: &A)
@@ -782,6 +785,30 @@ mod tests {
         assert!(matches!(
             validate_proof_consistency(&proof_with_zk(true, clear_claims()), true),
             Err(VerifierError::UnexpectedOpeningClaims)
+        ));
+    }
+
+    #[test]
+    fn validate_proof_config_checks_akita_payload_layout() {
+        let mut config =
+            JoltProtocolConfig::for_zk(false).with_pcs_family(crate::config::PcsFamily::Lattice);
+        config.lattice.program_mode = crate::config::ProgramMode::Committed;
+        config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some([7; 32]);
+        config.lattice.packed_witness.d_pack = Some(43);
+
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.protocol = config;
+        proof.commitments = crate::proof::CommitmentPayload::Akita(
+            crate::proof::AkitaCommitmentPayload::new(TestCommitment, [8; 32], 43),
+        );
+
+        assert!(matches!(
+            validate_proof_config(&config, &proof),
+            Err(VerifierError::AkitaPayloadLayoutDigestMismatch {
+                expected,
+                got,
+            }) if expected == [7; 32] && got == [8; 32]
         ));
     }
 

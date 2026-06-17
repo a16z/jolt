@@ -186,7 +186,8 @@ where
             None,
         ),
     };
-    require_commitment_layout(&proof.commitments, layout)?;
+    let commitments = proof.dory_commitments()?;
+    require_commitment_layout(commitments, layout)?;
 
     let anchor_points: Vec<&[F]> = precommitted_finals
         .iter()
@@ -207,7 +208,8 @@ where
 
     let entries = batch_entries(
         preprocessing,
-        proof,
+        commitments,
+        proof.untrusted_advice_commitment.as_ref(),
         layout,
         trusted_advice_commitment,
         &opening_point,
@@ -289,9 +291,10 @@ where
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
-fn batch_entries<'a, F, PCS, VC, ZkProof>(
+fn batch_entries<'a, F, PCS, VC>(
     preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    proof: &'a JoltProof<PCS, VC, ZkProof>,
+    commitments: &'a JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&'a PCS::Output>,
     layout: JoltRaPolynomialLayout,
     trusted_advice_commitment: Option<&'a PCS::Output>,
     opening_point: &[F],
@@ -327,18 +330,17 @@ where
         let (commitment, own_point, opening_claim): (&PCS::Output, &[F], Option<F>) =
             match polynomial {
                 JoltCommittedPolynomial::RamInc => (
-                    &proof.commitments.ram_inc,
+                    &commitments.ram_inc,
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
                 ),
                 JoltCommittedPolynomial::RdInc => (
-                    &proof.commitments.rd_inc,
+                    &commitments.rd_inc,
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
                 ),
                 JoltCommittedPolynomial::InstructionRa(index) => (
-                    proof
-                        .commitments
+                    commitments
                         .ra
                         .instruction
                         .get(index)
@@ -356,8 +358,7 @@ where
                     },
                 ),
                 JoltCommittedPolynomial::BytecodeRa(index) => (
-                    proof
-                        .commitments
+                    commitments
                         .ra
                         .bytecode
                         .get(index)
@@ -375,8 +376,7 @@ where
                     },
                 ),
                 JoltCommittedPolynomial::RamRa(index) => (
-                    proof
-                        .commitments
+                    commitments
                         .ra
                         .ram
                         .get(index)
@@ -403,9 +403,7 @@ where
                 JoltCommittedPolynomial::UntrustedAdvice => {
                     let opening = precommitted_final(polynomial)
                         .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = proof
-                        .untrusted_advice_commitment
-                        .as_ref()
+                    let commitment = untrusted_advice_commitment
                         .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
@@ -436,7 +434,7 @@ where
         if polynomial == JoltCommittedPolynomial::RdInc {
             entries.push(Stage8BatchEntry {
                 id: field_increments::field_rd_inc_reduced_opening().into(),
-                commitment: &proof.commitments.field_inline.field_registers.rd_inc,
+                commitment: &commitments.field_inline.field_registers.rd_inc,
                 opening_claim: clear_claims.map(|(stage6, _)| {
                     stage6
                         .field_inline

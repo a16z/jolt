@@ -84,7 +84,7 @@ where
         proof,
         trusted_advice_commitment,
         &mut transcript,
-    );
+    )?;
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
     let stage2 = stage2::verify(

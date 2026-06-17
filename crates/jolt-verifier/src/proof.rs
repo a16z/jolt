@@ -30,7 +30,7 @@ pub struct JoltProof<
     VC: VectorCommitment<Field = PCS::Field>,
 {
     pub protocol: JoltProtocolConfig,
-    pub commitments: JoltCommitments<PCS::Output>,
+    pub commitments: CommitmentPayload<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Output>,
@@ -63,6 +63,36 @@ where
         one_hot_config: JoltOneHotConfig,
         trace_polynomial_order: TracePolynomialOrder,
     ) -> Self {
+        Self::new_with_payload(
+            CommitmentPayload::Dory(commitments),
+            stages,
+            joint_opening_proof,
+            untrusted_advice_commitment,
+            claims,
+            trace_length,
+            ram_k,
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Constructor mirrors the proof payload while keeping internal verifier claims private."
+    )]
+    pub fn new_with_payload(
+        commitments: CommitmentPayload<PCS::Output>,
+        stages: JoltStageProofs<PCS::Field, VC>,
+        joint_opening_proof: PCS::Proof,
+        untrusted_advice_commitment: Option<PCS::Output>,
+        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        trace_length: usize,
+        ram_k: usize,
+        rw_config: JoltReadWriteConfig,
+        one_hot_config: JoltOneHotConfig,
+        trace_polynomial_order: TracePolynomialOrder,
+    ) -> Self {
         let protocol = JoltProtocolConfig::for_zk(claims.is_zk());
         Self {
             protocol,
@@ -77,6 +107,17 @@ where
             one_hot_config,
             trace_polynomial_order,
         }
+    }
+
+    pub(crate) fn dory_commitments(
+        &self,
+    ) -> Result<&DoryCommitmentPayload<PCS::Output>, VerifierError> {
+        self.commitments
+            .as_dory()
+            .ok_or_else(|| VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Curve,
+                got: self.commitments.family(),
+            })
     }
 
     pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {

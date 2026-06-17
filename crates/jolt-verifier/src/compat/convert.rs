@@ -8,8 +8,8 @@ use crate::compat::{
 use crate::{
     config::JoltProtocolConfig,
     proof::{
-        JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments, JoltStageProofs,
-        TracePolynomialOrder,
+        CommitmentPayload, JoltCommitments, JoltProof, JoltProofClaims, JoltRaCommitments,
+        JoltStageProofs, TracePolynomialOrder,
     },
     VerifierError,
 };
@@ -275,7 +275,7 @@ where
 
         Ok(Self {
             protocol: JoltProtocolConfig::for_zk(false),
-            commitments,
+            commitments: CommitmentPayload::Dory(commitments),
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             untrusted_advice_commitment: proof
@@ -327,7 +327,7 @@ where
 
         Ok(Self {
             protocol: JoltProtocolConfig::for_zk(true),
-            commitments,
+            commitments: CommitmentPayload::Dory(commitments),
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             untrusted_advice_commitment: proof
