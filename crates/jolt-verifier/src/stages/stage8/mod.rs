@@ -1,8 +1,14 @@
 pub mod inputs;
+#[cfg(feature = "akita")]
+mod lattice;
 pub mod outputs;
 mod verify;
 
 pub use inputs::{deps, Deps};
+#[cfg(feature = "akita")]
+pub use lattice::{
+    derive_akita_packed_witness_layout, validate_akita_packed_witness_layout_config,
+};
 pub use outputs::{
     Stage8BatchStatement, Stage8ClaimMode, Stage8ClearBatchStatement, Stage8ClearOutput,
     Stage8LogicalManifest, Stage8LogicalOpening, Stage8OpeningId, Stage8OpeningStatement,
