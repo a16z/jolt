@@ -172,7 +172,6 @@ codegen-units = 1
 "ark-ff:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 "ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 "ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"allocative:0.3.4" = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -324,7 +323,7 @@ tracing = { version = "0.1.37", default-features = false, features = [
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }
-allocative = { version = "=0.3.4" }
+allocative = { version = "=0.3.6" }
 pprof = { version = "0.15", features = [
   "prost-codec",
   "flamegraph",
