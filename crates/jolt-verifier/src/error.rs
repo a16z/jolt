@@ -32,6 +32,9 @@ pub enum VerifierError {
     )]
     AkitaPayloadDimensionMismatch { expected: usize, got: usize },
 
+    #[error("Akita packed witness commitment failed: {reason}")]
+    AkitaCommitmentFailed { reason: String },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

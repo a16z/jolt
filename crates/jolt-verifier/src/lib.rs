@@ -1,5 +1,7 @@
 //! Verifier model crate for Jolt proofs.
 
+#[cfg(feature = "akita")]
+pub mod akita;
 pub mod compat;
 pub mod config;
 pub mod error;
@@ -8,6 +10,11 @@ pub mod proof;
 pub mod stages;
 pub mod verifier;
 
+#[cfg(feature = "akita")]
+pub use akita::{
+    akita_lattice_protocol_config_for_layout, commit_akita_packed_witness,
+    commit_akita_packed_witness_with_config, AkitaPackedWitnessArtifacts,
+};
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
     IncrementCommitmentMode, JoltProtocolConfig, LatticeConfig, PackedWitnessConfig, PcsFamily,
