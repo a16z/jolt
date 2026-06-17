@@ -2,7 +2,7 @@
 use jolt_claims::protocols::field_inline::FieldInlineOpeningId;
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
-use jolt_openings::{BatchOpeningStatement, VerifierOpeningClaim};
+use jolt_openings::{BatchOpeningStatement, PhysicalView, VerifierOpeningClaim};
 use jolt_poly::{Point, HIGH_TO_LOW};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,9 +64,40 @@ impl<F: Field> Stage8LogicalManifest<F> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage8PhysicalOpening<F: Field> {
+    pub id: Stage8OpeningId,
+    pub relation: Stage8OpeningId,
+    pub view: PhysicalView<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage8PhysicalManifest<F: Field> {
+    pub openings: Vec<Stage8PhysicalOpening<F>>,
+    pub layout_digest: [u8; 32],
+}
+
+impl<F: Field> Stage8PhysicalManifest<F> {
+    pub fn direct(logical: &Stage8LogicalManifest<F>, layout_digest: [u8; 32]) -> Self {
+        Self {
+            openings: logical
+                .openings
+                .iter()
+                .map(|opening| Stage8PhysicalOpening {
+                    id: opening.id,
+                    relation: opening.id,
+                    view: PhysicalView::Direct,
+                })
+                .collect(),
+            layout_digest,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Stage8ClearBatchStatement<F: Field, C> {
     pub logical_manifest: Stage8LogicalManifest<F>,
+    pub physical_manifest: Stage8PhysicalManifest<F>,
     pub opening_ids: Vec<Stage8OpeningId>,
     pub opening_claims: Vec<VerifierOpeningClaim<F, C>>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
@@ -76,6 +107,7 @@ pub struct Stage8ClearBatchStatement<F: Field, C> {
 #[derive(Clone, Debug)]
 pub struct Stage8ZkBatchStatement<F: Field, C> {
     pub logical_manifest: Stage8LogicalManifest<F>,
+    pub physical_manifest: Stage8PhysicalManifest<F>,
     pub opening_ids: Vec<Stage8OpeningId>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
     pub statement: Stage8OpeningStatement<F, C, ()>,
@@ -148,5 +180,28 @@ mod tests {
             manifest.openings[1].claim_mode(),
             Stage8ClaimMode::Committed
         );
+    }
+
+    #[test]
+    fn physical_manifest_direct_resolver_uses_logical_ids() {
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::RamInc,
+            JoltRelationId::IncClaimReduction,
+        ));
+        let logical = Stage8LogicalManifest {
+            openings: vec![Stage8LogicalOpening {
+                id,
+                point: vec![Fr::from_u64(1)],
+                claim: Some(Fr::from_u64(2)),
+                scale: Fr::from_u64(3),
+            }],
+            pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
+        };
+        let physical = Stage8PhysicalManifest::direct(&logical, [9; 32]);
+
+        assert_eq!(physical.layout_digest, [9; 32]);
+        assert_eq!(physical.openings[0].id, id);
+        assert_eq!(physical.openings[0].relation, id);
+        assert!(matches!(physical.openings[0].view, PhysicalView::Direct));
     }
 }

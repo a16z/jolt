@@ -2,8 +2,8 @@ use super::{
     inputs::Deps,
     outputs::{
         Stage8BatchStatement, Stage8ClearBatchStatement, Stage8ClearOutput, Stage8LogicalManifest,
-        Stage8LogicalOpening, Stage8OpeningId, Stage8Output, Stage8ZkBatchStatement,
-        Stage8ZkOutput,
+        Stage8LogicalOpening, Stage8OpeningId, Stage8Output, Stage8PhysicalManifest,
+        Stage8ZkBatchStatement, Stage8ZkOutput,
     },
 };
 use crate::{
@@ -34,7 +34,7 @@ use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-    EvaluationClaim, PhysicalView, VerifierOpeningClaim, ZkBatchOpeningScheme,
+    EvaluationClaim, VerifierOpeningClaim, ZkBatchOpeningScheme,
 };
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_transcript::Transcript;
@@ -224,22 +224,25 @@ where
     let logical_manifest = logical_manifest(&entries, pcs_opening_point.clone());
     let opening_ids = logical_manifest.opening_ids();
     let layout_digest = stage8_layout_digest(preprocessing);
+    let physical_manifest = Stage8PhysicalManifest::direct(&logical_manifest, layout_digest);
     let point = pcs_opening_point.as_slice().to_vec();
 
     if checked.zk {
         let claims = entries
             .iter()
-            .map(|entry| BatchOpeningClaim {
+            .zip(&physical_manifest.openings)
+            .map(|(entry, physical)| BatchOpeningClaim {
                 id: entry.id,
-                relation: entry.id,
+                relation: physical.relation,
                 commitment: entry.commitment.clone(),
                 claim: (),
-                view: PhysicalView::Direct,
+                view: physical.view.clone(),
                 scale: entry.scale,
             })
             .collect::<Vec<_>>();
         return Ok(Stage8BatchStatement::Zk(Stage8ZkBatchStatement {
             logical_manifest,
+            physical_manifest,
             opening_ids,
             pcs_opening_point,
             statement: BatchOpeningStatement {
@@ -253,7 +256,7 @@ where
 
     let mut opening_claims = Vec::with_capacity(entries.len());
     let mut claims = Vec::with_capacity(entries.len());
-    for entry in &entries {
+    for (entry, physical) in entries.iter().zip(&physical_manifest.openings) {
         let opening_claim =
             entry
                 .opening_claim
@@ -269,15 +272,16 @@ where
         });
         claims.push(BatchOpeningClaim {
             id: entry.id,
-            relation: entry.id,
+            relation: physical.relation,
             commitment: entry.commitment.clone(),
             claim: opening_claim,
-            view: PhysicalView::Direct,
+            view: physical.view.clone(),
             scale: entry.scale,
         });
     }
     Ok(Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
         logical_manifest,
+        physical_manifest,
         opening_ids,
         opening_claims,
         pcs_opening_point,
