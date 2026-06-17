@@ -190,6 +190,8 @@ pub struct TraceBackedJoltVmWitness<'a, T: TraceSource> {
     pub program: &'a JoltProgram,
     pub preprocessing: &'a JoltProgramPreprocessing,
     pub trace: TraceOutput<T>,
+    #[cfg(feature = "field-inline")]
+    field_inline: Option<field_inline::TraceBackedFieldInlineWitness<'a>>,
 }
 
 impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
@@ -199,6 +201,8 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
             program: inputs.program,
             preprocessing: inputs.preprocessing,
             trace: inputs.trace,
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
         }
     }
 
@@ -319,15 +323,6 @@ impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
     fn advice_dimensions(words: usize) -> WitnessDimensions {
         let rows = words.next_power_of_two().max(1);
         WitnessDimensions::new(rows.ilog2() as usize)
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<'a, T: TraceSource + Clone> TraceBackedJoltVmWitness<'a, T> {
-    pub fn field_inline_witness<'w>(
-        &'w self,
-    ) -> Result<field_inline::TraceBackedFieldInlineWitness<'w, 'a, T>, WitnessError> {
-        field_inline::TraceBackedFieldInlineWitness::new(self)
     }
 }
 

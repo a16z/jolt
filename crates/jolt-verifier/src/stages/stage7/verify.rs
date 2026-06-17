@@ -18,14 +18,17 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::try_eq_mle;
+use jolt_poly::{try_eq_mle, Point};
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement,
 };
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::{AdviceAddressPhaseOutputClaim, Deps, Stage7Claims},
+    inputs::{
+        AdviceAddressPhaseOutputClaim, Deps, HammingWeightClaimReductionOutputOpeningClaims,
+        Stage7AdviceAddressPhaseClaims, Stage7Claims,
+    },
     outputs::{
         AdviceAddressPhasePublicOutput, CommittedReductionAddressPhasePublicOutput,
         HammingWeightClaimReductionPublicOutput, PrecommittedFinalOpening, Stage7ClearOutput,
@@ -60,12 +63,436 @@ struct Stage7BatchInputClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage7BatchExpectedOutputClaims<F: Field> {
+struct Stage7InlineExpectedOutputClaims<F: Field> {
     hamming_weight_claim_reduction: F,
     trusted_advice_address_phase: Option<F>,
     untrusted_advice_address_phase: Option<F>,
     bytecode_address_phase: Option<F>,
     program_image_address_phase: Option<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage7InputClaims<F: Field> {
+    pub hamming_weight_claim_reduction: F,
+    pub trusted_advice_address_phase: Option<F>,
+    pub untrusted_advice_address_phase: Option<F>,
+}
+
+pub struct Stage7InputClaimRequest<'a, F: Field> {
+    pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    pub trusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
+    pub untrusted_advice_layout: Option<&'a AdviceClaimReductionLayout>,
+    pub stage6: &'a Stage6ClearOutput<F>,
+    pub hamming_gamma: F,
+}
+
+pub struct Stage7HammingOutputClaimRequest<'a, F: Field> {
+    pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    pub hamming_point: &'a [F],
+    pub hamming_gamma: F,
+    pub claims: &'a Stage7Claims<F>,
+    pub stage6: &'a Stage6ClearOutput<F>,
+}
+
+pub struct Stage7HammingOutputOpeningClaimsRequest<'a, F: Field> {
+    pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    pub reduced_claims: &'a [F],
+}
+
+pub struct Stage7HammingSumcheckPointRequest<'a, F: Field> {
+    pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    pub max_num_rounds: usize,
+    pub challenges: &'a [F],
+}
+
+pub struct Stage7HammingOpeningPointRequest<'a, F: Field> {
+    pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    pub hamming_point: &'a [F],
+    pub r_cycle: &'a [F],
+}
+
+pub struct Stage7AdviceAddressOutputRequest<'a, F: Field> {
+    pub kind: JoltAdviceKind,
+    pub input_claim: F,
+    pub rounds: usize,
+    pub layout: &'a AdviceClaimReductionLayout,
+    pub cycle_phase_variables: &'a [F],
+    pub reference_opening_point: &'a [F],
+    pub challenges: &'a [F],
+    pub opening_claim: F,
+}
+
+pub struct Stage7OutputClaimsRequest<'a, F: Field> {
+    pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    pub reduced_claims: &'a [F],
+    pub trusted_advice: Option<&'a Stage7AdviceAddressOutput<F>>,
+    pub untrusted_advice: Option<&'a Stage7AdviceAddressOutput<F>>,
+}
+
+pub struct Stage7OutputClaimValuesRequest<'a, F: Field> {
+    pub reduced_claims: &'a [F],
+    pub trusted_advice: Option<&'a Stage7AdviceAddressOutput<F>>,
+    pub untrusted_advice: Option<&'a Stage7AdviceAddressOutput<F>>,
+}
+
+pub struct Stage7ExpectedOutputsRequest<'a, F: Field> {
+    pub hamming_weight_claim_reduction: F,
+    pub trusted_advice: Option<&'a Stage7AdviceAddressOutput<F>>,
+    pub untrusted_advice: Option<&'a Stage7AdviceAddressOutput<F>>,
+}
+
+pub struct Stage7ClearOutputRequest<'a, F: Field> {
+    pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    pub hamming_gamma: F,
+    pub public_challenges: Vec<F>,
+    pub output_claims: &'a Stage7Claims<F>,
+    pub input_claims: &'a Stage7InputClaims<F>,
+    pub batching_coefficients: &'a [F],
+    pub sumcheck_challenges: Vec<F>,
+    pub sumcheck_final_claim: F,
+    pub expected_final_claim: F,
+    pub hamming_sumcheck_point: Vec<F>,
+    pub hamming_opening_point: Vec<F>,
+    pub expected_outputs: &'a Stage7BatchExpectedOutputClaims<F>,
+    pub trusted_advice: Option<VerifiedAdviceAddressPhaseSumcheck<F>>,
+    pub untrusted_advice: Option<VerifiedAdviceAddressPhaseSumcheck<F>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage7AdviceAddressOutput<F: Field> {
+    pub kind: JoltAdviceKind,
+    pub input_claim: F,
+    pub sumcheck_point: Vec<F>,
+    pub opening_point: Vec<F>,
+    pub opening_claim: F,
+    pub expected_output_claim: F,
+}
+
+impl<F: Field> From<Stage7AdviceAddressOutput<F>> for VerifiedAdviceAddressPhaseSumcheck<F> {
+    fn from(output: Stage7AdviceAddressOutput<F>) -> Self {
+        Self {
+            kind: output.kind,
+            input_claim: output.input_claim,
+            sumcheck_point: output.sumcheck_point,
+            opening_point: output.opening_point,
+            expected_output_claim: output.expected_output_claim,
+        }
+    }
+}
+
+fn stage7_advice_address_output_claim<F: Field>(
+    output: &Stage7AdviceAddressOutput<F>,
+) -> AdviceAddressPhaseOutputClaim<F> {
+    AdviceAddressPhaseOutputClaim {
+        opening_claim: output.opening_claim,
+    }
+}
+
+/// Prover-facing expected-output container modeling the hamming + advice
+/// reduction families. The verifier's own inline computation additionally
+/// folds in the committed bytecode and program-image reductions via
+/// [`Stage7InlineExpectedOutputClaims`]; both share the same canonical order
+/// (hamming, trusted advice, untrusted advice, ...).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stage7BatchExpectedOutputClaims<F: Field> {
+    pub hamming_weight_claim_reduction: F,
+    pub trusted_advice_address_phase: Option<F>,
+    pub untrusted_advice_address_phase: Option<F>,
+}
+
+pub fn stage7_input_claims<F: Field>(
+    request: Stage7InputClaimRequest<'_, F>,
+) -> Result<Stage7InputClaims<F>, VerifierError> {
+    let hamming_claims = hamming_weight::claim_reduction::<F>(request.hamming_dimensions);
+    let hamming_weight_claim_reduction = hamming_claims.input.expression().try_evaluate(
+        |id| hamming_input_opening_claim(*id, request.hamming_dimensions, request.stage6),
+        |id| match id {
+            JoltChallengeId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionChallenge::Gamma,
+            ) => Ok(request.hamming_gamma),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+    )?;
+
+    let trusted_advice_address_phase = request
+        .trusted_advice_layout
+        .filter(|layout| layout.dimensions().has_address_phase())
+        .map(|layout| {
+            let claim = advice::address_phase::<F>(JoltAdviceKind::Trusted, layout.dimensions());
+            advice_address_phase_input(&claim, request.stage6, JoltAdviceKind::Trusted)
+        })
+        .transpose()?;
+    let untrusted_advice_address_phase = request
+        .untrusted_advice_layout
+        .filter(|layout| layout.dimensions().has_address_phase())
+        .map(|layout| {
+            let claim = advice::address_phase::<F>(JoltAdviceKind::Untrusted, layout.dimensions());
+            advice_address_phase_input(&claim, request.stage6, JoltAdviceKind::Untrusted)
+        })
+        .transpose()?;
+
+    Ok(Stage7InputClaims {
+        hamming_weight_claim_reduction,
+        trusted_advice_address_phase,
+        untrusted_advice_address_phase,
+    })
+}
+
+pub fn stage7_hamming_output_claim<F: Field>(
+    request: Stage7HammingOutputClaimRequest<'_, F>,
+) -> Result<F, VerifierError> {
+    let claim = hamming_weight::claim_reduction::<F>(request.hamming_dimensions);
+    hamming_output_claim(
+        &claim,
+        request.hamming_dimensions,
+        request.hamming_point,
+        request.hamming_gamma,
+        request.claims,
+        request.stage6,
+    )
+}
+
+pub fn stage7_hamming_output_opening_claims<F: Field>(
+    request: Stage7HammingOutputOpeningClaimsRequest<'_, F>,
+) -> Result<HammingWeightClaimReductionOutputOpeningClaims<F>, VerifierError> {
+    let layout = request.hamming_dimensions.layout;
+    let expected = layout.total();
+    if request.reduced_claims.len() != expected {
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: format!(
+                "Stage 7 hamming state returned {} final RA claims, expected {expected}",
+                request.reduced_claims.len()
+            ),
+        });
+    }
+
+    let instruction_end = layout.instruction();
+    let bytecode_end = instruction_end + layout.bytecode();
+    Ok(HammingWeightClaimReductionOutputOpeningClaims {
+        instruction_ra: request.reduced_claims[..instruction_end].to_vec(),
+        bytecode_ra: request.reduced_claims[instruction_end..bytecode_end].to_vec(),
+        ram_ra: request.reduced_claims[bytecode_end..].to_vec(),
+    })
+}
+
+pub fn stage7_output_claims<F: Field>(
+    request: Stage7OutputClaimsRequest<'_, F>,
+) -> Result<Stage7Claims<F>, VerifierError> {
+    Ok(Stage7Claims {
+        hamming_weight_claim_reduction: stage7_hamming_output_opening_claims(
+            Stage7HammingOutputOpeningClaimsRequest {
+                hamming_dimensions: request.hamming_dimensions,
+                reduced_claims: request.reduced_claims,
+            },
+        )?,
+        advice_address_phase: Stage7AdviceAddressPhaseClaims {
+            trusted: request
+                .trusted_advice
+                .map(stage7_advice_address_output_claim),
+            untrusted: request
+                .untrusted_advice
+                .map(stage7_advice_address_output_claim),
+        },
+        bytecode_address_phase: None,
+        program_image_address_phase: None,
+    })
+}
+
+pub fn stage7_output_claim_values<F: Field>(
+    request: Stage7OutputClaimValuesRequest<'_, F>,
+) -> Vec<F> {
+    let mut values = request.reduced_claims.to_vec();
+    if let Some(output) = request.trusted_advice {
+        values.push(output.opening_claim);
+    }
+    if let Some(output) = request.untrusted_advice {
+        values.push(output.opening_claim);
+    }
+    values
+}
+
+/// Canonical order in which Stage 7 batched-sumcheck input claims are absorbed
+/// into the transcript. The prover's input-claim absorption and the verifier's
+/// batched-sumcheck claim list both derive their order from this single
+/// function, so the Fiat-Shamir batching coefficients cannot drift between
+/// prover and verifier. Mirrors [`stage7_output_claim_values`].
+pub fn stage7_input_claim_values<F: Field>(claims: &Stage7InputClaims<F>) -> Vec<F> {
+    let mut values = vec![claims.hamming_weight_claim_reduction];
+    if let Some(input_claim) = claims.trusted_advice_address_phase {
+        values.push(input_claim);
+    }
+    if let Some(input_claim) = claims.untrusted_advice_address_phase {
+        values.push(input_claim);
+    }
+    values
+}
+
+pub fn stage7_hamming_sumcheck_point<F: Field>(
+    request: Stage7HammingSumcheckPointRequest<'_, F>,
+) -> Result<Vec<F>, VerifierError> {
+    let rounds = request.hamming_dimensions.log_k_chunk;
+    let offset = request.max_num_rounds.checked_sub(rounds).ok_or_else(|| {
+        VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: "Stage 7 hamming rounds exceed batch rounds".to_owned(),
+        }
+    })?;
+    let end =
+        offset
+            .checked_add(rounds)
+            .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::HammingWeightClaimReduction,
+                reason: "Stage 7 hamming point range overflowed".to_owned(),
+            })?;
+    request
+        .challenges
+        .get(offset..end)
+        .map(<[F]>::to_vec)
+        .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: format!(
+                "Stage 7 hamming point is out of range: offset {offset}, rounds {rounds}, total {}",
+                request.challenges.len()
+            ),
+        })
+}
+
+pub fn stage7_hamming_opening_point<F: Field>(
+    request: Stage7HammingOpeningPointRequest<'_, F>,
+) -> Result<Vec<F>, VerifierError> {
+    request
+        .hamming_dimensions
+        .opening_point(request.hamming_point, request.r_cycle)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: error.to_string(),
+        })
+}
+
+pub fn stage7_advice_address_output<F: Field>(
+    request: Stage7AdviceAddressOutputRequest<'_, F>,
+) -> Result<Stage7AdviceAddressOutput<F>, VerifierError> {
+    let advice_point = request.challenges.get(..request.rounds).ok_or_else(|| {
+        VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::AdviceClaimReduction,
+            reason: "Stage 7 advice point is out of range".to_owned(),
+        }
+    })?;
+    let opening_point = request
+        .layout
+        .address_phase_opening_point(request.cycle_phase_variables, advice_point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::AdviceClaimReduction,
+            reason: error.to_string(),
+        })?;
+    let scale = request
+        .layout
+        .address_phase_final_output_scale(
+            request.reference_opening_point,
+            request.cycle_phase_variables,
+            advice_point,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::AdviceClaimReduction,
+            reason: error.to_string(),
+        })?;
+
+    Ok(Stage7AdviceAddressOutput {
+        kind: request.kind,
+        input_claim: request.input_claim,
+        sumcheck_point: advice_point.to_vec(),
+        opening_point,
+        opening_claim: request.opening_claim,
+        expected_output_claim: request.opening_claim * scale,
+    })
+}
+
+pub fn stage7_expected_output_claim_values<F: Field>(
+    expected_outputs: &Stage7BatchExpectedOutputClaims<F>,
+) -> Vec<F> {
+    let mut values = vec![expected_outputs.hamming_weight_claim_reduction];
+    if let Some(output_claim) = expected_outputs.trusted_advice_address_phase {
+        values.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.untrusted_advice_address_phase {
+        values.push(output_claim);
+    }
+    values
+}
+
+pub fn stage7_expected_outputs<F: Field>(
+    request: Stage7ExpectedOutputsRequest<'_, F>,
+) -> Stage7BatchExpectedOutputClaims<F> {
+    Stage7BatchExpectedOutputClaims {
+        hamming_weight_claim_reduction: request.hamming_weight_claim_reduction,
+        trusted_advice_address_phase: request
+            .trusted_advice
+            .map(|output| output.expected_output_claim),
+        untrusted_advice_address_phase: request
+            .untrusted_advice
+            .map(|output| output.expected_output_claim),
+    }
+}
+
+pub fn stage7_expected_final_claim<F: Field>(
+    coefficients: &[F],
+    expected_outputs: &Stage7BatchExpectedOutputClaims<F>,
+) -> Result<F, VerifierError> {
+    let expected_outputs_in_order = stage7_expected_output_claim_values(expected_outputs);
+    if coefficients.len() != expected_outputs_in_order.len() {
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: format!(
+                "Stage 7 batch verifier returned {} coefficients for {} instances",
+                coefficients.len(),
+                expected_outputs_in_order.len()
+            ),
+        });
+    }
+    Ok(coefficients
+        .iter()
+        .zip(expected_outputs_in_order)
+        .map(|(coefficient, output)| *coefficient * output)
+        .sum())
+}
+
+pub fn stage7_clear_output<F: Field>(
+    request: Stage7ClearOutputRequest<'_, F>,
+) -> Stage7ClearOutput<F> {
+    let batching_coefficients = request.batching_coefficients.to_vec();
+    let hamming_opening_points =
+        stage7_hamming_opening_points(request.hamming_dimensions, &request.hamming_opening_point);
+
+    Stage7ClearOutput {
+        public: Stage7PublicOutput {
+            challenges: request.public_challenges,
+            batching_coefficients: batching_coefficients.clone(),
+            hamming_gamma: request.hamming_gamma,
+        },
+        output_claims: request.output_claims.clone(),
+        batch: VerifiedStage7Batch {
+            batching_coefficients,
+            sumcheck_point: Point::high_to_low(request.sumcheck_challenges),
+            sumcheck_final_claim: request.sumcheck_final_claim,
+            expected_final_claim: request.expected_final_claim,
+            hamming_weight_claim_reduction: VerifiedHammingWeightClaimReductionSumcheck {
+                input_claim: request.input_claims.hamming_weight_claim_reduction,
+                sumcheck_point: request.hamming_sumcheck_point,
+                opening_point: request.hamming_opening_point,
+                instruction_ra_opening_points: hamming_opening_points.instruction,
+                bytecode_ra_opening_points: hamming_opening_points.bytecode,
+                ram_ra_opening_points: hamming_opening_points.ram,
+                expected_output_claim: request.expected_outputs.hamming_weight_claim_reduction,
+            },
+            trusted_advice_address_phase: request.trusted_advice,
+            untrusted_advice_address_phase: request.untrusted_advice,
+            bytecode_address_phase: None,
+            program_image_address_phase: None,
+        },
+        precommitted_final_openings: Vec::new(),
+    }
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -233,7 +660,7 @@ where
                 reason: error.to_string(),
             })?;
         let hamming_opening_points =
-            hamming_opening_points(hamming_dimensions, &hamming_opening_point);
+            stage7_hamming_opening_points(hamming_dimensions, &hamming_opening_point);
 
         let trusted_advice = if let (Some(layout), Some(claim)) =
             (trusted_advice_layout, trusted_advice_claims.as_ref())
@@ -386,29 +813,17 @@ where
         return Err(VerifierError::ExpectedClearProof { field: "stage6" });
     };
     let claims = &proof.clear_claims()?.stage7;
+    let input_claims_core = stage7_input_claims(Stage7InputClaimRequest {
+        hamming_dimensions,
+        trusted_advice_layout,
+        untrusted_advice_layout,
+        stage6,
+        hamming_gamma,
+    })?;
     let input_claims = Stage7BatchInputClaims {
-        hamming_weight_claim_reduction: hamming_claims.input.expression().try_evaluate(
-            |id| hamming_input_opening_claim(*id, hamming_dimensions, stage6),
-            |id| match id {
-                JoltChallengeId::HammingWeightClaimReduction(
-                    HammingWeightClaimReductionChallenge::Gamma,
-                ) => Ok(hamming_gamma),
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-        trusted_advice_address_phase: trusted_advice_claims
-            .as_ref()
-            .map(|claim| {
-                advice_address_phase_input::<PCS::Field>(claim, stage6, JoltAdviceKind::Trusted)
-            })
-            .transpose()?,
-        untrusted_advice_address_phase: untrusted_advice_claims
-            .as_ref()
-            .map(|claim| {
-                advice_address_phase_input::<PCS::Field>(claim, stage6, JoltAdviceKind::Untrusted)
-            })
-            .transpose()?,
+        hamming_weight_claim_reduction: input_claims_core.hamming_weight_claim_reduction,
+        trusted_advice_address_phase: input_claims_core.trusted_advice_address_phase,
+        untrusted_advice_address_phase: input_claims_core.untrusted_advice_address_phase,
         bytecode_address_phase: bytecode_reduction_claims
             .as_ref()
             .map(|claim| {
@@ -535,27 +950,26 @@ where
         reason: error.to_string(),
     })?;
 
-    let hamming_point = batch
-        .try_instance_point(hamming_claims.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let hamming_opening_point = hamming_dimensions
-        .opening_point(hamming_point, &stage6.batch.booleanity.r_cycle)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
+    let hamming_point = stage7_hamming_sumcheck_point(Stage7HammingSumcheckPointRequest {
+        hamming_dimensions,
+        max_num_rounds: batch.max_num_vars,
+        challenges: batch.reduction.point.as_slice(),
+    })?;
+    let hamming_opening_point = stage7_hamming_opening_point(Stage7HammingOpeningPointRequest {
+        hamming_dimensions,
+        hamming_point: &hamming_point,
+        r_cycle: &stage6.batch.booleanity.r_cycle,
+    })?;
     let hamming_output = hamming_output_claim(
         &hamming_claims,
         hamming_dimensions,
-        hamming_point,
+        &hamming_point,
         hamming_gamma,
         claims,
         stage6,
     )?;
-    let hamming_opening_points = hamming_opening_points(hamming_dimensions, &hamming_opening_point);
+    let hamming_opening_points =
+        stage7_hamming_opening_points(hamming_dimensions, &hamming_opening_point);
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
@@ -658,7 +1072,7 @@ where
         });
     }
 
-    let expected_outputs = Stage7BatchExpectedOutputClaims {
+    let expected_outputs = Stage7InlineExpectedOutputClaims {
         hamming_weight_claim_reduction: hamming_output,
         trusted_advice_address_phase: trusted_advice
             .as_ref()
@@ -818,7 +1232,7 @@ where
             expected_final_claim,
             hamming_weight_claim_reduction: VerifiedHammingWeightClaimReductionSumcheck {
                 input_claim: input_claims.hamming_weight_claim_reduction,
-                sumcheck_point: hamming_point.to_vec(),
+                sumcheck_point: hamming_point.clone(),
                 opening_point: hamming_opening_point,
                 instruction_ra_opening_points: hamming_opening_points.instruction,
                 bytecode_ra_opening_points: hamming_opening_points.bytecode,
@@ -898,7 +1312,7 @@ fn hamming_output_claim<F: Field>(
                 reason: error.to_string(),
             }
         })?;
-    let virtualization_points = hamming_virtualization_address_points(dimensions, stage6)?;
+    let virtualization_points = stage7_hamming_virtualization_address_points(dimensions, stage6)?;
     let eq_virtualization = virtualization_points
         .iter()
         .map(|point| {
@@ -1053,7 +1467,7 @@ fn hamming_virtualization_inputs<F: Field>(
     Ok(values)
 }
 
-fn hamming_virtualization_address_points<F: Field>(
+pub fn stage7_hamming_virtualization_address_points<F: Field>(
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     stage6: &Stage6ClearOutput<F>,
 ) -> Result<Vec<Vec<F>>, VerifierError> {
@@ -1125,17 +1539,17 @@ fn hamming_virtualization_address_point<F: Field>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct HammingOpeningPoints<F: Field> {
-    instruction: Vec<Vec<F>>,
-    bytecode: Vec<Vec<F>>,
-    ram: Vec<Vec<F>>,
+pub struct Stage7HammingOpeningPoints<F: Field> {
+    pub instruction: Vec<Vec<F>>,
+    pub bytecode: Vec<Vec<F>>,
+    pub ram: Vec<Vec<F>>,
 }
 
-fn hamming_opening_points<F: Field>(
+pub fn stage7_hamming_opening_points<F: Field>(
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     opening_point: &[F],
-) -> HammingOpeningPoints<F> {
-    HammingOpeningPoints {
+) -> Stage7HammingOpeningPoints<F> {
+    Stage7HammingOpeningPoints {
         instruction: vec![opening_point.to_vec(); dimensions.layout.instruction()],
         bytecode: vec![opening_point.to_vec(); dimensions.layout.bytecode()],
         ram: vec![opening_point.to_vec(); dimensions.layout.ram()],

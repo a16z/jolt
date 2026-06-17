@@ -41,6 +41,7 @@ use crate::{
             RamRaVirtualizationOutputOpeningClaims, Stage6AddressPhaseClaims,
             Stage6AdviceCyclePhaseClaims, Stage6Claims,
         },
+        // stage6 field-inline claim types are pulled in below (field-inline only).
         stage7::inputs::{
             AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
             HammingWeightClaimReductionOutputOpeningClaims, ProgramImageAddressPhaseOutputClaim,

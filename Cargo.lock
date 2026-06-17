@@ -2805,6 +2805,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-backends"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-witness",
+ "rayon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
@@ -2817,6 +2835,7 @@ dependencies = [
  "jolt-transcript",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -2915,6 +2934,8 @@ dependencies = [
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "criterion",
  "dory-pcs",
@@ -3242,6 +3263,40 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jolt-prover"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "blake2 0.11.0-rc.6",
+ "common",
+ "jolt-backends",
+ "jolt-blindfold",
+ "jolt-claims",
+ "jolt-core",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-sdk",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "muldiv-guest",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "sha2-chain-guest",
+ "thiserror 2.0.18",
+ "tracer",
 ]
 
 [[package]]

@@ -1,5 +1,6 @@
 //! Typed outputs produced by stage 6 verification.
 
+use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -42,6 +43,8 @@ pub struct Stage6PublicOutput<F: Field> {
     pub bytecode_reduction_eta: Option<F>,
 }
 
+/// Field-inline-only Stage 6 public output (the field-register increment
+/// claim-reduction batching gamma).
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineStage6PublicOutput<F: Field> {
@@ -53,6 +56,18 @@ pub struct Stage6ClearOutput<F: Field> {
     pub public: Stage6PublicOutput<F>,
     pub output_claims: Stage6Claims<F>,
     pub batch: VerifiedStage6Batch<F>,
+}
+
+impl<F: Field> Stage6ClearOutput<F> {
+    pub const fn advice_cycle_phase(
+        &self,
+        kind: JoltAdviceKind,
+    ) -> Option<&VerifiedAdviceCyclePhaseSumcheck<F>> {
+        match kind {
+            JoltAdviceKind::Trusted => self.batch.trusted_advice_cycle_phase.as_ref(),
+            JoltAdviceKind::Untrusted => self.batch.untrusted_advice_cycle_phase.as_ref(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

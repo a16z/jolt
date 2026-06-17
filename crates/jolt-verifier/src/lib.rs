@@ -19,4 +19,8 @@ pub use preprocessing::{
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "field-inline")]
 pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};
-pub use verifier::{verify, CheckedInputs};
+pub use stages::zk::committed::zk_vector_commitment_capacity_requirement;
+pub use verifier::{
+    absorb_transcript_commitments, absorb_transcript_preamble, validate_inputs_from_parts, verify,
+    verify_until_stage1, CheckedInputs, PreStage1VerifierState, ProofTranscriptConfig,
+};

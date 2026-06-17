@@ -3,7 +3,7 @@ use jolt_field::Field;
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
 
-use super::{PrefixEval, Prefixes, SparseDensePrefix};
+use super::{PrefixCheckpoint, PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum ChangeDivisorWPrefix {}
 
@@ -48,5 +48,78 @@ impl<F: Field> SparseDensePrefix<F> for ChangeDivisorWPrefix {
             }
             checkpoints[Prefixes::ChangeDivisorW]
         }
+    }
+
+    #[expect(clippy::unwrap_used)]
+    fn prefix_mle(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: Option<F>,
+        c: u32,
+        mut b: LookupBits,
+        j: usize,
+    ) -> F {
+        let _ = (checkpoints, r_x, c, b, j);
+        if j < XLEN {
+            return F::zero();
+        }
+
+        let mut result = if j == XLEN || j == XLEN + 1 {
+            F::from_u64(2) - F::from_u128(1u128 << XLEN)
+        } else {
+            checkpoints[Prefixes::ChangeDivisorW].unwrap()
+        };
+
+        if j == XLEN {
+            let x_msb = b.pop_msb() as u32;
+            if x_msb == 0 {
+                return F::zero();
+            }
+            let (x, y) = b.uninterleave();
+            if u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
+                return F::zero();
+            }
+            result = result.mul_u64(c as u64);
+        } else if let Some(r_x) = r_x {
+            if j > XLEN {
+                let (x, y) = b.uninterleave();
+                if u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 || c == 0 {
+                    return F::zero();
+                }
+
+                if j == XLEN + 1 {
+                    result *= (r_x) * F::from_u64(c as u64);
+                } else {
+                    result *= (F::one() - r_x) * F::from_u64(c as u64);
+                }
+            }
+        } else if j > XLEN {
+            let (x, y) = b.uninterleave();
+            if !b.is_empty() && u64::from(x) != 0 || u64::from(y) != (1u64 << y.len()) - 1 {
+                return F::zero();
+            }
+            result *= F::one() - F::from_u64(c as u64);
+        }
+        result
+    }
+
+    #[expect(clippy::unwrap_used)]
+    fn update_prefix_checkpoint(
+        checkpoints: &[PrefixCheckpoint<F>],
+        r_x: F,
+        r_y: F,
+        j: usize,
+        suffix_len: usize,
+    ) -> PrefixCheckpoint<F> {
+        let _ = (checkpoints, r_x, r_y, j, suffix_len);
+        if j < XLEN {
+            return Some(F::zero()).into();
+        }
+
+        let updated = if j == XLEN + 1 {
+            (F::from_u64(2) - F::from_u128(1u128 << XLEN)) * r_x * r_y
+        } else {
+            checkpoints[Prefixes::ChangeDivisorW].unwrap() * ((F::one() - r_x) * r_y)
+        };
+        Some(updated).into()
     }
 }

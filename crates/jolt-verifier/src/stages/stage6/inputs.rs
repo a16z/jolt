@@ -89,6 +89,7 @@ pub struct Stage6Claims<F: Field> {
     pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<F>>,
 }
 
+/// Field-inline-only Stage 6 output opening claims.
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -96,6 +97,7 @@ pub struct FieldInlineStage6Claims<F: Field> {
     pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputOpeningClaims<F>,
 }
 
+/// Output opening claim of the field-register increment claim reduction.
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]

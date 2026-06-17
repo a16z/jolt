@@ -73,6 +73,27 @@ pub struct RamValCheckInitialEvaluation<F: Field> {
     pub full_eval: F,
 }
 
+impl<F: Field> RamValCheckInitialEvaluation<F> {
+    pub fn advice_contribution(
+        &self,
+        kind: JoltAdviceKind,
+    ) -> Option<&VerifiedRamValCheckAdviceContribution<F>> {
+        self.advice_contributions
+            .iter()
+            .find(|contribution| contribution.kind == kind)
+    }
+
+    pub fn advice_opening_claim(&self, kind: JoltAdviceKind) -> Option<F> {
+        self.advice_contribution(kind)
+            .map(|contribution| contribution.opening_claim)
+    }
+
+    pub fn advice_opening_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
+        self.advice_contribution(kind)
+            .map(|contribution| contribution.opening_point.as_slice())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
     pub kind: JoltAdviceKind,
