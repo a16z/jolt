@@ -92,6 +92,7 @@ pub struct VerifiedStage6Batch<F: Field> {
     pub ram_ra_virtualization: VerifiedRamRaVirtualizationSumcheck<F>,
     pub instruction_ra_virtualization: VerifiedInstructionRaVirtualizationSumcheck<F>,
     pub inc_claim_reduction: VerifiedStage6Sumcheck<F>,
+    pub fused_increment_translation: Option<VerifiedStage6Sumcheck<F>>,
     pub trusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub untrusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub bytecode_cycle_phase: Option<VerifiedBytecodeCyclePhaseSumcheck<F>>,

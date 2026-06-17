@@ -451,6 +451,12 @@ pub(super) fn append_opening_claims<F, T>(
     }
     transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.ram_inc);
     transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.rd_inc);
+    if let Some(output_claims) = &claims.fused_increment_translation {
+        transcript.append_labeled(b"opening_claim", &output_claims.ram_source);
+        transcript.append_labeled(b"opening_claim", &output_claims.magnitude);
+        transcript.append_labeled(b"opening_claim", &output_claims.sign);
+        transcript.append_labeled(b"opening_claim", &output_claims.rd_source);
+    }
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
     }

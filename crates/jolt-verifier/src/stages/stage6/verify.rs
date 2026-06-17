@@ -6,14 +6,14 @@ use jolt_claims::protocols::jolt::{
         },
         claim_reductions::{advice, bytecode as bytecode_reduction, increments, program_image},
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
-        instruction, ram,
+        instruction, lattice, ram,
     },
     fused_increment_source_opening, BooleanityChallenge, BooleanityPublic,
-    BytecodeClaimReductionChallenge, BytecodeReadRafChallenge, IncClaimReductionChallenge,
-    IncClaimReductionPublic, InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId,
-    JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
-    LatticeFusedIncrementTarget, PrecommittedReductionLayout, RamHammingBooleanityChallenge,
-    RamRaVirtualizationChallenge,
+    BytecodeClaimReductionChallenge, BytecodeReadRafChallenge, FusedIncrementTranslationChallenge,
+    IncClaimReductionChallenge, IncClaimReductionPublic, InstructionRaVirtualizationChallenge,
+    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltSumcheckDomain, JoltVirtualPolynomial, LatticeFusedIncrementTarget,
+    PrecommittedReductionLayout, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -53,6 +53,7 @@ struct Stage6BatchInputClaims<F: Field> {
     ram_ra_virtualization: F,
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
+    fused_increment_translation: Option<F>,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -69,6 +70,7 @@ struct Stage6BatchExpectedOutputClaims<F: Field> {
     ram_ra_virtualization: F,
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
+    fused_increment_translation: Option<F>,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -633,6 +635,7 @@ where
     );
     let [ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation] =
         increments::claim_reduction_input_openings();
+    let [ram_inc_output, rd_inc_output] = increments::claim_reduction_output_openings();
 
     let bytecode_read_raf_address_input = bytecode_address_claims.input.expression().try_evaluate(
         |id| {
@@ -807,10 +810,22 @@ where
             id: program_image::cycle_phase_program_image_opening(),
         });
     }
-    if claims.fused_increment_translation.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
-        });
+    let fused_increment_claims = if claims.fused_increment_translation.is_some() {
+        if crate::config::validate_protocol_config(&proof.protocol)?
+            != crate::config::PcsFamily::Lattice
+        {
+            return Err(VerifierError::UnexpectedOpeningClaim {
+                id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+            });
+        }
+        Some(lattice::fused_increment_translation_claim::<PCS::Field>(
+            trace_dimensions,
+        ))
+    } else {
+        None
+    };
+    if let Some(claim) = &fused_increment_claims {
+        validate_compressed_stage_claim(claim)?;
     }
 
     let stage6a = verify_a::verify_clear(
@@ -839,6 +854,9 @@ where
         .unwrap_or_else(PCS::Field::one);
     let inc_gamma = transcript.challenge_scalar();
     let eta = committed_program.then(|| transcript.challenge_scalar());
+    let fused_increment_translation_gamma = fused_increment_claims
+        .as_ref()
+        .map(|_| transcript.challenge_scalar());
 
     let input_claims = Stage6BatchInputClaims {
         bytecode_read_raf_address: stage6a.bytecode_read_raf_input,
@@ -899,6 +917,30 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
+        fused_increment_translation: fused_increment_claims
+            .as_ref()
+            .map(|claim| {
+                let gamma = fused_increment_translation_gamma.ok_or(
+                    VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(FusedIncrementTranslationChallenge::Gamma),
+                    },
+                )?;
+                claim.input.expression().try_evaluate(
+                    |id| match *id {
+                        id if id == ram_inc_output => Ok(claims.inc_claim_reduction.ram_inc),
+                        id if id == rd_inc_output => Ok(claims.inc_claim_reduction.rd_inc),
+                        id => Err(VerifierError::MissingOpeningClaim { id }),
+                    },
+                    |id| match id {
+                        JoltChallengeId::FusedIncrementTranslation(
+                            FusedIncrementTranslationChallenge::Gamma,
+                        ) => Ok(gamma),
+                        _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    },
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
         trusted_advice_cycle_phase: trusted_advice_claims
             .as_ref()
             .map(|claim| {
@@ -1003,6 +1045,16 @@ where
             input_claims.inc_claim_reduction,
         ),
     ];
+    if let (Some(claim), Some(input_claim)) = (
+        &fused_increment_claims,
+        input_claims.fused_increment_translation,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
     if let (Some(claim), Some(input_claim)) = (
         &trusted_advice_claims,
         input_claims.trusted_advice_cycle_phase,
@@ -1511,11 +1563,10 @@ where
                 reason: error.to_string(),
             }
         })?;
-    let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
     let inc_output = inc_claims.output.expression().try_evaluate(
         |id| match *id {
-            id if id == ram_inc => Ok(claims.inc_claim_reduction.ram_inc),
-            id if id == rd_inc => Ok(claims.inc_claim_reduction.rd_inc),
+            id if id == ram_inc_output => Ok(claims.inc_claim_reduction.ram_inc),
+            id if id == rd_inc_output => Ok(claims.inc_claim_reduction.rd_inc),
             id => Err(VerifierError::MissingOpeningClaim { id }),
         },
         |id| match id {
@@ -1538,6 +1589,52 @@ where
             _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
         },
     )?;
+    let fused_increment_translation =
+        if let (Some(claim), Some(output_claims), Some(input_claim), Some(gamma)) = (
+            &fused_increment_claims,
+            claims.fused_increment_translation.as_ref(),
+            input_claims.fused_increment_translation,
+            fused_increment_translation_gamma,
+        ) {
+            let point = batch
+                .try_instance_point(claim.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltRelationId::FusedIncrementTranslation,
+                    reason: error.to_string(),
+                })?;
+            let opening_point = trace_dimensions
+                .cycle_opening_point(point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::FusedIncrementTranslation,
+                    reason: error.to_string(),
+                })?;
+            let [ram_source, magnitude, sign, rd_source] =
+                lattice::fused_increment_translation_output_openings();
+            let expected_output_claim = claim.output.expression().try_evaluate(
+                |id| match *id {
+                    id if id == ram_source => Ok(output_claims.ram_source),
+                    id if id == magnitude => Ok(output_claims.magnitude),
+                    id if id == sign => Ok(output_claims.sign),
+                    id if id == rd_source => Ok(output_claims.rd_source),
+                    id => Err(VerifierError::MissingOpeningClaim { id }),
+                },
+                |id| match id {
+                    JoltChallengeId::FusedIncrementTranslation(
+                        FusedIncrementTranslationChallenge::Gamma,
+                    ) => Ok(gamma),
+                    _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                },
+                |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            )?;
+            Some(VerifiedStage6Sumcheck {
+                input_claim,
+                sumcheck_point: point.to_vec(),
+                opening_point,
+                expected_output_claim,
+            })
+        } else {
+            None
+        };
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
@@ -1674,6 +1771,9 @@ where
         ram_ra_virtualization: ram_ra_output,
         instruction_ra_virtualization: instruction_ra_output,
         inc_claim_reduction: inc_output,
+        fused_increment_translation: fused_increment_translation
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
         trusted_advice_cycle_phase: trusted_advice
             .as_ref()
             .map(|verified| verified.expected_output_claim),
@@ -1695,6 +1795,9 @@ where
         expected_outputs.instruction_ra_virtualization,
         expected_outputs.inc_claim_reduction,
     ];
+    if let Some(output_claim) = expected_outputs.fused_increment_translation {
+        expected_outputs_in_order.push(output_claim);
+    }
     if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
         expected_outputs_in_order.push(output_claim);
     }
@@ -1813,6 +1916,7 @@ where
                 opening_point: inc_opening_point,
                 expected_output_claim: expected_outputs.inc_claim_reduction,
             },
+            fused_increment_translation,
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
             bytecode_cycle_phase,

@@ -868,7 +868,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage6,
         MutationStrategy::AddItem,
         TamperCoverage::Deferred,
-        "lattice fused increment translation claims are rejected while the Stage 6 sumcheck is not wired",
+        "active coverage needs a lattice fixture whose Stage 6 batch includes the fused translation sumcheck",
     ),
     checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
