@@ -17,7 +17,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
 
-use super::outputs::{Stage8LogicalManifest, Stage8OpeningId};
+use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManifest};
 
 pub fn derive_akita_packed_witness_layout(
     config: &JoltProtocolConfig,
@@ -161,6 +161,19 @@ where
             ))
         })
         .collect()
+}
+
+pub fn jolt_lattice_physical_manifest<F>(
+    logical: &Stage8LogicalManifest<F>,
+    layout: &PackedWitnessLayout,
+    log_k_chunk: usize,
+) -> Result<Stage8PhysicalManifest<F>, VerifierError>
+where
+    F: Field,
+{
+    let formulas = jolt_lattice_view_formulas(logical, log_k_chunk)?;
+    Stage8PhysicalManifest::from_jolt_lattice_view_formulas(logical, layout, formulas)
+        .map_err(lattice_view_resolution_error)
 }
 
 #[cfg(not(feature = "field-inline"))]
@@ -454,6 +467,12 @@ fn unsupported_lattice_view(reason: impl Into<String>) -> VerifierError {
     }
 }
 
+fn lattice_view_resolution_error(error: PackedViewError) -> VerifierError {
+    VerifierError::FinalOpeningBatchFailed {
+        reason: format!("lattice packed view resolution failed: {error}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on setup errors")]
@@ -469,6 +488,7 @@ mod tests {
         LatticePackedFamilyId, LatticePackedViewFormula, TracePolynomialOrder,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_openings::PhysicalView;
     use jolt_poly::{EqPolynomial, Point};
 
     fn lattice_config() -> JoltProtocolConfig {
@@ -713,6 +733,63 @@ mod tests {
             jolt_lattice_view_formula::<Fr>(id, &[Fr::from_u64(1)], 8),
             Err(VerifierError::FinalOpeningBatchFailed { reason })
                 if reason.contains("BytecodeChunk")
+        ));
+    }
+
+    #[test]
+    fn jolt_lattice_physical_manifest_lowers_supported_ra_view() {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::InstructionRa(1),
+            JoltRelationId::HammingWeightClaimReduction,
+        );
+        let point = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let expected_weights = EqPolynomial::<Fr>::evals(&point[..2], None);
+        let logical = logical_manifest(id, point);
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::InstructionRa { index: 1 },
+            PackedFactDomain::TraceRows { log_t: 1 },
+            1,
+            PackedAlphabet::Fixed { size: 4 },
+        )])
+        .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
+
+        let physical = jolt_lattice_physical_manifest(&logical, &layout, 2)
+            .unwrap_or_else(|error| panic!("physical manifest should resolve: {error}"));
+
+        assert_eq!(physical.layout_digest, layout.digest);
+        assert_eq!(physical.openings[0].id, Stage8OpeningId::from(id));
+        assert!(matches!(
+            &physical.openings[0].view,
+            PhysicalView::PackedLinear {
+                layout_digest,
+                terms
+            } if *layout_digest == layout.digest
+                && terms.len() == 4
+                && terms[2].coefficient == expected_weights[2]
+                && terms[2].family == (PackedFamilyId::InstructionRa { index: 1 }).physical_ref()
+                && terms[2].limb == 0
+                && terms[2].symbol == 2
+        ));
+    }
+
+    #[test]
+    fn jolt_lattice_physical_manifest_rejects_masked_increment_view() {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::RamInc,
+            JoltRelationId::IncClaimReduction,
+        );
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            PackedFactDomain::TraceRows { log_t: 0 },
+            1,
+            PackedAlphabet::Bit,
+        )])
+        .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
+
+        assert!(matches!(
+            jolt_lattice_physical_manifest(&logical_manifest(id, vec![Fr::from_u64(1)]), &layout, 8),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("masked packed view")
         ));
     }
 
