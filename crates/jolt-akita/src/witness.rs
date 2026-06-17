@@ -207,16 +207,14 @@ impl JoltPackedWitnessBuilder {
 
         if self
             .layout
-            .family(&PackedFamilyId::FieldRdIncSign)
+            .family(&PackedFamilyId::FieldRdIncByte { index: 0 })
             .is_some()
         {
             let rd_delta = row.rd_write_value() as i128 - row.rd_pre_value() as i128;
-            self.emit_signed_increment(
-                PackedFamilyId::FieldRdIncByte { index: 0 },
-                PackedFamilyId::FieldRdIncSign,
-                row_index,
-                rd_delta,
-            )?;
+            let encoded = AkitaField::from_i128(rd_delta).to_bytes_le_vec();
+            for (index, byte) in encoded.into_iter().enumerate() {
+                self.emit_byte(PackedFamilyId::FieldRdIncByte { index }, row_index, 0, byte)?;
+            }
         }
         Ok(())
     }
@@ -900,6 +898,70 @@ mod tests {
     }
 
     #[test]
+    fn field_rd_inc_uses_canonical_field_bytes() {
+        let layout = field_rd_inc_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::ADD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 0,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 10,
+                    rd_write_value: 3,
+                }),
+                9,
+            ),
+            trace_row(
+                JoltInstructionKind::ADD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 0,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 7,
+                    rd_write_value: 7,
+                }),
+                11,
+            ),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |_, _| None)
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+        let encoded = AkitaField::from_i128(-7).to_bytes_le_vec();
+
+        assert_eq!(encoded.len(), AkitaField::NUM_BYTES);
+        for (index, byte) in encoded.into_iter().enumerate() {
+            assert_eq!(
+                get(
+                    &witness,
+                    PackedFamilyId::FieldRdIncByte { index },
+                    0,
+                    0,
+                    byte as usize
+                ),
+                AkitaField::one()
+            );
+        }
+        assert!(witness
+            .layout()
+            .family(&PackedFamilyId::FieldRdIncSign)
+            .is_none());
+    }
+
+    #[test]
     fn packs_committed_bytecode_facts() {
         let layout = PackedWitnessLayout::new([
             PackedFamilySpec::direct(
@@ -1109,6 +1171,18 @@ mod tests {
             1,
             PackedAlphabet::Byte,
         )])
+        .expect("layout should build")
+    }
+
+    fn field_rd_inc_layout() -> PackedWitnessLayout {
+        PackedWitnessLayout::new((0..AkitaField::NUM_BYTES).map(|index| {
+            PackedFamilySpec::direct(
+                PackedFamilyId::FieldRdIncByte { index },
+                trace_domain(),
+                1,
+                PackedAlphabet::Byte,
+            )
+        }))
         .expect("layout should build")
     }
 

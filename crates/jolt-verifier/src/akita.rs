@@ -178,12 +178,10 @@ where
 }
 
 fn layout_has_field_rd_inc(layout: &PackedWitnessLayout) -> bool {
-    layout.families.iter().any(|family| {
-        matches!(
-            family.id,
-            PackedFamilyId::FieldRdIncByte { .. } | PackedFamilyId::FieldRdIncSign
-        )
-    })
+    layout
+        .families
+        .iter()
+        .any(|family| matches!(family.id, PackedFamilyId::FieldRdIncByte { .. }))
 }
 
 fn layout_has_advice(layout: &PackedWitnessLayout, kind: PackedAdviceKind) -> bool {

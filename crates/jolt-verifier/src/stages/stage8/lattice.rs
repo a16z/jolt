@@ -76,7 +76,7 @@ pub fn derive_akita_packed_witness_layout(
     ));
 
     if config.lattice.field_inline.enabled {
-        specs.extend((0..8).map(|index| {
+        specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
             PackedFamilySpec::direct(
                 PackedFamilyId::FieldRdIncByte { index },
                 trace,
@@ -84,12 +84,6 @@ pub fn derive_akita_packed_witness_layout(
                 PackedAlphabet::Byte,
             )
         }));
-        specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::FieldRdIncSign,
-            trace,
-            1,
-            PackedAlphabet::Bit,
-        ));
     }
 
     if config.lattice.advice.trusted {
@@ -1549,9 +1543,14 @@ mod tests {
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
         assert!(layout.family(&PackedFamilyId::IncSign).is_some());
-        assert!(layout.family(&PackedFamilyId::FieldRdIncSign).is_some());
+        assert!(layout.family(&PackedFamilyId::FieldRdIncSign).is_none());
         assert!(layout
             .family(&PackedFamilyId::FieldRdIncByte { index: 7 })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::FieldRdIncByte {
+                index: AkitaField::NUM_BYTES - 1
+            })
             .is_some());
     }
 
