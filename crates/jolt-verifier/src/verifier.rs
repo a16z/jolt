@@ -3,7 +3,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use jolt_openings::{BatchOpeningScheme, CommitmentScheme, ZkBatchOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -30,9 +30,9 @@ pub fn verify<F, PCS, VC, T>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
-        + AdditivelyHomomorphic
-        + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+        + BatchOpeningScheme
+        + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,

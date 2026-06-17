@@ -146,6 +146,7 @@ where
         clear_claims,
     )?;
     let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
+    let layout_digest = stage8_layout_digest(preprocessing);
 
     if checked.zk {
         let batch_claims = entries
@@ -162,7 +163,7 @@ where
         let statement = BatchOpeningStatement {
             logical_point: pcs_opening_point.as_slice().to_vec(),
             pcs_point: pcs_opening_point.as_slice().to_vec(),
-            layout_digest: [0; 32],
+            layout_digest,
             claims: batch_claims,
         };
         let batch_result = PCS::verify_batch_zk(
@@ -212,7 +213,7 @@ where
     let statement = BatchOpeningStatement {
         logical_point: pcs_opening_point.as_slice().to_vec(),
         pcs_point: pcs_opening_point.as_slice().to_vec(),
-        layout_digest: [0; 32],
+        layout_digest,
         claims: batch_claims,
     };
     let batch_result = PCS::verify_batch(
@@ -401,6 +402,14 @@ where
         }
     }
     Ok(entries)
+}
+
+fn stage8_layout_digest<PCS, VC>(preprocessing: &JoltVerifierPreprocessing<PCS, VC>) -> [u8; 32]
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    preprocessing.preprocessing_digest
 }
 
 fn require_commitment_layout<C>(

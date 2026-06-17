@@ -314,6 +314,20 @@ Akita:
   bind PackedWitness layout digest before sampling batch/packing challenges.
 ```
 
+Current main integration:
+
+```text
+Stage 8 sets BatchOpeningStatement::layout_digest to the verifier
+preprocessing digest. This is a deterministic public anchor available on main.
+It is not the final PackedWitness layout digest; specs 03/04 replace it once
+the PackedWitness planner exists.
+
+PackedCombine binds its layout digest, points, scales, and physical-view
+coefficients before delegating to the inner batch-opening PCS. The Dory
+homomorphic blanket implementation preserves the legacy Stage 8 transcript
+schedule for compatibility with the current core prover.
+```
+
 Implementation plan:
 
 ```text

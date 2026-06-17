@@ -4,7 +4,7 @@ use common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use jolt_openings::{BatchOpeningScheme, CommitmentScheme, ZkBatchOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use crate::{
@@ -58,9 +58,9 @@ pub fn audit_zk_blindfold_protocol_shape<F, PCS, VC, T, ZkProof>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
-        + AdditivelyHomomorphic
-        + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+        + BatchOpeningScheme
+        + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
