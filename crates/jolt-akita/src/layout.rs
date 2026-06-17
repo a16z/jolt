@@ -250,6 +250,7 @@ impl AkitaSetupParams {
             max_num_polys_per_commitment_group,
             layout.digest,
         )
+        .with_packed_layout(layout.clone())
     }
 }
 
@@ -422,7 +423,7 @@ pub enum PackedFactDomain {
 }
 
 impl PackedFactDomain {
-    fn rows(&self) -> Result<usize, PackedLayoutError> {
+    pub fn rows(&self) -> Result<usize, PackedLayoutError> {
         let log_rows = match *self {
             Self::TraceRows { log_t } => log_t,
             Self::BytecodeRows { log_bytecode } => log_bytecode,

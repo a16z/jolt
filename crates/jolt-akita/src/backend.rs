@@ -222,6 +222,7 @@ impl CommitmentScheme for AkitaScheme {
             max_num_vars: params.max_num_vars,
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
+            packed_layout: params.packed_layout.clone(),
             native: serialize_akita(&native_verifier)
                 .unwrap_or_else(|err| panic!("Akita verifier setup serialization failed: {err}")),
         };
@@ -229,6 +230,7 @@ impl CommitmentScheme for AkitaScheme {
             max_num_vars: params.max_num_vars,
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
+            packed_layout: params.packed_layout,
             native,
             prepared,
             verifier: verifier.clone(),

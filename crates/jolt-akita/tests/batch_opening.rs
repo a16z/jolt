@@ -1,16 +1,17 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 use jolt_akita::{
-    AkitaCommitInput, AkitaCommitment, AkitaField, AkitaScheme, AkitaSetupParams, PackedAlphabet,
-    PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedLayoutError,
-    PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
+    AkitaCommitInput, AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaScheme,
+    AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilyId,
+    PackedFamilySpec, PackedLayoutError, PackedWitnessLayout, PackedWitnessSource,
+    SparsePackedWitness,
 };
 use jolt_field::Field;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
     PackedCombine, PackedLinearTerm, PhysicalView, ZkBatchOpeningScheme,
 };
-use jolt_poly::Polynomial;
+use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,23 @@ fn packed_layout() -> PackedWitnessLayout {
     .expect("packed layout should be valid")
 }
 
+fn packed_reduction_family() -> PackedFamilyId {
+    PackedFamilyId::Custom {
+        namespace: 2,
+        index: 0,
+    }
+}
+
+fn packed_reduction_layout() -> PackedWitnessLayout {
+    PackedWitnessLayout::new([PackedFamilySpec::direct(
+        packed_reduction_family(),
+        PackedFactDomain::TraceRows { log_t: 2 },
+        2,
+        PackedAlphabet::Bit,
+    )])
+    .expect("packed reduction layout should be valid")
+}
+
 fn packed_address(row: usize, symbol: usize) -> PackedCellAddress {
     PackedCellAddress {
         family: PackedFamilyId::Custom {
@@ -66,6 +84,15 @@ fn packed_address(row: usize, symbol: usize) -> PackedCellAddress {
         },
         row,
         limb: 0,
+        symbol,
+    }
+}
+
+fn packed_reduction_address(row: usize, limb: usize, symbol: usize) -> PackedCellAddress {
+    PackedCellAddress {
+        family: packed_reduction_family(),
+        row,
+        limb,
         symbol,
     }
 }
@@ -87,6 +114,21 @@ fn packed_term_at(coefficient: AkitaField, symbol: usize) -> PackedLinearTerm<Ak
     )
 }
 
+fn packed_reduction_term(
+    coefficient: AkitaField,
+    limb: usize,
+    symbol: usize,
+    row_point: &[AkitaField],
+) -> PackedLinearTerm<AkitaField> {
+    PackedLinearTerm::new(
+        coefficient,
+        packed_reduction_family().physical_ref(),
+        limb,
+        symbol,
+    )
+    .with_row_point(row_point.to_vec())
+}
+
 fn packed_polynomial(
     layout: &PackedWitnessLayout,
     entries: &[(usize, AkitaField)],
@@ -96,6 +138,36 @@ fn packed_polynomial(
         evals[rank] = value;
     }
     Polynomial::new(evals)
+}
+
+fn packed_view_eval(
+    layout: &PackedWitnessLayout,
+    witness: &SparsePackedWitness<AkitaField>,
+    terms: &[PackedLinearTerm<AkitaField>],
+) -> AkitaField {
+    terms.iter().fold(AkitaField::zero(), |acc, term| {
+        let family = layout
+            .families
+            .iter()
+            .find(|family| family.id.physical_ref() == term.family)
+            .expect("term family should exist");
+        let row_weights = EqPolynomial::new(term.row_point.clone()).evaluations();
+        let contribution = row_weights.iter().copied().enumerate().fold(
+            AkitaField::zero(),
+            |acc, (row, row_weight)| {
+                let value = witness
+                    .eval_direct_fact(&PackedCellAddress {
+                        family: family.id.clone(),
+                        row,
+                        limb: term.limb,
+                        symbol: term.symbol,
+                    })
+                    .expect("packed address should be valid");
+                acc + row_weight * value
+            },
+        );
+        acc + term.coefficient * contribution
+    })
 }
 
 struct EmittingPackedSource {
@@ -190,6 +262,46 @@ fn unit_packed_statement(
                     terms: vec![packed_term(f(1))],
                 },
                 scale: f(5),
+            },
+        ],
+    }
+}
+
+fn packed_reduction_statement(
+    layout: &PackedWitnessLayout,
+    commitment: AkitaCommitment,
+    row_point: &[AkitaField],
+    terms_a: Vec<PackedLinearTerm<AkitaField>>,
+    claim_a: AkitaField,
+    terms_b: Vec<PackedLinearTerm<AkitaField>>,
+    claim_b: AkitaField,
+) -> BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId> {
+    BatchOpeningStatement {
+        logical_point: row_point.to_vec(),
+        pcs_point: row_point.to_vec(),
+        layout_digest: layout.digest,
+        claims: vec![
+            BatchOpeningClaim {
+                id: OpeningId::A,
+                relation: RelationId::Packed,
+                commitment: commitment.clone(),
+                claim: claim_a,
+                view: PhysicalView::PackedLinear {
+                    layout_digest: layout.digest,
+                    terms: terms_a,
+                },
+                scale: f(3),
+            },
+            BatchOpeningClaim {
+                id: OpeningId::B,
+                relation: RelationId::Packed,
+                commitment,
+                claim: claim_b,
+                view: PhysicalView::PackedLinear {
+                    layout_digest: layout.digest,
+                    terms: terms_b,
+                },
+                scale: f(7),
             },
         ],
     }
@@ -410,6 +522,155 @@ fn packed_combine_akita_unit_packed_views_roundtrip() {
         assert_eq!(result.coefficients, vec![f(2), f(5)]);
         assert_eq!(result.reduced_opening, f(2) * eval_a + f(5) * eval_b);
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
+fn akita_packed_scheme_reduces_packed_views_to_native_opening() {
+    run_on_large_stack(|| {
+        let layout = packed_reduction_layout();
+        let witness = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (packed_reduction_address(0, 0, 1), f(11)),
+                (packed_reduction_address(1, 0, 1), f(13)),
+                (packed_reduction_address(2, 0, 1), f(17)),
+                (packed_reduction_address(3, 0, 1), f(19)),
+                (packed_reduction_address(0, 1, 0), f(23)),
+                (packed_reduction_address(1, 1, 0), f(29)),
+                (packed_reduction_address(2, 1, 0), f(31)),
+                (packed_reduction_address(3, 1, 0), f(37)),
+            ],
+        )
+        .expect("packed witness should be valid");
+        let poly = packed_polynomial(&layout, witness.entries());
+        let (prover_setup, verifier_setup) =
+            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            .expect("source commit should succeed");
+        let row_point = vec![f(2), f(5)];
+        let terms_a = vec![packed_reduction_term(f(1), 0, 1, &row_point)];
+        let terms_b = vec![
+            packed_reduction_term(f(2), 0, 1, &row_point),
+            packed_reduction_term(f(3), 1, 0, &row_point),
+        ];
+        let claim_a = packed_view_eval(&layout, &witness, &terms_a);
+        let claim_b = packed_view_eval(&layout, &witness, &terms_b);
+        let statement = packed_reduction_statement(
+            &layout,
+            commitment.clone(),
+            &row_point,
+            terms_a,
+            claim_a,
+            terms_b,
+            claim_b,
+        );
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-reduction");
+        let proof = <AkitaPackedScheme as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            std::slice::from_ref(&poly),
+            vec![hint],
+        )
+        .expect("packed reduction proof should be produced");
+        assert!(
+            proof.reduction.is_some(),
+            "packed views should produce a reduction proof"
+        );
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-reduction");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("packed reduction proof should verify");
+
+        assert_eq!(result.joint_commitment, commitment);
+        assert_eq!(result.coefficients.len(), 2);
+        assert_eq!(
+            result.reduced_opening,
+            result.coefficients[0] * claim_a + result.coefficients[1] * claim_b
+        );
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
+fn akita_packed_scheme_rejects_tampered_packed_statement() {
+    run_on_large_stack(|| {
+        let layout = packed_reduction_layout();
+        let witness = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (packed_reduction_address(0, 0, 1), f(11)),
+                (packed_reduction_address(1, 0, 1), f(13)),
+                (packed_reduction_address(2, 0, 1), f(17)),
+                (packed_reduction_address(3, 0, 1), f(19)),
+                (packed_reduction_address(0, 1, 0), f(23)),
+                (packed_reduction_address(1, 1, 0), f(29)),
+                (packed_reduction_address(2, 1, 0), f(31)),
+                (packed_reduction_address(3, 1, 0), f(37)),
+            ],
+        )
+        .expect("packed witness should be valid");
+        let poly = packed_polynomial(&layout, witness.entries());
+        let (prover_setup, verifier_setup) =
+            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            .expect("source commit should succeed");
+        let row_point = vec![f(2), f(5)];
+        let terms_a = vec![packed_reduction_term(f(1), 0, 1, &row_point)];
+        let terms_b = vec![
+            packed_reduction_term(f(2), 0, 1, &row_point),
+            packed_reduction_term(f(3), 1, 0, &row_point),
+        ];
+        let claim_a = packed_view_eval(&layout, &witness, &terms_a);
+        let claim_b = packed_view_eval(&layout, &witness, &terms_b);
+        let statement = packed_reduction_statement(
+            &layout, commitment, &row_point, terms_a, claim_a, terms_b, claim_b,
+        );
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-tamper");
+        let proof = <AkitaPackedScheme as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            std::slice::from_ref(&poly),
+            vec![hint],
+        )
+        .expect("packed reduction proof should be produced");
+
+        let mut claim_tampered = statement.clone();
+        claim_tampered.claims[0].claim += f(1);
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-tamper");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &claim_tampered,
+            &proof,
+        );
+        assert!(result.is_err(), "changed packed claim should reject");
+
+        let mut row_point_tampered = statement;
+        assert!(matches!(
+            &row_point_tampered.claims[0].view,
+            PhysicalView::PackedLinear { .. }
+        ));
+        if let PhysicalView::PackedLinear { terms, .. } = &mut row_point_tampered.claims[0].view {
+            terms[0].row_point[0] += f(1);
+        }
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-tamper");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &row_point_tampered,
+            &proof,
+        );
+        assert!(result.is_err(), "changed packed row point should reject");
     });
 }
 

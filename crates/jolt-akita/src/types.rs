@@ -11,6 +11,8 @@ use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
+use crate::layout::PackedWitnessLayout;
+
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
 pub const AKITA_D: usize = AkitaConfig::D;
@@ -34,6 +36,7 @@ pub struct AkitaSetupParams {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
     pub default_layout_digest: AkitaLayoutDigest,
+    pub packed_layout: Option<PackedWitnessLayout>,
 }
 
 impl AkitaSetupParams {
@@ -46,7 +49,13 @@ impl AkitaSetupParams {
             max_num_vars,
             max_num_polys_per_commitment_group,
             default_layout_digest,
+            packed_layout: None,
         }
+    }
+
+    pub fn with_packed_layout(mut self, layout: PackedWitnessLayout) -> Self {
+        self.packed_layout = Some(layout);
+        self
     }
 }
 
@@ -55,6 +64,7 @@ pub struct AkitaProverSetup {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
     pub default_layout_digest: AkitaLayoutDigest,
+    pub packed_layout: Option<PackedWitnessLayout>,
     pub(crate) native: akita_prover::AkitaProverSetup<AkitaField, AKITA_D>,
     pub(crate) prepared: NativePreparedSetup,
     pub(crate) verifier: AkitaVerifierSetup,
@@ -65,6 +75,7 @@ pub struct AkitaVerifierSetup {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
     pub default_layout_digest: AkitaLayoutDigest,
+    pub packed_layout: Option<PackedWitnessLayout>,
     pub native: Vec<u8>,
 }
 
@@ -96,6 +107,18 @@ pub struct AkitaBatchProof {
     pub statement_bridge: Vec<u8>,
     pub proof_shape: Vec<u8>,
     pub proof: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AkitaPackedReductionProof {
+    pub rounds: Vec<[Vec<u8>; 3]>,
+    pub opening_eval: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AkitaPackedBatchProof {
+    pub reduction: Option<AkitaPackedReductionProof>,
+    pub native: AkitaBatchProof,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
