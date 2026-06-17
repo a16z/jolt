@@ -8,7 +8,7 @@ use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
     FieldRegisterWrite,
 };
-use jolt_riscv::{FieldInlineOp, SourceInstructionKind, FIELD_INLINE_OPCODE};
+use jolt_riscv::{FieldInlineOp, SourceInstructionKind};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -40,8 +40,8 @@ macro_rules! field_instruction {
         }
 
         impl RISCVInstruction for $name {
-            const MASK: u32 = 0x0000_707f;
-            const MATCH: u32 = (FIELD_INLINE_OPCODE as u32) | (($op.funct3() as u32) << 12);
+            const MASK: u32 = $op.instruction_mask();
+            const MATCH: u32 = $op.instruction_match();
 
             type Format = FormatFieldInline;
             type RAMAccess = FieldInlineCycleData;

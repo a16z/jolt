@@ -201,7 +201,7 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 
 #[cfg(feature = "field-inline")]
 fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError> {
-    match FieldInlineOp::from_funct3(funct3(word) as u8) {
+    match FieldInlineOp::from_word(word) {
         Some(FieldInlineOp::Add) => Ok(SourceInstructionKind::FIELD_ADD),
         Some(FieldInlineOp::Sub) => Ok(SourceInstructionKind::FIELD_SUB),
         Some(FieldInlineOp::Mul) => Ok(SourceInstructionKind::FIELD_MUL),
@@ -210,7 +210,7 @@ fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError>
         Some(FieldInlineOp::LoadFromX) => Ok(SourceInstructionKind::FIELD_LOAD_FROM_X),
         Some(FieldInlineOp::StoreToX) => Ok(SourceInstructionKind::FIELD_STORE_TO_X),
         Some(FieldInlineOp::LoadImm) => Ok(SourceInstructionKind::FIELD_LOAD_IMM),
-        None => invalid("invalid field-inline funct3"),
+        None => invalid("invalid field-inline encoding"),
     }
 }
 
@@ -539,6 +539,11 @@ mod tests {
     }
 
     #[cfg(feature = "field-inline")]
+    fn field_r_word(funct7: u32, funct3: u32, rd: u8, rs1: u8, rs2: u8) -> u32 {
+        field_word(funct3, rd, rs1, u32::from(rs2)) | (funct7 << 25)
+    }
+
+    #[cfg(feature = "field-inline")]
     #[test]
     fn decodes_field_inline_source_rows_only_for_fr_on_profile() {
         let word = field_word(jolt_riscv::FieldInlineOp::Mul.funct3().into(), 1, 2, 3);
@@ -564,6 +569,29 @@ mod tests {
         assert_eq!(instruction.row().operands.rd, Some(1));
         assert_eq!(instruction.row().operands.rs1, Some(2));
         assert_eq!(instruction.row().operands.rs2, Some(3));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn rejects_unknown_field_inline_r_type_funct7() {
+        let word = field_r_word(
+            1,
+            u32::from(jolt_riscv::FieldInlineOp::Mul.funct3()),
+            1,
+            2,
+            3,
+        );
+        assert!(matches!(
+            decode_instruction(
+                word,
+                0x8000_0000,
+                false,
+                jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE
+            ),
+            Err(ProgramError::MalformedImage(
+                "invalid field-inline encoding"
+            ))
+        ));
     }
 
     #[cfg(not(feature = "field-inline"))]

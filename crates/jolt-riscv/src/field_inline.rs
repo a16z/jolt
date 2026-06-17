@@ -12,6 +12,8 @@ use ark_serialize::{
 pub const FIELD_REGISTER_LOG_K: u8 = 4;
 pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
 pub const FIELD_INLINE_OPCODE: u8 = 0x7b;
+pub const FIELD_INLINE_R_TYPE_FUNCT7: u8 = 0;
+pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u8 = 7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
@@ -30,7 +32,7 @@ pub enum FieldInlineOp {
 }
 
 impl FieldInlineOp {
-    pub const fn funct3(self) -> u8 {
+    pub const fn tag(self) -> u8 {
         match self {
             Self::Add => 0,
             Self::Sub => 1,
@@ -43,8 +45,43 @@ impl FieldInlineOp {
         }
     }
 
-    pub const fn from_funct3(funct3: u8) -> Option<Self> {
-        match funct3 {
+    pub const fn funct3(self) -> u8 {
+        match self {
+            Self::Add => 0,
+            Self::Sub => 1,
+            Self::Mul => 2,
+            Self::Inv => 3,
+            Self::AssertEq => 4,
+            Self::LoadFromX => 5,
+            Self::StoreToX => 6,
+            Self::LoadImm => FIELD_INLINE_LOAD_IMM_FUNCT3,
+        }
+    }
+
+    pub const fn funct7(self) -> Option<u8> {
+        match self {
+            Self::LoadImm => None,
+            _ => Some(FIELD_INLINE_R_TYPE_FUNCT7),
+        }
+    }
+
+    pub const fn instruction_mask(self) -> u32 {
+        match self {
+            Self::LoadImm => 0x0000_707f,
+            _ => 0xfe00_707f,
+        }
+    }
+
+    pub const fn instruction_match(self) -> u32 {
+        let base = (FIELD_INLINE_OPCODE as u32) | ((self.funct3() as u32) << 12);
+        match self.funct7() {
+            Some(funct7) => base | ((funct7 as u32) << 25),
+            None => base,
+        }
+    }
+
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
             0 => Some(Self::Add),
             1 => Some(Self::Sub),
             2 => Some(Self::Mul),
@@ -56,6 +93,34 @@ impl FieldInlineOp {
             _ => None,
         }
     }
+
+    pub const fn from_r_type_key(funct7: u8, funct3: u8) -> Option<Self> {
+        match (funct7, funct3) {
+            (FIELD_INLINE_R_TYPE_FUNCT7, 0) => Some(Self::Add),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 1) => Some(Self::Sub),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 2) => Some(Self::Mul),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 3) => Some(Self::Inv),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 4) => Some(Self::AssertEq),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadFromX),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 6) => Some(Self::StoreToX),
+            _ => None,
+        }
+    }
+
+    pub const fn from_i_type_funct3(funct3: u8) -> Option<Self> {
+        match funct3 {
+            FIELD_INLINE_LOAD_IMM_FUNCT3 => Some(Self::LoadImm),
+            _ => None,
+        }
+    }
+
+    pub const fn from_word(word: u32) -> Option<Self> {
+        let funct3 = ((word >> 12) & 0x7) as u8;
+        match Self::from_i_type_funct3(funct3) {
+            Some(op) => Some(op),
+            None => Self::from_r_type_key(((word >> 25) & 0x7f) as u8, funct3),
+        }
+    }
 }
 
 #[cfg(feature = "serialization")]
@@ -65,11 +130,11 @@ impl CanonicalSerialize for FieldInlineOp {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.funct3().serialize_with_mode(&mut writer, compress)
+        self.tag().serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.funct3().serialized_size(compress)
+        self.tag().serialized_size(compress)
     }
 }
 
@@ -81,7 +146,7 @@ impl CanonicalDeserialize for FieldInlineOp {
         validate: Validate,
     ) -> Result<Self, SerializationError> {
         let tag = u8::deserialize_with_mode(&mut reader, compress, validate)?;
-        Self::from_funct3(tag).ok_or(SerializationError::InvalidData)
+        Self::from_tag(tag).ok_or(SerializationError::InvalidData)
     }
 }
 
@@ -349,5 +414,56 @@ mod tests {
         let register = FieldRegister(FIELD_REGISTER_COUNT);
         assert!(roundtrip(register, Validate::Yes).is_err());
         assert!(roundtrip(register, Validate::No).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+
+    fn r_type_word(op: FieldInlineOp, funct7: u8) -> u32 {
+        u32::from(FIELD_INLINE_OPCODE)
+            | (1 << 7)
+            | (u32::from(op.funct3()) << 12)
+            | (2 << 15)
+            | (3 << 20)
+            | (u32::from(funct7) << 25)
+    }
+
+    fn i_type_word(funct3: u8, imm: u16) -> u32 {
+        u32::from(FIELD_INLINE_OPCODE)
+            | (1 << 7)
+            | (u32::from(funct3) << 12)
+            | (u32::from(imm) << 20)
+    }
+
+    #[test]
+    fn r_type_ops_require_exact_funct7_funct3_key() {
+        assert_eq!(
+            FieldInlineOp::from_r_type_key(0, 2),
+            Some(FieldInlineOp::Mul)
+        );
+        assert_eq!(FieldInlineOp::from_r_type_key(1, 2), None);
+        assert_eq!(
+            FieldInlineOp::from_word(r_type_word(FieldInlineOp::Mul, 0)),
+            Some(FieldInlineOp::Mul)
+        );
+        assert_eq!(
+            FieldInlineOp::from_word(r_type_word(FieldInlineOp::Mul, 1)),
+            None
+        );
+    }
+
+    #[test]
+    fn load_imm_is_reserved_i_type_family() {
+        assert_eq!(
+            FieldInlineOp::from_i_type_funct3(7),
+            Some(FieldInlineOp::LoadImm)
+        );
+        assert_eq!(
+            FieldInlineOp::from_word(i_type_word(7, 0x7ff)),
+            Some(FieldInlineOp::LoadImm)
+        );
+        assert_eq!(FieldInlineOp::from_r_type_key(0, 7), None);
     }
 }
