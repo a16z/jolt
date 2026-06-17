@@ -8,11 +8,12 @@ use jolt_claims::protocols::jolt::{
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram,
     },
-    BooleanityChallenge, BooleanityPublic, BytecodeClaimReductionChallenge,
-    BytecodeReadRafChallenge, IncClaimReductionChallenge, IncClaimReductionPublic,
-    InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
-    PrecommittedReductionLayout, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
+    fused_increment_source_opening, BooleanityChallenge, BooleanityPublic,
+    BytecodeClaimReductionChallenge, BytecodeReadRafChallenge, IncClaimReductionChallenge,
+    IncClaimReductionPublic, InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId,
+    JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
+    LatticeFusedIncrementTarget, PrecommittedReductionLayout, RamHammingBooleanityChallenge,
+    RamRaVirtualizationChallenge,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -804,6 +805,11 @@ where
     if program_image_reduction_claims.is_none() && claims.program_image_claim_reduction.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
             id: program_image::cycle_phase_program_image_opening(),
+        });
+    }
+    if claims.fused_increment_translation.is_some() {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
         });
     }
 

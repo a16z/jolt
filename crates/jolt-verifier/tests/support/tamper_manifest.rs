@@ -863,6 +863,14 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "core-fixture test offsets the register increment reduction output claim",
     ),
     checked_standard(
+        "stage6.claims.fused_increment_translation",
+        "claims.stage6.fused_increment_translation",
+        VerifierPhase::Stage6,
+        MutationStrategy::AddItem,
+        TamperCoverage::Deferred,
+        "lattice fused increment translation claims are rejected while the Stage 6 sumcheck is not wired",
+    ),
+    checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
         "claims.stage6.advice_cycle_phase.trusted.opening_claim",
         VerifierPhase::Stage6,
@@ -1432,6 +1440,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            fused_increment_translation: None,
             advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                 trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
                     opening_claim: zero,

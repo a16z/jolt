@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 pub use super::inputs_a::Stage6AddressPhaseClaims;
 pub use super::inputs_b::{
     AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims, BytecodeCyclePhaseOutputClaims,
-    BytecodeReadRafOutputOpeningClaims, IncClaimReductionOutputOpeningClaims,
-    InstructionRaVirtualizationOutputOpeningClaims, ProgramImageCyclePhaseOutputClaim,
-    RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
-    Stage6AdviceCyclePhaseClaims,
+    BytecodeReadRafOutputOpeningClaims, FusedIncrementTranslationOutputClaims,
+    IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
+    ProgramImageCyclePhaseOutputClaim, RamHammingBooleanityOutputOpeningClaims,
+    RamRaVirtualizationOutputOpeningClaims, Stage6AdviceCyclePhaseClaims,
 };
 use crate::stages::{
     stage1::{Stage1ClearOutput, Stage1Output},
@@ -80,9 +80,77 @@ pub struct Stage6Claims<F: Field> {
     pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
     pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
+    /// Lattice PCS mode only, once the fused increment translation sumcheck is present.
+    #[serde(default)]
+    pub fused_increment_translation: Option<FusedIncrementTranslationOutputClaims<F>>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
     /// Committed program mode only.
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
     /// Committed program mode only.
     pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<F>>,
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "test setup should fail loudly when serde shape changes"
+    )]
+
+    use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    #[test]
+    fn stage6_claims_default_missing_fused_increment_translation() {
+        let zero = Fr::from_u64(0);
+        let claims = Stage6Claims {
+            address_phase: Stage6AddressPhaseClaims {
+                bytecode_read_raf: zero,
+                booleanity: zero,
+                bytecode_val_stages: None,
+            },
+            bytecode_read_raf: BytecodeReadRafOutputOpeningClaims {
+                bytecode_ra: vec![zero],
+            },
+            booleanity: BooleanityOutputOpeningClaims {
+                instruction_ra: vec![zero],
+                bytecode_ra: vec![zero],
+                ram_ra: vec![zero],
+            },
+            ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
+                ram_hamming_weight: zero,
+            },
+            ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims { ram_ra: vec![zero] },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
+                committed_instruction_ra: vec![zero],
+            },
+            inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+                ram_inc: zero,
+                rd_inc: zero,
+            },
+            fused_increment_translation: Some(FusedIncrementTranslationOutputClaims {
+                ram_source: zero,
+                magnitude: zero,
+                sign: zero,
+                rd_source: zero,
+            }),
+            advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+                trusted: None,
+                untrusted: None,
+            },
+            bytecode_claim_reduction: None,
+            program_image_claim_reduction: None,
+        };
+
+        let mut value = serde_json::to_value(claims).expect("claims should serialize");
+        let removed = value
+            .as_object_mut()
+            .expect("claims should serialize to a map")
+            .remove("fused_increment_translation");
+        assert!(removed.is_some());
+
+        let decoded: Stage6Claims<Fr> =
+            serde_json::from_value(value).expect("missing fused field should deserialize");
+        assert_eq!(decoded.fused_increment_translation, None);
+    }
 }

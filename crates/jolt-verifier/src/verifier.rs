@@ -1336,6 +1336,7 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                fused_increment_translation: None,
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,

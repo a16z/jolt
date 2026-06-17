@@ -44,6 +44,15 @@ pub struct IncClaimReductionOutputOpeningClaims<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct FusedIncrementTranslationOutputClaims<F: Field> {
+    pub ram_source: F,
+    pub magnitude: F,
+    pub sign: F,
+    pub rd_source: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage6AdviceCyclePhaseClaims<F: Field> {
     pub trusted: Option<AdviceCyclePhaseOutputClaim<F>>,
     pub untrusted: Option<AdviceCyclePhaseOutputClaim<F>>,
