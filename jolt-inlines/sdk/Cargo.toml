@@ -17,11 +17,7 @@ host = [
   "dep:jolt-program",
   "dep:jolt-riscv",
 ]
-test-utils = [
-  "host",
-  "dep:rand",
-  "tracer/test-utils",
-]
+test-utils = ["host", "dep:rand", "tracer/test-utils"]
 
 [dependencies]
 jolt-platform = { workspace = true }
