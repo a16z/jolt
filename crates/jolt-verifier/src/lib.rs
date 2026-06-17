@@ -18,6 +18,7 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{
+    validate_akita_commitment_payload_config, validate_commitment_payload_config,
     validate_commitment_payload_family, AkitaCommitmentPayload, ClearProofClaims,
     CommitmentPayload, DoryCommitmentPayload, JoltProof, JoltProofClaims,
 };

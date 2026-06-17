@@ -24,6 +24,14 @@ pub enum VerifierError {
     )]
     CommitmentPayloadFamilyMismatch { expected: PcsFamily, got: PcsFamily },
 
+    #[error("Akita commitment payload layout digest does not match verifier config")]
+    AkitaPayloadLayoutDigestMismatch { expected: [u8; 32], got: [u8; 32] },
+
+    #[error(
+        "Akita commitment payload D_pack {got} does not match verifier config D_pack {expected}"
+    )]
+    AkitaPayloadDimensionMismatch { expected: usize, got: usize },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

@@ -161,11 +161,60 @@ pub fn validate_commitment_payload_family<C>(
     config: &JoltProtocolConfig,
     payload: &CommitmentPayload<C>,
 ) -> Result<(), VerifierError> {
+    validate_commitment_payload_config(config, payload)
+}
+
+pub fn validate_commitment_payload_config<C>(
+    config: &JoltProtocolConfig,
+    payload: &CommitmentPayload<C>,
+) -> Result<(), VerifierError> {
     let expected = validate_protocol_config(config)?;
     let got = payload.family();
     if expected != got {
         return Err(VerifierError::CommitmentPayloadFamilyMismatch { expected, got });
     }
+    if let CommitmentPayload::Akita(payload) = payload {
+        validate_akita_commitment_payload_config(config, payload)?;
+    }
+    Ok(())
+}
+
+pub fn validate_akita_commitment_payload_config<C>(
+    config: &JoltProtocolConfig,
+    payload: &AkitaCommitmentPayload<C>,
+) -> Result<(), VerifierError> {
+    let expected = validate_protocol_config(config)?;
+    if expected != PcsFamily::Lattice {
+        return Err(VerifierError::CommitmentPayloadFamilyMismatch {
+            expected,
+            got: PcsFamily::Lattice,
+        });
+    }
+
+    let Some(expected_digest) = config.lattice.packed_witness.layout_digest else {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "lattice PCS mode requires a packed witness layout digest".to_owned(),
+        });
+    };
+    if payload.layout_digest != expected_digest {
+        return Err(VerifierError::AkitaPayloadLayoutDigestMismatch {
+            expected: expected_digest,
+            got: payload.layout_digest,
+        });
+    }
+
+    let Some(expected_d_pack) = config.lattice.packed_witness.d_pack else {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "lattice PCS mode requires D_pack".to_owned(),
+        });
+    };
+    if payload.d_pack != expected_d_pack {
+        return Err(VerifierError::AkitaPayloadDimensionMismatch {
+            expected: expected_d_pack,
+            got: payload.d_pack,
+        });
+    }
+
     Ok(())
 }
 
@@ -367,6 +416,48 @@ mod tests {
             Err(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Lattice,
                 got: PcsFamily::Curve,
+            })
+        ));
+    }
+
+    #[test]
+    fn akita_payload_layout_digest_mismatch_rejects() {
+        let lattice = lattice_config();
+        let payload = CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [8; 32], 43));
+
+        assert!(matches!(
+            validate_commitment_payload_config(&lattice, &payload),
+            Err(VerifierError::AkitaPayloadLayoutDigestMismatch {
+                expected,
+                got,
+            }) if expected == [7; 32] && got == [8; 32]
+        ));
+    }
+
+    #[test]
+    fn akita_payload_dimension_mismatch_rejects() {
+        let lattice = lattice_config();
+        let payload = CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [7; 32], 44));
+
+        assert!(matches!(
+            validate_commitment_payload_config(&lattice, &payload),
+            Err(VerifierError::AkitaPayloadDimensionMismatch {
+                expected: 43,
+                got: 44,
+            })
+        ));
+    }
+
+    #[test]
+    fn direct_akita_payload_validator_requires_lattice_config() {
+        let curve = JoltProtocolConfig::for_zk(false);
+        let payload = AkitaCommitmentPayload::new(9, [7; 32], 43);
+
+        assert!(matches!(
+            validate_akita_commitment_payload_config(&curve, &payload),
+            Err(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Curve,
+                got: PcsFamily::Lattice,
             })
         ));
     }
