@@ -51,6 +51,7 @@ pub struct PackedLinearTerm<F> {
     pub family: PackedFamilyRef,
     pub limb: usize,
     pub symbol: usize,
+    pub row_point: Vec<F>,
 }
 
 impl<F> PackedLinearTerm<F> {
@@ -60,7 +61,13 @@ impl<F> PackedLinearTerm<F> {
             family,
             limb,
             symbol,
+            row_point: Vec::new(),
         }
+    }
+
+    pub fn with_row_point(mut self, row_point: Vec<F>) -> Self {
+        self.row_point = row_point;
+        self
     }
 }
 
@@ -762,6 +769,13 @@ fn bind_packed_batch_statement<F, C, OpeningId, RelationId, Claim, T>(
                     transcript.append(&U64Word(term.family.index));
                     transcript.append(&U64Word(term.limb as u64));
                     transcript.append(&U64Word(term.symbol as u64));
+                    transcript.append(&LabelWithCount(
+                        b"packed_view_row_point",
+                        term.row_point.len() as u64,
+                    ));
+                    for challenge in &term.row_point {
+                        challenge.append_to_transcript(transcript);
+                    }
                     term.coefficient.append_to_transcript(transcript);
                 }
             }

@@ -158,18 +158,24 @@ impl<F: Field> PackedViewFormula<F> {
         &self,
         layout: &PackedWitnessLayout,
     ) -> Result<PhysicalView<F>, PackedViewError> {
+        self.physical_view_at(layout, &[])
+    }
+
+    pub fn physical_view_at(
+        &self,
+        layout: &PackedWitnessLayout,
+        row_point: &[F],
+    ) -> Result<PhysicalView<F>, PackedViewError> {
         self.validate(layout)?;
         let terms = match self {
             Self::Direct {
                 family,
                 limb,
                 symbol,
-            } => vec![PackedLinearTerm::new(
-                F::one(),
-                family.physical_ref(),
-                *limb,
-                *symbol,
-            )],
+            } => vec![
+                PackedLinearTerm::new(F::one(), family.physical_ref(), *limb, *symbol)
+                    .with_row_point(row_point.to_vec()),
+            ],
             Self::LinearDecoded { terms, .. } | Self::ReducedMasked { terms } => terms
                 .iter()
                 .map(|term| {
@@ -179,6 +185,7 @@ impl<F: Field> PackedViewFormula<F> {
                         term.limb,
                         term.symbol,
                     )
+                    .with_row_point(row_point.to_vec())
                 })
                 .collect::<Vec<_>>(),
             Self::MaskedDecoded => return Err(PackedViewError::MaskedViewRequiresTranslation),

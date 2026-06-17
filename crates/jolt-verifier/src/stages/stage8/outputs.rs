@@ -107,7 +107,7 @@ impl<F: Field> Stage8PhysicalManifest<F> {
                 Ok(Stage8PhysicalOpening {
                     id: opening.id,
                     relation: opening.id,
-                    view: formula.physical_view(layout)?,
+                    view: formula.physical_view_at(layout, &opening.point)?,
                 })
             })
             .collect::<Result<Vec<_>, jolt_akita::PackedViewError>>()?;
@@ -122,26 +122,41 @@ impl<F: Field> Stage8PhysicalManifest<F> {
     pub fn from_jolt_lattice_view_formulas(
         logical: &Stage8LogicalManifest<F>,
         layout: &jolt_akita::PackedWitnessLayout,
-        formulas: impl IntoIterator<
-            Item = (
-                JoltOpeningId,
-                jolt_claims::protocols::jolt::LatticePackedViewFormula<F>,
-            ),
-        >,
+        formulas: impl IntoIterator<Item = super::JoltLatticeViewFormulaWithRowPoint<F>>,
     ) -> Result<Self, jolt_akita::PackedViewError> {
         let entries = formulas
             .into_iter()
-            .map(|(id, formula)| {
+            .map(|(id, formula, row_point)| {
                 let id = Stage8OpeningId::from(id);
-                Ok(jolt_akita::PackedViewEntry::new(
+                Ok((
                     id,
                     id,
                     super::lattice::akita_packed_view_formula(&formula)?,
+                    row_point,
                 ))
             })
             .collect::<Result<Vec<_>, jolt_akita::PackedViewError>>()?;
-        let catalog = jolt_akita::PackedViewCatalog::new(layout, entries)?;
-        Self::from_packed_view_catalog(logical, layout, &catalog)
+
+        let openings = logical
+            .openings
+            .iter()
+            .map(|opening| {
+                let (_, relation, formula, row_point) = entries
+                    .iter()
+                    .find(|(id, relation, _, _)| *id == opening.id && *relation == opening.id)
+                    .ok_or(jolt_akita::PackedViewError::MissingView)?;
+                Ok(Stage8PhysicalOpening {
+                    id: opening.id,
+                    relation: *relation,
+                    view: formula.physical_view_at(layout, row_point)?,
+                })
+            })
+            .collect::<Result<Vec<_>, jolt_akita::PackedViewError>>()?;
+
+        Ok(Self {
+            openings,
+            layout_digest: layout.digest,
+        })
     }
 }
 
@@ -360,6 +375,7 @@ mod tests {
                     LatticePackedFamilyId::BytecodeChunk { index: 0 },
                     3,
                 )),
+                vec![Fr::from_u64(1)],
             )],
         )
         .unwrap_or_else(|error| panic!("lattice formula should resolve: {error}"));
@@ -378,6 +394,7 @@ mod tests {
                 && terms[7].family == (PackedFamilyId::BytecodeChunk { index: 0 }).physical_ref()
                 && terms[7].limb == 3
                 && terms[7].symbol == 7
+                && terms[7].row_point == vec![Fr::from_u64(1)]
         ));
     }
 
@@ -422,6 +439,7 @@ mod tests {
                 [(
                     supplied_id,
                     LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1,),
+                    vec![Fr::from_u64(1)],
                 )],
             ),
             Err(PackedViewError::MissingView)
@@ -467,6 +485,7 @@ mod tests {
                     LatticePackedViewFormula::<Fr>::masked_decoded(
                         JoltRelationId::FusedIncrementTranslation,
                     ),
+                    vec![Fr::from_u64(1)],
                 )],
             ),
             Err(PackedViewError::MaskedViewRequiresTranslation)

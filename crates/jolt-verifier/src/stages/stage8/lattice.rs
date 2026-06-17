@@ -17,6 +17,7 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
     JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
     LatticePackedViewFormula, LatticePackedViewTerm, ProgramImageClaimReductionLayout,
+    TracePolynomialOrder,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -24,6 +25,9 @@ use jolt_poly::EqPolynomial;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
 use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManifest};
+
+pub type JoltLatticeViewFormulaWithRowPoint<F> =
+    (JoltOpeningId, LatticePackedViewFormula<F>, Vec<F>);
 
 pub fn derive_akita_packed_witness_layout(
     config: &JoltProtocolConfig,
@@ -146,7 +150,7 @@ pub fn jolt_lattice_view_formulas<F>(
     logical: &Stage8LogicalManifest<F>,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
-) -> Result<Vec<(JoltOpeningId, LatticePackedViewFormula<F>)>, VerifierError>
+) -> Result<Vec<JoltLatticeViewFormulaWithRowPoint<F>>, VerifierError>
 where
     F: Field,
 {
@@ -155,9 +159,11 @@ where
         .iter()
         .map(|opening| {
             let id = stage8_jolt_opening_id(opening.id)?;
+            let row_point = jolt_lattice_row_point(id, &opening.point, log_k_chunk, precommitted)?;
             Ok((
                 id,
                 jolt_lattice_view_formula(id, &opening.point, log_k_chunk, precommitted)?,
+                row_point,
             ))
         })
         .collect()
@@ -175,6 +181,150 @@ where
     let formulas = jolt_lattice_view_formulas(logical, log_k_chunk, precommitted)?;
     Stage8PhysicalManifest::from_jolt_lattice_view_formulas(logical, layout, formulas)
         .map_err(lattice_view_resolution_error)
+}
+
+fn jolt_lattice_row_point<F>(
+    id: JoltOpeningId,
+    point: &[F],
+    log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
+) -> Result<Vec<F>, VerifierError>
+where
+    F: Field,
+{
+    match id {
+        JoltOpeningId::Polynomial {
+            polynomial: JoltPolynomialId::Committed(polynomial),
+            relation,
+        } => committed_lattice_row_point(polynomial, relation, point, log_k_chunk, precommitted),
+        JoltOpeningId::TrustedAdvice {
+            relation: JoltRelationId::AdviceClaimReduction,
+        }
+        | JoltOpeningId::UntrustedAdvice {
+            relation: JoltRelationId::AdviceClaimReduction,
+        } => Ok(point.to_vec()),
+        id if id == fused_increment_magnitude_opening() || id == fused_increment_sign_opening() => {
+            Ok(point.to_vec())
+        }
+        id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
+            || id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) =>
+        {
+            bytecode_address_row_point(point, precommitted)
+        }
+        id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
+            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) =>
+        {
+            Ok(point.to_vec())
+        }
+        _ => Err(unsupported_lattice_view(format!(
+            "final opening {id:?} has no supported lattice packed row point"
+        ))),
+    }
+}
+
+fn committed_lattice_row_point<F>(
+    polynomial: JoltCommittedPolynomial,
+    relation: JoltRelationId,
+    point: &[F],
+    log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
+) -> Result<Vec<F>, VerifierError>
+where
+    F: Field,
+{
+    match (polynomial, relation) {
+        (
+            JoltCommittedPolynomial::InstructionRa(_)
+            | JoltCommittedPolynomial::BytecodeRa(_)
+            | JoltCommittedPolynomial::RamRa(_),
+            JoltRelationId::HammingWeightClaimReduction,
+        )
+        | (
+            JoltCommittedPolynomial::BytecodeRa(_),
+            JoltRelationId::FusedIncrementSourceLink,
+        ) => ra_row_point(point, log_k_chunk),
+        (
+            JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc,
+            JoltRelationId::IncClaimReduction,
+        ) => Ok(point.to_vec()),
+        (
+            JoltCommittedPolynomial::ProgramImageInit,
+            JoltRelationId::ProgramImageClaimReduction,
+        )
+        | (
+            JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice,
+            JoltRelationId::AdviceClaimReduction,
+        ) => Ok(point.to_vec()),
+        (JoltCommittedPolynomial::BytecodeChunk(index), JoltRelationId::BytecodeClaimReduction) => {
+            let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+                unsupported_lattice_view(format!(
+                    "BytecodeChunk({index}) row point requires committed-bytecode layout"
+                ))
+            })?;
+            if index >= layout.chunk_count() {
+                return Err(unsupported_lattice_view(format!(
+                    "BytecodeChunk({index}) is outside committed-bytecode chunk count {}",
+                    layout.chunk_count()
+                )));
+            }
+            bytecode_chunk_row_point(point, layout.trace_order(), layout.log_bytecode_chunk_size())
+        }
+        _ => Err(unsupported_lattice_view(format!(
+            "committed polynomial {polynomial:?} under relation {relation:?} has no supported lattice packed row point"
+        ))),
+    }
+}
+
+fn ra_row_point<F>(point: &[F], log_k_chunk: usize) -> Result<Vec<F>, VerifierError>
+where
+    F: Field,
+{
+    if point.len() < log_k_chunk {
+        return Err(unsupported_lattice_view(format!(
+            "RA lattice opening point has {} variables but needs at least {log_k_chunk}",
+            point.len()
+        )));
+    }
+    Ok(point[log_k_chunk..].to_vec())
+}
+
+fn bytecode_address_row_point<F>(
+    point: &[F],
+    precommitted: &PrecommittedSchedule,
+) -> Result<Vec<F>, VerifierError>
+where
+    F: Field,
+{
+    let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+        unsupported_lattice_view(
+            "bytecode-derived packed row point requires committed-bytecode layout",
+        )
+    })?;
+    layout
+        .split_address_point(point)
+        .map(|address| address.r_bc)
+        .map_err(|error| unsupported_lattice_view(error.to_string()))
+}
+
+fn bytecode_chunk_row_point<F>(
+    point: &[F],
+    trace_order: TracePolynomialOrder,
+    log_bytecode: usize,
+) -> Result<Vec<F>, VerifierError>
+where
+    F: Field,
+{
+    if point.len() < log_bytecode {
+        return Err(unsupported_lattice_view(format!(
+            "bytecode chunk opening point has {} variables but needs at least {log_bytecode}",
+            point.len()
+        )));
+    }
+    let lane_vars = point.len() - log_bytecode;
+    match trace_order {
+        TracePolynomialOrder::CycleMajor => Ok(point[lane_vars..].to_vec()),
+        TracePolynomialOrder::AddressMajor => Ok(point[..log_bytecode].to_vec()),
+    }
 }
 
 #[cfg(not(feature = "field-inline"))]
