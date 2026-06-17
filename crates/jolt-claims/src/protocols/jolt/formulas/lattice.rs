@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 use crate::{challenge, opening};
 
 use super::super::{
-    FusedIncrementTranslationChallenge, JoltChallengeId, JoltExpr, JoltRelationClaims,
+    FusedIncrementSourceLinkChallenge, FusedIncrementTranslationChallenge, JoltChallengeId,
+    JoltExpr, JoltRelationClaims,
 };
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
-use super::claim_reductions::bytecode;
+use super::bytecode::BytecodeReadRafDimensions;
+use super::claim_reductions::bytecode as bytecode_reduction;
 use super::dimensions::{
     JoltFormulaPointError, TraceDimensions, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
@@ -110,6 +112,10 @@ pub fn fused_increment_translation_relation() -> JoltRelationId {
     JoltRelationId::FusedIncrementTranslation
 }
 
+pub fn fused_increment_source_link_relation() -> JoltRelationId {
+    JoltRelationId::FusedIncrementSourceLink
+}
+
 pub fn fused_increment_translation_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
@@ -132,7 +138,46 @@ where
     )
 }
 
+pub fn fused_increment_source_link_claim<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    let gamma = fused_increment_source_link_challenge(FusedIncrementSourceLinkChallenge::Gamma);
+    let input = opening(fused_increment_source_opening(
+        LatticeFusedIncrementTarget::Ram,
+    )) + gamma.clone()
+        * opening(fused_increment_source_opening(
+            LatticeFusedIncrementTarget::Rd,
+        ));
+    let source_output = opening(fused_increment_bytecode_source_opening(
+        LatticeFusedIncrementTarget::Ram,
+    )) + gamma
+        * opening(fused_increment_bytecode_source_opening(
+            LatticeFusedIncrementTarget::Rd,
+        ));
+    let output = fused_increment_source_link_bytecode_ra_product(dimensions) * source_output;
+
+    JoltRelationClaims::new(
+        JoltRelationId::FusedIncrementSourceLink,
+        dimensions.sumcheck(),
+        input,
+        output,
+    )
+    .with_input_challenges([JoltChallengeId::from(
+        FusedIncrementSourceLinkChallenge::Gamma,
+    )])
+}
+
 fn fused_increment_translation_challenge<F>(id: FusedIncrementTranslationChallenge) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    challenge(JoltChallengeId::from(id))
+}
+
+fn fused_increment_source_link_challenge<F>(id: FusedIncrementSourceLinkChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -168,6 +213,29 @@ pub fn fused_increment_source_opening(target: LatticeFusedIncrementTarget) -> Jo
     )
 }
 
+pub fn fused_increment_bytecode_source_opening(
+    target: LatticeFusedIncrementTarget,
+) -> JoltOpeningId {
+    JoltOpeningId::lattice(
+        JoltRelationId::FusedIncrementSourceLink,
+        match target {
+            LatticeFusedIncrementTarget::Ram => 0,
+            LatticeFusedIncrementTarget::Rd => 1,
+        },
+    )
+}
+
+pub fn fused_increment_source_link_output_openings(
+    dimensions: BytecodeReadRafDimensions,
+) -> Vec<JoltOpeningId> {
+    let mut openings = fused_increment_source_link_bytecode_ra_openings(dimensions);
+    openings.extend([
+        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+    ]);
+    openings
+}
+
 pub fn fused_increment_magnitude_opening() -> JoltOpeningId {
     JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 2)
 }
@@ -187,6 +255,32 @@ where
     let source_magnitude = source.clone() * magnitude.clone();
     let sign_correction = source * sign * magnitude;
     source_magnitude - sign_correction.clone() - sign_correction
+}
+
+fn fused_increment_source_link_bytecode_ra_product<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    let mut product = JoltExpr::one();
+    for opening_id in fused_increment_source_link_bytecode_ra_openings(dimensions) {
+        product = product * opening(opening_id);
+    }
+    product
+}
+
+fn fused_increment_source_link_bytecode_ra_openings(
+    dimensions: BytecodeReadRafDimensions,
+) -> Vec<JoltOpeningId> {
+    (0..dimensions.num_committed_ra_polys())
+        .map(|index| {
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(index),
+                JoltRelationId::FusedIncrementSourceLink,
+            )
+        })
+        .collect()
 }
 
 pub fn fused_increment_source_lattice_view_formula<F: Field>(
@@ -380,7 +474,7 @@ pub fn bytecode_chunk_lattice_view_formula<F: Field>(
     log_bytecode: usize,
     field_byte_width: usize,
 ) -> Result<LatticePackedViewFormula<F>, JoltFormulaPointError> {
-    let lane_vars = bytecode::committed_lane_vars();
+    let lane_vars = bytecode_reduction::committed_lane_vars();
     let expected = lane_vars + log_bytecode;
     if opening_point.len() != expected {
         return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
@@ -393,7 +487,7 @@ pub fn bytecode_chunk_lattice_view_formula<F: Field>(
         TracePolynomialOrder::AddressMajor => &opening_point[log_bytecode..],
     };
     let lane_weights = EqPolynomial::<F>::evals(lane_point, None);
-    let lane_layout = bytecode::BYTECODE_LANE_LAYOUT;
+    let lane_layout = bytecode_reduction::BYTECODE_LANE_LAYOUT;
     let register_count = 1usize << REGISTER_ADDRESS_BITS;
     let mut terms = Vec::new();
 
@@ -470,6 +564,7 @@ mod tests {
     )]
 
     use super::*;
+    use crate::protocols::jolt::JoltPolynomialId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[test]
@@ -567,6 +662,117 @@ mod tests {
             vec![JoltChallengeId::from(
                 FusedIncrementTranslationChallenge::Gamma
             )]
+        );
+    }
+
+    #[test]
+    fn fused_increment_source_link_claim_batches_translation_sources() {
+        let dimensions = BytecodeReadRafDimensions::new(5, 10, 2);
+        let claims = fused_increment_source_link_claim::<Fr>(dimensions);
+        let expected_bytecode_ra = (0..2)
+            .map(|index| {
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeRa(index),
+                    JoltRelationId::FusedIncrementSourceLink,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut expected_output = expected_bytecode_ra.clone();
+        expected_output.extend([
+            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+        ]);
+
+        assert_eq!(
+            fused_increment_source_link_relation(),
+            JoltRelationId::FusedIncrementSourceLink
+        );
+        assert_eq!(claims.id, JoltRelationId::FusedIncrementSourceLink);
+        assert_eq!(claims.sumcheck, dimensions.sumcheck());
+        assert_eq!(
+            claims.input.required_openings,
+            vec![
+                fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+                fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
+            ]
+        );
+        assert_eq!(claims.output.required_openings, expected_output);
+        assert_eq!(
+            fused_increment_source_link_output_openings(dimensions),
+            claims.output.required_openings
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![JoltChallengeId::from(
+                FusedIncrementSourceLinkChallenge::Gamma
+            )]
+        );
+    }
+
+    #[test]
+    fn fused_increment_source_link_claim_evaluates_read_raf_source_formula() {
+        let dimensions = BytecodeReadRafDimensions::new(5, 10, 2);
+        let claims = fused_increment_source_link_claim::<Fr>(dimensions);
+        let ram_source = Fr::from_u64(13);
+        let rd_source = Fr::from_u64(17);
+        let bytecode_ra = [Fr::from_u64(2), Fr::from_u64(3)];
+        let store_flag = Fr::from_u64(5);
+        let rd_present = Fr::from_u64(7);
+        let gamma = Fr::from_u64(11);
+        let zero = Fr::from_u64(0);
+
+        let input = claims.input.expression().evaluate(
+            |id| match *id {
+                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) => {
+                    ram_source
+                }
+                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) => {
+                    rd_source
+                }
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::FusedIncrementSourceLink(
+                    FusedIncrementSourceLinkChallenge::Gamma,
+                ) => gamma,
+                _ => zero,
+            },
+            |_| zero,
+        );
+        let output = claims.output.expression().evaluate(
+            |id| match *id {
+                JoltOpeningId::Polynomial {
+                    polynomial:
+                        JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+                    relation: JoltRelationId::FusedIncrementSourceLink,
+                } => bytecode_ra[index],
+                id if id
+                    == fused_increment_bytecode_source_opening(
+                        LatticeFusedIncrementTarget::Ram,
+                    ) =>
+                {
+                    store_flag
+                }
+                id if id
+                    == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) =>
+                {
+                    rd_present
+                }
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::FusedIncrementSourceLink(
+                    FusedIncrementSourceLinkChallenge::Gamma,
+                ) => gamma,
+                _ => zero,
+            },
+            |_| zero,
+        );
+
+        assert_eq!(input, ram_source + gamma * rd_source);
+        assert_eq!(
+            output,
+            bytecode_ra[0] * bytecode_ra[1] * (store_flag + gamma * rd_present)
         );
     }
 
@@ -741,13 +947,13 @@ mod tests {
 
     #[test]
     fn bytecode_chunk_lattice_view_formula_uses_cycle_major_lane_weights() {
-        let lane_vars = bytecode::committed_lane_vars();
+        let lane_vars = bytecode_reduction::committed_lane_vars();
         let log_bytecode = 2;
         let lane_point = (1..=lane_vars as u64).map(Fr::from_u64).collect::<Vec<_>>();
         let mut opening_point = lane_point.clone();
         opening_point.extend([Fr::from_u64(101), Fr::from_u64(103)]);
         let lane_weights = EqPolynomial::<Fr>::evals(&lane_point, None);
-        let lane_layout = bytecode::BYTECODE_LANE_LAYOUT;
+        let lane_layout = bytecode_reduction::BYTECODE_LANE_LAYOUT;
 
         let formula = bytecode_chunk_lattice_view_formula(
             2,
@@ -826,7 +1032,7 @@ mod tests {
 
     #[test]
     fn bytecode_chunk_lattice_view_formula_uses_address_major_lane_suffix() {
-        let lane_vars = bytecode::committed_lane_vars();
+        let lane_vars = bytecode_reduction::committed_lane_vars();
         let log_bytecode = 2;
         let lane_point = (11..11 + lane_vars as u64)
             .map(Fr::from_u64)
@@ -856,13 +1062,13 @@ mod tests {
                 1
             )
             .coefficient,
-            lane_weights[bytecode::BYTECODE_LANE_LAYOUT.rs1_start + 1]
+            lane_weights[bytecode_reduction::BYTECODE_LANE_LAYOUT.rs1_start + 1]
         );
     }
 
     #[test]
     fn bytecode_chunk_lattice_view_formula_rejects_bad_point_length() {
-        let expected = bytecode::committed_lane_vars() + 3;
+        let expected = bytecode_reduction::committed_lane_vars() + 3;
 
         let err = bytecode_chunk_lattice_view_formula::<Fr>(
             0,

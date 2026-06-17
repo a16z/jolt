@@ -682,7 +682,8 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
+                | JoltChallengeId::FusedIncrementTranslation(_)
+                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
             },
             |_| zero,
         );
@@ -714,7 +715,8 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
+                | JoltChallengeId::FusedIncrementTranslation(_)
+                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
             },
             |_| zero,
         );
@@ -962,7 +964,8 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
+                | JoltChallengeId::FusedIncrementTranslation(_)
+                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
             },
             |_| zero,
         );
@@ -991,7 +994,8 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
+                | JoltChallengeId::FusedIncrementTranslation(_)
+                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
             },
             |id| match *id {
                 JoltPublicId::RamRaClaimReduction(id) => public_values.value(id),
@@ -1265,7 +1269,8 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
+                | JoltChallengeId::FusedIncrementTranslation(_)
+                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
             },
             |_| zero,
         );
@@ -1298,7 +1303,8 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
+                | JoltChallengeId::FusedIncrementTranslation(_)
+                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
             },
             |_| zero,
         );
@@ -1366,7 +1372,8 @@ mod tests {
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
-                | JoltChallengeId::FusedIncrementTranslation(_) => zero,
+                | JoltChallengeId::FusedIncrementTranslation(_)
+                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
             },
             |_| zero,
         );
