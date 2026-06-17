@@ -15,10 +15,10 @@ use jolt_claims::protocols::jolt::formulas::{
 };
 #[cfg(feature = "core-fixtures")]
 use jolt_crypto::{Bn254G1, Pedersen};
-#[cfg(feature = "core-fixtures")]
-use jolt_dory::DoryScheme;
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use jolt_dory::DoryCommitment;
+#[cfg(feature = "core-fixtures")]
+use jolt_dory::DoryScheme;
 #[cfg(feature = "core-fixtures")]
 use jolt_field::Fr;
 #[cfg(feature = "core-fixtures")]

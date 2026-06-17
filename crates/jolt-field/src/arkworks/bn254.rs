@@ -3,9 +3,9 @@
 //! [`Fr`] is `#[repr(transparent)]` over the inner arkworks scalar field element,
 //! so it has identical layout and can be transmuted where needed.
 use crate::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, Field, FieldCore,
-    FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt,
-    RandomSampling, ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
+    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize,
+    FixedBytes, FromPrimitiveInt, Invertible, Limbs, MulPrimitiveInt, RandomSampling,
+    ReducingBytes, RingCore, TranscriptChallenge, WithAccumulator,
 };
 use ark_ff::{prelude::*, PrimeField, UniformRand};
 use rand_core::RngCore;
@@ -470,8 +470,6 @@ impl MulPrimitiveInt for Fr {
         Fr(bn254_ops::mul_i128(self.0, n))
     }
 }
-
-impl Field for Fr {}
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]

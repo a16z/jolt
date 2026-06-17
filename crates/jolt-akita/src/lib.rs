@@ -1,17 +1,14 @@
-//! Akita PCS adapter shell.
+//! Akita PCS adapter for Jolt.
 //!
-//! This crate currently exposes a transparent mock backend that normalizes and
-//! binds Akita-shaped batch opening statements. It is a protocol-facing scaffold
-//! for the real lattice backend, not a cryptographic Akita implementation.
+//! Wraps the LayerZero Labs Akita PCS over its fp128 field using Jolt's
+//! `CommitmentScheme` and same-point `BatchOpeningScheme` traits.
 
 mod backend;
-mod field;
 mod types;
 
 pub use backend::AkitaScheme;
-pub use field::{to_akita_claim, AkitaClaimField};
 pub use types::{
-    AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaFieldMode, AkitaHidingCommitment,
-    AkitaLayoutDigest, AkitaPackedViewStatement, AkitaProverHint, AkitaProverSetup, AkitaSetup,
-    AkitaSetupKey, AkitaSetupMode, AkitaSetupParams, AkitaVerifierSetup, AkitaViewFormula,
+    AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaConfig, AkitaField,
+    AkitaHidingCommitment, AkitaLayoutDigest, AkitaPackedViewStatement, AkitaProverHint,
+    AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AkitaViewFormula, AKITA_D,
 };

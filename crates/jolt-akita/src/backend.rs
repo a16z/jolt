@@ -1,120 +1,188 @@
-use std::marker::PhantomData;
+use std::io::Cursor;
 
+use akita_pcs::{
+    AkitaDeserialize, AkitaSerialize, AkitaTranscript, CommitmentProver, ComputeBackendSetup,
+    CpuBackend,
+};
+use akita_prover::{CommittedPolynomials, ProverClaims};
+use akita_types::{
+    BasisMode, CommitmentVerifier, CommittedOpenings, SetupContributionMode, VerifierClaims,
+};
 use jolt_crypto::Commitment;
-use jolt_field::Field;
+use jolt_field::{CanonicalBytes, FixedByteSize};
 use jolt_openings::{
     BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
     PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    append_field_slice, u64_field, AkitaBatchProof, AkitaCommitInput, AkitaCommitment,
-    AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetup, AkitaSetupKey,
-    AkitaSetupParams, AkitaVerifierSetup,
+    append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
+    AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
+    NativeCommitment, NativeDensePoly, NativeHint, NativeProof, NativeProofShape, NativeScheme,
+    NativeVerifier,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct AkitaScheme<F: Field>(PhantomData<F>);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AkitaScheme;
 
-impl<F: Field> AkitaScheme<F> {
+impl AkitaScheme {
+    pub fn commit_group(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        polynomials: &[Polynomial<AkitaField>],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let num_vars = validate_commit_polynomials(setup, polynomials)?;
+        let dense = dense_polynomials(polynomials)?;
+        let dense_refs = dense.iter().collect::<Vec<_>>();
+        let (native_commitment, native_hint) = NativeScheme::commit(
+            &setup.native,
+            &CpuBackend,
+            &setup.prepared,
+            dense_refs.as_slice(),
+        )
+        .map_err(akita_error)?;
+        let commitment = AkitaCommitment {
+            layout_digest,
+            num_vars,
+            poly_count: polynomials.len(),
+            native: serialize_akita(&native_commitment)?,
+        };
+        Ok((
+            commitment.clone(),
+            AkitaProverHint {
+                commitment,
+                native: Some(native_hint),
+            },
+        ))
+    }
+
     pub fn commit_packed_witness(
         setup: &AkitaProverSetup,
-        input: AkitaCommitInput<F>,
+        input: AkitaCommitInput,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        validate_setup_dimension(&setup.key, input.d_pack)?;
-        validate_evaluation_shape(input.d_pack, input.evaluations.len())?;
-        let commitment_digest = commitment_digest::<F>(
-            &setup.key,
-            &input.layout_digest,
-            input.d_pack,
-            &input.evaluations,
-        );
-        let commitment = AkitaCommitment {
-            layout_digest: input.layout_digest,
-            commitment_digest,
-            d_pack: input.d_pack,
-        };
-        let hint = AkitaProverHint {
-            layout_digest: commitment.layout_digest,
-            commitment_digest,
-            d_pack: commitment.d_pack,
-        };
-        Ok((commitment, hint))
+        Self::commit_group(setup, input.layout_digest, &[input.polynomial])
     }
 }
 
-impl<F: Field> Commitment for AkitaScheme<F> {
+fn validate_commit_polynomials(
+    setup: &AkitaProverSetup,
+    polynomials: &[Polynomial<AkitaField>],
+) -> Result<usize, OpeningsError> {
+    let first = polynomials
+        .first()
+        .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
+    let num_vars = first.num_vars();
+    if num_vars > setup.max_num_vars {
+        return Err(OpeningsError::PolynomialTooLarge {
+            poly_size: num_vars,
+            setup_max: setup.max_num_vars,
+        });
+    }
+    if polynomials.len() > setup.max_num_polys_per_commitment_group {
+        return Err(invalid_batch(format!(
+            "Akita commitment group has {} polynomials but setup supports {}",
+            polynomials.len(),
+            setup.max_num_polys_per_commitment_group
+        )));
+    }
+    for polynomial in polynomials {
+        if polynomial.num_vars() != num_vars {
+            return Err(invalid_batch(format!(
+                "Akita commitment group mixes {}-variable and {num_vars}-variable polynomials",
+                polynomial.num_vars()
+            )));
+        }
+    }
+    Ok(num_vars)
+}
+
+impl Commitment for AkitaScheme {
     type Output = AkitaCommitment;
 }
 
-impl<F: Field> CommitmentScheme for AkitaScheme<F> {
-    type Field = F;
-    type Proof = AkitaBatchProof<F>;
+impl CommitmentScheme for AkitaScheme {
+    type Field = AkitaField;
+    type Proof = AkitaBatchProof;
     type ProverSetup = AkitaProverSetup;
     type VerifierSetup = AkitaVerifierSetup;
-    type Polynomial = Polynomial<F>;
+    type Polynomial = Polynomial<AkitaField>;
     type OpeningHint = AkitaProverHint;
     type SetupParams = AkitaSetupParams;
 
+    #[expect(
+        clippy::panic,
+        reason = "CommitmentScheme::setup cannot return native Akita setup errors"
+    )]
     fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
-        let setup = AkitaSetup::new(params);
-        (setup.clone(), setup)
+        let native = NativeScheme::setup_prover(
+            params.max_num_vars,
+            params.max_num_polys_per_commitment_group,
+        )
+        .unwrap_or_else(|err| panic!("Akita setup failed: {err}"));
+        let prepared = CpuBackend
+            .prepare_setup(&native)
+            .unwrap_or_else(|err| panic!("Akita setup preparation failed: {err}"));
+        let native_verifier = NativeScheme::setup_verifier(&native);
+        let verifier = AkitaVerifierSetup {
+            max_num_vars: params.max_num_vars,
+            max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
+            default_layout_digest: params.default_layout_digest,
+            native: serialize_akita(&native_verifier)
+                .unwrap_or_else(|err| panic!("Akita verifier setup serialization failed: {err}")),
+        };
+        let prover = AkitaProverSetup {
+            max_num_vars: params.max_num_vars,
+            max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
+            default_layout_digest: params.default_layout_digest,
+            native,
+            prepared,
+            verifier: verifier.clone(),
+        };
+        (prover, verifier)
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        prover_setup.clone()
+        prover_setup.verifier.clone()
     }
 
+    #[expect(
+        clippy::panic,
+        reason = "CommitmentScheme::commit cannot return native Akita commit errors"
+    )]
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        let evaluations = polynomial_evaluations(poly);
-        let commitment_digest = commitment_digest::<F>(
-            &setup.key,
-            &setup.default_layout_digest,
-            poly.num_vars(),
-            &evaluations,
-        );
-        let commitment = AkitaCommitment {
-            layout_digest: setup.default_layout_digest,
-            commitment_digest,
-            d_pack: poly.num_vars(),
-        };
-        let hint = AkitaProverHint {
-            layout_digest: commitment.layout_digest,
-            commitment_digest,
-            d_pack: commitment.d_pack,
-        };
-        (commitment, hint)
+        let polynomial = Polynomial::from(polynomial_evaluations(poly));
+        Self::commit_group(setup, setup.default_layout_digest, &[polynomial])
+            .unwrap_or_else(|err| panic!("Akita commit failed: {err}"))
     }
 
+    #[expect(
+        clippy::panic,
+        reason = "CommitmentScheme::open cannot return native Akita prove errors"
+    )]
     fn open(
-        _poly: &Self::Polynomial,
+        poly: &Self::Polynomial,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        let commitment = hint.map_or_else(AkitaCommitment::default, |hint| AkitaCommitment {
-            layout_digest: hint.layout_digest,
-            commitment_digest: hint.commitment_digest,
-            d_pack: hint.d_pack,
-        });
-        let statement_digest =
-            bind_single_opening_statement(&setup.key, &commitment, point, eval, transcript);
-        AkitaBatchProof {
-            setup_key: setup.key.clone(),
-            packed_commitment: commitment,
-            statement_digest,
-            coefficients: vec![F::one()],
-            reduced_opening: eval,
-        }
+        let hint = hint.unwrap_or_else(|| Self::commit(poly, setup).1);
+        let statement = singleton_statement(hint.commitment.clone(), point, eval);
+        <Self as BatchOpeningScheme>::prove_batch(
+            setup,
+            transcript,
+            &statement,
+            std::slice::from_ref(poly),
+            vec![hint],
+        )
+        .unwrap_or_else(|err| panic!("Akita open failed: {err}"))
     }
 
     fn verify(
@@ -125,19 +193,8 @@ impl<F: Field> CommitmentScheme for AkitaScheme<F> {
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
-        validate_setup_dimension(&setup.key, commitment.d_pack)?;
-        if proof.setup_key != setup.key || proof.packed_commitment != *commitment {
-            return Err(OpeningsError::VerificationFailed);
-        }
-        let statement_digest =
-            bind_single_opening_statement(&setup.key, commitment, point, eval, transcript);
-        if proof.statement_digest != statement_digest
-            || proof.coefficients != [F::one()]
-            || proof.reduced_opening != eval
-        {
-            return Err(OpeningsError::VerificationFailed);
-        }
-        Ok(())
+        let statement = singleton_statement(commitment.clone(), point, eval);
+        <Self as BatchOpeningScheme>::verify_batch(setup, transcript, &statement, proof).map(|_| ())
     }
 
     fn bind_opening_inputs(
@@ -151,7 +208,7 @@ impl<F: Field> CommitmentScheme for AkitaScheme<F> {
     }
 }
 
-impl<F: Field> BatchOpeningScheme for AkitaScheme<F> {
+impl BatchOpeningScheme for AkitaScheme {
     fn prove_batch<T, OpeningId, RelationId>(
         setup: &Self::ProverSetup,
         transcript: &mut T,
@@ -162,39 +219,47 @@ impl<F: Field> BatchOpeningScheme for AkitaScheme<F> {
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        if polynomials.len() != 1 {
-            return Err(OpeningsError::InvalidBatch(format!(
-                "Akita mock expects exactly one PackedWitness polynomial, got {}",
-                polynomials.len()
-            )));
-        }
-        if hints.len() != 1 {
-            return Err(OpeningsError::InvalidBatch(format!(
-                "Akita mock expects exactly one PackedWitness opening hint, got {}",
-                hints.len()
-            )));
-        }
-        let normalized = normalize_clear_batch(&setup.key, statement, transcript)?;
-        if !hints[0].matches_commitment(&normalized.packed_commitment) {
-            return Err(OpeningsError::InvalidBatch(
-                "Akita prover hint does not match PackedWitness commitment".to_owned(),
-            ));
-        }
-        if polynomials[0].num_vars() != statement.pcs_point.len() {
-            return Err(OpeningsError::InvalidBatch(format!(
-                "PackedWitness polynomial has {} variables but opening point has {}",
-                polynomials[0].num_vars(),
-                statement.pcs_point.len()
-            )));
-        }
-        validate_physical_claims(statement, &polynomials[0])?;
-        Ok(AkitaBatchProof {
-            setup_key: setup.key.clone(),
-            packed_commitment: normalized.packed_commitment,
-            statement_digest: normalized.statement_digest,
-            coefficients: normalized.coefficients,
-            reduced_opening: normalized.reduced_opening,
-        })
+        let normalized = normalize_clear_batch(statement)?;
+        validate_prover_inputs(setup, &normalized.commitment, polynomials, &hints)?;
+        bind_batch_statement(statement, &normalized, transcript);
+
+        let native_commitment =
+            deserialize_akita::<NativeCommitment>(&normalized.commitment.native, &())?;
+        let native_hint = hints
+            .into_iter()
+            .next()
+            .and_then(|hint| hint.native)
+            .ok_or_else(|| invalid_batch("Akita prover hint is missing native opening data"))?;
+        let dense = dense_polynomials(polynomials)?;
+        let dense_refs = dense.iter().collect::<Vec<_>>();
+        let claims: ProverClaims<'_, AkitaField, &NativeDensePoly, _, NativeHint> = (
+            statement.pcs_point.as_slice(),
+            vec![CommittedPolynomials {
+                polynomials: dense_refs.as_slice(),
+                commitment: &native_commitment,
+                hint: native_hint,
+            }],
+        );
+
+        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
+        let native_proof = NativeScheme::batched_prove(
+            &setup.native,
+            &CpuBackend,
+            &setup.prepared,
+            claims,
+            &mut akita_transcript,
+            BasisMode::Lagrange,
+            SetupContributionMode::Direct,
+        )
+        .map_err(akita_error)?;
+        let proof_shape = native_proof.shape();
+        let proof = AkitaBatchProof {
+            commitment: normalized.commitment,
+            proof_shape: serialize_akita(&proof_shape)?,
+            proof: serialize_akita(&native_proof)?,
+        };
+        bind_proof_bytes(&proof, transcript);
+        Ok(proof)
     }
 
     fn verify_batch<T, OpeningId, RelationId>(
@@ -206,27 +271,52 @@ impl<F: Field> BatchOpeningScheme for AkitaScheme<F> {
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        if proof.setup_key != setup.key {
+        let normalized = normalize_clear_batch(statement)?;
+        if proof.commitment != normalized.commitment {
             return Err(OpeningsError::VerificationFailed);
         }
-        let normalized = normalize_clear_batch(&setup.key, statement, transcript)?;
-        if proof.packed_commitment != normalized.packed_commitment
-            || proof.statement_digest != normalized.statement_digest
-            || proof.coefficients != normalized.coefficients
-            || proof.reduced_opening != normalized.reduced_opening
-        {
-            return Err(OpeningsError::VerificationFailed);
-        }
+        validate_verifier_setup(setup, &normalized.commitment)?;
+        bind_batch_statement(statement, &normalized, transcript);
+        bind_proof_bytes(proof, transcript);
+
+        let native_verifier = deserialize_akita::<NativeVerifier>(&setup.native, &())?;
+        let native_commitment =
+            deserialize_akita::<NativeCommitment>(&proof.commitment.native, &())?;
+        let proof_shape = deserialize_akita::<NativeProofShape>(&proof.proof_shape, &())?;
+        let native_proof = deserialize_akita::<NativeProof>(&proof.proof, &proof_shape)?;
+        let openings = statement
+            .claims
+            .iter()
+            .map(|claim| claim.claim)
+            .collect::<Vec<_>>();
+        let claims: VerifierClaims<'_, AkitaField, _> = (
+            statement.pcs_point.as_slice(),
+            vec![CommittedOpenings {
+                openings: openings.as_slice(),
+                commitment: &native_commitment,
+            }],
+        );
+        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
+        NativeScheme::batched_verify(
+            &native_proof,
+            &native_verifier,
+            &mut akita_transcript,
+            claims,
+            BasisMode::Lagrange,
+            SetupContributionMode::Direct,
+        )
+        .map_err(|_| OpeningsError::VerificationFailed)?;
+
         Ok(BatchOpeningResult {
-            coefficients: proof.coefficients.clone(),
-            joint_commitment: proof.packed_commitment.clone(),
-            reduced_opening: proof.reduced_opening,
+            coefficients: normalized.coefficients,
+            joint_commitment: normalized.commitment,
+            reduced_opening: normalized.reduced_opening,
         })
     }
 }
 
-impl<F: Field> ZkOpeningScheme for AkitaScheme<F> {
-    type HidingCommitment = AkitaHidingCommitment<F>;
+impl ZkOpeningScheme for AkitaScheme {
+    type HidingCommitment = AkitaHidingCommitment;
     type Blind = ();
 
     fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
@@ -245,7 +335,13 @@ impl<F: Field> ZkOpeningScheme for AkitaScheme<F> {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let proof = Self::open(poly, point, eval, setup, Some(hint), transcript);
-        (proof, AkitaHidingCommitment { commitment: eval }, ())
+        (
+            proof,
+            AkitaHidingCommitment {
+                eval: field_bytes(eval),
+            },
+            (),
+        )
     }
 
     fn verify_zk(
@@ -269,7 +365,7 @@ impl<F: Field> ZkOpeningScheme for AkitaScheme<F> {
     }
 }
 
-impl<F: Field> ZkBatchOpeningScheme for AkitaScheme<F> {
+impl ZkBatchOpeningScheme for AkitaScheme {
     fn prove_batch_zk<T, OpeningId, RelationId>(
         _setup: &Self::ProverSetup,
         _transcript: &mut T,
@@ -297,98 +393,149 @@ impl<F: Field> ZkBatchOpeningScheme for AkitaScheme<F> {
     }
 }
 
-struct NormalizedBatch<F: Field> {
-    packed_commitment: AkitaCommitment,
-    statement_digest: F,
-    coefficients: Vec<F>,
-    reduced_opening: F,
+struct NormalizedBatch {
+    commitment: AkitaCommitment,
+    coefficients: Vec<AkitaField>,
+    reduced_opening: AkitaField,
 }
 
-fn normalize_clear_batch<F, C, OpeningId, RelationId, T>(
-    setup_key: &AkitaSetupKey,
-    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
-    transcript: &mut T,
-) -> Result<NormalizedBatch<F>, OpeningsError>
-where
-    F: Field,
-    C: Clone + IntoAkitaCommitment,
-    T: Transcript<Challenge = F>,
-{
+fn normalize_clear_batch<OpeningId, RelationId>(
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+) -> Result<NormalizedBatch, OpeningsError> {
     if statement.claims.is_empty() {
-        return Err(OpeningsError::InvalidBatch(
-            "Akita batch opening requires at least one claim".to_owned(),
+        return Err(invalid_batch(
+            "Akita batch opening requires at least one claim",
         ));
     }
-    let packed_commitment = statement.claims[0]
-        .commitment
-        .clone()
-        .into_akita_commitment();
-    validate_setup_dimension(setup_key, packed_commitment.d_pack)?;
-    if statement.layout_digest != packed_commitment.layout_digest {
-        return Err(OpeningsError::InvalidBatch(
-            "statement layout digest does not match PackedWitness commitment".to_owned(),
+    let commitment = statement.claims[0].commitment.clone();
+    if statement.layout_digest != commitment.layout_digest {
+        return Err(invalid_batch(
+            "statement layout digest does not match Akita commitment",
         ));
     }
-
+    if statement.pcs_point.len() != commitment.num_vars {
+        return Err(invalid_batch(format!(
+            "Akita opening point has {} variables but commitment has {}",
+            statement.pcs_point.len(),
+            commitment.num_vars
+        )));
+    }
+    if statement.logical_point != statement.pcs_point {
+        return Err(invalid_batch(
+            "Akita direct batch requires logical point and PCS point to match",
+        ));
+    }
     let mut coefficients = Vec::with_capacity(statement.claims.len());
+    let mut reduced_opening = AkitaField::zero();
     for claim in &statement.claims {
-        let commitment = claim.commitment.clone().into_akita_commitment();
-        if commitment != packed_commitment {
-            return Err(OpeningsError::InvalidBatch(
-                "Akita batch statement must use exactly one PackedWitness commitment".to_owned(),
+        if claim.commitment != commitment {
+            return Err(invalid_batch(
+                "Akita batch statement must use exactly one commitment group",
             ));
         }
-        coefficients
-            .push(claim.scale * physical_view_scale(&statement.layout_digest, &claim.view)?);
+        if !matches!(claim.view, PhysicalView::Direct) {
+            return Err(invalid_batch(
+                "Akita native adapter expects direct physical views; use PackedCombine to lower packed views first",
+            ));
+        }
+        coefficients.push(claim.scale);
+        reduced_opening += claim.scale * claim.claim;
     }
-    let reduced_opening = coefficients
-        .iter()
-        .zip(&statement.claims)
-        .fold(F::zero(), |acc, (coefficient, claim)| {
-            acc + *coefficient * claim.claim
-        });
-
-    bind_batch_statement(
-        setup_key,
-        &packed_commitment,
-        statement,
-        &coefficients,
-        reduced_opening,
-        transcript,
-    );
+    if commitment.poly_count != statement.claims.len() {
+        return Err(invalid_batch(format!(
+            "Akita commitment covers {} polynomials but statement has {} claims",
+            commitment.poly_count,
+            statement.claims.len()
+        )));
+    }
     Ok(NormalizedBatch {
-        packed_commitment,
-        statement_digest: transcript.challenge_scalar(),
+        commitment,
         coefficients,
         reduced_opening,
     })
 }
 
-trait IntoAkitaCommitment {
-    fn into_akita_commitment(self) -> AkitaCommitment;
-}
-
-impl IntoAkitaCommitment for AkitaCommitment {
-    fn into_akita_commitment(self) -> AkitaCommitment {
-        self
+fn validate_prover_inputs(
+    setup: &AkitaProverSetup,
+    commitment: &AkitaCommitment,
+    polynomials: &[Polynomial<AkitaField>],
+    hints: &[AkitaProverHint],
+) -> Result<(), OpeningsError> {
+    validate_setup_shape(
+        setup.max_num_vars,
+        setup.max_num_polys_per_commitment_group,
+        commitment,
+    )?;
+    if polynomials.len() != commitment.poly_count {
+        return Err(invalid_batch(format!(
+            "Akita prover received {} polynomials for {} commitment slots",
+            polynomials.len(),
+            commitment.poly_count
+        )));
     }
+    if hints.len() != 1 {
+        return Err(invalid_batch(format!(
+            "Akita prover expects one grouped commitment hint, got {}",
+            hints.len()
+        )));
+    }
+    if !hints[0].matches_commitment(commitment) {
+        return Err(invalid_batch(
+            "Akita prover hint does not match the statement commitment",
+        ));
+    }
+    for polynomial in polynomials {
+        if polynomial.num_vars() != commitment.num_vars {
+            return Err(invalid_batch(format!(
+                "Akita polynomial has {} variables but commitment has {}",
+                polynomial.num_vars(),
+                commitment.num_vars
+            )));
+        }
+    }
+    Ok(())
 }
 
-fn bind_batch_statement<F, C, OpeningId, RelationId, T>(
-    setup_key: &AkitaSetupKey,
-    packed_commitment: &AkitaCommitment,
-    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
-    coefficients: &[F],
-    reduced_opening: F,
+fn validate_verifier_setup(
+    setup: &AkitaVerifierSetup,
+    commitment: &AkitaCommitment,
+) -> Result<(), OpeningsError> {
+    validate_setup_shape(
+        setup.max_num_vars,
+        setup.max_num_polys_per_commitment_group,
+        commitment,
+    )
+}
+
+fn validate_setup_shape(
+    max_num_vars: usize,
+    max_num_polys_per_commitment_group: usize,
+    commitment: &AkitaCommitment,
+) -> Result<(), OpeningsError> {
+    if commitment.num_vars > max_num_vars {
+        return Err(OpeningsError::PolynomialTooLarge {
+            poly_size: commitment.num_vars,
+            setup_max: max_num_vars,
+        });
+    }
+    if commitment.poly_count > max_num_polys_per_commitment_group {
+        return Err(invalid_batch(format!(
+            "Akita commitment covers {} polynomials but setup supports {}",
+            commitment.poly_count, max_num_polys_per_commitment_group
+        )));
+    }
+    Ok(())
+}
+
+fn bind_batch_statement<OpeningId, RelationId, T>(
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    normalized: &NormalizedBatch,
     transcript: &mut T,
 ) where
-    F: Field,
-    C: Clone + IntoAkitaCommitment,
-    T: Transcript<Challenge = F>,
+    T: Transcript<Challenge = AkitaField>,
 {
     transcript.append(&Label(b"akita_batch_statement"));
-    setup_key.append_to_transcript(transcript);
-    packed_commitment.append_to_transcript(transcript);
+    normalized.commitment.append_to_transcript(transcript);
     transcript.append_bytes(&statement.layout_digest);
     append_field_slice(transcript, b"akita_logical_point", &statement.logical_point);
     append_field_slice(transcript, b"akita_pcs_point", &statement.pcs_point);
@@ -397,126 +544,90 @@ fn bind_batch_statement<F, C, OpeningId, RelationId, T>(
         statement.claims.len() as u64,
     ));
     for claim in &statement.claims {
-        claim
-            .commitment
-            .clone()
-            .into_akita_commitment()
-            .append_to_transcript(transcript);
+        claim.commitment.append_to_transcript(transcript);
         claim.claim.append_to_transcript(transcript);
         claim.scale.append_to_transcript(transcript);
-        bind_physical_view(&statement.layout_digest, &claim.view, transcript);
+        transcript.append_bytes(&[0]);
     }
-    append_field_slice(transcript, b"akita_coefficients", coefficients);
-    reduced_opening.append_to_transcript(transcript);
+    append_field_slice(transcript, b"akita_coefficients", &normalized.coefficients);
+    normalized.reduced_opening.append_to_transcript(transcript);
 }
 
-fn bind_physical_view<F, T>(
-    statement_layout_digest: &[u8; 32],
-    view: &PhysicalView<F>,
-    transcript: &mut T,
-) where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    match view {
-        PhysicalView::Direct => transcript.append_bytes(&[0]),
-        PhysicalView::PackedLinear {
-            layout_digest,
-            coefficients,
-        } => {
-            transcript.append_bytes(&[1]);
-            transcript.append_bytes(statement_layout_digest);
-            transcript.append_bytes(layout_digest);
-            append_field_slice(transcript, b"akita_view_coeffs", coefficients);
-        }
-    }
-}
-
-fn validate_physical_claims<F, OpeningId, RelationId>(
-    statement: &BatchOpeningStatement<F, AkitaCommitment, OpeningId, RelationId>,
-    polynomial: &Polynomial<F>,
-) -> Result<(), OpeningsError>
+fn bind_proof_bytes<T>(proof: &AkitaBatchProof, transcript: &mut T)
 where
-    F: Field,
+    T: Transcript<Challenge = AkitaField>,
 {
-    let physical_eval = polynomial.evaluate(&statement.pcs_point);
-    for claim in &statement.claims {
-        let scale = physical_view_scale(&statement.layout_digest, &claim.view)?;
-        if claim.claim * scale != physical_eval {
-            return Err(OpeningsError::VerificationFailed);
-        }
-    }
-    Ok(())
+    transcript.append(&LabelWithCount(
+        b"akita_proof_shape",
+        proof.proof_shape.len() as u64,
+    ));
+    transcript.append_bytes(&proof.proof_shape);
+    transcript.append(&LabelWithCount(b"akita_proof", proof.proof.len() as u64));
+    transcript.append_bytes(&proof.proof);
 }
 
-fn physical_view_scale<F>(
-    statement_layout_digest: &[u8; 32],
-    view: &PhysicalView<F>,
-) -> Result<F, OpeningsError>
-where
-    F: Field,
-{
-    match view {
-        PhysicalView::Direct => Ok(F::one()),
-        PhysicalView::PackedLinear {
-            layout_digest,
-            coefficients,
-        } => {
-            if layout_digest != statement_layout_digest {
-                return Err(OpeningsError::InvalidBatch(
-                    "packed view layout digest does not match statement layout digest".to_owned(),
-                ));
-            }
-            if coefficients.is_empty() {
-                return Err(OpeningsError::InvalidBatch(
-                    "packed linear view requires at least one coefficient".to_owned(),
-                ));
-            }
-            Ok(coefficients
-                .iter()
-                .copied()
-                .fold(F::zero(), |acc, coefficient| acc + coefficient))
-        }
+fn singleton_statement(
+    commitment: AkitaCommitment,
+    point: &[AkitaField],
+    eval: AkitaField,
+) -> BatchOpeningStatement<AkitaField, AkitaCommitment> {
+    BatchOpeningStatement {
+        logical_point: point.to_vec(),
+        pcs_point: point.to_vec(),
+        layout_digest: commitment.layout_digest,
+        claims: vec![jolt_openings::BatchOpeningClaim {
+            id: (),
+            relation: (),
+            commitment,
+            claim: eval,
+            view: PhysicalView::Direct,
+            scale: AkitaField::one(),
+        }],
     }
 }
 
-fn bind_single_opening_statement<F, T>(
-    setup_key: &AkitaSetupKey,
-    commitment: &AkitaCommitment,
-    point: &[F],
-    eval: F,
-    transcript: &mut T,
-) -> F
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    transcript.append(&Label(b"akita_single_opening"));
-    setup_key.append_to_transcript(transcript);
-    commitment.append_to_transcript(transcript);
-    append_field_slice(transcript, b"akita_single_point", point);
-    eval.append_to_transcript(transcript);
-    transcript.challenge_scalar()
+fn dense_polynomials(
+    polynomials: &[Polynomial<AkitaField>],
+) -> Result<Vec<NativeDensePoly>, OpeningsError> {
+    polynomials
+        .iter()
+        .map(|poly| {
+            let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals())?;
+            NativeDensePoly::from_field_evals(poly.num_vars(), &evals).map_err(akita_error)
+        })
+        .collect()
 }
 
-fn commitment_digest<F: Field>(
-    setup_key: &AkitaSetupKey,
-    layout_digest: &[u8; 32],
-    d_pack: usize,
-    evaluations: &[F],
-) -> [u8; 32] {
-    let mut transcript = Blake2bTranscript::<F>::new(b"akita-commit");
-    setup_key.append_to_transcript(&mut transcript);
-    transcript.append_bytes(layout_digest);
-    transcript.append(&u64_field::<F>(d_pack as u64));
-    append_field_slice(&mut transcript, b"akita_commit_evals", evaluations);
-    transcript.state()
+fn jolt_to_akita_evals(
+    num_vars: usize,
+    jolt_evals: &[AkitaField],
+) -> Result<Vec<AkitaField>, OpeningsError> {
+    let Some(expected) = 1usize.checked_shl(num_vars as u32) else {
+        return Err(invalid_batch(format!(
+            "Akita polynomial dimension {num_vars} exceeds usize bit width"
+        )));
+    };
+    if jolt_evals.len() != expected {
+        return Err(invalid_batch(format!(
+            "Akita polynomial has {} evaluations but dimension {num_vars} requires {expected}",
+            jolt_evals.len()
+        )));
+    }
+    if num_vars == 0 {
+        return Ok(jolt_evals.to_vec());
+    }
+    let shift = usize::BITS as usize - num_vars;
+    let mut akita_evals = vec![AkitaField::zero(); jolt_evals.len()];
+    for (jolt_index, &eval) in jolt_evals.iter().enumerate() {
+        let akita_index = jolt_index.reverse_bits() >> shift;
+        akita_evals[akita_index] = eval;
+    }
+    Ok(akita_evals)
 }
 
-fn polynomial_evaluations<F, P>(polynomial: &P) -> Vec<F>
+fn polynomial_evaluations<P>(polynomial: &P) -> Vec<AkitaField>
 where
-    F: Field,
-    P: MultilinearPoly<F> + ?Sized,
+    P: MultilinearPoly<AkitaField> + ?Sized,
 {
     let capacity = if polynomial.num_vars() < usize::BITS as usize {
         1usize << polynomial.num_vars()
@@ -530,34 +641,40 @@ where
     evals
 }
 
-fn validate_setup_dimension(setup_key: &AkitaSetupKey, d_pack: usize) -> Result<(), OpeningsError> {
-    if setup_key.accepts_dimension(d_pack) {
-        Ok(())
-    } else {
-        Err(OpeningsError::InvalidSetup(format!(
-            "Akita setup dimension {} does not accept PackedWitness dimension {d_pack}",
-            setup_key.d_setup
-        )))
-    }
+fn serialize_akita<T>(value: &T) -> Result<Vec<u8>, OpeningsError>
+where
+    T: AkitaSerialize,
+{
+    let mut bytes = Vec::with_capacity(value.compressed_size());
+    value
+        .serialize_compressed(&mut bytes)
+        .map_err(akita_error)?;
+    Ok(bytes)
 }
 
-fn validate_evaluation_shape(d_pack: usize, evaluation_count: usize) -> Result<(), OpeningsError> {
-    if d_pack >= usize::BITS as usize {
-        return Err(OpeningsError::InvalidSetup(format!(
-            "PackedWitness dimension {d_pack} exceeds usize bit width"
-        )));
-    }
-    let expected = 1usize << d_pack;
-    if evaluation_count != expected {
-        return Err(OpeningsError::InvalidBatch(format!(
-            "PackedWitness evaluation count {evaluation_count} does not match dimension {d_pack}"
-        )));
-    }
-    Ok(())
+fn deserialize_akita<T>(bytes: &[u8], ctx: &T::Context) -> Result<T, OpeningsError>
+where
+    T: AkitaDeserialize,
+{
+    T::deserialize_compressed(Cursor::new(bytes), ctx).map_err(akita_error)
+}
+
+fn field_bytes(value: AkitaField) -> Vec<u8> {
+    let mut bytes = vec![0u8; AkitaField::NUM_BYTES];
+    value.to_bytes_le(&mut bytes);
+    bytes
+}
+
+fn invalid_batch(message: impl Into<String>) -> OpeningsError {
+    OpeningsError::InvalidBatch(message.into())
+}
+
+fn akita_error(error: impl ToString) -> OpeningsError {
+    OpeningsError::InvalidBatch(error.to_string())
 }
 
 fn transparent_zk_error() -> OpeningsError {
     OpeningsError::InvalidBatch(
-        "Akita mock backend is transparent-only and does not support ZK openings".to_owned(),
+        "Akita native adapter is transparent-only and does not support ZK openings yet".to_owned(),
     )
 }

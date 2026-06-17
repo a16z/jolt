@@ -3,6 +3,7 @@
 use std::ops::{Mul, SubAssign};
 
 use jolt_field::Field;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::math::Math;
@@ -19,7 +20,7 @@ use crate::thread::unsafe_allocate_zero_vec;
 /// a single evaluation from a multilinear polynomial:
 /// $$f(r) = \sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, r)$$
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
 pub struct EqPolynomial<F: Field> {
     point: Vec<F>,
 }
