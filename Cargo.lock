@@ -2972,12 +2972,14 @@ dependencies = [
 name = "jolt-hyperkzg"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "criterion",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
+ "memory-stats",
  "num-traits",
  "rand 0.8.5",
  "rand_chacha 0.3.1",

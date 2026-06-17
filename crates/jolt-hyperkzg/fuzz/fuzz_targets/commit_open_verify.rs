@@ -33,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
 
-    let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk);
+    let (commitment, _) = TestScheme::commit(poly.evaluations(), &pk);
 
     let mut pt = Blake2bTranscript::new(b"fuzz");
     let proof =
