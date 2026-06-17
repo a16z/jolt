@@ -439,6 +439,7 @@ fn stage6_claims_from_native<F: Field>(
             rd_inc: claims.require(rd_inc)?,
         },
         fused_increment_translation: None,
+        fused_increment_source_link: None,
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
@@ -751,6 +752,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_inc: zero,
             },
             fused_increment_translation: None,
+            fused_increment_source_link: None,
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
                 untrusted: None,

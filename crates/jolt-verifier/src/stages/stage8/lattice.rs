@@ -10,12 +10,13 @@ use jolt_akita::{
 use jolt_claims::protocols::jolt::{
     byte_decode_terms, bytecode_chunk_lattice_view_formula,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    fused_increment_magnitude_lattice_view_formula, fused_increment_magnitude_opening,
-    fused_increment_sign_lattice_view_formula, fused_increment_sign_opening,
+    fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
+    fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
+    fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
     fused_increment_source_opening, little_endian_byte_decode_terms, weighted_symbol_terms,
     AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
     JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
-    LatticePackedViewFormula, ProgramImageClaimReductionLayout,
+    LatticePackedViewFormula, LatticePackedViewTerm, ProgramImageClaimReductionLayout,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -218,6 +219,20 @@ where
         id if id == fused_increment_sign_opening() => {
             Ok(fused_increment_sign_lattice_view_formula())
         }
+        id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram) => {
+            fused_increment_bytecode_source_lattice_view_formula(
+                LatticeFusedIncrementTarget::Ram,
+                point,
+                precommitted,
+            )
+        }
+        id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) => {
+            fused_increment_bytecode_source_lattice_view_formula(
+                LatticeFusedIncrementTarget::Rd,
+                point,
+                precommitted,
+            )
+        }
         id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
             || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) =>
         {
@@ -308,7 +323,10 @@ where
             point,
             log_k_chunk,
         ),
-        (JoltCommittedPolynomial::BytecodeRa(index), JoltRelationId::HammingWeightClaimReduction) => {
+        (
+            JoltCommittedPolynomial::BytecodeRa(index),
+            JoltRelationId::HammingWeightClaimReduction | JoltRelationId::FusedIncrementSourceLink,
+        ) => {
             ra_lattice_view_formula(
                 LatticePackedFamilyId::BytecodeRa { index },
                 point,
@@ -405,6 +423,66 @@ where
         LatticePackedFamilyId::AdviceBytes { kind, index: 0 },
         0,
     ))
+}
+
+fn fused_increment_bytecode_source_lattice_view_formula<F>(
+    target: LatticeFusedIncrementTarget,
+    point: &[F],
+    precommitted: &PrecommittedSchedule,
+) -> Result<LatticePackedViewFormula<F>, VerifierError>
+where
+    F: Field,
+{
+    let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+        unsupported_lattice_view(
+            "fused increment bytecode source view requires committed-bytecode layout",
+        )
+    })?;
+    let address = layout
+        .split_address_point(point)
+        .map_err(|error| unsupported_lattice_view(error.to_string()))?;
+    let mut terms = Vec::new();
+    for (chunk, weight) in address.chunk_rbc_weights.into_iter().enumerate() {
+        let formula = fused_increment_source_lattice_view_formula(target, chunk);
+        extend_scaled_lattice_terms(&mut terms, formula, weight)?;
+    }
+    Ok(LatticePackedViewFormula::linear_decoded(terms))
+}
+
+fn extend_scaled_lattice_terms<F>(
+    terms: &mut Vec<LatticePackedViewTerm<F>>,
+    formula: LatticePackedViewFormula<F>,
+    scale: F,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+{
+    match formula {
+        LatticePackedViewFormula::Direct {
+            family,
+            limb,
+            symbol,
+        } => terms.push(LatticePackedViewTerm::new(scale, family, limb, symbol)),
+        LatticePackedViewFormula::LinearDecoded {
+            terms: formula_terms,
+        } => {
+            terms.extend(formula_terms.into_iter().map(|term| {
+                LatticePackedViewTerm::new(
+                    scale * term.coefficient,
+                    term.family,
+                    term.limb,
+                    term.symbol,
+                )
+            }));
+        }
+        LatticePackedViewFormula::ReducedMasked { .. }
+        | LatticePackedViewFormula::MaskedDecoded { .. } => {
+            return Err(unsupported_lattice_view(
+                "fused increment bytecode source view must lower to direct or linear decoded terms",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn akita_packed_view_formula<F>(
@@ -626,6 +704,7 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_openings::{PackedLinearTerm, PhysicalView};
     use jolt_poly::{EqPolynomial, Point};
+    use jolt_riscv::CircuitFlags;
 
     fn lattice_config() -> JoltProtocolConfig {
         let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
@@ -1009,6 +1088,94 @@ mod tests {
         assert!(error
             .to_string()
             .contains("bytecode-derived packed view relation"));
+    }
+
+    #[test]
+    fn jolt_lattice_resolver_lowers_source_link_bytecode_ra() {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(0),
+            JoltRelationId::FusedIncrementSourceLink,
+        );
+        let point = (1..=9).map(Fr::from_u64).collect::<Vec<_>>();
+        let formula = jolt_lattice_view_formula(id, &point, 8, &precommitted_schedule(None))
+            .unwrap_or_else(|error| panic!("source-link BytecodeRa should resolve: {error}"));
+        let terms = linear_decoded_terms(&formula);
+
+        assert_eq!(
+            find_lattice_term(terms, LatticePackedFamilyId::BytecodeRa { index: 0 }, 0, 7,)
+                .coefficient,
+            EqPolynomial::<Fr>::evals(&point[..8], None)[7]
+        );
+    }
+
+    #[test]
+    fn jolt_lattice_resolver_lowers_fused_increment_bytecode_sources() {
+        let schedule = precommitted_schedule(None);
+        let point = [
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+            Fr::from_u64(11),
+        ];
+        let chunk_weights = EqPolynomial::<Fr>::evals(&point[..1], None);
+        let store_formula = jolt_lattice_view_formula(
+            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+            &point,
+            8,
+            &schedule,
+        )
+        .unwrap_or_else(|error| panic!("store source view should resolve: {error}"));
+        let store_terms = linear_decoded_terms(&store_formula);
+        assert_eq!(store_terms.len(), 2);
+        assert_eq!(
+            find_lattice_term(
+                store_terms,
+                LatticePackedFamilyId::BytecodeCircuitFlag {
+                    chunk: 0,
+                    flag: CircuitFlags::Store as usize,
+                },
+                0,
+                1,
+            )
+            .coefficient,
+            chunk_weights[0]
+        );
+        assert_eq!(
+            find_lattice_term(
+                store_terms,
+                LatticePackedFamilyId::BytecodeCircuitFlag {
+                    chunk: 1,
+                    flag: CircuitFlags::Store as usize,
+                },
+                0,
+                1,
+            )
+            .coefficient,
+            chunk_weights[1]
+        );
+
+        let rd_formula = jolt_lattice_view_formula(
+            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+            &point,
+            8,
+            &schedule,
+        )
+        .unwrap_or_else(|error| panic!("rd-present source view should resolve: {error}"));
+        let rd_terms = linear_decoded_terms(&rd_formula);
+        assert_eq!(rd_terms.len(), 2 * (1 << REGISTER_ADDRESS_BITS));
+        assert_eq!(
+            find_lattice_term(
+                rd_terms,
+                LatticePackedFamilyId::BytecodeRegisterSelector {
+                    chunk: 1,
+                    selector: 2,
+                },
+                0,
+                31,
+            )
+            .coefficient,
+            chunk_weights[1]
+        );
     }
 
     #[test]

@@ -69,6 +69,10 @@ pub struct Stage6ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Stage outputs are short-lived verifier artifacts; boxing would churn stage APIs."
+)]
 pub enum Stage6Output<F: Field, C> {
     Clear(Stage6ClearOutput<F>),
     Zk(Stage6ZkOutput<F, C>),
@@ -93,6 +97,7 @@ pub struct VerifiedStage6Batch<F: Field> {
     pub instruction_ra_virtualization: VerifiedInstructionRaVirtualizationSumcheck<F>,
     pub inc_claim_reduction: VerifiedStage6Sumcheck<F>,
     pub fused_increment_translation: Option<VerifiedStage6Sumcheck<F>>,
+    pub fused_increment_source_link: Option<VerifiedBytecodeReadRafSumcheck<F>>,
     pub trusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub untrusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub bytecode_cycle_phase: Option<VerifiedBytecodeCyclePhaseSumcheck<F>>,

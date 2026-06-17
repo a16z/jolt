@@ -53,6 +53,14 @@ pub struct FusedIncrementTranslationOutputClaims<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct FusedIncrementSourceLinkOutputClaims<F: Field> {
+    pub bytecode_ra: Vec<F>,
+    pub store_flag: F,
+    pub rd_present: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage6AdviceCyclePhaseClaims<F: Field> {
     pub trusted: Option<AdviceCyclePhaseOutputClaim<F>>,
     pub untrusted: Option<AdviceCyclePhaseOutputClaim<F>>,

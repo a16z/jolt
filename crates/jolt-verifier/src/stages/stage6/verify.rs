@@ -8,12 +8,14 @@ use jolt_claims::protocols::jolt::{
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction, lattice, ram,
     },
-    fused_increment_source_opening, BooleanityChallenge, BooleanityPublic,
-    BytecodeClaimReductionChallenge, BytecodeReadRafChallenge, FusedIncrementTranslationChallenge,
+    fused_increment_bytecode_source_opening, fused_increment_source_opening, BooleanityChallenge,
+    BooleanityPublic, BytecodeClaimReductionChallenge, BytecodeReadRafChallenge,
+    FusedIncrementSourceLinkChallenge, FusedIncrementTranslationChallenge,
     IncClaimReductionChallenge, IncClaimReductionPublic, InstructionRaVirtualizationChallenge,
-    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    JoltSumcheckDomain, JoltVirtualPolynomial, LatticeFusedIncrementTarget,
-    PrecommittedReductionLayout, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
+    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltPolynomialId, JoltPublicId,
+    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
+    LatticeFusedIncrementTarget, PrecommittedReductionLayout, RamHammingBooleanityChallenge,
+    RamRaVirtualizationChallenge,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -54,6 +56,7 @@ struct Stage6BatchInputClaims<F: Field> {
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
     fused_increment_translation: Option<F>,
+    fused_increment_source_link: Option<F>,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -71,6 +74,7 @@ struct Stage6BatchExpectedOutputClaims<F: Field> {
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
     fused_increment_translation: Option<F>,
+    fused_increment_source_link: Option<F>,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -824,7 +828,27 @@ where
     } else {
         None
     };
+    if claims.fused_increment_source_link.is_some() && fused_increment_claims.is_none() {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
+    if fused_increment_claims.is_some() && claims.fused_increment_source_link.is_none() {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
+    let fused_increment_source_link_claims = if claims.fused_increment_source_link.is_some() {
+        Some(lattice::fused_increment_source_link_claim::<PCS::Field>(
+            formula_dimensions.bytecode_read_raf,
+        ))
+    } else {
+        None
+    };
     if let Some(claim) = &fused_increment_claims {
+        validate_compressed_stage_claim(claim)?;
+    }
+    if let Some(claim) = &fused_increment_source_link_claims {
         validate_compressed_stage_claim(claim)?;
     }
 
@@ -855,6 +879,9 @@ where
     let inc_gamma = transcript.challenge_scalar();
     let eta = committed_program.then(|| transcript.challenge_scalar());
     let fused_increment_translation_gamma = fused_increment_claims
+        .as_ref()
+        .map(|_| transcript.challenge_scalar());
+    let fused_increment_source_link_gamma = fused_increment_source_link_claims
         .as_ref()
         .map(|_| transcript.challenge_scalar());
 
@@ -934,6 +961,43 @@ where
                     |id| match id {
                         JoltChallengeId::FusedIncrementTranslation(
                             FusedIncrementTranslationChallenge::Gamma,
+                        ) => Ok(gamma),
+                        _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    },
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
+        fused_increment_source_link: fused_increment_source_link_claims
+            .as_ref()
+            .map(|claim| {
+                let gamma = fused_increment_source_link_gamma.ok_or(
+                    VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(FusedIncrementSourceLinkChallenge::Gamma),
+                    },
+                )?;
+                let translation_output = claims.fused_increment_translation.as_ref().ok_or(
+                    VerifierError::MissingOpeningClaim {
+                        id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+                    },
+                )?;
+                claim.input.expression().try_evaluate(
+                    |id| match *id {
+                        id if id
+                            == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) =>
+                        {
+                            Ok(translation_output.ram_source)
+                        }
+                        id if id
+                            == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) =>
+                        {
+                            Ok(translation_output.rd_source)
+                        }
+                        id => Err(VerifierError::MissingOpeningClaim { id }),
+                    },
+                    |id| match id {
+                        JoltChallengeId::FusedIncrementSourceLink(
+                            FusedIncrementSourceLinkChallenge::Gamma,
                         ) => Ok(gamma),
                         _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
                     },
@@ -1048,6 +1112,16 @@ where
     if let (Some(claim), Some(input_claim)) = (
         &fused_increment_claims,
         input_claims.fused_increment_translation,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &fused_increment_source_link_claims,
+        input_claims.fused_increment_source_link,
     ) {
         sumcheck_claims.push(SumcheckClaim::new(
             claim.sumcheck.rounds,
@@ -1636,6 +1710,97 @@ where
             None
         };
 
+    let fused_increment_source_link = if let (
+        Some(claim),
+        Some(output_claims),
+        Some(input_claim),
+        Some(gamma),
+    ) = (
+        &fused_increment_source_link_claims,
+        claims.fused_increment_source_link.as_ref(),
+        input_claims.fused_increment_source_link,
+        fused_increment_source_link_gamma,
+    ) {
+        let expected_bytecode_ra = formula_dimensions
+            .bytecode_read_raf
+            .num_committed_ra_polys();
+        if output_claims.bytecode_ra.len() != expected_bytecode_ra {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::FusedIncrementSourceLink,
+                reason: format!(
+                    "fused increment source-link bytecode RA claim count mismatch: expected {}, got {}",
+                    expected_bytecode_ra,
+                    output_claims.bytecode_ra.len()
+                ),
+            });
+        }
+        let point = batch
+            .try_instance_point(claim.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::FusedIncrementSourceLink,
+                reason: error.to_string(),
+            })?;
+        let opening_point = formula_dimensions
+            .bytecode_read_raf
+            .opening_point(point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::FusedIncrementSourceLink,
+                reason: error.to_string(),
+            })?;
+        let expected_output_claim = claim.output.expression().try_evaluate(
+            |id| match *id {
+                jolt_claims::protocols::jolt::JoltOpeningId::Polynomial {
+                    polynomial:
+                        JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+                    relation: JoltRelationId::FusedIncrementSourceLink,
+                } => output_claims
+                    .bytecode_ra
+                    .get(index)
+                    .copied()
+                    .ok_or(VerifierError::MissingOpeningClaim { id: *id }),
+                id if id
+                    == fused_increment_bytecode_source_opening(
+                        LatticeFusedIncrementTarget::Ram,
+                    ) =>
+                {
+                    Ok(output_claims.store_flag)
+                }
+                id if id
+                    == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) =>
+                {
+                    Ok(output_claims.rd_present)
+                }
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| match id {
+                JoltChallengeId::FusedIncrementSourceLink(
+                    FusedIncrementSourceLinkChallenge::Gamma,
+                ) => Ok(gamma),
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        )?;
+        let bytecode_ra_opening_points = proof
+            .one_hot_config
+            .committed_address_chunks(&opening_point.r_address)
+            .into_iter()
+            .map(|r_address_chunk| {
+                [r_address_chunk.as_slice(), opening_point.r_cycle.as_slice()].concat()
+            })
+            .collect::<Vec<_>>();
+        Some(VerifiedBytecodeReadRafSumcheck {
+            input_claim,
+            sumcheck_point: point.to_vec(),
+            r_address: opening_point.r_address,
+            r_cycle: opening_point.r_cycle,
+            full_opening_point: opening_point.opening_point,
+            bytecode_ra_opening_points,
+            expected_output_claim,
+        })
+    } else {
+        None
+    };
+
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
         trusted_advice_claims.as_ref(),
@@ -1774,6 +1939,9 @@ where
         fused_increment_translation: fused_increment_translation
             .as_ref()
             .map(|verified| verified.expected_output_claim),
+        fused_increment_source_link: fused_increment_source_link
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
         trusted_advice_cycle_phase: trusted_advice
             .as_ref()
             .map(|verified| verified.expected_output_claim),
@@ -1796,6 +1964,9 @@ where
         expected_outputs.inc_claim_reduction,
     ];
     if let Some(output_claim) = expected_outputs.fused_increment_translation {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.fused_increment_source_link {
         expected_outputs_in_order.push(output_claim);
     }
     if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
@@ -1917,6 +2088,7 @@ where
                 expected_output_claim: expected_outputs.inc_claim_reduction,
             },
             fused_increment_translation,
+            fused_increment_source_link,
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
             bytecode_cycle_phase,

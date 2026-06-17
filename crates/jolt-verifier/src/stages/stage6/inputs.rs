@@ -6,10 +6,11 @@ use serde::{Deserialize, Serialize};
 pub use super::inputs_a::Stage6AddressPhaseClaims;
 pub use super::inputs_b::{
     AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims, BytecodeCyclePhaseOutputClaims,
-    BytecodeReadRafOutputOpeningClaims, FusedIncrementTranslationOutputClaims,
-    IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
-    ProgramImageCyclePhaseOutputClaim, RamHammingBooleanityOutputOpeningClaims,
-    RamRaVirtualizationOutputOpeningClaims, Stage6AdviceCyclePhaseClaims,
+    BytecodeReadRafOutputOpeningClaims, FusedIncrementSourceLinkOutputClaims,
+    FusedIncrementTranslationOutputClaims, IncClaimReductionOutputOpeningClaims,
+    InstructionRaVirtualizationOutputOpeningClaims, ProgramImageCyclePhaseOutputClaim,
+    RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
+    Stage6AdviceCyclePhaseClaims,
 };
 use crate::stages::{
     stage1::{Stage1ClearOutput, Stage1Output},
@@ -83,6 +84,9 @@ pub struct Stage6Claims<F: Field> {
     /// Lattice PCS mode only, once the fused increment translation sumcheck is present.
     #[serde(default)]
     pub fused_increment_translation: Option<FusedIncrementTranslationOutputClaims<F>>,
+    /// Lattice PCS mode only, links fused translation source outputs to bytecode lanes.
+    #[serde(default)]
+    pub fused_increment_source_link: Option<FusedIncrementSourceLinkOutputClaims<F>>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
     /// Committed program mode only.
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
@@ -134,6 +138,11 @@ mod tests {
                 sign: zero,
                 rd_source: zero,
             }),
+            fused_increment_source_link: Some(FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: vec![zero],
+                store_flag: zero,
+                rd_present: zero,
+            }),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
                 untrusted: None,
@@ -148,9 +157,15 @@ mod tests {
             .expect("claims should serialize to a map")
             .remove("fused_increment_translation");
         assert!(removed.is_some());
+        let removed = value
+            .as_object_mut()
+            .expect("claims should serialize to a map")
+            .remove("fused_increment_source_link");
+        assert!(removed.is_some());
 
         let decoded: Stage6Claims<Fr> =
             serde_json::from_value(value).expect("missing fused field should deserialize");
         assert_eq!(decoded.fused_increment_translation, None);
+        assert_eq!(decoded.fused_increment_source_link, None);
     }
 }

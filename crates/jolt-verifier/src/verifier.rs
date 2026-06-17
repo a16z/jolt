@@ -1337,6 +1337,7 @@ mod tests {
                     rd_inc: zero,
                 },
                 fused_increment_translation: None,
+                fused_increment_source_link: None,
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,
