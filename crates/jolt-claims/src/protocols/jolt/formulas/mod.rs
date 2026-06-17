@@ -5,6 +5,7 @@ pub mod committed_openings;
 pub mod dimensions;
 pub mod error;
 pub mod instruction;
+pub mod lattice;
 pub mod ra;
 pub mod ram;
 pub mod registers;

@@ -17,6 +17,10 @@ pub use formulas::{
         TraceDimensions, TracePolynomialOrder,
     },
     error::{JoltFormulaDimensionsError, JoltFormulaPointError},
+    lattice::{
+        byte_decode_terms, final_opening_lattice_requirement, LatticeFinalOpeningRequirement,
+        LatticePackedFamilyId, LatticePackedViewFormula, LatticePackedViewTerm,
+    },
 };
 pub use ids::{
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
