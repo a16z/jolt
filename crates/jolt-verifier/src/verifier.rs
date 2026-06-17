@@ -1,15 +1,19 @@
 //! Top-level verifier entry point.
 
 use common::jolt_device::JoltDevice;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::formulas::dimensions::JoltFormulaDimensions;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
+#[cfg(feature = "akita")]
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, ZkBatchOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig, ZkConfig},
+    config::{validate_proof_config, JoltProtocolConfig, PcsFamily, ZkConfig},
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
@@ -75,6 +79,7 @@ where
     )?;
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(config, proof)?;
+    validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -222,6 +227,7 @@ where
     )?;
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(config, proof)?;
+    validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -431,6 +437,51 @@ where
         vc_capacity,
         precommitted,
     })
+}
+
+fn validate_lattice_layout_binding<PCS, VC, ZkProof>(
+    config: &JoltProtocolConfig,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    checked: &CheckedInputs,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    if proof.commitments.family() != PcsFamily::Lattice {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "akita"))]
+    {
+        let _ = (config, preprocessing, checked);
+        Err(VerifierError::InvalidProtocolConfig {
+            reason: "lattice PCS mode requires the jolt-verifier akita feature".to_string(),
+        })
+    }
+
+    #[cfg(feature = "akita")]
+    {
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .map_err(|error| VerifierError::InvalidProtocolConfig {
+            reason: format!("invalid lattice formula dimensions: {error}"),
+        })?;
+        let layout = stage8::derive_akita_packed_witness_layout(
+            config,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            formula_dimensions.ra_layout,
+            &checked.precommitted,
+        )?;
+        stage8::validate_akita_packed_witness_layout_config(config, &layout)
+    }
 }
 
 fn validate_zk_vector_commitment_setup<PCS, VC>(
@@ -688,8 +739,16 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic,
+        reason = "verifier unit tests fail loudly on setup errors"
+    )]
+
     use super::*;
-    use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    use crate::proof::{
+        AkitaCommitmentPayload, ClearProofClaims, CommitmentPayload, JoltProofClaims,
+        JoltStageProofs,
+    };
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
@@ -697,7 +756,7 @@ mod tests {
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::{MultilinearPoly, Polynomial};
     use jolt_program::preprocess::{
-        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+        BytecodePreprocessing, JoltProgramPreprocessing, ProgramMetadata, RAMPreprocessing,
     };
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
@@ -896,6 +955,66 @@ mod tests {
             result,
             Err(VerifierError::ProtocolConfigMismatch { expected, got })
                 if expected == config && got == JoltProtocolConfig::for_zk(false)
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_accepts_derived_layout_config() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
+        let config = lattice_config(layout.digest, layout.dimension);
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+
+        validate_proof_config(&config, &proof)
+            .unwrap_or_else(|error| panic!("proof config should validate: {error}"));
+        validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked)
+            .unwrap_or_else(|error| panic!("layout binding should validate: {error}"));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_rejects_derived_layout_mismatch() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        validate_proof_config(&config, &proof)
+            .unwrap_or_else(|error| panic!("proof config should validate: {error}"));
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+    }
+
+    #[cfg(not(feature = "akita"))]
+    #[test]
+    fn lattice_layout_binding_requires_akita_feature() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        validate_proof_config(&config, &proof)
+            .unwrap_or_else(|error| panic!("proof config should validate: {error}"));
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { .. })
         ));
     }
 
@@ -1323,5 +1442,107 @@ mod tests {
             (),
             None,
         )
+    }
+
+    fn committed_test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            max_input_size: 8,
+            max_output_size: 8,
+            stack_size: 8,
+            heap_size: 8,
+        });
+        let bytecode_address = memory_layout.get_lowest_address();
+        JoltVerifierPreprocessing::new(
+            crate::preprocessing::ProgramPreprocessing::Committed(
+                crate::preprocessing::CommittedProgramPreprocessing {
+                    meta: ProgramMetadata {
+                        entry_address: bytecode_address,
+                        min_bytecode_address: bytecode_address,
+                        entry_bytecode_index: 0,
+                        program_image_len_words: 4,
+                        bytecode_len: 16,
+                    },
+                    memory_layout,
+                    max_padded_trace_length: 16,
+                    bytecode_chunk_commitments: vec![TestCommitment, TestCommitment],
+                    program_image_commitment: TestCommitment,
+                },
+            ),
+            [7; 32],
+            (),
+            None,
+        )
+    }
+
+    fn public_io_for_preprocessing<PCS, VC>(
+        preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    ) -> JoltDevice
+    where
+        PCS: CommitmentScheme,
+        VC: VectorCommitment<Field = PCS::Field>,
+    {
+        JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        }
+    }
+
+    fn lattice_config(layout_digest: [u8; 32], d_pack: usize) -> JoltProtocolConfig {
+        let mut config =
+            JoltProtocolConfig::for_zk(false).with_pcs_family(crate::config::PcsFamily::Lattice);
+        config.lattice.program_mode = crate::config::ProgramMode::Committed;
+        config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some(layout_digest);
+        config.lattice.packed_witness.d_pack = Some(d_pack);
+        config
+    }
+
+    fn proof_with_lattice_payload(
+        config: &JoltProtocolConfig,
+        layout_digest: [u8; 32],
+        d_pack: usize,
+    ) -> TestProof {
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.protocol = *config;
+        proof.trace_length = 4;
+        proof.ram_K = 4;
+        proof.one_hot_config = JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: 8,
+        };
+        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+            TestCommitment,
+            layout_digest,
+            d_pack,
+        ));
+        proof
+    }
+
+    #[cfg(feature = "akita")]
+    fn expected_lattice_layout(
+        config: &JoltProtocolConfig,
+        preprocessing: &JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        proof: &TestProof,
+        checked: &CheckedInputs,
+    ) -> jolt_akita::PackedWitnessLayout {
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        stage8::derive_akita_packed_witness_layout(
+            config,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            formula_dimensions.ra_layout,
+            &checked.precommitted,
+        )
+        .unwrap_or_else(|error| panic!("Akita layout should derive: {error}"))
     }
 }
