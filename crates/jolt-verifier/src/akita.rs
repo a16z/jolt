@@ -5,16 +5,24 @@ use crate::{
         AdviceLatticeConfig, FieldInlineLatticeConfig, IncrementCommitmentMode, JoltProtocolConfig,
         LatticeConfig, PackedWitnessConfig, PcsFamily, ProgramMode,
     },
-    proof::{AkitaCommitmentPayload, CommitmentPayload},
+    preprocessing::JoltVerifierPreprocessing,
+    proof::{AkitaCommitmentPayload, ClearOnlyVectorCommitment, CommitmentPayload, JoltProof},
     stages::stage8::validate_akita_packed_witness_layout_config,
     VerifierError,
 };
+use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
     AkitaProverSetup, PackedAdviceKind, PackedFamilyId, PackedWitnessLayout, PackedWitnessSource,
 };
+use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
 use jolt_transcript::Transcript;
+
+pub type AkitaClearVectorCommitment = ClearOnlyVectorCommitment<AkitaField>;
+pub type AkitaVerifierPreprocessing =
+    JoltVerifierPreprocessing<AkitaPackedScheme, AkitaClearVectorCommitment>;
+pub type AkitaJoltProof = JoltProof<AkitaPackedScheme, AkitaClearVectorCommitment>;
 
 #[derive(Clone, Debug)]
 pub struct AkitaPackedWitnessArtifacts {
@@ -142,6 +150,31 @@ where
     .map_err(|error| VerifierError::FinalOpeningBatchFailed {
         reason: error.to_string(),
     })
+}
+
+pub fn verify_akita_clear<T>(
+    preprocessing: &AkitaVerifierPreprocessing,
+    public_io: &JoltDevice,
+    proof: &AkitaJoltProof,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+    config: &JoltProtocolConfig,
+) -> Result<(), VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    <AkitaField as WithAccumulator>::Accumulator: RingAccumulator<Element = AkitaField>,
+{
+    crate::verifier::verify_clear_with_config::<
+        AkitaField,
+        AkitaPackedScheme,
+        AkitaClearVectorCommitment,
+        T,
+    >(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        config,
+    )
 }
 
 fn layout_has_field_rd_inc(layout: &PackedWitnessLayout) -> bool {
@@ -367,6 +400,19 @@ mod tests {
             result.coefficients[0] * instruction_claim + result.coefficients[1] * sign_claim
         );
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    }
+
+    #[test]
+    fn akita_clear_verifier_surface_is_nameable() {
+        type TestTranscript = Blake2bTranscript<AkitaField>;
+        type VerifyFn = fn(
+            &AkitaVerifierPreprocessing,
+            &JoltDevice,
+            &AkitaJoltProof,
+            Option<&AkitaCommitment>,
+            &JoltProtocolConfig,
+        ) -> Result<(), VerifierError>;
+        let _verify: VerifyFn = verify_akita_clear::<TestTranscript>;
     }
 
     #[test]

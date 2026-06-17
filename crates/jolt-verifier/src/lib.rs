@@ -13,8 +13,9 @@ pub mod verifier;
 #[cfg(feature = "akita")]
 pub use akita::{
     akita_lattice_protocol_config_for_layout, commit_akita_packed_witness,
-    commit_akita_packed_witness_with_config, prove_akita_packed_openings,
-    AkitaPackedWitnessArtifacts,
+    commit_akita_packed_witness_with_config, prove_akita_packed_openings, verify_akita_clear,
+    AkitaClearVectorCommitment, AkitaJoltProof, AkitaPackedWitnessArtifacts,
+    AkitaVerifierPreprocessing,
 };
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
@@ -27,12 +28,13 @@ pub use preprocessing::{
 };
 pub use proof::{
     validate_akita_commitment_payload_config, validate_commitment_payload_config,
-    validate_commitment_payload_family, AkitaCommitmentPayload, ClearProofClaims,
-    CommitmentPayload, DoryCommitmentPayload, JoltProof, JoltProofClaims,
+    validate_commitment_payload_family, AkitaCommitmentPayload, ClearOnlyCommitment,
+    ClearOnlyVectorCommitment, ClearOnlyVectorCommitmentSetup, ClearProofClaims, CommitmentPayload,
+    DoryCommitmentPayload, JoltProof, JoltProofClaims,
 };
 #[cfg(feature = "field-inline")]
 pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};
 pub use verifier::{
-    stage8_batch_statement, stage8_batch_statement_with_config, verify, verify_with_config,
-    CheckedInputs,
+    stage8_batch_statement, stage8_batch_statement_with_config, verify, verify_clear,
+    verify_clear_with_config, verify_with_config, CheckedInputs,
 };

@@ -17,4 +17,4 @@ pub use outputs::{
     Stage8Output, Stage8PhysicalManifest, Stage8PhysicalOpening, Stage8ZkBatchStatement,
     Stage8ZkOutput,
 };
-pub use verify::{batch_statement, verify};
+pub use verify::{batch_statement, verify, verify_clear};

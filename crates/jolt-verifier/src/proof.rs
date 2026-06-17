@@ -1,5 +1,7 @@
 //! Verifier-owned proof model types.
 
+use std::marker::PhantomData;
+
 use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -7,6 +9,7 @@ use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::{AppendToTranscript, Label, Transcript};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -14,6 +17,52 @@ use crate::{
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClearOnlyCommitment;
+
+impl AppendToTranscript for ClearOnlyCommitment {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append(&Label(b"clear_only_commitment"));
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClearOnlyVectorCommitment<F: Field>(PhantomData<F>);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClearOnlyVectorCommitmentSetup;
+
+impl<F: Field> Commitment for ClearOnlyVectorCommitment<F> {
+    type Output = ClearOnlyCommitment;
+}
+
+impl<F: Field> VectorCommitment for ClearOnlyVectorCommitment<F> {
+    type Field = F;
+    type Setup = ClearOnlyVectorCommitmentSetup;
+
+    fn capacity(_setup: &Self::Setup) -> usize {
+        0
+    }
+
+    fn commit(
+        _setup: &Self::Setup,
+        values: &[Self::Field],
+        _blinding: &Self::Field,
+    ) -> Self::Output {
+        debug_assert!(values.is_empty());
+        ClearOnlyCommitment
+    }
+
+    fn verify(
+        _setup: &Self::Setup,
+        _commitment: &Self::Output,
+        values: &[Self::Field],
+        _blinding: &Self::Field,
+    ) -> bool {
+        values.is_empty()
+    }
+}
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

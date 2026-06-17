@@ -51,6 +51,29 @@ where
     )
 }
 
+pub fn verify_clear<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+) -> Result<(), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+{
+    verify_clear_with_config::<F, PCS, VC, T>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        &JoltProtocolConfig::for_zk(false),
+    )
+}
+
 pub fn verify_with_config<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -176,6 +199,102 @@ where
     let stage8::Stage8Output::Clear(_stage8) = stage8 else {
         return Err(VerifierError::ExpectedClearProof { field: "stage8" });
     };
+
+    Ok(())
+}
+
+pub fn verify_clear_with_config<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<(), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+{
+    if config_zk(config) {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "verify_clear requires a transparent protocol config".to_string(),
+        });
+    }
+
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        false,
+    )?;
+    validate_proof_consistency(proof, false)?;
+    validate_proof_config(config, proof)?;
+    validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+    )?;
+
+    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
+    let stage2 = stage2::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage2::deps(&stage1),
+    )?;
+    let stage3 = stage3::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage3::deps(&stage1, &stage2)?,
+    )?;
+    let stage4 = stage4::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage4::deps(&stage2, &stage3)?,
+    )?;
+    let stage5 = stage5::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage5::deps(&stage2, &stage4)?,
+    )?;
+    let stage6 = stage6::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+    )?;
+    let stage7 = stage7::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage7::deps(&stage4, &stage6)?,
+    )?;
+    let _stage8 = stage8::verify_clear(
+        &checked,
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+        stage8::deps(&stage6, &stage7)?,
+    )?;
 
     Ok(())
 }

@@ -138,6 +138,56 @@ where
     }
 }
 
+pub fn verify_clear<F, PCS, VC, T, ZkProof>(
+    checked: &CheckedInputs,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    transcript: &mut T,
+    deps: Deps<'_, F, VC::Output>,
+) -> Result<Stage8ClearOutput<F, PCS::Output>, VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    if checked.zk {
+        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
+    }
+
+    let Stage8BatchStatement::Clear(batch) = batch_statement(
+        checked,
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        deps,
+    )?
+    else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
+    };
+
+    let batch_result = PCS::verify_batch(
+        &preprocessing.pcs_setup,
+        transcript,
+        &batch.statement,
+        &proof.joint_opening_proof,
+    )
+    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+        reason: error.to_string(),
+    })?;
+
+    Ok(Stage8ClearOutput {
+        opening_claims: batch.opening_claims,
+        opening_ids: batch.opening_ids,
+        constraint_coefficients: batch_result.coefficients,
+        pcs_opening_point: batch.pcs_opening_point,
+        joint_claim: batch_result.reduced_opening,
+        joint_commitment: batch_result.joint_commitment,
+    })
+}
+
 pub fn batch_statement<F, PCS, VC, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
