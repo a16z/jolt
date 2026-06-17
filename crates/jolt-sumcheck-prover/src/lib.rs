@@ -19,4 +19,4 @@ pub use handler::{prove_and_verify_compressed, prove_sumcheck, BatchedSumcheckPr
 pub use program::{ProverProgram, ProverStep, Stage};
 pub use recorder::{ClearCompressedRecorder, SumcheckProofRecorder};
 pub use reference::{prove_reference, ReferenceSumcheckBackend, ReferenceSumcheckState};
-pub use spec::{BatchedSumcheckSpec, RoundOffset, SumcheckInstance, WitnessBinding};
+pub use spec::{BatchedSumcheckSpec, RelationId, RoundOffset, SumcheckInstance, WitnessBinding};

@@ -22,3 +22,4 @@ mod tests;
 
 pub use backend::CpuBackend;
 pub use config::CpuBackendConfig;
+pub use sumcheck::universal::{PreMaterializedRegularBatchBackend, PreMaterializedStage4Backend};

@@ -31,6 +31,7 @@ jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-program.workspace = true
 jolt-r1cs = { workspace = true, optional = true }
+jolt-sumcheck-prover.workspace = true
 jolt-witness.workspace = true
 rayon.workspace = true
 thiserror.workspace = true

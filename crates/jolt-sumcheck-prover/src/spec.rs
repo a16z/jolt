@@ -1,5 +1,8 @@
 use jolt_field::Field;
 
+/// Relation identifier for dispatching CPU/GPU sumcheck algebra.
+pub type RelationId = &'static str;
+
 /// Front-loaded batch alignment: instance `i` is inactive for rounds `r < offset`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RoundOffset {
@@ -25,11 +28,13 @@ pub enum WitnessBinding<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckInstance<F: Field> {
     pub label: &'static str,
+    pub relation: RelationId,
     pub input_claim: F,
     pub num_vars: usize,
     pub degree: usize,
     pub alignment: RoundOffset,
     pub bindings: WitnessBinding<F>,
+    pub optimization_ids: Vec<&'static str>,
 }
 
 impl<F: Field> SumcheckInstance<F> {
@@ -42,12 +47,24 @@ impl<F: Field> SumcheckInstance<F> {
     ) -> Self {
         Self {
             label,
+            relation: label,
             input_claim,
             num_vars,
             degree,
             alignment,
             bindings: WitnessBinding::None,
+            optimization_ids: Vec::new(),
         }
+    }
+
+    pub fn with_relation(mut self, relation: RelationId) -> Self {
+        self.relation = relation;
+        self
+    }
+
+    pub fn with_optimization_ids(mut self, ids: Vec<&'static str>) -> Self {
+        self.optimization_ids = ids;
+        self
     }
 
     pub fn with_dense_bindings(mut self, evals: Vec<F>) -> Self {

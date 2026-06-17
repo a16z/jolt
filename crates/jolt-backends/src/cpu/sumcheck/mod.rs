@@ -4,6 +4,7 @@
 //! hardware-agnostic sumcheck requests.
 
 mod kernels;
+pub mod universal;
 
 use std::collections::{HashMap, HashSet};
 
