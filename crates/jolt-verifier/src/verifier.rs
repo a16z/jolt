@@ -15,7 +15,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig, PcsFamily, ZkConfig},
     preprocessing::JoltVerifierPreprocessing,
-    proof::JoltProof,
+    proof::{CommitmentPayload, JoltProof},
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
@@ -585,41 +585,50 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let commitments = proof.dory_commitments()?;
-    let mut absorb_commitment = |commitment: &PCS::Output| {
-        append_payload_label(transcript, b"commitment", commitment);
-        transcript.append(commitment);
-    };
-    absorb_commitment(&commitments.rd_inc);
-    absorb_commitment(&commitments.ram_inc);
-    for commitment in &commitments.ra.instruction {
-        absorb_commitment(commitment);
-    }
-    for commitment in &commitments.ra.ram {
-        absorb_commitment(commitment);
-    }
-    for commitment in &commitments.ra.bytecode {
-        absorb_commitment(commitment);
-    }
-    if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
-        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
-        transcript.append(untrusted_advice_commitment);
-    }
-    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
-        transcript.append(trusted_advice_commitment);
-    }
-    if let Some(committed) = preprocessing.program.committed() {
-        for commitment in &committed.bytecode_chunk_commitments {
-            append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-            transcript.append(commitment);
+    match &proof.commitments {
+        CommitmentPayload::Dory(commitments) => {
+            let mut absorb_commitment = |commitment: &PCS::Output| {
+                append_payload_label(transcript, b"commitment", commitment);
+                transcript.append(commitment);
+            };
+            absorb_commitment(&commitments.rd_inc);
+            absorb_commitment(&commitments.ram_inc);
+            for commitment in &commitments.ra.instruction {
+                absorb_commitment(commitment);
+            }
+            for commitment in &commitments.ra.ram {
+                absorb_commitment(commitment);
+            }
+            for commitment in &commitments.ra.bytecode {
+                absorb_commitment(commitment);
+            }
+            if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
+                append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
+                transcript.append(untrusted_advice_commitment);
+            }
+            if let Some(trusted_advice_commitment) = trusted_advice_commitment {
+                append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
+                transcript.append(trusted_advice_commitment);
+            }
+            if let Some(committed) = preprocessing.program.committed() {
+                for commitment in &committed.bytecode_chunk_commitments {
+                    append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
+                    transcript.append(commitment);
+                }
+                append_payload_label(
+                    transcript,
+                    b"program_image_commitment",
+                    &committed.program_image_commitment,
+                );
+                transcript.append(&committed.program_image_commitment);
+            }
         }
-        append_payload_label(
-            transcript,
-            b"program_image_commitment",
-            &committed.program_image_commitment,
-        );
-        transcript.append(&committed.program_image_commitment);
+        CommitmentPayload::Akita(payload) => {
+            append_payload_label(transcript, b"akita_packed_witness", &payload.packed_witness);
+            transcript.append(&payload.packed_witness);
+            absorb_labeled_bytes(transcript, b"akita_layout_digest", &payload.layout_digest);
+            absorb_labeled_u64(transcript, b"akita_d_pack", payload.d_pack as u64);
+        }
     }
     Ok(())
 }
@@ -829,6 +838,33 @@ mod tests {
         fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
     }
 
+    #[derive(Default)]
+    struct RecordingTranscript {
+        bytes: Vec<u8>,
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(label: &'static [u8]) -> Self {
+            let mut transcript = Self::default();
+            transcript.append_bytes(label);
+            transcript
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.bytes.extend_from_slice(bytes);
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::zero()
+        }
+
+        fn state(&self) -> [u8; 32] {
+            [0; 32]
+        }
+    }
+
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
     type TestClaims = JoltProofClaims<Fr, jolt_blindfold::BlindFoldProof<Fr, Bn254G1>>;
 
@@ -1016,6 +1052,20 @@ mod tests {
             validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
             Err(VerifierError::InvalidProtocolConfig { .. })
         ));
+    }
+
+    #[test]
+    fn absorb_commitments_accepts_akita_payload_and_binds_layout_digest() {
+        let preprocessing = committed_test_preprocessing();
+        let layout_digest = [9; 32];
+        let proof =
+            proof_with_lattice_payload(&lattice_config(layout_digest, 44), layout_digest, 44);
+        let mut transcript = RecordingTranscript::new(b"test");
+
+        absorb_commitments(&preprocessing, &proof, None, &mut transcript)
+            .unwrap_or_else(|error| panic!("Akita commitment absorption should succeed: {error}"));
+
+        assert!(contains_subslice(&transcript.bytes, &layout_digest));
     }
 
     #[test]
@@ -1519,6 +1569,12 @@ mod tests {
             d_pack,
         ));
         proof
+    }
+
+    fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
     }
 
     #[cfg(feature = "akita")]
