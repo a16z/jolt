@@ -1,8 +1,9 @@
 use super::{
     inputs::Deps,
     outputs::{
-        Stage8BatchStatement, Stage8ClearBatchStatement, Stage8ClearOutput, Stage8OpeningId,
-        Stage8Output, Stage8ZkBatchStatement, Stage8ZkOutput,
+        Stage8BatchStatement, Stage8ClearBatchStatement, Stage8ClearOutput, Stage8LogicalManifest,
+        Stage8LogicalOpening, Stage8OpeningId, Stage8Output, Stage8ZkBatchStatement,
+        Stage8ZkOutput,
     },
 };
 use crate::{
@@ -35,7 +36,7 @@ use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
     EvaluationClaim, PhysicalView, VerifierOpeningClaim, ZkBatchOpeningScheme,
 };
-use jolt_poly::Point;
+use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_transcript::Transcript;
 
 struct Stage8BatchEntry<'a, F: Field, C> {
@@ -43,6 +44,8 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
     opening_claim: Option<F>,
+    /// Point where this logical opening was produced before Stage 8 embedding.
+    own_point: Vec<F>,
     /// Lagrange factor embedding this polynomial's own opening point into the
     /// unified opening point.
     scale: F,
@@ -218,7 +221,8 @@ where
         precommitted_finals,
         clear_claims,
     )?;
-    let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
+    let logical_manifest = logical_manifest(&entries, pcs_opening_point.clone());
+    let opening_ids = logical_manifest.opening_ids();
     let layout_digest = stage8_layout_digest(preprocessing);
     let point = pcs_opening_point.as_slice().to_vec();
 
@@ -235,6 +239,7 @@ where
             })
             .collect::<Vec<_>>();
         return Ok(Stage8BatchStatement::Zk(Stage8ZkBatchStatement {
+            logical_manifest,
             opening_ids,
             pcs_opening_point,
             statement: BatchOpeningStatement {
@@ -272,6 +277,7 @@ where
         });
     }
     Ok(Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
+        logical_manifest,
         opening_ids,
         opening_claims,
         pcs_opening_point,
@@ -428,6 +434,7 @@ where
             id: id.into(),
             commitment,
             opening_claim,
+            own_point: own_point.to_vec(),
             scale: commitment_embedding_scale(opening_point, own_point),
         });
         #[cfg(feature = "field-inline")]
@@ -441,11 +448,33 @@ where
                         .field_registers_inc_claim_reduction
                         .field_rd_inc
                 }),
+                own_point: inc_opening_point.to_vec(),
                 scale: commitment_embedding_scale(opening_point, inc_opening_point),
             });
         }
     }
     Ok(entries)
+}
+
+fn logical_manifest<F, C>(
+    entries: &[Stage8BatchEntry<'_, F, C>],
+    pcs_opening_point: Point<HIGH_TO_LOW, F>,
+) -> Stage8LogicalManifest<F>
+where
+    F: Field,
+{
+    Stage8LogicalManifest {
+        openings: entries
+            .iter()
+            .map(|entry| Stage8LogicalOpening {
+                id: entry.id,
+                point: entry.own_point.clone(),
+                claim: entry.opening_claim,
+                scale: entry.scale,
+            })
+            .collect(),
+        pcs_opening_point,
+    }
 }
 
 fn stage8_layout_digest<PCS, VC>(preprocessing: &JoltVerifierPreprocessing<PCS, VC>) -> [u8; 32]
