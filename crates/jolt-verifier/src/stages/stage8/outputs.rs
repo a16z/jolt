@@ -117,6 +117,32 @@ impl<F: Field> Stage8PhysicalManifest<F> {
             layout_digest: layout.digest,
         })
     }
+
+    #[cfg(feature = "akita")]
+    pub fn from_jolt_lattice_view_formulas(
+        logical: &Stage8LogicalManifest<F>,
+        layout: &jolt_akita::PackedWitnessLayout,
+        formulas: impl IntoIterator<
+            Item = (
+                JoltOpeningId,
+                jolt_claims::protocols::jolt::LatticePackedViewFormula<F>,
+            ),
+        >,
+    ) -> Result<Self, jolt_akita::PackedViewError> {
+        let entries = formulas
+            .into_iter()
+            .map(|(id, formula)| {
+                let id = Stage8OpeningId::from(id);
+                Ok(jolt_akita::PackedViewEntry::new(
+                    id,
+                    id,
+                    super::lattice::akita_packed_view_formula(&formula)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, jolt_akita::PackedViewError>>()?;
+        let catalog = jolt_akita::PackedViewCatalog::new(layout, entries)?;
+        Self::from_packed_view_catalog(logical, layout, &catalog)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -290,6 +316,155 @@ mod tests {
                 && terms[0].coefficient == Fr::from_u64(1)
                 && terms[0].family == PackedFamilyId::IncSign.physical_ref()
                 && terms[0].symbol == 1
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn physical_manifest_resolves_jolt_lattice_view_formulas() {
+        use jolt_akita::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedWitnessLayout,
+        };
+        use jolt_claims::protocols::jolt::{
+            byte_decode_terms, LatticePackedFamilyId, LatticePackedViewFormula,
+        };
+
+        let jolt_id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltRelationId::BytecodeClaimReduction,
+        );
+        let id = Stage8OpeningId::from(jolt_id);
+        let logical = Stage8LogicalManifest {
+            openings: vec![Stage8LogicalOpening {
+                id,
+                point: vec![Fr::from_u64(1)],
+                claim: Some(Fr::from_u64(2)),
+                scale: Fr::from_u64(3),
+            }],
+            pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
+        };
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::BytecodeChunk { index: 0 },
+            PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+            8,
+            PackedAlphabet::Byte,
+        )])
+        .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
+
+        let physical = Stage8PhysicalManifest::from_jolt_lattice_view_formulas(
+            &logical,
+            &layout,
+            [(
+                jolt_id,
+                LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+                    LatticePackedFamilyId::BytecodeChunk { index: 0 },
+                    3,
+                )),
+            )],
+        )
+        .unwrap_or_else(|error| panic!("lattice formula should resolve: {error}"));
+
+        assert_eq!(physical.layout_digest, layout.digest);
+        assert_eq!(physical.openings[0].id, id);
+        assert_eq!(physical.openings[0].relation, id);
+        assert!(matches!(
+            &physical.openings[0].view,
+            PhysicalView::PackedLinear {
+                layout_digest,
+                terms
+            } if *layout_digest == layout.digest
+                && terms.len() == 256
+                && terms[7].coefficient == Fr::from_u64(7)
+                && terms[7].family == (PackedFamilyId::BytecodeChunk { index: 0 }).physical_ref()
+                && terms[7].limb == 3
+                && terms[7].symbol == 7
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn physical_manifest_rejects_missing_jolt_lattice_formula() {
+        use jolt_akita::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedViewError,
+            PackedWitnessLayout,
+        };
+        use jolt_claims::protocols::jolt::{LatticePackedFamilyId, LatticePackedViewFormula};
+
+        let expected_id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::RamInc,
+            JoltRelationId::IncClaimReduction,
+        );
+        let supplied_id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::RdInc,
+            JoltRelationId::IncClaimReduction,
+        );
+        let logical = Stage8LogicalManifest {
+            openings: vec![Stage8LogicalOpening {
+                id: Stage8OpeningId::from(expected_id),
+                point: vec![Fr::from_u64(1)],
+                claim: Some(Fr::from_u64(2)),
+                scale: Fr::from_u64(3),
+            }],
+            pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
+        };
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            PackedFactDomain::TraceRows { log_t: 0 },
+            1,
+            PackedAlphabet::Bit,
+        )])
+        .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
+
+        assert!(matches!(
+            Stage8PhysicalManifest::from_jolt_lattice_view_formulas(
+                &logical,
+                &layout,
+                [(
+                    supplied_id,
+                    LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1,),
+                )],
+            ),
+            Err(PackedViewError::MissingView)
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn physical_manifest_rejects_masked_jolt_lattice_formula() {
+        use jolt_akita::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedViewError,
+            PackedWitnessLayout,
+        };
+        use jolt_claims::protocols::jolt::LatticePackedViewFormula;
+
+        let jolt_id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::RamInc,
+            JoltRelationId::IncClaimReduction,
+        );
+        let logical = Stage8LogicalManifest {
+            openings: vec![Stage8LogicalOpening {
+                id: Stage8OpeningId::from(jolt_id),
+                point: vec![Fr::from_u64(1)],
+                claim: Some(Fr::from_u64(2)),
+                scale: Fr::from_u64(3),
+            }],
+            pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
+        };
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            PackedFactDomain::TraceRows { log_t: 0 },
+            1,
+            PackedAlphabet::Bit,
+        )])
+        .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
+
+        assert!(matches!(
+            Stage8PhysicalManifest::from_jolt_lattice_view_formulas(
+                &logical,
+                &layout,
+                [(jolt_id, LatticePackedViewFormula::<Fr>::MaskedDecoded)],
+            ),
+            Err(PackedViewError::MaskedViewRequiresTranslation)
         ));
     }
 }
