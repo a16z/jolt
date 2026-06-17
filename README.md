@@ -54,7 +54,7 @@ For developers looking to contribute to Jolt, follow the instructions below.
 
 ## Installation
 
-You will need Rust [nightly](./rust-toolchain.toml).
+You will need the Rust toolchain pinned in [rust-toolchain.toml](./rust-toolchain.toml).
 
 If you have `rustup` installed, you do not need to do anything as it will
 automatically install the correct toolchain and any additional targets on the
