@@ -56,5 +56,27 @@ pub(super) const fn handles_rd_zero_internally(instruction_kind: SourceInstructi
             | SourceInstructionKind::EBREAK
             | SourceInstructionKind::CSRRW
             | SourceInstructionKind::CSRRS
+    ) || field_inline_handles_rd_zero(instruction_kind)
+}
+
+#[cfg(feature = "field-inline")]
+const fn field_inline_handles_rd_zero(instruction_kind: SourceInstructionKind) -> bool {
+    matches!(
+        instruction_kind,
+        SourceInstructionKind::FIELD_ADD
+            | SourceInstructionKind::FIELD_SUB
+            | SourceInstructionKind::FIELD_MUL
+            | SourceInstructionKind::FIELD_INV
+            | SourceInstructionKind::FIELD_LOAD_FROM_X
+            | SourceInstructionKind::FIELD_LOAD_IMM
+            // rd encodes the destination x-register; store-to-x0 is a legal no-op and
+            // must keep rd=x0 rather than take the virtual-register rewrite (which would
+            // produce an out-of-range x-register and fail metadata construction).
+            | SourceInstructionKind::FIELD_STORE_TO_X
     )
+}
+
+#[cfg(not(feature = "field-inline"))]
+const fn field_inline_handles_rd_zero(_instruction_kind: SourceInstructionKind) -> bool {
+    false
 }

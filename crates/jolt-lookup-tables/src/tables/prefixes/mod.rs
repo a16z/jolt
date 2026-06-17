@@ -1,14 +1,11 @@
 //! Prefix polynomial evaluations for the sparse-dense decomposition.
 //!
 //! Each prefix captures the "contribution" of high-order bound variables
-//! to a lookup table's MLE during sumcheck. Prefixes are evaluated at
-//! binary points to materialize a dense polynomial, which is then bound
-//! using standard polynomial operations during sumcheck rounds.
-//!
-//! Checkpoints accumulate prefix values across phases. They are initialized
-//! via [`SparseDensePrefix::default_checkpoint`] and updated by the consumer
-//! at phase boundaries (the bound polynomial's final scalar becomes the new
-//! checkpoint).
+//! to a lookup table's MLE during sumcheck. At the start of each phase,
+//! prefixes are evaluated at binary points to materialize a dense polynomial,
+//! which is then bound during the phase's sumcheck rounds. The fully bound
+//! value becomes the prefix's checkpoint for the next phase. Checkpoints are
+//! initialized via [`SparseDensePrefix::default_checkpoint`].
 
 pub mod and;
 pub mod andn;
@@ -76,6 +73,9 @@ pub trait SparseDensePrefix<F: Field>: 'static + Sync {
 #[derive(Clone, Copy)]
 pub struct PrefixEval<F>(pub(crate) F);
 
+/// Full RV64 instruction lookup address width.
+pub const LOG_K: usize = 2 * crate::XLEN;
+
 impl<F: Display> Display for PrefixEval<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -85,6 +85,13 @@ impl<F: Display> Display for PrefixEval<F> {
 impl<F> From<F> for PrefixEval<F> {
     fn from(value: F) -> Self {
         Self(value)
+    }
+}
+
+impl<F: Copy> PrefixEval<F> {
+    /// Returns the underlying field evaluation.
+    pub fn value(self) -> F {
+        self.0
     }
 }
 

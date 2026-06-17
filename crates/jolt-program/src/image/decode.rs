@@ -3,6 +3,8 @@
     reason = "RISC-V decode tables are easiest to audit in ISA bit-field widths"
 )]
 
+#[cfg(feature = "field-inline")]
+use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
 use jolt_riscv::{
     JoltInstructionProfile, NormalizedOperands, SourceInlineKey, SourceInstruction,
     SourceInstructionKind, SourceInstructionRow,
@@ -60,6 +62,8 @@ pub fn decode_instruction(
         0b1110011 => decode_system(word)?,
         0b0001011 | 0b0101011 => SourceInstructionKind::Inline,
         0b1011011 => decode_custom(word)?,
+        #[cfg(feature = "field-inline")]
+        opcode if opcode == u32::from(FIELD_INLINE_OPCODE) => decode_field_inline(word)?,
         _ => return invalid("unknown RV64 opcode"),
     };
 
@@ -195,6 +199,21 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     }
 }
 
+#[cfg(feature = "field-inline")]
+fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError> {
+    match FieldInlineOp::from_funct3(funct3(word) as u8) {
+        Some(FieldInlineOp::Add) => Ok(SourceInstructionKind::FIELD_ADD),
+        Some(FieldInlineOp::Sub) => Ok(SourceInstructionKind::FIELD_SUB),
+        Some(FieldInlineOp::Mul) => Ok(SourceInstructionKind::FIELD_MUL),
+        Some(FieldInlineOp::Inv) => Ok(SourceInstructionKind::FIELD_INV),
+        Some(FieldInlineOp::AssertEq) => Ok(SourceInstructionKind::FIELD_ASSERT_EQ),
+        Some(FieldInlineOp::LoadFromX) => Ok(SourceInstructionKind::FIELD_LOAD_FROM_X),
+        Some(FieldInlineOp::StoreToX) => Ok(SourceInstructionKind::FIELD_STORE_TO_X),
+        Some(FieldInlineOp::LoadImm) => Ok(SourceInstructionKind::FIELD_LOAD_IMM),
+        None => invalid("invalid field-inline funct3"),
+    }
+}
+
 fn source_instruction(
     instruction_kind: SourceInstructionKind,
     word: u32,
@@ -262,6 +281,21 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         | SourceInstructionKind::AdviceLH
         | SourceInstructionKind::AdviceLW
         | SourceInstructionKind::AdviceLD => format_advice_load_operands(word),
+        #[cfg(feature = "field-inline")]
+        SourceInstructionKind::FIELD_ADD
+        | SourceInstructionKind::FIELD_SUB
+        | SourceInstructionKind::FIELD_MUL => format_r_operands(word),
+        // FIELD_ASSERT_EQ has no destination register; decoding it with `rd: None`
+        // keeps the bytecode operands consistent with the tracer's parsed shape and
+        // avoids the rd=x0 virtual-register rewrite during expansion.
+        #[cfg(feature = "field-inline")]
+        SourceInstructionKind::FIELD_ASSERT_EQ => format_field_binary_no_rd_operands(word),
+        #[cfg(feature = "field-inline")]
+        SourceInstructionKind::FIELD_INV
+        | SourceInstructionKind::FIELD_LOAD_FROM_X
+        | SourceInstructionKind::FIELD_STORE_TO_X => format_field_unary_operands(word),
+        #[cfg(feature = "field-inline")]
+        SourceInstructionKind::FIELD_LOAD_IMM => format_field_load_imm_operands(word),
         SourceInstructionKind::Inline => format_inline_operands(word),
         SourceInstructionKind::ECALL
         | SourceInstructionKind::EBREAK
@@ -270,6 +304,36 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         | SourceInstructionKind::NoOp
         | SourceInstructionKind::Unimpl => NormalizedOperands::default(),
         _ => format_i_or_r_operands(instruction_kind, word),
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn format_field_unary_operands(word: u32) -> NormalizedOperands {
+    NormalizedOperands {
+        rd: Some(rd(word)),
+        rs1: Some(rs1(word)),
+        rs2: None,
+        imm: 0,
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn format_field_binary_no_rd_operands(word: u32) -> NormalizedOperands {
+    NormalizedOperands {
+        rd: None,
+        rs1: Some(rs1(word)),
+        rs2: Some(rs2(word)),
+        imm: 0,
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn format_field_load_imm_operands(word: u32) -> NormalizedOperands {
+    NormalizedOperands {
+        rd: Some(rd(word)),
+        rs1: None,
+        rs2: None,
+        imm: i128::from((word >> 20) & 0xfff),
     }
 }
 
@@ -459,4 +523,56 @@ fn sign_extension_mask(value: u32, bit: u32, mask: u32) -> u32 {
 
 fn invalid<T>(message: &'static str) -> Result<T, ProgramError> {
     Err(ProgramError::MalformedImage(message))
+}
+
+#[cfg(test)]
+#[cfg_attr(
+    feature = "field-inline",
+    expect(clippy::panic, reason = "decode tests fail with contextual errors")
+)]
+mod tests {
+    use super::*;
+    use jolt_riscv::RV64IMAC_JOLT;
+
+    fn field_word(funct3: u32, rd: u8, rs1: u8, rs2_or_imm: u32) -> u32 {
+        0x7b | (funct3 << 12) | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (rs2_or_imm << 20)
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn decodes_field_inline_source_rows_only_for_fr_on_profile() {
+        let word = field_word(jolt_riscv::FieldInlineOp::Mul.funct3().into(), 1, 2, 3);
+        let fr_off = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT);
+        assert!(matches!(
+            fr_off,
+            Err(ProgramError::IllegalSourceInstruction(
+                jolt_riscv::SourceInstruction::FieldMul(_)
+            ))
+        ));
+
+        let fr_on = decode_instruction(
+            word,
+            0x8000_0000,
+            false,
+            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
+        );
+        let instruction = match fr_on {
+            Ok(instruction) => instruction,
+            Err(error) => panic!("field-inline decode failed: {error:?}"),
+        };
+        assert_eq!(instruction.kind(), SourceInstructionKind::FIELD_MUL);
+        assert_eq!(instruction.row().operands.rd, Some(1));
+        assert_eq!(instruction.row().operands.rs1, Some(2));
+        assert_eq!(instruction.row().operands.rs2, Some(3));
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn field_inline_opcode_is_unknown_without_feature() {
+        let word = field_word(2, 1, 2, 3);
+        assert!(matches!(
+            decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT),
+            Err(ProgramError::MalformedImage("unknown RV64 opcode"))
+        ));
+    }
 }

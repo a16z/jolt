@@ -1,7 +1,12 @@
 //! Lookup-table-related traits.
 
 use jolt_field::Field;
-use jolt_riscv::{JoltInstruction, JoltTraceRow};
+#[cfg(feature = "field-inline")]
+use jolt_riscv::instructions::{
+    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
+    FieldSub,
+};
+use jolt_riscv::{JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionRowData};
 use std::fmt::Debug;
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -32,9 +37,9 @@ pub trait InstructionLookupTable<const XLEN: usize> {
 
 macro_rules! impl_jolt_instruction_lookup_table {
     (
-        instructions: [$($kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
-        impl<const XLEN: usize, T> InstructionLookupTable<XLEN>
+        impl<const XLEN: usize, T: JoltInstructionRowData> InstructionLookupTable<XLEN>
             for JoltInstruction<T>
         {
             #[inline]
@@ -42,6 +47,7 @@ macro_rules! impl_jolt_instruction_lookup_table {
                 match self {
                     JoltInstruction::Noop(_) => None,
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$variant(instruction) => instruction.lookup_table(),
                     )*
                 }
@@ -52,17 +58,11 @@ macro_rules! impl_jolt_instruction_lookup_table {
 
 jolt_riscv::for_each_jolt_instruction_kind!(impl_jolt_instruction_lookup_table);
 
-impl<const XLEN: usize> InstructionLookupTable<XLEN> for JoltTraceRow {
-    #[inline]
-    fn lookup_table(&self) -> Option<LookupTableKind<XLEN>> {
-        let instruction = self.instruction_kind()?;
-        InstructionLookupTable::<XLEN>::lookup_table(&instruction)
-    }
-}
-
 macro_rules! impl_lookup_table {
     ($instr:ident, Some($table:ident)) => {
-        impl<const XLEN: usize, T> $crate::traits::InstructionLookupTable<XLEN> for $instr<T> {
+        impl<const XLEN: usize, T: jolt_riscv::JoltInstructionRowData>
+            $crate::traits::InstructionLookupTable<XLEN> for $instr<T>
+        {
             #[inline]
             fn lookup_table(&self) -> Option<$crate::tables::LookupTableKind<XLEN>> {
                 Some($crate::tables::LookupTableKind::$table(
@@ -72,7 +72,9 @@ macro_rules! impl_lookup_table {
         }
     };
     ($instr:ident, None) => {
-        impl<const XLEN: usize, T> $crate::traits::InstructionLookupTable<XLEN> for $instr<T> {
+        impl<const XLEN: usize, T: jolt_riscv::JoltInstructionRowData>
+            $crate::traits::InstructionLookupTable<XLEN> for $instr<T>
+        {
             #[inline]
             fn lookup_table(&self) -> Option<$crate::tables::LookupTableKind<XLEN>> {
                 None
@@ -112,13 +114,179 @@ pub trait LookupQuery<const XLEN: usize> {
     fn to_lookup_output(&self) -> u64;
 }
 
+#[cfg(feature = "field-inline")]
+macro_rules! impl_field_inline_no_lookup {
+    ($($instr:ident),* $(,)?) => {
+        $(
+            impl_lookup_table!($instr, None);
+
+            impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN>
+                for jolt_riscv::instructions::$instr<C>
+            {
+                #[inline]
+                fn to_instruction_inputs(&self) -> (u64, i128) {
+                    (0, 0)
+                }
+
+                #[inline]
+                fn to_lookup_output(&self) -> u64 {
+                    0
+                }
+            }
+        )*
+    };
+}
+
+#[cfg(feature = "field-inline")]
+impl_field_inline_no_lookup!(
+    FieldAdd,
+    FieldSub,
+    FieldMul,
+    FieldInv,
+    FieldAssertEq,
+    FieldLoadFromX,
+    FieldStoreToX,
+    FieldLoadImm,
+);
+
+/// Lookup-query adapter for dynamic final Jolt instruction rows.
+///
+/// Per-instruction `LookupQuery` impls remain the source of operand packing,
+/// lookup-index derivation, and output computation. This wrapper only routes a
+/// runtime cycle to the typed instruction wrapper selected by its final Jolt
+/// instruction kind.
+#[derive(Clone, Copy, Debug)]
+pub struct JoltLookupQuery<C> {
+    pub instruction_kind: JoltInstructionKind,
+    pub cycle: C,
+}
+
+impl<C> JoltLookupQuery<C> {
+    #[inline]
+    pub const fn new(instruction_kind: JoltInstructionKind, cycle: C) -> Self {
+        Self {
+            instruction_kind,
+            cycle,
+        }
+    }
+}
+
+macro_rules! impl_jolt_lookup_query {
+    (
+        instructions: [$($(#[$meta:meta])* $kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+    ) => {
+        impl<const XLEN: usize, C> LookupQuery<XLEN> for JoltLookupQuery<C>
+        where
+            C: JoltCycle + Copy,
+        {
+            #[inline]
+            fn to_instruction_inputs(&self) -> (u64, i128) {
+                match self.instruction_kind {
+                    JoltInstruction::Noop(_) => (0, 0),
+                    $(
+                        $(#[$meta])*
+                        JoltInstruction::$variant(_) => {
+                            let instruction = jolt_riscv::instructions::$variant(self.cycle);
+                            LookupQuery::<XLEN>::to_instruction_inputs(&instruction)
+                        }
+                    )*
+                }
+            }
+
+            #[inline]
+            fn to_lookup_operands(&self) -> (u64, u128) {
+                match self.instruction_kind {
+                    JoltInstruction::Noop(_) => (0, 0),
+                    $(
+                        $(#[$meta])*
+                        JoltInstruction::$variant(_) => {
+                            let instruction = jolt_riscv::instructions::$variant(self.cycle);
+                            LookupQuery::<XLEN>::to_lookup_operands(&instruction)
+                        }
+                    )*
+                }
+            }
+
+            #[inline]
+            fn to_lookup_index(&self) -> u128 {
+                match self.instruction_kind {
+                    JoltInstruction::Noop(_) => 0,
+                    $(
+                        $(#[$meta])*
+                        JoltInstruction::$variant(_) => {
+                            let instruction = jolt_riscv::instructions::$variant(self.cycle);
+                            LookupQuery::<XLEN>::to_lookup_index(&instruction)
+                        }
+                    )*
+                }
+            }
+
+            #[inline]
+            fn to_lookup_output(&self) -> u64 {
+                match self.instruction_kind {
+                    JoltInstruction::Noop(_) => 0,
+                    $(
+                        $(#[$meta])*
+                        JoltInstruction::$variant(_) => {
+                            let instruction = jolt_riscv::instructions::$variant(self.cycle);
+                            LookupQuery::<XLEN>::to_lookup_output(&instruction)
+                        }
+                    )*
+                }
+            }
+        }
+    };
+}
+
+jolt_riscv::for_each_jolt_instruction_kind!(impl_jolt_lookup_query);
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use jolt_riscv::{
         instructions::{Add, Ld, Noop},
-        JoltInstructionRow,
+        JoltInstructionRow, NormalizedOperands,
     };
+
+    #[derive(Clone, Copy, Debug)]
+    struct TestCycle {
+        instruction: JoltInstructionRow,
+        rs1: Option<u64>,
+        rs2: Option<u64>,
+        rd: Option<(u64, u64)>,
+    }
+
+    impl JoltCycle for TestCycle {
+        type Instruction = JoltInstructionRow;
+
+        fn instruction(&self) -> Self::Instruction {
+            self.instruction
+        }
+
+        fn rs1_val(&self) -> Option<u64> {
+            self.rs1
+        }
+
+        fn rs2_val(&self) -> Option<u64> {
+            self.rs2
+        }
+
+        fn rd_vals(&self) -> Option<(u64, u64)> {
+            self.rd
+        }
+
+        fn ram_access_address(&self) -> Option<u64> {
+            None
+        }
+
+        fn ram_read_value(&self) -> Option<u64> {
+            None
+        }
+
+        fn ram_write_value(&self) -> Option<u64> {
+            None
+        }
+    }
 
     #[test]
     fn aggregate_instruction_dispatches_lookup_table() {
@@ -129,5 +297,31 @@ mod tests {
         assert!(InstructionLookupTable::<64>::lookup_table(&add).is_some());
         assert!(InstructionLookupTable::<64>::lookup_table(&load).is_none());
         assert!(InstructionLookupTable::<64>::lookup_table(&noop).is_none());
+    }
+
+    #[test]
+    fn dynamic_lookup_query_dispatches_to_instruction_impl() {
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::ADDI,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: None,
+                imm: -1,
+            },
+            ..Default::default()
+        };
+        let cycle = TestCycle {
+            instruction,
+            rs1: Some(10),
+            rs2: None,
+            rd: Some((0, 9)),
+        };
+        let query = JoltLookupQuery::new(JoltInstructionKind::ADDI, cycle);
+
+        assert_eq!(
+            LookupQuery::<64>::to_lookup_index(&query),
+            (1_u128 << 64) + 9
+        );
     }
 }

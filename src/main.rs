@@ -647,6 +647,7 @@ edition = "2021"
 
 [features]
 guest = []
+field-inline = ["jolt/field-inline"]
 
 [dependencies]
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }
@@ -659,6 +660,7 @@ edition = "2021"
 
 [features]
 guest = []
+field-inline = ["jolt/field-inline"]
 
 [dependencies]
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }

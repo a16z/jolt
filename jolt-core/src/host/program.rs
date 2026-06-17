@@ -10,7 +10,9 @@ use common::constants::{
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 use jolt_program::{JoltProgram, ProgramError};
-use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
+#[cfg(feature = "field-inline")]
+use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
@@ -27,6 +29,8 @@ impl Program {
             guest: guest.to_string(),
             func: None,
             profile: None,
+            instruction_profile: RV64IMAC_JOLT_ALL_INLINES,
+            guest_features: Vec::new(),
             heap_size: DEFAULT_HEAP_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
@@ -54,6 +58,22 @@ impl Program {
     /// If set, guest builds use `--profile <name>`.
     pub fn set_profile(&mut self, profile: &str) {
         self.profile = Some(profile.to_string());
+    }
+
+    pub fn set_instruction_profile(&mut self, profile: JoltInstructionProfile) {
+        self.instruction_profile = profile;
+    }
+
+    pub fn add_guest_feature(&mut self, feature: &str) {
+        if self.guest_features.iter().all(|known| known != feature) {
+            self.guest_features.push(feature.to_string());
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    pub fn enable_field_inline(&mut self) {
+        self.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
+        self.add_guest_feature("field-inline");
     }
 
     /// Set backtrace mode for the guest build.
@@ -98,7 +118,12 @@ impl Program {
     }
 
     pub fn build(&mut self, target_dir: &str) {
-        self.build_with_features(target_dir, &[]);
+        let default_features = self.guest_features.clone();
+        let default_features = default_features
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        self.build_with_features(target_dir, &default_features);
     }
 
     #[tracing::instrument(skip_all, name = "Program::build_with_features")]
@@ -131,8 +156,15 @@ impl Program {
             args.push("--heap-size".to_string());
             args.push(self.heap_size.to_string());
 
+            let mut features = self.guest_features.clone();
+            for feature in extra_features {
+                if features.iter().all(|known| known.as_str() != *feature) {
+                    features.push((*feature).to_string());
+                }
+            }
+
             // Add suffix to target dir if building with compute_advice feature
-            let guest_target_dir = if extra_features.contains(&"compute_advice") {
+            let guest_target_dir = if features.iter().any(|feature| feature == "compute_advice") {
                 format!(
                     "{}/{}-{}-compute-advice",
                     target_dir,
@@ -168,9 +200,9 @@ impl Program {
             // Always pass --features guest to enable the guest feature on the example package
             // (this is separate from the jolt-sdk features specified in the example's Cargo.toml)
             args.push("--features".to_string());
-            let mut features = vec!["guest".to_string()];
-            features.extend(extra_features.iter().map(|s| s.to_string()));
-            args.push(features.join(","));
+            let mut cargo_features = vec!["guest".to_string()];
+            cargo_features.extend(features);
+            args.push(cargo_features.join(","));
 
             let cmd_line = compose_command_line(
                 &jolt_cmd,
@@ -229,7 +261,10 @@ impl Program {
 
             // If extra_features contains "compute_advice", store in elf_compute_advice
             // Otherwise store in elf
-            if extra_features.contains(&"compute_advice") {
+            if cargo_features
+                .iter()
+                .any(|feature| feature == "compute_advice")
+            {
                 self.elf_compute_advice = Some(elf_path.clone());
                 info!("Built compute_advice guest binary: {}", elf_path.display());
             } else {
@@ -272,7 +307,7 @@ impl Program {
         jolt_program::build_jolt_program_with_inline_provider(
             &elf_contents,
             &mut inline_provider,
-            RV64IMAC_JOLT_ALL_INLINES,
+            self.instruction_profile,
         )
     }
 
@@ -321,7 +356,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let image = jolt_program::image::decode_elf(&elf_contents, RV64IMAC_JOLT)
+        let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
@@ -352,7 +387,7 @@ impl Program {
             File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
-        let image = jolt_program::image::decode_elf(&elf_contents, RV64IMAC_JOLT)
+        let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);

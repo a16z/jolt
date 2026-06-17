@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 guest = []
+field-inline = ["jolt/field-inline"]
 compute_advice = []
 
 [dependencies]

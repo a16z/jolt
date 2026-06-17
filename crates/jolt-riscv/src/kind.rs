@@ -445,6 +445,30 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRotW7) => {
         Some(SourceExtension::JoltCustom)
     };
+    (FieldAdd) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldSub) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldMul) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldInv) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldAssertEq) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldLoadFromX) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldStoreToX) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldLoadImm) => {
+        Some(SourceExtension::FieldInline)
+    };
 }
 
 macro_rules! source_side_effects_for_marker {
@@ -856,6 +880,30 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRotW7) => {
         false
     };
+    (FieldAdd) => {
+        true
+    };
+    (FieldSub) => {
+        true
+    };
+    (FieldMul) => {
+        true
+    };
+    (FieldInv) => {
+        true
+    };
+    (FieldAssertEq) => {
+        true
+    };
+    (FieldLoadFromX) => {
+        true
+    };
+    (FieldStoreToX) => {
+        true
+    };
+    (FieldLoadImm) => {
+        true
+    };
 }
 
 macro_rules! jolt_target_extension_for_marker {
@@ -1060,6 +1108,30 @@ macro_rules! jolt_target_extension_for_marker {
     (VirtualXorRotW7) => {
         Some(JoltTargetExtension::BitManipulation)
     };
+    (FieldAdd) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldSub) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldMul) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldInv) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldAssertEq) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldLoadFromX) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldStoreToX) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldLoadImm) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
 }
 
 macro_rules! jolt_side_effects_for_marker {
@@ -1100,6 +1172,30 @@ macro_rules! jolt_side_effects_for_marker {
         true
     };
     (VirtualHostIO) => {
+        true
+    };
+    (FieldAdd) => {
+        true
+    };
+    (FieldSub) => {
+        true
+    };
+    (FieldMul) => {
+        true
+    };
+    (FieldInv) => {
+        true
+    };
+    (FieldAssertEq) => {
+        true
+    };
+    (FieldLoadFromX) => {
+        true
+    };
+    (FieldStoreToX) => {
+        true
+    };
+    (FieldLoadImm) => {
         true
     };
     (Add) => {
@@ -1293,9 +1389,10 @@ impl<T> JoltInstructionMeta for Noop<T> {
 
 macro_rules! define_source_instruction_meta {
     (
-        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         $(
+            $(#[$meta])*
             impl<T> SourceInstructionMeta for $marker<T> {
                 const CANONICAL_NAME: &'static str = $canonical_name;
                 const SOURCE_EXTENSION: Option<SourceExtension> =
@@ -1308,9 +1405,10 @@ macro_rules! define_source_instruction_meta {
 
 macro_rules! define_jolt_instruction_meta {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         $(
+            $(#[$meta])*
             impl<T> JoltInstructionMeta for $marker<T> {
                 const CANONICAL_NAME: &'static str = $canonical_name;
                 const JOLT_TAG: JoltInstructionTag = JoltInstructionTag($tag);
@@ -1327,7 +1425,7 @@ crate::for_each_jolt_instruction_kind!(define_jolt_instruction_meta);
 
 macro_rules! define_source_instruction_kind {
     (
-        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         #[expect(
             non_upper_case_globals,
@@ -1337,6 +1435,7 @@ macro_rules! define_source_instruction_kind {
             pub const NoOp: Self = SourceInstruction::Noop(Noop(()));
             pub const Unimpl: Self = SourceInstruction::Unimplemented(Unimpl(()));
             $(
+                $(#[$meta])*
                 pub const $instr: Self = SourceInstruction::$marker($marker(()));
             )*
             pub const Inline: Self = SourceInstruction::InlineDispatch(Inline(()));
@@ -1345,6 +1444,7 @@ macro_rules! define_source_instruction_kind {
                 SourceInstruction::Noop(Noop(())),
                 SourceInstruction::Unimplemented(Unimpl(())),
                 $(
+                    $(#[$meta])*
                     SourceInstruction::$marker($marker(())),
                 )*
                 SourceInstruction::InlineDispatch(Inline(())),
@@ -1355,6 +1455,7 @@ macro_rules! define_source_instruction_kind {
                     SourceInstruction::Noop(_) => "NoOp",
                     SourceInstruction::Unimplemented(_) => "Unimpl",
                     $(
+                        $(#[$meta])*
                         SourceInstruction::$marker(_) => stringify!($instr),
                     )*
                     SourceInstruction::InlineDispatch(_) => "Inline",
@@ -1368,6 +1469,7 @@ macro_rules! define_source_instruction_kind {
                         <Unimpl<()> as SourceInstructionMeta>::CANONICAL_NAME
                     }
                     $(
+                        $(#[$meta])*
                         SourceInstruction::$marker(_) => {
                             <$marker<()> as SourceInstructionMeta>::CANONICAL_NAME
                         }
@@ -1385,6 +1487,7 @@ macro_rules! define_source_instruction_kind {
                         <Unimpl<()> as SourceInstructionMeta>::SOURCE_EXTENSION
                     }
                     $(
+                        $(#[$meta])*
                         SourceInstruction::$marker(_) => {
                             <$marker<()> as SourceInstructionMeta>::SOURCE_EXTENSION
                         }
@@ -1400,6 +1503,7 @@ macro_rules! define_source_instruction_kind {
                     "jolt.pseudo.noop" => Some(SourceInstruction::Noop(Noop(()))),
                     "jolt.pseudo.unimpl" => Some(SourceInstruction::Unimplemented(Unimpl(()))),
                     $(
+                        $(#[$meta])*
                         $canonical_name => Some(SourceInstruction::$marker($marker(()))),
                     )*
                     "jolt.inline.dispatch" => Some(SourceInstruction::InlineDispatch(Inline(()))),
@@ -1412,6 +1516,7 @@ macro_rules! define_source_instruction_kind {
                     "NoOp" => Some(SourceInstruction::Noop(Noop(()))),
                     "Unimpl" => Some(SourceInstruction::Unimplemented(Unimpl(()))),
                     $(
+                        $(#[$meta])*
                         stringify!($instr) => Some(SourceInstruction::$marker($marker(()))),
                     )*
                     "Inline" => Some(SourceInstruction::InlineDispatch(Inline(()))),
@@ -1433,6 +1538,7 @@ macro_rules! define_source_instruction_kind {
                         <Unimpl<()> as SourceInstructionMeta>::HAS_SIDE_EFFECTS
                     }
                     $(
+                        $(#[$meta])*
                         SourceInstruction::$marker(_) => {
                             <$marker<()> as SourceInstructionMeta>::HAS_SIDE_EFFECTS
                         }
@@ -1454,7 +1560,7 @@ macro_rules! define_source_instruction_kind {
 
 macro_rules! define_jolt_instruction_kind {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         #[expect(
             non_upper_case_globals,
@@ -1463,12 +1569,14 @@ macro_rules! define_jolt_instruction_kind {
         impl JoltInstructionKind {
             pub const NoOp: Self = JoltInstruction::Noop(Noop(()));
             $(
+                $(#[$meta])*
                 pub const $instr: Self = JoltInstruction::$marker($marker(()));
             )*
 
             pub const ALL: &'static [Self] = &[
                 JoltInstruction::Noop(Noop(())),
                 $(
+                    $(#[$meta])*
                     JoltInstruction::$marker($marker(())),
                 )*
             ];
@@ -1477,6 +1585,7 @@ macro_rules! define_jolt_instruction_kind {
                 match self {
                     JoltInstruction::Noop(_) => "NoOp",
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$marker(_) => stringify!($instr),
                     )*
                 }
@@ -1486,6 +1595,7 @@ macro_rules! define_jolt_instruction_kind {
                 match self {
                     JoltInstruction::Noop(_) => <Noop<()> as JoltInstructionMeta>::CANONICAL_NAME,
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$marker(_) => {
                             <$marker<()> as JoltInstructionMeta>::CANONICAL_NAME
                         }
@@ -1497,6 +1607,7 @@ macro_rules! define_jolt_instruction_kind {
                 match self {
                     JoltInstruction::Noop(_) => <Noop<()> as JoltInstructionMeta>::JOLT_TAG,
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$marker(_) => <$marker<()> as JoltInstructionMeta>::JOLT_TAG,
                     )*
                 }
@@ -1506,6 +1617,7 @@ macro_rules! define_jolt_instruction_kind {
                 match self {
                     JoltInstruction::Noop(_) => <Noop<()> as JoltInstructionMeta>::TARGET_EXTENSION,
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$marker(_) => {
                             <$marker<()> as JoltInstructionMeta>::TARGET_EXTENSION
                         }
@@ -1517,6 +1629,7 @@ macro_rules! define_jolt_instruction_kind {
                 match tag.0 {
                     0x0000 => Some(JoltInstruction::Noop(Noop(()))),
                     $(
+                        $(#[$meta])*
                         $tag => Some(JoltInstruction::$marker($marker(()))),
                     )*
                     _ => None,
@@ -1527,6 +1640,7 @@ macro_rules! define_jolt_instruction_kind {
                 match name {
                     "NoOp" => Some(JoltInstruction::Noop(Noop(()))),
                     $(
+                        $(#[$meta])*
                         stringify!($instr) => Some(JoltInstruction::$marker($marker(()))),
                     )*
                     _ => None,
@@ -1537,6 +1651,7 @@ macro_rules! define_jolt_instruction_kind {
                 match self {
                     JoltInstruction::Noop(_) => <Noop<()> as JoltInstructionMeta>::HAS_SIDE_EFFECTS,
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$marker(_) => {
                             <$marker<()> as JoltInstructionMeta>::HAS_SIDE_EFFECTS
                         }
@@ -1550,6 +1665,7 @@ macro_rules! define_jolt_instruction_kind {
                 match kind {
                     JoltInstruction::Noop(_) => Some(SourceInstruction::Noop(Noop(()))),
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$marker(_) => Some(SourceInstruction::$marker($marker(()))),
                     )*
                 }
@@ -1559,6 +1675,7 @@ macro_rules! define_jolt_instruction_kind {
                 match self {
                     SourceInstruction::Noop(_) => Some(JoltInstruction::Noop(Noop(()))),
                     $(
+                        $(#[$meta])*
                         SourceInstruction::$marker(_) => Some(JoltInstruction::$marker($marker(()))),
                     )*
                     _ => None,

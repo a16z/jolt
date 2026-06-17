@@ -17,6 +17,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod a;
 pub mod assert;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 pub mod i;
 pub mod m;
 pub mod virt;
@@ -32,6 +34,11 @@ pub use assert::AssertMulUNoOverflow;
 pub use assert::AssertValidDiv0;
 pub use assert::AssertValidUnsignedRemainder;
 pub use assert::AssertWordAlignment;
+#[cfg(feature = "field-inline")]
+pub use field_inline::{
+    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
+    FieldSub,
+};
 pub use i::Add;
 pub use i::AddW;
 pub use i::Addi;
@@ -174,7 +181,7 @@ pub struct Inline<T = ()>(pub T);
 
 macro_rules! define_source_instruction {
     (
-        instructions: [$($instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
     ) => {
         /// Typed view over decoded source rows.
         ///
@@ -188,6 +195,7 @@ macro_rules! define_source_instruction {
             Noop(Noop<T>),
             Unimplemented(Unimpl<T>),
             $(
+                $(#[$meta])*
                 $marker($marker<T>),
             )*
             InlineDispatch(Inline<T>),
@@ -199,6 +207,7 @@ macro_rules! define_source_instruction {
                     Self::Noop(_) => SourceInstruction::Noop(Noop(())),
                     Self::Unimplemented(_) => SourceInstruction::Unimplemented(Unimpl(())),
                     $(
+                        $(#[$meta])*
                         Self::$marker(_) => SourceInstruction::$marker($marker(())),
                     )*
                     Self::InlineDispatch(_) => SourceInstruction::InlineDispatch(Inline(())),
@@ -210,6 +219,7 @@ macro_rules! define_source_instruction {
                     SourceInstruction::Noop(_) => Self::Noop(Noop(row)),
                     SourceInstruction::Unimplemented(_) => Self::Unimplemented(Unimpl(row)),
                     $(
+                        $(#[$meta])*
                         SourceInstruction::$marker(_) => Self::$marker($marker(row)),
                     )*
                     SourceInstruction::InlineDispatch(_) => Self::InlineDispatch(Inline(row)),
@@ -221,6 +231,7 @@ macro_rules! define_source_instruction {
                     Self::Noop(instruction) => &instruction.0,
                     Self::Unimplemented(instruction) => &instruction.0,
                     $(
+                        $(#[$meta])*
                         Self::$marker(instruction) => &instruction.0,
                     )*
                     Self::InlineDispatch(instruction) => &instruction.0,
@@ -232,12 +243,17 @@ macro_rules! define_source_instruction {
                     Self::Noop(instruction) => instruction.0,
                     Self::Unimplemented(instruction) => instruction.0,
                     $(
+                        $(#[$meta])*
                         Self::$marker(instruction) => instruction.0,
                     )*
                     Self::InlineDispatch(instruction) => instruction.0,
                 }
             }
 
+            pub fn map_row(self, f: impl FnOnce(SourceInstructionRow) -> SourceInstructionRow) -> Self {
+                let kind = self.kind();
+                Self::new(kind, f(self.into_row()))
+            }
         }
 
         impl TryFrom<&SourceInstruction<SourceInstructionRow>> for JoltInstructionRow {
@@ -389,11 +405,27 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
+    #[cfg(feature = "field-inline")]
+    FieldAdd(FieldAdd<T>),
+    #[cfg(feature = "field-inline")]
+    FieldSub(FieldSub<T>),
+    #[cfg(feature = "field-inline")]
+    FieldMul(FieldMul<T>),
+    #[cfg(feature = "field-inline")]
+    FieldInv(FieldInv<T>),
+    #[cfg(feature = "field-inline")]
+    FieldAssertEq(FieldAssertEq<T>),
+    #[cfg(feature = "field-inline")]
+    FieldLoadFromX(FieldLoadFromX<T>),
+    #[cfg(feature = "field-inline")]
+    FieldStoreToX(FieldStoreToX<T>),
+    #[cfg(feature = "field-inline")]
+    FieldLoadImm(FieldLoadImm<T>),
 }
 
 macro_rules! impl_jolt_instruction_try_from_row {
     (
-        instructions: [$($instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         impl TryFrom<JoltInstructionRow> for JoltInstruction {
             type Error = JoltInstructionKind;
@@ -402,6 +434,7 @@ macro_rules! impl_jolt_instruction_try_from_row {
                 Ok(match instruction.instruction_kind {
                     JoltInstruction::Noop(_) => Self::Noop(Noop(instruction)),
                     $(
+                        $(#[$meta])*
                         JoltInstruction::$marker(_) => Self::$marker($marker(instruction)),
                     )*
                 })
@@ -413,12 +446,13 @@ macro_rules! impl_jolt_instruction_try_from_row {
 crate::for_each_jolt_instruction_kind!(impl_jolt_instruction_try_from_row);
 
 macro_rules! impl_jolt_instructions_flags {
-    ($($variant:ident => $kind:ident),* $(,)?) => {
+    ($($(#[$meta:meta])* $variant:ident => $kind:ident),* $(,)?) => {
         impl<T> JoltInstruction<T> {
             pub const fn kind(&self) -> JoltInstructionKind {
                 match self {
                     Self::Noop(_) => JoltInstruction::Noop(Noop(())),
                     $(
+                        $(#[$meta])*
                         Self::$variant(_) => JoltInstruction::$variant($variant(())),
                     )*
                 }
@@ -428,6 +462,7 @@ macro_rules! impl_jolt_instructions_flags {
                 match self {
                     Self::Noop(instruction) => &instruction.0,
                     $(
+                        $(#[$meta])*
                         Self::$variant(instruction) => &instruction.0,
                     )*
                 }
@@ -444,6 +479,7 @@ macro_rules! impl_jolt_instructions_flags {
                         row
                     }
                     $(
+                        $(#[$meta])*
                         Self::$variant(instruction) => {
                             let mut row = instruction.0.into();
                             row.instruction_kind = JoltInstruction::$variant($variant(()));
@@ -467,7 +503,10 @@ macro_rules! impl_jolt_instructions_flags {
                         crate::flags::CircuitFlagSet::default()
                             .set(crate::flags::CircuitFlags::DoNotUpdateUnexpandedPC)
                     },
-                    $(JoltInstruction::$variant(t) => t.circuit_flags(),)*
+                    $(
+                        $(#[$meta])*
+                        JoltInstruction::$variant(t) => t.circuit_flags(),
+                    )*
                 }
             }
 
@@ -477,7 +516,10 @@ macro_rules! impl_jolt_instructions_flags {
                         crate::flags::InstructionFlagSet::default()
                             .set(crate::flags::InstructionFlags::IsNoop)
                     },
-                    $(JoltInstruction::$variant(t) => t.instruction_flags(),)*
+                    $(
+                        $(#[$meta])*
+                        JoltInstruction::$variant(t) => t.instruction_flags(),
+                    )*
                 }
             }
         }
@@ -487,6 +529,7 @@ macro_rules! impl_jolt_instructions_flags {
                 [
                     Self::Noop(Noop(JoltInstructionRow::default())),
                     $(
+                        $(#[$meta])*
                         Self::$variant($variant(JoltInstructionRow::default())),
                     )*
                 ]
@@ -564,6 +607,22 @@ impl_jolt_instructions_flags! {
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,
     VirtualHostIO => VirtualHostIO,
+    #[cfg(feature = "field-inline")]
+    FieldAdd => FIELD_ADD,
+    #[cfg(feature = "field-inline")]
+    FieldSub => FIELD_SUB,
+    #[cfg(feature = "field-inline")]
+    FieldMul => FIELD_MUL,
+    #[cfg(feature = "field-inline")]
+    FieldInv => FIELD_INV,
+    #[cfg(feature = "field-inline")]
+    FieldAssertEq => FIELD_ASSERT_EQ,
+    #[cfg(feature = "field-inline")]
+    FieldLoadFromX => FIELD_LOAD_FROM_X,
+    #[cfg(feature = "field-inline")]
+    FieldStoreToX => FIELD_STORE_TO_X,
+    #[cfg(feature = "field-inline")]
+    FieldLoadImm => FIELD_LOAD_IMM,
 }
 #[cfg(test)]
 mod tests {

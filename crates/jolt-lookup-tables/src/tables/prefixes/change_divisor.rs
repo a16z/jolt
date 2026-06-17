@@ -15,15 +15,11 @@ impl<F: Field> SparseDensePrefix<F> for ChangeDivisorPrefix {
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
         let j_start = 2 * XLEN - suffix_len - b.len();
 
-        // change_divisor computes: checkpoint * x_msb * prod((1-x_i) * y_i) for remaining pairs
-        // where x_msb is the first x bit (at j=0).
-        //
-        // At j=0: x_msb must be 1, all remaining x bits must be 0, all y bits must be 1.
-        // At j=1: checkpoint * r_x (from j=1) * c (y bit) — special case for first y bit.
-        // At j>1: checkpoint * (1-x_i) * y_i for each pair.
-        //
-        // At binary points, non-zero only when x_msb=1, all subsequent x bits=0, all y bits=1.
-        // Exception: j=1 uses x*y instead of (1-x)*y.
+        // change_divisor restricted to binary points is checkpoint * x_0 * y_0
+        // * prod_{i>0}((1-x_i) * y_i): non-zero only when the operand MSB x_0 is 1,
+        // every later x bit is 0, and every y bit is 1. When the phase does not
+        // contain the MSB pair (j_start > 0), the x_0 * y_0 factor is already
+        // folded into the checkpoint.
 
         if j_start == 0 {
             // Phase includes the MSB x bit. Extract it.
@@ -43,8 +39,7 @@ impl<F: Field> SparseDensePrefix<F> for ChangeDivisorPrefix {
                 return F::zero();
             }
 
-            // j=1 contributes x*y = x_msb * y_0, j>1 contributes (1-x_i)*y_i.
-            // Since x_rest=0 and all y=1, each (1-0)*1 = 1, and x_msb*y_0 = 1.
+            // With x_msb=1, x_rest=0, and all y bits 1, every product factor is 1.
             checkpoints[Prefixes::ChangeDivisor]
         } else {
             // All x bits must be 0, all y bits must be 1 for non-zero result

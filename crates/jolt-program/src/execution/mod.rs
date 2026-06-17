@@ -11,6 +11,11 @@ use crate::{
 #[cfg(feature = "image")]
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 
+#[cfg(feature = "field-inline")]
+pub use crate::field_inline::{
+    FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
+    FieldRegisterWrite,
+};
 pub use backend::{ExecutionBackend, TraceSource};
 pub use error::TraceError;
 pub use trace::{
@@ -25,10 +30,11 @@ pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError>
         .into_iter()
         .map(JoltInstructionRow::from)
         .collect();
-    Ok(JoltProgram::from_rv64_image(
+    Ok(JoltProgram::from_rv64_image_with_profile(
         elf_bytes.to_vec(),
         expanded_bytecode,
         image,
+        RV64IMAC_JOLT,
     ))
 }
 
@@ -44,10 +50,11 @@ pub fn build_jolt_program_with_inline_provider<P: InlineExpansionProvider + ?Siz
             .into_iter()
             .map(JoltInstructionRow::from)
             .collect();
-    Ok(JoltProgram::from_rv64_image(
+    Ok(JoltProgram::from_rv64_image_with_profile(
         elf_bytes.to_vec(),
         expanded_bytecode,
         image,
+        profile,
     ))
 }
 

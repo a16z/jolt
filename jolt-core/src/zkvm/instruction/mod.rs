@@ -349,6 +349,15 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualXORROTW7 => {
                 LookupTables::VirtualXORROTW7(Default::default())
             }
+            #[cfg(feature = "field-inline")]
+            JoltInstruction::FieldAdd(_)
+            | JoltInstruction::FieldSub(_)
+            | JoltInstruction::FieldMul(_)
+            | JoltInstruction::FieldInv(_)
+            | JoltInstruction::FieldAssertEq(_)
+            | JoltInstruction::FieldLoadFromX(_)
+            | JoltInstruction::FieldStoreToX(_)
+            | JoltInstruction::FieldLoadImm(_) => return None,
             JoltInstructionKind::NoOp
             | JoltInstructionKind::LD
             | JoltInstructionKind::SD

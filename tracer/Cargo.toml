@@ -32,11 +32,17 @@ std = [
   "postcard/use-std",
   "serde_json/std",
 ]
-test-utils = ["dep:rand", "jolt-riscv/test-utils"]
+test-utils = ["dep:rand"]
+field-inline = [
+  "jolt-program/field-inline",
+  "jolt-riscv/field-inline",
+  "dep:jolt-field",
+]
 
 [dependencies]
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-field = { workspace = true, optional = true }
 jolt-platform.workspace = true
 fnv.workspace = true
 object.workspace = true

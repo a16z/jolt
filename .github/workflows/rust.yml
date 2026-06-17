@@ -60,6 +60,11 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features core-fixtures
       - name: cargo clippy -p jolt-verifier --features core-fixtures,zk
         run: cargo clippy -p jolt-verifier --all-targets --features core-fixtures,zk
+      # The field-inline feature is not enabled by host/zk/default, so the
+      # workspace-wide invocations above never build it. Lint the crates that
+      # define it explicitly so the feature keeps compiling.
+      - name: cargo clippy --features field-inline
+        run: cargo clippy -p tracer -p jolt-program -p jolt-riscv -p jolt-lookup-tables --all-targets --features field-inline
 
   machete:
     runs-on: ubuntu-latest
@@ -253,6 +258,12 @@ jobs:
             fi
             cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
           done
+      - name: Test crates with field-inline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo nextest run -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
+            --features field-inline --no-tests=pass
 
   test-inlines:
     name: Test inlines
