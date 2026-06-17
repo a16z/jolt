@@ -7,6 +7,7 @@ mod backend;
 mod layout;
 mod types;
 mod views;
+mod witness;
 
 pub use backend::AkitaScheme;
 pub use layout::{
@@ -24,3 +25,4 @@ pub use views::{
     PackedViewCatalog, PackedViewEntry, PackedViewError, PackedViewFormula, PackedViewTerm,
     PackedViewValidity,
 };
+pub use witness::{JoltPackedWitnessBuilder, JoltPackedWitnessError};

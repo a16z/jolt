@@ -20,7 +20,10 @@ akita-verifier = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1
 blake2.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
+jolt-riscv.workspace = true
 jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true

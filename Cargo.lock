@@ -3116,10 +3116,13 @@ dependencies = [
  "blake2 0.11.0-rc.6",
  "jolt-crypto",
  "jolt-field 0.1.0",
+ "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-riscv",
  "jolt-transcript",
  "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
