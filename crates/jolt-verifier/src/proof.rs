@@ -17,7 +17,10 @@ use crate::{
 
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
+#[serde(bound(
+    serialize = "PCS::Field: Serialize, ZkProof: Serialize",
+    deserialize = "PCS::Field: serde::de::DeserializeOwned, ZkProof: serde::de::DeserializeOwned"
+))]
 pub struct JoltProof<
     PCS,
     VC,
@@ -174,7 +177,10 @@ impl<C> JoltCommitments<C> {
     clippy::large_enum_variant,
     reason = "Clear claims are the verifier-owned standard proof payload; keeping them inline avoids heap indirection in the common clear path."
 )]
-#[serde(bound = "ZkProof: Serialize + serde::de::DeserializeOwned")]
+#[serde(bound(
+    serialize = "F: Serialize, ZkProof: Serialize",
+    deserialize = "F: serde::de::DeserializeOwned, ZkProof: serde::de::DeserializeOwned"
+))]
 pub enum JoltProofClaims<F, ZkProof>
 where
     F: Field,
@@ -193,7 +199,7 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct ClearProofClaims<F: Field> {
     pub stage1: stage1::inputs::Stage1Claims<F>,
     pub stage2: stage2::inputs::Stage2Claims<F>,
@@ -205,7 +211,10 @@ pub struct ClearProofClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(
+    serialize = "F: Serialize",
+    deserialize = "F: serde::de::DeserializeOwned"
+))]
 pub struct JoltStageProofs<F, VC>
 where
     F: Field,

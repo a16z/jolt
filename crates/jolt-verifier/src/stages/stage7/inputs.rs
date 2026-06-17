@@ -38,7 +38,7 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage7Claims<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims<F>,
     pub advice_address_phase: Stage7AdviceAddressPhaseClaims<F>,
@@ -51,7 +51,7 @@ pub struct Stage7Claims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct HammingWeightClaimReductionOutputOpeningClaims<F: Field> {
     pub instruction_ra: Vec<F>,
     pub bytecode_ra: Vec<F>,
@@ -59,26 +59,26 @@ pub struct HammingWeightClaimReductionOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage7AdviceAddressPhaseClaims<F: Field> {
     pub trusted: Option<AdviceAddressPhaseOutputClaim<F>>,
     pub untrusted: Option<AdviceAddressPhaseOutputClaim<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct AdviceAddressPhaseOutputClaim<F: Field> {
     pub opening_claim: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct BytecodeAddressPhaseOutputClaims<F: Field> {
     pub chunks: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct ProgramImageAddressPhaseOutputClaim<F: Field> {
     pub opening_claim: F,
 }

@@ -5,7 +5,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "Com: Serialize", deserialize = "Com: DeserializeOwned"))]
+#[serde(bound(
+    serialize = "F: Serialize, Com: Serialize",
+    deserialize = "F: DeserializeOwned, Com: DeserializeOwned"
+))]
 pub struct BlindFoldProof<F: Field, Com> {
     pub auxiliary_row_commitments: Vec<Com>,
     pub random_round_commitments: Vec<Com>,

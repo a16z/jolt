@@ -68,7 +68,10 @@ use jolt_riscv::CircuitFlags;
 
 #[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(
+    serialize = "F: serde::Serialize",
+    deserialize = "F: serde::Deserialize<'de>"
+))]
 pub struct LegacyOpeningClaims<F: Field>(pub BTreeMap<legacy::OpeningId, F>);
 
 #[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]

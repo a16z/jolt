@@ -71,7 +71,7 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage6Claims<F: Field> {
     pub address_phase: Stage6AddressPhaseClaims<F>,
     pub bytecode_read_raf: BytecodeReadRafOutputOpeningClaims<F>,

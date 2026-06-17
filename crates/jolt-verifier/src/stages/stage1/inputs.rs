@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::VerifierError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage1Claims<F: Field> {
     pub uniskip_output_claim: F,
     pub outer: SpartanOuterClaims<F>,
@@ -41,7 +41,7 @@ impl<F: Field> Stage1Claims<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct SpartanOuterClaims<F: Field> {
     pub left_instruction_input: F,
     pub right_instruction_input: F,
@@ -115,7 +115,7 @@ impl<F: Field> SpartanOuterClaims<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct SpartanOuterFlagClaims<F: Field> {
     pub add_operands: F,
     pub subtract_operands: F,
@@ -156,7 +156,7 @@ impl<F: Field> SpartanOuterFlagClaims<F> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineStage1Claims<F: Field> {
     pub field_rs1_value: F,
     pub field_rs2_value: F,
@@ -208,7 +208,7 @@ impl<F: Field> FieldInlineStage1Claims<F> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineStage1FlagClaims<F: Field> {
     pub add: F,
     pub sub: F,

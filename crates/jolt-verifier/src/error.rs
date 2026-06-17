@@ -16,6 +16,9 @@ pub enum VerifierError {
         got: JoltProtocolConfig,
     },
 
+    #[error("invalid protocol config: {reason}")]
+    InvalidProtocolConfig { reason: String },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

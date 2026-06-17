@@ -39,7 +39,7 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage5Claims<F: Field> {
     pub instruction_read_raf: InstructionReadRafOutputOpeningClaims<F>,
     pub ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims<F>,
@@ -49,7 +49,7 @@ pub struct Stage5Claims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct InstructionReadRafOutputOpeningClaims<F: Field> {
     pub lookup_table_flags: Vec<F>,
     pub instruction_ra: Vec<F>,
@@ -57,13 +57,13 @@ pub struct InstructionReadRafOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RamRaClaimReductionOutputOpeningClaims<F: Field> {
     pub ram_ra: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RegistersValEvaluationOutputOpeningClaims<F: Field> {
     pub rd_inc: F,
     pub rd_wa: F,
@@ -71,14 +71,14 @@ pub struct RegistersValEvaluationOutputOpeningClaims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineStage5Claims<F: Field> {
     pub field_registers_val_evaluation: FieldRegistersValEvaluationOutputOpeningClaims<F>,
 }
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldRegistersValEvaluationOutputOpeningClaims<F: Field> {
     pub field_rd_inc: F,
     pub field_rd_wa: F,
