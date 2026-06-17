@@ -42,7 +42,7 @@ use crate::{
         },
         multilinear_polynomial::MultilinearPolynomial,
         opening_proof::{
-            compute_lagrange_factor, DoryOpeningState, OpeningAccumulator,
+            compute_lagrange_factor, BatchOpeningScheme, DoryOpeningState, OpeningAccumulator,
             ProverOpeningAccumulator, SumcheckId,
         },
         rlc_polynomial::{RLCStreamingData, TraceSource},
@@ -219,7 +219,7 @@ impl<
         'a,
         F: JoltField,
         C: JoltCurve<F = F>,
-        PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
+        PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C> + BatchOpeningScheme,
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
 {
@@ -2269,20 +2269,14 @@ impl<
             );
         }
 
-        // Build streaming RLC polynomial directly (no witness poly regeneration!)
-        // Use materialized trace (default, single pass) instead of lazy trace
-        let (joint_poly, hint) = state.build_streaming_rlc::<PCS>(
+        let (proof, _y_blinding) = <PCS as BatchOpeningScheme>::prove_batch_opening(
+            &self.preprocessing.generators,
+            &state,
             self.one_hot_params.clone(),
             TraceSource::Materialized(Arc::clone(&self.trace)),
             streaming_data,
             opening_proof_hints,
             precommitted_polys,
-        );
-        let (proof, _y_blinding) = PCS::prove(
-            &self.preprocessing.generators,
-            &joint_poly,
-            &opening_point.r,
-            Some(hint),
             &mut self.transcript,
         );
 

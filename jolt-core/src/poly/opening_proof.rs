@@ -333,6 +333,68 @@ pub struct DoryOpeningState<F: JoltField> {
     pub polynomial_claims: Vec<(CommittedPolynomial, F)>,
 }
 
+pub type BatchOpeningState<F> = DoryOpeningState<F>;
+
+pub trait HomomorphicBatchOpeningScheme: CommitmentScheme {}
+
+impl HomomorphicBatchOpeningScheme for crate::poly::commitment::dory::DoryCommitmentScheme {}
+
+#[cfg(test)]
+impl<F> HomomorphicBatchOpeningScheme for crate::poly::commitment::mock::MockCommitScheme<F> where
+    F: JoltField
+{
+}
+
+pub trait BatchOpeningScheme: CommitmentScheme {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "prover context is kept explicit until Akita introduces a non-Dory backend"
+    )]
+    fn prove_batch_opening<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        state: &BatchOpeningState<Self::Field>,
+        one_hot_params: OneHotParams,
+        trace_source: TraceSource,
+        rlc_streaming_data: Arc<RLCStreamingData>,
+        opening_hints: HashMap<CommittedPolynomial, Self::OpeningProofHint>,
+        precommitted_polys: HashMap<CommittedPolynomial, PrecommittedPolynomial<Self::Field>>,
+        transcript: &mut ProofTranscript,
+    ) -> (Self::Proof, Option<Self::Field>)
+    where
+        Self: Sized;
+}
+
+impl<PCS> BatchOpeningScheme for PCS
+where
+    PCS: HomomorphicBatchOpeningScheme,
+{
+    fn prove_batch_opening<ProofTranscript: Transcript>(
+        setup: &Self::ProverSetup,
+        state: &BatchOpeningState<Self::Field>,
+        one_hot_params: OneHotParams,
+        trace_source: TraceSource,
+        rlc_streaming_data: Arc<RLCStreamingData>,
+        opening_hints: HashMap<CommittedPolynomial, Self::OpeningProofHint>,
+        precommitted_polys: HashMap<CommittedPolynomial, PrecommittedPolynomial<Self::Field>>,
+        transcript: &mut ProofTranscript,
+    ) -> (Self::Proof, Option<Self::Field>) {
+        let (joint_poly, hint) = state.build_streaming_rlc::<Self>(
+            one_hot_params,
+            trace_source,
+            rlc_streaming_data,
+            opening_hints,
+            precommitted_polys,
+        );
+        Self::prove(
+            setup,
+            &joint_poly,
+            state.opening_point.as_slice(),
+            Some(hint),
+            transcript,
+        )
+    }
+}
+
 impl<F: JoltField> DoryOpeningState<F> {
     /// Build streaming RLC polynomial from this state.
     /// Streams directly from trace - no witness regeneration needed.
@@ -899,4 +961,69 @@ pub fn compute_lagrange_factor<F: JoltField>(
             }
         })
         .product()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use ark_bn254::Fr;
+    use common::jolt_device::MemoryLayout;
+
+    use super::{BatchOpeningScheme, DoryOpeningState};
+    use crate::{
+        field::JoltField,
+        poly::{
+            commitment::{
+                commitment_scheme::CommitmentScheme,
+                mock::{MockCommitScheme, MockCommitment},
+            },
+            rlc_polynomial::{RLCStreamingData, TraceSource},
+        },
+        transcripts::{Blake2bTranscript, Transcript},
+        zkvm::{
+            bytecode::BytecodePreprocessing, config::OneHotParams, witness::CommittedPolynomial,
+        },
+    };
+
+    #[test]
+    fn default_batch_opening_proves_at_state_point() {
+        let opening_point = vec![
+            <Fr as JoltField>::Challenge::from(3),
+            <Fr as JoltField>::Challenge::from(5),
+        ];
+        let state = DoryOpeningState {
+            opening_point: opening_point.clone(),
+            gamma_powers: vec![Fr::from(11)],
+            polynomial_claims: vec![(CommittedPolynomial::RamInc, Fr::from(7))],
+        };
+        let streaming_data = Arc::new(RLCStreamingData {
+            bytecode: Arc::new(BytecodePreprocessing::default()),
+            memory_layout: MemoryLayout::default(),
+        });
+        let opening_hints = [(CommittedPolynomial::RamInc, ())].into_iter().collect();
+        let mut transcript = Blake2bTranscript::new(b"core-batch-opening");
+
+        let (proof, blinding) = <MockCommitScheme<Fr> as BatchOpeningScheme>::prove_batch_opening(
+            &(),
+            &state,
+            OneHotParams::new(8, 2, 8),
+            TraceSource::Materialized(Arc::new(Vec::new())),
+            streaming_data,
+            opening_hints,
+            Default::default(),
+            &mut transcript,
+        );
+
+        assert!(blinding.is_none());
+        MockCommitScheme::<Fr>::verify(
+            &proof,
+            &(),
+            &mut transcript,
+            opening_point.as_slice(),
+            &Fr::from(7),
+            &MockCommitment::default(),
+        )
+        .expect("mock proof should verify at batch opening point");
+    }
 }

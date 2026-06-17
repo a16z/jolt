@@ -4,6 +4,7 @@ use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
 use crate::poly::commitment::dory::DoryCommitmentScheme;
+use crate::poly::opening_proof::BatchOpeningScheme;
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::PreprocessingError;
 use crate::zkvm::program::ProgramPreprocessing;
@@ -40,7 +41,7 @@ pub fn preprocess(
 pub fn prove<
     F: JoltField,
     C: JoltCurve<F = F>,
-    PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C>,
+    PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C> + BatchOpeningScheme,
     FS: Transcript,
 >(
     guest: &Program,
