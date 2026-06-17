@@ -315,14 +315,6 @@ pub enum PackedFamilyId {
         index: usize,
     },
     IncSign,
-    RamIncByte {
-        index: usize,
-    },
-    RamIncSign,
-    RdIncByte {
-        index: usize,
-    },
-    RdIncSign,
     FieldRdIncByte {
         index: usize,
     },
@@ -375,10 +367,6 @@ impl PackedFamilyId {
             Self::RamRa { index } => (2, *index as u64),
             Self::IncByte { index } => (3, *index as u64),
             Self::IncSign => (4, 0),
-            Self::RamIncByte { index } => (5, *index as u64),
-            Self::RamIncSign => (6, 0),
-            Self::RdIncByte { index } => (7, *index as u64),
-            Self::RdIncSign => (8, 0),
             Self::FieldRdIncByte { index } => (9, *index as u64),
             Self::FieldRdIncSign => (10, 0),
             Self::AdviceBytes { kind, index } => match kind {
@@ -760,16 +748,6 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
             write_usize(bytes, *index);
         }
         PackedFamilyId::IncSign => bytes.push(4),
-        PackedFamilyId::RamIncByte { index } => {
-            bytes.push(5);
-            write_usize(bytes, *index);
-        }
-        PackedFamilyId::RamIncSign => bytes.push(6),
-        PackedFamilyId::RdIncByte { index } => {
-            bytes.push(7);
-            write_usize(bytes, *index);
-        }
-        PackedFamilyId::RdIncSign => bytes.push(8),
         PackedFamilyId::FieldRdIncByte { index } => {
             bytes.push(9);
             write_usize(bytes, *index);
@@ -896,15 +874,6 @@ mod tests {
         specs
     }
 
-    fn split_increment_specs(log_t: usize) -> Vec<PackedFamilySpec> {
-        let mut specs = Vec::new();
-        specs.extend((0..8).map(|index| byte_family(PackedFamilyId::RamIncByte { index }, log_t)));
-        specs.push(bit_family(PackedFamilyId::RamIncSign, log_t));
-        specs.extend((0..8).map(|index| byte_family(PackedFamilyId::RdIncByte { index }, log_t)));
-        specs.push(bit_family(PackedFamilyId::RdIncSign, log_t));
-        specs
-    }
-
     #[test]
     fn packed_witness_layout_digest_stable() {
         let mut specs = vec![
@@ -939,19 +908,6 @@ mod tests {
 
         assert_eq!(audit.trace_cells_per_row, Some(5_888));
         assert_eq!(layout.dimension, 33);
-    }
-
-    #[test]
-    fn separate_increment_budget_is_n_plus_14() {
-        let log_t = 20;
-        let mut specs = base_ra_specs(log_t);
-        specs.extend(split_increment_specs(log_t));
-
-        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
-        let audit = layout.audit();
-
-        assert_eq!(audit.trace_cells_per_row, Some(9_988));
-        assert_eq!(layout.dimension, log_t + 14);
     }
 
     #[test]

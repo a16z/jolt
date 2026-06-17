@@ -224,10 +224,6 @@ pub fn akita_packed_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId 
         LatticePackedFamilyId::RamRa { index } => PackedFamilyId::RamRa { index: *index },
         LatticePackedFamilyId::IncByte { index } => PackedFamilyId::IncByte { index: *index },
         LatticePackedFamilyId::IncSign => PackedFamilyId::IncSign,
-        LatticePackedFamilyId::RamIncByte { index } => PackedFamilyId::RamIncByte { index: *index },
-        LatticePackedFamilyId::RamIncSign => PackedFamilyId::RamIncSign,
-        LatticePackedFamilyId::RdIncByte { index } => PackedFamilyId::RdIncByte { index: *index },
-        LatticePackedFamilyId::RdIncSign => PackedFamilyId::RdIncSign,
         LatticePackedFamilyId::FieldRdIncByte { index } => {
             PackedFamilyId::FieldRdIncByte { index: *index }
         }

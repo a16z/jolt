@@ -432,16 +432,6 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
             write_usize(bytes, *index);
         }
         PackedFamilyId::IncSign => bytes.push(4),
-        PackedFamilyId::RamIncByte { index } => {
-            bytes.push(5);
-            write_usize(bytes, *index);
-        }
-        PackedFamilyId::RamIncSign => bytes.push(6),
-        PackedFamilyId::RdIncByte { index } => {
-            bytes.push(7);
-            write_usize(bytes, *index);
-        }
-        PackedFamilyId::RdIncSign => bytes.push(8),
         PackedFamilyId::FieldRdIncByte { index } => {
             bytes.push(9);
             write_usize(bytes, *index);
