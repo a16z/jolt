@@ -1,0 +1,34 @@
+[package]
+name = "jolt-witness"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Witness oracle infrastructure for Jolt proving"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "zkvm", "witness"]
+categories = ["cryptography"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+field-inline = [
+  "jolt-claims/field-inline",
+  "jolt-lookup-tables/field-inline",
+  "jolt-program/field-inline",
+  "jolt-riscv/field-inline",
+]
+
+[dependencies]
+jolt-claims.workspace = true
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-poly.workspace = true
+jolt-program.workspace = true
+jolt-riscv.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+common.workspace = true
