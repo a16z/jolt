@@ -5,12 +5,14 @@ use crate::{
 };
 use jolt_akita::{
     PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec,
-    PackedWitnessLayout,
+    PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
 };
 use jolt_claims::protocols::jolt::{
     formulas::{claim_reductions::bytecode, ra::JoltRaPolynomialLayout},
-    AdviceClaimReductionLayout, JoltAdviceKind, ProgramImageClaimReductionLayout,
+    AdviceClaimReductionLayout, JoltAdviceKind, LatticePackedFamilyId, LatticePackedViewFormula,
+    ProgramImageClaimReductionLayout,
 };
+use jolt_field::Field;
 
 pub fn derive_akita_packed_witness_layout(
     config: &JoltProtocolConfig,
@@ -136,6 +138,81 @@ pub fn validate_akita_packed_witness_layout_config(
     Ok(())
 }
 
+pub fn akita_packed_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId {
+    match family {
+        LatticePackedFamilyId::InstructionRa { index } => {
+            PackedFamilyId::InstructionRa { index: *index }
+        }
+        LatticePackedFamilyId::BytecodeRa { index } => PackedFamilyId::BytecodeRa { index: *index },
+        LatticePackedFamilyId::RamRa { index } => PackedFamilyId::RamRa { index: *index },
+        LatticePackedFamilyId::IncByte { index } => PackedFamilyId::IncByte { index: *index },
+        LatticePackedFamilyId::IncSign => PackedFamilyId::IncSign,
+        LatticePackedFamilyId::RamIncByte { index } => PackedFamilyId::RamIncByte { index: *index },
+        LatticePackedFamilyId::RamIncSign => PackedFamilyId::RamIncSign,
+        LatticePackedFamilyId::RdIncByte { index } => PackedFamilyId::RdIncByte { index: *index },
+        LatticePackedFamilyId::RdIncSign => PackedFamilyId::RdIncSign,
+        LatticePackedFamilyId::FieldRdIncByte { index } => {
+            PackedFamilyId::FieldRdIncByte { index: *index }
+        }
+        LatticePackedFamilyId::FieldRdIncSign => PackedFamilyId::FieldRdIncSign,
+        LatticePackedFamilyId::AdviceBytes { kind, index } => PackedFamilyId::AdviceBytes {
+            kind: akita_advice_kind(*kind),
+            index: *index,
+        },
+        LatticePackedFamilyId::BytecodeChunk { index } => {
+            PackedFamilyId::BytecodeChunk { index: *index }
+        }
+        LatticePackedFamilyId::ProgramImageInit => PackedFamilyId::ProgramImageInit,
+        LatticePackedFamilyId::Custom { namespace, index } => PackedFamilyId::Custom {
+            namespace: *namespace,
+            index: *index,
+        },
+    }
+}
+
+pub fn akita_packed_view_formula<F>(
+    formula: &LatticePackedViewFormula<F>,
+) -> Result<PackedViewFormula<F>, PackedViewError>
+where
+    F: Field,
+{
+    match formula {
+        LatticePackedViewFormula::Direct {
+            family,
+            limb,
+            symbol,
+        } => Ok(PackedViewFormula::direct(
+            akita_packed_family_id(family),
+            *limb,
+            *symbol,
+        )),
+        LatticePackedViewFormula::LinearDecoded { terms } => Ok(PackedViewFormula::linear_decoded(
+            terms
+                .iter()
+                .map(|term| {
+                    PackedViewTerm::new(
+                        term.coefficient,
+                        akita_packed_family_id(&term.family),
+                        term.limb,
+                        term.symbol,
+                    )
+                })
+                .collect(),
+        )),
+        LatticePackedViewFormula::ReducedMasked { .. }
+        | LatticePackedViewFormula::MaskedDecoded => {
+            Err(PackedViewError::MaskedViewRequiresTranslation)
+        }
+    }
+}
+
+fn akita_advice_kind(kind: JoltAdviceKind) -> PackedAdviceKind {
+    match kind {
+        JoltAdviceKind::Trusted => PackedAdviceKind::Trusted,
+        JoltAdviceKind::Untrusted => PackedAdviceKind::Untrusted,
+    }
+}
+
 fn advice_family(kind: PackedAdviceKind, layout: &AdviceClaimReductionLayout) -> PackedFamilySpec {
     PackedFamilySpec::direct(
         PackedFamilyId::AdviceBytes { kind, index: 0 },
@@ -219,7 +296,10 @@ mod tests {
         config::{IncrementCommitmentMode, PackedWitnessConfig, ProgramMode},
         stages::CommittedProgramSchedule,
     };
-    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_claims::protocols::jolt::{
+        byte_decode_terms, LatticePackedFamilyId, LatticePackedViewFormula, TracePolynomialOrder,
+    };
+    use jolt_field::{Fr, FromPrimitiveInt};
 
     fn lattice_config() -> JoltProtocolConfig {
         let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
@@ -296,6 +376,77 @@ mod tests {
 
         validate_akita_packed_witness_layout_config(&matching_config, &layout)
             .unwrap_or_else(|error| panic!("layout config should validate: {error}"));
+    }
+
+    #[test]
+    fn lattice_family_ids_convert_to_akita_family_ids() {
+        assert_eq!(
+            akita_packed_family_id(&LatticePackedFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Trusted,
+                index: 3,
+            }),
+            PackedFamilyId::AdviceBytes {
+                kind: PackedAdviceKind::Trusted,
+                index: 3,
+            }
+        );
+        assert_eq!(
+            akita_packed_family_id(&LatticePackedFamilyId::Custom {
+                namespace: 17,
+                index: 5,
+            }),
+            PackedFamilyId::Custom {
+                namespace: 17,
+                index: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn lattice_direct_view_converts_to_akita_view_formula() {
+        let formula = LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1);
+
+        assert_eq!(
+            akita_packed_view_formula(&formula)
+                .unwrap_or_else(|error| panic!("direct view should convert: {error}")),
+            PackedViewFormula::direct(PackedFamilyId::IncSign, 0, 1)
+        );
+    }
+
+    #[test]
+    fn lattice_linear_view_converts_terms_to_akita_view_formula() {
+        let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+            LatticePackedFamilyId::BytecodeChunk { index: 2 },
+            4,
+        ));
+
+        let converted = akita_packed_view_formula(&formula)
+            .unwrap_or_else(|error| panic!("linear view should convert: {error}"));
+
+        assert!(matches!(
+            converted,
+            PackedViewFormula::LinearDecoded { terms, .. }
+                if terms.len() == 256
+                    && terms[7].coefficient == Fr::from_u64(7)
+                    && terms[7].family == (PackedFamilyId::BytecodeChunk { index: 2 })
+                    && terms[7].limb == 4
+                    && terms[7].symbol == 7
+        ));
+    }
+
+    #[test]
+    fn lattice_masked_views_require_prior_translation() {
+        assert!(matches!(
+            akita_packed_view_formula::<Fr>(&LatticePackedViewFormula::MaskedDecoded),
+            Err(PackedViewError::MaskedViewRequiresTranslation)
+        ));
+        assert!(matches!(
+            akita_packed_view_formula::<Fr>(&LatticePackedViewFormula::reduced_masked(
+                jolt_claims::protocols::jolt::JoltRelationId::IncClaimReduction,
+                Vec::new(),
+            )),
+            Err(PackedViewError::MaskedViewRequiresTranslation)
+        ));
     }
 
     #[test]

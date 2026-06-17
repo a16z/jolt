@@ -7,7 +7,8 @@ mod verify;
 pub use inputs::{deps, Deps};
 #[cfg(feature = "akita")]
 pub use lattice::{
-    derive_akita_packed_witness_layout, validate_akita_packed_witness_layout_config,
+    akita_packed_family_id, akita_packed_view_formula, derive_akita_packed_witness_layout,
+    validate_akita_packed_witness_layout_config,
 };
 pub use outputs::{
     Stage8BatchStatement, Stage8ClaimMode, Stage8ClearBatchStatement, Stage8ClearOutput,
