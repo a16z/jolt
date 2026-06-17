@@ -1,7 +1,7 @@
 use jolt_inlines_sdk::host::{
     instruction::{add::ADD, ld::LD, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU},
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
-    InlineRegister,
+    InlineRegister, NoAdvice,
 };
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
@@ -64,6 +64,8 @@ impl BigIntMulSequenceBuilder {
                 .emit_ld::<LD>(self.b(i), self.operands.rs2, i as i64 * 8);
         }
 
+        // Inline finalization clears released inline registers, so the result
+        // accumulator starts at zero without eight explicit ADD rows.
         for i in 0..INPUT_LIMBS {
             for j in 0..INPUT_LIMBS {
                 self.mul_and_accumulate(i, j); // A[i] × B[j] → R[i+j]
@@ -143,7 +145,7 @@ impl BigIntMulSequenceBuilder {
 pub struct BigintMul256;
 
 impl InlineOp for BigintMul256 {
-    type Advice = ();
+    type Advice = NoAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BIGINT256_MUL_FUNCT3;

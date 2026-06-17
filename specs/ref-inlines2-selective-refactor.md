@@ -33,6 +33,7 @@ New or local invariants:
 - Every converted inline's harness execution output must equal `InlineReference::reference(input)` for fixed edge cases and random cases.
 - `InlineOp::build_sequence` remains deterministic and tracer-free; runtime CPU state and concrete advice values remain isolated to `build_advice`.
 - `jolt-inlines-fixtures` registered expansion `row_count` and `output_sha256` values stay unchanged for `InlineReference`/`InlineSpec`, typed-advice evaluation, and non-performance refactors.
+- Bigint multiplication is the only intentional expansion change in this PR: removing redundant result-accumulator zero-init rows changes each fixture scenario from 222 rows to 214 rows.
 - Any intentional expansion change must document the before/after row count and why the change is worth the fixture update.
 - Normal `jolt-inlines-sdk/host` dependencies must not grow to include `tracer/test-utils`, `rand/std_rng`, or harness-only utilities unless explicitly accepted in the implementation PR.
 - Curve field-wrapper refactors must preserve guest custom opcode/funct selector behavior for multiplication, squaring, division, and advice consumption.
@@ -57,7 +58,7 @@ Candidate `/new-invariant` after the first two packages are converted: `inline_r
 - [ ] `jolt-inlines-sdk` exposes a pure `InlineReference` trait that is usable without harness/test dependencies.
 - [ ] `jolt-inlines-sdk` exposes `InlineSpec` and shared reference-vs-harness helpers behind a `test-utils` feature.
 - [ ] `test-utils` keeps existing `host` dependency shape unchanged unless the implementation PR explicitly justifies the change.
-- [ ] Bigint multiplication is converted first and proves the trait shape without fixture hash or row-count changes.
+- [ ] Bigint multiplication is converted first; the only accepted fixture drift is the documented 222-to-214 row reduction from removing redundant accumulator zero-init rows.
 - [ ] SHA-2, Keccak, Blake2, and Blake3 tests are converted after the bigint conversion stabilizes.
 - [ ] Per-crate reference/test utility code is deleted only after equivalent `InlineSpec` tests pass.
 - [ ] Missing builder range helpers are added only when needed by at least two current-main builders or when they remove a concrete correctness hazard.
@@ -114,6 +115,8 @@ No `--features host,zk` coverage is required unless an implementation touches pr
 ### Performance
 
 `InlineReference`/`InlineSpec` must be guest/prover performance neutral. Fixture row counts and hashes are the primary guardrail.
+
+Bigint multiplication intentionally drops eight rows by relying on inline finalization to clear released inline registers instead of emitting eight explicit accumulator zero-init ADD rows. The fixture update records the resulting 222-to-214 row-count change, and `bigint_mul_keeps_zero_init_row_reduction` guards that performance win.
 
 Builder helpers are acceptable when they preserve row count and order, or when they reduce row count with an explicit fixture update. Sequence-builder mining is acceptable only one candidate at a time after recording pre-change fixture row counts.
 

@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256r1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
@@ -7,9 +5,10 @@ use jolt_inlines_sdk::host::{
         add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
         virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_advice, Cpu, ExpandedInstructionSequence, ExpansionError, FormatInline,
-    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister, MulAccExt,
-    MulqType,
+    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
+    ExpandedInstructionSequence, ExpansionError, FieldElementLimbs, FormatInline, InlineAdvice,
+    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
+    ModularDivisionAdvice, MulAccExt, MulqType, QuotientAdvice, SignedU128Advice,
 };
 use num_bigint::BigInt as NBigInt;
 
@@ -78,6 +77,14 @@ struct P256Mulq {
     is_scalar_field: bool,
 }
 
+fn p256_modulus(is_scalar_field: bool) -> jolt_inlines_sdk::host::NBigUint {
+    if is_scalar_field {
+        Fr::MODULUS.into()
+    } else {
+        Fq::MODULUS.into()
+    }
+}
+
 impl P256Mulq {
     fn new(
         mut asm: InlineExpansionBuilder,
@@ -117,43 +124,38 @@ impl P256Mulq {
         })
     }
 
-    fn advice(
+    fn quotient_advice(
         operands: FormatInline,
         cpu: &mut Cpu,
         is_scalar_field: bool,
         op_type: &MulqType,
-    ) -> VecDeque<u64> {
-        mulq_advice(
-            &operands,
-            cpu,
-            is_scalar_field,
-            op_type,
-            |is_scalar| {
-                if is_scalar {
-                    Fr::MODULUS.into()
+    ) -> QuotientAdvice {
+        mulq_quotient_advice(&operands, cpu, is_scalar_field, op_type, p256_modulus)
+    }
+
+    fn division_advice(
+        operands: FormatInline,
+        cpu: &mut Cpu,
+        is_scalar_field: bool,
+    ) -> ModularDivisionAdvice {
+        mulq_division_advice(&operands, cpu, is_scalar_field, p256_modulus, |b, a| {
+            limbs_to_nbiguint(
+                &if is_scalar_field {
+                    (Fr::new(BigInt(*b))
+                        .inverse()
+                        .expect("Attempted to invert zero in P-256 scalar field")
+                        * Fr::new(BigInt(*a)))
+                    .into_bigint()
                 } else {
-                    Fq::MODULUS.into()
+                    (Fq::new(BigInt(*b))
+                        .inverse()
+                        .expect("Attempted to invert zero in P-256 base field")
+                        * Fq::new(BigInt(*a)))
+                    .into_bigint()
                 }
-            },
-            |b, a| {
-                limbs_to_nbiguint(
-                    &if is_scalar_field {
-                        (Fr::new(BigInt(*b))
-                            .inverse()
-                            .expect("Attempted to invert zero in P-256 scalar field")
-                            * Fr::new(BigInt(*a)))
-                        .into_bigint()
-                    } else {
-                        (Fq::new(BigInt(*b))
-                            .inverse()
-                            .expect("Attempted to invert zero in P-256 base field")
-                            * Fq::new(BigInt(*a)))
-                        .into_bigint()
-                    }
-                    .0,
-                )
-            },
-        )
+                .0,
+            )
+        })
     }
 
     // inline sequence function
@@ -584,11 +586,34 @@ impl P256Mulq {
 }
 
 macro_rules! p256_mulq_op {
+    ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: MulqType::Div, is_scalar: $is_scalar:expr) => {
+        pub struct $name;
+
+        impl InlineOp for $name {
+            type Advice = ModularDivisionAdvice;
+
+            const OPCODE: u32 = crate::INLINE_OPCODE;
+            const FUNCT3: u32 = $funct3;
+            const FUNCT7: u32 = crate::P256_FUNCT7;
+            const NAME: &'static str = $op_name;
+
+            fn build_sequence(
+                asm: InlineExpansionBuilder,
+                operands: InlineOperands,
+            ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+                P256Mulq::new(asm, operands, MulqType::Div, $is_scalar)?.inline_sequence()
+            }
+
+            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
+                P256Mulq::division_advice(operands, cpu, $is_scalar)
+            }
+        }
+    };
     ($name:ident, funct3: $funct3:expr, name: $op_name:expr, mul_type: $mul_type:expr, is_scalar: $is_scalar:expr) => {
         pub struct $name;
 
         impl InlineOp for $name {
-            type Advice = VecDeque<u64>;
+            type Advice = QuotientAdvice;
 
             const OPCODE: u32 = crate::INLINE_OPCODE;
             const FUNCT3: u32 = $funct3;
@@ -603,7 +628,7 @@ macro_rules! p256_mulq_op {
             }
 
             fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-                P256Mulq::advice(operands, cpu, $is_scalar, &$mul_type)
+                P256Mulq::quotient_advice(operands, cpu, $is_scalar, &$mul_type)
             }
         }
     };
@@ -617,8 +642,31 @@ p256_mulq_op!(P256SquareR, funct3: crate::P256_SQUARER_FUNCT3, name: crate::P256
 p256_mulq_op!(P256DivR,    funct3: crate::P256_DIVR_FUNCT3,    name: crate::P256_DIVR_NAME,    mul_type: MulqType::Div,    is_scalar: true);
 
 // Fake GLV advice inline: computes s*P and half-GCD decomposition off-circuit,
-// outputs (R.x, R.y, a_lo, a_hi, b_lo, b_hi, sign_b) via VirtualAdvice.
+// then emits [R.x(4), R.y(4), a_lo, a_hi, a_sign, b_lo, b_hi, b_sign].
 // The guest SDK verifies correctness in-circuit.
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct P256FakeGlvAdvice {
+    pub result_x: FieldElementLimbs,
+    pub result_y: FieldElementLimbs,
+    pub a: SignedU128Advice,
+    pub b: SignedU128Advice,
+}
+
+impl InlineAdvice for P256FakeGlvAdvice {
+    fn into_runtime_advice(self) -> Option<std::collections::VecDeque<u64>> {
+        let mut advice = std::collections::VecDeque::with_capacity(14);
+        advice.extend(self.result_x);
+        advice.extend(self.result_y);
+        advice.push_back(self.a.magnitude[0]);
+        advice.push_back(self.a.magnitude[1]);
+        advice.push_back(u64::from(self.a.is_negative));
+        advice.push_back(self.b.magnitude[0]);
+        advice.push_back(self.b.magnitude[1]);
+        advice.push_back(u64::from(self.b.is_negative));
+        Some(advice)
+    }
+}
 
 struct FakeGlvAdvBuilder {
     asm: InlineExpansionBuilder,
@@ -638,8 +686,8 @@ impl FakeGlvAdvBuilder {
     /// Advice function: runs on the host at native speed.
     /// Reads scalar s from rs1 and point P from rs2.
     /// Computes R = s*P via arkworks, then half-GCD decomposition.
-    /// Returns 14 u64 values: [R.x(4), R.y(4), a_lo, a_hi, a_sign, b_lo, b_hi, b_sign]
-    fn advice(operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+    /// Computes the 14 advice words emitted by `P256FakeGlvAdvice`.
+    fn advice(operands: FormatInline, cpu: &mut Cpu) -> P256FakeGlvAdvice {
         // Read scalar s from rs1
         let s_addr = cpu.x[operands.rs1 as usize] as u64;
         let s_limbs = [
@@ -679,20 +727,14 @@ impl FakeGlvAdvBuilder {
 
         // Half-GCD decomposition via shared module
         let s_big: NBigInt = Fr::new(BigInt(s_limbs)).into_bigint().into();
-        let [a_lo, a_hi, a_sign, b_lo, b_hi, b_sign] = crate::fake_glv::decompose_to_u64s(&s_big);
+        let (a, a_negative, b, b_negative) = crate::fake_glv::decompose_to_u128s(&s_big);
 
-        // Output: [R.x(4), R.y(4), a_lo, a_hi, a_sign, b_lo, b_hi, b_sign] = 14 values
-        let mut advice = Vec::with_capacity(14);
-        advice.extend_from_slice(&rx);
-        advice.extend_from_slice(&ry);
-        advice.push(a_lo);
-        advice.push(a_hi);
-        advice.push(a_sign);
-        advice.push(b_lo);
-        advice.push(b_hi);
-        advice.push(b_sign);
-
-        VecDeque::from(advice)
+        P256FakeGlvAdvice {
+            result_x: rx,
+            result_y: ry,
+            a: SignedU128Advice::from_u128(a, a_negative),
+            b: SignedU128Advice::from_u128(b, b_negative),
+        }
     }
 
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -705,7 +747,7 @@ impl FakeGlvAdvBuilder {
 pub struct P256FakeGlvAdv;
 
 impl InlineOp for P256FakeGlvAdv {
-    type Advice = VecDeque<u64>;
+    type Advice = P256FakeGlvAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::P256_FAKE_GLV_ADV_FUNCT3;

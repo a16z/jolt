@@ -16,7 +16,7 @@ use jolt_inlines_sdk::host::{
         virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     },
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
 };
 
@@ -235,7 +235,7 @@ impl Blake2SequenceBuilder {
 pub struct Blake2bCompression;
 
 impl InlineOp for Blake2bCompression {
-    type Advice = ();
+    type Advice = NoAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BLAKE2_FUNCT3;
@@ -254,7 +254,10 @@ impl InlineOp for Blake2bCompression {
 mod tests {
     use super::Blake2bCompression;
     use crate::IV;
-    use jolt_inlines_sdk::{assert_random_cases_match_reference, assert_reference_matches_harness};
+    use jolt_inlines_sdk::{
+        assert_edge_cases_match_reference, assert_random_cases_match_reference,
+        assert_reference_matches_harness,
+    };
 
     fn initial_state() -> [u64; crate::STATE_VECTOR_LEN] {
         let mut state = IV;
@@ -276,6 +279,11 @@ mod tests {
     #[test]
     fn test_trace_result_with_default_input() {
         assert_reference_matches_harness::<Blake2bCompression>(&default_input());
+    }
+
+    #[test]
+    fn test_trace_result_with_edge_cases() {
+        assert_edge_cases_match_reference::<Blake2bCompression>();
     }
 
     #[test]

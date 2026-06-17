@@ -25,7 +25,8 @@ mod tests {
     use tracer::{InlineRegistration, TracerInlineExpansionProvider};
 
     const FIXTURE_PATH: &str = "fixtures/registered_inline_expand_parity_hashes.jsonl";
-    const BIGINT_MUL_ROW_BUDGET: usize = 214;
+    const BIGINT_MUL_ROWS_BEFORE_ZERO_INIT_REMOVAL: usize = 222;
+    const BIGINT_MUL_ROWS_AFTER_ZERO_INIT_REMOVAL: usize = 214;
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
     struct RegisteredInlineExpansionParityCase {
@@ -250,15 +251,17 @@ mod tests {
     }
 
     #[test]
-    fn bigint_mul_expansion_stays_within_row_budget() -> Result<(), Box<dyn Error>> {
+    fn bigint_mul_keeps_zero_init_row_reduction() -> Result<(), Box<dyn Error>> {
         for case in compute_cases()? {
             if case.inline_name == "BIGINT256_MUL_INLINE" {
-                assert!(
-                    case.row_count <= BIGINT_MUL_ROW_BUDGET,
-                    "{} emitted {} rows, budget is {}",
+                assert_eq!(
+                    case.row_count,
+                    BIGINT_MUL_ROWS_AFTER_ZERO_INIT_REMOVAL,
+                    "{} emitted {} rows; expected {} after removing redundant zero-init rows, baseline was {}",
                     case.name,
                     case.row_count,
-                    BIGINT_MUL_ROW_BUDGET
+                    BIGINT_MUL_ROWS_AFTER_ZERO_INIT_REMOVAL,
+                    BIGINT_MUL_ROWS_BEFORE_ZERO_INIT_REMOVAL,
                 );
             }
         }

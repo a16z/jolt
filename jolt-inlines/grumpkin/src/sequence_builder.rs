@@ -1,10 +1,9 @@
-use std::collections::VecDeque;
-
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_grumpkin::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    Cpu, ExpandedInstructionSequence, ExpansionError, FormatInline, InlineBuilderExt,
-    InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
+    Cpu, ExpandedInstructionSequence, ExpansionError, FieldElementAdvice, FormatInline,
+    GlvDecompositionAdvice, InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands,
+    InlineRegister,
 };
 struct GrumpkinDivAdv {
     asm: InlineExpansionBuilder,
@@ -21,9 +20,7 @@ impl GrumpkinDivAdv {
         Ok(GrumpkinDivAdv { asm, vr, operands })
     }
 
-    // Custom advice function
-    fn advice(operands: FormatInline, is_base_field: bool, cpu: &mut Cpu) -> VecDeque<u64> {
-        // read memory directly to get inputs
+    fn advice(operands: FormatInline, is_base_field: bool, cpu: &mut Cpu) -> FieldElementAdvice {
         let a_addr = cpu.x[operands.rs1 as usize] as u64;
         let a = [
             cpu.mmu.load_doubleword(a_addr).unwrap().0,
@@ -38,28 +35,26 @@ impl GrumpkinDivAdv {
             cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
             cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
         ];
-        // compute c = a / b and return limbs as VecDeque
-        VecDeque::from(
-            if is_base_field {
-                let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
-                (arr_to_fq(&b)
-                    .inverse()
-                    .expect("Attempted to invert zero in grumpkin base field")
-                    * arr_to_fq(&a))
-                .0
-            } else {
-                let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt(*a));
-                (arr_to_fr(&b)
-                    .inverse()
-                    .expect("Attempted to invert zero in grumpkin scalar field")
-                    * arr_to_fr(&a))
-                .0
-            }
+        let limbs = if is_base_field {
+            let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
+            (arr_to_fq(&b)
+                .inverse()
+                .expect("Attempted to invert zero in grumpkin base field")
+                * arr_to_fq(&a))
             .0
-            .to_vec(),
-        )
+             .0
+        } else {
+            let arr_to_fr = |a: &[u64; 4]| Fr::new_unchecked(BigInt(*a));
+            (arr_to_fr(&b)
+                .inverse()
+                .expect("Attempted to invert zero in grumpkin scalar field")
+                * arr_to_fr(&a))
+            .0
+             .0
+        };
+        FieldElementAdvice { limbs }
     }
-    // inline sequence function
+
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 4);
         self.asm.release(self.vr);
@@ -82,7 +77,7 @@ impl GlvrAdvBuilder {
         Ok(GlvrAdvBuilder { asm, vr, operands })
     }
 
-    fn advice(operands: FormatInline, cpu: &mut Cpu) -> VecDeque<u64> {
+    fn advice(operands: FormatInline, cpu: &mut Cpu) -> GlvDecompositionAdvice {
         let k_addr = cpu.x[operands.rs1 as usize] as u64;
         let k_limbs = [
             cpu.mmu.load_doubleword(k_addr).unwrap().0,
@@ -91,8 +86,7 @@ impl GlvrAdvBuilder {
             cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
         ];
         let k = Fr::new_unchecked(BigInt(k_limbs)).into_bigint().into();
-        let result = crate::glv::decompose_scalar_to_u64s(k);
-        VecDeque::from(result.to_vec())
+        GlvDecompositionAdvice::from_sign_abs(crate::glv::decompose_scalar(k))
     }
 
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -105,7 +99,7 @@ impl GlvrAdvBuilder {
 pub struct GrumpkinDivQAdv;
 
 impl InlineOp for GrumpkinDivQAdv {
-    type Advice = VecDeque<u64>;
+    type Advice = FieldElementAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_DIVQ_ADV_FUNCT3;
@@ -127,7 +121,7 @@ impl InlineOp for GrumpkinDivQAdv {
 pub struct GrumpkinDivRAdv;
 
 impl InlineOp for GrumpkinDivRAdv {
-    type Advice = VecDeque<u64>;
+    type Advice = FieldElementAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_DIVR_ADV_FUNCT3;
@@ -149,7 +143,7 @@ impl InlineOp for GrumpkinDivRAdv {
 pub struct GrumpkinGlvrAdv;
 
 impl InlineOp for GrumpkinGlvrAdv {
-    type Advice = VecDeque<u64>;
+    type Advice = GlvDecompositionAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::GRUMPKIN_GLVR_ADV_FUNCT3;

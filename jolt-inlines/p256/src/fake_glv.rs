@@ -37,35 +37,6 @@ pub(crate) fn decompose_scalar(s: &NBigInt) -> (NBigInt, NBigInt) {
     (u_val, v_val)
 }
 
-/// Serialize a signed big-integer as `(lo, hi, sign)` triple of u64 values.
-fn serialize_128(val: &NBigInt) -> (u64, u64, u64) {
-    let sign = if val.sign() == Sign::Minus {
-        1u64
-    } else {
-        0u64
-    };
-    let bytes = val.magnitude().to_bytes_le();
-    let mut lo = 0u64;
-    let mut hi = 0u64;
-    for (i, &b) in bytes.iter().enumerate() {
-        if i < 8 {
-            lo |= (b as u64) << (i * 8);
-        } else if i < 16 {
-            hi |= (b as u64) << ((i - 8) * 8);
-        }
-    }
-    (lo, hi, sign)
-}
-
-/// Decompose scalar and serialize as 6 u64 values:
-/// `[a_lo, a_hi, a_sign, b_lo, b_hi, b_sign]`.
-pub(crate) fn decompose_to_u64s(s: &NBigInt) -> [u64; 6] {
-    let (a, b) = decompose_scalar(s);
-    let (a_lo, a_hi, a_sign) = serialize_128(&a);
-    let (b_lo, b_hi, b_sign) = serialize_128(&b);
-    [a_lo, a_hi, a_sign, b_lo, b_hi, b_sign]
-}
-
 /// Decompose scalar and return as `(u128, bool)` pairs (value, is_negative).
 pub(crate) fn decompose_to_u128s(s: &NBigInt) -> (u128, bool, u128, bool) {
     let (a, b) = decompose_scalar(s);

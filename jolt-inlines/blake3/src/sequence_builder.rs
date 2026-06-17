@@ -21,7 +21,7 @@ use jolt_inlines_sdk::host::{
         virtual_zero_extend_word::VirtualZeroExtendWord,
     },
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
 };
 
@@ -446,7 +446,7 @@ impl Blake3Keyed64SequenceBuilder {
 pub struct Blake3Compression;
 
 impl InlineOp for Blake3Compression {
-    type Advice = ();
+    type Advice = NoAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BLAKE3_FUNCT3;
@@ -464,7 +464,7 @@ impl InlineOp for Blake3Compression {
 pub struct Blake3Keyed64Compression;
 
 impl InlineOp for Blake3Keyed64Compression {
-    type Advice = ();
+    type Advice = NoAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::BLAKE3_KEYED64_FUNCT3;
@@ -481,10 +481,13 @@ impl InlineOp for Blake3Keyed64Compression {
 
 #[cfg(test)]
 mod tests {
+    use crate::{spec::Blake3Keyed64Input, CHAINING_VALUE_LEN};
+
     use super::{Blake3Compression, Blake3Keyed64Compression};
     use jolt_inlines_sdk::{
-        assert_edge_cases_match_reference, assert_random_cases_match_reference,
+        assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineSpec,
     };
+    use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn test_trace_result_equals_blake3_compress_reference() {
@@ -492,14 +495,53 @@ mod tests {
         assert_random_cases_match_reference::<Blake3Compression>(0xB1A3E3, 1000);
     }
 
-    #[test]
-    fn test_trace_result_equals_blake3_keyed_compress_reference() {
-        assert_random_cases_match_reference::<Blake3Compression>(0x000B_1A3E_34E1, 1000);
+    fn words_to_bytes(words: &[u32; CHAINING_VALUE_LEN]) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        for (chunk, word) in bytes.chunks_exact_mut(4).zip(words) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn keyed_hash_words((left, right, key): &Blake3Keyed64Input) -> [u32; CHAINING_VALUE_LEN] {
+        let key_bytes = words_to_bytes(key);
+        let mut input = [0u8; 64];
+        input[..32].copy_from_slice(&words_to_bytes(left));
+        input[32..].copy_from_slice(&words_to_bytes(right));
+
+        let digest = blake3::keyed_hash(&key_bytes, &input);
+        core::array::from_fn(|i| {
+            u32::from_le_bytes(digest.as_bytes()[i * 4..i * 4 + 4].try_into().unwrap())
+        })
+    }
+
+    fn assert_keyed64_trace_matches_blake3_keyed_hash(input: &Blake3Keyed64Input) {
+        let expected = keyed_hash_words(input);
+        let mut harness = <Blake3Keyed64Compression as InlineSpec>::harness();
+        harness.setup_registers();
+        <Blake3Keyed64Compression as InlineSpec>::load(&mut harness, input);
+        harness.execute_inline(<Blake3Keyed64Compression as InlineSpec>::instruction());
+        let actual = <Blake3Keyed64Compression as InlineSpec>::read(&mut harness);
+
+        assert_eq!(
+            actual, expected,
+            "BLAKE3 keyed64 trace output mismatch against blake3::keyed_hash"
+        );
     }
 
     #[test]
     fn test_trace_keyed64_matches_blake3_keyed_hash() {
         assert_edge_cases_match_reference::<Blake3Keyed64Compression>();
         assert_random_cases_match_reference::<Blake3Keyed64Compression>(0x88888, 100);
+
+        for input in <Blake3Keyed64Compression as InlineSpec>::edge_cases() {
+            assert_keyed64_trace_matches_blake3_keyed_hash(&input);
+        }
+
+        let mut rng = StdRng::seed_from_u64(0x88888);
+        for _ in 0..100 {
+            let input = <Blake3Keyed64Compression as InlineSpec>::random(&mut rng);
+            assert_keyed64_trace_matches_blake3_keyed_hash(&input);
+        }
     }
 }

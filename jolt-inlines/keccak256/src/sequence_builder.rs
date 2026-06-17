@@ -17,7 +17,7 @@ use crate::NUM_LANES;
 use jolt_inlines_sdk::host::{
     instruction::andn::ANDN,
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
 };
 
@@ -251,7 +251,7 @@ impl Keccak256SequenceBuilder {
 pub struct Keccak256Permutation;
 
 impl InlineOp for Keccak256Permutation {
-    type Advice = ();
+    type Advice = NoAdvice;
 
     const OPCODE: u32 = crate::INLINE_OPCODE;
     const FUNCT3: u32 = crate::KECCAK256_FUNCT3;
