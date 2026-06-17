@@ -10,8 +10,8 @@ use jolt_riscv::{
 use thiserror::Error;
 
 use crate::{
-    AkitaField, PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedLayoutError,
-    PackedWitnessLayout, SparsePackedWitness,
+    AkitaField, PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId,
+    PackedLayoutError, PackedWitnessLayout, SparsePackedWitness,
 };
 
 #[derive(Clone, Debug)]
@@ -158,6 +158,28 @@ impl JoltPackedWitnessBuilder {
                 row,
                 &word.to_le_bytes(),
             )?;
+        }
+        Ok(self)
+    }
+
+    pub fn pack_advice_bytes(
+        &mut self,
+        kind: PackedAdviceKind,
+        bytes: &[u8],
+    ) -> Result<&mut Self, JoltPackedWitnessError> {
+        let domain = advice_domain_name(kind);
+        let expected = self
+            .advice_byte_count(kind)?
+            .ok_or(JoltPackedWitnessError::MissingDomain { domain })?;
+        if bytes.len() != expected {
+            return Err(JoltPackedWitnessError::LengthMismatch {
+                domain,
+                expected,
+                got: bytes.len(),
+            });
+        }
+        for (row, byte) in bytes.iter().copied().enumerate() {
+            self.emit_byte(PackedFamilyId::AdviceBytes { kind, index: 0 }, row, 0, byte)?;
         }
         Ok(self)
     }
@@ -423,6 +445,19 @@ impl JoltPackedWitnessBuilder {
         Ok(rows)
     }
 
+    fn advice_byte_count(
+        &self,
+        kind: PackedAdviceKind,
+    ) -> Result<Option<usize>, JoltPackedWitnessError> {
+        let mut rows = None;
+        for family in &self.layout.families {
+            if family.id == (PackedFamilyId::AdviceBytes { kind, index: 0 }) {
+                merge_domain_rows(&mut rows, family.domain, advice_domain_name(kind))?;
+            }
+        }
+        Ok(rows)
+    }
+
     fn max_trace_family_index(&self, is_family: impl Fn(&PackedFamilyId) -> bool) -> usize {
         self.layout
             .families
@@ -437,6 +472,13 @@ impl JoltPackedWitnessBuilder {
             })
             .max()
             .unwrap_or(0)
+    }
+}
+
+fn advice_domain_name(kind: PackedAdviceKind) -> &'static str {
+    match kind {
+        PackedAdviceKind::Trusted => "trusted advice bytes",
+        PackedAdviceKind::Untrusted => "untrusted advice bytes",
     }
 }
 
@@ -1025,6 +1067,49 @@ mod tests {
             get(&witness, PackedFamilyId::ProgramImageInit, 1, 1, 4),
             AkitaField::one()
         );
+    }
+
+    #[test]
+    fn trusted_advice_encoding_roundtrip() {
+        assert_advice_encoding(PackedAdviceKind::Trusted, [0, 1, 2, 255]);
+    }
+
+    #[test]
+    fn untrusted_advice_encoding_roundtrip() {
+        assert_advice_encoding(PackedAdviceKind::Untrusted, [255, 0, 7, 8]);
+    }
+
+    fn assert_advice_encoding(kind: PackedAdviceKind, bytes: [u8; 4]) {
+        let layout = advice_layout(kind);
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_advice_bytes(kind, &bytes)
+            .expect("advice packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        for (row, byte) in bytes.iter().copied().enumerate() {
+            assert_eq!(
+                get(
+                    &witness,
+                    PackedFamilyId::AdviceBytes { kind, index: 0 },
+                    row,
+                    0,
+                    byte as usize
+                ),
+                AkitaField::one()
+            );
+        }
+    }
+
+    fn advice_layout(kind: PackedAdviceKind) -> PackedWitnessLayout {
+        PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::AdviceBytes { kind, index: 0 },
+            PackedFactDomain::AdviceBytes { kind, log_bytes: 2 },
+            1,
+            PackedAlphabet::Byte,
+        )])
+        .expect("layout should build")
     }
 
     fn increment_layout() -> PackedWitnessLayout {
