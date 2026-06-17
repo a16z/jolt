@@ -673,6 +673,97 @@ fn akita_packed_scheme_rejects_tampered_packed_statement() {
 }
 
 #[test]
+fn akita_packed_scheme_requires_one_packed_witness_commitment() {
+    run_on_large_stack(|| {
+        let layout = packed_reduction_layout();
+        let witness = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (packed_reduction_address(0, 0, 1), f(11)),
+                (packed_reduction_address(1, 0, 1), f(13)),
+                (packed_reduction_address(2, 0, 1), f(17)),
+                (packed_reduction_address(3, 0, 1), f(19)),
+                (packed_reduction_address(0, 1, 0), f(23)),
+                (packed_reduction_address(1, 1, 0), f(29)),
+                (packed_reduction_address(2, 1, 0), f(31)),
+                (packed_reduction_address(3, 1, 0), f(37)),
+            ],
+        )
+        .expect("packed witness should be valid");
+        let (prover_setup, verifier_setup) =
+            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 2));
+        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            .expect("source commit should succeed");
+        let row_point = vec![f(2), f(5)];
+        let terms_a = vec![packed_reduction_term(f(1), 0, 1, &row_point)];
+        let terms_b = vec![
+            packed_reduction_term(f(2), 0, 1, &row_point),
+            packed_reduction_term(f(3), 1, 0, &row_point),
+        ];
+        let claim_a = packed_view_eval(&layout, &witness, &terms_a);
+        let claim_b = packed_view_eval(&layout, &witness, &terms_b);
+        let statement = packed_reduction_statement(
+            &layout,
+            commitment,
+            &row_point,
+            terms_a,
+            claim_a,
+            terms_b,
+            claim_b,
+        );
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-single-witness");
+        let proof = AkitaPackedScheme::prove_packed_source_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &witness,
+            hint,
+        )
+        .expect("packed reduction proof should be produced");
+
+        let (group_commitment, _) = AkitaScheme::commit_group(
+            &prover_setup,
+            layout.digest,
+            &[polynomial(100), polynomial(200)],
+        )
+        .expect("grouped commitment should succeed");
+        let mut group_commitment_statement = statement.clone();
+        for claim in &mut group_commitment_statement.claims {
+            claim.commitment = group_commitment.clone();
+        }
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-single-witness");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &group_commitment_statement,
+            &proof,
+        );
+        assert!(
+            matches!(result, Err(OpeningsError::InvalidBatch(_))),
+            "packed view statements must reject grouped commitments"
+        );
+
+        let (other_commitment, _) =
+            AkitaScheme::commit_group(&prover_setup, layout.digest, &[polynomial(300)])
+                .expect("alternate commitment should succeed");
+        let mut mixed_commitment_statement = statement;
+        mixed_commitment_statement.claims[1].commitment = other_commitment;
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-single-witness");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &mixed_commitment_statement,
+            &proof,
+        );
+        assert!(
+            matches!(result, Err(OpeningsError::InvalidBatch(_))),
+            "packed view statements must use one packed witness commitment"
+        );
+    });
+}
+
+#[test]
 fn akita_commit_group_rejects_invalid_shapes() {
     let (prover_setup, _) = setup();
     let poly_a = polynomial(1);
