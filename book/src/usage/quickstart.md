@@ -16,7 +16,7 @@ curl -sfL jolt.rs/skill | bash
 ## Installing
 Start by installing the `jolt` command line tool.
 ```
-cargo +nightly install --git https://github.com/a16z/jolt --force --bins jolt
+cargo install --git https://github.com/a16z/jolt --force --bins jolt
 ```
 
 ## Creating a Project

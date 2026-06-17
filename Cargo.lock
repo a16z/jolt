@@ -1407,7 +1407,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 name = "common"
 version = "0.2.0"
 dependencies = [
- "allocative 0.3.4 (git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e)",
+ "allocative 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "serde",
  "syn 2.0.117",
@@ -2843,7 +2843,7 @@ dependencies = [
 name = "jolt-core"
 version = "0.1.0"
 dependencies = [
- "allocative 0.3.4 (git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e)",
+ "allocative 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
@@ -2983,7 +2983,7 @@ dependencies = [
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
- "allocative 0.3.4 (git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e)",
+ "allocative 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
@@ -3221,7 +3221,7 @@ dependencies = [
 name = "jolt-profiling"
 version = "0.1.0"
 dependencies = [
- "allocative 0.3.4 (git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e)",
+ "allocative 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "inferno 0.12.6",
  "memory-stats",
  "pprof",
@@ -7287,7 +7287,7 @@ dependencies = [
 name = "zklean-extractor"
 version = "0.1.0"
 dependencies = [
- "allocative 0.3.4 (git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e)",
+ "allocative 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
