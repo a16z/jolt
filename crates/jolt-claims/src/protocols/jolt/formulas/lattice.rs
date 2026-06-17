@@ -147,11 +147,39 @@ pub fn byte_decode_terms<F: Field>(
     family: LatticePackedFamilyId,
     limb: usize,
 ) -> Vec<LatticePackedViewTerm<F>> {
-    (0..256)
+    symbol_decode_terms(family, limb, 256)
+}
+
+pub fn symbol_decode_terms<F: Field>(
+    family: LatticePackedFamilyId,
+    limb: usize,
+    alphabet_size: usize,
+) -> Vec<LatticePackedViewTerm<F>> {
+    (0..alphabet_size)
         .map(|symbol| {
             LatticePackedViewTerm::new(F::from_u64(symbol as u64), family.clone(), limb, symbol)
         })
         .collect()
+}
+
+pub fn little_endian_byte_decode_terms<F: Field>(
+    family: LatticePackedFamilyId,
+    limb_count: usize,
+) -> Vec<LatticePackedViewTerm<F>> {
+    let mut terms = Vec::with_capacity(256 * limb_count);
+    let mut place = F::one();
+    for limb in 0..limb_count {
+        terms.extend((0..256).map(|symbol| {
+            LatticePackedViewTerm::new(
+                place * F::from_u64(symbol as u64),
+                family.clone(),
+                limb,
+                symbol,
+            )
+        }));
+        place *= F::from_u64(256);
+    }
+    terms
 }
 
 #[cfg(test)]
@@ -205,5 +233,34 @@ mod tests {
         );
         assert_eq!(terms[7].limb, 3);
         assert_eq!(terms[7].symbol, 7);
+    }
+
+    #[test]
+    fn symbol_decode_terms_support_non_byte_alphabets() {
+        let terms = symbol_decode_terms::<Fr>(LatticePackedFamilyId::RamRa { index: 1 }, 0, 4);
+
+        assert_eq!(terms.len(), 4);
+        assert_eq!(terms[3].coefficient, Fr::from_u64(3));
+        assert_eq!(terms[3].family, LatticePackedFamilyId::RamRa { index: 1 });
+        assert_eq!(terms[3].limb, 0);
+        assert_eq!(terms[3].symbol, 3);
+    }
+
+    #[test]
+    fn little_endian_byte_decode_terms_weight_limbs_by_place_value() {
+        let terms =
+            little_endian_byte_decode_terms::<Fr>(LatticePackedFamilyId::ProgramImageInit, 2);
+
+        assert_eq!(terms.len(), 512);
+        assert_eq!(terms[7].coefficient, Fr::from_u64(7));
+        assert_eq!(terms[7].limb, 0);
+        assert_eq!(terms[7].symbol, 7);
+        assert_eq!(terms[256 + 7].coefficient, Fr::from_u64(256 * 7));
+        assert_eq!(terms[256 + 7].limb, 1);
+        assert_eq!(terms[256 + 7].symbol, 7);
+        assert_eq!(
+            terms[256 + 7].family,
+            LatticePackedFamilyId::ProgramImageInit
+        );
     }
 }
