@@ -11,7 +11,8 @@ workspace = true
 [dependencies]
 jolt-claims.workspace = true
 jolt-field = { path = "../jolt-field" }
-jolt-poly = { path = "../jolt-poly" }
+jolt-poly = { path = "../jolt-poly", features = ["r1cs"] }
+num-bigint.workspace = true
 num-traits.workspace = true
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -20,6 +21,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-sumcheck = { workspace = true, features = ["r1cs"] }
+jolt-transcript = { workspace = true, features = ["poseidon-r1cs"] }
+jolt-wrapper-verifier.workspace = true
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
 

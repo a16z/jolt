@@ -3,13 +3,13 @@
 //! These are the building blocks consumed by the HyperKZG protocol.
 //! All operations are generic over `P: PairingGroup`.
 
+use crate::error::HyperKZGError;
+use crate::types::{HyperKZGProverSetup, HyperKZGVerifierSetup};
 use jolt_crypto::{JoltGroup, PairingGroup};
 use jolt_field::Field;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
-
-use crate::error::HyperKZGError;
-use crate::types::{HyperKZGProverSetup, HyperKZGVerifierSetup};
+use rayon::join;
 
 /// Commits to a polynomial (given as evaluation/coefficient vector) using MSM against SRS G1 powers.
 pub(crate) fn kzg_commit<P: PairingGroup>(
@@ -23,6 +23,32 @@ pub(crate) fn kzg_commit<P: PairingGroup>(
         });
     }
     Ok(P::G1::msm(&setup.g1_powers[..coeffs.len()], coeffs))
+}
+
+/// Adds one scalar hiding shift to a transparent KZG commitment.
+#[cfg(feature = "zk")]
+pub(crate) fn blind_commitment<P: PairingGroup>(
+    commitment: P::G1,
+    hiding_base: P::G1,
+    blind: P::ScalarField,
+) -> P::G1 {
+    commitment + hiding_base.scalar_mul(&blind)
+}
+
+/// Commits to a V2 hidden scalar evaluation:
+/// `value * G + (rho + u*tau) * H - tau * H_1`.
+#[cfg(feature = "zk")]
+pub(crate) fn randomized_eval_commitment<P: PairingGroup>(
+    value_base: P::G1,
+    hiding_base: P::G1,
+    beta_hiding_base: P::G1,
+    value: P::ScalarField,
+    rho: P::ScalarField,
+    tau: P::ScalarField,
+    u: P::ScalarField,
+) -> P::G1 {
+    value_base.scalar_mul(&value) + hiding_base.scalar_mul(&(rho + u * tau))
+        - beta_hiding_base.scalar_mul(&tau)
 }
 
 /// Computes the KZG witness polynomial `h(x) = f(x) / (x - u)`.
@@ -56,6 +82,23 @@ pub(crate) fn eval_univariate<F: Field>(coeffs: &[F], u: F) -> F {
     result
 }
 
+/// Computes the transparent KZG witness commitment for one polynomial at `u`.
+#[cfg(feature = "zk")]
+pub(crate) fn kzg_witness_commitment<P: PairingGroup>(
+    coeffs: &[P::ScalarField],
+    u: P::ScalarField,
+    setup: &HyperKZGProverSetup<P>,
+) -> Result<P::G1, HyperKZGError> {
+    let witness = compute_witness_polynomial::<P::ScalarField>(coeffs, u);
+    if setup.g1_powers.len() < witness.len() {
+        return Err(HyperKZGError::SrsTooSmall {
+            have: setup.g1_powers.len(),
+            need: witness.len(),
+        });
+    }
+    Ok(P::G1::msm(&setup.g1_powers[..witness.len()], &witness))
+}
+
 /// Batch KZG opening: commits to witness polynomials for each evaluation point.
 ///
 /// Given polynomials `f[0..k]` and evaluation points `u[0..t]`, computes:
@@ -79,8 +122,16 @@ where
     let k = f.len();
 
     // Compute evaluations v[t][j] = f_j(u_t)
-    let v: [Vec<P::ScalarField>; 3] =
-        (*u).map(|ui| f.iter().map(|fj| eval_univariate(fj, ui)).collect());
+    let eval_row = |u_i| {
+        f.iter()
+            .map(|fj| eval_univariate(fj, u_i))
+            .collect::<Vec<_>>()
+    };
+    let (v_r, (v_neg_r, v_r2)) = join(
+        || eval_row(u[0]),
+        || join(|| eval_row(u[1]), || eval_row(u[2])),
+    );
+    let v = [v_r, v_neg_r, v_r2];
 
     // Absorb all evaluations into transcript
     for row in &v {
@@ -103,10 +154,15 @@ where
     }
 
     // Compute witness polynomials and commit
-    let w: [P::G1; 3] = (*u).map(|ui| {
-        let h = compute_witness_polynomial::<P::ScalarField>(&b_poly, ui);
+    let witness = |u_i| {
+        let h = compute_witness_polynomial::<P::ScalarField>(&b_poly, u_i);
         P::G1::msm(&setup.g1_powers[..h.len()], &h)
-    });
+    };
+    let (w_r, (w_neg_r, w_r2)) = join(
+        || witness(u[0]),
+        || join(|| witness(u[1]), || witness(u[2])),
+    );
+    let w = [w_r, w_neg_r, w_r2];
 
     // Absorb witness commitments and mirror the verifier's `d_0` challenge
     // to keep prover/verifier transcripts in sync.

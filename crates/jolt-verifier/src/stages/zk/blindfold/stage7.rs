@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage7<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage7<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -9,6 +9,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: Clone,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let formula_dimensions = formula_dimensions(input)?;
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
@@ -19,23 +20,6 @@ where
     let (trusted_layout, trusted_claims) = advice_address_claim(input, JoltAdviceKind::Trusted);
     let (untrusted_layout, untrusted_claims) =
         advice_address_claim(input, JoltAdviceKind::Untrusted);
-    let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
-    let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
-    let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().and_then(|layout| {
-        layout.dimensions().has_address_phase().then(|| {
-            bytecode_reduction::address_phase::<PCS::Field>(
-                layout.dimensions(),
-                layout.chunk_count(),
-            )
-        })
-    });
-    let program_image_reduction_claims =
-        program_image_reduction_layout.as_ref().and_then(|layout| {
-            layout
-                .dimensions()
-                .has_address_phase()
-                .then(|| program_image::address_phase::<PCS::Field>(layout.dimensions()))
-        });
 
     values.challenge(
         JoltChallengeId::from(HammingWeightClaimReductionChallenge::Gamma),
@@ -77,32 +61,12 @@ where
     ) {
         add_advice_address_publics(input, values, layout, JoltAdviceKind::Untrusted, public)?;
     }
-    if let (Some(layout), Some(_claim), Some(public)) = (
-        bytecode_reduction_layout.as_ref(),
-        bytecode_reduction_claims.as_ref(),
-        input.stage7.bytecode_address_phase.as_ref(),
-    ) {
-        add_bytecode_reduction_address_publics(input, values, layout, public)?;
-    }
-    if let (Some(layout), Some(_claim), Some(public)) = (
-        program_image_reduction_layout.as_ref(),
-        program_image_reduction_claims.as_ref(),
-        input.stage7.program_image_address_phase.as_ref(),
-    ) {
-        add_program_image_reduction_address_publics(input, values, layout, public)?;
-    }
 
     let mut claims = vec![hamming_claims];
     if let Some(claim) = trusted_claims {
         claims.push(claim);
     }
     if let Some(claim) = untrusted_claims {
-        claims.push(claim);
-    }
-    if let Some(claim) = bytecode_reduction_claims {
-        claims.push(claim);
-    }
-    if let Some(claim) = program_image_reduction_claims {
         claims.push(claim);
     }
     let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
@@ -115,18 +79,6 @@ where
     if let Some(layout) = untrusted_layout {
         if layout.dimensions().has_address_phase() {
             output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted));
-        }
-    }
-    if let Some(layout) = bytecode_reduction_layout.as_ref() {
-        if layout.dimensions().has_address_phase() {
-            output_ids.extend(
-                (0..layout.chunk_count()).map(bytecode_reduction::final_bytecode_chunk_opening),
-            );
-        }
-    }
-    if let Some(layout) = program_image_reduction_layout.as_ref() {
-        if layout.dimensions().has_address_phase() {
-            output_ids.push(program_image::final_program_image_opening());
         }
     }
     add_batched_stage(

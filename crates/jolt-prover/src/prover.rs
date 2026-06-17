@@ -113,7 +113,6 @@ where
         + BlindFoldProverBackend<PCS::Field>,
     W: CommittedWitnessProvider<PCS::Field, JoltVmNamespace>
         + WitnessProvider<PCS::Field, JoltVmNamespace>
-        + jolt_witness::RaFamilyCycleIndexSource<PCS::Field, JoltVmNamespace>
         + JoltVmSpartanOuterRows
         + JoltVmStage2Rows
         + JoltVmStage3ShiftRows
@@ -391,7 +390,6 @@ where
         + JoltVmStage5InstructionReadRafRows
         + JoltVmStage6Rows
         + WitnessProvider<PCS::Field, JoltVmNamespace>
-        + jolt_witness::RaFamilyCycleIndexSource<PCS::Field, JoltVmNamespace>
         + Sync,
     FI: FieldInlineProverWitness<PCS::Field>,
 {
@@ -614,7 +612,6 @@ where
         + JoltVmStage5InstructionReadRafRows
         + JoltVmStage6Rows
         + WitnessProvider<PCS::Field, JoltVmNamespace>
-        + jolt_witness::RaFamilyCycleIndexSource<PCS::Field, JoltVmNamespace>
         + Sync,
     FI: FieldInlineProverWitness<PCS::Field>,
 {

@@ -31,16 +31,17 @@ use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
 use jolt_dory::DoryCommitment;
 use jolt_dory::{DoryScheme, DoryVerifierSetup};
 use jolt_field::Fr;
-use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
+use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::Blake2bTranscript;
 use jolt_verifier::{
-    compat::convert::{CorePcsBridge, ImportedCoreProof},
-    verify, CommittedProgramPreprocessing, JoltVerifierPreprocessing, VerifierError,
+    compat::convert::ImportedCoreProof, verify, JoltVerifierPreprocessing, VerifierError,
 };
 
 #[cfg(feature = "zk")]
 use jolt_verifier::compat::convert::CoreCurveBridge;
+#[cfg(not(feature = "zk"))]
+use jolt_verifier::compat::convert::CorePcsBridge;
 
 use jolt_core::{
     curve::{Bn254Curve, JoltCurve},
@@ -63,7 +64,6 @@ use jolt_core::{
     transcripts::Transcript as CoreTranscript,
     zkvm::{
         instruction::{CircuitFlags as CoreCircuitFlags, InstructionFlags as CoreInstructionFlags},
-        program::ProgramPreprocessing,
         prover::JoltProverPreprocessing,
         verifier::{
             JoltSharedPreprocessing, JoltVerifierPreprocessing as CoreVerifierPreprocessing,
@@ -193,8 +193,7 @@ pub enum LegacyProofStageTarget {
     Stage3Batch,
     Stage4Batch,
     Stage5Batch,
-    Stage6AddressPhase,
-    Stage6CyclePhase,
+    Stage6Batch,
     Stage7Batch,
 }
 
@@ -291,11 +290,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_sumcheck_round_count(&self.proof.stage5_sumcheck_proof)
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_sumcheck_round_count(&self.proof.stage6a_sumcheck_proof)
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_sumcheck_round_count(&self.proof.stage6b_sumcheck_proof)
+            LegacyProofStageTarget::Stage6Batch => {
+                core_sumcheck_round_count(&self.proof.stage6_sumcheck_proof)
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_sumcheck_round_count(&self.proof.stage7_sumcheck_proof)
@@ -328,11 +324,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_mutate_sumcheck_round(&mut self.proof.stage5_sumcheck_proof, round_index);
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_mutate_sumcheck_round(&mut self.proof.stage6a_sumcheck_proof, round_index);
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_mutate_sumcheck_round(&mut self.proof.stage6b_sumcheck_proof, round_index);
+            LegacyProofStageTarget::Stage6Batch => {
+                core_mutate_sumcheck_round(&mut self.proof.stage6_sumcheck_proof, round_index);
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_mutate_sumcheck_round(&mut self.proof.stage7_sumcheck_proof, round_index);
@@ -363,11 +356,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_pop_sumcheck_round(&mut self.proof.stage5_sumcheck_proof);
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_pop_sumcheck_round(&mut self.proof.stage6a_sumcheck_proof);
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_pop_sumcheck_round(&mut self.proof.stage6b_sumcheck_proof);
+            LegacyProofStageTarget::Stage6Batch => {
+                core_pop_sumcheck_round(&mut self.proof.stage6_sumcheck_proof);
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_pop_sumcheck_round(&mut self.proof.stage7_sumcheck_proof);
@@ -398,11 +388,8 @@ impl CorePrecompatVerifierCase {
             LegacyProofStageTarget::Stage5Batch => {
                 core_push_sumcheck_round(&mut self.proof.stage5_sumcheck_proof);
             }
-            LegacyProofStageTarget::Stage6AddressPhase => {
-                core_push_sumcheck_round(&mut self.proof.stage6a_sumcheck_proof);
-            }
-            LegacyProofStageTarget::Stage6CyclePhase => {
-                core_push_sumcheck_round(&mut self.proof.stage6b_sumcheck_proof);
+            LegacyProofStageTarget::Stage6Batch => {
+                core_push_sumcheck_round(&mut self.proof.stage6_sumcheck_proof);
             }
             LegacyProofStageTarget::Stage7Batch => {
                 core_push_sumcheck_round(&mut self.proof.stage7_sumcheck_proof);
@@ -499,21 +486,6 @@ pub fn zk_muldiv_case() -> CoreZkVerifierCase {
 }
 
 #[cfg(feature = "zk")]
-pub fn zk_committed_muldiv_case() -> CoreZkVerifierCase {
-    let _guard = core_fixture_lock();
-    let fixture = load_or_generate_fixture(CoreFixtureKind::ZkCommittedMulDivSmall, || {
-        let fixture = generate_committed_muldiv();
-        assert_core_accepts(
-            &fixture,
-            fixture.proof.clone_via_bytes(),
-            fixture.public_io.clone(),
-        );
-        fixture
-    });
-    zk_case_from_parts(fixture)
-}
-
-#[cfg(feature = "zk")]
 pub fn fresh_zk_muldiv_case() -> CoreZkVerifierCase {
     let _guard = core_fixture_lock();
     zk_case_from_parts(generate_muldiv())
@@ -523,24 +495,6 @@ pub fn fresh_zk_muldiv_case() -> CoreZkVerifierCase {
 pub fn standard_advice_consumer_case() -> CoreVerifierCase {
     let _guard = core_fixture_lock();
     case_from_accepted_fixture(CoreFixtureKind::AdviceConsumer, generate_advice_consumer)
-}
-
-#[cfg(not(feature = "zk"))]
-pub fn standard_committed_muldiv_case() -> CoreVerifierCase {
-    let _guard = core_fixture_lock();
-    case_from_accepted_fixture(
-        CoreFixtureKind::CommittedMulDivSmall,
-        generate_committed_muldiv,
-    )
-}
-
-#[cfg(not(feature = "zk"))]
-pub fn standard_committed_muldiv_precompat_case() -> CorePrecompatVerifierCase {
-    let _guard = core_fixture_lock();
-    precompat_case_from_accepted_fixture(
-        CoreFixtureKind::CommittedMulDivSmall,
-        generate_committed_muldiv,
-    )
 }
 
 #[cfg(not(feature = "zk"))]
@@ -683,12 +637,8 @@ enum CoreFixtureKind {
     Sha2Small,
     #[cfg(not(feature = "zk"))]
     AdviceConsumer,
-    #[cfg(not(feature = "zk"))]
-    CommittedMulDivSmall,
     #[cfg(feature = "zk")]
     ZkMulDivSmall,
-    #[cfg(feature = "zk")]
-    ZkCommittedMulDivSmall,
 }
 
 impl CoreFixtureKind {
@@ -708,12 +658,8 @@ impl CoreFixtureKind {
             Self::Sha2Small => "standard-sha2-small",
             #[cfg(not(feature = "zk"))]
             Self::AdviceConsumer => "standard-advice-consumer",
-            #[cfg(not(feature = "zk"))]
-            Self::CommittedMulDivSmall => "standard-committed-muldiv-small",
             #[cfg(feature = "zk")]
             Self::ZkMulDivSmall => "zk-muldiv-small-continued-transcript",
-            #[cfg(feature = "zk")]
-            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small",
         }
     }
 }
@@ -995,10 +941,7 @@ fn core_opening_id(id: JoltOpeningId) -> CoreOpeningId {
         JoltOpeningId::Polynomial {
             polynomial,
             relation,
-        } => CoreOpeningId::Polynomial(
-            core_polynomial_id(polynomial),
-            core_sumcheck_id_for_opening(polynomial, relation),
-        ),
+        } => CoreOpeningId::Polynomial(core_polynomial_id(polynomial), core_sumcheck_id(relation)),
         JoltOpeningId::UntrustedAdvice { relation } => {
             CoreOpeningId::UntrustedAdvice(core_sumcheck_id(relation))
         }
@@ -1021,22 +964,6 @@ fn core_polynomial_id(id: JoltPolynomialId) -> CorePolynomialId {
 }
 
 #[cfg(not(feature = "zk"))]
-fn core_sumcheck_id_for_opening(
-    polynomial: JoltPolynomialId,
-    relation: JoltRelationId,
-) -> CoreSumcheckId {
-    match polynomial {
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::BytecodeReadRafAddrClaim) => {
-            CoreSumcheckId::BytecodeReadRafAddressPhase
-        }
-        JoltPolynomialId::Virtual(JoltVirtualPolynomial::BooleanityAddrClaim) => {
-            CoreSumcheckId::BooleanityAddressPhase
-        }
-        _ => core_sumcheck_id(relation),
-    }
-}
-
-#[cfg(not(feature = "zk"))]
 fn core_committed_polynomial(id: JoltCommittedPolynomial) -> CoreCommittedPolynomial {
     match id {
         JoltCommittedPolynomial::RdInc => CoreCommittedPolynomial::RdInc,
@@ -1045,13 +972,9 @@ fn core_committed_polynomial(id: JoltCommittedPolynomial) -> CoreCommittedPolyno
             CoreCommittedPolynomial::InstructionRa(index)
         }
         JoltCommittedPolynomial::BytecodeRa(index) => CoreCommittedPolynomial::BytecodeRa(index),
-        JoltCommittedPolynomial::BytecodeChunk(index) => {
-            CoreCommittedPolynomial::BytecodeChunk(index)
-        }
         JoltCommittedPolynomial::RamRa(index) => CoreCommittedPolynomial::RamRa(index),
         JoltCommittedPolynomial::TrustedAdvice => CoreCommittedPolynomial::TrustedAdvice,
         JoltCommittedPolynomial::UntrustedAdvice => CoreCommittedPolynomial::UntrustedAdvice,
-        JoltCommittedPolynomial::ProgramImageInit => CoreCommittedPolynomial::ProgramImageInit,
     }
 }
 
@@ -1105,19 +1028,6 @@ fn core_virtual_polynomial(id: JoltVirtualPolynomial) -> CoreVirtualPolynomial {
         JoltVirtualPolynomial::LookupTableFlag(index) => {
             CoreVirtualPolynomial::LookupTableFlag(index)
         }
-        JoltVirtualPolynomial::BytecodeValStage(index) => {
-            CoreVirtualPolynomial::BytecodeValStage(index)
-        }
-        JoltVirtualPolynomial::BytecodeReadRafAddrClaim => {
-            CoreVirtualPolynomial::BytecodeReadRafAddrClaim
-        }
-        JoltVirtualPolynomial::BooleanityAddrClaim => CoreVirtualPolynomial::BooleanityAddrClaim,
-        JoltVirtualPolynomial::BytecodeClaimReductionIntermediate => {
-            CoreVirtualPolynomial::BytecodeClaimReductionIntermediate
-        }
-        JoltVirtualPolynomial::ProgramImageInitContributionRw => {
-            CoreVirtualPolynomial::ProgramImageInitContributionRw
-        }
     }
 }
 
@@ -1151,14 +1061,6 @@ fn core_sumcheck_id(id: JoltRelationId) -> CoreSumcheckId {
             CoreSumcheckId::AdviceClaimReductionCyclePhase
         }
         JoltRelationId::AdviceClaimReduction => CoreSumcheckId::AdviceClaimReduction,
-        JoltRelationId::BytecodeClaimReductionCyclePhase => {
-            CoreSumcheckId::BytecodeClaimReductionCyclePhase
-        }
-        JoltRelationId::BytecodeClaimReduction => CoreSumcheckId::BytecodeClaimReduction,
-        JoltRelationId::ProgramImageClaimReductionCyclePhase => {
-            CoreSumcheckId::ProgramImageClaimReductionCyclePhase
-        }
-        JoltRelationId::ProgramImageClaimReduction => CoreSumcheckId::ProgramImageClaimReduction,
         JoltRelationId::IncClaimReduction => CoreSumcheckId::IncClaimReduction,
         JoltRelationId::HammingWeightClaimReduction => CoreSumcheckId::HammingWeightClaimReduction,
     }
@@ -1298,55 +1200,6 @@ fn generate_advice_consumer() -> GeneratedCoreFixture {
     )
 }
 
-fn generate_committed_muldiv() -> GeneratedCoreFixture {
-    const BYTECODE_CHUNK_COUNT: usize = 2;
-
-    let mut program = host::Program::new("muldiv-guest");
-    let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-    let (bytecode, init_memory_state, _, entry_address) = program.decode();
-    let (_, _, _, public_io) = program.trace(&inputs, &[], &[]);
-
-    let program_preprocessing =
-        ProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("preprocess committed core fixture");
-    let (shared_preprocessing, committed_program_prover_data, generators) =
-        JoltSharedPreprocessing::new_committed(
-            program_preprocessing,
-            public_io.memory_layout.clone(),
-            1 << 16,
-            BYTECODE_CHUNK_COUNT,
-        );
-    let prover_preprocessing = JoltProverPreprocessing::new_committed(
-        shared_preprocessing,
-        committed_program_prover_data,
-        generators,
-    );
-    let elf_contents = program
-        .get_elf_contents()
-        .expect("elf contents should exist");
-
-    let prover = RV64IMACProver::gen_from_elf(
-        &prover_preprocessing,
-        &elf_contents,
-        &inputs,
-        &[],
-        &[],
-        None,
-        None,
-        None,
-    );
-    let public_io = prover.program_io.clone();
-    let (proof, _) = prover.prove();
-    let core_preprocessing = CoreVerifierPreprocessing::from(&prover_preprocessing);
-
-    GeneratedCoreFixture {
-        core_preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment: None,
-    }
-}
-
 fn generate_core_fixture(
     mut program: host::Program,
     inputs: Vec<u8>,
@@ -1357,14 +1210,14 @@ fn generate_core_fixture(
     let (bytecode, init_memory_state, _, entry_address) = program.decode();
     let (_, _, _, public_io) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
 
-    let program_preprocessing =
-        ProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("preprocess core fixture");
     let shared_preprocessing = JoltSharedPreprocessing::new(
-        program_preprocessing,
+        bytecode,
         public_io.memory_layout.clone(),
+        init_memory_state,
         1 << 16,
-    );
+        entry_address,
+    )
+    .expect("preprocess core fixture");
     let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing);
     let elf_contents = program
         .get_elf_contents()
@@ -1423,40 +1276,13 @@ fn commit_trusted_advice_preprocessing_only(
 fn convert_preprocessing(
     preprocessing: &CoreVerifierPreprocessing<CoreField, Bn254Curve, DoryCommitmentScheme>,
 ) -> ConvertedPreprocessing {
-    let program = match &preprocessing.shared.program {
-        ProgramPreprocessing::Full(full) => {
-            jolt_verifier::ProgramPreprocessing::Full(JoltProgramPreprocessing {
-                bytecode: full.bytecode.as_ref().clone(),
-                ram: full.ram.clone(),
-                memory_layout: preprocessing.shared.memory_layout.clone(),
-                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-            })
-        }
-        ProgramPreprocessing::Committed(committed) => {
-            jolt_verifier::ProgramPreprocessing::Committed(CommittedProgramPreprocessing {
-                meta: ProgramMetadata {
-                    entry_address: committed.meta.entry_address,
-                    min_bytecode_address: committed.meta.min_bytecode_address,
-                    entry_bytecode_index: committed.meta.entry_bytecode_index,
-                    program_image_len_words: committed.meta.program_image_len_words,
-                    bytecode_len: committed.meta.bytecode_len,
-                },
-                memory_layout: preprocessing.shared.memory_layout.clone(),
-                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                bytecode_chunk_commitments: committed
-                    .bytecode_commitments
-                    .commitments
-                    .iter()
-                    .map(|commitment| DoryCommitmentScheme::commitment_into_verifier(*commitment))
-                    .collect(),
-                program_image_commitment: DoryCommitmentScheme::commitment_into_verifier(
-                    committed.program_commitments.program_image_commitment,
-                ),
-            })
-        }
-    };
     JoltVerifierPreprocessing::new(
-        program,
+        JoltProgramPreprocessing {
+            bytecode: preprocessing.shared.bytecode.as_ref().clone(),
+            ram: preprocessing.shared.ram.clone(),
+            memory_layout: preprocessing.shared.memory_layout.clone(),
+            max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
+        },
         preprocessing.shared.digest(),
         DoryVerifierSetup(preprocessing.generators.clone()),
         convert_vc_setup(preprocessing),

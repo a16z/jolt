@@ -173,7 +173,7 @@ where
                 slot: item.slot,
                 oracle: item.requirement.oracle,
                 id: committed_id(item.requirement.oracle.kind),
-                polynomial_rows: item.descriptor.dimensions.rows(),
+                polynomial_rows: item.descriptor.dimensions.rows,
                 layout: item.commitment_layout(core_fast_path_layout),
                 mode: item.mode,
             }
@@ -214,7 +214,7 @@ where
                 let result = stream::commit_streamed_witness::<F, PCS, N>(
                     item.slot,
                     item.requirement.oracle,
-                    item.descriptor.dimensions.rows(),
+                    item.descriptor.dimensions.rows,
                     layout,
                     item.mode,
                     stream.as_mut(),
@@ -268,7 +268,7 @@ impl<N: WitnessNamespace> ResolvedCommitmentRequest<N> {
             if matches!(
                 self.descriptor.encoding,
                 PolynomialEncoding::Dense | PolynomialEncoding::Compact
-            ) && self.descriptor.dimensions.rows() == embedding.trace_rows
+            ) && self.descriptor.dimensions.rows == embedding.trace_rows
                 && matches!(
                     self.requirement.retention,
                     RetentionHint::ThroughStage8 | RetentionHint::ThroughBlindFold
@@ -342,7 +342,7 @@ fn infer_core_fast_path_layout<N: WitnessNamespace>(
                     PolynomialEncoding::Dense | PolynomialEncoding::Compact
                 )
         })
-        .map(|item| item.descriptor.dimensions.rows())
+        .map(|item| item.descriptor.dimensions.rows)
         .min()?;
 
     let one_hot_rows = resolved
@@ -351,7 +351,7 @@ fn infer_core_fast_path_layout<N: WitnessNamespace>(
             item.requirement.retention == RetentionHint::ThroughStage8
                 && item.descriptor.encoding == PolynomialEncoding::OneHot
         })
-        .map(|item| item.descriptor.dimensions.rows())
+        .map(|item| item.descriptor.dimensions.rows)
         .max()?;
 
     if trace_rows == 0

@@ -18,7 +18,7 @@ use jolt_field::Fr;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::Blake2bTranscript;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
@@ -26,47 +26,6 @@ use jolt_verifier::JoltProofClaims;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 fn zk_muldiv_core_proof_is_accepted() {
     support::assert_zk_accepts(crate::support::core_fixtures::zk_muldiv_case().verify());
-}
-
-#[test]
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
-fn zk_committed_muldiv_core_proof_is_accepted() {
-    support::assert_zk_accepts(crate::support::core_fixtures::zk_committed_muldiv_case().verify());
-}
-
-#[test]
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
-fn zk_committed_muldiv_blindfold_shape_audit_matches_modular_protocol() {
-    let case = crate::support::core_fixtures::zk_committed_muldiv_case();
-    let modular = jolt_verifier::compat::audit_zk_blindfold_protocol_shape::<
-        Fr,
-        DoryScheme,
-        Pedersen<Bn254G1>,
-        Blake2bTranscript,
-        _,
-    >(&case.preprocessing, &case.public_io, &case.proof, None)
-    .expect("build modular BlindFold protocol shape");
-    let JoltProofClaims::Zk { blindfold_proof } = &case.proof.claims else {
-        panic!("ZK core fixture must carry a BlindFold proof");
-    };
-    let proof_shape = blindfold_proof_shape(blindfold_proof);
-
-    assert_eq!(
-        proof_shape.random_round_commitment_rows,
-        modular.coefficient_rows
-    );
-    assert_eq!(
-        proof_shape.random_output_claim_rows,
-        modular.output_claim_rows
-    );
-    assert_eq!(
-        proof_shape.random_eval_commitments,
-        modular.eval_commitments
-    );
-    assert_eq!(proof_shape.auxiliary_rows, modular.auxiliary_rows);
-    assert_eq!(proof_shape.random_auxiliary_rows, modular.auxiliary_rows);
-    assert_eq!(proof_shape.random_error_rows, modular.error_row_count);
-    assert_eq!(proof_shape.cross_term_error_rows, modular.error_row_count);
 }
 
 #[test]

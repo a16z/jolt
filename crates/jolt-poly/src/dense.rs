@@ -6,7 +6,7 @@ use jolt_field::Field;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::eq::EqPolynomial;
+use crate::eq::{boolean_index_msb, EqPolynomial};
 
 /// Minimum number of evaluations before parallelizing bind/evaluate.
 ///
@@ -23,6 +23,10 @@ const PAR_THRESHOLD: usize = 1024;
 ///   [`evaluate`](Polynomial::evaluate), and arithmetic operators.
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
 ///   [`bind_to_field`](Polynomial::bind_to_field) for on-demand field promotion.
+#[expect(
+    clippy::unsafe_derive_deserialize,
+    reason = "deserialization goes through PolynomialRaw and validates dimensions"
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>"),
@@ -258,6 +262,43 @@ impl<F: Field> Polynomial<F> {
         self.num_vars -= 1;
     }
 
+    /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
+    #[inline]
+    pub fn bind_low_to_high_reusing_scratch(&mut self, scalar: F, scratch: &mut Vec<F>) {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
+        let half = self.evals.len() / 2;
+        scratch.clear();
+        if scratch.capacity() < half {
+            scratch.reserve(half - scratch.capacity());
+        }
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                let coeffs = &self.evals;
+                let spare = &mut scratch.spare_capacity_mut()[..half];
+                (spare, coeffs.par_chunks_exact(2))
+                    .into_par_iter()
+                    .with_min_len(PAR_THRESHOLD)
+                    .for_each(|(dest, pair)| {
+                        let _ = dest.write(pair[0] + scalar * (pair[1] - pair[0]));
+                    });
+                // SAFETY: every spare slot in `0..half` is written exactly once above.
+                unsafe { scratch.set_len(half) };
+                std::mem::swap(&mut self.evals, scratch);
+                self.num_vars -= 1;
+                return;
+            }
+        }
+
+        for pair in self.evals.chunks_exact(2) {
+            scratch.push(pair[0] + scalar * (pair[1] - pair[0]));
+        }
+        std::mem::swap(&mut self.evals, scratch);
+        self.num_vars -= 1;
+    }
+
     /// Returns the `(lo, hi)` pair for the given index and binding order.
     ///
     /// For sumcheck round polynomial evaluation at index `j`:
@@ -319,6 +360,21 @@ impl<F: Field> Polynomial<F> {
             .zip(eq_evals.iter())
             .map(|(&f, &e)| f * e)
             .sum()
+    }
+
+    /// Evaluates the polynomial, using direct table lookup for MSB-ordered Boolean points.
+    pub fn evaluate_with_msb_boolean_fast_path(&self, point: &[F]) -> F {
+        assert_eq!(
+            point.len(),
+            self.num_vars,
+            "point dimension must match num_vars"
+        );
+        if let Some(index) = boolean_index_msb(point) {
+            if let Some(value) = self.evals.get(index) {
+                return *value;
+            }
+        }
+        self.evaluate(point)
     }
 
     /// Evaluates by sequentially binding each variable, consuming `self`.

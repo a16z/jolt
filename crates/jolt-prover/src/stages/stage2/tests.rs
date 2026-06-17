@@ -26,9 +26,9 @@ use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage2Rows, JoltVm
 use jolt_witness::protocols::jolt_vm::{JoltVmSpartanOuterRow, JoltVmSpartanOuterRows};
 #[cfg(feature = "zk")]
 use jolt_witness::{
-    MaterializationPolicy, OracleDescriptor, OracleKind, OracleRef, PolynomialEncoding,
-    PolynomialView, RetentionHint, ViewRequirement, WitnessDimensions, WitnessError,
-    WitnessProvider,
+    MaterializationPolicy, OracleDescriptor, OracleKind, OracleRef, OracleViewRequest,
+    PolynomialEncoding, PolynomialView, RetentionHint, ViewRequirement, WitnessDimensions,
+    WitnessError, WitnessProvider,
 };
 
 #[cfg(feature = "zk")]
@@ -451,8 +451,8 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage2Witness {
             OracleKind::Virtual(
                 jolt_claims::protocols::jolt::JoltVirtualPolynomial::RamVal
                 | jolt_claims::protocols::jolt::JoltVirtualPolynomial::RamRa,
-            ) => WitnessDimensions::new(8),
-            OracleKind::Committed(_) | OracleKind::Virtual(_) => WitnessDimensions::new(4),
+            ) => WitnessDimensions::new(256, 8),
+            OracleKind::Committed(_) | OracleKind::Virtual(_) => WitnessDimensions::new(16, 4),
         };
         Ok(OracleDescriptor::new(
             oracle,
@@ -476,11 +476,11 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage2Witness {
 
     fn oracle_view(
         &self,
-        requirement: ViewRequirement<JoltVmNamespace>,
+        request: OracleViewRequest<JoltVmNamespace>,
     ) -> Result<PolynomialView<'_, Fr, JoltVmNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(requirement.oracle)?;
-        let rows = descriptor.dimensions.rows();
-        let values = match requirement.oracle.kind {
+        let descriptor = self.describe_oracle(request.oracle())?;
+        let rows = descriptor.dimensions.rows;
+        let values = match request.oracle().kind {
             OracleKind::Virtual(
                 jolt_claims::protocols::jolt::JoltVirtualPolynomial::NextUnexpandedPC,
             ) => vec![Fr::from_u64(4); rows],
@@ -590,7 +590,7 @@ impl WitnessProvider<Fr, FieldInlineNamespace> for FieldInlineWitness {
     ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
         Ok(OracleDescriptor::new(
             oracle,
-            WitnessDimensions::new(4),
+            WitnessDimensions::new(16, 4),
             PolynomialEncoding::Dense,
         ))
     }
@@ -610,9 +610,9 @@ impl WitnessProvider<Fr, FieldInlineNamespace> for FieldInlineWitness {
 
     fn oracle_view(
         &self,
-        requirement: ViewRequirement<FieldInlineNamespace>,
+        request: OracleViewRequest<FieldInlineNamespace>,
     ) -> Result<PolynomialView<'_, Fr, FieldInlineNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(requirement.oracle)?;
+        let descriptor = self.describe_oracle(request.oracle())?;
         Ok(PolynomialView::owned(descriptor, vec![Fr::from_u64(0); 16]))
     }
 }

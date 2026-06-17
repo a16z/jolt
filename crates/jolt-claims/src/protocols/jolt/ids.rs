@@ -25,10 +25,6 @@ pub enum JoltRelationId {
     Booleanity,
     AdviceClaimReductionCyclePhase,
     AdviceClaimReduction,
-    BytecodeClaimReductionCyclePhase,
-    BytecodeClaimReduction,
-    ProgramImageClaimReductionCyclePhase,
-    ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
 }
@@ -125,10 +121,6 @@ pub enum BytecodeReadRafChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BytecodeReadRafPublic {
     StageValue(usize),
-    /// Committed program mode: `eq(stage_cycle_point_s, r_cycle)` factor
-    /// multiplying the staged `BytecodeValStage(s)` opening. In full mode this
-    /// factor is folded into `StageValue(s)` instead.
-    StageCycleEq(usize),
     SpartanOuterRaf,
     SpartanShiftRaf,
     Entry,
@@ -143,23 +135,6 @@ pub enum JoltAdviceKind {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AdviceClaimReductionPublic {
     FinalScale(JoltAdviceKind),
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum BytecodeClaimReductionChallenge {
-    Eta,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum BytecodeClaimReductionPublic {
-    /// Final output coefficient of one committed bytecode chunk opening:
-    /// `eq(r_bc_high)[chunk] * eq_combined * skip_scale`.
-    ChunkOutputWeight(usize),
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum ProgramImageClaimReductionPublic {
-    FinalScale,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -243,7 +218,6 @@ pub enum JoltChallengeId {
     IncClaimReduction(IncClaimReductionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
-    BytecodeClaimReduction(BytecodeClaimReductionChallenge),
     SpartanShift(SpartanShiftChallenge),
     RegistersReadWrite(RegistersReadWriteChallenge),
     RegistersValEvaluation(RegistersValEvaluationChallenge),
@@ -260,11 +234,9 @@ pub enum JoltCommittedPolynomial {
     RamInc,
     InstructionRa(usize),
     BytecodeRa(usize),
-    BytecodeChunk(usize),
     RamRa(usize),
     TrustedAdvice,
     UntrustedAdvice,
-    ProgramImageInit,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -308,11 +280,6 @@ pub enum JoltVirtualPolynomial {
     OpFlags(CircuitFlags),
     InstructionFlags(InstructionFlags),
     LookupTableFlag(usize),
-    BytecodeValStage(usize),
-    BytecodeReadRafAddrClaim,
-    BooleanityAddrClaim,
-    BytecodeClaimReductionIntermediate,
-    ProgramImageInitContributionRw,
 }
 
 #[derive(
@@ -378,8 +345,6 @@ pub enum JoltPublicId {
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
     BytecodeReadRaf(BytecodeReadRafPublic),
     AdviceClaimReduction(AdviceClaimReductionPublic),
-    BytecodeClaimReduction(BytecodeClaimReductionPublic),
-    ProgramImageClaimReduction(ProgramImageClaimReductionPublic),
     SpartanShift(SpartanShiftPublic),
     SpartanProductVirtualization(SpartanProductVirtualizationPublic),
     SpartanOuter(SpartanOuterPublic),

@@ -1,29 +1,30 @@
 use super::{
+    final_openings::{
+        stage8_clear_final_opening_batch, stage8_final_opening_order, Stage8FinalOpening,
+        Stage8FinalOpeningBatchInput,
+    },
     inputs::Deps,
     outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput},
 };
+#[cfg(feature = "pcs-assist")]
+use crate::pcs_assist::{PcsAssistClearInput, PcsAssistZkInput};
 use crate::{
+    config::JoltProtocolConfig,
+    pcs_assist::PcsProofAssist,
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
-    stages::{
-        stage6::inputs::Stage6Claims,
-        stage7::{inputs::Stage7Claims, outputs::PrecommittedFinalOpening},
-    },
+    stages::{stage6::Stage6ZkOutput, stage7::Stage7ZkOutput},
     verifier::CheckedInputs,
     VerifierError,
 };
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{
     formulas::{
-        committed_openings::{
-            commitment_embedding_scale, final_opening_id, final_opening_point,
-            final_opening_polynomial_order, FinalOpeningPointInputs,
-        },
-        dimensions::JoltFormulaDimensions,
-        ra::JoltRaPolynomialLayout,
+        claim_reductions::advice, committed_openings::advice_commitment_embedding_scale,
+        dimensions::JoltFormulaDimensions, ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial,
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
@@ -31,33 +32,18 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim, ZkOpeningScheme,
 };
-use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_poly::{EqPolynomial, Point};
+use jolt_transcript::Transcript;
 
-struct Stage8BatchEntry<'a, F: Field, C> {
-    id: Stage8OpeningId,
-    commitment: &'a C,
-    /// `None` in ZK mode, where opening claims stay committed.
-    opening_claim: Option<F>,
-    /// Lagrange factor embedding this polynomial's own opening point into the
-    /// unified opening point.
-    scale: F,
+struct AdviceFinalOpeningPoint<F: Field> {
+    point: Vec<F>,
 }
 
-#[cfg(feature = "field-inline")]
-const fn field_inline_final_opening_count() -> usize {
-    1
-}
-
-#[cfg(not(feature = "field-inline"))]
-const fn field_inline_final_opening_count() -> usize {
-    0
-}
-
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify<F, PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
+    config: &JoltProtocolConfig<PcsAssist::Config>,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
     deps: Deps<'_, F, VC::Output>,
@@ -69,8 +55,12 @@ where
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
     PCS::Output: Clone + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = F>,
 {
+    #[cfg(not(feature = "pcs-assist"))]
+    let _ = config;
+
     match (checked.zk, deps) {
         (true, Deps::Clear { .. }) => {
             return Err(VerifierError::ExpectedCommittedProof { field: "stage8" });
@@ -85,7 +75,7 @@ where
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
         2 * RISCV_XLEN,
-        preprocessing.program.bytecode_len(),
+        preprocessing.program.bytecode.code_size,
         checked.ram_K,
     ))
     .map_err(|error| VerifierError::FinalOpeningBatchFailed {
@@ -93,75 +83,385 @@ where
     })?;
     let layout = formula_dimensions.ra_layout;
 
-    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
-        Deps::Clear { stage6, stage7 } => (
-            stage7
-                .batch
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
-            stage6.batch.inc_claim_reduction.opening_point.as_slice(),
-            stage7.precommitted_final_openings.as_slice(),
-            Some((&stage6.output_claims, &stage7.output_claims)),
-        ),
-        Deps::Zk { stage6, stage7 } => (
-            stage7
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
-            stage6.inc_claim_reduction.opening_point.as_slice(),
-            stage7.precommitted_final_openings.as_slice(),
-            None,
-        ),
+    let opening_point = match deps {
+        Deps::Clear { stage7, .. } => stage7
+            .batch
+            .hamming_weight_claim_reduction
+            .opening_point
+            .clone(),
+        Deps::Zk { stage7, .. } => stage7.hamming_weight_claim_reduction.opening_point.clone(),
     };
+    let committed_chunk_bits = proof.one_hot_config.committed_chunk_bits();
+    if opening_point.len() < committed_chunk_bits {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "final opening point has {} variables, expected at least {committed_chunk_bits}",
+                opening_point.len()
+            ),
+        });
+    }
+    let r_address_stage7 = &opening_point[..committed_chunk_bits];
+    let dense_embedding_scale = EqPolynomial::<PCS::Field>::zero_selector(r_address_stage7);
     require_commitment_layout(&proof.commitments, layout)?;
 
-    let anchor_points: Vec<&[F]> = precommitted_finals
-        .iter()
-        .map(|opening| opening.point.as_slice())
-        .collect();
-    let opening_point = final_opening_point(FinalOpeningPointInputs {
-        log_t,
-        log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
-        trace_order: proof.trace_polynomial_order,
-        hamming_weight_opening_point: hamming_opening_point,
-        inc_claim_reduction_opening_point: inc_opening_point,
-        precommitted_anchor_points: &anchor_points,
-    })
-    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-        reason: error.to_string(),
-    })?;
-    let pcs_opening_point = Point::high_to_low(opening_point.clone());
-
-    let entries = batch_entries(
-        preprocessing,
-        proof,
-        layout,
-        trusted_advice_commitment,
-        &opening_point,
-        hamming_opening_point,
-        inc_opening_point,
-        precommitted_finals,
-        clear_claims,
-    )?;
-    let opening_ids: Vec<Stage8OpeningId> = entries.iter().map(|entry| entry.id).collect();
+    let pcs_opening_point = Point::high_to_low(
+        proof
+            .trace_polynomial_order
+            .commitment_opening_point(&opening_point, log_t)
+            .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                reason: error.to_string(),
+            })?,
+    );
+    let common_point = Point::high_to_low(opening_point.clone());
 
     if checked.zk {
-        let gamma_powers = transcript.challenge_scalar_powers(entries.len());
-        let commitments: Vec<PCS::Output> = entries
-            .iter()
-            .map(|entry| entry.commitment.clone())
-            .collect();
+        let Deps::Zk { stage6, stage7 } = deps else {
+            return Err(VerifierError::ExpectedCommittedProof { field: "stage8" });
+        };
+
+        let trusted_advice = if checked.trusted_advice_commitment_present {
+            Some(final_advice_opening_point(
+                JoltAdviceKind::Trusted,
+                checked,
+                proof,
+                stage6,
+                stage7,
+            )?)
+        } else {
+            None
+        };
+        let untrusted_advice = if proof.untrusted_advice_commitment.is_some() {
+            Some(final_advice_opening_point(
+                JoltAdviceKind::Untrusted,
+                checked,
+                proof,
+                stage6,
+                stage7,
+            )?)
+        } else {
+            None
+        };
+        let trusted_advice_commitment = match (trusted_advice.is_some(), trusted_advice_commitment)
+        {
+            (true, Some(commitment)) => Some(commitment),
+            (true, None) => {
+                return Err(VerifierError::MissingFinalOpeningCommitment {
+                    polynomial: JoltCommittedPolynomial::TrustedAdvice,
+                });
+            }
+            (false, _) => None,
+        };
+        let untrusted_advice_commitment = match (
+            untrusted_advice.is_some(),
+            proof.untrusted_advice_commitment.as_ref(),
+        ) {
+            (true, Some(commitment)) => Some(commitment),
+            (true, None) => {
+                return Err(VerifierError::MissingFinalOpeningCommitment {
+                    polynomial: JoltCommittedPolynomial::UntrustedAdvice,
+                });
+            }
+            (false, _) => None,
+        };
+
+        let final_openings = stage8_final_opening_order(
+            layout,
+            trusted_advice.is_some(),
+            untrusted_advice.is_some(),
+        );
+        let mut opening_ids = Vec::with_capacity(final_openings.len());
+        let mut commitments = Vec::with_capacity(final_openings.len());
+        let mut scaling_factors = Vec::with_capacity(final_openings.len());
+        {
+            let mut push_opening =
+                |id: Stage8OpeningId, commitment: &PCS::Output, scale: PCS::Field| {
+                    scaling_factors.push(scale);
+                    opening_ids.push(id);
+                    commitments.push(commitment.clone());
+                };
+
+            for opening in final_openings {
+                let id = opening.id();
+                match opening {
+                    Stage8FinalOpening::Jolt(polynomial) => {
+                        match polynomial {
+                            JoltCommittedPolynomial::RamInc => {
+                                push_opening(id, &proof.commitments.ram_inc, dense_embedding_scale);
+                            }
+                            JoltCommittedPolynomial::RdInc => {
+                                push_opening(id, &proof.commitments.rd_inc, dense_embedding_scale);
+                            }
+                            JoltCommittedPolynomial::InstructionRa(index) => {
+                                let commitment =
+                                    proof.commitments.ra.instruction.get(index).ok_or_else(
+                                        || final_opening_commitment_mismatch(polynomial),
+                                    )?;
+                                push_opening(id, commitment, PCS::Field::one());
+                            }
+                            JoltCommittedPolynomial::BytecodeRa(index) => {
+                                let commitment =
+                                    proof.commitments.ra.bytecode.get(index).ok_or_else(|| {
+                                        final_opening_commitment_mismatch(polynomial)
+                                    })?;
+                                push_opening(id, commitment, PCS::Field::one());
+                            }
+                            JoltCommittedPolynomial::RamRa(index) => {
+                                let commitment =
+                                    proof.commitments.ra.ram.get(index).ok_or_else(|| {
+                                        final_opening_commitment_mismatch(polynomial)
+                                    })?;
+                                push_opening(id, commitment, PCS::Field::one());
+                            }
+                            JoltCommittedPolynomial::TrustedAdvice => {
+                                let commitment = trusted_advice_commitment.ok_or(
+                                    VerifierError::MissingFinalOpeningCommitment { polynomial },
+                                )?;
+                                let final_opening = trusted_advice.as_ref().ok_or(
+                                    VerifierError::MissingOpeningClaim {
+                                        id: advice::final_advice_opening(JoltAdviceKind::Trusted),
+                                    },
+                                )?;
+                                push_opening(
+                                    id,
+                                    commitment,
+                                    advice_commitment_embedding_scale(
+                                        &opening_point,
+                                        &final_opening.point,
+                                    ),
+                                );
+                            }
+                            JoltCommittedPolynomial::UntrustedAdvice => {
+                                let commitment = untrusted_advice_commitment.ok_or(
+                                    VerifierError::MissingFinalOpeningCommitment { polynomial },
+                                )?;
+                                let final_opening = untrusted_advice.as_ref().ok_or(
+                                    VerifierError::MissingOpeningClaim {
+                                        id: advice::final_advice_opening(JoltAdviceKind::Untrusted),
+                                    },
+                                )?;
+                                push_opening(
+                                    id,
+                                    commitment,
+                                    advice_commitment_embedding_scale(
+                                        &opening_point,
+                                        &final_opening.point,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    #[cfg(feature = "field-inline")]
+                    Stage8FinalOpening::FieldInline(FieldInlineCommittedPolynomial::FieldRdInc) => {
+                        push_opening(
+                            id,
+                            &proof.commitments.field_inline.field_registers.rd_inc,
+                            dense_embedding_scale,
+                        );
+                    }
+                }
+            }
+        }
+
+        let gamma_powers = transcript.challenge_scalar_powers(opening_ids.len());
         let joint_commitment = PCS::combine(&commitments, &gamma_powers);
         let constraint_coefficients = gamma_powers
             .iter()
-            .zip(&entries)
-            .map(|(gamma, entry)| *gamma * entry.scale)
+            .zip(scaling_factors)
+            .map(|(gamma, scale)| *gamma * scale)
             .collect::<Vec<_>>();
 
-        let hiding_evaluation_commitment = PCS::verify_zk(
+        #[cfg(not(feature = "pcs-assist"))]
+        let hiding_evaluation_commitment = {
+            PCS::verify_zk(
+                &joint_commitment,
+                &opening_point,
+                &proof.joint_opening_proof,
+                &preprocessing.pcs_setup,
+                transcript,
+            )
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?
+        };
+
+        #[cfg(feature = "pcs-assist")]
+        let hiding_evaluation_commitment = verify_zk_pcs_assist::<PCS, T, PcsAssist>(
+            config,
+            proof.pcs_assist.as_ref(),
+            PcsAssistZkInput {
+                setup: &preprocessing.pcs_setup,
+                pcs_proof: &proof.joint_opening_proof,
+                commitment: &joint_commitment,
+                point: opening_point.as_slice(),
+            },
+            transcript,
+        )?;
+        PCS::bind_zk_opening_inputs(
+            transcript,
+            common_point.as_slice(),
+            &hiding_evaluation_commitment,
+        );
+
+        return Ok(Stage8Output::Zk(Stage8ZkOutput {
+            opening_ids,
+            constraint_coefficients,
+            opening_point: common_point,
+            pcs_opening_point,
+            joint_commitment,
+            hiding_evaluation_commitment,
+        }));
+    }
+
+    let Deps::Clear { stage6, stage7 } = deps else {
+        return Err(VerifierError::ExpectedClearProof { field: "stage8" });
+    };
+    let trusted_advice_layout = if checked.trusted_advice_commitment_present {
+        Some(final_advice_layout(
+            JoltAdviceKind::Trusted,
+            checked,
+            proof,
+            log_t,
+        ))
+    } else {
+        None
+    };
+    let untrusted_advice_layout = if proof.untrusted_advice_commitment.is_some() {
+        Some(final_advice_layout(
+            JoltAdviceKind::Untrusted,
+            checked,
+            proof,
+            log_t,
+        ))
+    } else {
+        None
+    };
+
+    let trusted_advice_commitment =
+        match (trusted_advice_layout.is_some(), trusted_advice_commitment) {
+            (true, Some(commitment)) => Some(commitment),
+            (true, None) => {
+                return Err(VerifierError::MissingFinalOpeningCommitment {
+                    polynomial: JoltCommittedPolynomial::TrustedAdvice,
+                });
+            }
+            (false, _) => None,
+        };
+    let untrusted_advice_commitment = match (
+        untrusted_advice_layout.is_some(),
+        proof.untrusted_advice_commitment.as_ref(),
+    ) {
+        (true, Some(commitment)) => Some(commitment),
+        (true, None) => {
+            return Err(VerifierError::MissingFinalOpeningCommitment {
+                polynomial: JoltCommittedPolynomial::UntrustedAdvice,
+            });
+        }
+        (false, _) => None,
+    };
+    let final_opening_batch = stage8_clear_final_opening_batch(
+        Stage8FinalOpeningBatchInput {
+            log_t,
+            committed_chunk_bits,
+            layout,
+            trace_polynomial_order: proof.trace_polynomial_order,
+            trusted_advice_layout: trusted_advice_layout.as_ref(),
+            untrusted_advice_layout: untrusted_advice_layout.as_ref(),
+            stage6,
+            stage7,
+        },
+        transcript,
+    )?;
+    let mut opening_claims = Vec::with_capacity(final_opening_batch.claims.len());
+    let clear_pcs_opening_point = final_opening_batch.structure.pcs_opening_point.clone();
+
+    {
+        let mut push_opening =
+            |commitment: &PCS::Output, opening_claim: PCS::Field, scale: PCS::Field| {
+                opening_claims.push(VerifierOpeningClaim {
+                    commitment: commitment.clone(),
+                    evaluation: EvaluationClaim::new(
+                        clear_pcs_opening_point.clone(),
+                        opening_claim * scale,
+                    ),
+                });
+            };
+
+        for final_opening in &final_opening_batch.claims {
+            match final_opening.opening {
+                Stage8FinalOpening::Jolt(polynomial) => match polynomial {
+                    JoltCommittedPolynomial::RamInc => push_opening(
+                        &proof.commitments.ram_inc,
+                        final_opening.opening_claim,
+                        final_opening.scale,
+                    ),
+                    JoltCommittedPolynomial::RdInc => push_opening(
+                        &proof.commitments.rd_inc,
+                        final_opening.opening_claim,
+                        final_opening.scale,
+                    ),
+                    JoltCommittedPolynomial::InstructionRa(index) => {
+                        let commitment = proof
+                            .commitments
+                            .ra
+                            .instruction
+                            .get(index)
+                            .ok_or_else(|| final_opening_commitment_mismatch(polynomial))?;
+                        push_opening(commitment, final_opening.opening_claim, final_opening.scale);
+                    }
+                    JoltCommittedPolynomial::BytecodeRa(index) => {
+                        let commitment = proof
+                            .commitments
+                            .ra
+                            .bytecode
+                            .get(index)
+                            .ok_or_else(|| final_opening_commitment_mismatch(polynomial))?;
+                        push_opening(commitment, final_opening.opening_claim, final_opening.scale);
+                    }
+                    JoltCommittedPolynomial::RamRa(index) => {
+                        let commitment = proof
+                            .commitments
+                            .ra
+                            .ram
+                            .get(index)
+                            .ok_or_else(|| final_opening_commitment_mismatch(polynomial))?;
+                        push_opening(commitment, final_opening.opening_claim, final_opening.scale);
+                    }
+                    JoltCommittedPolynomial::TrustedAdvice => {
+                        let commitment = trusted_advice_commitment
+                            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+                        push_opening(commitment, final_opening.opening_claim, final_opening.scale);
+                    }
+                    JoltCommittedPolynomial::UntrustedAdvice => {
+                        let commitment = untrusted_advice_commitment
+                            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+                        push_opening(commitment, final_opening.opening_claim, final_opening.scale);
+                    }
+                },
+                #[cfg(feature = "field-inline")]
+                Stage8FinalOpening::FieldInline(FieldInlineCommittedPolynomial::FieldRdInc) => {
+                    push_opening(
+                        &proof.commitments.field_inline.field_registers.rd_inc,
+                        final_opening.opening_claim,
+                        final_opening.scale,
+                    );
+                }
+            }
+        }
+    }
+
+    let commitments = opening_claims
+        .iter()
+        .map(|claim| claim.commitment.clone())
+        .collect::<Vec<_>>();
+    let joint_commitment = PCS::combine(&commitments, &final_opening_batch.gamma_powers);
+    let structure = final_opening_batch.structure;
+
+    #[cfg(not(feature = "pcs-assist"))]
+    {
+        PCS::verify(
             &joint_commitment,
-            pcs_opening_point.as_slice(),
+            structure.pcs_opening_point.as_slice(),
+            structure.joint_claim,
             &proof.joint_opening_proof,
             &preprocessing.pcs_setup,
             transcript,
@@ -169,252 +469,84 @@ where
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
         })?;
-        PCS::bind_zk_opening_inputs(
-            transcript,
-            pcs_opening_point.as_slice(),
-            &hiding_evaluation_commitment,
-        );
-
-        return Ok(Stage8Output::Zk(Stage8ZkOutput {
-            opening_ids,
-            constraint_coefficients,
-            pcs_opening_point,
-            joint_commitment,
-            hiding_evaluation_commitment,
-        }));
     }
 
-    let opening_claims = entries
-        .iter()
-        .map(|entry| {
-            let opening_claim =
-                entry
-                    .opening_claim
-                    .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-                        reason: "missing clear opening claim in final batch".to_string(),
-                    })?;
-            Ok(VerifierOpeningClaim {
-                commitment: entry.commitment.clone(),
-                evaluation: EvaluationClaim::new(
-                    pcs_opening_point.clone(),
-                    opening_claim * entry.scale,
-                ),
-            })
-        })
-        .collect::<Result<Vec<_>, VerifierError>>()?;
-
-    transcript.append(&LabelWithCount(b"rlc_claims", opening_claims.len() as u64));
-    for claim in &opening_claims {
-        claim.evaluation.value.append_to_transcript(transcript);
-    }
-    let gamma_powers = transcript.challenge_scalar_powers(opening_claims.len());
-
-    let joint_claim = gamma_powers
-        .iter()
-        .zip(&opening_claims)
-        .fold(PCS::Field::zero(), |claim, (gamma, opening)| {
-            claim + *gamma * opening.evaluation.value
-        });
-    let commitments = opening_claims
-        .iter()
-        .map(|claim| claim.commitment.clone())
-        .collect::<Vec<_>>();
-    let joint_commitment = PCS::combine(&commitments, &gamma_powers);
-    let constraint_coefficients = gamma_powers
-        .iter()
-        .zip(&entries)
-        .map(|(gamma, entry)| *gamma * entry.scale)
-        .collect::<Vec<_>>();
-
-    PCS::verify(
-        &joint_commitment,
-        pcs_opening_point.as_slice(),
-        joint_claim,
-        &proof.joint_opening_proof,
-        &preprocessing.pcs_setup,
+    #[cfg(feature = "pcs-assist")]
+    verify_clear_pcs_assist::<PCS, T, PcsAssist>(
+        config,
+        proof.pcs_assist.as_ref(),
+        PcsAssistClearInput {
+            setup: &preprocessing.pcs_setup,
+            pcs_proof: &proof.joint_opening_proof,
+            commitment: &joint_commitment,
+            point: structure.pcs_opening_point.as_slice(),
+            eval: structure.joint_claim,
+        },
         transcript,
-    )
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })?;
-    PCS::bind_opening_inputs(transcript, pcs_opening_point.as_slice(), &joint_claim);
+    )?;
+    PCS::bind_opening_inputs(
+        transcript,
+        structure.opening_point.as_slice(),
+        &structure.joint_claim,
+    );
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
         opening_claims,
-        opening_ids,
-        constraint_coefficients,
-        pcs_opening_point,
-        joint_claim,
+        opening_ids: structure.opening_ids,
+        constraint_coefficients: structure.constraint_coefficients,
+        opening_point: structure.opening_point,
+        pcs_opening_point: structure.pcs_opening_point,
+        joint_claim: structure.joint_claim,
         joint_commitment,
     }))
 }
 
-/// Builds the final PCS batch in the canonical order from
-/// [`final_opening_polynomial_order`], resolving each polynomial's commitment,
-/// opening claim (clear mode only), and unified-point embedding scale.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "gathers per-polynomial sources from several stages"
-)]
-fn batch_entries<'a, F, PCS, VC, ZkProof>(
-    preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    proof: &'a JoltProof<PCS, VC, ZkProof>,
-    layout: JoltRaPolynomialLayout,
-    trusted_advice_commitment: Option<&'a PCS::Output>,
-    opening_point: &[F],
-    hamming_opening_point: &[F],
-    inc_opening_point: &[F],
-    precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(&Stage6Claims<F>, &Stage7Claims<F>)>,
-) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
+#[cfg(feature = "pcs-assist")]
+fn verify_clear_pcs_assist<PCS, T, PcsAssist>(
+    config: &JoltProtocolConfig<PcsAssist::Config>,
+    assist_proof: Option<&PcsAssist::Proof>,
+    input: PcsAssistClearInput<'_, PCS>,
+    transcript: &mut T,
+) -> Result<(), VerifierError>
 where
-    F: Field,
-    PCS: CommitmentScheme<Field = F>,
-    VC: VectorCommitment<Field = F>,
+    PCS: CommitmentScheme,
+    PcsAssist: PcsProofAssist<PCS>,
+    T: Transcript<Challenge = PCS::Field>,
 {
-    let precommitted_final = |polynomial: JoltCommittedPolynomial| {
-        precommitted_finals
-            .iter()
-            .find(|opening| opening.polynomial == polynomial)
-    };
-    let include_trusted = precommitted_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
-    let include_untrusted = precommitted_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
-    let committed_program = preprocessing.program.committed();
-    let order = final_opening_polynomial_order(
-        layout,
-        include_trusted,
-        include_untrusted,
-        committed_program.map(|committed| committed.bytecode_chunk_count()),
-    );
-
-    let mut entries = Vec::with_capacity(order.len() + field_inline_final_opening_count());
-    // Core's final PCS batch order intentionally differs from proof payload order.
-    for polynomial in order {
-        let id = final_opening_id(polynomial);
-        let (commitment, own_point, opening_claim): (&PCS::Output, &[F], Option<F>) =
-            match polynomial {
-                JoltCommittedPolynomial::RamInc => (
-                    &proof.commitments.ram_inc,
-                    inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
-                ),
-                JoltCommittedPolynomial::RdInc => (
-                    &proof.commitments.rd_inc,
-                    inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
-                ),
-                JoltCommittedPolynomial::InstructionRa(index) => (
-                    proof
-                        .commitments
-                        .ra
-                        .instruction
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            *stage7
-                                .hamming_weight_claim_reduction
-                                .instruction_ra
-                                .get(index)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::BytecodeRa(index) => (
-                    proof
-                        .commitments
-                        .ra
-                        .bytecode
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            *stage7
-                                .hamming_weight_claim_reduction
-                                .bytecode_ra
-                                .get(index)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::RamRa(index) => (
-                    proof
-                        .commitments
-                        .ra
-                        .ram
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            *stage7
-                                .hamming_weight_claim_reduction
-                                .ram_ra
-                                .get(index)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::TrustedAdvice => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = trusted_advice_commitment
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::UntrustedAdvice => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = proof
-                        .untrusted_advice_commitment
-                        .as_ref()
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::BytecodeChunk(index) => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = committed_program
-                        .and_then(|committed| committed.bytecode_chunk_commitments.get(index))
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::ProgramImageInit => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = committed_program
-                        .map(|committed| &committed.program_image_commitment)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-            };
-        entries.push(Stage8BatchEntry {
-            id: id.into(),
-            commitment,
-            opening_claim,
-            scale: commitment_embedding_scale(opening_point, own_point),
-        });
-        #[cfg(feature = "field-inline")]
-        if polynomial == JoltCommittedPolynomial::RdInc {
-            entries.push(Stage8BatchEntry {
-                id: field_increments::field_rd_inc_reduced_opening().into(),
-                commitment: &proof.commitments.field_inline.field_registers.rd_inc,
-                opening_claim: clear_claims.map(|(stage6, _)| {
-                    stage6
-                        .field_inline
-                        .field_registers_inc_claim_reduction
-                        .field_rd_inc
-                }),
-                scale: commitment_embedding_scale(opening_point, inc_opening_point),
-            });
+    let assist_config = config
+        .pcs_assist
+        .as_ref()
+        .ok_or(VerifierError::MissingPcsAssistConfig)?;
+    let assist_proof = assist_proof.ok_or(VerifierError::MissingPcsAssistProof)?;
+    PcsAssist::verify_clear(assist_config, input, assist_proof, transcript).map_err(|error| {
+        VerifierError::PcsAssistVerificationFailed {
+            reason: error.to_string(),
         }
-    }
-    Ok(entries)
+    })
+}
+
+#[cfg(feature = "pcs-assist")]
+fn verify_zk_pcs_assist<PCS, T, PcsAssist>(
+    config: &JoltProtocolConfig<PcsAssist::Config>,
+    assist_proof: Option<&PcsAssist::Proof>,
+    input: PcsAssistZkInput<'_, PCS>,
+    transcript: &mut T,
+) -> Result<<PCS as ZkOpeningScheme>::HidingCommitment, VerifierError>
+where
+    PCS: ZkOpeningScheme,
+    PcsAssist: PcsProofAssist<PCS>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let assist_config = config
+        .pcs_assist
+        .as_ref()
+        .ok_or(VerifierError::MissingPcsAssistConfig)?;
+    let assist_proof = assist_proof.ok_or(VerifierError::MissingPcsAssistProof)?;
+    PcsAssist::verify_zk(assist_config, input, assist_proof, transcript).map_err(|error| {
+        VerifierError::PcsAssistVerificationFailed {
+            reason: error.to_string(),
+        }
+    })
 }
 
 fn require_commitment_layout<C>(
@@ -446,4 +578,608 @@ fn require_commitment_layout<C>(
         });
     }
     Ok(())
+}
+
+fn final_opening_commitment_mismatch(polynomial: JoltCommittedPolynomial) -> VerifierError {
+    VerifierError::FinalOpeningBatchFailed {
+        reason: format!("missing final-opening commitment for {polynomial:?}"),
+    }
+}
+
+fn final_advice_layout<PCS, VC, ZkProof, PcsAssist>(
+    kind: JoltAdviceKind,
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
+    log_t: usize,
+) -> AdviceClaimReductionLayout
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
+{
+    let max_advice_size = match kind {
+        JoltAdviceKind::Trusted => checked.public_io.memory_layout.max_trusted_advice_size,
+        JoltAdviceKind::Untrusted => checked.public_io.memory_layout.max_untrusted_advice_size,
+    } as usize;
+    AdviceClaimReductionLayout::balanced(
+        proof.trace_polynomial_order,
+        log_t,
+        proof.one_hot_config.committed_chunk_bits(),
+        max_advice_size,
+    )
+}
+
+fn final_advice_opening_point<PCS, VC, ZkProof, PcsAssist>(
+    kind: JoltAdviceKind,
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
+    stage6: &Stage6ZkOutput<PCS::Field, VC::Output>,
+    stage7: &Stage7ZkOutput<PCS::Field, VC::Output>,
+) -> Result<AdviceFinalOpeningPoint<PCS::Field>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
+{
+    let log_t = checked.trace_length.ilog2() as usize;
+    let max_advice_size = match kind {
+        JoltAdviceKind::Trusted => checked.public_io.memory_layout.max_trusted_advice_size,
+        JoltAdviceKind::Untrusted => checked.public_io.memory_layout.max_untrusted_advice_size,
+    } as usize;
+    let layout = AdviceClaimReductionLayout::balanced(
+        proof.trace_polynomial_order,
+        log_t,
+        proof.one_hot_config.committed_chunk_bits(),
+        max_advice_size,
+    );
+    let id = advice::final_advice_opening(kind);
+
+    match (kind, layout.dimensions().has_address_phase()) {
+        (JoltAdviceKind::Trusted, true) => {
+            let verified = stage7
+                .trusted_advice_address_phase
+                .as_ref()
+                .ok_or(VerifierError::MissingOpeningClaim { id })?;
+            Ok(AdviceFinalOpeningPoint {
+                point: verified.opening_point.clone(),
+            })
+        }
+        (JoltAdviceKind::Untrusted, true) => {
+            let verified = stage7
+                .untrusted_advice_address_phase
+                .as_ref()
+                .ok_or(VerifierError::MissingOpeningClaim { id })?;
+            Ok(AdviceFinalOpeningPoint {
+                point: verified.opening_point.clone(),
+            })
+        }
+        (JoltAdviceKind::Trusted, false) => {
+            let verified = stage6
+                .trusted_advice_cycle_phase
+                .as_ref()
+                .ok_or(VerifierError::MissingOpeningClaim { id })?;
+            Ok(AdviceFinalOpeningPoint {
+                point: verified.opening_point.clone(),
+            })
+        }
+        (JoltAdviceKind::Untrusted, false) => {
+            let verified = stage6
+                .untrusted_advice_cycle_phase
+                .as_ref()
+                .ok_or(VerifierError::MissingOpeningClaim { id })?;
+            Ok(AdviceFinalOpeningPoint {
+                point: verified.opening_point.clone(),
+            })
+        }
+    }
+}
+
+#[cfg(all(test, feature = "pcs-assist"))]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert successful verifier results"
+)]
+mod tests {
+    use std::fmt;
+
+    use super::*;
+    use jolt_crypto::Commitment;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_openings::OpeningsError;
+    use jolt_poly::{MultilinearPoly, Polynomial};
+    use jolt_transcript::U64Word;
+    use num_traits::Zero;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestPcs;
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestCommitment(u64);
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestPcsProof(u64);
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestSetup(u64);
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestHidingCommitment(u64);
+
+    impl Commitment for TestPcs {
+        type Output = TestCommitment;
+    }
+
+    impl CommitmentScheme for TestPcs {
+        type Field = Fr;
+        type Proof = TestPcsProof;
+        type ProverSetup = ();
+        type VerifierSetup = TestSetup;
+        type Polynomial = Polynomial<Fr>;
+        type OpeningHint = ();
+        type SetupParams = ();
+
+        fn setup(_params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
+            ((), TestSetup::default())
+        }
+
+        fn verifier_setup(_prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
+            TestSetup::default()
+        }
+
+        fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
+            _poly: &P,
+            _setup: &Self::ProverSetup,
+        ) -> (Self::Output, Self::OpeningHint) {
+            (TestCommitment::default(), ())
+        }
+
+        fn open(
+            _poly: &Self::Polynomial,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _setup: &Self::ProverSetup,
+            _hint: Option<Self::OpeningHint>,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Self::Proof {
+            TestPcsProof::default()
+        }
+
+        fn verify(
+            _commitment: &Self::Output,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _proof: &Self::Proof,
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Result<(), OpeningsError> {
+            Ok(())
+        }
+
+        fn bind_opening_inputs(
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _point: &[Self::Field],
+            _eval: &Self::Field,
+        ) {
+        }
+    }
+
+    impl ZkOpeningScheme for TestPcs {
+        type HidingCommitment = TestHidingCommitment;
+        type Blind = ();
+
+        fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+            poly: &P,
+            setup: &Self::ProverSetup,
+        ) -> (Self::Output, Self::OpeningHint) {
+            Self::commit(poly, setup)
+        }
+
+        fn open_zk(
+            _poly: &Self::Polynomial,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _setup: &Self::ProverSetup,
+            _hint: Self::OpeningHint,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
+            (TestPcsProof::default(), TestHidingCommitment::default(), ())
+        }
+
+        fn verify_zk(
+            _commitment: &Self::Output,
+            _point: &[Self::Field],
+            _proof: &Self::Proof,
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        ) -> Result<Self::HidingCommitment, OpeningsError> {
+            Ok(TestHidingCommitment::default())
+        }
+
+        fn bind_zk_opening_inputs(
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _point: &[Self::Field],
+            _hiding_commitment: &Self::HidingCommitment,
+        ) {
+        }
+    }
+
+    impl AppendToTranscript for TestHidingCommitment {
+        fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+            transcript.append(&U64Word(self.0));
+        }
+
+        fn transcript_payload_len(&self) -> Option<u64> {
+            Some(32)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestAssistConfig {
+        version: u64,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    enum TestAssistProof {
+        Clear {
+            config: TestAssistConfig,
+            setup: TestSetup,
+            pcs_proof: TestPcsProof,
+            commitment: TestCommitment,
+            point: Vec<Fr>,
+            eval: Fr,
+        },
+        Zk {
+            config: TestAssistConfig,
+            setup: TestSetup,
+            pcs_proof: TestPcsProof,
+            commitment: TestCommitment,
+            point: Vec<Fr>,
+            hiding_commitment: TestHidingCommitment,
+        },
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestAssist;
+
+    #[derive(Debug)]
+    struct TestAssistError(String);
+
+    impl fmt::Display for TestAssistError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl std::error::Error for TestAssistError {}
+
+    impl PcsProofAssist<TestPcs> for TestAssist {
+        type Proof = TestAssistProof;
+        type Config = TestAssistConfig;
+        type Error = TestAssistError;
+
+        fn selected_config() -> Self::Config {
+            selected_assist_config()
+        }
+
+        fn verify_clear<T>(
+            config: &Self::Config,
+            input: PcsAssistClearInput<'_, TestPcs>,
+            proof: &Self::Proof,
+            transcript: &mut T,
+        ) -> Result<(), Self::Error>
+        where
+            T: Transcript<Challenge = Fr>,
+        {
+            let TestAssistProof::Clear {
+                config: expected_config,
+                setup,
+                pcs_proof,
+                commitment,
+                point,
+                eval,
+            } = proof
+            else {
+                return Err(TestAssistError("expected clear assist proof".to_string()));
+            };
+
+            verify_common_inputs(
+                CommonAssistInput {
+                    config,
+                    setup: input.setup,
+                    pcs_proof: input.pcs_proof,
+                    commitment: input.commitment,
+                    point: input.point,
+                },
+                CommonAssistInput {
+                    config: expected_config,
+                    setup,
+                    pcs_proof,
+                    commitment,
+                    point,
+                },
+            )?;
+            if input.eval != *eval {
+                return Err(TestAssistError("clear eval mismatch".to_string()));
+            }
+            transcript.append(&U64Word(11));
+            Ok(())
+        }
+
+        fn verify_zk<T>(
+            config: &Self::Config,
+            input: PcsAssistZkInput<'_, TestPcs>,
+            proof: &Self::Proof,
+            transcript: &mut T,
+        ) -> Result<TestHidingCommitment, Self::Error>
+        where
+            T: Transcript<Challenge = Fr>,
+        {
+            let TestAssistProof::Zk {
+                config: expected_config,
+                setup,
+                pcs_proof,
+                commitment,
+                point,
+                hiding_commitment,
+            } = proof
+            else {
+                return Err(TestAssistError("expected zk assist proof".to_string()));
+            };
+
+            verify_common_inputs(
+                CommonAssistInput {
+                    config,
+                    setup: input.setup,
+                    pcs_proof: input.pcs_proof,
+                    commitment: input.commitment,
+                    point: input.point,
+                },
+                CommonAssistInput {
+                    config: expected_config,
+                    setup,
+                    pcs_proof,
+                    commitment,
+                    point,
+                },
+            )?;
+            transcript.append(&U64Word(22));
+            Ok(*hiding_commitment)
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingTranscript {
+        chunks: Vec<Vec<u8>>,
+        state: [u8; 32],
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(_label: &'static [u8]) -> Self {
+            Self::default()
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.chunks.push(bytes.to_vec());
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::zero()
+        }
+
+        fn state(&self) -> [u8; 32] {
+            self.state
+        }
+    }
+
+    #[test]
+    fn pcs_assist_clear_dispatch_passes_final_opening_inputs() {
+        let config = protocol_config();
+        let setup = TestSetup(3);
+        let pcs_proof = TestPcsProof(5);
+        let commitment = TestCommitment(8);
+        let point = vec![fr(1), fr(2), fr(3)];
+        let eval = fr(13);
+        let assist_proof = TestAssistProof::Clear {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            eval,
+        };
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-clear");
+
+        let result = verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+            &config,
+            Some(&assist_proof),
+            PcsAssistClearInput {
+                setup: &setup,
+                pcs_proof: &pcs_proof,
+                commitment: &commitment,
+                point: point.as_slice(),
+                eval,
+            },
+            &mut transcript,
+        );
+
+        assert!(result.is_ok());
+        assert!(transcript_contains_word(&transcript, 11));
+    }
+
+    #[test]
+    fn pcs_assist_zk_dispatch_passes_final_opening_inputs() {
+        let config = protocol_config();
+        let setup = TestSetup(4);
+        let pcs_proof = TestPcsProof(6);
+        let commitment = TestCommitment(9);
+        let point = vec![fr(21), fr(34)];
+        let hiding_commitment = TestHidingCommitment(55);
+        let assist_proof = TestAssistProof::Zk {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            hiding_commitment,
+        };
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-zk");
+
+        let result = verify_zk_pcs_assist::<TestPcs, _, TestAssist>(
+            &config,
+            Some(&assist_proof),
+            PcsAssistZkInput {
+                setup: &setup,
+                pcs_proof: &pcs_proof,
+                commitment: &commitment,
+                point: point.as_slice(),
+            },
+            &mut transcript,
+        )
+        .unwrap();
+
+        assert_eq!(result, hiding_commitment);
+        assert!(transcript_contains_word(&transcript, 22));
+    }
+
+    #[test]
+    fn pcs_assist_dispatch_rejects_missing_config_or_proof() {
+        let setup = TestSetup(3);
+        let pcs_proof = TestPcsProof(5);
+        let commitment = TestCommitment(8);
+        let point = vec![fr(1)];
+        let eval = fr(2);
+        let assist_proof = TestAssistProof::Clear {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            eval,
+        };
+        let mut missing_config = protocol_config();
+        missing_config.pcs_assist = None;
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-missing-config");
+
+        assert!(matches!(
+            verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+                &missing_config,
+                Some(&assist_proof),
+                PcsAssistClearInput {
+                    setup: &setup,
+                    pcs_proof: &pcs_proof,
+                    commitment: &commitment,
+                    point: point.as_slice(),
+                    eval,
+                },
+                &mut transcript,
+            ),
+            Err(VerifierError::MissingPcsAssistConfig)
+        ));
+
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-missing-proof");
+        assert!(matches!(
+            verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+                &protocol_config(),
+                None,
+                PcsAssistClearInput {
+                    setup: &setup,
+                    pcs_proof: &pcs_proof,
+                    commitment: &commitment,
+                    point: point.as_slice(),
+                    eval,
+                },
+                &mut transcript,
+            ),
+            Err(VerifierError::MissingPcsAssistProof)
+        ));
+    }
+
+    #[test]
+    fn pcs_assist_dispatch_surfaces_assist_rejection() {
+        let config = protocol_config();
+        let setup = TestSetup(3);
+        let pcs_proof = TestPcsProof(5);
+        let commitment = TestCommitment(8);
+        let point = vec![fr(1), fr(2)];
+        let assist_proof = TestAssistProof::Clear {
+            config: selected_assist_config(),
+            setup,
+            pcs_proof,
+            commitment,
+            point: point.clone(),
+            eval: fr(13),
+        };
+        let mut transcript = RecordingTranscript::new(b"pcs-assist-reject");
+
+        let result = verify_clear_pcs_assist::<TestPcs, _, TestAssist>(
+            &config,
+            Some(&assist_proof),
+            PcsAssistClearInput {
+                setup: &setup,
+                pcs_proof: &pcs_proof,
+                commitment: &commitment,
+                point: point.as_slice(),
+                eval: fr(99),
+            },
+            &mut transcript,
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::PcsAssistVerificationFailed { .. })
+        ));
+    }
+
+    struct CommonAssistInput<'a> {
+        config: &'a TestAssistConfig,
+        setup: &'a TestSetup,
+        pcs_proof: &'a TestPcsProof,
+        commitment: &'a TestCommitment,
+        point: &'a [Fr],
+    }
+
+    fn verify_common_inputs(
+        actual: CommonAssistInput<'_>,
+        expected: CommonAssistInput<'_>,
+    ) -> Result<(), TestAssistError> {
+        if actual.config != expected.config {
+            return Err(TestAssistError("assist config mismatch".to_string()));
+        }
+        if actual.setup != expected.setup {
+            return Err(TestAssistError("setup mismatch".to_string()));
+        }
+        if actual.pcs_proof != expected.pcs_proof {
+            return Err(TestAssistError("PCS proof mismatch".to_string()));
+        }
+        if actual.commitment != expected.commitment {
+            return Err(TestAssistError("commitment mismatch".to_string()));
+        }
+        if actual.point != expected.point {
+            return Err(TestAssistError("point mismatch".to_string()));
+        }
+        Ok(())
+    }
+
+    fn selected_assist_config() -> TestAssistConfig {
+        TestAssistConfig { version: 7 }
+    }
+
+    fn protocol_config() -> JoltProtocolConfig<TestAssistConfig> {
+        JoltProtocolConfig::selected_for_zk::<TestPcs, TestAssist>(false)
+    }
+
+    fn fr(value: u64) -> Fr {
+        <Fr as FromPrimitiveInt>::from_u64(value)
+    }
+
+    fn transcript_contains_word(transcript: &RecordingTranscript, word: u64) -> bool {
+        let suffix = word.to_be_bytes();
+        transcript
+            .chunks
+            .iter()
+            .any(|chunk| chunk.ends_with(&suffix))
+    }
 }

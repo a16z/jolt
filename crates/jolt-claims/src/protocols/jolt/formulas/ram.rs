@@ -73,24 +73,24 @@ impl RamRaVirtualizationDimensions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInit<F> {
     public_eval: F,
-    contributions: Vec<RamValCheckInitContribution<F>>,
+    advice_contributions: Vec<RamValCheckAdviceContribution<F>>,
 }
 
 impl<F> RamValCheckInit<F> {
     pub fn full(init_eval: F) -> Self {
         Self {
             public_eval: init_eval,
-            contributions: Vec::new(),
+            advice_contributions: Vec::new(),
         }
     }
 
-    pub fn decomposed<I>(public_eval: F, contributions: I) -> Self
+    pub fn decomposed<I>(public_eval: F, advice_contributions: I) -> Self
     where
-        I: IntoIterator<Item = RamValCheckInitContribution<F>>,
+        I: IntoIterator<Item = RamValCheckAdviceContribution<F>>,
     {
         Self {
             public_eval,
-            contributions: contributions.into_iter().collect(),
+            advice_contributions: advice_contributions.into_iter().collect(),
         }
     }
 }
@@ -101,17 +101,13 @@ impl<F> From<F> for RamValCheckInit<F> {
     }
 }
 
-/// One staged-opening contribution to `Val_init(r_address)`: the init
-/// evaluation gains `-neg_selector * opening`. Advice polynomials contribute
-/// with their block-selector weight; in committed program mode the program
-/// image contributes its staged scalar with weight one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RamValCheckInitContribution<F> {
+pub struct RamValCheckAdviceContribution<F> {
     pub neg_selector: F,
     pub opening: JoltOpeningId,
 }
 
-impl<F> RamValCheckInitContribution<F> {
+impl<F> RamValCheckAdviceContribution<F> {
     pub fn new(neg_selector: F, opening: JoltOpeningId) -> Self {
         Self {
             neg_selector,
@@ -130,13 +126,6 @@ impl<F> RamValCheckInitContribution<F> {
         Self::new(
             neg_selector,
             JoltOpeningId::trusted_advice(JoltRelationId::RamValCheck),
-        )
-    }
-
-    pub fn program_image(neg_selector: F) -> Self {
-        Self::new(
-            neg_selector,
-            super::claim_reductions::program_image::ram_val_check_contribution_opening(),
         )
     }
 }
@@ -566,7 +555,7 @@ where
     F: RingCore,
 {
     let mut eval = JoltExpr::constant(init.public_eval);
-    for contribution in init.contributions {
+    for contribution in init.advice_contributions {
         eval = eval - JoltExpr::constant(contribution.neg_selector) * opening(contribution.opening);
     }
     eval
@@ -762,7 +751,6 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -793,7 +781,6 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -1051,7 +1038,6 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -1079,7 +1065,6 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |id| match *id {
@@ -1388,8 +1373,8 @@ mod tests {
         let init = RamValCheckInit::decomposed(
             Fr::from_u64(3),
             [
-                RamValCheckInitContribution::untrusted(-Fr::from_u64(5)),
-                RamValCheckInitContribution::trusted(-Fr::from_u64(7)),
+                RamValCheckAdviceContribution::untrusted(-Fr::from_u64(5)),
+                RamValCheckAdviceContribution::trusted(-Fr::from_u64(7)),
             ],
         );
         let claims = val_check::<Fr>(trace_dimensions(), init);
@@ -1453,7 +1438,6 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -1485,7 +1469,6 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,
@@ -1506,8 +1489,8 @@ mod tests {
         let init = RamValCheckInit::decomposed(
             public_eval,
             [
-                RamValCheckInitContribution::untrusted(untrusted_neg_selector),
-                RamValCheckInitContribution::trusted(trusted_neg_selector),
+                RamValCheckAdviceContribution::untrusted(untrusted_neg_selector),
+                RamValCheckAdviceContribution::trusted(trusted_neg_selector),
             ],
         );
         let claims = val_check::<Fr>(trace_dimensions(), init);
@@ -1552,7 +1535,6 @@ mod tests {
                 | JoltChallengeId::IncClaimReduction(_)
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
-                | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
             |_| zero,

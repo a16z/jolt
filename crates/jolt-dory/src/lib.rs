@@ -32,5 +32,8 @@ mod types;
 
 pub use scheme::DoryScheme;
 pub use types::{
-    DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
+    DoryCommitment, DoryFinalArtifacts, DoryFirstReduceArtifacts, DoryHint, DoryPartialCommitment,
+    DoryProof, DoryProverSetup, DoryReduceRoundArtifacts, DoryReduceRoundTranscriptScalars,
+    DoryScalarProductProofArtifacts, DorySecondReduceArtifacts, DoryVerifierSetup,
+    DoryVerifierSetupArtifacts, DoryVerifierTranscriptScalars, DoryVmvArtifacts, DoryZkArtifacts,
 };

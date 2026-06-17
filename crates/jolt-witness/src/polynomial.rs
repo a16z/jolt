@@ -6,6 +6,8 @@ use super::PolynomialEncoding;
 pub enum MaterializationPolicy {
     #[default]
     BackendChoice,
+    Borrowed,
+    Materialized,
     Streaming,
 }
 
@@ -80,6 +82,21 @@ impl<N: WitnessNamespace> ViewRequirement<N> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleViewRequest<N: WitnessNamespace> {
+    pub requirement: ViewRequirement<N>,
+}
+
+impl<N: WitnessNamespace> OracleViewRequest<N> {
+    pub const fn new(requirement: ViewRequirement<N>) -> Self {
+        Self { requirement }
+    }
+
+    pub const fn oracle(&self) -> OracleRef<N> {
+        self.requirement.oracle
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PolynomialView<'a, F, N: WitnessNamespace> {
     Borrowed {
         descriptor: OracleDescriptor<N>,
@@ -119,7 +136,7 @@ impl<'a, F, N: WitnessNamespace> PolynomialView<'a, F, N> {
         match self {
             Self::Borrowed { values, .. } => values.len(),
             Self::Owned { values, .. } => values.len(),
-            Self::Deferred { descriptor } => descriptor.dimensions.rows(),
+            Self::Deferred { descriptor } => descriptor.dimensions.rows,
         }
     }
 
@@ -158,10 +175,10 @@ mod tests {
         const ID: NamespaceId = NamespaceId::new("test");
     }
 
-    fn descriptor(log_rows: usize) -> OracleDescriptor<TestNamespace> {
+    fn descriptor(rows: usize) -> OracleDescriptor<TestNamespace> {
         OracleDescriptor::new(
             OracleRef::committed(3),
-            WitnessDimensions::new(log_rows),
+            WitnessDimensions::new(rows, 2),
             PolynomialEncoding::Dense,
         )
     }
@@ -169,7 +186,7 @@ mod tests {
     #[test]
     fn borrowed_view_reports_backing_slice() {
         let values = [1_u64, 2, 3, 4];
-        let view = PolynomialView::borrowed(descriptor(2), &values);
+        let view = PolynomialView::borrowed(descriptor(values.len()), &values);
 
         assert_eq!(view.len(), values.len());
         assert_eq!(view.as_slice(), Some(values.as_slice()));
@@ -178,7 +195,7 @@ mod tests {
 
     #[test]
     fn deferred_view_reports_declared_rows_without_materializing() {
-        let view = PolynomialView::<u64, TestNamespace>::deferred(descriptor(3));
+        let view = PolynomialView::<u64, TestNamespace>::deferred(descriptor(8));
 
         assert_eq!(view.len(), 8);
         assert_eq!(view.as_slice(), None);

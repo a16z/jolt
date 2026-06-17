@@ -1,21 +1,23 @@
-use jolt_field::Field;
-use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
+use jolt_field::{Field, FromPrimitiveInt};
+use jolt_r1cs::{
+    scalar_affine_combination, LinearCombination, R1csBuilder, ScalarGadget, Variable,
+};
 use thiserror::Error;
 
 use crate::{BooleanHypercube, SumcheckDomain, SumcheckStatement, VerifiedCommittedRound};
 
-pub trait SumcheckR1csRound<F> {
+pub trait SumcheckR1csRound<F: Field> {
     fn degree(&self) -> usize;
-    fn challenge(&self) -> F;
+    fn challenge(&self) -> LinearCombination<F>;
 }
 
-impl<F: Copy, C> SumcheckR1csRound<F> for VerifiedCommittedRound<F, C> {
+impl<F: Field, C> SumcheckR1csRound<F> for VerifiedCommittedRound<F, C> {
     fn degree(&self) -> usize {
         self.degree
     }
 
-    fn challenge(&self) -> F {
-        self.challenge
+    fn challenge(&self) -> LinearCombination<F> {
+        LinearCombination::constant(self.challenge)
     }
 }
 
@@ -33,6 +35,8 @@ pub enum SumcheckR1csError {
     LayoutRoundCountMismatch { expected: usize, actual: usize },
     #[error("round {round_index} layout has no coefficient variables")]
     EmptyRoundLayout { round_index: usize },
+    #[error("round {round_index} has no coefficient gadgets")]
+    EmptyRoundCoefficients { round_index: usize },
     #[error(
         "round {round_index} layout has degree {actual} but sumcheck input has degree {expected}"
     )]
@@ -84,6 +88,32 @@ pub struct SumcheckR1csRoundLayout {
     pub claim_in: Variable,
     pub coefficients: Vec<Variable>,
     pub claim_out: Variable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SumcheckR1csGadgetRound<S: ScalarGadget> {
+    pub claim_in: S,
+    pub coefficients: Vec<S>,
+    pub challenge: S,
+    pub claim_out: S,
+}
+
+impl<S> SumcheckR1csGadgetRound<S>
+where
+    S: ScalarGadget,
+{
+    pub fn new(claim_in: S, coefficients: Vec<S>, challenge: S, claim_out: S) -> Self {
+        Self {
+            claim_in,
+            coefficients,
+            challenge,
+            claim_out,
+        }
+    }
+
+    pub fn degree(&self) -> usize {
+        self.coefficients.len().saturating_sub(1)
+    }
 }
 
 impl SumcheckR1csRoundLayout {
@@ -183,6 +213,46 @@ where
     Ok(())
 }
 
+pub fn append_sumcheck_r1cs_gadget_constraints<S>(
+    builder: &mut R1csBuilder<S::BuilderField>,
+    statement: SumcheckStatement,
+    rounds: &[SumcheckR1csGadgetRound<S>],
+) -> Result<(), SumcheckR1csError>
+where
+    S: ScalarGadget,
+    BooleanHypercube: SumcheckDomain<S::Scalar>,
+{
+    append_sumcheck_r1cs_gadget_constraints_for_domain(builder, statement, rounds, BooleanHypercube)
+}
+
+pub fn append_sumcheck_r1cs_gadget_constraints_for_domain<S, D>(
+    builder: &mut R1csBuilder<S::BuilderField>,
+    statement: SumcheckStatement,
+    rounds: &[SumcheckR1csGadgetRound<S>],
+    domain: D,
+) -> Result<(), SumcheckR1csError>
+where
+    S: ScalarGadget,
+    D: SumcheckDomain<S::Scalar>,
+{
+    validate_gadget_rounds(statement, rounds)?;
+
+    for (round_index, round) in rounds.iter().enumerate() {
+        let round_sum_coefficients =
+            domain
+                .round_sum_coefficients(round.degree())
+                .map_err(
+                    |source| SumcheckR1csError::RoundSumCoefficientsUnavailable {
+                        round_index,
+                        reason: source.to_string(),
+                    },
+                )?;
+        append_gadget_round_constraints(builder, round_index, round, &round_sum_coefficients)?;
+    }
+
+    Ok(())
+}
+
 fn validate_layout<F, R>(
     num_vars: usize,
     statement: SumcheckStatement,
@@ -250,6 +320,7 @@ fn validate_rounds_statement<F, R>(
     rounds: &[R],
 ) -> Result<(), SumcheckR1csError>
 where
+    F: Field,
     R: SumcheckR1csRound<F>,
 {
     if statement.num_vars != rounds.len() {
@@ -260,6 +331,36 @@ where
     }
 
     for (round_index, round) in rounds.iter().enumerate() {
+        if round.degree() > statement.degree {
+            return Err(SumcheckR1csError::DegreeBoundExceeded {
+                round_index,
+                bound: statement.degree,
+                actual: round.degree(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_gadget_rounds<S>(
+    statement: SumcheckStatement,
+    rounds: &[SumcheckR1csGadgetRound<S>],
+) -> Result<(), SumcheckR1csError>
+where
+    S: ScalarGadget,
+{
+    if statement.num_vars != rounds.len() {
+        return Err(SumcheckR1csError::WrongNumberOfRounds {
+            expected: statement.num_vars,
+            actual: rounds.len(),
+        });
+    }
+
+    for (round_index, round) in rounds.iter().enumerate() {
+        if round.coefficients.is_empty() {
+            return Err(SumcheckR1csError::EmptyRoundCoefficients { round_index });
+        }
         if round.degree() > statement.degree {
             return Err(SumcheckR1csError::DegreeBoundExceeded {
                 round_index,
@@ -284,15 +385,46 @@ fn append_round_constraints<F: Field>(
     builder: &mut R1csBuilder<F>,
     round_index: usize,
     round: &SumcheckR1csRoundLayout,
-    challenge: F,
+    challenge: LinearCombination<F>,
     round_sum_coefficients: &[F],
 ) -> Result<(), SumcheckR1csError> {
     let round_sum = round_sum_lc(round_index, round, round_sum_coefficients)?;
     builder.assert_equal(round_sum, round.claim_in);
-    builder.assert_equal(
-        polynomial_eval_lc(&round.coefficients, challenge),
-        round.claim_out,
+    let round_eval = polynomial_eval_at_challenge(builder, &round.coefficients, challenge);
+    builder.assert_equal(round_eval, round.claim_out);
+    Ok(())
+}
+
+fn append_gadget_round_constraints<S>(
+    builder: &mut R1csBuilder<S::BuilderField>,
+    round_index: usize,
+    round: &SumcheckR1csGadgetRound<S>,
+    round_sum_coefficients: &[S::Scalar],
+) -> Result<(), SumcheckR1csError>
+where
+    S: ScalarGadget,
+{
+    if round_sum_coefficients.len() != round.coefficients.len() {
+        return Err(SumcheckR1csError::RoundSumCoefficientCountMismatch {
+            round_index,
+            expected: round.coefficients.len(),
+            actual: round_sum_coefficients.len(),
+        });
+    }
+
+    let round_sum = scalar_affine_combination(
+        builder,
+        S::Scalar::from_u64(0),
+        round_sum_coefficients
+            .iter()
+            .copied()
+            .zip(&round.coefficients),
     );
+    round_sum.assert_equal(builder, &round.claim_in);
+
+    let round_eval = polynomial_eval_gadget(builder, &round.coefficients, &round.challenge);
+    round_eval.assert_equal(builder, &round.claim_out);
+
     Ok(())
 }
 
@@ -329,11 +461,64 @@ fn polynomial_eval_lc<F: Field>(coefficients: &[Variable], point: F) -> LinearCo
     result
 }
 
+fn polynomial_eval_at_challenge<F: Field>(
+    builder: &mut R1csBuilder<F>,
+    coefficients: &[Variable],
+    point: LinearCombination<F>,
+) -> LinearCombination<F> {
+    if let Some(point) = point.as_constant() {
+        return polynomial_eval_lc(coefficients, point);
+    }
+
+    let Some((&last, rest)) = coefficients.split_last() else {
+        return LinearCombination::zero();
+    };
+
+    let mut evaluation = LinearCombination::variable(last);
+    for &coefficient in rest.iter().rev() {
+        evaluation =
+            builder.multiply(evaluation, point.clone()) + LinearCombination::variable(coefficient);
+    }
+    evaluation
+}
+
+fn polynomial_eval_gadget<S>(
+    builder: &mut R1csBuilder<S::BuilderField>,
+    coefficients: &[S],
+    point: &S,
+) -> S
+where
+    S: ScalarGadget,
+{
+    let Some((last, rest)) = coefficients.split_last() else {
+        return S::constant(S::Scalar::from_u64(0));
+    };
+
+    let mut evaluation = last.clone();
+    for coefficient in rest.iter().rev() {
+        evaluation = evaluation.mul(builder, point);
+        evaluation = evaluation.add(builder, coefficient);
+    }
+    evaluation
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fq, Fr, FromPrimitiveInt};
+    use jolt_r1cs::{AssignedScalar, FqVar};
+
+    type NativeGadgetRoundFixture = (
+        R1csBuilder<Fr>,
+        Vec<(&'static str, Variable)>,
+        SumcheckR1csGadgetRound<AssignedScalar<Fr>>,
+    );
+    type NonnativeGadgetRoundFixture = (
+        R1csBuilder<Fr>,
+        Vec<(&'static str, Variable)>,
+        SumcheckR1csGadgetRound<FqVar>,
+    );
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct Round {
@@ -346,8 +531,24 @@ mod tests {
             self.degree
         }
 
-        fn challenge(&self) -> Fr {
-            self.challenge
+        fn challenge(&self) -> LinearCombination<Fr> {
+            LinearCombination::constant(self.challenge)
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct LinearChallengeRound {
+        degree: usize,
+        challenge: LinearCombination<Fr>,
+    }
+
+    impl SumcheckR1csRound<Fr> for LinearChallengeRound {
+        fn degree(&self) -> usize {
+            self.degree
+        }
+
+        fn challenge(&self) -> LinearCombination<Fr> {
+            self.challenge.clone()
         }
     }
 
@@ -376,6 +577,68 @@ mod tests {
         assign(builder, round.claim_out, claim_out);
     }
 
+    fn native_gadget_round(
+        input_claim: u64,
+        coefficients: &[u64],
+        challenge: u64,
+        output_claim: u64,
+    ) -> NativeGadgetRoundFixture {
+        let mut builder = R1csBuilder::<Fr>::new();
+        let input_claim = AssignedScalar::alloc(&mut builder, Fr::from_u64(input_claim));
+        let coefficients = coefficients
+            .iter()
+            .map(|&coefficient| AssignedScalar::alloc(&mut builder, Fr::from_u64(coefficient)))
+            .collect::<Vec<_>>();
+        let challenge = AssignedScalar::alloc(&mut builder, Fr::from_u64(challenge));
+        let output_claim = AssignedScalar::alloc(&mut builder, Fr::from_u64(output_claim));
+        let tamper_targets = std::iter::once(("input claim", variable(&input_claim)))
+            .chain(coefficients.iter().enumerate().map(|(index, coefficient)| {
+                let label = match index {
+                    0 => "coefficient 0",
+                    1 => "coefficient 1",
+                    _ => "coefficient",
+                };
+                (label, variable(coefficient))
+            }))
+            .chain([
+                ("challenge", variable(&challenge)),
+                ("output claim", variable(&output_claim)),
+            ])
+            .collect();
+        let round =
+            SumcheckR1csGadgetRound::new(input_claim, coefficients, challenge, output_claim);
+
+        (builder, tamper_targets, round)
+    }
+
+    fn nonnative_gadget_round(
+        input_claim: u64,
+        coefficients: &[u64],
+        challenge: u64,
+        output_claim: u64,
+    ) -> NonnativeGadgetRoundFixture {
+        let mut builder = R1csBuilder::<Fr>::new();
+        let input_claim = FqVar::alloc(&mut builder, Fq::from_u64(input_claim));
+        let coefficients = coefficients
+            .iter()
+            .map(|&coefficient| FqVar::alloc(&mut builder, Fq::from_u64(coefficient)))
+            .collect::<Vec<_>>();
+        let challenge = FqVar::alloc(&mut builder, Fq::from_u64(challenge));
+        let output_claim = FqVar::alloc(&mut builder, Fq::from_u64(output_claim));
+        let mut tamper_targets = vec![("input claim limb", variable(&input_claim.limbs()[0]))];
+        if let Some(coefficient) = coefficients.get(1) {
+            tamper_targets.push(("coefficient limb", variable(&coefficient.limbs()[0])));
+        }
+        tamper_targets.extend([
+            ("challenge limb", variable(&challenge.limbs()[0])),
+            ("output claim limb", variable(&output_claim.limbs()[0])),
+        ]);
+        let round =
+            SumcheckR1csGadgetRound::new(input_claim, coefficients, challenge, output_claim);
+
+        (builder, tamper_targets, round)
+    }
+
     #[test]
     fn emits_satisfied_round_constraints() {
         let statement = SumcheckStatement::new(2, 1);
@@ -393,6 +656,167 @@ mod tests {
 
         let witness = builder.witness().expect("witness is assigned");
         assert!(builder.into_matrices().check_witness(&witness).is_ok());
+    }
+
+    #[test]
+    fn supports_variable_challenge_transition() {
+        let statement = SumcheckStatement::new(1, 2);
+        let mut builder = R1csBuilder::<Fr>::new();
+        let challenge = builder.alloc(Fr::from_u64(2));
+        let rounds = [LinearChallengeRound {
+            degree: 2,
+            challenge: LinearCombination::variable(challenge),
+        }];
+
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
+            .expect("layout should allocate");
+        assign(&mut builder, layout.input_claim, 15);
+        assign_round(&mut builder, &layout.rounds[0], &[3, 4, 5], 31);
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
+            .expect("constraints should build");
+
+        let witness = builder.witness().expect("witness is assigned");
+        assert!(builder.into_matrices().check_witness(&witness).is_ok());
+    }
+
+    #[test]
+    fn rejects_bad_variable_challenge_transition() {
+        let statement = SumcheckStatement::new(1, 2);
+        let mut builder = R1csBuilder::<Fr>::new();
+        let challenge = builder.alloc(Fr::from_u64(3));
+        let rounds = [LinearChallengeRound {
+            degree: 2,
+            challenge: LinearCombination::variable(challenge),
+        }];
+
+        let layout = allocate_sumcheck_r1cs_layout(&mut builder, statement, &rounds)
+            .expect("layout should allocate");
+        assign(&mut builder, layout.input_claim, 15);
+        assign_round(&mut builder, &layout.rounds[0], &[3, 4, 5], 31);
+        append_sumcheck_r1cs_constraints(&mut builder, statement, &rounds, &layout)
+            .expect("constraints should build");
+
+        let witness = builder.witness().expect("witness is assigned");
+        assert!(builder.into_matrices().check_witness(&witness).is_err());
+    }
+
+    #[test]
+    fn native_gadget_constraints_accept_valid_sumcheck() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, _, round) = native_gadget_round(15, &[3, 4, 5], 2, 31);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert!(builder_accepts(builder));
+    }
+
+    #[test]
+    fn native_gadget_constraints_reject_tampering() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, targets, round) = native_gadget_round(15, &[3, 4, 5], 2, 31);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert_tampering_rejected(builder, targets);
+    }
+
+    #[test]
+    fn native_gadget_constraints_reject_bad_round_sum() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, _, round) = native_gadget_round(16, &[3, 4, 5], 2, 31);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert!(builder_rejects(builder));
+    }
+
+    #[test]
+    fn native_gadget_constraints_reject_bad_output_claim() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, _, round) = native_gadget_round(15, &[3, 4, 5], 2, 32);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert!(builder_rejects(builder));
+    }
+
+    #[test]
+    fn gadget_constraints_reject_empty_coefficients() {
+        let statement = SumcheckStatement::new(1, 2);
+        let mut builder = R1csBuilder::<Fr>::new();
+        let round = SumcheckR1csGadgetRound::new(
+            AssignedScalar::alloc(&mut builder, Fr::from_u64(0)),
+            Vec::new(),
+            AssignedScalar::alloc(&mut builder, Fr::from_u64(2)),
+            AssignedScalar::alloc(&mut builder, Fr::from_u64(0)),
+        );
+
+        let error = append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect_err("empty coefficient list should be rejected");
+
+        assert_eq!(
+            error,
+            SumcheckR1csError::EmptyRoundCoefficients { round_index: 0 }
+        );
+    }
+
+    #[test]
+    fn nonnative_gadget_constraints_accept_valid_sumcheck() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, _, round) = nonnative_gadget_round(15, &[3, 4, 5], 2, 31);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert!(builder_accepts(builder));
+    }
+
+    #[test]
+    fn nonnative_gadget_constraints_reject_tampering() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, targets, round) = nonnative_gadget_round(15, &[3, 4, 5], 2, 31);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert_tampering_rejected(builder, targets);
+    }
+
+    #[test]
+    fn nonnative_gadget_constraints_reject_bad_round_sum() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, _, round) = nonnative_gadget_round(16, &[3, 4, 5], 2, 31);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert!(builder_rejects(builder));
+    }
+
+    #[test]
+    fn nonnative_gadget_constraints_reject_bad_challenge_transition() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, _, round) = nonnative_gadget_round(15, &[3, 4, 5], 3, 31);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert!(builder_rejects(builder));
+    }
+
+    #[test]
+    fn nonnative_gadget_constraints_reject_bad_output_claim() {
+        let statement = SumcheckStatement::new(1, 2);
+        let (mut builder, _, round) = nonnative_gadget_round(15, &[3, 4, 5], 2, 32);
+
+        append_sumcheck_r1cs_gadget_constraints(&mut builder, statement, &[round])
+            .expect("constraints should build");
+
+        assert!(builder_rejects(builder));
     }
 
     #[test]
@@ -554,5 +978,57 @@ mod tests {
                 num_vars,
             }
         );
+    }
+
+    fn builder_accepts<F>(builder: R1csBuilder<F>) -> bool
+    where
+        F: Field,
+    {
+        let witness = builder.witness().expect("witness is assigned");
+        builder.into_matrices().check_witness(&witness).is_ok()
+    }
+
+    fn builder_rejects<F>(builder: R1csBuilder<F>) -> bool
+    where
+        F: Field,
+    {
+        let witness = builder.witness().expect("witness is assigned");
+        builder.into_matrices().check_witness(&witness).is_err()
+    }
+
+    fn assert_tampering_rejected<F>(
+        builder: R1csBuilder<F>,
+        targets: impl IntoIterator<Item = (&'static str, Variable)>,
+    ) where
+        F: Field,
+    {
+        let witness = builder.witness().expect("witness is assigned");
+        let matrices = builder.into_matrices();
+        assert!(matrices.check_witness(&witness).is_ok());
+
+        for (label, variable) in targets {
+            let mut tampered = witness.clone();
+            tampered[variable.index()] += F::one();
+            assert!(
+                matrices.check_witness(&tampered).is_err(),
+                "{label} accepted after tampering variable {}",
+                variable.index()
+            );
+        }
+    }
+
+    fn variable<F>(scalar: &AssignedScalar<F>) -> Variable
+    where
+        F: Field,
+    {
+        assert_eq!(scalar.lc.terms.len(), 1);
+        let (variable, coefficient) = scalar
+            .lc
+            .terms
+            .first()
+            .copied()
+            .expect("linear combination has one term");
+        assert_eq!(coefficient, F::one());
+        variable
     }
 }

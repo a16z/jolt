@@ -10,6 +10,7 @@ extend-exclude = ["patches/*.patch"]
 "thre" = "thre"
 "numer" = "numer"
 "Hax" = "Hax"
+"Hom" = "Hom"
 "Toom" = "Toom"
 # sail_riscv_sim config schema field names (tests/arch-tests/jolt/sail.json):
 # "nto" is Zawrs "no timeout", "useed"/"sseed" are Zkr entropy CSR fields.

@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_poly::{boolean_index_msb, EqPolynomial, TensorEqTable};
 use jolt_witness::{
-    PolynomialChunk, PolynomialView, RaFamilyCycleIndexSource,
+    OracleViewRequest, PolynomialChunk, PolynomialView,
     RaFamilyCycleIndices as WitnessRaCycleIndices, WitnessNamespace, WitnessProvider,
 };
 
@@ -986,7 +986,7 @@ where
         witness: &W,
     ) -> Result<Vec<Vec<F>>, BackendError>
     where
-        W: WitnessProvider<F, N> + RaFamilyCycleIndexSource<F, N>,
+        W: WitnessProvider<F, N>,
     {
         materialize_sumcheck_ra_pushforward(self.name(), request, witness)
     }
@@ -997,7 +997,7 @@ where
         witness: &W,
     ) -> Result<SumcheckStage7HammingState<F>, BackendError>
     where
-        W: WitnessProvider<F, N> + RaFamilyCycleIndexSource<F, N>,
+        W: WitnessProvider<F, N>,
     {
         materialize_sumcheck_stage7_hamming_state(self.name(), request, witness)
     }
@@ -1288,7 +1288,10 @@ where
         }
 
         if let Some(value) = witness
-            .try_evaluate_oracle_view(view_request.requirement, &view_request.point)
+            .try_evaluate_oracle_view(
+                OracleViewRequest::new(view_request.requirement),
+                &view_request.point,
+            )
             .map_err(|error| BackendError::InvalidRequest {
                 backend,
                 task: EVALUATION_TASK,
@@ -1470,7 +1473,7 @@ fn materialize_sumcheck_ra_pushforward<F, N, W>(
 where
     F: Field,
     N: WitnessNamespace,
-    W: WitnessProvider<F, N> + RaFamilyCycleIndexSource<F, N>,
+    W: WitnessProvider<F, N>,
 {
     let k_chunk = 1usize << request.log_k_chunk;
     let indices = collect_ra_cycle_indices(
@@ -1501,7 +1504,7 @@ fn materialize_sumcheck_stage7_hamming_state<F, N, W>(
 where
     F: Field,
     N: WitnessNamespace,
-    W: WitnessProvider<F, N> + RaFamilyCycleIndexSource<F, N>,
+    W: WitnessProvider<F, N>,
 {
     let k_chunk = 1usize << request.log_k_chunk;
     let num_polys = request.num_polys();
@@ -1725,7 +1728,7 @@ fn collect_ra_cycle_indices<F, N, W>(
 where
     F: Field,
     N: WitnessNamespace,
-    W: WitnessProvider<F, N> + RaFamilyCycleIndexSource<F, N>,
+    W: WitnessProvider<F, N>,
 {
     let instruction_chunks = instruction_ids.len();
     let bytecode_chunks = bytecode_ids.len();
@@ -1985,7 +1988,7 @@ where
             ),
         });
     }
-    if descriptor.dimensions.rows() == 0 {
+    if descriptor.dimensions.rows == 0 {
         return Err(BackendError::InvalidRequest {
             backend,
             task,
@@ -2017,14 +2020,14 @@ where
             reason: format!("{context} did not materialize a concrete view"),
         });
     };
-    if values.len() != descriptor.dimensions.rows() {
+    if values.len() != descriptor.dimensions.rows {
         return Err(BackendError::InvalidRequest {
             backend,
             task,
             reason: format!(
                 "{context} materialized {} rows, expected {}",
                 values.len(),
-                descriptor.dimensions.rows()
+                descriptor.dimensions.rows
             ),
         });
     }
@@ -2045,7 +2048,7 @@ where
     W: WitnessProvider<F, N>,
 {
     let view = witness
-        .oracle_view(requirement)
+        .oracle_view(OracleViewRequest::new(requirement))
         .map_err(|error| BackendError::InvalidRequest {
             backend,
             task,

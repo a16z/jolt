@@ -21,9 +21,9 @@ use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
 use jolt_witness::protocols::jolt_vm::field_inline::FieldInlineNamespace;
 use jolt_witness::{
     protocols::jolt_vm::JoltVmNamespace, CommittedWitnessProvider, MaterializationPolicy,
-    NamespaceId, OracleDescriptor, OracleKind, OracleRef, PolynomialEncoding, PolynomialView,
-    RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace,
-    WitnessProvider,
+    NamespaceId, OracleDescriptor, OracleKind, OracleRef, OracleViewRequest, PolynomialEncoding,
+    PolynomialView, RetentionHint, ViewRequirement, WitnessDimensions, WitnessError,
+    WitnessNamespace, WitnessProvider,
 };
 
 use super::prove::{build_commitment_request, CommitmentStageConfig};
@@ -55,7 +55,7 @@ impl<F> WitnessProvider<F, TestNamespace> for TestWitness {
     ) -> Result<OracleDescriptor<TestNamespace>, WitnessError> {
         Ok(OracleDescriptor::new(
             oracle,
-            WitnessDimensions::new(3),
+            WitnessDimensions::new(8, 3),
             match oracle.kind {
                 OracleKind::Committed(1) => PolynomialEncoding::OneHot,
                 _ => PolynomialEncoding::Compact,
@@ -81,7 +81,7 @@ impl<F> WitnessProvider<F, TestNamespace> for TestWitness {
 
     fn oracle_view(
         &self,
-        _requirement: ViewRequirement<TestNamespace>,
+        _request: OracleViewRequest<TestNamespace>,
     ) -> Result<PolynomialView<'_, F, TestNamespace>, WitnessError> {
         Err(WitnessError::UnsupportedView {
             view: "test oracle views",
@@ -107,7 +107,7 @@ impl<F> WitnessProvider<F, FieldInlineNamespace> for TestFieldInlineWitness {
     ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
         Ok(OracleDescriptor::new(
             oracle,
-            WitnessDimensions::new(2),
+            WitnessDimensions::new(4, 2),
             PolynomialEncoding::Dense,
         ))
     }
@@ -126,7 +126,7 @@ impl<F> WitnessProvider<F, FieldInlineNamespace> for TestFieldInlineWitness {
 
     fn oracle_view(
         &self,
-        _requirement: ViewRequirement<FieldInlineNamespace>,
+        _request: OracleViewRequest<FieldInlineNamespace>,
     ) -> Result<PolynomialView<'_, F, FieldInlineNamespace>, WitnessError> {
         Err(WitnessError::UnsupportedView {
             view: "test field-inline oracle views",
@@ -252,7 +252,7 @@ impl<F> WitnessProvider<F, JoltVmNamespace> for JoltVmTestWitness {
     ) -> Result<OracleDescriptor<JoltVmNamespace>, WitnessError> {
         Ok(OracleDescriptor::new(
             oracle,
-            WitnessDimensions::new(3),
+            WitnessDimensions::new(8, 3),
             PolynomialEncoding::Compact,
         ))
     }
@@ -271,7 +271,7 @@ impl<F> WitnessProvider<F, JoltVmNamespace> for JoltVmTestWitness {
 
     fn oracle_view(
         &self,
-        _requirement: ViewRequirement<JoltVmNamespace>,
+        _request: OracleViewRequest<JoltVmNamespace>,
     ) -> Result<PolynomialView<'_, F, JoltVmNamespace>, WitnessError> {
         Err(WitnessError::UnsupportedView {
             view: "test Jolt VM oracle views",

@@ -22,36 +22,316 @@ use super::{
     },
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
+    pcs_assist::PcsProofAssist,
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::{
+        stage1::outputs::Stage1ClearOutput, stage2::outputs::Stage2ClearOutput, zk::committed,
+    },
+    verifier::CheckedInputs,
+    VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage3BatchInputClaims<F: Field> {
-    shift: F,
-    instruction_input: F,
-    registers_claim_reduction: F,
+pub struct Stage3InputClaims<F: Field> {
+    pub shift: F,
+    pub instruction_input: F,
+    pub registers_claim_reduction: F,
+}
+
+pub struct Stage3InputClaimRequest<'a, F: Field> {
+    pub dimensions: TraceDimensions,
+    pub stage1: &'a Stage1ClearOutput<F>,
+    pub stage2: &'a Stage2ClearOutput<F>,
+    pub shift_gamma: F,
+    pub instruction_gamma: F,
+    pub registers_gamma: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage3BatchExpectedOutputClaims<F: Field> {
-    shift: F,
-    instruction_input: F,
-    registers_claim_reduction: F,
+pub struct Stage3ExpectedOutputClaims<F: Field> {
+    pub shift: F,
+    pub instruction_input: F,
+    pub registers_claim_reduction: F,
+}
+
+pub struct Stage3ExpectedOutputRequest<'a, F: Field> {
+    pub dimensions: TraceDimensions,
+    pub stage2: &'a Stage2ClearOutput<F>,
+    pub shift_gamma: F,
+    pub instruction_gamma: F,
+    pub registers_gamma: F,
+    pub shift_opening_point: &'a [F],
+    pub instruction_opening_point: &'a [F],
+    pub registers_opening_point: &'a [F],
+    pub claims: &'a Stage3Claims<F>,
 }
 
 const STAGE3_BATCH_OUTPUT_CLAIMS: usize = 13;
 
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn stage3_input_claims<F: Field>(
+    request: Stage3InputClaimRequest<'_, F>,
+) -> Result<Stage3InputClaims<F>, VerifierError> {
+    let [(left_reduced, left_product), (right_reduced, right_product)] =
+        instruction::input_virtualization_consistency_openings();
+    if request.stage2.batch.product_remainder.opening_point
+        != request
+            .stage2
+            .batch
+            .instruction_claim_reduction
+            .opening_point
+    {
+        return Err(VerifierError::StageClaimOpeningMismatch {
+            stage: JoltRelationId::InstructionInputVirtualization,
+            left: left_reduced,
+            right: left_product,
+        });
+    }
+    let product_left = request
+        .stage2
+        .output_claims
+        .product_remainder
+        .left_instruction_input;
+    let product_right = request
+        .stage2
+        .output_claims
+        .product_remainder
+        .right_instruction_input;
+    let reduced_left = request
+        .stage2
+        .output_claims
+        .instruction_claim_reduction
+        .left_instruction_input
+        .unwrap_or(product_left);
+    let reduced_right = request
+        .stage2
+        .output_claims
+        .instruction_claim_reduction
+        .right_instruction_input
+        .unwrap_or(product_right);
+    if reduced_left != product_left {
+        return Err(VerifierError::StageClaimOpeningMismatch {
+            stage: JoltRelationId::InstructionInputVirtualization,
+            left: left_reduced,
+            right: left_product,
+        });
+    }
+    if reduced_right != product_right {
+        return Err(VerifierError::StageClaimOpeningMismatch {
+            stage: JoltRelationId::InstructionInputVirtualization,
+            left: right_reduced,
+            right: right_product,
+        });
+    }
+
+    let shift_claims = spartan::shift::<F>(request.dimensions);
+    let instruction_claims = instruction::input_virtualization::<F>(request.dimensions);
+    let registers_claims = registers_claim_reduction::claim_reduction::<F>(request.dimensions);
+
+    let [next_unexpanded_pc, next_pc, next_is_virtual, next_is_first_in_sequence, next_is_noop] =
+        shift_input_openings();
+    let [right_instruction_input_product, left_instruction_input_product] =
+        instruction::input_virtualization_input_openings();
+    let [rd_write_value_spartan, rs1_value_spartan, rs2_value_spartan] =
+        registers_claim_reduction::claim_reduction_input_openings();
+
+    Ok(Stage3InputClaims {
+        shift: shift_claims.input.expression().try_evaluate(
+            |id| match *id {
+                id if id == next_unexpanded_pc => Ok(request.stage1.outer.next_unexpanded_pc),
+                id if id == next_pc => Ok(request.stage1.outer.next_pc),
+                id if id == next_is_virtual => Ok(request.stage1.outer.next_is_virtual),
+                id if id == next_is_first_in_sequence => {
+                    Ok(request.stage1.outer.next_is_first_in_sequence)
+                }
+                id if id == next_is_noop => {
+                    Ok(request.stage2.output_claims.product_remainder.next_is_noop)
+                }
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| match id {
+                JoltChallengeId::SpartanShift(SpartanShiftChallenge::Gamma) => {
+                    Ok(request.shift_gamma)
+                }
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        )?,
+        instruction_input: instruction_claims.input.expression().try_evaluate(
+            |id| match *id {
+                id if id == right_instruction_input_product => Ok(product_right),
+                id if id == left_instruction_input_product => Ok(product_left),
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| match id {
+                JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => {
+                    Ok(request.instruction_gamma)
+                }
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        )?,
+        registers_claim_reduction: registers_claims.input.expression().try_evaluate(
+            |id| match *id {
+                id if id == rd_write_value_spartan => Ok(request.stage1.outer.rd_write_value),
+                id if id == rs1_value_spartan => Ok(request.stage1.outer.rs1_value),
+                id if id == rs2_value_spartan => Ok(request.stage1.outer.rs2_value),
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| match id {
+                JoltChallengeId::RegistersClaimReduction(
+                    RegistersClaimReductionChallenge::Gamma,
+                ) => Ok(request.registers_gamma),
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        )?,
+    })
+}
+
+pub fn stage3_expected_output_claims<F: Field>(
+    request: Stage3ExpectedOutputRequest<'_, F>,
+) -> Result<Stage3ExpectedOutputClaims<F>, VerifierError> {
+    let shift_claims = spartan::shift::<F>(request.dimensions);
+    let instruction_claims = instruction::input_virtualization::<F>(request.dimensions);
+    let registers_claims = registers_claim_reduction::claim_reduction::<F>(request.dimensions);
+
+    let eq_plus_one_outer =
+        EqPlusOnePolynomial::new(request.stage2.product_uniskip.tau_low.clone())
+            .evaluate(request.shift_opening_point);
+    let eq_plus_one_product =
+        EqPlusOnePolynomial::new(request.stage2.batch.product_remainder.opening_point.clone())
+            .evaluate(request.shift_opening_point);
+    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
+        shift_output_openings();
+    let shift = shift_claims.output.expression().try_evaluate(
+        |id| match *id {
+            id if id == unexpanded_pc_shift => Ok(request.claims.shift.unexpanded_pc),
+            id if id == pc_shift => Ok(request.claims.shift.pc),
+            id if id == is_virtual_shift => Ok(request.claims.shift.is_virtual),
+            id if id == is_first_in_sequence_shift => Ok(request.claims.shift.is_first_in_sequence),
+            id if id == is_noop_shift => Ok(request.claims.shift.is_noop),
+            id => Err(VerifierError::MissingOpeningClaim { id }),
+        },
+        |id| match id {
+            JoltChallengeId::SpartanShift(SpartanShiftChallenge::Gamma) => Ok(request.shift_gamma),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| match id {
+            JoltPublicId::SpartanShift(SpartanShiftPublic::EqPlusOneOuter) => Ok(eq_plus_one_outer),
+            JoltPublicId::SpartanShift(SpartanShiftPublic::EqPlusOneProduct) => {
+                Ok(eq_plus_one_product)
+            }
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
+    )?;
+
+    let eq_product = try_eq_mle(
+        request.instruction_opening_point,
+        &request.stage2.batch.product_remainder.opening_point,
+    )
+    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::InstructionInputVirtualization,
+        reason: error.to_string(),
+    })?;
+    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
+        instruction::input_virtualization_output_openings();
+    let instruction_input = instruction_claims.output.expression().try_evaluate(
+        |id| match *id {
+            id if id == left_operand_is_rs1 => {
+                Ok(request.claims.instruction_input.left_operand_is_rs1)
+            }
+            id if id == rs1_value_input => Ok(request.claims.instruction_input.rs1_value),
+            id if id == left_operand_is_pc => {
+                Ok(request.claims.instruction_input.left_operand_is_pc)
+            }
+            id if id == unexpanded_pc_input => Ok(request.claims.instruction_input.unexpanded_pc),
+            id if id == right_operand_is_rs2 => {
+                Ok(request.claims.instruction_input.right_operand_is_rs2)
+            }
+            id if id == rs2_value_input => Ok(request.claims.instruction_input.rs2_value),
+            id if id == right_operand_is_imm => {
+                Ok(request.claims.instruction_input.right_operand_is_imm)
+            }
+            id if id == imm_input => Ok(request.claims.instruction_input.imm),
+            id => Err(VerifierError::MissingOpeningClaim { id }),
+        },
+        |id| match id {
+            JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => {
+                Ok(request.instruction_gamma)
+            }
+            JoltChallengeId::InstructionInput(InstructionInputChallenge::EqProduct) => {
+                Ok(eq_product)
+            }
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+    )?;
+
+    let eq_spartan = try_eq_mle(
+        request.registers_opening_point,
+        &request.stage2.product_uniskip.tau_low,
+    )
+    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+        stage: JoltRelationId::RegistersClaimReduction,
+        reason: error.to_string(),
+    })?;
+    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
+        registers_claim_reduction::claim_reduction_output_openings();
+    let registers_claim_reduction = registers_claims.output.expression().try_evaluate(
+        |id| match *id {
+            id if id == rd_write_value_reduced => {
+                Ok(request.claims.registers_claim_reduction.rd_write_value)
+            }
+            id if id == rs1_value_reduced => Ok(request.claims.registers_claim_reduction.rs1_value),
+            id if id == rs2_value_reduced => Ok(request.claims.registers_claim_reduction.rs2_value),
+            id => Err(VerifierError::MissingOpeningClaim { id }),
+        },
+        |id| match id {
+            JoltChallengeId::RegistersClaimReduction(RegistersClaimReductionChallenge::Gamma) => {
+                Ok(request.registers_gamma)
+            }
+            JoltChallengeId::RegistersClaimReduction(
+                RegistersClaimReductionChallenge::EqSpartan,
+            ) => Ok(eq_spartan),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+    )?;
+
+    Ok(Stage3ExpectedOutputClaims {
+        shift,
+        instruction_input,
+        registers_claim_reduction,
+    })
+}
+
+pub fn stage3_expected_final_claim<F: Field>(
+    coefficients: &[F],
+    expected_outputs: &Stage3ExpectedOutputClaims<F>,
+) -> Result<F, VerifierError> {
+    let [shift_coefficient, instruction_coefficient, registers_coefficient] = coefficients else {
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::SpartanShift,
+            reason: "Stage 3 batch verifier returned the wrong number of coefficients".to_string(),
+        });
+    };
+    Ok(*shift_coefficient * expected_outputs.shift
+        + *instruction_coefficient * expected_outputs.instruction_input
+        + *registers_coefficient * expected_outputs.registers_claim_reduction)
+}
+
+pub fn verify<PCS, VC, T, ZkProof, PcsAssist>(
     checked: &CheckedInputs,
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, PcsAssist>,
     transcript: &mut T,
     deps: Deps<'_, PCS::Field, VC::Output>,
 ) -> Result<Stage3Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
+    PcsAssist: PcsProofAssist<PCS>,
     T: Transcript<Challenge = PCS::Field>,
 {
     match (checked.zk, deps) {
@@ -143,103 +423,14 @@ where
     };
     let claims = &proof.clear_claims()?.stage3;
 
-    let [(left_reduced, left_product), (right_reduced, right_product)] =
-        instruction::input_virtualization_consistency_openings();
-    if stage2.batch.product_remainder.opening_point
-        != stage2.batch.instruction_claim_reduction.opening_point
-    {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            left: left_reduced,
-            right: left_product,
-        });
-    }
-    let product_left = stage2
-        .output_claims
-        .product_remainder
-        .left_instruction_input;
-    let product_right = stage2
-        .output_claims
-        .product_remainder
-        .right_instruction_input;
-    let reduced_left = stage2
-        .output_claims
-        .instruction_claim_reduction
-        .left_instruction_input
-        .unwrap_or(product_left);
-    let reduced_right = stage2
-        .output_claims
-        .instruction_claim_reduction
-        .right_instruction_input
-        .unwrap_or(product_right);
-    if reduced_left != product_left {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            left: left_reduced,
-            right: left_product,
-        });
-    }
-    if reduced_right != product_right {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            left: right_reduced,
-            right: right_product,
-        });
-    }
-
-    let [next_unexpanded_pc, next_pc, next_is_virtual, next_is_first_in_sequence, next_is_noop] =
-        shift_input_openings();
-    let [right_instruction_input_product, left_instruction_input_product] =
-        instruction::input_virtualization_input_openings();
-    let [rd_write_value_spartan, rs1_value_spartan, rs2_value_spartan] =
-        registers_claim_reduction::claim_reduction_input_openings();
-
-    let input_claims = Stage3BatchInputClaims {
-        shift: shift_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == next_unexpanded_pc => Ok(stage1.outer.next_unexpanded_pc),
-                id if id == next_pc => Ok(stage1.outer.next_pc),
-                id if id == next_is_virtual => Ok(stage1.outer.next_is_virtual),
-                id if id == next_is_first_in_sequence => Ok(stage1.outer.next_is_first_in_sequence),
-                id if id == next_is_noop => Ok(stage2.output_claims.product_remainder.next_is_noop),
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::SpartanShift(SpartanShiftChallenge::Gamma) => Ok(shift_gamma),
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-        instruction_input: instruction_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == right_instruction_input_product => Ok(product_right),
-                id if id == left_instruction_input_product => Ok(product_left),
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => {
-                    Ok(instruction_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-        registers_claim_reduction: registers_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == rd_write_value_spartan => Ok(stage1.outer.rd_write_value),
-                id if id == rs1_value_spartan => Ok(stage1.outer.rs1_value),
-                id if id == rs2_value_spartan => Ok(stage1.outer.rs2_value),
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::RegistersClaimReduction(
-                    RegistersClaimReductionChallenge::Gamma,
-                ) => Ok(registers_gamma),
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-    };
+    let input_claims = stage3_input_claims(Stage3InputClaimRequest {
+        dimensions,
+        stage1,
+        stage2,
+        shift_gamma,
+        instruction_gamma,
+        registers_gamma,
+    })?;
 
     let sumcheck_claims = [
         SumcheckClaim::new(
@@ -275,34 +466,6 @@ where
             reason: error.to_string(),
         })?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_plus_one_outer = EqPlusOnePolynomial::new(stage2.product_uniskip.tau_low.clone())
-        .evaluate(&shift_opening_point);
-    let eq_plus_one_product =
-        EqPlusOnePolynomial::new(stage2.batch.product_remainder.opening_point.clone())
-            .evaluate(&shift_opening_point);
-    let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
-        shift_output_openings();
-    let shift_output = shift_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == unexpanded_pc_shift => Ok(claims.shift.unexpanded_pc),
-            id if id == pc_shift => Ok(claims.shift.pc),
-            id if id == is_virtual_shift => Ok(claims.shift.is_virtual),
-            id if id == is_first_in_sequence_shift => Ok(claims.shift.is_first_in_sequence),
-            id if id == is_noop_shift => Ok(claims.shift.is_noop),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| match id {
-            JoltChallengeId::SpartanShift(SpartanShiftChallenge::Gamma) => Ok(shift_gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| match id {
-            JoltPublicId::SpartanShift(SpartanShiftPublic::EqPlusOneOuter) => Ok(eq_plus_one_outer),
-            JoltPublicId::SpartanShift(SpartanShiftPublic::EqPlusOneProduct) => {
-                Ok(eq_plus_one_product)
-            }
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )?;
 
     let instruction_point = batch
         .try_instance_point(instruction_claims.sumcheck.rounds)
@@ -311,39 +474,6 @@ where
             reason: error.to_string(),
         })?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_product = try_eq_mle(
-        &instruction_opening_point,
-        &stage2.batch.product_remainder.opening_point,
-    )
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::InstructionInputVirtualization,
-        reason: error.to_string(),
-    })?;
-    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
-        instruction::input_virtualization_output_openings();
-    let instruction_output = instruction_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == left_operand_is_rs1 => Ok(claims.instruction_input.left_operand_is_rs1),
-            id if id == rs1_value_input => Ok(claims.instruction_input.rs1_value),
-            id if id == left_operand_is_pc => Ok(claims.instruction_input.left_operand_is_pc),
-            id if id == unexpanded_pc_input => Ok(claims.instruction_input.unexpanded_pc),
-            id if id == right_operand_is_rs2 => Ok(claims.instruction_input.right_operand_is_rs2),
-            id if id == rs2_value_input => Ok(claims.instruction_input.rs2_value),
-            id if id == right_operand_is_imm => Ok(claims.instruction_input.right_operand_is_imm),
-            id if id == imm_input => Ok(claims.instruction_input.imm),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| match id {
-            JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => {
-                Ok(instruction_gamma)
-            }
-            JoltChallengeId::InstructionInput(InstructionInputChallenge::EqProduct) => {
-                Ok(eq_product)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-    )?;
 
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)
@@ -352,50 +482,19 @@ where
             reason: error.to_string(),
         })?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
-    let eq_spartan = try_eq_mle(&registers_opening_point, &stage2.product_uniskip.tau_low)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RegistersClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
-        registers_claim_reduction::claim_reduction_output_openings();
-    let registers_output = registers_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == rd_write_value_reduced => {
-                Ok(claims.registers_claim_reduction.rd_write_value)
-            }
-            id if id == rs1_value_reduced => Ok(claims.registers_claim_reduction.rs1_value),
-            id if id == rs2_value_reduced => Ok(claims.registers_claim_reduction.rs2_value),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| match id {
-            JoltChallengeId::RegistersClaimReduction(RegistersClaimReductionChallenge::Gamma) => {
-                Ok(registers_gamma)
-            }
-            JoltChallengeId::RegistersClaimReduction(
-                RegistersClaimReductionChallenge::EqSpartan,
-            ) => Ok(eq_spartan),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-    )?;
-
-    let expected_outputs = Stage3BatchExpectedOutputClaims {
-        shift: shift_output,
-        instruction_input: instruction_output,
-        registers_claim_reduction: registers_output,
-    };
-    let [shift_coefficient, instruction_coefficient, registers_coefficient] =
-        batch.batching_coefficients.as_slice()
-    else {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::SpartanShift,
-            reason: "Stage 3 batch verifier returned the wrong number of coefficients".to_string(),
-        });
-    };
-    let expected_final_claim = *shift_coefficient * expected_outputs.shift
-        + *instruction_coefficient * expected_outputs.instruction_input
-        + *registers_coefficient * expected_outputs.registers_claim_reduction;
+    let expected_outputs = stage3_expected_output_claims(Stage3ExpectedOutputRequest {
+        dimensions,
+        stage2,
+        shift_gamma,
+        instruction_gamma,
+        registers_gamma,
+        shift_opening_point: &shift_opening_point,
+        instruction_opening_point: &instruction_opening_point,
+        registers_opening_point: &registers_opening_point,
+        claims,
+    })?;
+    let expected_final_claim =
+        stage3_expected_final_claim(&batch.batching_coefficients, &expected_outputs)?;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: JoltRelationId::SpartanShift,
@@ -437,39 +536,32 @@ where
     }))
 }
 
-fn append_stage3_opening_claims<F, T>(transcript: &mut T, claims: &Stage3Claims<F>)
+pub fn append_stage3_opening_claims<F, T>(transcript: &mut T, claims: &Stage3Claims<F>)
 where
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    transcript.append_labeled(b"opening_claim", &claims.shift.unexpanded_pc);
-    transcript.append_labeled(b"opening_claim", &claims.shift.pc);
-    transcript.append_labeled(b"opening_claim", &claims.shift.is_virtual);
-    transcript.append_labeled(b"opening_claim", &claims.shift.is_first_in_sequence);
-    transcript.append_labeled(b"opening_claim", &claims.shift.is_noop);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.left_operand_is_rs1,
-    );
-    transcript.append_labeled(b"opening_claim", &claims.instruction_input.rs1_value);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.left_operand_is_pc,
-    );
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.right_operand_is_rs2,
-    );
-    transcript.append_labeled(b"opening_claim", &claims.instruction_input.rs2_value);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_input.right_operand_is_imm,
-    );
-    transcript.append_labeled(b"opening_claim", &claims.instruction_input.imm);
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.registers_claim_reduction.rd_write_value,
-    );
+    for opening_claim in stage3_output_claim_values(claims) {
+        transcript.append_labeled(b"opening_claim", &opening_claim);
+    }
+}
+
+pub fn stage3_output_claim_values<F: Field>(claims: &Stage3Claims<F>) -> Vec<F> {
+    vec![
+        claims.shift.unexpanded_pc,
+        claims.shift.pc,
+        claims.shift.is_virtual,
+        claims.shift.is_first_in_sequence,
+        claims.shift.is_noop,
+        claims.instruction_input.left_operand_is_rs1,
+        claims.instruction_input.rs1_value,
+        claims.instruction_input.left_operand_is_pc,
+        claims.instruction_input.right_operand_is_rs2,
+        claims.instruction_input.rs2_value,
+        claims.instruction_input.right_operand_is_imm,
+        claims.instruction_input.imm,
+        claims.registers_claim_reduction.rd_write_value,
+    ]
 }
 
 #[cfg(test)]

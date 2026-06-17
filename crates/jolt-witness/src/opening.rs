@@ -1,7 +1,5 @@
 use crate::{OracleRef, WitnessNamespace};
 
-/// Claimed evaluation of `oracle` at `point`: the witness-side data backing
-/// one opening claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpeningWitness<F, N: WitnessNamespace> {
     pub oracle: OracleRef<N>,

@@ -246,6 +246,19 @@ jobs:
                    | tr '\n' ' ')
           echo "Found crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+      - name: Verify required modular crates are workspace members
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --format-version=1 --no-deps \
+            | jq -e '
+                [.packages[].name] as $names
+                | all(["jolt-prover", "jolt-backends"][]; $names | index(.) != null)
+              '
+      - name: Run modular prover e2e prove-verify
+        shell: bash
+        run: cargo nextest run -p jolt-prover modular_muldiv_proof_verifies --no-tests=fail
+
       - name: Test each crate
         shell: bash
         run: |

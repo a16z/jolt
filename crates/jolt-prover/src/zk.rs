@@ -11,6 +11,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_field::FromPrimitiveInt;
 use jolt_field::RandomSampling;
+use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_openings::CommitmentScheme;
 use jolt_openings::ZkOpeningScheme;
@@ -386,7 +387,8 @@ pub(crate) fn prove_blindfold<F, VC, T, R, B>(
     backend: &mut B,
 ) -> Result<jolt_blindfold::BlindFoldProof<F, VC::Output>, ProverError>
 where
-    F: Field + AppendToTranscript,
+    F: Field + AppendToTranscript + WithAccumulator,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
     VC: VectorCommitment<Field = F>,
     VC::Output: HomomorphicCommitment<F>,
     T: Transcript<Challenge = F>,

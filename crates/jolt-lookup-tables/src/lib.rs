@@ -1,3 +1,14 @@
+#![expect(
+    clippy::explicit_counter_loop,
+    clippy::len_zero,
+    clippy::redundant_else,
+    clippy::unimplemented,
+    clippy::unnecessary_cast,
+    clippy::unwrap_used,
+    clippy::useless_conversion,
+    reason = "donor prefix MLE implementations preserve prover relation semantics; lint cleanup is separate"
+)]
+
 pub const XLEN: usize = 64;
 
 pub mod challenge_ops;

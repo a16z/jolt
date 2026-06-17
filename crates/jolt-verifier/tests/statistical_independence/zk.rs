@@ -18,9 +18,7 @@ use jolt_field::{FixedBytes, Fr};
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
-use jolt_transcript::{
-    AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript, Transcript,
-};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 

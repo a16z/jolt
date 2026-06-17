@@ -57,7 +57,7 @@ use jolt_verifier::stages::{
     stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
 };
 use jolt_witness::protocols::jolt_vm::{jolt_opening_oracle_ref, JoltVmNamespace};
-use jolt_witness::{OracleRef, WitnessProvider};
+use jolt_witness::{OracleRef, OracleViewRequest, WitnessProvider};
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData};
 
 use super::io::{Stage6ProverConfig, Stage6RegularBatchPrefixOutput};
@@ -1576,12 +1576,15 @@ where
                     oracle.kind
                 ))
             })?;
-        let request = requirement;
+        let request = OracleViewRequest::new(requirement);
         if let Some(polynomial) = self.oracle_cache.borrow().get(&oracle) {
             return evaluate_cached_polynomial(oracle, polynomial, point);
         }
         if !is_boolean_point {
-            if let Some(value) = self.witness.try_evaluate_oracle_view(request, point)? {
+            if let Some(value) = self
+                .witness
+                .try_evaluate_oracle_view(request.clone(), point)?
+            {
                 return Ok(value);
             }
         }
@@ -1700,7 +1703,7 @@ where
                 "witness returned no view requirement for Stage 6 {kind:?} advice"
             ))
         })?;
-    let view = witness.oracle_view(requirement)?;
+    let view = witness.oracle_view(OracleViewRequest::new(requirement))?;
     view.as_slice().map(<[F]>::to_vec).ok_or_else(|| {
         invalid_stage_request(format!("Stage 6 {kind:?} advice view is not concrete"))
     })

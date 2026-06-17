@@ -1,9 +1,8 @@
-use super::util::{power_of_two_log_rows, require_unique_ids};
 use crate::{
     CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind,
-    OracleRef, PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView, PublicValue,
-    RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace,
-    WitnessProvider,
+    OracleRef, OracleViewRequest, PolynomialChunk, PolynomialEncoding, PolynomialStream,
+    PolynomialView, PublicValue, RetentionHint, ViewRequirement, WitnessDimensions, WitnessError,
+    WitnessNamespace, WitnessProvider,
 };
 
 pub const DORY_ASSIST_NAMESPACE: NamespaceId = NamespaceId::new("dory_assist");
@@ -103,19 +102,14 @@ impl<F> DoryAssistWitness<F> {
         committed: Vec<DoryAssistCommittedColumn<F>>,
         public_inputs: Vec<DoryAssistPublicInput<F>>,
     ) -> Result<Self, WitnessError> {
+        require_unique_ids(committed.iter().map(|column| column.id), "committed column")?;
         require_unique_ids(
-            DORY_ASSIST_NAMESPACE,
-            committed.iter().map(|column| column.id),
-            "committed column",
-        )?;
-        require_unique_ids(
-            DORY_ASSIST_NAMESPACE,
             public_inputs.iter().map(|public_input| public_input.id),
             "public input",
         )?;
 
         for column in &committed {
-            let _ = power_of_two_log_rows(DORY_ASSIST_NAMESPACE, column.values.len())?;
+            let _ = power_of_two_log_rows(column.values.len())?;
         }
 
         Ok(Self {
@@ -152,10 +146,7 @@ impl<F> DoryAssistWitness<F> {
         id: DoryAssistCommittedPolynomial,
     ) -> Result<WitnessDimensions, WitnessError> {
         let rows = self.committed_values(id)?.len();
-        Ok(WitnessDimensions::new(power_of_two_log_rows(
-            DORY_ASSIST_NAMESPACE,
-            rows,
-        )?))
+        Ok(WitnessDimensions::new(rows, power_of_two_log_rows(rows)?))
     }
 }
 
@@ -164,12 +155,16 @@ impl<F: Clone> WitnessProvider<F, DoryAssistNamespace> for DoryAssistWitness<F> 
         &self,
         oracle: OracleRef<DoryAssistNamespace>,
     ) -> Result<OracleDescriptor<DoryAssistNamespace>, WitnessError> {
-        let OracleKind::Committed(id) = oracle.kind;
-        Ok(OracleDescriptor::new(
-            oracle,
-            self.dimensions(id)?,
-            PolynomialEncoding::Dense,
-        ))
+        match oracle.kind {
+            OracleKind::Committed(id) => Ok(OracleDescriptor::new(
+                oracle,
+                self.dimensions(id)?,
+                PolynomialEncoding::Dense,
+            )),
+            OracleKind::Virtual(_) => Err(WitnessError::UnknownOracle {
+                namespace: DORY_ASSIST_NAMESPACE.name,
+            }),
+        }
     }
 
     fn view_requirements(
@@ -188,13 +183,13 @@ impl<F: Clone> WitnessProvider<F, DoryAssistNamespace> for DoryAssistWitness<F> 
 
     fn oracle_view(
         &self,
-        requirement: ViewRequirement<DoryAssistNamespace>,
+        request: OracleViewRequest<DoryAssistNamespace>,
     ) -> Result<PolynomialView<'_, F, DoryAssistNamespace>, WitnessError> {
         let descriptor = <Self as WitnessProvider<F, DoryAssistNamespace>>::describe_oracle(
             self,
-            requirement.oracle,
+            request.oracle(),
         )?;
-        let OracleKind::Committed(id) = requirement.oracle.kind;
+        let OracleKind::Committed(id) = request.oracle().kind;
         Ok(PolynomialView::borrowed(
             descriptor,
             self.committed_values(id)?,
@@ -254,6 +249,36 @@ impl<F: Clone> PolynomialStream<F> for DoryAssistCommittedStream<'_, F> {
     }
 }
 
+fn require_unique_ids<Id>(
+    ids: impl IntoIterator<Item = Id>,
+    label: &'static str,
+) -> Result<(), WitnessError>
+where
+    Id: Copy + Eq + core::fmt::Debug,
+{
+    let mut seen = Vec::new();
+    for id in ids {
+        if seen.contains(&id) {
+            return Err(WitnessError::InvalidWitnessData {
+                namespace: DORY_ASSIST_NAMESPACE.name,
+                reason: format!("duplicate {label} id: {id:?}"),
+            });
+        }
+        seen.push(id);
+    }
+    Ok(())
+}
+
+fn power_of_two_log_rows(rows: usize) -> Result<usize, WitnessError> {
+    if rows == 0 || !rows.is_power_of_two() {
+        return Err(WitnessError::InvalidDimensions {
+            namespace: DORY_ASSIST_NAMESPACE.name,
+            reason: format!("row count must be a nonzero power of two, got {rows}"),
+        });
+    }
+    Ok(rows.trailing_zeros() as usize)
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -294,7 +319,7 @@ mod tests {
         let descriptor = witness.describe_oracle(oracle).unwrap();
 
         assert_eq!(descriptor.reference, oracle);
-        assert_eq!(descriptor.dimensions, WitnessDimensions::new(2));
+        assert_eq!(descriptor.dimensions, WitnessDimensions::new(4, 2));
         assert_eq!(descriptor.encoding, PolynomialEncoding::Dense);
         assert_ne!(
             DORY_ASSIST_NAMESPACE,
@@ -310,10 +335,12 @@ mod tests {
         ));
         let requirement = witness.view_requirements(oracle).unwrap().remove(0);
 
-        let view = witness.oracle_view(requirement).unwrap();
+        let view = witness
+            .oracle_view(OracleViewRequest::new(requirement))
+            .unwrap();
 
         assert_eq!(view.as_slice(), Some([10, 11, 12, 13].as_slice()));
-        assert_eq!(view.descriptor().dimensions, WitnessDimensions::new(2));
+        assert_eq!(view.descriptor().dimensions, WitnessDimensions::new(4, 2));
     }
 
     #[test]

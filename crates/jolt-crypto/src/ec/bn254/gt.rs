@@ -1,9 +1,9 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use ark_bn254::{Fq12, Fr};
+use ark_bn254::{Fq12, Fq2, Fq6, Fr as ArkFr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
-use jolt_field::Field;
+use jolt_field::{FixedByteSize, Fq, Fr};
 
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -48,6 +48,70 @@ impl Default for Bn254GT {
     #[inline(always)]
     fn default() -> Self {
         Self(Fq12::ONE)
+    }
+}
+
+impl Bn254GT {
+    pub const FQ12_COEFFICIENTS: usize = 12;
+
+    /// Returns the BN254 Fq12 tower coefficients in canonical basis order.
+    ///
+    /// The order is `(c0.c0, c0.c1, c0.c2, c1.c0, c1.c1, c1.c2)`, with each
+    /// Fq2 coefficient emitted as `(c0, c1)`.
+    pub fn fq12_coefficients(&self) -> [Fq; Self::FQ12_COEFFICIENTS] {
+        [
+            field_to_fq(&self.0.c0.c0.c0),
+            field_to_fq(&self.0.c0.c0.c1),
+            field_to_fq(&self.0.c0.c1.c0),
+            field_to_fq(&self.0.c0.c1.c1),
+            field_to_fq(&self.0.c0.c2.c0),
+            field_to_fq(&self.0.c0.c2.c1),
+            field_to_fq(&self.0.c1.c0.c0),
+            field_to_fq(&self.0.c1.c0.c1),
+            field_to_fq(&self.0.c1.c1.c0),
+            field_to_fq(&self.0.c1.c1.c1),
+            field_to_fq(&self.0.c1.c2.c0),
+            field_to_fq(&self.0.c1.c2.c1),
+        ]
+    }
+
+    pub fn from_fq12_coefficients(coefficients: [Fq; Self::FQ12_COEFFICIENTS]) -> Option<Self> {
+        let inner = Fq12::new(
+            Fq6::new(
+                Fq2::new(
+                    super::fq_to_field(&coefficients[0]),
+                    super::fq_to_field(&coefficients[1]),
+                ),
+                Fq2::new(
+                    super::fq_to_field(&coefficients[2]),
+                    super::fq_to_field(&coefficients[3]),
+                ),
+                Fq2::new(
+                    super::fq_to_field(&coefficients[4]),
+                    super::fq_to_field(&coefficients[5]),
+                ),
+            ),
+            Fq6::new(
+                Fq2::new(
+                    super::fq_to_field(&coefficients[6]),
+                    super::fq_to_field(&coefficients[7]),
+                ),
+                Fq2::new(
+                    super::fq_to_field(&coefficients[8]),
+                    super::fq_to_field(&coefficients[9]),
+                ),
+                Fq2::new(
+                    super::fq_to_field(&coefficients[10]),
+                    super::fq_to_field(&coefficients[11]),
+                ),
+            ),
+        );
+
+        if inner == Fq12::ZERO || inner.pow(ArkFr::MODULUS) != Fq12::ONE {
+            return None;
+        }
+
+        Some(Self(inner))
     }
 }
 
@@ -146,7 +210,23 @@ impl AppendToTranscript for Bn254GT {
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "canonical BN254 Fq serialization into a fixed 32-byte buffer cannot fail"
+)]
+fn field_to_fq(value: &ark_bn254::Fq) -> Fq {
+    use ark_serialize::CanonicalSerialize;
+
+    let mut bytes = [0_u8; Fq::NUM_BYTES];
+    value
+        .serialize_compressed(&mut bytes[..])
+        .expect("BN254 Fq serialization cannot fail");
+    Fq::from_le_bytes_mod_order(&bytes)
+}
+
 impl JoltGroup for Bn254GT {
+    type ScalarField = Fr;
+
     #[inline(always)]
     fn identity() -> Self {
         Self(Fq12::ONE)
@@ -163,14 +243,14 @@ impl JoltGroup for Bn254GT {
     }
 
     #[inline]
-    fn scalar_mul<F: Field>(&self, scalar: &F) -> Self {
+    fn scalar_mul(&self, scalar: &Self::ScalarField) -> Self {
         // GT exponentiation: self^scalar (written additively as scalar * self).
         let fr = field_to_fr(scalar);
         Self(self.0.pow(fr.into_bigint()))
     }
 
     #[inline]
-    fn msm<F: Field>(bases: &[Self], scalars: &[F]) -> Self {
+    fn msm(bases: &[Self], scalars: &[Self::ScalarField]) -> Self {
         debug_assert_eq!(bases.len(), scalars.len());
         // GT "MSM" is Π bases[i]^scalars[i] (written additively as Σ scalars[i] * bases[i]).
         let mut acc = Fq12::ONE;
@@ -206,7 +286,7 @@ impl<'de> serde::Deserialize<'de> for Bn254GT {
             ));
         }
         // Subgroup membership: GT is the r-torsion subgroup, so x^r == 1.
-        if inner.pow(Fr::MODULUS) != Fq12::ONE {
+        if inner.pow(ArkFr::MODULUS) != Fq12::ONE {
             return Err(serde::de::Error::custom(
                 "GT element is not in the r-torsion subgroup",
             ));

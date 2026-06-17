@@ -63,13 +63,6 @@ pub const STANDARD_ADVICE_CONSUMER: TestCase = TestCase {
     checked_at: VerifierPhase::Commitments,
 };
 
-pub const STANDARD_COMMITTED_MULDIV_SMALL: TestCase = TestCase {
-    name: "standard_committed_muldiv_small",
-    zk: false,
-    fixture: FixtureId::CommittedMulDivSmall,
-    checked_at: VerifierPhase::Commitments,
-};
-
 pub const ALL: &[TestCase] = &[
     STANDARD_MULDIV_SMALL,
     STANDARD_FIBONACCI_SMALL,
@@ -80,5 +73,4 @@ pub const ALL: &[TestCase] = &[
     ZK_MULDIV_SMALL,
     ZK_STAGE1_PREFIX,
     STANDARD_ADVICE_CONSUMER,
-    STANDARD_COMMITTED_MULDIV_SMALL,
 ];

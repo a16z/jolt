@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage4<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage4<PCS, VC, ZkProof, PcsAssist>(
+    input: &BlindFoldInputs<'_, PCS, VC, ZkProof, PcsAssist>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -9,6 +9,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: Clone,
+    PcsAssist: PcsProofAssist<PCS>,
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     let log_k = input.checked.ram_K.ilog2() as usize;
@@ -125,11 +126,6 @@ where
         output_ids.push(VerifierOpeningId::Jolt(ram::val_check_advice_opening(
             JoltAdviceKind::Trusted,
         )));
-    }
-    if input.checked.precommitted.program_image.is_some() {
-        output_ids.push(VerifierOpeningId::Jolt(
-            program_image::ram_val_check_contribution_opening(),
-        ));
     }
     output_ids.extend(map_jolt_opening_ids(
         registers::read_write_checking_output_openings().to_vec(),

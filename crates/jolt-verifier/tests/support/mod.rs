@@ -24,7 +24,6 @@ pub enum FixtureId {
     MulDivZkSmall,
     ZkStage1Prefix,
     AdviceConsumer,
-    CommittedMulDivSmall,
     PublicIoMismatch,
     TrustedAdviceMismatch,
     MixedProofMode,

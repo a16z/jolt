@@ -1,5 +1,3 @@
-/// Public-input scalar tagged with a stable label naming which value it is
-/// (e.g. `"config_digest"`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicValue<F> {
     pub label: &'static str,

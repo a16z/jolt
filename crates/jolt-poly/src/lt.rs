@@ -20,9 +20,9 @@
 //! LT(j, r) = LT(j_hi, r_hi) + eq(j_hi, r_hi) · LT(j_lo, r_lo)
 //! ```
 //!
-//! where `j = (j_hi, j_lo)`. Binding proceeds HighToLow: first all hi vars
-//! (shrinking `lt_hi` and `eq_hi`), then all lo vars (shrinking `lt_lo`).
-//! Total memory stays at 3 · √N throughout.
+//! where `j = (j_hi, j_lo)`. Binding can proceed HighToLow or LowToHigh.
+//! HighToLow first shrinks `lt_hi` and `eq_hi`; LowToHigh first shrinks
+//! `lt_lo`. Total memory stays at 3 · √N throughout.
 
 use jolt_field::Field;
 
@@ -33,7 +33,6 @@ use crate::EqPolynomial;
 /// Stores three sub-tables of size ≤ √N each, reconstructing full-table
 /// values on demand via `LT[j] = lt_hi[j_hi] + eq_hi[j_hi] · lt_lo[j_lo]`.
 ///
-/// Supports HighToLow binding only (MSB first).
 pub struct LtPolynomial<F: Field> {
     lt_lo: Vec<F>,
     lt_hi: Vec<F>,
@@ -87,17 +86,37 @@ impl<F: Field> LtPolynomial<F> {
     }
 
     /// Returns `(LT[j], LT[j + half])` for HighToLow sumcheck pairing.
-    ///
-    /// In the hi-binding phase, the pairing splits across hi-table halves.
-    /// In the lo-binding phase (all hi vars bound), it splits across lo-table halves.
     #[inline]
     pub fn sumcheck_eval_pair(&self, j: usize) -> (F, F) {
-        let half = self.len() / 2;
-        (self.get(j), self.get(j + half))
+        self.sumcheck_eval_pair_with_order(j, crate::BindingOrder::HighToLow)
+    }
+
+    /// Returns the `(lo, hi)` pair for the requested sumcheck binding order.
+    #[inline]
+    pub fn sumcheck_eval_pair_with_order(&self, j: usize, order: crate::BindingOrder) -> (F, F) {
+        match order {
+            crate::BindingOrder::HighToLow => {
+                let half = self.len() / 2;
+                (self.get(j), self.get(j + half))
+            }
+            crate::BindingOrder::LowToHigh => (self.get(2 * j), self.get(2 * j + 1)),
+        }
     }
 
     /// Binds the MSB (HighToLow), halving the effective table size.
     pub fn bind(&mut self, challenge: F) {
+        self.bind_with_order(challenge, crate::BindingOrder::HighToLow);
+    }
+
+    /// Binds the next variable for the requested sumcheck binding order.
+    pub fn bind_with_order(&mut self, challenge: F, order: crate::BindingOrder) {
+        match order {
+            crate::BindingOrder::HighToLow => self.bind_high_to_low(challenge),
+            crate::BindingOrder::LowToHigh => self.bind_low_to_high(challenge),
+        }
+    }
+
+    fn bind_high_to_low(&mut self, challenge: F) {
         if self.n_hi_vars > 0 {
             bind_in_place(&mut self.lt_hi, challenge);
             bind_in_place(&mut self.eq_hi, challenge);
@@ -106,6 +125,18 @@ impl<F: Field> LtPolynomial<F> {
             assert!(self.n_lo_vars > 0, "no variables left to bind");
             bind_in_place(&mut self.lt_lo, challenge);
             self.n_lo_vars -= 1;
+        }
+    }
+
+    fn bind_low_to_high(&mut self, challenge: F) {
+        if self.n_lo_vars > 0 {
+            bind_in_place_low_to_high(&mut self.lt_lo, challenge);
+            self.n_lo_vars -= 1;
+        } else {
+            assert!(self.n_hi_vars > 0, "no variables left to bind");
+            bind_in_place_low_to_high(&mut self.lt_hi, challenge);
+            bind_in_place_low_to_high(&mut self.eq_hi, challenge);
+            self.n_hi_vars -= 1;
         }
     }
 
@@ -161,6 +192,18 @@ fn bind_in_place<F: Field>(v: &mut Vec<F>, challenge: F) {
     for j in 0..half {
         let lo = v[j];
         let hi = v[j + half];
+        v[j] = lo + challenge * (hi - lo);
+    }
+    v.truncate(half);
+}
+
+/// In-place LowToHigh bind: `v[j] = v[2j] + challenge · (v[2j+1] - v[2j])`.
+#[inline]
+fn bind_in_place_low_to_high<F: Field>(v: &mut Vec<F>, challenge: F) {
+    let half = v.len() / 2;
+    for j in 0..half {
+        let lo = v[2 * j];
+        let hi = v[2 * j + 1];
         v[j] = lo + challenge * (hi - lo);
     }
     v.truncate(half);
@@ -257,6 +300,23 @@ mod tests {
     }
 
     #[test]
+    fn low_to_high_sumcheck_eval_pair_matches_full_table() {
+        let mut rng = ChaCha20Rng::seed_from_u64(124);
+        for n in 2..=7 {
+            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+            let full_table = LtPolynomial::evaluations(&r);
+            let split = LtPolynomial::new(&r);
+
+            for (j, pair) in full_table.chunks_exact(2).enumerate() {
+                let (lo, hi) =
+                    split.sumcheck_eval_pair_with_order(j, crate::BindingOrder::LowToHigh);
+                assert_eq!(lo, pair[0], "lo mismatch at j={j}, n={n}");
+                assert_eq!(hi, pair[1], "hi mismatch at j={j}, n={n}");
+            }
+        }
+    }
+
+    #[test]
     fn sequential_bind_converges() {
         // Bind all variables → single scalar = evaluate(challenges, r).
         let mut rng = ChaCha20Rng::seed_from_u64(200);
@@ -323,6 +383,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn low_to_high_multi_round_bind_matches_full_table() {
+        let mut rng = ChaCha20Rng::seed_from_u64(401);
+        let n = 6;
+        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let challenges: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+
+        let mut split = LtPolynomial::new(&r);
+        let mut full = LtPolynomial::evaluations(&r);
+
+        for (round, &c) in challenges.iter().enumerate() {
+            split.bind_with_order(c, crate::BindingOrder::LowToHigh);
+            bind_in_place_low_to_high(&mut full, c);
+
+            assert_eq!(split.len(), full.len(), "size mismatch after round {round}");
+            for (j, &expected) in full.iter().enumerate() {
+                assert_eq!(
+                    split.get(j),
+                    expected,
+                    "mismatch at j={j} after round {round}"
+                );
+            }
+        }
+
+        let point = challenges.iter().rev().copied().collect::<Vec<_>>();
+        assert_eq!(split.get(0), LtPolynomial::evaluate(&point, &r));
     }
 
     #[test]

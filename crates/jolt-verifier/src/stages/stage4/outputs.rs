@@ -68,9 +68,29 @@ pub struct VerifiedStage4Sumcheck<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInitialEvaluation<F: Field> {
     pub public_eval: F,
-    pub program_image_contribution: Option<VerifiedRamValCheckProgramImageContribution<F>>,
     pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
     pub full_eval: F,
+}
+
+impl<F: Field> RamValCheckInitialEvaluation<F> {
+    pub fn advice_contribution(
+        &self,
+        kind: JoltAdviceKind,
+    ) -> Option<&VerifiedRamValCheckAdviceContribution<F>> {
+        self.advice_contributions
+            .iter()
+            .find(|contribution| contribution.kind == kind)
+    }
+
+    pub fn advice_opening_claim(&self, kind: JoltAdviceKind) -> Option<F> {
+        self.advice_contribution(kind)
+            .map(|contribution| contribution.opening_claim)
+    }
+
+    pub fn advice_opening_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
+        self.advice_contribution(kind)
+            .map(|contribution| contribution.opening_point.as_slice())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,11 +101,44 @@ pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
     pub opening_point: Vec<F>,
 }
 
-/// Staged program-image contribution to `Val_init(r_address)` in committed
-/// program mode: the scalar opening claim and the full RAM address point it
-/// was staged at.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedRamValCheckProgramImageContribution<F: Field> {
-    pub opening_claim: F,
-    pub opening_point: Vec<F>,
+#[cfg(test)]
+mod tests {
+    use jolt_claims::protocols::jolt::JoltAdviceKind;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    use super::*;
+
+    #[test]
+    fn ram_val_check_initial_evaluation_finds_advice_contribution_by_kind() {
+        let trusted = VerifiedRamValCheckAdviceContribution {
+            kind: JoltAdviceKind::Trusted,
+            selector: Fr::from_u64(2),
+            opening_claim: Fr::from_u64(3),
+            opening_point: vec![Fr::from_u64(5)],
+        };
+        let untrusted = VerifiedRamValCheckAdviceContribution {
+            kind: JoltAdviceKind::Untrusted,
+            selector: Fr::from_u64(7),
+            opening_claim: Fr::from_u64(11),
+            opening_point: vec![Fr::from_u64(13), Fr::from_u64(17)],
+        };
+        let initial = RamValCheckInitialEvaluation {
+            public_eval: Fr::from_u64(19),
+            advice_contributions: vec![trusted.clone(), untrusted.clone()],
+            full_eval: Fr::from_u64(23),
+        };
+
+        assert_eq!(
+            initial.advice_contribution(JoltAdviceKind::Trusted),
+            Some(&trusted)
+        );
+        assert_eq!(
+            initial.advice_opening_claim(JoltAdviceKind::Untrusted),
+            Some(untrusted.opening_claim)
+        );
+        assert_eq!(
+            initial.advice_opening_point(JoltAdviceKind::Untrusted),
+            Some(untrusted.opening_point.as_slice())
+        );
+    }
 }

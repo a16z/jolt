@@ -14,11 +14,7 @@ workspace = true
 [features]
 default = ["cpu"]
 cpu = []
-field-inline = [
-  "dep:jolt-r1cs",
-  "jolt-r1cs/field-inline",
-  "jolt-witness/field-inline",
-]
+field-inline = ["dep:jolt-r1cs", "jolt-r1cs/field-inline", "jolt-witness/field-inline"]
 prover-harness = []
 zk = ["dep:jolt-crypto", "dep:jolt-r1cs"]
 

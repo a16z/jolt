@@ -324,6 +324,10 @@ impl PrecommittedClaimReduction {
         self.address_phase_total_rounds
     }
 
+    pub const fn scheduling_reference_config(&self) -> PrecommittedSchedulingReference {
+        self.scheduling_reference
+    }
+
     /// The `(1/2)^cycle_gap` factor contributed by inactive cycle-phase
     /// rounds. This is the cycle-only counterpart of
     /// [`precommitted_skip_round_scale`], used when the reduction finishes in

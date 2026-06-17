@@ -3,7 +3,7 @@ name = "jolt-hyperkzg"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "HyperKZG multilinear polynomial commitment scheme for the Jolt zkVM"
+description = "HyperKZG Gemini-style multilinear polynomial commitment scheme for the Jolt zkVM"
 
 [lints]
 workspace = true
@@ -15,6 +15,7 @@ jolt-poly = { path = "../jolt-poly" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-openings = { path = "../jolt-openings" }
 serde = { workspace = true, features = ["derive"] }
+bincode = { workspace = true }
 tracing.workspace = true
 num-traits = { workspace = true }
 rayon = { workspace = true }
@@ -22,13 +23,22 @@ thiserror = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 rand_chacha = { workspace = true }
 
+[features]
+default = []
+zk = []
+
 [dev-dependencies]
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 criterion = { workspace = true }
 rand = { workspace = true }
+memory-stats = { workspace = true }
 
 [[bench]]
 name = "hyperkzg"
+harness = false
+
+[[bench]]
+name = "hyperkzg_zk_profile"
 harness = false
 
 [package.metadata.cargo-machete]

@@ -4,7 +4,7 @@
 //! protocols. All functions are generic over [`Field`] and operate on
 //! integer-indexed domains (symmetric or arbitrary).
 
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
 use jolt_field::Field;
 
@@ -69,22 +69,46 @@ pub fn centered_lagrange_evals<F: Field>(
     domain_size: usize,
     r: F,
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
-    Ok(lagrange_evals(
-        centered_domain_start(domain_size)?,
-        domain_size,
-        r,
-    ))
+    let _ = centered_domain_start(domain_size)?;
+    macro_rules! evals {
+        ($n:literal) => {
+            Ok(LagrangePolynomial::<F>::evals::<$n>(r).to_vec())
+        };
+    }
+    match domain_size {
+        1 => evals!(1),
+        2 => evals!(2),
+        3 => evals!(3),
+        4 => evals!(4),
+        5 => evals!(5),
+        6 => evals!(6),
+        7 => evals!(7),
+        8 => evals!(8),
+        9 => evals!(9),
+        10 => evals!(10),
+        11 => evals!(11),
+        12 => evals!(12),
+        13 => evals!(13),
+        14 => evals!(14),
+        15 => evals!(15),
+        16 => evals!(16),
+        17 => evals!(17),
+        18 => evals!(18),
+        19 => evals!(19),
+        20 => evals!(20),
+        _ => Ok(lagrange_evals(
+            centered_domain_start(domain_size)?,
+            domain_size,
+            r,
+        )),
+    }
 }
 
 pub fn centered_lagrange_evals_array<F: Field, const N: usize>(
     r: F,
 ) -> Result<[F; N], CenteredIntegerDomainError> {
-    let evals = centered_lagrange_evals(N, r)?;
-    let mut result = [F::zero(); N];
-    for (dst, src) in result.iter_mut().zip(evals) {
-        *dst = src;
-    }
-    Ok(result)
+    let _ = centered_domain_start(N)?;
+    Ok(LagrangePolynomial::<F>::evals::<N>(r))
 }
 
 /// Computes `sum_i L_i(x) * L_i(y)` over the centered consecutive integer
@@ -94,13 +118,43 @@ pub fn centered_lagrange_kernel<F: Field>(
     x: F,
     y: F,
 ) -> Result<F, CenteredIntegerDomainError> {
-    let x_evals = centered_lagrange_evals(domain_size, x)?;
-    let y_evals = centered_lagrange_evals(domain_size, y)?;
-    Ok(x_evals
-        .into_iter()
-        .zip(y_evals)
-        .map(|(left, right)| left * right)
-        .sum())
+    let _ = centered_domain_start(domain_size)?;
+    macro_rules! kernel {
+        ($n:literal) => {
+            Ok(LagrangePolynomial::<F>::lagrange_kernel::<$n>(x, y))
+        };
+    }
+    match domain_size {
+        1 => kernel!(1),
+        2 => kernel!(2),
+        3 => kernel!(3),
+        4 => kernel!(4),
+        5 => kernel!(5),
+        6 => kernel!(6),
+        7 => kernel!(7),
+        8 => kernel!(8),
+        9 => kernel!(9),
+        10 => kernel!(10),
+        11 => kernel!(11),
+        12 => kernel!(12),
+        13 => kernel!(13),
+        14 => kernel!(14),
+        15 => kernel!(15),
+        16 => kernel!(16),
+        17 => kernel!(17),
+        18 => kernel!(18),
+        19 => kernel!(19),
+        20 => kernel!(20),
+        _ => {
+            let x_evals = lagrange_evals(centered_domain_start(domain_size)?, domain_size, x);
+            let y_evals = lagrange_evals(centered_domain_start(domain_size)?, domain_size, y);
+            Ok(x_evals
+                .into_iter()
+                .zip(y_evals)
+                .map(|(left, right)| left * right)
+                .sum())
+        }
+    }
 }
 
 /// Computes power sums $S_k = \sum_{t=-D}^{D} t^k$ for $k = 0, 1, \ldots, \text{num\_powers}-1$
@@ -148,6 +202,319 @@ impl fmt::Display for CenteredIntegerDomainError {
 }
 
 impl std::error::Error for CenteredIntegerDomainError {}
+
+pub struct LagrangeHelper;
+
+impl LagrangeHelper {
+    #[inline]
+    pub const fn fact(n: usize) -> u64 {
+        let mut acc = 1u64;
+        let mut i = 2usize;
+        while i <= n {
+            acc *= i as u64;
+            i += 1;
+        }
+        acc
+    }
+
+    pub const FACT_U64_0_TO_20: [u64; 21] = {
+        let mut out = [0u64; 21];
+        let mut i = 0usize;
+        while i <= 20 {
+            out[i] = Self::fact(i);
+            i += 1;
+        }
+        out
+    };
+
+    #[inline]
+    pub const fn den_row_i64<const N: usize>() -> [i64; N] {
+        let mut out = [0i64; N];
+        let mut i = 0usize;
+        while i < N {
+            let left = Self::FACT_U64_0_TO_20[i] as i128;
+            let right = Self::FACT_U64_0_TO_20[N - 1 - i] as i128;
+            let mut value = left * right;
+            if ((N - 1 - i) & 1) == 1 {
+                value = -value;
+            }
+            out[i] = value as i64;
+            i += 1;
+        }
+        out
+    }
+}
+
+pub struct LagrangePolynomial<F: Field>(PhantomData<F>);
+
+impl<F: Field> LagrangePolynomial<F> {
+    #[inline]
+    fn start_i64<const N: usize>() -> i64 {
+        -(((N - 1) / 2) as i64)
+    }
+
+    #[inline]
+    fn distances<const N: usize>(r: F) -> ([F; N], Option<usize>) {
+        let mut dists = [F::zero(); N];
+        let mut base = r - F::from_i64(Self::start_i64::<N>());
+        let mut hit = None;
+        for (i, dist) in dists.iter_mut().enumerate() {
+            let current = base;
+            if current.is_zero() {
+                hit = Some(i);
+            }
+            *dist = current;
+            base -= F::one();
+        }
+        (dists, hit)
+    }
+
+    #[inline]
+    #[expect(clippy::expect_used)]
+    fn inv_denom<const N: usize>() -> [F; N] {
+        let den_i64 = LagrangeHelper::den_row_i64::<N>();
+        let mut denom = [F::zero(); N];
+        for (dst, &src) in denom.iter_mut().zip(den_i64.iter()) {
+            *dst = F::from_i64(src);
+        }
+
+        let mut left = [F::one(); N];
+        for i in 1..N {
+            left[i] = left[i - 1] * denom[i - 1];
+        }
+        let inv_total = (left[N - 1] * denom[N - 1])
+            .inverse()
+            .expect("Lagrange denominator product is invertible");
+
+        let mut inv_denom = [F::zero(); N];
+        let mut right = F::one();
+        for i in (0..N).rev() {
+            inv_denom[i] = left[i] * right * inv_total;
+            right *= denom[i];
+        }
+        inv_denom
+    }
+
+    #[inline]
+    #[expect(clippy::expect_used)]
+    fn bary_terms_from_dists<const N: usize>(dists: &[F; N], inv_denom: &[F; N]) -> ([F; N], F) {
+        let mut prefix = [F::one(); N];
+        for i in 1..N {
+            prefix[i] = prefix[i - 1] * dists[i - 1];
+        }
+        let inv_prod = (prefix[N - 1] * dists[N - 1])
+            .inverse()
+            .expect("off-domain Lagrange distance product is invertible");
+
+        let mut suffix = [F::one(); N];
+        for i in (0..N.saturating_sub(1)).rev() {
+            suffix[i] = suffix[i + 1] * dists[i + 1];
+        }
+
+        let mut terms = [F::zero(); N];
+        let mut sum = F::zero();
+        for i in 0..N {
+            let inv_di = prefix[i] * suffix[i] * inv_prod;
+            let term = inv_denom[i] * inv_di;
+            terms[i] = term;
+            sum += term;
+        }
+        (terms, sum)
+    }
+
+    #[inline]
+    #[expect(clippy::expect_used)]
+    pub fn evaluate<const N: usize>(values: &[F; N], r: F) -> F {
+        debug_assert!(N > 0, "N must be positive");
+        debug_assert!(N <= 20, "evaluate is intended for small N");
+        let (dists, hit) = Self::distances::<N>(r);
+        if let Some(i) = hit {
+            return values[i];
+        }
+        let inv_denom = Self::inv_denom::<N>();
+        let (terms, sum) = Self::bary_terms_from_dists::<N>(&dists, &inv_denom);
+        let inv_sum = sum
+            .inverse()
+            .expect("off-domain Lagrange term sum is invertible");
+        let mut numerator = F::zero();
+        for i in 0..N {
+            numerator += values[i] * terms[i];
+        }
+        numerator * inv_sum
+    }
+
+    #[inline]
+    #[expect(clippy::expect_used)]
+    pub fn evals<const N: usize>(r: F) -> [F; N] {
+        debug_assert!(N > 0, "N must be positive");
+        debug_assert!(N <= 20, "evals is intended for small N");
+        let (dists, hit) = Self::distances::<N>(r);
+        if let Some(i) = hit {
+            let mut out = [F::zero(); N];
+            out[i] = F::one();
+            return out;
+        }
+        let inv_denom = Self::inv_denom::<N>();
+        let (terms, sum) = Self::bary_terms_from_dists::<N>(&dists, &inv_denom);
+        let inv_sum = sum
+            .inverse()
+            .expect("off-domain Lagrange term sum is invertible");
+        let mut out = [F::zero(); N];
+        for i in 0..N {
+            out[i] = terms[i] * inv_sum;
+        }
+        out
+    }
+
+    #[inline]
+    #[expect(clippy::expect_used)]
+    pub fn lagrange_kernel<const N: usize>(x: F, y: F) -> F {
+        debug_assert!(N > 0, "N must be positive");
+        debug_assert!(N <= 20, "lagrange_kernel is intended for small N");
+        let (dists_x, hit_x) = Self::distances::<N>(x);
+        let (dists_y, hit_y) = Self::distances::<N>(y);
+
+        if let (Some(ix), Some(y_index)) = (hit_x, hit_y) {
+            return if ix == y_index { F::one() } else { F::zero() };
+        }
+
+        let inv_denom = Self::inv_denom::<N>();
+        if let Some(ix) = hit_x {
+            let (terms_y, sum_y) = Self::bary_terms_from_dists::<N>(&dists_y, &inv_denom);
+            return terms_y[ix]
+                * sum_y
+                    .inverse()
+                    .expect("off-domain Lagrange term sum is invertible");
+        }
+        if let Some(y_index) = hit_y {
+            let (terms_x, sum_x) = Self::bary_terms_from_dists::<N>(&dists_x, &inv_denom);
+            return terms_x[y_index]
+                * sum_x
+                    .inverse()
+                    .expect("off-domain Lagrange term sum is invertible");
+        }
+
+        let (terms_x, sum_x) = Self::bary_terms_from_dists::<N>(&dists_x, &inv_denom);
+        let (terms_y, sum_y) = Self::bary_terms_from_dists::<N>(&dists_y, &inv_denom);
+        let mut numerator = F::zero();
+        for i in 0..N {
+            numerator += terms_x[i] * terms_y[i];
+        }
+        numerator
+            * (sum_x * sum_y)
+                .inverse()
+                .expect("off-domain Lagrange kernel denominator is invertible")
+    }
+
+    pub fn evaluate_many<const N: usize>(values: &[F; N], points: &[F]) -> Vec<F> {
+        if points.is_empty() {
+            return Vec::new();
+        }
+
+        if points.len() > N {
+            let coeffs = Self::interpolate_coeffs(values);
+            points
+                .iter()
+                .map(|&point| {
+                    let mut result = coeffs[N - 1];
+                    for i in (0..N - 1).rev() {
+                        result = result * point + coeffs[i];
+                    }
+                    result
+                })
+                .collect()
+        } else {
+            points
+                .iter()
+                .map(|&point| Self::evaluate::<N>(values, point))
+                .collect()
+        }
+    }
+
+    #[inline]
+    #[expect(clippy::expect_used)]
+    pub fn interpolate_coeffs<const N: usize>(values: &[F; N]) -> [F; N] {
+        debug_assert!(N > 0, "N must be positive");
+        let degree = N - 1;
+        let start = Self::start_i64::<N>();
+
+        let mut smalls = [0u64; N];
+        let mut prefix = [F::one(); N];
+        for m in 1..=degree {
+            smalls[m] = m as u64;
+            prefix[m] = prefix[m - 1].mul_u64(smalls[m]);
+        }
+        let inv_total = prefix[degree]
+            .inverse()
+            .expect("factorial product is invertible");
+        let mut right = F::one();
+        let mut inverses = [F::zero(); N];
+        for idx in (1..=degree).rev() {
+            inverses[idx] = prefix[idx - 1] * right * inv_total;
+            right = right.mul_u64(smalls[idx]);
+        }
+
+        let mut dd = *values;
+        let mut newton = [F::zero(); N];
+        newton[0] = dd[0];
+        for order in 1..=degree {
+            let inv = inverses[order];
+            for i in 0..(N - order) {
+                dd[i] = (dd[i + 1] - dd[i]) * inv;
+            }
+            newton[order] = dd[0];
+        }
+
+        let mut coeffs = [F::zero(); N];
+        let mut basis = [F::zero(); N];
+        basis[0] = F::one();
+        let mut basis_degree = 0usize;
+        for (k, &scale) in newton.iter().enumerate() {
+            for j in 0..=basis_degree {
+                coeffs[j] += scale * basis[j];
+            }
+
+            if k == degree {
+                break;
+            }
+
+            let node = start + k as i64;
+            let last = basis[basis_degree];
+            for idx in (1..=basis_degree).rev() {
+                let old = basis[idx];
+                basis[idx] = basis[idx - 1] - old.mul_i64(node);
+            }
+            basis[0] = -basis[0].mul_i64(node);
+            basis_degree += 1;
+            basis[basis_degree] = last;
+        }
+
+        coeffs
+    }
+}
+
+pub fn centered_lagrange_evaluate<F: Field, const N: usize>(
+    values: &[F; N],
+    r: F,
+) -> Result<F, CenteredIntegerDomainError> {
+    let _ = centered_domain_start(N)?;
+    Ok(LagrangePolynomial::<F>::evaluate::<N>(values, r))
+}
+
+pub fn centered_lagrange_evaluate_many<F: Field, const N: usize>(
+    values: &[F; N],
+    points: &[F],
+) -> Result<Vec<F>, CenteredIntegerDomainError> {
+    let _ = centered_domain_start(N)?;
+    Ok(LagrangePolynomial::<F>::evaluate_many::<N>(values, points))
+}
+
+pub fn centered_interpolate_coeffs_array<F: Field, const N: usize>(
+    values: &[F; N],
+) -> Result<[F; N], CenteredIntegerDomainError> {
+    let _ = centered_domain_start(N)?;
+    Ok(LagrangePolynomial::<F>::interpolate_coeffs::<N>(values))
+}
 
 /// Start of the centered consecutive-integer domain used by core univariate skip.
 ///

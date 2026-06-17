@@ -28,8 +28,8 @@ use jolt_witness::{
         field_inline::{FieldInlineNamespace, FIELD_INLINE_NAMESPACE},
         JoltVmWitnessConfig, JoltVmWitnessInputs,
     },
-    CommittedWitnessProvider, OracleRef, PolynomialChunk, PolynomialStream, PolynomialView,
-    RetentionHint, WitnessError, WitnessProvider,
+    CommittedWitnessProvider, OracleRef, OracleViewRequest, PolynomialChunk, PolynomialStream,
+    PolynomialView, RetentionHint, WitnessError, WitnessProvider,
 };
 
 const ENTRY: u64 = RAM_START_ADDRESS;
@@ -212,7 +212,10 @@ fn owned_view(
             '_,
             '_,
             OwnedTrace,
-        > as WitnessProvider<Fr, FieldInlineNamespace>>::oracle_view(provider, requirement)
+        > as WitnessProvider<Fr, FieldInlineNamespace>>::oracle_view(
+            provider,
+            OracleViewRequest::new(requirement),
+        )
         .unwrap();
     match view {
         PolynomialView::Owned { values, .. } => values,

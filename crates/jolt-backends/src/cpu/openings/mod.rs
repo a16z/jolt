@@ -5,7 +5,7 @@
 
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_witness::{WitnessNamespace, WitnessProvider};
+use jolt_witness::{OracleViewRequest, WitnessNamespace, WitnessProvider};
 use rayon::prelude::*;
 
 use crate::{
@@ -57,17 +57,16 @@ where
     let mut expected_rows = None;
     for (component_index, component) in request.components.iter().enumerate() {
         let context = format!("{} component {component_index}", request.label);
-        let view =
-            witness
-                .oracle_view(component.view)
-                .map_err(|error| BackendError::InvalidRequest {
-                    backend,
-                    task: RLC_MATERIALIZATION_TASK,
-                    reason: format!(
-                        "{context} materialize {:?} failed: {error}",
-                        component.view.oracle.kind
-                    ),
-                })?;
+        let view = witness
+            .oracle_view(OracleViewRequest::new(component.view))
+            .map_err(|error| BackendError::InvalidRequest {
+                backend,
+                task: RLC_MATERIALIZATION_TASK,
+                reason: format!(
+                    "{context} materialize {:?} failed: {error}",
+                    component.view.oracle.kind
+                ),
+            })?;
         let descriptor = view.descriptor();
         if descriptor.reference.kind != component.view.oracle.kind {
             return Err(BackendError::InvalidRequest {

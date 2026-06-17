@@ -423,6 +423,15 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets every Spartan outer variable opening claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage1.claims.field_inline_spartan_outer",
+        "claims.stage1.field_inline.*",
+        VerifierPhase::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline Spartan outer claims are checked once the Stage 1 verifier composition lands",
+    ),
 ];
 
 pub const STAGE2_TARGETS: &[TamperTarget] = &[
@@ -513,6 +522,15 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "Stage 6 bytecode read-RAF consumes this Stage 2 pass-through claim",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage2.claims.batch_outputs.field_inline.product",
+        "claims.stage2.batch_outputs.field_inline.product.*",
+        VerifierPhase::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline product output claims are checked by the selected Stage 2 formulas once field-inline fixtures exist",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.instruction_claim_reduction",
@@ -624,6 +642,15 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets each register read-write output claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage4.claims.field_inline.field_registers_read_write",
+        "claims.stage4.field_inline.field_registers_read_write.*",
+        VerifierPhase::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline register read-write claims are checked once field-inline fixtures exist",
+    ),
     checked_standard(
         "stage4.claims.ram_val_check",
         "claims.stage4.ram_val_check.*",
@@ -647,14 +674,6 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the trusted advice opening consumed by RAM value check",
-    ),
-    checked_standard(
-        "stage4.claims.program_image_contribution",
-        "claims.stage4.program_image_contribution",
-        VerifierPhase::Stage4,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the staged program-image init contribution",
     ),
 ];
 
@@ -723,72 +742,41 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets each register value-evaluation output claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage5.claims.field_inline.field_registers_val_evaluation",
+        "claims.stage5.field_inline.field_registers_val_evaluation.*",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline fixtures will offset each field-register value-evaluation output claim",
+    ),
 ];
 
 pub const STAGE6_TARGETS: &[TamperTarget] = &[
     checked_standard(
-        "stage6.address_phase.round_polynomial",
-        "proof.stages.stage6a_sumcheck_proof.round_polynomials[*]",
+        "stage6.batch.round_polynomial",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials[*]",
         VerifierPhase::Stage6,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "core-fixture test mutates every compressed Stage 6 address-phase round polynomial",
+        "core-fixture test mutates every compressed Stage 6 batch round polynomial",
     ),
     checked_standard(
-        "stage6.address_phase.round_count.missing",
-        "proof.stages.stage6a_sumcheck_proof.round_polynomials",
+        "stage6.batch.round_count.missing",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials",
         VerifierPhase::Stage6,
         MutationStrategy::TruncateVector,
         TamperCoverage::Active,
-        "core-fixture test removes a Stage 6 address-phase round",
+        "core-fixture test removes a Stage 6 batch round",
     ),
     checked_standard(
-        "stage6.address_phase.round_count.extra",
-        "proof.stages.stage6a_sumcheck_proof.round_polynomials",
+        "stage6.batch.round_count.extra",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials",
         VerifierPhase::Stage6,
         MutationStrategy::ExtendVector,
         TamperCoverage::Active,
-        "core-fixture test appends a Stage 6 address-phase round",
-    ),
-    checked_standard(
-        "stage6.cycle_phase.round_polynomial",
-        "proof.stages.stage6b_sumcheck_proof.round_polynomials[*]",
-        VerifierPhase::Stage6,
-        MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Active,
-        "core-fixture test mutates every compressed Stage 6 cycle-phase round polynomial",
-    ),
-    checked_standard(
-        "stage6.cycle_phase.round_count.missing",
-        "proof.stages.stage6b_sumcheck_proof.round_polynomials",
-        VerifierPhase::Stage6,
-        MutationStrategy::TruncateVector,
-        TamperCoverage::Active,
-        "core-fixture test removes a Stage 6 cycle-phase round",
-    ),
-    checked_standard(
-        "stage6.cycle_phase.round_count.extra",
-        "proof.stages.stage6b_sumcheck_proof.round_polynomials",
-        VerifierPhase::Stage6,
-        MutationStrategy::ExtendVector,
-        TamperCoverage::Active,
-        "core-fixture test appends a Stage 6 cycle-phase round",
-    ),
-    checked_standard(
-        "stage6.claims.address_phase.bytecode_read_raf",
-        "claims.stage6.address_phase.bytecode_read_raf",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "core-fixture test offsets the Stage 6 bytecode read-RAF address-phase output claim",
-    ),
-    checked_standard(
-        "stage6.claims.address_phase.booleanity",
-        "claims.stage6.address_phase.booleanity",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "core-fixture test offsets the Stage 6 Booleanity address-phase output claim",
+        "core-fixture test appends a Stage 6 batch round",
     ),
     checked_standard(
         "stage6.claims.bytecode_read_raf.bytecode_ra",
@@ -862,6 +850,15 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets the register increment reduction output claim",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage6.claims.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
+        "claims.stage6.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "field-inline fixtures will offset the field-register increment reduction output claim",
+    ),
     checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
         "claims.stage6.advice_cycle_phase.trusted.opening_claim",
@@ -877,30 +874,6 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice cycle-phase output claim",
-    ),
-    checked_standard(
-        "stage6.claims.address_phase.bytecode_val_stages",
-        "claims.stage6.address_phase.bytecode_val_stages",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets each staged bytecode Val-stage claim",
-    ),
-    checked_standard(
-        "stage6.claims.bytecode_claim_reduction",
-        "claims.stage6.bytecode_claim_reduction.Intermediate",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the bytecode reduction cycle-phase output claim",
-    ),
-    checked_standard(
-        "stage6.claims.program_image_claim_reduction",
-        "claims.stage6.program_image_claim_reduction.opening_claim",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the program-image reduction cycle-phase output claim",
     ),
 ];
 
@@ -968,22 +941,6 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "advice fixture test offsets the untrusted advice address-phase output claim",
-    ),
-    checked_standard(
-        "stage7.claims.bytecode_address_phase.chunks",
-        "claims.stage7.bytecode_address_phase.chunks",
-        VerifierPhase::Stage7,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets each final bytecode chunk claim",
-    ),
-    checked_standard(
-        "stage7.claims.program_image_address_phase",
-        "claims.stage7.program_image_address_phase.opening_claim",
-        VerifierPhase::Stage7,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the final program-image claim",
     ),
 ];
 
@@ -1101,8 +1058,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.stages.stage3_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage4_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage5_sumcheck_proof.round_polynomials[*]",
-        "proof.stages.stage6a_sumcheck_proof.round_polynomials[*]",
-        "proof.stages.stage6b_sumcheck_proof.round_polynomials[*]",
+        "proof.stages.stage6_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage7_sumcheck_proof.round_polynomials[*]",
     ]
 }
@@ -1198,6 +1154,22 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.flags.is_first_in_sequence",
             "claims.stage1.outer.flags.is_last_in_sequence",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage1.field_inline.*" => vec![
+            "claims.stage1.field_inline.field_rs1_value",
+            "claims.stage1.field_inline.field_rs2_value",
+            "claims.stage1.field_inline.field_rd_value",
+            "claims.stage1.field_inline.field_product",
+            "claims.stage1.field_inline.field_inv_product",
+            "claims.stage1.field_inline.flags.add",
+            "claims.stage1.field_inline.flags.sub",
+            "claims.stage1.field_inline.flags.mul",
+            "claims.stage1.field_inline.flags.inv",
+            "claims.stage1.field_inline.flags.assert_eq",
+            "claims.stage1.field_inline.flags.load_from_x",
+            "claims.stage1.field_inline.flags.store_to_x",
+            "claims.stage1.field_inline.flags.load_imm",
+        ],
         "claims.stage2.batch_outputs.ram_read_write.*" => vec![
             "claims.stage2.batch_outputs.ram_read_write.val",
             "claims.stage2.batch_outputs.ram_read_write.ra",
@@ -1210,6 +1182,12 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.product_remainder.lookup_output",
             "claims.stage2.batch_outputs.product_remainder.branch_flag",
             "claims.stage2.batch_outputs.product_remainder.next_is_noop",
+        ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage2.batch_outputs.field_inline.product.*" => vec![
+            "claims.stage2.batch_outputs.field_inline.product.field_rs1_value",
+            "claims.stage2.batch_outputs.field_inline.product.field_rs2_value",
+            "claims.stage2.batch_outputs.field_inline.product.field_rd_value",
         ],
         "claims.stage2.batch_outputs.instruction_claim_reduction.*" => vec![
             "claims.stage2.batch_outputs.instruction_claim_reduction.lookup_output",
@@ -1247,6 +1225,14 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage4.registers_read_write.rd_wa",
             "claims.stage4.registers_read_write.rd_inc",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage4.field_inline.field_registers_read_write.*" => vec![
+            "claims.stage4.field_inline.field_registers_read_write.field_registers_val",
+            "claims.stage4.field_inline.field_registers_read_write.field_rs1_ra",
+            "claims.stage4.field_inline.field_registers_read_write.field_rs2_ra",
+            "claims.stage4.field_inline.field_registers_read_write.field_rd_wa",
+            "claims.stage4.field_inline.field_registers_read_write.field_rd_inc",
+        ],
         "claims.stage4.ram_val_check.*" => vec![
             "claims.stage4.ram_val_check.ram_ra",
             "claims.stage4.ram_val_check.ram_inc",
@@ -1254,6 +1240,11 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
         "claims.stage5.registers_val_evaluation.*" => vec![
             "claims.stage5.registers_val_evaluation.rd_inc",
             "claims.stage5.registers_val_evaluation.rd_wa",
+        ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage5.field_inline.field_registers_val_evaluation.*" => vec![
+            "claims.stage5.field_inline.field_registers_val_evaluation.field_rd_inc",
+            "claims.stage5.field_inline.field_registers_val_evaluation.field_rd_wa",
         ],
         path => vec![path],
     }
@@ -1317,6 +1308,8 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     is_last_in_sequence: zero,
                 },
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage1::inputs::FieldInlineStage1Claims::zero(),
         },
         stage2: stage2::inputs::Stage2Claims {
             product_uniskip_output_claim: zero,
@@ -1335,6 +1328,14 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+                    product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                        field_rs1_value: zero,
+                        field_rs2_value: zero,
+                        field_rd_value: zero,
+                    },
                 },
                 instruction_claim_reduction:
                     stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
@@ -1377,13 +1378,23 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 untrusted: Some(zero),
                 trusted: Some(zero),
             },
-            program_image_contribution: None,
             registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
                 registers_val: zero,
                 rs1_ra: zero,
                 rs2_ra: zero,
                 rd_wa: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage4::inputs::FieldInlineStage4Claims {
+                field_registers_read_write:
+                    stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                        field_registers_val: zero,
+                        field_rs1_ra: zero,
+                        field_rs2_ra: zero,
+                        field_rd_wa: zero,
+                        field_rd_inc: zero,
+                    },
             },
             ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                 ram_ra: zero,
@@ -1403,13 +1414,16 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rd_inc: zero,
                 rd_wa: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage5::inputs::FieldInlineStage5Claims {
+                field_registers_val_evaluation:
+                    stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                        field_rd_inc: zero,
+                        field_rd_wa: zero,
+                    },
+            },
         },
         stage6: stage6::inputs::Stage6Claims {
-            address_phase: stage6::inputs::Stage6AddressPhaseClaims {
-                bytecode_read_raf: zero,
-                booleanity: zero,
-                bytecode_val_stages: Some([zero; 5]),
-            },
             bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
                 bytecode_ra: vec![zero],
             },
@@ -1432,6 +1446,13 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage6::inputs::FieldInlineStage6Claims {
+                field_registers_inc_claim_reduction:
+                    stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                        field_rd_inc: zero,
+                    },
+            },
             advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                 trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
                     opening_claim: zero,
@@ -1440,14 +1461,6 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     opening_claim: zero,
                 }),
             },
-            bytecode_claim_reduction: Some(
-                stage6::inputs::BytecodeCyclePhaseOutputClaims::Intermediate(zero),
-            ),
-            program_image_claim_reduction: Some(
-                stage6::inputs::ProgramImageCyclePhaseOutputClaim {
-                    opening_claim: zero,
-                },
-            ),
         },
         stage7: stage7::inputs::Stage7Claims {
             hamming_weight_claim_reduction:
@@ -1464,14 +1477,6 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     opening_claim: zero,
                 }),
             },
-            bytecode_address_phase: Some(stage7::inputs::BytecodeAddressPhaseOutputClaims {
-                chunks: vec![zero],
-            }),
-            program_image_address_phase: Some(
-                stage7::inputs::ProgramImageAddressPhaseOutputClaim {
-                    opening_claim: zero,
-                },
-            ),
         },
     }
 }

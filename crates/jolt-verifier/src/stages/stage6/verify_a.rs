@@ -69,17 +69,12 @@ where
         stage: JoltRelationId::BytecodeReadRaf,
         reason: error.to_string(),
     })?;
-    let committed_program_claims = if checked.precommitted.bytecode.is_some() {
-        jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
-    } else {
-        0
-    };
     let address_phase_output_claims =
         committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
             checked,
             proof: &proof.stages.stage6a_sumcheck_proof,
             proof_label: "stage6a_sumcheck_proof",
-            output_claim_count: 2 + committed_program_claims,
+            output_claim_count: 2,
             stage: JoltRelationId::BytecodeReadRaf,
         })?;
 
@@ -222,10 +217,5 @@ where
     T: Transcript<Challenge = F>,
 {
     transcript.append_labeled(b"opening_claim", &claims.address_phase.bytecode_read_raf);
-    if let Some(stage_claims) = &claims.address_phase.bytecode_val_stages {
-        for opening_claim in stage_claims {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
-    }
     transcript.append_labeled(b"opening_claim", &claims.address_phase.booleanity);
 }

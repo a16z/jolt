@@ -27,10 +27,10 @@ use jolt_witness::{
         DoryAssistOperationFamily, DoryAssistWitness,
     },
     protocols::jolt_vm::JoltVmStage6Row,
-    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind, OracleRef, PolynomialChunk,
-    PolynomialChunkKind, PolynomialEncoding, PolynomialStream, PolynomialView,
-    RaFamilyCycleIndexSource, RetentionHint, ViewRequirement, WitnessDimensions, WitnessError,
-    WitnessNamespace, WitnessProvider,
+    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind, OracleRef, OracleViewRequest,
+    PolynomialChunk, PolynomialChunkKind, PolynomialEncoding, PolynomialStream, PolynomialView,
+    RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace,
+    WitnessProvider,
 };
 
 use super::read_write_matrix::{AddressMajorBindableEntry as _, AddressMajorMessageEntry as _};
@@ -909,8 +909,6 @@ struct RaPushforwardTestWitness {
     columns: Vec<Vec<Option<usize>>>,
 }
 
-impl RaFamilyCycleIndexSource<Fr, TestNamespace> for RaPushforwardTestWitness {}
-
 impl WitnessProvider<Fr, TestNamespace> for RaPushforwardTestWitness {
     fn describe_oracle(
         &self,
@@ -932,7 +930,7 @@ impl WitnessProvider<Fr, TestNamespace> for RaPushforwardTestWitness {
 
     fn oracle_view(
         &self,
-        _requirement: ViewRequirement<TestNamespace>,
+        _request: OracleViewRequest<TestNamespace>,
     ) -> Result<PolynomialView<'_, Fr, TestNamespace>, WitnessError> {
         Err(WitnessError::UnsupportedView {
             view: "ra pushforward test oracle view",
@@ -2115,7 +2113,7 @@ impl WitnessProvider<Fr, TestNamespace> for TestFieldWitness {
 
     fn oracle_view(
         &self,
-        _requirement: ViewRequirement<TestNamespace>,
+        _request: OracleViewRequest<TestNamespace>,
     ) -> Result<PolynomialView<'_, Fr, TestNamespace>, WitnessError> {
         Err(WitnessError::UnsupportedView {
             view: "cpu test field oracle views",
@@ -2186,9 +2184,9 @@ impl WitnessProvider<Fr, TestNamespace> for TestRlcViewWitness {
 
     fn oracle_view(
         &self,
-        requirement: ViewRequirement<TestNamespace>,
+        request: OracleViewRequest<TestNamespace>,
     ) -> Result<PolynomialView<'_, Fr, TestNamespace>, WitnessError> {
-        let OracleKind::Committed(id) = requirement.oracle.kind else {
+        let OracleKind::Committed(id) = request.oracle().kind else {
             return Err(WitnessError::UnknownOracle {
                 namespace: TestNamespace::ID.name,
             });
@@ -2199,7 +2197,7 @@ impl WitnessProvider<Fr, TestNamespace> for TestRlcViewWitness {
             .ok_or(WitnessError::UnknownOracle {
                 namespace: TestNamespace::ID.name,
             })?;
-        let descriptor = self.describe_oracle(requirement.oracle)?;
+        let descriptor = self.describe_oracle(request.oracle())?;
         Ok(PolynomialView::borrowed(descriptor, values))
     }
 }
@@ -2230,9 +2228,9 @@ impl WitnessProvider<Fr, TestNamespace> for TestDenseViewWitness {
 
     fn oracle_view(
         &self,
-        requirement: ViewRequirement<TestNamespace>,
+        request: OracleViewRequest<TestNamespace>,
     ) -> Result<PolynomialView<'_, Fr, TestNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(requirement.oracle)?;
+        let descriptor = self.describe_oracle(request.oracle())?;
         Ok(PolynomialView::borrowed(descriptor, &self.values))
     }
 }
@@ -2325,7 +2323,7 @@ fn cpu_sumcheck_request_builders_preserve_kernel_metadata() {
 fn cpu_sumcheck_backend_resolves_witness_views_by_instance_slot() -> Result<(), String> {
     let witness = TestFieldWitness {
         encoding: PolynomialEncoding::Dense,
-        dimensions: WitnessDimensions::new(3),
+        dimensions: WitnessDimensions::new(8, 3),
         chunks: Vec::new(),
     };
     let requirement = requirement(
@@ -2349,7 +2347,7 @@ fn cpu_sumcheck_backend_resolves_witness_views_by_instance_slot() -> Result<(), 
     assert_eq!(resolved.requirement, requirement);
     assert_eq!(resolved.descriptor.reference, requirement.oracle);
     assert_eq!(resolved.descriptor.encoding, PolynomialEncoding::Dense);
-    assert_eq!(resolved.descriptor.dimensions, WitnessDimensions::new(3));
+    assert_eq!(resolved.descriptor.dimensions, WitnessDimensions::new(8, 3));
     Ok(())
 }
 
@@ -2357,7 +2355,7 @@ fn cpu_sumcheck_backend_resolves_witness_views_by_instance_slot() -> Result<(), 
 fn cpu_sumcheck_backend_rejects_mismatched_view_encoding() {
     let witness = TestFieldWitness {
         encoding: PolynomialEncoding::Compact,
-        dimensions: WitnessDimensions::new(3),
+        dimensions: WitnessDimensions::new(8, 3),
         chunks: Vec::new(),
     };
     let request = sumcheck_request(
@@ -2395,7 +2393,7 @@ fn cpu_sumcheck_backend_evaluates_materialized_dense_views() -> Result<(), Strin
     let point = vec![Fr::from_u64(11), Fr::from_u64(13)];
     let witness = TestDenseViewWitness {
         encoding: PolynomialEncoding::Dense,
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(values.len(), 2),
         values: values.clone(),
     };
     let requirement = requirement(
@@ -2440,7 +2438,7 @@ fn cpu_sumcheck_backend_evaluates_repeated_materialized_point_group() -> Result<
     let point = vec![Fr::from_u64(23), Fr::from_u64(29), Fr::from_u64(31)];
     let witness = TestDenseViewWitness {
         encoding: PolynomialEncoding::Dense,
-        dimensions: WitnessDimensions::new(3),
+        dimensions: WitnessDimensions::new(values.len(), 3),
         values: values.clone(),
     };
     let requirement = requirement(
@@ -2482,7 +2480,7 @@ fn cpu_sumcheck_backend_materializes_dense_views_by_value_slot() -> Result<(), S
     ];
     let witness = TestDenseViewWitness {
         encoding: PolynomialEncoding::Dense,
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(values.len(), 2),
         values: values.clone(),
     };
     let requirement = requirement(
@@ -2529,7 +2527,7 @@ fn cpu_opening_backend_materializes_rlc_from_dense_views() -> Result<(), String>
         ],
     ];
     let witness = TestRlcViewWitness {
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(4, 2),
         values: values.clone(),
     };
     let view0 = ViewRequirement::new(
@@ -3662,7 +3660,7 @@ fn cpu_sumcheck_backend_evaluates_raw_spartan_product_uniskip_extended_rows() ->
 fn cpu_sumcheck_backend_rejects_wrong_evaluation_point_arity() {
     let witness = TestDenseViewWitness {
         encoding: PolynomialEncoding::Dense,
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(4, 2),
         values: vec![Fr::from_u64(0); 4],
     };
     let request = SumcheckEvaluationRequest::new(
@@ -3750,7 +3748,7 @@ impl WitnessProvider<Fr, TestNamespace> for TestMultiOracleWitness {
 
     fn oracle_view(
         &self,
-        _requirement: ViewRequirement<TestNamespace>,
+        _request: OracleViewRequest<TestNamespace>,
     ) -> Result<PolynomialView<'_, Fr, TestNamespace>, WitnessError> {
         Err(WitnessError::UnsupportedView {
             view: "cpu test multi oracle views",
@@ -3781,7 +3779,7 @@ fn cpu_commitment_backend_commits_compact_stream_by_slot() -> Result<(), String>
     ];
     let witness = TestFieldWitness {
         encoding: PolynomialEncoding::Compact,
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(4, 2),
         chunks: vec![
             PolynomialChunk::I128(vec![1]),
             PolynomialChunk::I128(vec![-2, 3]),
@@ -3836,7 +3834,7 @@ fn cpu_commitment_backend_commits_compact_stream_by_slot() -> Result<(), String>
 fn cpu_commitment_backend_embeds_compact_trace_stream() -> Result<(), String> {
     let witness = TestFieldWitness {
         encoding: PolynomialEncoding::Compact,
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(4, 2),
         chunks: vec![
             PolynomialChunk::I128(vec![1, -2]),
             PolynomialChunk::I128(vec![3, 4]),
@@ -3942,7 +3940,7 @@ fn cpu_commitment_backend_commits_one_hot_stream_without_dense_witness() -> Resu
     let indices = [Some(1), None, Some(0), Some(3)];
     let witness = TestFieldWitness {
         encoding: PolynomialEncoding::OneHot,
-        dimensions: WitnessDimensions::new(4),
+        dimensions: WitnessDimensions::new(16, 4),
         chunks: vec![
             PolynomialChunk::OneHot(indices[..2].to_vec()),
             PolynomialChunk::OneHot(indices[2..].to_vec()),
@@ -4013,13 +4011,13 @@ fn cpu_commitment_backend_uses_zk_commitment_mode_for_dense_and_one_hot() -> Res
             TestOracle {
                 id: 1,
                 encoding: PolynomialEncoding::Dense,
-                dimensions: WitnessDimensions::new(2),
+                dimensions: WitnessDimensions::new(4, 2),
                 chunks: vec![PolynomialChunk::Dense(dense_values)],
             },
             TestOracle {
                 id: 2,
                 encoding: PolynomialEncoding::OneHot,
-                dimensions: WitnessDimensions::new(4),
+                dimensions: WitnessDimensions::new(16, 4),
                 chunks: vec![PolynomialChunk::OneHot(indices)],
             },
         ],
@@ -4072,7 +4070,7 @@ fn cpu_commitment_backend_commits_zero_dense_chunks() -> Result<(), String> {
         oracles: vec![TestOracle {
             id: 1,
             encoding: PolynomialEncoding::Dense,
-            dimensions: WitnessDimensions::new(4),
+            dimensions: WitnessDimensions::new(16, 4),
             chunks: vec![PolynomialChunk::Zeros(16)],
         }],
     };
@@ -4125,7 +4123,7 @@ fn cpu_commitment_backend_uses_core_one_hot_order_when_dense_trace_sets_layout(
             TestOracle {
                 id: 1,
                 encoding: PolynomialEncoding::Dense,
-                dimensions: WitnessDimensions::new(4),
+                dimensions: WitnessDimensions::new(16, 4),
                 chunks: vec![
                     PolynomialChunk::Dense(vec![Fr::from_u64(0); 8]),
                     PolynomialChunk::Dense(vec![Fr::from_u64(0); 8]),
@@ -4134,7 +4132,7 @@ fn cpu_commitment_backend_uses_core_one_hot_order_when_dense_trace_sets_layout(
             TestOracle {
                 id: 2,
                 encoding: PolynomialEncoding::OneHot,
-                dimensions: WitnessDimensions::new(6),
+                dimensions: WitnessDimensions::new(64, 6),
                 chunks: indices
                     .chunks(8)
                     .map(|chunk| PolynomialChunk::OneHot(chunk.to_vec()))
@@ -4195,7 +4193,7 @@ fn cpu_commitment_backend_uses_core_one_hot_order_when_dense_trace_sets_layout(
 fn cpu_commitment_backend_rejects_requirement_encoding_mismatch() {
     let witness = TestFieldWitness {
         encoding: PolynomialEncoding::Dense,
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(4, 2),
         chunks: Vec::new(),
     };
     let request = CommitmentRequest::new(vec![CommitmentRequestItem::new(
@@ -4228,7 +4226,7 @@ fn cpu_commitment_backend_rejects_requirement_encoding_mismatch() {
 fn cpu_commitment_backend_requires_streaming_materialization() {
     let witness = TestFieldWitness {
         encoding: PolynomialEncoding::Compact,
-        dimensions: WitnessDimensions::new(2),
+        dimensions: WitnessDimensions::new(4, 2),
         chunks: Vec::new(),
     };
     let request = CommitmentRequest::new(vec![CommitmentRequestItem::new(
