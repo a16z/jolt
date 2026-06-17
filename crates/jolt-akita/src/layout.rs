@@ -334,6 +334,30 @@ pub enum PackedFamilyId {
     BytecodeChunk {
         index: usize,
     },
+    BytecodeRegisterSelector {
+        chunk: usize,
+        selector: usize,
+    },
+    BytecodeCircuitFlag {
+        chunk: usize,
+        flag: usize,
+    },
+    BytecodeInstructionFlag {
+        chunk: usize,
+        flag: usize,
+    },
+    BytecodeLookupSelector {
+        chunk: usize,
+    },
+    BytecodeRafFlag {
+        chunk: usize,
+    },
+    BytecodeUnexpandedPcBytes {
+        chunk: usize,
+    },
+    BytecodeImmBytes {
+        chunk: usize,
+    },
     ProgramImageInit,
     Custom {
         namespace: u32,
@@ -345,30 +369,45 @@ const JOLT_PACKED_FAMILY_NAMESPACE: u64 = 0x6a6f_6c74_7063_7301;
 
 impl PackedFamilyId {
     pub fn physical_ref(&self) -> PackedFamilyRef {
-        let (id, index) = match self {
-            Self::InstructionRa { index } => (0, *index),
-            Self::BytecodeRa { index } => (1, *index),
-            Self::RamRa { index } => (2, *index),
-            Self::IncByte { index } => (3, *index),
+        let (id, index): (u64, u64) = match self {
+            Self::InstructionRa { index } => (0, *index as u64),
+            Self::BytecodeRa { index } => (1, *index as u64),
+            Self::RamRa { index } => (2, *index as u64),
+            Self::IncByte { index } => (3, *index as u64),
             Self::IncSign => (4, 0),
-            Self::RamIncByte { index } => (5, *index),
+            Self::RamIncByte { index } => (5, *index as u64),
             Self::RamIncSign => (6, 0),
-            Self::RdIncByte { index } => (7, *index),
+            Self::RdIncByte { index } => (7, *index as u64),
             Self::RdIncSign => (8, 0),
-            Self::FieldRdIncByte { index } => (9, *index),
+            Self::FieldRdIncByte { index } => (9, *index as u64),
             Self::FieldRdIncSign => (10, 0),
             Self::AdviceBytes { kind, index } => match kind {
-                PackedAdviceKind::Trusted => (11, *index),
-                PackedAdviceKind::Untrusted => (12, *index),
+                PackedAdviceKind::Trusted => (11, *index as u64),
+                PackedAdviceKind::Untrusted => (12, *index as u64),
             },
-            Self::BytecodeChunk { index } => (13, *index),
+            Self::BytecodeChunk { index } => (13, *index as u64),
             Self::ProgramImageInit => (14, 0),
+            Self::BytecodeRegisterSelector { chunk, selector } => {
+                (15, combine_two_indices(*chunk, *selector))
+            }
+            Self::BytecodeCircuitFlag { chunk, flag } => (16, combine_two_indices(*chunk, *flag)),
+            Self::BytecodeInstructionFlag { chunk, flag } => {
+                (17, combine_two_indices(*chunk, *flag))
+            }
+            Self::BytecodeLookupSelector { chunk } => (18, *chunk as u64),
+            Self::BytecodeRafFlag { chunk } => (19, *chunk as u64),
+            Self::BytecodeUnexpandedPcBytes { chunk } => (20, *chunk as u64),
+            Self::BytecodeImmBytes { chunk } => (21, *chunk as u64),
             Self::Custom { namespace, index } => {
                 return PackedFamilyRef::new(u64::from(*namespace), 0, *index as u64);
             }
         };
-        PackedFamilyRef::new(JOLT_PACKED_FAMILY_NAMESPACE, id, index as u64)
+        PackedFamilyRef::new(JOLT_PACKED_FAMILY_NAMESPACE, id, index)
     }
+}
+
+fn combine_two_indices(left: usize, right: usize) -> u64 {
+    ((left as u64) << 32) | right as u64
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -746,6 +785,37 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
             write_usize(bytes, *index);
         }
         PackedFamilyId::ProgramImageInit => bytes.push(13),
+        PackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+            bytes.push(15);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *selector);
+        }
+        PackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+            bytes.push(16);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *flag);
+        }
+        PackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+            bytes.push(17);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *flag);
+        }
+        PackedFamilyId::BytecodeLookupSelector { chunk } => {
+            bytes.push(18);
+            write_usize(bytes, *chunk);
+        }
+        PackedFamilyId::BytecodeRafFlag { chunk } => {
+            bytes.push(19);
+            write_usize(bytes, *chunk);
+        }
+        PackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+            bytes.push(20);
+            write_usize(bytes, *chunk);
+        }
+        PackedFamilyId::BytecodeImmBytes { chunk } => {
+            bytes.push(21);
+            write_usize(bytes, *chunk);
+        }
         PackedFamilyId::Custom { namespace, index } => {
             bytes.push(14);
             bytes.extend_from_slice(&namespace.to_le_bytes());
@@ -926,6 +996,74 @@ mod tests {
             let address = layout.unrank(rank).expect("non-dummy rank should unrank");
             assert_eq!(layout.rank(&address).expect("address should rank"), rank);
         }
+    }
+
+    #[test]
+    fn committed_bytecode_lane_families_are_distinct() {
+        let bytecode = PackedFactDomain::BytecodeRows { log_bytecode: 1 };
+        let families = [
+            PackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 0,
+            },
+            PackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 1,
+            },
+            PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 },
+            PackedFamilyId::BytecodeInstructionFlag { chunk: 0, flag: 0 },
+            PackedFamilyId::BytecodeLookupSelector { chunk: 0 },
+            PackedFamilyId::BytecodeRafFlag { chunk: 0 },
+            PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 },
+            PackedFamilyId::BytecodeImmBytes { chunk: 0 },
+        ];
+        let layout = PackedWitnessLayout::new([
+            PackedFamilySpec::direct(
+                families[0].clone(),
+                bytecode,
+                1,
+                PackedAlphabet::Fixed { size: 32 },
+            ),
+            PackedFamilySpec::direct(
+                families[1].clone(),
+                bytecode,
+                1,
+                PackedAlphabet::Fixed { size: 32 },
+            ),
+            PackedFamilySpec::direct(families[2].clone(), bytecode, 1, PackedAlphabet::Bit),
+            PackedFamilySpec::direct(families[3].clone(), bytecode, 1, PackedAlphabet::Bit),
+            PackedFamilySpec::direct(
+                families[4].clone(),
+                bytecode,
+                1,
+                PackedAlphabet::Fixed { size: 4 },
+            ),
+            PackedFamilySpec::direct(families[5].clone(), bytecode, 1, PackedAlphabet::Bit),
+            PackedFamilySpec::direct(families[6].clone(), bytecode, 8, PackedAlphabet::Byte),
+            PackedFamilySpec::direct(families[7].clone(), bytecode, 16, PackedAlphabet::Byte),
+        ])
+        .expect("layout should build");
+
+        for family in &families {
+            assert!(layout.family(family).is_some());
+        }
+        for left in 0..families.len() {
+            for right in left + 1..families.len() {
+                assert_ne!(
+                    families[left].physical_ref(),
+                    families[right].physical_ref()
+                );
+            }
+        }
+
+        let address = PackedCellAddress {
+            family: PackedFamilyId::BytecodeImmBytes { chunk: 0 },
+            row: 1,
+            limb: 15,
+            symbol: 7,
+        };
+        let rank = layout.rank(&address).expect("bytecode byte address ranks");
+        assert_eq!(layout.unrank(rank), Some(address));
     }
 
     #[test]

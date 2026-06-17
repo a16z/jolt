@@ -18,6 +18,13 @@ pub enum LatticePackedFamilyId {
     FieldRdIncSign,
     AdviceBytes { kind: JoltAdviceKind, index: usize },
     BytecodeChunk { index: usize },
+    BytecodeRegisterSelector { chunk: usize, selector: usize },
+    BytecodeCircuitFlag { chunk: usize, flag: usize },
+    BytecodeInstructionFlag { chunk: usize, flag: usize },
+    BytecodeLookupSelector { chunk: usize },
+    BytecodeRafFlag { chunk: usize },
+    BytecodeUnexpandedPcBytes { chunk: usize },
+    BytecodeImmBytes { chunk: usize },
     ProgramImageInit,
     Custom { namespace: u32, index: usize },
 }
@@ -260,6 +267,28 @@ mod tests {
         );
         assert_eq!(terms[7].limb, 3);
         assert_eq!(terms[7].symbol, 7);
+    }
+
+    #[test]
+    fn committed_bytecode_lattice_family_ids_name_lane_classes() {
+        assert_ne!(
+            LatticePackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 0,
+            },
+            LatticePackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 1,
+            }
+        );
+        assert_ne!(
+            LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 },
+            LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 }
+        );
+        assert_ne!(
+            LatticePackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 },
+            LatticePackedFamilyId::BytecodeInstructionFlag { chunk: 0, flag: 0 }
+        );
     }
 
     #[test]

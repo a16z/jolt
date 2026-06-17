@@ -460,6 +460,37 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
             write_usize(bytes, *index);
         }
         PackedFamilyId::ProgramImageInit => bytes.push(13),
+        PackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+            bytes.push(15);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *selector);
+        }
+        PackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+            bytes.push(16);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *flag);
+        }
+        PackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+            bytes.push(17);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *flag);
+        }
+        PackedFamilyId::BytecodeLookupSelector { chunk } => {
+            bytes.push(18);
+            write_usize(bytes, *chunk);
+        }
+        PackedFamilyId::BytecodeRafFlag { chunk } => {
+            bytes.push(19);
+            write_usize(bytes, *chunk);
+        }
+        PackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+            bytes.push(20);
+            write_usize(bytes, *chunk);
+        }
+        PackedFamilyId::BytecodeImmBytes { chunk } => {
+            bytes.push(21);
+            write_usize(bytes, *chunk);
+        }
         PackedFamilyId::Custom { namespace, index } => {
             bytes.push(14);
             bytes.extend_from_slice(&namespace.to_le_bytes());

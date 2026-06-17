@@ -241,6 +241,36 @@ pub fn akita_packed_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId 
         LatticePackedFamilyId::BytecodeChunk { index } => {
             PackedFamilyId::BytecodeChunk { index: *index }
         }
+        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+            PackedFamilyId::BytecodeRegisterSelector {
+                chunk: *chunk,
+                selector: *selector,
+            }
+        }
+        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+            PackedFamilyId::BytecodeCircuitFlag {
+                chunk: *chunk,
+                flag: *flag,
+            }
+        }
+        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+            PackedFamilyId::BytecodeInstructionFlag {
+                chunk: *chunk,
+                flag: *flag,
+            }
+        }
+        LatticePackedFamilyId::BytecodeLookupSelector { chunk } => {
+            PackedFamilyId::BytecodeLookupSelector { chunk: *chunk }
+        }
+        LatticePackedFamilyId::BytecodeRafFlag { chunk } => {
+            PackedFamilyId::BytecodeRafFlag { chunk: *chunk }
+        }
+        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+            PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: *chunk }
+        }
+        LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
+            PackedFamilyId::BytecodeImmBytes { chunk: *chunk }
+        }
         LatticePackedFamilyId::ProgramImageInit => PackedFamilyId::ProgramImageInit,
         LatticePackedFamilyId::Custom { namespace, index } => PackedFamilyId::Custom {
             namespace: *namespace,
@@ -601,6 +631,20 @@ mod tests {
                 namespace: 17,
                 index: 5,
             }
+        );
+        assert_eq!(
+            akita_packed_family_id(&LatticePackedFamilyId::BytecodeRegisterSelector {
+                chunk: 2,
+                selector: 1,
+            }),
+            PackedFamilyId::BytecodeRegisterSelector {
+                chunk: 2,
+                selector: 1,
+            }
+        );
+        assert_eq!(
+            akita_packed_family_id(&LatticePackedFamilyId::BytecodeImmBytes { chunk: 2 }),
+            PackedFamilyId::BytecodeImmBytes { chunk: 2 }
         );
     }
 
