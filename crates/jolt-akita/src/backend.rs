@@ -36,6 +36,7 @@ impl AkitaScheme {
         layout_digest: [u8; 32],
         polynomials: &[Polynomial<AkitaField>],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        validate_setup_layout_digest(setup.default_layout_digest, layout_digest)?;
         let num_vars = validate_commit_polynomials(setup, polynomials)?;
         let dense = dense_polynomials(polynomials)?;
         let dense_refs = dense.iter().collect::<Vec<_>>();
@@ -106,6 +107,12 @@ fn validate_commit_polynomials(
             poly_size: num_vars,
             setup_max: setup.max_num_vars,
         });
+    }
+    if num_vars != setup.max_num_vars {
+        return Err(invalid_batch(format!(
+            "Akita commitment dimension {num_vars} does not match exact setup dimension {}",
+            setup.max_num_vars
+        )));
     }
     if polynomials.len() > setup.max_num_polys_per_commitment_group {
         return Err(invalid_batch(format!(
@@ -555,6 +562,7 @@ fn validate_prover_inputs(
     validate_setup_shape(
         setup.max_num_vars,
         setup.max_num_polys_per_commitment_group,
+        setup.default_layout_digest,
         commitment,
     )?;
     if polynomials.len() != commitment.poly_count {
@@ -594,6 +602,7 @@ fn validate_verifier_setup(
     validate_setup_shape(
         setup.max_num_vars,
         setup.max_num_polys_per_commitment_group,
+        setup.default_layout_digest,
         commitment,
     )
 }
@@ -601,6 +610,7 @@ fn validate_verifier_setup(
 fn validate_setup_shape(
     max_num_vars: usize,
     max_num_polys_per_commitment_group: usize,
+    default_layout_digest: [u8; 32],
     commitment: &AkitaCommitment,
 ) -> Result<(), OpeningsError> {
     if commitment.num_vars > max_num_vars {
@@ -609,11 +619,27 @@ fn validate_setup_shape(
             setup_max: max_num_vars,
         });
     }
+    if commitment.num_vars != max_num_vars {
+        return Err(invalid_batch(format!(
+            "Akita commitment dimension {} does not match exact setup dimension {max_num_vars}",
+            commitment.num_vars
+        )));
+    }
+    validate_setup_layout_digest(default_layout_digest, commitment.layout_digest)?;
     if commitment.poly_count > max_num_polys_per_commitment_group {
         return Err(invalid_batch(format!(
             "Akita commitment covers {} polynomials but setup supports {}",
             commitment.poly_count, max_num_polys_per_commitment_group
         )));
+    }
+    Ok(())
+}
+
+fn validate_setup_layout_digest(expected: [u8; 32], actual: [u8; 32]) -> Result<(), OpeningsError> {
+    if actual != expected {
+        return Err(invalid_batch(
+            "Akita commitment layout digest does not match setup key layout digest",
+        ));
     }
     Ok(())
 }

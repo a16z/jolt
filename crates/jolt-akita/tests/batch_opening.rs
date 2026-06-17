@@ -435,6 +435,79 @@ fn akita_commit_group_rejects_invalid_shapes() {
 }
 
 #[test]
+fn akita_commit_group_rejects_setup_layout_and_dimension_mismatch() {
+    let (prover_setup, _) = setup();
+    let wrong_layout = AkitaScheme::commit_group(&prover_setup, layout(8), &[polynomial(1)]);
+    assert!(matches!(wrong_layout, Err(OpeningsError::InvalidBatch(_))));
+
+    let (wrong_dimension_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7)));
+    let wrong_dimension =
+        AkitaScheme::commit_group(&wrong_dimension_setup, layout(7), &[polynomial(1)]);
+    assert!(matches!(
+        wrong_dimension,
+        Err(OpeningsError::InvalidBatch(_))
+    ));
+}
+
+#[test]
+fn akita_setup_key_is_bound_to_batch_proof() {
+    run_on_large_stack(|| {
+        let (prover_setup, verifier_setup) = setup();
+        let (_, wrong_layout_setup) = AkitaScheme::setup(AkitaSetupParams::new(4, 2, layout(8)));
+        let (_, wrong_dimension_setup) = AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7)));
+        let poly = polynomial(1);
+        let point = vec![f(2), f(3), f(5), f(7)];
+        let eval = poly.evaluate(&point);
+        let (commitment, hint) =
+            AkitaScheme::commit_group(&prover_setup, layout(7), std::slice::from_ref(&poly))
+                .expect("commit should succeed");
+        let statement = BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest: layout(7),
+            claims: vec![BatchOpeningClaim {
+                id: OpeningId::A,
+                relation: RelationId::Packed,
+                commitment,
+                claim: eval,
+                view: PhysicalView::Direct,
+                scale: f(1),
+            }],
+        };
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-setup-key");
+        let proof = <AkitaScheme as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            std::slice::from_ref(&poly),
+            vec![hint],
+        )
+        .expect("proof should be produced");
+
+        for setup in [&wrong_layout_setup, &wrong_dimension_setup] {
+            let mut verifier_transcript = Blake2bTranscript::new(b"akita-setup-key");
+            let result = <AkitaScheme as BatchOpeningScheme>::verify_batch(
+                setup,
+                &mut verifier_transcript,
+                &statement,
+                &proof,
+            );
+            assert!(result.is_err(), "wrong setup key should reject");
+        }
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-setup-key");
+        let _result = <AkitaScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("matching setup key should verify");
+    });
+}
+
+#[test]
 fn akita_batch_opening_rejects_tampered_claim() {
     run_on_large_stack(|| {
         let (prover_setup, verifier_setup) = setup();
