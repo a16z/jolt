@@ -147,7 +147,7 @@ pub fn byte_decode_terms<F: Field>(
     family: LatticePackedFamilyId,
     limb: usize,
 ) -> Vec<LatticePackedViewTerm<F>> {
-    symbol_decode_terms(family, limb, 256)
+    weighted_byte_decode_terms(family, [(limb, F::one())])
 }
 
 pub fn symbol_decode_terms<F: Field>(
@@ -155,9 +155,43 @@ pub fn symbol_decode_terms<F: Field>(
     limb: usize,
     alphabet_size: usize,
 ) -> Vec<LatticePackedViewTerm<F>> {
-    (0..alphabet_size)
-        .map(|symbol| {
-            LatticePackedViewTerm::new(F::from_u64(symbol as u64), family.clone(), limb, symbol)
+    weighted_symbol_terms(
+        family,
+        limb,
+        (0..alphabet_size).map(|symbol| F::from_u64(symbol as u64)),
+    )
+}
+
+pub fn weighted_symbol_terms<F>(
+    family: LatticePackedFamilyId,
+    limb: usize,
+    weights: impl IntoIterator<Item = F>,
+) -> Vec<LatticePackedViewTerm<F>> {
+    weights
+        .into_iter()
+        .enumerate()
+        .map(|(symbol, coefficient)| {
+            LatticePackedViewTerm::new(coefficient, family.clone(), limb, symbol)
+        })
+        .collect()
+}
+
+pub fn weighted_byte_decode_terms<F: Field>(
+    family: LatticePackedFamilyId,
+    limb_weights: impl IntoIterator<Item = (usize, F)>,
+) -> Vec<LatticePackedViewTerm<F>> {
+    limb_weights
+        .into_iter()
+        .flat_map(|(limb, limb_weight)| {
+            let family = family.clone();
+            (0..256).map(move |symbol| {
+                LatticePackedViewTerm::new(
+                    limb_weight * F::from_u64(symbol as u64),
+                    family.clone(),
+                    limb,
+                    symbol,
+                )
+            })
         })
         .collect()
 }
@@ -166,20 +200,13 @@ pub fn little_endian_byte_decode_terms<F: Field>(
     family: LatticePackedFamilyId,
     limb_count: usize,
 ) -> Vec<LatticePackedViewTerm<F>> {
-    let mut terms = Vec::with_capacity(256 * limb_count);
+    let mut limb_weights = Vec::with_capacity(limb_count);
     let mut place = F::one();
     for limb in 0..limb_count {
-        terms.extend((0..256).map(|symbol| {
-            LatticePackedViewTerm::new(
-                place * F::from_u64(symbol as u64),
-                family.clone(),
-                limb,
-                symbol,
-            )
-        }));
+        limb_weights.push((limb, place));
         place *= F::from_u64(256);
     }
-    terms
+    weighted_byte_decode_terms(family, limb_weights)
 }
 
 #[cfg(test)]
@@ -244,6 +271,43 @@ mod tests {
         assert_eq!(terms[3].family, LatticePackedFamilyId::RamRa { index: 1 });
         assert_eq!(terms[3].limb, 0);
         assert_eq!(terms[3].symbol, 3);
+    }
+
+    #[test]
+    fn weighted_symbol_terms_use_supplied_coefficients() {
+        let terms = weighted_symbol_terms(
+            LatticePackedFamilyId::InstructionRa { index: 0 },
+            2,
+            [Fr::from_u64(11), Fr::from_u64(13), Fr::from_u64(17)],
+        );
+
+        assert_eq!(terms.len(), 3);
+        assert_eq!(terms[1].coefficient, Fr::from_u64(13));
+        assert_eq!(
+            terms[1].family,
+            LatticePackedFamilyId::InstructionRa { index: 0 }
+        );
+        assert_eq!(terms[1].limb, 2);
+        assert_eq!(terms[1].symbol, 1);
+    }
+
+    #[test]
+    fn weighted_byte_decode_terms_scale_symbols_by_limb_weights() {
+        let terms = weighted_byte_decode_terms(
+            LatticePackedFamilyId::BytecodeChunk { index: 2 },
+            [(3, Fr::from_u64(5)), (8, Fr::from_u64(7))],
+        );
+
+        assert_eq!(terms.len(), 512);
+        assert_eq!(terms[9].coefficient, Fr::from_u64(45));
+        assert_eq!(terms[9].limb, 3);
+        assert_eq!(terms[9].symbol, 9);
+        assert_eq!(terms[256 + 9].coefficient, Fr::from_u64(63));
+        assert_eq!(terms[256 + 9].limb, 8);
+        assert_eq!(
+            terms[256 + 9].family,
+            LatticePackedFamilyId::BytecodeChunk { index: 2 }
+        );
     }
 
     #[test]
