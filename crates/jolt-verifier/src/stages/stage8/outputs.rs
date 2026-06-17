@@ -284,8 +284,12 @@ mod tests {
             &physical.openings[0].view,
             PhysicalView::PackedLinear {
                 layout_digest,
-                coefficients
-            } if *layout_digest == layout.digest && *coefficients == vec![Fr::from_u64(1)]
+                terms
+            } if *layout_digest == layout.digest
+                && terms.len() == 1
+                && terms[0].coefficient == Fr::from_u64(1)
+                && terms[0].family == PackedFamilyId::IncSign.physical_ref()
+                && terms[0].symbol == 1
         ));
     }
 }

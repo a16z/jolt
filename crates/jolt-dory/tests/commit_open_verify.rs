@@ -10,7 +10,8 @@ use jolt_dory::DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt, Invertible, RandomSampling};
 use jolt_openings::{
     AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement,
-    CommitmentScheme, PackedCombine, PhysicalView, StreamingCommitment, ZkOpeningScheme,
+    CommitmentScheme, PackedCombine, PackedFamilyRef, PackedLinearTerm, PhysicalView,
+    StreamingCommitment, ZkOpeningScheme,
 };
 use jolt_poly::{OneHotPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
@@ -50,6 +51,19 @@ fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: 
         &mut vt2,
     )
     .expect("round-trip verification (without hint) must succeed");
+}
+
+fn packed_term(coefficient: Fr) -> PackedLinearTerm<Fr> {
+    packed_term_at(coefficient, 0)
+}
+
+fn packed_term_at(coefficient: Fr, symbol: usize) -> PackedLinearTerm<Fr> {
+    PackedLinearTerm::new(
+        coefficient,
+        PackedFamilyRef::new(0x6a6f_6c74, 1, 0),
+        0,
+        symbol,
+    )
 }
 
 #[test]
@@ -153,7 +167,7 @@ fn packed_combine_dory_many_claims_one_commitment_verifies() {
                 claim: eval * first_decode.inverse().expect("decode is nonzero"),
                 view: PhysicalView::PackedLinear {
                     layout_digest: [11; 32],
-                    coefficients: vec![first_decode],
+                    terms: vec![packed_term(first_decode)],
                 },
                 scale: Fr::from_u64(1),
             },
@@ -164,7 +178,7 @@ fn packed_combine_dory_many_claims_one_commitment_verifies() {
                 claim: eval * second_decode.inverse().expect("decode is nonzero"),
                 view: PhysicalView::PackedLinear {
                     layout_digest: [11; 32],
-                    coefficients: vec![second_decode],
+                    terms: vec![packed_term(second_decode)],
                 },
                 scale: Fr::from_u64(1),
             },
@@ -232,7 +246,7 @@ fn packed_combine_dory_rejects_tampered_packed_coefficients() {
             claim: eval * decode.inverse().expect("decode is nonzero"),
             view: PhysicalView::PackedLinear {
                 layout_digest: [12; 32],
-                coefficients: vec![decode],
+                terms: vec![packed_term(decode)],
             },
             scale: Fr::from_u64(1),
         }],
@@ -251,7 +265,10 @@ fn packed_combine_dory_rejects_tampered_packed_coefficients() {
     let mut tampered = statement;
     tampered.claims[0].view = PhysicalView::PackedLinear {
         layout_digest: [12; 32],
-        coefficients: vec![Fr::from_u64(1), Fr::from_u64(1)],
+        terms: vec![
+            packed_term(Fr::from_u64(1)),
+            packed_term_at(Fr::from_u64(1), 1),
+        ],
     };
     let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-coeffs");
     let result = <PackedDory as BatchOpeningScheme>::verify_batch(

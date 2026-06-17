@@ -42,6 +42,6 @@ pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_sca
 
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme,
-    BatchOpeningStatement, CommitmentScheme, PackedCombine, PhysicalView, StreamingCommitment,
-    ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningStatement, CommitmentScheme, PackedCombine, PackedFamilyRef, PackedLinearTerm,
+    PhysicalView, StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme,
 };

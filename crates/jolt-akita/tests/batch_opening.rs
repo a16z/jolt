@@ -8,7 +8,7 @@ use jolt_akita::{
 use jolt_field::Field;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackedCombine, PhysicalView, ZkBatchOpeningScheme,
+    PackedCombine, PackedLinearTerm, PhysicalView, ZkBatchOpeningScheme,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -68,6 +68,23 @@ fn packed_address(row: usize, symbol: usize) -> PackedCellAddress {
         limb: 0,
         symbol,
     }
+}
+
+fn packed_term(coefficient: AkitaField) -> PackedLinearTerm<AkitaField> {
+    packed_term_at(coefficient, 0)
+}
+
+fn packed_term_at(coefficient: AkitaField, symbol: usize) -> PackedLinearTerm<AkitaField> {
+    PackedLinearTerm::new(
+        coefficient,
+        (PackedFamilyId::Custom {
+            namespace: 1,
+            index: 0,
+        })
+        .physical_ref(),
+        0,
+        symbol,
+    )
 }
 
 fn packed_polynomial(
@@ -159,7 +176,7 @@ fn unit_packed_statement(
                 claim: eval_a,
                 view: PhysicalView::PackedLinear {
                     layout_digest: layout(7),
-                    coefficients: vec![f(1)],
+                    terms: vec![packed_term(f(1))],
                 },
                 scale: f(2),
             },
@@ -170,7 +187,7 @@ fn unit_packed_statement(
                 claim: eval_b,
                 view: PhysicalView::PackedLinear {
                     layout_digest: layout(7),
-                    coefficients: vec![f(1)],
+                    terms: vec![packed_term(f(1))],
                 },
                 scale: f(5),
             },
@@ -518,7 +535,7 @@ fn packed_combine_akita_binds_packed_coefficients_to_native_proof() {
         let mut tampered = statement;
         tampered.claims[0].view = PhysicalView::PackedLinear {
             layout_digest: layout(7),
-            coefficients: vec![f(0), f(1)],
+            terms: vec![packed_term(f(0)), packed_term_at(f(1), 1)],
         };
         let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-coeff-tamper");
         let result = <PackedAkita as BatchOpeningScheme>::verify_batch(
@@ -556,7 +573,7 @@ fn akita_native_adapter_rejects_packed_linear_view_until_lowered() {
             claim: eval,
             view: PhysicalView::PackedLinear {
                 layout_digest: layout(7),
-                coefficients: vec![f(1)],
+                terms: vec![packed_term(f(1))],
             },
             scale: f(1),
         }],

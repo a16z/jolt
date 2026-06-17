@@ -4,7 +4,7 @@ use std::fmt::{self, Display, Formatter};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
-use jolt_openings::PhysicalView;
+use jolt_openings::{PackedLinearTerm, PhysicalView};
 
 use crate::layout::{
     PackedCellAddress, PackedFamilyId, PackedLayoutError, PackedWitnessLayout, PackedWitnessSource,
@@ -159,17 +159,33 @@ impl<F: Field> PackedViewFormula<F> {
         layout: &PackedWitnessLayout,
     ) -> Result<PhysicalView<F>, PackedViewError> {
         self.validate(layout)?;
-        let coefficients = match self {
-            Self::Direct { .. } => vec![F::one()],
+        let terms = match self {
+            Self::Direct {
+                family,
+                limb,
+                symbol,
+            } => vec![PackedLinearTerm::new(
+                F::one(),
+                family.physical_ref(),
+                *limb,
+                *symbol,
+            )],
             Self::LinearDecoded { terms, .. } | Self::ReducedMasked { terms } => terms
                 .iter()
-                .map(|term| term.coefficient)
+                .map(|term| {
+                    PackedLinearTerm::new(
+                        term.coefficient,
+                        term.family.physical_ref(),
+                        term.limb,
+                        term.symbol,
+                    )
+                })
                 .collect::<Vec<_>>(),
             Self::MaskedDecoded => return Err(PackedViewError::MaskedViewRequiresTranslation),
         };
         Ok(PhysicalView::PackedLinear {
             layout_digest: layout.digest,
-            coefficients,
+            terms,
         })
     }
 
@@ -536,7 +552,11 @@ mod tests {
             formula
                 .physical_view(&layout)
                 .expect("view should lower to the opening API"),
-            PhysicalView::PackedLinear { coefficients, .. } if coefficients == vec![AkitaField::one()]
+            PhysicalView::PackedLinear { terms, .. }
+                if terms.len() == 1
+                    && terms[0].coefficient == AkitaField::one()
+                    && terms[0].family == PackedFamilyId::IncSign.physical_ref()
+                    && terms[0].symbol == 1
         ));
     }
 
@@ -564,8 +584,12 @@ mod tests {
             formula
                 .physical_view(&layout)
                 .expect("view should lower to the opening API"),
-            PhysicalView::PackedLinear { layout_digest, coefficients }
-                if layout_digest == layout.digest && coefficients.len() == 256
+            PhysicalView::PackedLinear { layout_digest, terms }
+                if layout_digest == layout.digest
+                    && terms.len() == 256
+                    && terms[7].coefficient == f(7)
+                    && terms[7].family == (PackedFamilyId::RamRa { index: 0 }).physical_ref()
+                    && terms[7].symbol == 7
         ));
     }
 

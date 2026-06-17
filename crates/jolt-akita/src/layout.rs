@@ -5,6 +5,7 @@ use std::fmt::{self, Display, Formatter};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
+use jolt_openings::PackedFamilyRef;
 use serde::{Deserialize, Serialize};
 
 use crate::types::{AkitaLayoutDigest, AkitaSetupParams};
@@ -338,6 +339,36 @@ pub enum PackedFamilyId {
         namespace: u32,
         index: usize,
     },
+}
+
+const JOLT_PACKED_FAMILY_NAMESPACE: u64 = 0x6a6f_6c74_7063_7301;
+
+impl PackedFamilyId {
+    pub fn physical_ref(&self) -> PackedFamilyRef {
+        let (id, index) = match self {
+            Self::InstructionRa { index } => (0, *index),
+            Self::BytecodeRa { index } => (1, *index),
+            Self::RamRa { index } => (2, *index),
+            Self::IncByte { index } => (3, *index),
+            Self::IncSign => (4, 0),
+            Self::RamIncByte { index } => (5, *index),
+            Self::RamIncSign => (6, 0),
+            Self::RdIncByte { index } => (7, *index),
+            Self::RdIncSign => (8, 0),
+            Self::FieldRdIncByte { index } => (9, *index),
+            Self::FieldRdIncSign => (10, 0),
+            Self::AdviceBytes { kind, index } => match kind {
+                PackedAdviceKind::Trusted => (11, *index),
+                PackedAdviceKind::Untrusted => (12, *index),
+            },
+            Self::BytecodeChunk { index } => (13, *index),
+            Self::ProgramImageInit => (14, 0),
+            Self::Custom { namespace, index } => {
+                return PackedFamilyRef::new(u64::from(*namespace), 0, *index as u64);
+            }
+        };
+        PackedFamilyRef::new(JOLT_PACKED_FAMILY_NAMESPACE, id, index as u64)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

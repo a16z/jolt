@@ -10,7 +10,7 @@ use std::{fmt::Debug, marker::PhantomData};
 use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::{Field, FromPrimitiveInt};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::OpeningsError;
@@ -41,8 +41,44 @@ pub enum PhysicalView<F> {
     Direct,
     PackedLinear {
         layout_digest: [u8; 32],
-        coefficients: Vec<F>,
+        terms: Vec<PackedLinearTerm<F>>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackedLinearTerm<F> {
+    pub coefficient: F,
+    pub family: PackedFamilyRef,
+    pub limb: usize,
+    pub symbol: usize,
+}
+
+impl<F> PackedLinearTerm<F> {
+    pub fn new(coefficient: F, family: PackedFamilyRef, limb: usize, symbol: usize) -> Self {
+        Self {
+            coefficient,
+            family,
+            limb,
+            symbol,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PackedFamilyRef {
+    pub namespace: u64,
+    pub id: u64,
+    pub index: u64,
+}
+
+impl PackedFamilyRef {
+    pub const fn new(namespace: u64, id: u64, index: u64) -> Self {
+        Self {
+            namespace,
+            id,
+            index,
+        }
+    }
 }
 
 /// PCS-specific reduction data produced by verifying a same-point batch.
@@ -715,16 +751,18 @@ fn bind_packed_batch_statement<F, C, OpeningId, RelationId, Claim, T>(
             PhysicalView::Direct => transcript.append_bytes(&[0]),
             PhysicalView::PackedLinear {
                 layout_digest,
-                coefficients,
+                terms,
             } => {
                 transcript.append_bytes(&[1]);
                 transcript.append_bytes(layout_digest);
-                transcript.append(&LabelWithCount(
-                    b"packed_view_coeffs",
-                    coefficients.len() as u64,
-                ));
-                for coefficient in coefficients {
-                    coefficient.append_to_transcript(transcript);
+                transcript.append(&LabelWithCount(b"packed_view_terms", terms.len() as u64));
+                for term in terms {
+                    transcript.append(&U64Word(term.family.namespace));
+                    transcript.append(&U64Word(term.family.id));
+                    transcript.append(&U64Word(term.family.index));
+                    transcript.append(&U64Word(term.limb as u64));
+                    transcript.append(&U64Word(term.symbol as u64));
+                    term.coefficient.append_to_transcript(transcript);
                 }
             }
         }
@@ -774,22 +812,21 @@ where
         PhysicalView::Direct => Ok(F::one()),
         PhysicalView::PackedLinear {
             layout_digest,
-            coefficients,
+            terms,
         } => {
             if layout_digest != statement_layout_digest {
                 return Err(OpeningsError::InvalidBatch(
                     "packed view layout digest does not match statement layout digest".to_owned(),
                 ));
             }
-            if coefficients.is_empty() {
+            if terms.is_empty() {
                 return Err(OpeningsError::InvalidBatch(
-                    "packed linear view requires at least one coefficient".to_owned(),
+                    "packed linear view requires at least one term".to_owned(),
                 ));
             }
-            Ok(coefficients
+            Ok(terms
                 .iter()
-                .copied()
-                .fold(F::zero(), |acc, coefficient| acc + coefficient))
+                .fold(F::zero(), |acc, term| acc + term.coefficient))
         }
     }
 }
@@ -929,6 +966,19 @@ mod tests {
         Second,
     }
 
+    fn packed_term<F>(coefficient: F) -> PackedLinearTerm<F> {
+        PackedLinearTerm::new(coefficient, PackedFamilyRef::new(0x6a6f_6c74, 1, 0), 0, 0)
+    }
+
+    fn packed_term_at<F>(coefficient: F, symbol: usize) -> PackedLinearTerm<F> {
+        PackedLinearTerm::new(
+            coefficient,
+            PackedFamilyRef::new(0x6a6f_6c74, 1, 0),
+            0,
+            symbol,
+        )
+    }
+
     #[test]
     fn batch_opening_statement_preserves_claim_metadata() {
         let statement = BatchOpeningStatement {
@@ -951,7 +1001,7 @@ mod tests {
                     claim: 23,
                     view: PhysicalView::PackedLinear {
                         layout_digest: [23; 32],
-                        coefficients: vec![29, 31],
+                        terms: vec![packed_term(29), packed_term_at(31, 1)],
                     },
                     scale: 37,
                 },
@@ -989,20 +1039,22 @@ mod tests {
     }
 
     #[test]
-    fn physical_view_records_packed_layout_and_coefficients() {
+    fn physical_view_records_packed_layout_and_terms() {
         let view = PhysicalView::PackedLinear {
             layout_digest: [41; 32],
-            coefficients: vec![43_u64, 47],
+            terms: vec![packed_term(43_u64), packed_term_at(47, 1)],
         };
 
         assert!(matches!(view, PhysicalView::PackedLinear { .. }));
         if let PhysicalView::PackedLinear {
             layout_digest,
-            coefficients,
+            terms,
         } = view
         {
             assert_eq!(layout_digest, [41; 32]);
-            assert_eq!(coefficients, vec![43, 47]);
+            assert_eq!(terms[0].coefficient, 43);
+            assert_eq!(terms[1].coefficient, 47);
+            assert_eq!(terms[1].symbol, 1);
         }
     }
 
@@ -1232,7 +1284,7 @@ mod tests {
         let mut statement = clear_batch_statement(&polynomials, &point);
         statement.claims[0].view = PhysicalView::PackedLinear {
             layout_digest: [3; 32],
-            coefficients: vec![fr(1), fr(2)],
+            terms: vec![packed_term(fr(1)), packed_term_at(fr(2), 1)],
         };
 
         let mut transcript = Blake2bTranscript::new(b"batch-packed");
@@ -1267,7 +1319,7 @@ mod tests {
                     claim: eval * first_decode.inverse().expect("decode is nonzero"),
                     view: PhysicalView::PackedLinear {
                         layout_digest: [44; 32],
-                        coefficients: vec![first_decode],
+                        terms: vec![packed_term(first_decode)],
                     },
                     scale: fr(1),
                 },
@@ -1278,7 +1330,7 @@ mod tests {
                     claim: eval * second_decode.inverse().expect("decode is nonzero"),
                     view: PhysicalView::PackedLinear {
                         layout_digest: [44; 32],
-                        coefficients: vec![second_decode],
+                        terms: vec![packed_term(second_decode)],
                     },
                     scale: fr(1),
                 },
@@ -1333,7 +1385,7 @@ mod tests {
         let mut statement = packed_batch_statement(&polynomials[0], &point);
         statement.claims[0].view = PhysicalView::PackedLinear {
             layout_digest: [45; 32],
-            coefficients: vec![fr(2)],
+            terms: vec![packed_term(fr(2))],
         };
 
         let mut transcript = Blake2bTranscript::new(b"packed-layout-mismatch");
@@ -1400,7 +1452,7 @@ mod tests {
         let mut tampered = statement;
         tampered.claims[0].view = PhysicalView::PackedLinear {
             layout_digest: [44; 32],
-            coefficients: vec![fr(1), fr(1)],
+            terms: vec![packed_term(fr(1)), packed_term_at(fr(1), 1)],
         };
 
         let mut verifier_transcript = Blake2bTranscript::new(b"packed-coeffs-bound");
@@ -1417,13 +1469,48 @@ mod tests {
     }
 
     #[test]
+    fn packed_combine_binds_view_addresses_before_inner_batch() {
+        let (polynomials, point) = batch_polynomials();
+        let polynomial = polynomials[0].clone();
+        let statement = packed_batch_statement(&polynomial, &point);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"packed-addresses-bound");
+        let proof = <PackedMockPCS as BatchOpeningScheme>::prove_batch(
+            &(),
+            &mut prover_transcript,
+            &statement,
+            &[polynomial.clone(), polynomial.clone()],
+            vec![(), ()],
+        )
+        .expect("packed batch proof should be produced");
+
+        let mut tampered = statement;
+        tampered.claims[0].view = PhysicalView::PackedLinear {
+            layout_digest: [44; 32],
+            terms: vec![packed_term_at(fr(2), 1)],
+        };
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"packed-addresses-bound");
+        let result = <PackedMockPCS as BatchOpeningScheme>::verify_batch(
+            &(),
+            &mut verifier_transcript,
+            &tampered,
+            &proof,
+        );
+        assert!(
+            result.is_err(),
+            "changed packed address should fail even when coefficients are unchanged"
+        );
+    }
+
+    #[test]
     fn packed_combine_rejects_empty_linear_view() {
         let (polynomials, point) = batch_polynomials();
         let polynomial = polynomials[0].clone();
         let mut statement = packed_batch_statement(&polynomial, &point);
         statement.claims[0].view = PhysicalView::PackedLinear {
             layout_digest: [44; 32],
-            coefficients: Vec::new(),
+            terms: Vec::new(),
         };
 
         let mut transcript = Blake2bTranscript::new(b"packed-empty-view");
@@ -1454,7 +1541,7 @@ mod tests {
                 claim: fr(5),
                 view: PhysicalView::PackedLinear {
                     layout_digest: [47; 32],
-                    coefficients: vec![fr(7)],
+                    terms: vec![packed_term(fr(7))],
                 },
                 scale: fr(1),
             }],
