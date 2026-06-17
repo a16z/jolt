@@ -744,7 +744,7 @@ impl Cpu {
             // Interrupt can be maskable by xie csr register
             // where x is a new privilege mode.
 
-match trap.trap_type {
+            match trap.trap_type {
                 TrapType::UserSoftwareInterrupt if usie == 0 => {
                     return false;
                 }
@@ -773,7 +773,6 @@ match trap.trap_type {
                     return false;
                 }
                 _ => {}
-            };
             };
         }
 

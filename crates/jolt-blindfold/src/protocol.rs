@@ -6,9 +6,8 @@ use jolt_r1cs::{ConstraintMatrices, R1csBuilder, Variable};
 use jolt_sumcheck::{CommittedOutputClaims, CommittedSumcheckConsistency};
 
 use crate::{
-    r1cs::{build_with_sources, Layout},
-    BlindFoldProtocolBuilder, BlindFoldStatement, Error, RelaxedError, RelaxedInstance,
-    VerificationError,
+    r1cs::Layout, BlindFoldProtocolBuilder, BlindFoldStatement, Error, RelaxedError,
+    RelaxedInstance, VerificationError,
 };
 
 #[derive(Clone, Debug)]
