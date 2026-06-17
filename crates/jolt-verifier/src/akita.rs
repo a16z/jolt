@@ -122,9 +122,15 @@ mod tests {
 
     use super::*;
     use jolt_akita::{
-        AkitaSetupParams, PackedAlphabet, PackedFactDomain, PackedFamilySpec, SparsePackedWitness,
+        AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec,
+        SparsePackedWitness,
     };
-    use jolt_openings::CommitmentScheme;
+    use jolt_openings::{
+        BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
+        PackedLinearTerm, PhysicalView,
+    };
+    use jolt_poly::Polynomial;
+    use jolt_transcript::{Blake2bTranscript, Transcript};
 
     fn tiny_layout() -> PackedWitnessLayout {
         PackedWitnessLayout::new([
@@ -142,6 +148,26 @@ mod tests {
             ),
         ])
         .expect("layout should build")
+    }
+
+    fn packed_cell(family: PackedFamilyId, symbol: usize) -> PackedCellAddress {
+        PackedCellAddress {
+            family,
+            row: 0,
+            limb: 0,
+            symbol,
+        }
+    }
+
+    fn packed_polynomial(
+        layout: &PackedWitnessLayout,
+        entries: &[(usize, AkitaField)],
+    ) -> Polynomial<AkitaField> {
+        let mut evals = vec![AkitaField::zero(); 1usize << layout.dimension];
+        for &(rank, value) in entries {
+            evals[rank] = value;
+        }
+        Polynomial::new(evals)
     }
 
     #[test]
@@ -188,6 +214,104 @@ mod tests {
             artifact.protocol.lattice.packed_witness.layout_digest,
             Some(layout.digest)
         );
+    }
+
+    #[test]
+    fn packed_witness_artifacts_feed_akita_packed_batch_verifier() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let instruction_family = PackedFamilyId::InstructionRa { index: 0 };
+        let sign_family = PackedFamilyId::IncSign;
+        let source = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (
+                    packed_cell(instruction_family.clone(), 7),
+                    AkitaField::from_u64(11),
+                ),
+                (packed_cell(sign_family.clone(), 1), AkitaField::from_u64(5)),
+            ],
+        )
+        .expect("source should build");
+        let poly = packed_polynomial(&layout, source.entries());
+        let artifact = commit_akita_packed_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        let commitment = artifact
+            .payload()
+            .expect("artifact should carry Akita payload")
+            .packed_witness
+            .clone();
+        let instruction_claim = AkitaField::from_u64(22);
+        let sign_claim = AkitaField::from_u64(15);
+        let statement = BatchOpeningStatement {
+            logical_point: Vec::new(),
+            pcs_point: Vec::new(),
+            layout_digest: layout.digest,
+            claims: vec![
+                BatchOpeningClaim {
+                    id: 0usize,
+                    relation: 0usize,
+                    commitment: commitment.clone(),
+                    claim: instruction_claim,
+                    view: PhysicalView::PackedLinear {
+                        layout_digest: layout.digest,
+                        terms: vec![PackedLinearTerm::new(
+                            AkitaField::from_u64(2),
+                            instruction_family.physical_ref(),
+                            0,
+                            7,
+                        )
+                        .with_row_point(Vec::new())],
+                    },
+                    scale: AkitaField::from_u64(3),
+                },
+                BatchOpeningClaim {
+                    id: 1usize,
+                    relation: 1usize,
+                    commitment: commitment.clone(),
+                    claim: sign_claim,
+                    view: PhysicalView::PackedLinear {
+                        layout_digest: layout.digest,
+                        terms: vec![PackedLinearTerm::new(
+                            AkitaField::from_u64(3),
+                            sign_family.physical_ref(),
+                            0,
+                            1,
+                        )
+                        .with_row_point(Vec::new())],
+                    },
+                    scale: AkitaField::from_u64(7),
+                },
+            ],
+        };
+
+        let mut prover_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
+        let proof = <AkitaPackedScheme as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            std::slice::from_ref(&poly),
+            vec![artifact.hint],
+        )
+        .expect("packed batch proof should be produced");
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("packed batch proof should verify");
+
+        assert_eq!(result.joint_commitment, commitment);
+        assert_eq!(result.coefficients.len(), 2);
+        assert_eq!(
+            result.reduced_opening,
+            result.coefficients[0] * instruction_claim + result.coefficients[1] * sign_claim
+        );
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
 
     #[test]
