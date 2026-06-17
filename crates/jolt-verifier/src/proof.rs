@@ -109,17 +109,6 @@ where
         }
     }
 
-    pub(crate) fn dory_commitments(
-        &self,
-    ) -> Result<&DoryCommitmentPayload<PCS::Output>, VerifierError> {
-        self.commitments
-            .as_dory()
-            .ok_or_else(|| VerifierError::CommitmentPayloadFamilyMismatch {
-                expected: PcsFamily::Curve,
-                got: self.commitments.family(),
-            })
-    }
-
     pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
         match &self.claims {
             JoltProofClaims::Clear(claims) => Ok(claims),

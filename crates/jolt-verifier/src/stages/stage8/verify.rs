@@ -167,8 +167,6 @@ where
         reason: error.to_string(),
     })?;
     let layout = formula_dimensions.ra_layout;
-    require_stage8_curve_payload(&proof.commitments)?;
-
     let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
         Deps::Clear { stage6, stage7 } => (
             stage7
@@ -190,8 +188,6 @@ where
             None,
         ),
     };
-    let commitments = proof.dory_commitments()?;
-    require_commitment_layout(commitments, layout)?;
 
     let anchor_points: Vec<&[F]> = precommitted_finals
         .iter()
@@ -209,23 +205,66 @@ where
         reason: error.to_string(),
     })?;
     let pcs_opening_point = Point::high_to_low(opening_point.clone());
+    let committed_bytecode_chunk_count = preprocessing
+        .program
+        .committed()
+        .map(|committed| committed.bytecode_chunk_count());
 
-    let entries = batch_entries(
-        preprocessing,
-        commitments,
-        proof.untrusted_advice_commitment.as_ref(),
-        layout,
-        trusted_advice_commitment,
-        &opening_point,
-        hamming_opening_point,
-        inc_opening_point,
-        precommitted_finals,
-        clear_claims,
-    )?;
+    let entries = match &proof.commitments {
+        CommitmentPayload::Dory(commitments) => {
+            require_commitment_layout(commitments, layout)?;
+            batch_entries(
+                layout,
+                committed_bytecode_chunk_count,
+                &opening_point,
+                hamming_opening_point,
+                inc_opening_point,
+                precommitted_finals,
+                clear_claims,
+                |polynomial| {
+                    dory_final_commitment(
+                        preprocessing,
+                        commitments,
+                        proof.untrusted_advice_commitment.as_ref(),
+                        trusted_advice_commitment,
+                        polynomial,
+                    )
+                },
+                #[cfg(feature = "field-inline")]
+                Some(&commitments.field_inline.field_registers.rd_inc),
+            )?
+        }
+        CommitmentPayload::Akita(payload) => batch_entries(
+            layout,
+            committed_bytecode_chunk_count,
+            &opening_point,
+            hamming_opening_point,
+            inc_opening_point,
+            precommitted_finals,
+            clear_claims,
+            |_| Ok(&payload.packed_witness),
+            #[cfg(feature = "field-inline")]
+            Some(&payload.packed_witness),
+        )?,
+    };
     let logical_manifest = logical_manifest(&entries, pcs_opening_point.clone());
     let opening_ids = logical_manifest.opening_ids();
-    let layout_digest = stage8_layout_digest(preprocessing);
-    let physical_manifest = Stage8PhysicalManifest::direct(&logical_manifest, layout_digest);
+    let (physical_manifest, layout_digest) = match &proof.commitments {
+        CommitmentPayload::Dory(_) => {
+            let layout_digest = stage8_layout_digest(preprocessing);
+            (
+                Stage8PhysicalManifest::direct(&logical_manifest, layout_digest),
+                layout_digest,
+            )
+        }
+        CommitmentPayload::Akita(_) => akita_stage8_physical_manifest(
+            &proof.protocol,
+            checked,
+            proof,
+            layout,
+            &logical_manifest,
+        )?,
+    };
     let point = pcs_opening_point.as_slice().to_vec();
 
     if checked.zk {
@@ -302,22 +341,20 @@ where
     clippy::too_many_arguments,
     reason = "gathers per-polynomial sources from several stages"
 )]
-fn batch_entries<'a, F, PCS, VC>(
-    preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    commitments: &'a JoltCommitments<PCS::Output>,
-    untrusted_advice_commitment: Option<&'a PCS::Output>,
+fn batch_entries<'a, F, C, CommitmentFor>(
     layout: JoltRaPolynomialLayout,
-    trusted_advice_commitment: Option<&'a PCS::Output>,
+    committed_bytecode_chunk_count: Option<usize>,
     opening_point: &[F],
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
     clear_claims: Option<(&Stage6Claims<F>, &Stage7Claims<F>)>,
-) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
+    mut commitment_for: CommitmentFor,
+    #[cfg(feature = "field-inline")] field_rd_inc_commitment: &'a C,
+) -> Result<Vec<Stage8BatchEntry<'a, F, C>>, VerifierError>
 where
     F: Field,
-    PCS: CommitmentScheme<Field = F>,
-    VC: VectorCommitment<Field = F>,
+    CommitmentFor: FnMut(JoltCommittedPolynomial) -> Result<&'a C, VerifierError>,
 {
     let precommitted_final = |polynomial: JoltCommittedPolynomial| {
         precommitted_finals
@@ -326,115 +363,87 @@ where
     };
     let include_trusted = precommitted_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
     let include_untrusted = precommitted_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
-    let committed_program = preprocessing.program.committed();
     let order = final_opening_polynomial_order(
         layout,
         include_trusted,
         include_untrusted,
-        committed_program.map(|committed| committed.bytecode_chunk_count()),
+        committed_bytecode_chunk_count,
     );
 
     let mut entries = Vec::with_capacity(order.len() + field_inline_final_opening_count());
     // Core's final PCS batch order intentionally differs from proof payload order.
     for polynomial in order {
         let id = final_opening_id(polynomial);
-        let (commitment, own_point, opening_claim): (&PCS::Output, &[F], Option<F>) =
-            match polynomial {
-                JoltCommittedPolynomial::RamInc => (
-                    &commitments.ram_inc,
-                    inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
-                ),
-                JoltCommittedPolynomial::RdInc => (
-                    &commitments.rd_inc,
-                    inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
-                ),
-                JoltCommittedPolynomial::InstructionRa(index) => (
-                    commitments
-                        .ra
-                        .instruction
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            *stage7
-                                .hamming_weight_claim_reduction
-                                .instruction_ra
-                                .get(index)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::BytecodeRa(index) => (
-                    commitments
-                        .ra
-                        .bytecode
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            *stage7
-                                .hamming_weight_claim_reduction
-                                .bytecode_ra
-                                .get(index)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::RamRa(index) => (
-                    commitments
-                        .ra
-                        .ram
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?,
-                    hamming_opening_point,
-                    match clear_claims {
-                        Some((_, stage7)) => Some(
-                            *stage7
-                                .hamming_weight_claim_reduction
-                                .ram_ra
-                                .get(index)
-                                .ok_or(VerifierError::MissingOpeningClaim { id })?,
-                        ),
-                        None => None,
-                    },
-                ),
-                JoltCommittedPolynomial::TrustedAdvice => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = trusted_advice_commitment
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::UntrustedAdvice => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = untrusted_advice_commitment
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::BytecodeChunk(index) => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = committed_program
-                        .and_then(|committed| committed.bytecode_chunk_commitments.get(index))
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-                JoltCommittedPolynomial::ProgramImageInit => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = committed_program
-                        .map(|committed| &committed.program_image_commitment)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
-                }
-            };
+        let (own_point, opening_claim): (&[F], Option<F>) = match polynomial {
+            JoltCommittedPolynomial::RamInc => (
+                inc_opening_point,
+                clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
+            ),
+            JoltCommittedPolynomial::RdInc => (
+                inc_opening_point,
+                clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
+            ),
+            JoltCommittedPolynomial::InstructionRa(index) => (
+                hamming_opening_point,
+                match clear_claims {
+                    Some((_, stage7)) => Some(
+                        *stage7
+                            .hamming_weight_claim_reduction
+                            .instruction_ra
+                            .get(index)
+                            .ok_or(VerifierError::MissingOpeningClaim { id })?,
+                    ),
+                    None => None,
+                },
+            ),
+            JoltCommittedPolynomial::BytecodeRa(index) => (
+                hamming_opening_point,
+                match clear_claims {
+                    Some((_, stage7)) => Some(
+                        *stage7
+                            .hamming_weight_claim_reduction
+                            .bytecode_ra
+                            .get(index)
+                            .ok_or(VerifierError::MissingOpeningClaim { id })?,
+                    ),
+                    None => None,
+                },
+            ),
+            JoltCommittedPolynomial::RamRa(index) => (
+                hamming_opening_point,
+                match clear_claims {
+                    Some((_, stage7)) => Some(
+                        *stage7
+                            .hamming_weight_claim_reduction
+                            .ram_ra
+                            .get(index)
+                            .ok_or(VerifierError::MissingOpeningClaim { id })?,
+                    ),
+                    None => None,
+                },
+            ),
+            JoltCommittedPolynomial::TrustedAdvice => {
+                let opening = precommitted_final(polynomial)
+                    .ok_or(VerifierError::MissingOpeningClaim { id })?;
+                (opening.point.as_slice(), opening.opening_claim)
+            }
+            JoltCommittedPolynomial::UntrustedAdvice => {
+                let opening = precommitted_final(polynomial)
+                    .ok_or(VerifierError::MissingOpeningClaim { id })?;
+                (opening.point.as_slice(), opening.opening_claim)
+            }
+            JoltCommittedPolynomial::BytecodeChunk(_) => {
+                let opening = precommitted_final(polynomial)
+                    .ok_or(VerifierError::MissingOpeningClaim { id })?;
+                (opening.point.as_slice(), opening.opening_claim)
+            }
+            JoltCommittedPolynomial::ProgramImageInit => {
+                let opening = precommitted_final(polynomial)
+                    .ok_or(VerifierError::MissingOpeningClaim { id })?;
+                (opening.point.as_slice(), opening.opening_claim)
+            }
+        };
+        let commitment = commitment_for(polynomial)?;
         entries.push(Stage8BatchEntry {
             id: id.into(),
             commitment,
@@ -446,7 +455,7 @@ where
         if polynomial == JoltCommittedPolynomial::RdInc {
             entries.push(Stage8BatchEntry {
                 id: field_increments::field_rd_inc_reduced_opening().into(),
-                commitment: &commitments.field_inline.field_registers.rd_inc,
+                commitment: field_rd_inc_commitment,
                 opening_claim: clear_claims.map(|(stage6, _)| {
                     stage6
                         .field_inline
@@ -459,6 +468,102 @@ where
         }
     }
     Ok(entries)
+}
+
+fn dory_final_commitment<'a, PCS, VC>(
+    preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
+    commitments: &'a JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&'a PCS::Output>,
+    trusted_advice_commitment: Option<&'a PCS::Output>,
+    polynomial: JoltCommittedPolynomial,
+) -> Result<&'a PCS::Output, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    match polynomial {
+        JoltCommittedPolynomial::RamInc => Ok(&commitments.ram_inc),
+        JoltCommittedPolynomial::RdInc => Ok(&commitments.rd_inc),
+        JoltCommittedPolynomial::InstructionRa(index) => commitments
+            .ra
+            .instruction
+            .get(index)
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::BytecodeRa(index) => commitments
+            .ra
+            .bytecode
+            .get(index)
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::RamRa(index) => commitments
+            .ra
+            .ram
+            .get(index)
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::TrustedAdvice => trusted_advice_commitment
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::UntrustedAdvice => untrusted_advice_commitment
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::BytecodeChunk(index) => preprocessing
+            .program
+            .committed()
+            .and_then(|committed| committed.bytecode_chunk_commitments.get(index))
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::ProgramImageInit => preprocessing
+            .program
+            .committed()
+            .map(|committed| &committed.program_image_commitment)
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+    }
+}
+
+#[cfg(feature = "akita")]
+fn akita_stage8_physical_manifest<F, PCS, VC, ZkProof>(
+    config: &crate::config::JoltProtocolConfig,
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    layout: JoltRaPolynomialLayout,
+    logical: &Stage8LogicalManifest<F>,
+) -> Result<(Stage8PhysicalManifest<F>, [u8; 32]), VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+{
+    let log_t = checked.trace_length.ilog2() as usize;
+    let packed_layout = super::derive_akita_packed_witness_layout(
+        config,
+        log_t,
+        proof.one_hot_config.committed_chunk_bits(),
+        layout,
+        &checked.precommitted,
+    )?;
+    super::validate_akita_packed_witness_layout_config(config, &packed_layout)?;
+    let physical = super::jolt_lattice_physical_manifest(
+        logical,
+        &packed_layout,
+        proof.one_hot_config.committed_chunk_bits(),
+        &checked.precommitted,
+    )?;
+    Ok((physical, packed_layout.digest))
+}
+
+#[cfg(not(feature = "akita"))]
+fn akita_stage8_physical_manifest<F, PCS, VC, ZkProof>(
+    config: &crate::config::JoltProtocolConfig,
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    layout: JoltRaPolynomialLayout,
+    logical: &Stage8LogicalManifest<F>,
+) -> Result<(Stage8PhysicalManifest<F>, [u8; 32]), VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
+{
+    let _ = (config, checked, proof, layout, logical);
+    Err(VerifierError::InvalidProtocolConfig {
+        reason: "lattice Stage 8 requires the jolt-verifier akita feature".to_string(),
+    })
 }
 
 fn logical_manifest<F, C>(
@@ -519,48 +624,4 @@ fn require_commitment_layout<C>(
         });
     }
     Ok(())
-}
-
-fn require_stage8_curve_payload<C>(payload: &CommitmentPayload<C>) -> Result<(), VerifierError> {
-    if let CommitmentPayload::Akita(_) = payload {
-        return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: "lattice Stage 8 requires packed view resolution before final opening dispatch"
-                .to_string(),
-        });
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::proof::{AkitaCommitmentPayload, JoltRaCommitments};
-
-    fn dory_payload() -> CommitmentPayload<u64> {
-        CommitmentPayload::Dory(JoltCommitments::new(
-            1,
-            2,
-            JoltRaCommitments::new(vec![3], vec![4], vec![5]),
-            #[cfg(feature = "field-inline")]
-            crate::proof::FieldInlineCommitments::new(
-                crate::proof::FieldRegistersCommitments::new(6),
-            ),
-        ))
-    }
-
-    #[test]
-    fn stage8_curve_payload_guard_accepts_dory_payloads() {
-        assert!(require_stage8_curve_payload(&dory_payload()).is_ok());
-    }
-
-    #[test]
-    fn stage8_curve_payload_guard_rejects_akita_payloads() {
-        let payload = CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [7; 32], 43));
-
-        assert!(matches!(
-            require_stage8_curve_payload(&payload),
-            Err(VerifierError::FinalOpeningBatchFailed { reason })
-                if reason.contains("lattice Stage 8")
-        ));
-    }
 }
