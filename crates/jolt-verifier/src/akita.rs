@@ -10,8 +10,8 @@ use crate::{
     VerifierError,
 };
 use jolt_akita::{
-    AkitaCommitment, AkitaField, AkitaProverHint, AkitaProverSetup, AkitaScheme, PackedAdviceKind,
-    PackedFamilyId, PackedWitnessLayout, PackedWitnessSource,
+    AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaProverHint, AkitaProverSetup,
+    PackedAdviceKind, PackedFamilyId, PackedWitnessLayout, PackedWitnessSource,
 };
 
 #[derive(Clone, Debug)]
@@ -75,11 +75,12 @@ where
 {
     let layout = source.layout().clone();
     validate_akita_packed_witness_layout_config(&protocol, &layout)?;
-    let (commitment, hint) = AkitaScheme::commit_packed_source(setup, source).map_err(|error| {
-        VerifierError::AkitaCommitmentFailed {
-            reason: error.to_string(),
-        }
-    })?;
+    let (commitment, hint) =
+        AkitaPackedScheme::commit_packed_source(setup, source).map_err(|error| {
+            VerifierError::AkitaCommitmentFailed {
+                reason: error.to_string(),
+            }
+        })?;
     let payload = AkitaCommitmentPayload::new(commitment, layout.digest, layout.dimension);
     crate::proof::validate_akita_commitment_payload_config(&protocol, &payload)?;
 
@@ -165,7 +166,7 @@ mod tests {
     fn commits_packed_witness_and_returns_verifier_payload() {
         let layout = tiny_layout();
         let params = AkitaSetupParams::from_packed_layout(&layout, 1);
-        let (prover_setup, _) = AkitaScheme::setup(params);
+        let (prover_setup, _) = AkitaPackedScheme::setup(params);
         let source = SparsePackedWitness::try_new(
             layout.clone(),
             vec![(0, AkitaField::from_u64(1)), (256, AkitaField::from_u64(1))],
@@ -193,7 +194,7 @@ mod tests {
     fn configured_layout_mismatch_rejects_before_commit() {
         let layout = tiny_layout();
         let params = AkitaSetupParams::from_packed_layout(&layout, 1);
-        let (prover_setup, _) = AkitaScheme::setup(params);
+        let (prover_setup, _) = AkitaPackedScheme::setup(params);
         let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
             .expect("empty sparse source should build");
         let mut config = akita_lattice_protocol_config_for_layout(&layout);

@@ -8,16 +8,35 @@ use jolt_poly::{EqPolynomial, MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{PackedCellAddress, PackedFamily, PackedWitnessLayout};
+use crate::layout::{PackedCellAddress, PackedFamily, PackedWitnessLayout, PackedWitnessSource};
 use crate::types::{
-    append_field_slice, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaPackedBatchProof,
-    AkitaPackedReductionProof, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
-    AkitaVerifierSetup,
+    append_field_slice, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaHidingCommitment,
+    AkitaPackedBatchProof, AkitaPackedReductionProof, AkitaProverHint, AkitaProverSetup,
+    AkitaSetupParams, AkitaVerifierSetup,
 };
 use crate::AkitaScheme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaPackedScheme;
+
+impl AkitaPackedScheme {
+    pub fn commit_packed_witness(
+        setup: &AkitaProverSetup,
+        input: AkitaCommitInput,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        AkitaScheme::commit_packed_witness(setup, input)
+    }
+
+    pub fn commit_packed_source<S>(
+        setup: &AkitaProverSetup,
+        source: &S,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+    where
+        S: PackedWitnessSource<AkitaField>,
+    {
+        AkitaScheme::commit_packed_source(setup, source)
+    }
+}
 
 struct PackedBatchShape<'a> {
     layout: &'a PackedWitnessLayout,
