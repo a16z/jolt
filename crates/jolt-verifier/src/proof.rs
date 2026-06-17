@@ -10,7 +10,7 @@ use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::JoltProtocolConfig,
+    config::{validate_protocol_config, JoltProtocolConfig, PcsFamily},
     stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
     VerifierError,
 };
@@ -101,6 +101,72 @@ pub struct JoltCommitments<C> {
     pub ra: JoltRaCommitments<C>,
     #[cfg(feature = "field-inline")]
     pub field_inline: FieldInlineCommitments<C>,
+}
+
+pub type DoryCommitmentPayload<C> = JoltCommitments<C>;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitmentPayload<C> {
+    Dory(DoryCommitmentPayload<C>),
+    Akita(AkitaCommitmentPayload<C>),
+}
+
+impl<C> CommitmentPayload<C> {
+    pub const fn family(&self) -> PcsFamily {
+        match self {
+            Self::Dory(_) => PcsFamily::Curve,
+            Self::Akita(_) => PcsFamily::Lattice,
+        }
+    }
+
+    pub fn as_dory(&self) -> Option<&DoryCommitmentPayload<C>> {
+        match self {
+            Self::Dory(payload) => Some(payload),
+            Self::Akita(_) => None,
+        }
+    }
+
+    pub fn as_akita(&self) -> Option<&AkitaCommitmentPayload<C>> {
+        match self {
+            Self::Dory(_) => None,
+            Self::Akita(payload) => Some(payload),
+        }
+    }
+}
+
+impl<C> From<DoryCommitmentPayload<C>> for CommitmentPayload<C> {
+    fn from(payload: DoryCommitmentPayload<C>) -> Self {
+        Self::Dory(payload)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AkitaCommitmentPayload<C> {
+    pub packed_witness: C,
+    pub layout_digest: [u8; 32],
+    pub d_pack: usize,
+}
+
+impl<C> AkitaCommitmentPayload<C> {
+    pub fn new(packed_witness: C, layout_digest: [u8; 32], d_pack: usize) -> Self {
+        Self {
+            packed_witness,
+            layout_digest,
+            d_pack,
+        }
+    }
+}
+
+pub fn validate_commitment_payload_family<C>(
+    config: &JoltProtocolConfig,
+    payload: &CommitmentPayload<C>,
+) -> Result<(), VerifierError> {
+    let expected = validate_protocol_config(config)?;
+    let got = payload.family();
+    if expected != got {
+        return Err(VerifierError::CommitmentPayloadFamilyMismatch { expected, got });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,4 +296,78 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        IncrementCommitmentMode, PackedWitnessConfig, PcsFamilyFlags, ProgramMode,
+    };
+
+    fn dory_payload() -> CommitmentPayload<u64> {
+        CommitmentPayload::Dory(JoltCommitments::new(
+            1,
+            2,
+            JoltRaCommitments::new(vec![3], vec![4], vec![5]),
+        ))
+    }
+
+    fn akita_payload() -> CommitmentPayload<u64> {
+        CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [7; 32], 43))
+    }
+
+    fn lattice_config() -> JoltProtocolConfig {
+        let mut config = JoltProtocolConfig::for_zk(false);
+        config.pcs = PcsFamilyFlags {
+            curve: false,
+            lattice: true,
+        };
+        config.lattice.program_mode = ProgramMode::Committed;
+        config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness = PackedWitnessConfig {
+            layout_digest: Some([7; 32]),
+            d_pack: Some(43),
+            field_rd_inc_family: false,
+            trusted_advice_family: false,
+            untrusted_advice_family: false,
+        };
+        config
+    }
+
+    #[test]
+    fn commitment_payload_family_tracks_variant() {
+        assert_eq!(dory_payload().family(), PcsFamily::Curve);
+        assert_eq!(akita_payload().family(), PcsFamily::Lattice);
+    }
+
+    #[test]
+    fn commitment_payload_validates_against_selected_pcs_family() {
+        let curve = JoltProtocolConfig::for_zk(false);
+        let lattice = lattice_config();
+
+        assert!(validate_commitment_payload_family(&curve, &dory_payload()).is_ok());
+        assert!(validate_commitment_payload_family(&lattice, &akita_payload()).is_ok());
+    }
+
+    #[test]
+    fn commitment_payload_mode_mismatch_rejects() {
+        let curve = JoltProtocolConfig::for_zk(false);
+        let lattice = lattice_config();
+
+        assert!(matches!(
+            validate_commitment_payload_family(&curve, &akita_payload()),
+            Err(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Curve,
+                got: PcsFamily::Lattice,
+            })
+        ));
+        assert!(matches!(
+            validate_commitment_payload_family(&lattice, &dory_payload()),
+            Err(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Lattice,
+                got: PcsFamily::Curve,
+            })
+        ));
+    }
 }

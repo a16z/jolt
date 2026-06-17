@@ -6,7 +6,7 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 
-use crate::config::JoltProtocolConfig;
+use crate::config::{JoltProtocolConfig, PcsFamily};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
@@ -18,6 +18,11 @@ pub enum VerifierError {
 
     #[error("invalid protocol config: {reason}")]
     InvalidProtocolConfig { reason: String },
+
+    #[error(
+        "proof commitment payload family {got:?} does not match selected PCS family {expected:?}"
+    )]
+    CommitmentPayloadFamilyMismatch { expected: PcsFamily, got: PcsFamily },
 
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
