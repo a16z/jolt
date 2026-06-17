@@ -10,7 +10,6 @@ pub mod expand;
 pub mod field_inline;
 #[cfg(feature = "image")]
 pub mod image;
-pub mod lookup;
 pub mod preprocess;
 
 pub use error::ProgramError;
