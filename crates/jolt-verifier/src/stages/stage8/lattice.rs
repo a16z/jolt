@@ -236,12 +236,19 @@ mod tests {
     }
 
     fn precommitted_schedule(trusted_max_advice_bytes: Option<usize>) -> PrecommittedSchedule {
+        precommitted_schedule_with_advice(trusted_max_advice_bytes, None)
+    }
+
+    fn precommitted_schedule_with_advice(
+        trusted_max_advice_bytes: Option<usize>,
+        untrusted_max_advice_bytes: Option<usize>,
+    ) -> PrecommittedSchedule {
         PrecommittedSchedule::new(
             TracePolynomialOrder::CycleMajor,
             2,
             8,
             trusted_max_advice_bytes,
-            None,
+            untrusted_max_advice_bytes,
             Some(CommittedProgramSchedule {
                 bytecode_len: 16,
                 bytecode_chunk_count: 2,
@@ -339,5 +346,90 @@ mod tests {
                 index: 0,
             })
             .is_some());
+    }
+
+    #[test]
+    fn field_inline_layout_uses_separate_rd_inc_families() {
+        let mut config = lattice_config();
+        config.lattice.field_inline.enabled = true;
+        config.lattice.packed_witness.field_rd_inc_family = true;
+
+        let layout = derive_akita_packed_witness_layout(
+            &config,
+            2,
+            8,
+            ra_layout(),
+            &precommitted_schedule(None),
+        )
+        .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+
+        assert!(layout.family(&PackedFamilyId::IncSign).is_some());
+        assert!(layout.family(&PackedFamilyId::FieldRdIncSign).is_some());
+        assert!(layout
+            .family(&PackedFamilyId::FieldRdIncByte { index: 7 })
+            .is_some());
+    }
+
+    #[test]
+    fn advice_and_committed_program_use_non_trace_domains() {
+        let mut config = lattice_config();
+        config.lattice.advice.trusted = true;
+        config.lattice.advice.untrusted = true;
+        config.lattice.packed_witness.trusted_advice_family = true;
+        config.lattice.packed_witness.untrusted_advice_family = true;
+
+        let layout = derive_akita_packed_witness_layout(
+            &config,
+            2,
+            8,
+            ra_layout(),
+            &precommitted_schedule_with_advice(Some(64), Some(128)),
+        )
+        .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+
+        let trusted = layout
+            .family(&PackedFamilyId::AdviceBytes {
+                kind: PackedAdviceKind::Trusted,
+                index: 0,
+            })
+            .unwrap_or_else(|| panic!("trusted advice family should be present"));
+        assert!(matches!(
+            trusted.domain,
+            PackedFactDomain::AdviceBytes {
+                kind: PackedAdviceKind::Trusted,
+                ..
+            }
+        ));
+
+        let untrusted = layout
+            .family(&PackedFamilyId::AdviceBytes {
+                kind: PackedAdviceKind::Untrusted,
+                index: 0,
+            })
+            .unwrap_or_else(|| panic!("untrusted advice family should be present"));
+        assert!(matches!(
+            untrusted.domain,
+            PackedFactDomain::AdviceBytes {
+                kind: PackedAdviceKind::Untrusted,
+                ..
+            }
+        ));
+
+        let bytecode = layout
+            .family(&PackedFamilyId::BytecodeChunk { index: 0 })
+            .unwrap_or_else(|| panic!("bytecode chunk family should be present"));
+        assert_eq!(
+            bytecode.domain,
+            PackedFactDomain::BytecodeRows { log_bytecode: 3 }
+        );
+
+        let program_image = layout
+            .family(&PackedFamilyId::ProgramImageInit)
+            .unwrap_or_else(|| panic!("program-image family should be present"));
+        assert_eq!(
+            program_image.domain,
+            PackedFactDomain::ProgramImageWords { log_words: 2 }
+        );
+        assert_eq!(program_image.limbs, 8);
     }
 }
