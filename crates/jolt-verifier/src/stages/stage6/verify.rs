@@ -160,14 +160,15 @@ where
         check_relation_boolean_hypercube(claim)?;
     }
 
-    let bytecode_gamma_powers = transcript.challenge_scalar_powers(8);
+    let bytecode_gamma_powers = transcript.challenge_scalar_powers(STAGE6_BYTECODE_GAMMA_COUNT);
     let bytecode_gamma = bytecode_gamma_powers[1];
-    let stage1_gammas = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
-    let stage2_gammas = transcript.challenge_scalar_powers(4);
-    let stage3_gammas = transcript.challenge_scalar_powers(9);
-    let stage4_gammas = transcript.challenge_scalar_powers(3);
-    let stage5_gammas =
-        transcript.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT);
+    let stage1_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE1_GAMMA_COUNT);
+    let stage2_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE2_GAMMA_COUNT);
+    let stage3_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE3_GAMMA_COUNT);
+    let stage4_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE4_GAMMA_COUNT);
+    let stage5_gammas = transcript.challenge_scalar_powers(stage6_stage5_gamma_count(
+        LookupTableKind::<RISCV_XLEN>::COUNT,
+    ));
 
     let (stage5_instruction_address, stage5_instruction_cycle) = match stage5 {
         Stage5Output::Clear(stage5) => (
@@ -1508,11 +1509,11 @@ where
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    let bytecode_gamma_powers = transcript.challenge_scalar_powers(stage6_bytecode_gamma_count());
-    let stage1_gammas = transcript.challenge_scalar_powers(stage6_stage1_gamma_count());
-    let stage2_gammas = transcript.challenge_scalar_powers(stage6_stage2_gamma_count());
-    let stage3_gammas = transcript.challenge_scalar_powers(stage6_stage3_gamma_count());
-    let stage4_gammas = transcript.challenge_scalar_powers(stage6_stage4_gamma_count());
+    let bytecode_gamma_powers = transcript.challenge_scalar_powers(STAGE6_BYTECODE_GAMMA_COUNT);
+    let stage1_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE1_GAMMA_COUNT);
+    let stage2_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE2_GAMMA_COUNT);
+    let stage3_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE3_GAMMA_COUNT);
+    let stage4_gammas = transcript.challenge_scalar_powers(STAGE6_STAGE4_GAMMA_COUNT);
     let stage5_gammas =
         transcript.challenge_scalar_powers(stage6_stage5_gamma_count(lookup_table_flag_count));
     let booleanity_reference = stage6_booleanity_reference(
@@ -1702,25 +1703,11 @@ pub fn stage6_expected_final_claim<F: Field>(
         .sum())
 }
 
-const fn stage6_bytecode_gamma_count() -> usize {
-    8
-}
-
-const fn stage6_stage1_gamma_count() -> usize {
-    2 + NUM_CIRCUIT_FLAGS
-}
-
-const fn stage6_stage2_gamma_count() -> usize {
-    4
-}
-
-const fn stage6_stage3_gamma_count() -> usize {
-    9
-}
-
-const fn stage6_stage4_gamma_count() -> usize {
-    3
-}
+pub const STAGE6_BYTECODE_GAMMA_COUNT: usize = 8;
+pub const STAGE6_STAGE1_GAMMA_COUNT: usize = 2 + NUM_CIRCUIT_FLAGS;
+pub const STAGE6_STAGE2_GAMMA_COUNT: usize = 4;
+pub const STAGE6_STAGE3_GAMMA_COUNT: usize = 9;
+pub const STAGE6_STAGE4_GAMMA_COUNT: usize = 3;
 
 const fn stage6_stage5_gamma_count(lookup_table_flag_count: usize) -> usize {
     2 + lookup_table_flag_count

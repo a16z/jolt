@@ -53,5 +53,7 @@ pub use verify::{
     Stage6BatchInputClaims, Stage6BytecodeReadRafExpectedOutputInputs,
     Stage6BytecodeRegisterPoints, Stage6IncClaimReductionCyclePoints,
     Stage6InstructionReadRafPoint, Stage6PostAddressChallenges, Stage6PreAddressChallenges,
-    Stage6RamReducedOpeningPoint, Stage6TranscriptChallenges,
+    Stage6RamReducedOpeningPoint, Stage6TranscriptChallenges, STAGE6_BYTECODE_GAMMA_COUNT,
+    STAGE6_STAGE1_GAMMA_COUNT, STAGE6_STAGE2_GAMMA_COUNT, STAGE6_STAGE3_GAMMA_COUNT,
+    STAGE6_STAGE4_GAMMA_COUNT,
 };
