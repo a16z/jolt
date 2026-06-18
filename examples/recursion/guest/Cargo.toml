@@ -14,3 +14,14 @@ jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "random",
 ] }
 ark-serialize.workspace = true
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "recursion-guest"
+path = "src/main.rs"
+test = false
+bench = false

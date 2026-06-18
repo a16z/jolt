@@ -18,3 +18,14 @@ sha2 = { version = "0.11.0", default-features = false }
 sha3 = { version = "0.10", default-features = false }
 blake2 = { version = "0.11.0-rc", default-features = false }
 blake3 = { version = "1.8", default-features = false }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "hashbench-guest"
+path = "src/main.rs"
+test = false
+bench = false

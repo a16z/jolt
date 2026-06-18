@@ -13,28 +13,25 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b"]
-jolt-core-compat = ["dep:ark-bn254", "dep:jolt-core", "dep:jolt-dory"]
-core-fixtures = ["jolt-core-compat", "jolt-core/host"]
+jolt-core-compat = []
+core-fixtures = ["jolt-core/host", "jolt-core-compat"]
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
-zk = ["jolt-core?/zk"]
+zk = []
 transcript-blake2b = []
 transcript-keccak = []
 transcript-poseidon = []
 
 [dependencies]
-ark-bn254 = { workspace = true, optional = true }
 ark-serialize.workspace = true
 common.workspace = true
-jolt-core = { workspace = true, features = ["minimal"], optional = true }
 jolt-blindfold.workspace = true
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
-jolt-dory = { path = "../jolt-dory", optional = true }
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
-jolt-program.workspace = true
+jolt-program = { workspace = true, features = ["serialization"] }
 jolt-r1cs.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
@@ -45,6 +42,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jolt-core = { workspace = true, features = ["minimal"] }
+jolt-core-verifier-bridge.workspace = true
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }

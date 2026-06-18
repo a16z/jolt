@@ -1,0 +1,33 @@
+[package]
+name = "jolt-verifier-core-fixtures"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Core-backed fixture tests for the standalone Jolt verifier"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+core-fixtures = ["jolt-core/host", "jolt-verifier/jolt-core-compat"]
+zk = ["jolt-core/zk", "jolt-core-verifier-bridge/zk", "jolt-verifier/zk"]
+
+[dev-dependencies]
+ark-serialize.workspace = true
+common.workspace = true
+jolt-core = { workspace = true, default-features = false, features = ["minimal"] }
+jolt-core-verifier-bridge.workspace = true
+jolt-blindfold.workspace = true
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
+jolt-dory.workspace = true
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-poly.workspace = true
+jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+jolt-verifier.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+serde_json = { workspace = true, features = ["std"] }

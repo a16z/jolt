@@ -18,3 +18,14 @@ reth-ethereum-primitives = { workspace = true }
 alloy-eips = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "sig-recovery-guest"
+path = "src/main.rs"
+test = false
+bench = false

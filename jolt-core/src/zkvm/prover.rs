@@ -2574,6 +2574,10 @@ mod tests {
 
     use ark_bn254::Fr;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use jolt_core_verifier_bridge::{
+        proof_into_verifier_from_core_bytes, trusted_advice_commitment_from_core_bytes,
+        verifier_preprocessing_from_core_bytes, verify_rv64imac,
+    };
     use serial_test::serial;
 
     use crate::curve::Bn254Curve;
@@ -2598,7 +2602,7 @@ mod tests {
         prover::JoltProverPreprocessing,
         ram::populate_memory_states,
         verifier::{JoltVerifier, JoltVerifierPreprocessing},
-        RV64IMACProver, RV64IMACVerifier,
+        RV64IMACProof, RV64IMACProver, RV64IMACVerifier,
     };
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
@@ -2658,6 +2662,47 @@ mod tests {
             DoryCommitmentScheme::commit(&poly, &preprocessing.generators)
         };
         (commitment, hint)
+    }
+
+    fn verify_with_canonical_verifier(
+        preprocessing: &JoltVerifierPreprocessing<Fr, Bn254Curve, DoryCommitmentScheme>,
+        proof: RV64IMACProof,
+        public_io: common::jolt_device::JoltDevice,
+        trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
+    ) {
+        let mut preprocessing_bytes = Vec::new();
+        preprocessing
+            .serialize_compressed(&mut preprocessing_bytes)
+            .expect("serialize core verifier preprocessing");
+        let preprocessing = verifier_preprocessing_from_core_bytes(&preprocessing_bytes)
+            .expect("convert core verifier preprocessing to canonical verifier preprocessing");
+
+        let mut proof_bytes = Vec::new();
+        proof
+            .serialize_compressed(&mut proof_bytes)
+            .expect("serialize core proof");
+        let proof = proof_into_verifier_from_core_bytes(&proof_bytes)
+            .expect("convert core proof to canonical verifier proof");
+
+        let trusted_advice_commitment =
+            trusted_advice_commitment.map(|trusted_advice_commitment| {
+                let mut commitment_bytes = Vec::new();
+                trusted_advice_commitment
+                    .serialize_compressed(&mut commitment_bytes)
+                    .expect("serialize core trusted advice commitment");
+                trusted_advice_commitment_from_core_bytes(&commitment_bytes).expect(
+                    "convert core trusted advice commitment to canonical verifier commitment",
+                )
+            });
+
+        verify_rv64imac(
+            &preprocessing,
+            &public_io,
+            &proof,
+            trusted_advice_commitment.as_ref(),
+            cfg!(feature = "zk"),
+        )
+        .expect("canonical verifier rejected core proof");
     }
 
     fn test_shared_preprocessing(
@@ -2722,18 +2767,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -2775,18 +2812,10 @@ mod tests {
         );
 
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -2821,18 +2850,15 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
+        verify_with_canonical_verifier(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
             None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        );
         assert_eq!(
             io_device.inputs, inputs,
             "Inputs mismatch: expected {:?}, got {:?}",
@@ -2878,18 +2904,15 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
+        verify_with_canonical_verifier(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
             None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        );
         let expected_output = &[
             0x28, 0x9b, 0xdf, 0x82, 0x9b, 0x4a, 0x30, 0x26, 0x7, 0x9a, 0x3e, 0xa0, 0x89, 0x73,
             0xb1, 0x97, 0x2d, 0x12, 0x4e, 0x7e, 0xaf, 0x22, 0x33, 0xc6, 0x3, 0x14, 0x3d, 0xc6,
@@ -2944,19 +2967,15 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        RV64IMACVerifier::new(
+        verify_with_canonical_verifier(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
             Some(trusted_commitment),
-            debug_info,
-        )
-        .expect("Failed to create verifier")
-        .verify()
-        .expect("Failed to verify proof");
+        );
 
         // Verify output is correct (advice should not affect sha2 output)
         let expected_output = &[
@@ -3015,19 +3034,15 @@ mod tests {
         assert!(prover.padded_trace_len <= 1024, "test expects small trace");
 
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        RV64IMACVerifier::new(
+        verify_with_canonical_verifier(
             &verifier_preprocessing,
             jolt_proof,
             io_device,
             Some(trusted_commitment),
-            debug_info,
-        )
-        .expect("Failed to create verifier")
-        .verify()
-        .expect("Verification failed");
+        );
     }
 
     #[test]
@@ -3071,19 +3086,15 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        RV64IMACVerifier::new(
+        verify_with_canonical_verifier(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
             Some(trusted_commitment),
-            debug_info,
-        )
-        .expect("Failed to create verifier")
-        .verify()
-        .expect("Verification failed");
+        );
 
         // Expected merkle root for leaves [5;32], [6;32], [7;32], [8;32]
         let expected_output = &[
@@ -3183,16 +3194,12 @@ mod tests {
 
         // Verify end-to-end
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        RV64IMACVerifier::new(
+        verify_with_canonical_verifier(
             &verifier_preprocessing,
             jolt_proof,
             io_device,
             Some(trusted_commitment),
-            Some(debug_info),
-        )
-        .expect("Failed to create verifier")
-        .verify()
-        .expect("Verification failed");
+        );
     }
 
     #[test]
@@ -3225,18 +3232,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -3270,18 +3269,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -3315,18 +3306,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -3365,18 +3348,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     #[test]
@@ -3424,18 +3399,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     /// Exercises std mode guest compilation (riscv64imac-zero-linux-musl custom target spec).
@@ -3473,18 +3440,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        let verifier = RV64IMACVerifier::new(
-            &verifier_preprocessing,
-            jolt_proof,
-            io_device,
-            None,
-            debug_info,
-        )
-        .expect("Failed to create verifier");
-        verifier.verify().expect("Failed to verify proof");
+        verify_with_canonical_verifier(&verifier_preprocessing, jolt_proof, io_device, None);
     }
 
     /// Test BlindFold R1CS satisfaction using real sumcheck data from muldiv proof.
@@ -4014,15 +3973,10 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (proof, debug_info) = prover.prove();
+        let (proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-
-        // DoryGlobals is now initialized inside the verifier's verify_stage8
-        RV64IMACVerifier::new(&verifier_preprocessing, proof, io_device, None, debug_info)
-            .expect("verifier creation failed")
-            .verify()
-            .expect("verification failed");
+        verify_with_canonical_verifier(&verifier_preprocessing, proof, io_device, None);
     }
 
     #[test]
@@ -4067,19 +4021,15 @@ mod tests {
             None,
         );
         let io_device = prover.program_io.clone();
-        let (jolt_proof, debug_info) = prover.prove();
+        let (jolt_proof, _debug_info) = prover.prove();
 
         let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
-        RV64IMACVerifier::new(
+        verify_with_canonical_verifier(
             &verifier_preprocessing,
             jolt_proof,
             io_device.clone(),
             Some(trusted_commitment),
-            debug_info,
-        )
-        .expect("Failed to create verifier")
-        .verify()
-        .expect("Verification failed");
+        );
 
         // Expected merkle root for leaves [5;32], [6;32], [7;32], [8;32]
         let expected_output = &[

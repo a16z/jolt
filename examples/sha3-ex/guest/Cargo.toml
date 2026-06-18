@@ -10,3 +10,14 @@ field-inline = ["jolt/field-inline"]
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [] }
 jolt-inlines-keccak256.workspace = true
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "sha3-guest"
+path = "src/main.rs"
+test = false
+bench = false

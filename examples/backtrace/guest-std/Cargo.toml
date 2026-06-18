@@ -12,3 +12,14 @@ jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "guest-std",
   "stdout",
 ] }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "backtrace-guest-std"
+path = "src/main.rs"
+test = false
+bench = false

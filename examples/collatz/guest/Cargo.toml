@@ -9,3 +9,14 @@ field-inline = ["jolt/field-inline"]
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "collatz-guest"
+path = "src/main.rs"
+test = false
+bench = false

@@ -1,0 +1,32 @@
+[package]
+name = "jolt-core-verifier-bridge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Conversion bridge from current jolt-core proof artifacts into jolt-verifier artifacts"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+zk = ["jolt-core/zk", "jolt-verifier/zk"]
+
+[dependencies]
+ark-serialize.workspace = true
+common.workspace = true
+jolt-core = { workspace = true, default-features = false, features = ["minimal"] }
+jolt-blindfold.workspace = true
+jolt-claims.workspace = true
+jolt-crypto.workspace = true
+jolt-dory.workspace = true
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-program = { workspace = true, features = ["serialization"] }
+jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+jolt-verifier.workspace = true
+serde.workspace = true

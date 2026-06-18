@@ -17,3 +17,14 @@ rand_v09 = { version = "0.9.2", package = "rand", default-features = false, feat
   "std_rng",
   "os_rng",
 ] }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "random-guest"
+path = "src/main.rs"
+test = false
+bench = false

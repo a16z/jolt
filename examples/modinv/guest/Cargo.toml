@@ -12,3 +12,14 @@ compute_advice = []
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "guest-std",
 ] }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "modinv-guest"
+path = "src/main.rs"
+test = false
+bench = false

@@ -5,7 +5,10 @@ use jolt_sdk::{self as jolt};
 extern crate alloc;
 
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
-use jolt::{Curve, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof, RV64IMACVerifier, F, PCS};
+use jolt::{
+    CoreJoltVerifierPreprocessing as JoltVerifierPreprocessing, CoreRV64IMACProof as RV64IMACProof,
+    CoreRV64IMACVerifier as RV64IMACVerifier, Curve, JoltDevice, F, PCS,
+};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 

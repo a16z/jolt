@@ -4,7 +4,9 @@
 //
 // The upstream merkle-tree example is left unmodified. This crate reuses its guest.
 
-use jolt_sdk::{serialize_and_print_size, TrustedAdvice, UntrustedAdvice};
+use jolt_sdk::{
+    serialize_and_print_size, serialize_core_and_print_size, TrustedAdvice, UntrustedAdvice,
+};
 use std::time::Instant;
 use tracing::info;
 
@@ -63,7 +65,7 @@ pub fn main() {
             .expect("Could not serialize proof.");
         serialize_and_print_size("io_device", "/tmp/merkle_io_device.bin", &program_io)
             .expect("Could not serialize io_device.");
-        serialize_and_print_size(
+        serialize_core_and_print_size(
             "Trusted Advice Commitment",
             "/tmp/merkle_trusted_advice.bin",
             &trusted_advice_commitment,

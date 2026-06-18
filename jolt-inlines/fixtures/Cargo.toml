@@ -12,7 +12,7 @@ publish = false
 workspace = true
 
 [features]
-default = []
+default = ["host"]
 host = [
   "jolt-inlines-bigint/host",
   "jolt-inlines-blake2/host",

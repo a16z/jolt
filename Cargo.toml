@@ -26,6 +26,7 @@ keywords = ["SNARK", "cryptography", "proofs"]
 members = [
   "crates/jolt-claims",
   "crates/jolt-blindfold",
+  "crates/jolt-core-verifier-bridge",
   "crates/jolt-crypto",
   "crates/jolt-program",
   "crates/jolt-poly",
@@ -36,6 +37,7 @@ members = [
   "crates/jolt-verifier",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
+  "crates/jolt-verifier-core-fixtures",
   "crates/jolt-riscv",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
@@ -120,6 +122,7 @@ exclude = ["jolt-eval/fuzz"]
 
 [features]
 host = ["jolt-sdk/host"]
+zk = ["jolt-sdk/zk"]
 
 [lib]
 path = "./src/lib.rs"
@@ -149,6 +152,8 @@ common = { workspace = true, features = ["std"] }
 [profile.test]
 opt-level = 3
 lto = "off"
+incremental = false
+debug = 0
 
 [profile.release]
 debug = 1
@@ -385,7 +390,9 @@ tracer = { path = "./tracer", default-features = false }
 jolt-core = { path = "./jolt-core", default-features = false }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
+jolt-core-verifier-bridge = { path = "./crates/jolt-core-verifier-bridge" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
+jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }

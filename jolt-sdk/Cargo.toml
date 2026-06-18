@@ -17,7 +17,11 @@ edition = "2021"
 [features]
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
-zk = ["jolt-core?/zk"]
+zk = [
+  "jolt-core?/zk",
+  "jolt-core-verifier-bridge?/zk",
+  "jolt-verifier?/zk",
+]
 field-inline = [
   "jolt-core?/field-inline",
   "jolt-program?/field-inline",
@@ -26,9 +30,16 @@ field-inline = [
 
 host = [
   "jolt-core/default",
+  "dep:jolt-core-verifier-bridge",
+  "dep:bincode",
   "jolt-platform/std",
   "dep:common",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "dep:jolt-field",
   "dep:jolt-program",
+  "dep:jolt-transcript",
+  "dep:jolt-verifier",
   "dep:tracer",
   "postcard/use-std",
   "serde/std",
@@ -65,7 +76,7 @@ random = ["zeroos-random"]
 stdout = ["zeroos-vfs-device-console"]
 
 zeroos-runtime-nostd = ["zeroos?/runtime-nostd"]
-zeroos-runtime-musl = ["zeroos?/runtime-musl"]
+zeroos-runtime-musl = []
 zeroos-thread = ["zeroos?/scheduler-cooperative"]
 zeroos-vfs = ["zeroos?/vfs"]
 zeroos-random = ["zeroos?/random", "zeroos?/rng-lcg"]
@@ -85,9 +96,16 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 jolt-sdk-macros.workspace = true
 # Host-only dependencies
+bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
 jolt-core = { workspace = true, default-features = false, optional = true }
+jolt-core-verifier-bridge = { workspace = true, optional = true }
+jolt-crypto = { workspace = true, optional = true }
+jolt-dory = { workspace = true, optional = true }
+jolt-field = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }
+jolt-transcript = { workspace = true, optional = true }
+jolt-verifier = { workspace = true, optional = true }
 tracer = { workspace = true, default-features = false, features = [
   "std",
 ], optional = true }
@@ -108,4 +126,7 @@ zeroos = { workspace = true, default-features = false, features = [
 ] }
 
 [target.'cfg(all(target_arch = "riscv64", target_os = "linux"))'.dependencies]
-zeroos = { workspace = true, default-features = false, features = ["os-linux"] }
+zeroos = { workspace = true, default-features = false, features = [
+  "os-linux",
+  "runtime-musl",
+] }

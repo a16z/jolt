@@ -3,8 +3,9 @@ use ark_serialize::CanonicalSerialize;
 use clap::{Parser, Subcommand};
 use jolt_sdk::guest::program::Program;
 use jolt_sdk::{
-    JoltDevice, JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
-    MemoryConfig, MemoryLayout, ProgramPreprocessing, RV64IMACProof, Serializable,
+    CoreJoltVerifierPreprocessing as JoltVerifierPreprocessing, CoreRV64IMACProof as RV64IMACProof,
+    JoltDevice, JoltProverPreprocessing, JoltSharedPreprocessing, MemoryConfig, MemoryLayout,
+    ProgramPreprocessing, Serializable,
 };
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
@@ -235,7 +236,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
 
     let mut cursor = std::io::Cursor::new(all_groups_data);
 
-    let verifier_preprocessing = jolt_sdk::JoltVerifierPreprocessing::<
+    let verifier_preprocessing = JoltVerifierPreprocessing::<
         jolt_sdk::F,
         jolt_sdk::Curve,
         jolt_sdk::PCS,
@@ -523,7 +524,7 @@ fn run_recursion_proof(
     let recursion_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
     let recursion_verifier_preprocessing =
-        jolt_sdk::JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
+        JoltVerifierPreprocessing::from(&recursion_prover_preprocessing);
 
     // update program_size in memory_config now that we know it
     recursion.memory_config.program_size = Some(

@@ -255,9 +255,18 @@ impl MacroBuilder {
         };
 
         let commitment_arg_in_verify = if has_trusted_advice {
-            quote! { trusted_advice_commitment }
+            quote! { trusted_advice_commitment.as_ref() }
         } else {
             quote! { None }
+        };
+
+        let convert_trusted_advice_commitment = if has_trusted_advice {
+            quote! {
+                let trusted_advice_commitment =
+                    trusted_advice_commitment.map(jolt::verifier_commitment_from_core);
+            }
+        } else {
+            quote! {}
         };
 
         quote! {
@@ -271,7 +280,7 @@ impl MacroBuilder {
 
                 let verify_closure = move |#(#public_inputs,)* output, panic, #commitment_param_in_closure proof: jolt::RV64IMACProof| {
                     let preprocessing = (*preprocessing).clone();
-                    let memory_layout = &preprocessing.shared.memory_layout;
+                    let memory_layout = preprocessing.program.memory_layout();
                     let memory_config = MemoryConfig {
                         max_input_size: memory_layout.max_input_size,
                         max_output_size: memory_layout.max_output_size,
@@ -287,8 +296,14 @@ impl MacroBuilder {
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    let verifier = RV64IMACVerifier::new(&preprocessing, proof, io_device, #commitment_arg_in_verify, None);
-                    verifier.is_ok_and(|verifier| verifier.verify().is_ok())
+                    #convert_trusted_advice_commitment
+                    jolt::verify_rv64imac(
+                        &preprocessing,
+                        &io_device,
+                        &proof,
+                        #commitment_arg_in_verify,
+                        jolt::_ZK_FEATURE_ENABLED,
+                    ).is_ok()
                 };
 
                 verify_closure
@@ -706,11 +721,12 @@ impl MacroBuilder {
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
             ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
-                jolt::JoltVerifierPreprocessing::new(
+                let core_preprocessing = jolt::CoreJoltVerifierPreprocessing::new(
                     shared_preprocess,
                     generators,
                     blindfold_setup,
-                )
+                );
+                jolt::verifier_preprocessing_from_core(&core_preprocessing)
             }
         }
     }
@@ -729,8 +745,8 @@ impl MacroBuilder {
                 -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
                 #imports
-                let preprocessing = JoltVerifierPreprocessing::from(prover_preprocessing);
-                preprocessing
+                let core_preprocessing = jolt::CoreJoltVerifierPreprocessing::from(prover_preprocessing);
+                jolt::verifier_preprocessing_from_core(&core_preprocessing)
             }
         }
     }
@@ -934,6 +950,8 @@ impl MacroBuilder {
                 );
                 let io_device = prover.program_io.clone();
                 let (jolt_proof, _) = prover.prove();
+                let jolt_proof = jolt::verifier_proof_from_core(jolt_proof)
+                    .expect("core proof should convert to verifier-native proof");
 
                 #handle_return
 
@@ -1116,7 +1134,6 @@ impl MacroBuilder {
             use jolt::{
                 JoltField,
                 RV64IMACProver,
-                RV64IMACVerifier,
                 RV64IMACProof,
                 host::Program,
                 host::JoltProgramSource,

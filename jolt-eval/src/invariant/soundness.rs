@@ -259,20 +259,27 @@ impl Invariant for SoundnessInvariant {
 /// RAII guard that reverts a patch on drop via `git checkout`.
 struct PatchGuard {
     dir: PathBuf,
-    applied: bool,
+    patch: Option<String>,
 }
 
 impl Drop for PatchGuard {
     fn drop(&mut self) {
-        if self.applied {
-            let _ = Command::new("git")
+        if let Some(patch) = self.patch.as_deref() {
+            let Ok(mut child) = Command::new("git")
                 .current_dir(&self.dir)
-                .args(["checkout", "."])
-                .status();
-            let _ = Command::new("git")
-                .current_dir(&self.dir)
-                .args(["clean", "-fd"])
-                .status();
+                .args(["apply", "--reverse", "--allow-empty", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            else {
+                return;
+            };
+
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                let _ = stdin.write_all(patch.as_bytes());
+            }
+
+            let _ = child.wait();
         }
     }
 }
@@ -282,7 +289,7 @@ impl Drop for PatchGuard {
 fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, CheckError> {
     let guard = PatchGuard {
         dir: sandbox_dir.to_path_buf(),
-        applied: false,
+        patch: None,
     };
 
     if patch.trim().is_empty() {
@@ -320,7 +327,7 @@ fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, CheckError
 
     Ok(PatchGuard {
         dir: sandbox_dir.to_path_buf(),
-        applied: true,
+        patch: Some(safe_patch),
     })
 }
 

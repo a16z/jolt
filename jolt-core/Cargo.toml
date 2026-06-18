@@ -24,7 +24,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 
 [features]
 default = ["host"]
-zk = ["dory/zk"]
+zk = ["dory/zk", "jolt-core-verifier-bridge/zk"]
 host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
 prover = [
   "minimal",
@@ -109,6 +109,7 @@ ignored = ["prost"]
 [dev-dependencies]
 criterion.workspace = true
 iai-callgrind.workspace = true
+jolt-core-verifier-bridge.workspace = true
 serial_test.workspace = true
 tracer = { workspace = true, default-features = false, features = [
   "std",
