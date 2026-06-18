@@ -725,12 +725,15 @@ where
         &checked.precommitted,
     )?;
     super::validate_akita_packed_witness_layout_config(config, &packed_layout)?;
+    let validity_requirements =
+        super::derive_akita_packed_validity_requirements(config, &checked.precommitted)?;
     super::validate_akita_packed_witness_validity_config(config, &checked.precommitted)?;
-    let physical = super::jolt_lattice_physical_manifest(
+    let physical = super::jolt_lattice_physical_manifest_with_validity(
         logical,
         &packed_layout,
         proof.one_hot_config.committed_chunk_bits(),
         &checked.precommitted,
+        &validity_requirements,
     )?;
     Ok((physical, packed_layout.digest))
 }

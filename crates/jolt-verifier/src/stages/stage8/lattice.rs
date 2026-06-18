@@ -22,9 +22,9 @@ use jolt_claims::protocols::jolt::{
     lattice_packed_validity_digest, little_endian_byte_decode_terms,
     program_image_validity_requirement, weighted_symbol_terms, AdviceClaimReductionLayout,
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-    LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityRequirement,
-    LatticePackedViewFormula, LatticePackedViewTerm, ProgramImageClaimReductionLayout,
-    TracePolynomialOrder,
+    LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityKind,
+    LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
+    ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_poly::EqPolynomial;
@@ -238,6 +238,111 @@ where
     let formulas = jolt_lattice_view_formulas(logical, log_k_chunk, precommitted)?;
     Stage8PhysicalManifest::from_jolt_lattice_view_formulas(logical, layout, formulas)
         .map_err(lattice_view_resolution_error)
+}
+
+pub fn jolt_lattice_physical_manifest_with_validity<F>(
+    logical: &Stage8LogicalManifest<F>,
+    layout: &PackedWitnessLayout,
+    log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
+    validity_requirements: &[LatticePackedValidityRequirement],
+) -> Result<Stage8PhysicalManifest<F>, VerifierError>
+where
+    F: Field,
+{
+    let formulas = jolt_lattice_view_formulas(logical, log_k_chunk, precommitted)?;
+    validate_lattice_view_validity_coverage(&formulas, validity_requirements)?;
+    Stage8PhysicalManifest::from_jolt_lattice_view_formulas(logical, layout, formulas)
+        .map_err(lattice_view_resolution_error)
+}
+
+pub fn validate_lattice_view_validity_coverage<F>(
+    formulas: &[JoltLatticeViewFormulaWithRowPoint<F>],
+    requirements: &[LatticePackedValidityRequirement],
+) -> Result<(), VerifierError> {
+    for (id, formula, _) in formulas {
+        validate_lattice_formula_validity_coverage(*id, formula, requirements)?;
+    }
+    Ok(())
+}
+
+fn validate_lattice_formula_validity_coverage<F>(
+    id: Stage8OpeningId,
+    formula: &LatticePackedViewFormula<F>,
+    requirements: &[LatticePackedValidityRequirement],
+) -> Result<(), VerifierError> {
+    match formula {
+        LatticePackedViewFormula::Direct {
+            family,
+            limb,
+            symbol,
+        } => validate_lattice_term_validity_coverage(id, family, *limb, *symbol, requirements),
+        LatticePackedViewFormula::LinearDecoded { terms }
+        | LatticePackedViewFormula::ReducedMasked { terms, .. } => {
+            for term in terms {
+                validate_lattice_term_validity_coverage(
+                    id,
+                    &term.family,
+                    term.limb,
+                    term.symbol,
+                    requirements,
+                )?;
+            }
+            Ok(())
+        }
+        LatticePackedViewFormula::MaskedDecoded { relation } => Err(unsupported_lattice_view(
+            format!("opening {id:?} still has unresolved masked relation {relation:?}"),
+        )),
+    }
+}
+
+fn validate_lattice_term_validity_coverage(
+    id: Stage8OpeningId,
+    family: &LatticePackedFamilyId,
+    limb: usize,
+    symbol: usize,
+    requirements: &[LatticePackedValidityRequirement],
+) -> Result<(), VerifierError> {
+    if core_jolt_ra_family(family) {
+        return Ok(());
+    }
+    if requirements
+        .iter()
+        .any(|requirement| requirement_covers_term(requirement, family, limb, symbol))
+    {
+        return Ok(());
+    }
+    Err(unsupported_lattice_view(format!(
+        "opening {id:?} uses packed family {family:?} limb {limb} symbol {symbol} without a bound validity requirement"
+    )))
+}
+
+fn core_jolt_ra_family(family: &LatticePackedFamilyId) -> bool {
+    matches!(
+        family,
+        LatticePackedFamilyId::InstructionRa { .. }
+            | LatticePackedFamilyId::BytecodeRa { .. }
+            | LatticePackedFamilyId::RamRa { .. }
+    )
+}
+
+fn requirement_covers_term(
+    requirement: &LatticePackedValidityRequirement,
+    family: &LatticePackedFamilyId,
+    limb: usize,
+    symbol: usize,
+) -> bool {
+    if &requirement.family != family || limb >= requirement.limbs {
+        return false;
+    }
+    match requirement.kind {
+        LatticePackedValidityKind::ExactOneHot | LatticePackedValidityKind::OptionalOneHot => {
+            symbol < requirement.alphabet_size
+        }
+        LatticePackedValidityKind::BooleanIndicator { symbol: indicator } => {
+            symbol == indicator && indicator < requirement.alphabet_size
+        }
+    }
 }
 
 fn jolt_lattice_row_point<F>(
@@ -1141,6 +1246,98 @@ mod tests {
             validate_akita_packed_witness_validity_config(&config, &schedule),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("validity digest")
+        ));
+    }
+
+    #[test]
+    fn validity_coverage_accepts_bound_decoded_families() {
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::ProgramImageInit,
+            JoltRelationId::ProgramImageClaimReduction,
+        ));
+        let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+            LatticePackedFamilyId::ProgramImageInit,
+            0,
+        ));
+
+        validate_lattice_view_validity_coverage(
+            &[(id, formula, vec![Fr::from_u64(1)])],
+            &[program_image_validity_requirement()],
+        )
+        .unwrap_or_else(|error| panic!("bound decoded family should validate: {error}"));
+    }
+
+    #[test]
+    fn validity_coverage_rejects_unbound_decoded_families() {
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::ProgramImageInit,
+            JoltRelationId::ProgramImageClaimReduction,
+        ));
+        let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+            LatticePackedFamilyId::ProgramImageInit,
+            0,
+        ));
+
+        assert!(matches!(
+            validate_lattice_view_validity_coverage(&[(id, formula, Vec::new())], &[]),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("without a bound validity requirement")
+        ));
+    }
+
+    #[test]
+    fn validity_coverage_allows_core_ra_families() {
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::InstructionRa(0),
+            JoltRelationId::HammingWeightClaimReduction,
+        ));
+        let formula = LatticePackedViewFormula::linear_decoded(vec![LatticePackedViewTerm::new(
+            Fr::from_u64(1),
+            LatticePackedFamilyId::InstructionRa { index: 0 },
+            0,
+            0,
+        )]);
+
+        validate_lattice_view_validity_coverage(&[(id, formula, Vec::new())], &[]).unwrap_or_else(
+            |error| panic!("core RA family should not need lattice validity: {error}"),
+        );
+    }
+
+    #[test]
+    fn validity_coverage_checks_boolean_indicator_symbol() {
+        let id = Stage8OpeningId::from(fused_increment_sign_opening());
+        let requirement = LatticePackedValidityRequirement::boolean_indicator(
+            LatticePackedFamilyId::IncSign,
+            1,
+            2,
+            1,
+        );
+
+        validate_lattice_view_validity_coverage(
+            &[(
+                id,
+                LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1),
+                Vec::new(),
+            )],
+            std::slice::from_ref(&requirement),
+        )
+        .unwrap_or_else(|error| panic!("covered boolean indicator should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_view_validity_coverage(
+                &[(
+                    id,
+                    LatticePackedViewFormula::<Fr>::direct(
+                        LatticePackedFamilyId::IncSign,
+                        0,
+                        0,
+                    ),
+                    Vec::new(),
+                )],
+                &[requirement],
+            ),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("without a bound validity requirement")
         ));
     }
 
