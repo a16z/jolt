@@ -1,6 +1,4 @@
 use std::collections::BTreeSet;
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_verifier::{
@@ -205,7 +203,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "value-level output mutation should be run on real core fixtures and rejects at RAM output check",
+        "value-level output mutation should be run on real verifier fixtures and rejects at RAM output check",
     ),
     checked_standard(
         "public_io.panic",
@@ -288,7 +286,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "real core fixture replaces one commitment with another and rejects before acceptance",
+        "real verifier fixture replaces one commitment with another and rejects before acceptance",
     ),
     checked_standard(
         "proof.commitments.missing",
@@ -296,7 +294,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage1,
         MutationStrategy::RemoveItem,
         TamperCoverage::Active,
-        "real core fixture removes one commitment and rejects before acceptance",
+        "real verifier fixture removes one commitment and rejects before acceptance",
     ),
     checked_standard(
         "proof.commitments.extra",
@@ -304,7 +302,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage1,
         MutationStrategy::DuplicateItem,
         TamperCoverage::Active,
-        "real core fixture duplicates one commitment and rejects before acceptance",
+        "real verifier fixture duplicates one commitment and rejects before acceptance",
     ),
     checked_standard(
         "proof.commitments.order",
@@ -312,7 +310,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage1,
         MutationStrategy::SwapOrder,
         TamperCoverage::Active,
-        "real core fixture swaps commitments and rejects before acceptance",
+        "real verifier fixture swaps commitments and rejects before acceptance",
     ),
     checked_standard(
         "proof.untrusted_advice_commitment",
@@ -335,7 +333,7 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
         "proof.joint_opening_proof",
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "real core fixture replaces the joint opening proof with another valid proof payload",
+        "real verifier fixture replaces the joint opening proof with another valid proof payload",
     ),
 ];
 
@@ -993,7 +991,7 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
         "stage8.opening_claim_values",
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "real core fixture offsets final opening claim fields after compat conversion",
+        "real verifier fixture offsets final opening claim fields ",
     ),
     final_opening_standard(
         "stage8.opening_claim_points",
@@ -1014,7 +1012,7 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
         "proof.claims.Zk.blindfold_proof",
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "real core ZK fixture mutates the imported BlindFold proof payload after compat conversion",
+        "verifier-native ZK fixture mutates the imported BlindFold proof payload ",
     ),
     zk_target(
         "zk.vector_commitment_setup",
@@ -1125,38 +1123,16 @@ pub fn assert_manifest_target_is_active(target: TamperTarget) {
     );
 }
 
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-pub fn assert_core_tamper_rejects(
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+pub fn assert_verifier_fixture_tamper_rejects(
     target: TamperTarget,
-    base: &crate::support::core_fixtures::CoreVerifierCase,
-    mutate: impl FnOnce(&mut crate::support::core_fixtures::CoreVerifierCase),
+    base: &crate::support::verifier_fixtures::VerifierFixtureCase,
+    mutate: impl FnOnce(&mut crate::support::verifier_fixtures::VerifierFixtureCase),
 ) {
     assert_manifest_target_is_active(target);
     let mut case = base.clone();
     mutate(&mut case);
     crate::support::assert_rejects(case.verify());
-}
-
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-pub fn assert_precompat_core_tamper_rejects(
-    target: TamperTarget,
-    base: &crate::support::core_fixtures::CorePrecompatVerifierCase,
-    mutate: impl FnOnce(&mut crate::support::core_fixtures::CorePrecompatVerifierCase),
-) {
-    assert_manifest_target_is_active(target);
-    let mut case = base.clone();
-    mutate(&mut case);
-
-    let core_result = catch_unwind(AssertUnwindSafe(|| case.verify_core()));
-    let core_rejected = match core_result {
-        Ok(result) => result.is_err(),
-        Err(_) => true,
-    };
-    assert!(
-        core_rejected,
-        "core verifier accepted pre-compat tampered target {target:?}"
-    );
-    crate::support::assert_rejects(case.verify_after_compat());
 }
 
 fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {

@@ -16,7 +16,7 @@ pub mod objective;
 pub mod sort_e2e;
 pub mod sort_targets;
 
-pub use guests::{GuestConfig, GuestProgram, JoltDevice, ProofVerifyError};
+pub use guests::{GuestConfig, GuestProgram, JoltDevice, VerifierError};
 pub use invariant::{
     CheckError, Invariant, InvariantTargets, InvariantViolation, JoltInvariants, SynthesisTarget,
 };

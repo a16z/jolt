@@ -263,7 +263,7 @@ impl MacroBuilder {
         let convert_trusted_advice_commitment = if has_trusted_advice {
             quote! {
                 let trusted_advice_commitment =
-                    trusted_advice_commitment.map(jolt::verifier_commitment_from_core);
+                    trusted_advice_commitment.map(jolt::verifier_commitment_from_prover);
             }
         } else {
             quote! {}
@@ -721,12 +721,11 @@ impl MacroBuilder {
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
             ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
-                let core_preprocessing = jolt::CoreJoltVerifierPreprocessing::new(
+                jolt::verifier_preprocessing_from_shared(
                     shared_preprocess,
                     generators,
                     blindfold_setup,
-                );
-                jolt::verifier_preprocessing_from_core(&core_preprocessing)
+                )
             }
         }
     }
@@ -745,8 +744,7 @@ impl MacroBuilder {
                 -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
             {
                 #imports
-                let core_preprocessing = jolt::CoreJoltVerifierPreprocessing::from(prover_preprocessing);
-                jolt::verifier_preprocessing_from_core(&core_preprocessing)
+                jolt::verifier_preprocessing_from_prover(prover_preprocessing)
             }
         }
     }
@@ -949,9 +947,8 @@ impl MacroBuilder {
                     advice_tape,
                 );
                 let io_device = prover.program_io.clone();
-                let (jolt_proof, _) = prover.prove();
-                let jolt_proof = jolt::verifier_proof_from_core(jolt_proof)
-                    .expect("core proof should convert to verifier-native proof");
+                let (jolt_proof, _) = prover.prove()
+                    .expect("prover should produce verifier-native proof");
 
                 #handle_return
 
@@ -1093,7 +1090,7 @@ impl MacroBuilder {
     }
 
     /// Generate `jolt_panic()` function that writes to the panic address.
-    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-core.
+    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-prover.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]

@@ -2,8 +2,8 @@
 #[cfg(feature = "host")]
 mod tests {
     use jolt_sdk::{
-        verifier_preprocessing_from_core, verifier_proof_from_core, verify_rv64imac,
-        CoreJoltVerifierPreprocessing, CoreRV64IMACProof, Serializable,
+        deserialize_verifier_object, verify_rv64imac, JoltDevice, JoltVerifierPreprocessing,
+        RV64IMACProof,
     };
 
     #[test]
@@ -20,12 +20,13 @@ mod tests {
             return;
         }
 
-        let core_preprocessing =
-            CoreJoltVerifierPreprocessing::read_from_target_dir(fixtures).unwrap();
-        let preprocessing = verifier_preprocessing_from_core(&core_preprocessing);
-        let core_proof = CoreRV64IMACProof::from_file(proof_path).unwrap();
-        let proof = verifier_proof_from_core(core_proof).unwrap();
-        let device = common::jolt_device::JoltDevice::from_file(io_path).unwrap();
+        let preprocessing_bytes = std::fs::read(preprocessing_path).unwrap();
+        let preprocessing: JoltVerifierPreprocessing =
+            deserialize_verifier_object(&preprocessing_bytes).unwrap();
+        let proof_bytes = std::fs::read(proof_path).unwrap();
+        let proof: RV64IMACProof = deserialize_verifier_object(&proof_bytes).unwrap();
+        let io_bytes = std::fs::read(io_path).unwrap();
+        let device: JoltDevice = deserialize_verifier_object(&io_bytes).unwrap();
         let start = std::time::Instant::now();
         println!("Verifying proof...");
         let result = verify_rv64imac(&preprocessing, &device, &proof, None, false);

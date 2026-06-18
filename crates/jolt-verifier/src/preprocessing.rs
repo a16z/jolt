@@ -9,7 +9,7 @@ use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use serde::{Deserialize, Serialize};
 
 /// Committed-program verifier inputs: trusted bytecode-chunk and program-image
-/// commitments plus the program metadata they bind to. Mirrors `jolt-core`'s
+/// commitments plus the program metadata they bind to. Mirrors `jolt-prover`'s
 /// `CommittedProgramPreprocessing`; the chunk count is implied by
 /// `bytecode_chunk_commitments.len()`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -32,7 +32,7 @@ impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
 }
 
 /// Program preprocessing in one of two modes, detected at runtime from the
-/// deserialized preprocessing exactly like `jolt-core`'s
+/// deserialized preprocessing exactly like `jolt-prover`'s
 /// `ProgramPreprocessing`: `Full` carries the bytecode table and initial RAM
 /// image, `Committed` replaces them with trusted commitments plus metadata.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

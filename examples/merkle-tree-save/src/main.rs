@@ -1,12 +1,10 @@
 // This is a variant of examples/merkle-tree that adds:
-// 1. `--save` flag to serialize proof artifacts to /tmp/ for the transpiler pipeline
+// 1. `--save` flag to serialize verifier objects to /tmp/
 // 2. Transcript feature flags (transcript-poseidon, etc.) in Cargo.toml
 //
 // The upstream merkle-tree example is left unmodified. This crate reuses its guest.
 
-use jolt_sdk::{
-    serialize_and_print_size, serialize_core_and_print_size, TrustedAdvice, UntrustedAdvice,
-};
+use jolt_sdk::{serialize_and_print_size, TrustedAdvice, UntrustedAdvice};
 use std::time::Instant;
 use tracing::info;
 
@@ -65,10 +63,12 @@ pub fn main() {
             .expect("Could not serialize proof.");
         serialize_and_print_size("io_device", "/tmp/merkle_io_device.bin", &program_io)
             .expect("Could not serialize io_device.");
-        serialize_core_and_print_size(
+        let verifier_trusted_advice_commitment =
+            trusted_advice_commitment.map(jolt_sdk::verifier_commitment_from_prover);
+        serialize_and_print_size(
             "Trusted Advice Commitment",
             "/tmp/merkle_trusted_advice.bin",
-            &trusted_advice_commitment,
+            &verifier_trusted_advice_commitment,
         )
         .expect("Could not serialize trusted advice commitment.");
     }

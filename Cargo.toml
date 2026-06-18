@@ -26,7 +26,6 @@ keywords = ["SNARK", "cryptography", "proofs"]
 members = [
   "crates/jolt-claims",
   "crates/jolt-blindfold",
-  "crates/jolt-core-verifier-bridge",
   "crates/jolt-crypto",
   "crates/jolt-program",
   "crates/jolt-poly",
@@ -37,12 +36,11 @@ members = [
   "crates/jolt-verifier",
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
-  "crates/jolt-verifier-core-fixtures",
   "crates/jolt-riscv",
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
-  "jolt-core",
+  "jolt-prover",
   "tracer",
   "common",
   "jolt-platform",
@@ -113,7 +111,6 @@ members = [
   "examples/sig-recovery/guest",
   "zklean-extractor",
   "z3-verifier",
-  "transpiler",
   "jolt-eval",
   "jolt-eval/macros",
   "jolt-eval/guest-sandbox",
@@ -146,7 +143,7 @@ zeroos-build.workspace = true
 ark-bn254.workspace = true
 
 jolt-sdk = { workspace = true, features = ["host"] }
-jolt-core = { workspace = true, features = ["default"] }
+jolt-prover = { workspace = true, features = ["default"] }
 common = { workspace = true, features = ["std"] }
 
 [profile.test]
@@ -387,10 +384,9 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 # Internal dependencies
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
-jolt-core = { path = "./jolt-core", default-features = false }
+jolt-prover = { path = "./jolt-prover", default-features = false }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
-jolt-core-verifier-bridge = { path = "./crates/jolt-core-verifier-bridge" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }

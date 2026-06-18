@@ -3,16 +3,17 @@ pub mod secp256k1_ecdsa;
 pub mod sha2_chain;
 
 use ark_bn254::Fr;
-use jolt_core::curve::Bn254Curve;
-use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_core::transcripts::Blake2bTranscript;
+use jolt_prover::curve::Bn254Curve;
+use jolt_prover::poly::commitment::dory::DoryCommitmentScheme;
+use jolt_prover::transcripts::Blake2bTranscript;
+pub use jolt_prover::zkvm::proof::VerifierError;
+use jolt_prover::zkvm::proof::{verifier_preprocessing_from_prover, verify_rv64imac};
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
 
 pub use fibonacci::Fibonacci;
-pub use jolt_core::guest::program::Program as GuestProgram;
-pub use jolt_core::utils::errors::ProofVerifyError;
+pub use jolt_prover::guest::program::Program as GuestProgram;
 pub use secp256k1_ecdsa::Secp256k1EcdsaVerify;
 pub use sha2_chain::Sha2Chain;
 pub use tracer::JoltDevice;
@@ -22,20 +23,20 @@ pub type C = Bn254Curve;
 pub type PCS = DoryCommitmentScheme;
 pub type FS = Blake2bTranscript;
 
-pub type Proof = jolt_core::zkvm::proof_serialization::JoltProof<F, C, PCS, FS>;
-pub type ProverPreprocessing = jolt_core::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
-pub type VerifierPreprocessing = jolt_core::zkvm::verifier::JoltVerifierPreprocessing<F, C, PCS>;
+pub type Proof = jolt_prover::zkvm::proof::RV64IMACProof;
+pub type ProverPreprocessing = jolt_prover::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
+pub type VerifierPreprocessing = jolt_prover::zkvm::proof::VerifierPreprocessing<F, C, PCS>;
 
 pub fn prover_preprocessing(
     program: &GuestProgram,
     max_trace_length: usize,
 ) -> ProverPreprocessing {
-    jolt_core::guest::prover::preprocess(program, max_trace_length)
+    jolt_prover::guest::prover::preprocess(program, max_trace_length)
         .expect("prover preprocessing failed")
 }
 
 pub fn verifier_preprocessing(prover_pp: &ProverPreprocessing) -> VerifierPreprocessing {
-    VerifierPreprocessing::from(prover_pp)
+    verifier_preprocessing_from_prover(prover_pp)
 }
 
 pub fn prove(
@@ -44,7 +45,7 @@ pub fn prove(
     inputs: &[u8],
 ) -> (Proof, JoltDevice) {
     let mut output_bytes = vec![0u8; program.memory_config.max_output_size as usize];
-    let (proof, io_device, _debug) = jolt_core::guest::prover::prove::<F, C, PCS, FS>(
+    let (proof, io_device, _debug) = jolt_prover::guest::prover::prove::<F, C, PCS, FS>(
         program,
         inputs,
         &[],
@@ -53,7 +54,8 @@ pub fn prove(
         None,
         &mut output_bytes,
         prover_pp,
-    );
+    )
+    .expect("prover should produce verifier-native proof");
     (proof, io_device)
 }
 
@@ -61,14 +63,8 @@ pub fn verify(
     verifier_pp: &VerifierPreprocessing,
     proof: Proof,
     io_device: &JoltDevice,
-) -> Result<(), ProofVerifyError> {
-    jolt_core::guest::verifier::verify::<F, C, PCS, FS>(
-        &io_device.inputs,
-        None,
-        &io_device.outputs,
-        proof,
-        verifier_pp,
-    )
+) -> Result<(), VerifierError> {
+    verify_rv64imac(verifier_pp, io_device, &proof, None, false)
 }
 
 /// Verify a proof against claimed (potentially malicious) outputs and panic flag.
@@ -78,10 +74,8 @@ pub fn verify_with_claims(
     inputs: &[u8],
     claimed_outputs: &[u8],
     claimed_panic: bool,
-) -> Result<(), ProofVerifyError> {
-    use jolt_core::zkvm::verifier::JoltVerifier;
-
-    let memory_layout = &verifier_pp.shared.memory_layout;
+) -> Result<(), VerifierError> {
+    let memory_layout = verifier_pp.program.memory_layout();
     let memory_config = MemoryConfig {
         max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
         max_trusted_advice_size: memory_layout.max_trusted_advice_size,
@@ -96,8 +90,7 @@ pub fn verify_with_claims(
     io_device.outputs = claimed_outputs.to_vec();
     io_device.panic = claimed_panic;
 
-    let verifier = JoltVerifier::<F, C, PCS, FS>::new(verifier_pp, proof, io_device, None, None)?;
-    verifier.verify()
+    verify_rv64imac(verifier_pp, &io_device, &proof, None, false)
 }
 
 // ── GuestConfig ─────────────────────────────────────────────────────

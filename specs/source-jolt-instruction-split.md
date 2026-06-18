@@ -316,8 +316,8 @@ cargo clippy --all --features host -q --all-targets -- -D warnings
 cargo clippy --all --features host,zk -q --all-targets -- -D warnings
 cargo nextest run -p jolt-program --cargo-quiet
 cargo nextest run -p tracer --cargo-quiet --features test-utils
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
 ```
 
 Add or update tests for:
@@ -937,7 +937,7 @@ pub struct ProofTraceRow {
 ```
 
 `crates/jolt-program` already has the equivalent `TraceRow` / `OwnedTrace`
-shape. A future cleanup should make `jolt-core` prover inputs consume that
+shape. A future cleanup should make `jolt-prover` prover inputs consume that
 normalized proof trace instead of `Arc<Vec<Cycle>>`. In that end state, tracer
 execution still owns concrete `Cycle` construction and CPU/RAM side effects,
 but proving code never sees source-only cycle variants and no longer needs to
@@ -1382,7 +1382,7 @@ Current implementation status:
   `Flags` impls. Lookup/flag queries are now final-row-only, but the long-term
   ownership question remains: ideally the RV64 catalog crate should not know
   Jolt R1CS circuit flags or witness-routing instruction flags.
-- `jolt-core` prover internals still pass `Arc<Vec<Cycle>>` through many
+- `jolt-prover` prover internals still pass `Arc<Vec<Cycle>>` through many
   witness-generation and sumcheck paths. `JoltTraceCycle` makes final-row proof
   metadata explicit at each use site, but a cleaner follow-up is to normalize
   once from tracer `Cycle` into `TraceRow` / `ProofTraceRow`.

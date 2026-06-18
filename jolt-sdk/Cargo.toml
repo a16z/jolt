@@ -18,8 +18,7 @@ edition = "2021"
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
 zk = [
-  "jolt-core?/zk",
-  "jolt-core-verifier-bridge?/zk",
+  "jolt-prover?/zk",
   "jolt-verifier?/zk",
 ]
 field-inline = [
@@ -29,8 +28,8 @@ field-inline = [
 ]
 
 host = [
-  "jolt-core/default",
-  "dep:jolt-core-verifier-bridge",
+  "jolt-prover/default",
+  "dep:ark-serialize",
   "dep:bincode",
   "jolt-platform/std",
   "dep:common",
@@ -56,12 +55,22 @@ guest-std = [
   "zeroos-std",
 ]
 
-guest-verifier = ["guest-std", "dep:common", "jolt-core/minimal"]
+guest-verifier = [
+  "guest-std",
+  "dep:bincode",
+  "dep:common",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "dep:jolt-field",
+  "dep:jolt-transcript",
+  "dep:jolt-verifier",
+  "jolt-prover/minimal",
+]
 
 malloc-shim = ["jolt-platform/malloc-shim"]
-transcript-poseidon = ["jolt-core/transcript-poseidon"]
-transcript-keccak = ["jolt-core/transcript-keccak"]
-transcript-blake2b = ["jolt-core/transcript-blake2b"]
+transcript-poseidon = ["jolt-prover/transcript-poseidon"]
+transcript-keccak = ["jolt-prover/transcript-keccak"]
+transcript-blake2b = ["jolt-prover/transcript-blake2b"]
 
 # Jolt-SDK native features (optional capabilities)
 #
@@ -96,10 +105,10 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 jolt-sdk-macros.workspace = true
 # Host-only dependencies
+ark-serialize = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
-jolt-core = { workspace = true, default-features = false, optional = true }
-jolt-core-verifier-bridge = { workspace = true, optional = true }
+jolt-prover = { workspace = true, default-features = false, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
 jolt-field = { workspace = true, optional = true }

@@ -147,7 +147,10 @@ where
     Ok(())
 }
 
-#[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
+#[expect(
+    non_snake_case,
+    reason = "Matches current jolt-prover proof field name."
+)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedInputs {
     pub public_io: JoltDevice,

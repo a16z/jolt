@@ -50,7 +50,7 @@
 //! binds the hidden R1CS witness value used in the Jolt claim relation to the
 //! hidden PCS evaluation proved by Stage 8.
 //!
-//! In ZK mode this is the bridge between the committed stage proofs and the
+//! In ZK mode this is the link between the committed stage proofs and the
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
@@ -215,7 +215,7 @@ struct SourceValues<F: Field> {
     challenges: Vec<(VerifierChallengeId, F)>,
 }
 
-pub(crate) fn build<PCS, VC, ZkProof>(
+pub fn build<PCS, VC, ZkProof>(
     input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
 ) -> Result<BlindFoldOutput<PCS::Field, VC::Output>, VerifierError>
 where

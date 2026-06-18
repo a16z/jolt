@@ -1,7 +1,7 @@
 #![cfg(test)]
 #![allow(non_upper_case_globals)]
 
-use jolt_core::zkvm::{
+use jolt_prover::zkvm::{
     instruction::{
         CircuitFlags, Flags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
     },

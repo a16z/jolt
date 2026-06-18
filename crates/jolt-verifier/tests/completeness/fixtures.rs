@@ -72,7 +72,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             zk: true,
             has_trusted_advice: false,
             expected_core_accepts: false,
-            notes: "Prefix BlindFold fixture for Stage 1-only verification; not a full core proof.",
+            notes: "Prefix BlindFold fixture for Stage 1-only verification; not a full verifier object.",
         },
         FixtureId::AdviceConsumer => FixtureMetadata {
             id,

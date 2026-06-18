@@ -5,7 +5,7 @@
 //! `ProgramImageInitContributionRw` instead of having the verifier materialize
 //! the initial RAM words. This reduction binds that scalar to the trusted
 //! `ProgramImageInit` commitment over the shared precommitted schedule.
-//! Mirrors `jolt-core`'s `zkvm/claim_reductions/program_image.rs`.
+//! Mirrors `jolt-prover`'s `zkvm/claim_reductions/program_image.rs`.
 
 use jolt_field::{Field, RingCore};
 

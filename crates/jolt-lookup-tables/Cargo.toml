@@ -26,7 +26,7 @@ serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
-jolt-core = { workspace = true, default-features = false, features = [
+jolt-prover = { workspace = true, default-features = false, features = [
   "minimal",
 ] }
 jolt-riscv = { workspace = true, features = ["serialization"] }

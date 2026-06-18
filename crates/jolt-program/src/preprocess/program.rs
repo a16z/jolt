@@ -37,7 +37,7 @@ impl JoltProgramPreprocessing {
 
 /// Verifier-side program shape for committed program mode: the trusted
 /// commitments replace the bytecode table and program image, so only this
-/// metadata accompanies them. Mirrors `jolt-core`'s `ProgramMetadata`.
+/// metadata accompanies them. Mirrors `jolt-prover`'s `ProgramMetadata`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",

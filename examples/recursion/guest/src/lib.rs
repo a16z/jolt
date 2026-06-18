@@ -4,11 +4,8 @@ use jolt_sdk::{self as jolt};
 
 extern crate alloc;
 
-use ark_serialize::{CanonicalDeserialize, Compress, Validate};
-use jolt::{
-    CoreJoltVerifierPreprocessing as JoltVerifierPreprocessing, CoreRV64IMACProof as RV64IMACProof,
-    CoreRV64IMACVerifier as RV64IMACVerifier, Curve, JoltDevice, F, PCS,
-};
+use jolt::{JoltDevice, JoltVerifierPreprocessing, RV64IMACProof};
+use serde::de::DeserializeOwned;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
@@ -17,6 +14,29 @@ mod embedded_bytes {
 }
 
 include!("./provable_macro.rs");
+
+fn read_record<T: DeserializeOwned>(buffer: &[u8], offset: &mut usize) -> T {
+    assert!(
+        buffer.len().saturating_sub(*offset) >= 8,
+        "missing record length prefix"
+    );
+    let mut len_bytes = [0u8; 8];
+    len_bytes.copy_from_slice(&buffer[*offset..*offset + 8]);
+    *offset += 8;
+
+    let len = usize::try_from(u64::from_le_bytes(len_bytes)).unwrap();
+    assert!(
+        buffer.len().saturating_sub(*offset) >= len,
+        "truncated serialized record"
+    );
+    let end = *offset + len;
+    let (value, consumed) =
+        bincode::serde::decode_from_slice(&buffer[*offset..end], bincode::config::standard())
+            .unwrap();
+    assert_eq!(consumed, len, "record decoder left trailing bytes");
+    *offset = end;
+    value
+}
 
 provable_with_config! {
 fn verify(bytes: &[u8]) -> u32 {
@@ -27,31 +47,29 @@ fn verify(bytes: &[u8]) -> u32 {
         bytes
     };
 
-    let mut cursor = std::io::Cursor::new(data_bytes);
+    let mut offset = 0;
 
     start_cycle_tracking("deserialize preprocessing");
-    let verifier_preprocessing: JoltVerifierPreprocessing<F, Curve, PCS> =
-        JoltVerifierPreprocessing::<F, Curve, PCS>::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+    let verifier_preprocessing: JoltVerifierPreprocessing = read_record(data_bytes, &mut offset);
     end_cycle_tracking("deserialize preprocessing");
 
     start_cycle_tracking("deserialize count of proofs");
     // Deserialize number of proofs to verify
-    let n: u32 = u32::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+    let n: u32 = read_record(data_bytes, &mut offset);
     end_cycle_tracking("deserialize count of proofs");
 
     let mut all_valid = true;
     for _ in 0..n {
         start_cycle_tracking("deserialize proof");
-        let proof = RV64IMACProof::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+        let proof: RV64IMACProof = read_record(data_bytes, &mut offset);
         end_cycle_tracking("deserialize proof");
 
         start_cycle_tracking("deserialize device");
-        let device = JoltDevice::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No).unwrap();
+        let device: JoltDevice = read_record(data_bytes, &mut offset);
         end_cycle_tracking("deserialize device");
 
         start_cycle_tracking("verification");
-        let verifier = RV64IMACVerifier::new(&verifier_preprocessing, proof, device, None, None);
-        let is_valid = verifier.is_ok_and(|verifier| verifier.verify().is_ok());
+        let is_valid = jolt::verify_rv64imac(&verifier_preprocessing, &device, &proof, None, false).is_ok();
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;
     }

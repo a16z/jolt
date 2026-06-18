@@ -83,10 +83,10 @@ This prints every syscall the guest makes (e.g. `[syscall] SYS_clone`), which he
 
 ## Release runs with fat LTO fail a lookup-table test
 
-If `cargo nextest run --release -p jolt-core` fails at:
+If `cargo nextest run --release -p jolt-prover` fails at:
 
 ```
-'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-core/src/zkvm/lookup_table/test.rs:108:17:
+'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-prover/src/zkvm/lookup_table/test.rs:108:17:
 assertion `left == right` failed
 ```
 
@@ -113,12 +113,12 @@ Enabling "fat" LTO without additional flags triggers a compiler miscompilation i
 
 To reproduce:
 ```bash
-CARGO_PROFILE_RELEASE_LTO=fat cargo nextest run --release -p jolt-core -E 'test(=zkvm::lookup_table::equal::test::prefix_suffix)'
+CARGO_PROFILE_RELEASE_LTO=fat cargo nextest run --release -p jolt-prover -E 'test(=zkvm::lookup_table::equal::test::prefix_suffix)'
 ```
 
 You will see an error similar to:
 ```text
-thread 'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-core/src/zkvm/lookup_table/test.rs:108:17:
+thread 'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-prover/src/zkvm/lookup_table/test.rs:108:17:
 assertion `left == right` failed
   left: 3421757210433941145757981284077922153733430471292915370254709621273756639318
  right: 15993602859885613318374216934674599210221976492830069114166327961258944178919
@@ -129,7 +129,7 @@ assertion `left == right` failed
 The above error can be fixed by setting `lto = "thin"`. You can verify with:
 
 ```bash
-CARGO_PROFILE_RELEASE_LTO=thin cargo nextest run --release -p jolt-core -E 'test(=zkvm::lookup_table::equal::test::prefix_suffix)'
+CARGO_PROFILE_RELEASE_LTO=thin cargo nextest run --release -p jolt-prover -E 'test(=zkvm::lookup_table::equal::test::prefix_suffix)'
 ```
 
 ### 3. `lto = "fat"` with `-C no-prepopulate-passes`
@@ -140,12 +140,12 @@ This may cause tests with tight trace length limitsâ€”such as `advice_e2e_dory`â
 
 To reproduce:
 ```bash
-CARGO_PROFILE_RELEASE_LTO=fat RUSTFLAGS="-C no-prepopulate-passes" cargo nextest run --release -p jolt-core -E 'test(=zkvm::prover::tests::advice_e2e_dory)'
+CARGO_PROFILE_RELEASE_LTO=fat RUSTFLAGS="-C no-prepopulate-passes" cargo nextest run --release -p jolt-prover -E 'test(=zkvm::prover::tests::advice_e2e_dory)'
 ```
 
 You will see a trace length error:
 ```text
-    thread 'zkvm::prover::tests::advice_e2e_dory' panicked at jolt-core/src/zkvm/prover.rs:336:13:
+    thread 'zkvm::prover::tests::advice_e2e_dory' panicked at jolt-prover/src/zkvm/prover.rs:336:13:
     Execution trace length (105501 cycles, padded to 131072) exceeds max_trace_length (65536) configured in MemoryConfig. Increase max_trace_length to at least 131072.
 ```
 

@@ -1,69 +1,50 @@
 #![cfg_attr(
-    all(feature = "core-fixtures", not(feature = "zk")),
+    all(feature = "prover-fixtures", not(feature = "zk")),
     expect(
         clippy::expect_used,
-        reason = "fixture dimension helpers should fail loudly when stored core artifacts are malformed"
+        reason = "fixture dimension helpers should fail loudly when stored verifier objects are malformed"
     )
 )]
 
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-use crate::support::{core_fixtures, tamper_manifest};
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use crate::support::proof_claims::offset_opening_claim;
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use crate::support::{tamper_manifest, verifier_fixtures};
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     formulas::{committed_openings::final_opening_ids, dimensions::JoltFormulaDimensions},
     JoltOpeningId,
 };
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_field::{Fr, FromPrimitiveInt};
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-use jolt_verifier::compat::claims::offset_opening_claim;
 
 #[test]
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tampered_opening_value_reject() {
-    tamper_final_opening_claims(&core_fixtures::standard_muldiv_case());
-    tamper_final_opening_claims(&core_fixtures::standard_advice_consumer_case());
+    tamper_final_opening_claims(&verifier_fixtures::standard_muldiv_case());
+    tamper_final_opening_claims(&verifier_fixtures::standard_advice_consumer_case());
 }
 
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-fn tamper_final_opening_claims(base: &core_fixtures::CoreVerifierCase) {
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn tamper_final_opening_claims(base: &verifier_fixtures::VerifierFixtureCase) {
     for id in stage8_final_opening_ids(base) {
-        tamper_manifest::assert_core_tamper_rejects(
+        tamper_manifest::assert_verifier_fixture_tamper_rejects(
             tamper_manifest::required_target("stage8.opening_claim_values"),
             base,
             |case| {
                 assert!(
                     offset_opening_claim(&mut case.proof, id, Fr::from_u64(1)),
-                    "converted core fixture is missing final opening claim {id:?}"
+                    "converted verifier fixture is missing final opening claim {id:?}"
                 );
             },
         );
     }
 }
 
-#[test]
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-fn precompat_tampered_opening_value_reject() {
-    let converted = core_fixtures::standard_muldiv_case();
-    let base = core_fixtures::standard_muldiv_precompat_case();
-    for id in stage8_final_opening_ids(&converted) {
-        tamper_manifest::assert_precompat_core_tamper_rejects(
-            tamper_manifest::required_target("stage8.opening_claim_values"),
-            &base,
-            |case| {
-                assert!(
-                    case.offset_opening_claim(id, 1),
-                    "legacy core fixture is missing final opening claim {id:?}"
-                );
-            },
-        );
-    }
-}
-
-#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
-fn stage8_final_opening_ids(base: &core_fixtures::CoreVerifierCase) -> Vec<JoltOpeningId> {
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+fn stage8_final_opening_ids(base: &verifier_fixtures::VerifierFixtureCase) -> Vec<JoltOpeningId> {
     let log_t = base.proof.trace_length.ilog2() as usize;
     let dimensions = JoltFormulaDimensions::try_from(base.proof.one_hot_config.dimensions(
         log_t,
@@ -71,7 +52,7 @@ fn stage8_final_opening_ids(base: &core_fixtures::CoreVerifierCase) -> Vec<JoltO
         base.preprocessing.program.bytecode_len(),
         base.proof.ram_K,
     ))
-    .expect("core fixture has invalid final opening dimensions");
+    .expect("verifier fixture has invalid final opening dimensions");
     final_opening_ids(
         dimensions.ra_layout,
         base.trusted_advice_commitment.is_some(),
@@ -84,6 +65,6 @@ fn stage8_final_opening_ids(base: &core_fixtures::CoreVerifierCase) -> Vec<JoltO
 }
 
 #[test]
-#[cfg(any(not(feature = "core-fixtures"), feature = "zk"))]
+#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
 #[ignore = "opening verification is not wired yet"]
 fn tampered_opening_value_reject() {}

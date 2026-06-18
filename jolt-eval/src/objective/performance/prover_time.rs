@@ -1,4 +1,4 @@
-use jolt_core::host::Program;
+use jolt_prover::host::Program;
 
 use crate::guests::{self, GuestConfig, GuestProgram, ProverPreprocessing};
 use crate::objective::Objective;
@@ -49,7 +49,7 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
 
         // Decode to get program_size, trace to get trace length
         let (_bytecode, _memory_init, program_size, _e_entry) =
-            jolt_core::guest::program::decode(&elf_bytes);
+            jolt_prover::guest::program::decode(&elf_bytes);
         mc.program_size = Some(program_size);
 
         let program = GuestProgram::new(&elf_bytes, &mc);

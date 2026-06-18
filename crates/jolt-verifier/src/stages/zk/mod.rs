@@ -1,6 +1,9 @@
 //! ZK verifier stage construction and committed-proof boundary helpers.
 
-pub(crate) mod blindfold;
+#[doc(hidden)]
+pub mod blindfold;
 pub(crate) mod committed;
-pub(crate) mod inputs;
-pub(crate) mod outputs;
+#[doc(hidden)]
+pub mod inputs;
+#[doc(hidden)]
+pub mod outputs;

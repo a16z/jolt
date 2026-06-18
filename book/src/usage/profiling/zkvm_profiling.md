@@ -7,7 +7,7 @@ We use the [`tracing_chrome`](https://github.com/thoren-d/tracing-chrome) crate 
 
 To generate a trace, run e.g.
 
-```cargo run --release -p jolt-core profile --name sha3 --format chrome```
+```cargo run --release -p jolt-prover profile --name sha3 --format chrome```
 
 Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the `examples` directory. The benchmark inputs are provided in `bench.rs`.
 
@@ -20,7 +20,7 @@ The above command will output a JSON file in the workspace rootwith a name `trac
 To visualize CPU and memory usage alongside the execution trace, enable the `monitor` feature:
 
 ```bash
-cargo run --release --features monitor -p jolt-core profile --name sha3 --format chrome
+cargo run --release --features monitor -p jolt-prover profile --name sha3 --format chrome
 python3 scripts/postprocess_trace.py trace-*.json
 ```
 
@@ -34,13 +34,13 @@ When tracing is insufficiently detailed, you can enable [pprof](https://github.c
 
 To enable pprof profiling, add the `--features pprof` flag:
 
-```cargo run --release --features pprof -p jolt-core profile --name sha3 --format chrome```
+```cargo run --release --features pprof -p jolt-prover profile --name sha3 --format chrome```
 
 This will generate multiple `.pb` profile files in `benchmark-runs/pprof/`, one for each major stage.
 
 To view the proving profile in your browser using [pprof](https://github.com/google/pprof), run:
 
-```go tool pprof -http=:8080 target/release/jolt-core benchmark-runs/pprof/sha3_prove.pb```
+```go tool pprof -http=:8080 target/release/jolt-prover benchmark-runs/pprof/sha3_prove.pb```
 
 This will start a web server at `http://localhost:8080` where you can explore:
 
@@ -54,17 +54,17 @@ This will start a web server at `http://localhost:8080` where you can explore:
 
 You may need to increase the sampling frequency to get a more detailed profile for shorter traces or decrease it for longer tracesto reduce overhead.You may customize the sampling frequency using the `PPROF_FREQ` environment variable (default: 100 Hz):
 
-```PPROF_FREQ=1000 cargo run --release --features pprof -p jolt-core profile --name sha3 --format chrome```
+```PPROF_FREQ=1000 cargo run --release --features pprof -p jolt-prover profile --name sha3 --format chrome```
 
 ## Memory profiling
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
 Allocative allows you to (recursively) measure the total heap space occupied by any data structure implementing the `Allocative` trait, and optionally generate a flamegraph.
-In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-7 of the Jolt [DAG](../../how/architecture/architecture.md#jolt-as-a-dag) (see [`jolt_dag.rs`](https://github.com/a16z/jolt/blob/main/jolt-core/src/zkvm/dag/jolt_dag.rs)).
+In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-7 of the Jolt [DAG](../../how/architecture/architecture.md#jolt-as-a-dag) (see [`jolt_dag.rs`](https://github.com/a16z/jolt/blob/main/jolt-prover/src/zkvm/dag/jolt_dag.rs)).
 
 To generate allocative output, run:
 
-```RUST_LOG=debug cargo run --release --features allocative -p jolt-core profile --name sha3 --format chrome```
+```RUST_LOG=debug cargo run --release --features allocative -p jolt-prover profile --name sha3 --format chrome```
 
 Where, as above, `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`.
 

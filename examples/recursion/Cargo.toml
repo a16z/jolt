@@ -11,6 +11,7 @@ path = "src/main.rs"
 jolt-sdk = { workspace = true, features = ["host"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
-ark-serialize.workspace = true
 postcard.workspace = true
 clap.workspace = true
+bincode.workspace = true
+serde.workspace = true

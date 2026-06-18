@@ -570,7 +570,7 @@ macro_rules! define_rv64imac_enums {
             }
 
             /// Returns a freshly randomized cycle of the same variant.
-            /// Used by jolt-core fuzz tests that need to iterate all
+            /// Used by jolt-prover fuzz tests that need to iterate all
             /// instruction variants via `Cycle::iter()`.
             #[cfg(any(feature = "test-utils", test))]
             pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {

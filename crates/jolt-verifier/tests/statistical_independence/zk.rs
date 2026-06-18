@@ -1,5 +1,5 @@
 #![cfg_attr(
-    all(feature = "core-fixtures", feature = "zk"),
+    all(feature = "prover-fixtures", feature = "zk"),
     expect(
         clippy::cast_precision_loss,
         clippy::expect_used,
@@ -8,39 +8,39 @@
     )
 )]
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use std::collections::BTreeMap;
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use ark_serialize::CanonicalSerialize;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_field::{FixedBytes, Fr};
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_transcript::{
     AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript, Transcript,
 };
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 const DEFAULT_SAMPLES: usize = 64;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 const NUM_BUCKETS: usize = 16;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 const MIN_SAMPLES: usize = NUM_BUCKETS * 4;
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 const CHI2_CRITICAL: f64 = 43.84;
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[test]
-#[ignore = "run with --release: cargo nextest run -p jolt-verifier --release --features core-fixtures,zk zk_muldiv_jolt_proof_components_are_statistically_independent --run-ignored ignored-only --cargo-quiet"]
+#[ignore = "run with --release: cargo nextest run -p jolt-verifier --release --features prover-fixtures,zk zk_muldiv_jolt_proof_components_are_statistically_independent --run-ignored ignored-only --cargo-quiet"]
 fn zk_muldiv_jolt_proof_components_are_statistically_independent() {
     with_zk_statistical_stack(run_zk_muldiv_jolt_proof_components_are_statistically_independent);
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn run_zk_muldiv_jolt_proof_components_are_statistically_independent() {
     require_release_build();
 
@@ -56,7 +56,7 @@ fn run_zk_muldiv_jolt_proof_components_are_statistically_independent() {
     let mut baseline = None;
 
     for sample_index in 0..samples {
-        let case = crate::support::core_fixtures::fresh_zk_muldiv_case();
+        let case = crate::support::verifier_fixtures::fresh_zk_muldiv_case();
         crate::support::assert_zk_accepts(case.verify());
 
         let shape = StableZkProofShape::from_case(&case);
@@ -82,7 +82,7 @@ fn run_zk_muldiv_jolt_proof_components_are_statistically_independent() {
     assert_same_distribution(&even, &odd);
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn with_zk_statistical_stack(test: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .name("zk-statistical-independence".to_string())
@@ -93,7 +93,7 @@ fn with_zk_statistical_stack(test: impl FnOnce() + Send + 'static) {
         .expect("ZK statistical-independence test panicked");
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn require_release_build() {
     assert!(
         !(cfg!(debug_assertions)
@@ -102,7 +102,7 @@ fn require_release_build() {
     );
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn statistical_sample_count() -> usize {
     std::env::var("JOLT_VERIFIER_ZK_STAT_SAMPLES")
         .ok()
@@ -113,7 +113,7 @@ fn statistical_sample_count() -> usize {
         })
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, PartialEq)]
 struct StableZkProofShape {
     public_io: common::jolt_device::JoltDevice,
@@ -129,9 +129,9 @@ struct StableZkProofShape {
     blindfold_shape: BlindFoldProofShape,
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 impl StableZkProofShape {
-    fn from_case(case: &crate::support::core_fixtures::CoreZkVerifierCase) -> Self {
+    fn from_case(case: &crate::support::verifier_fixtures::ZkVerifierFixtureCase) -> Self {
         let JoltProofClaims::Zk { blindfold_proof } = &case.proof.claims else {
             panic!("ZK statistical fixture must carry a BlindFold proof");
         };
@@ -157,7 +157,7 @@ impl StableZkProofShape {
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CommitmentShape {
     instruction_ra: usize,
@@ -166,7 +166,7 @@ struct CommitmentShape {
     has_untrusted_advice: bool,
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CommittedStageShape {
     rounds: usize,
@@ -174,7 +174,7 @@ struct CommittedStageShape {
     output_claim_rows: usize,
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DoryOpeningProofShape {
     first_messages: usize,
@@ -188,7 +188,7 @@ struct DoryOpeningProofShape {
     has_scalar_product: bool,
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BlindFoldProofShape {
     auxiliary_rows: usize,
@@ -202,7 +202,7 @@ struct BlindFoldProofShape {
     folded_eval_blinding_openings: usize,
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 impl BlindFoldProofShape {
     fn from_proof(proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>) -> Self {
         Self {
@@ -219,7 +219,7 @@ impl BlindFoldProofShape {
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 impl DoryOpeningProofShape {
     fn from_proof(proof: &jolt_dory::DoryProof) -> Self {
         let proof = &proof.0;
@@ -237,7 +237,7 @@ impl DoryOpeningProofShape {
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn committed_stage_shapes(
     stages: &jolt_verifier::proof::JoltStageProofs<Fr, jolt_crypto::Pedersen<jolt_crypto::Bn254G1>>,
 ) -> Vec<CommittedStageShape> {
@@ -258,7 +258,7 @@ fn committed_stage_shapes(
     .collect()
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn committed_stage_shape<C>(proof: &SumcheckProof<Fr, C>) -> CommittedStageShape {
     let proof = proof
         .as_committed()
@@ -270,9 +270,9 @@ fn committed_stage_shape<C>(proof: &SumcheckProof<Fr, C>) -> CommittedStageShape
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn collect_jolt_proof_statistics(
-    case: &crate::support::core_fixtures::CoreZkVerifierCase,
+    case: &crate::support::verifier_fixtures::ZkVerifierFixtureCase,
     tracker: &mut BucketTracker,
 ) {
     let proof = &case.proof;
@@ -347,7 +347,7 @@ fn collect_jolt_proof_statistics(
     collect_blindfold_statistics(blindfold_proof, tracker);
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn collect_sumcheck_statistics<C>(
     prefix: &'static str,
     proof: &SumcheckProof<Fr, C>,
@@ -370,7 +370,7 @@ fn collect_sumcheck_statistics<C>(
     );
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn collect_dory_opening_statistics(proof: &jolt_dory::DoryProof, tracker: &mut BucketTracker) {
     let proof = &proof.0;
     tracker.record_canonical("dory.vmv.c", &proof.vmv_message.c);
@@ -428,7 +428,7 @@ fn collect_dory_opening_statistics(proof: &jolt_dory::DoryProof, tracker: &mut B
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn collect_blindfold_statistics(
     proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>,
     tracker: &mut BucketTracker,
@@ -489,14 +489,14 @@ fn collect_blindfold_statistics(
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[derive(Clone, Debug, Default)]
 struct BucketTracker {
     buckets: BTreeMap<String, Vec<usize>>,
     samples: BTreeMap<String, Vec<u64>>,
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 impl BucketTracker {
     fn new() -> Self {
         Self::default()
@@ -581,7 +581,7 @@ impl BucketTracker {
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn selected_positions(len: usize) -> Vec<usize> {
     match len {
         0 => Vec::new(),
@@ -595,7 +595,7 @@ fn selected_positions(len: usize) -> Vec<usize> {
     }
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn field_low_u64(value: Fr) -> u64 {
     let bytes = value.to_bytes_array();
     u64::from_le_bytes([
@@ -603,7 +603,7 @@ fn field_low_u64(value: Fr) -> u64 {
     ])
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn assert_uniformity(tracker: &BucketTracker, expected: f64) {
     let mut failures = Vec::new();
     for name in tracker.names() {
@@ -631,7 +631,7 @@ fn assert_uniformity(tracker: &BucketTracker, expected: f64) {
     );
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn assert_same_distribution(lhs: &BucketTracker, rhs: &BucketTracker) {
     let mut failures = Vec::new();
     for name in lhs.names() {
@@ -654,7 +654,7 @@ fn assert_same_distribution(lhs: &BucketTracker, rhs: &BucketTracker) {
     );
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn unique_sample_count(values: &[u64]) -> usize {
     let mut values = values.to_vec();
     values.sort_unstable();
@@ -662,7 +662,7 @@ fn unique_sample_count(values: &[u64]) -> usize {
     values.len()
 }
 
-#[cfg(all(feature = "core-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn two_sample_chi_squared(a: &[usize], b: &[usize]) -> f64 {
     let n_a = a.iter().sum::<usize>() as f64;
     let n_b = b.iter().sum::<usize>() as f64;
@@ -692,7 +692,7 @@ fn two_sample_chi_squared(a: &[usize], b: &[usize]) -> f64 {
         .sum()
 }
 
-#[cfg(any(not(feature = "core-fixtures"), not(feature = "zk")))]
+#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
 #[test]
-#[ignore = "enable --features core-fixtures,zk and run with --release to generate fresh ZK proof samples"]
+#[ignore = "enable --features prover-fixtures,zk and run with --release to generate fresh ZK proof samples"]
 fn zk_muldiv_jolt_proof_components_are_statistically_independent() {}

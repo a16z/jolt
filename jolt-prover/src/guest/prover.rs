@@ -1,0 +1,77 @@
+use super::program::Program;
+use crate::curve::Bn254Curve;
+use crate::poly::commitment::commitment_scheme::CommitmentScheme;
+use crate::poly::commitment::commitment_scheme::{StreamingCommitmentScheme, ZkEvalCommitment};
+use crate::poly::commitment::dory::DoryCommitmentScheme;
+use crate::transcripts::Transcript;
+use crate::zkvm::bytecode::PreprocessingError;
+use crate::zkvm::program::ProgramPreprocessing;
+use crate::zkvm::proof::{ProofCommitmentScheme, ProofCurve, ProofField, VerifierProof};
+use crate::zkvm::prover::JoltProverPreprocessing;
+use crate::zkvm::ProverDebugInfo;
+use common::jolt_device::MemoryLayout;
+use tracer::JoltDevice;
+
+#[allow(clippy::type_complexity)]
+#[cfg(feature = "prover")]
+pub fn preprocess(
+    guest: &Program,
+    max_trace_length: usize,
+) -> Result<
+    JoltProverPreprocessing<ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme>,
+    PreprocessingError,
+> {
+    use crate::zkvm::preprocessing::JoltSharedPreprocessing;
+
+    let (bytecode, memory_init, program_size, e_entry) = guest.decode();
+
+    let mut memory_config = guest.memory_config;
+    memory_config.program_size = Some(program_size);
+    let memory_layout = MemoryLayout::new(&memory_config);
+    let program = ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
+    let shared_preprocessing =
+        JoltSharedPreprocessing::new(program, memory_layout, max_trace_length);
+    Ok(JoltProverPreprocessing::new(shared_preprocessing))
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[cfg(feature = "prover")]
+pub fn prove<
+    F: ProofField,
+    C: ProofCurve<F>,
+    PCS: StreamingCommitmentScheme<Field = F> + ZkEvalCommitment<C> + ProofCommitmentScheme<F>,
+    FS: Transcript,
+>(
+    guest: &Program,
+    inputs_bytes: &[u8],
+    untrusted_advice_bytes: &[u8],
+    trusted_advice_bytes: &[u8],
+    trusted_advice_commitment: Option<<PCS as CommitmentScheme>::Commitment>,
+    trusted_advice_hint: Option<<PCS as CommitmentScheme>::OpeningProofHint>,
+    output_bytes: &mut [u8],
+    preprocessing: &JoltProverPreprocessing<F, C, PCS>,
+) -> Result<
+    (
+        VerifierProof<F, C, PCS>,
+        JoltDevice,
+        Option<ProverDebugInfo<F, FS, PCS>>,
+    ),
+    crate::zkvm::proof::VerifierError,
+> {
+    use crate::zkvm::prover::JoltCpuProver;
+
+    let prover = JoltCpuProver::<F, C, PCS, FS>::gen_from_elf(
+        preprocessing,
+        &guest.elf_contents,
+        inputs_bytes,
+        untrusted_advice_bytes,
+        trusted_advice_bytes,
+        trusted_advice_commitment,
+        trusted_advice_hint,
+        None,
+    );
+    let io_device = prover.program_io.clone();
+    let (proof, debug_info) = prover.prove()?;
+    output_bytes[..io_device.outputs.len()].copy_from_slice(&io_device.outputs);
+    Ok((proof, io_device, debug_info))
+}

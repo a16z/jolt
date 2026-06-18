@@ -554,8 +554,8 @@ cargo clippy --all --features host -q --all-targets -- -D warnings
 cargo clippy --all --features host,zk -q --all-targets -- -D warnings
 cargo nextest run -p jolt-program --cargo-quiet
 cargo nextest run -p tracer --cargo-quiet --features test-utils
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
 git diff --check
 ```
 

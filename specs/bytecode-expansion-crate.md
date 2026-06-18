@@ -33,7 +33,7 @@ ELF bytes
   -> JoltProgramPreprocessing
 ```
 
-`tracer`, `jolt-sdk`, and `jolt-core` should become consumers of these program-construction APIs instead of owners of bytecode expansion or materialized program preprocessing semantics. `tracer` should also become an implementation of the execution backend trait rather than a crate whose concrete internals leak into `jolt-program`, `jolt-riscv`, or proof-system APIs.
+`tracer`, `jolt-sdk`, and `jolt-prover` should become consumers of these program-construction APIs instead of owners of bytecode expansion or materialized program preprocessing semantics. `tracer` should also become an implementation of the execution backend trait rather than a crate whose concrete internals leak into `jolt-program`, `jolt-riscv`, or proof-system APIs.
 
 ### Invariants
 
@@ -58,7 +58,7 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - This spec does not propose changing guest compilation, memory initialization semantics, or trace execution beyond redirecting program call sites to the new program crate and putting execution behind a stable backend trait.
 - This spec does not require completing Lean, Hax, or Aeneas extraction in the same implementation PR.
 - This spec does not require redesigning bytecode commitments, lookup tables, or prover constraints.
-- This spec does not require moving PCS setup, commitment derivation, bytecode/program-image opening hints, BlindFold setup, `JoltProverPreprocessing`, or `JoltVerifierPreprocessing` out of `jolt-core`.
+- This spec does not require moving PCS setup, commitment derivation, bytecode/program-image opening hints, BlindFold setup, `JoltProverPreprocessing`, or `JoltVerifierPreprocessing` out of `jolt-prover`.
 - This spec does not require integrating bytecode-commitment PR [#1344](https://github.com/a16z/jolt/pull/1344). That work is a future integration constraint, not part of this implementation scope.
 - This spec does not require supporting RV32 in `jolt-program` or `tracer`; RV32/ELF32 should be rejected by the new program pipeline and the historical tracer RV32/SV32 execution paths should be deleted.
 - This spec does not complete the deeper source-program versus final-Jolt instruction-kind split. `SourceInstructionKind` remains a decoder-facing mirror of the broad current instruction set, including Jolt custom source opcodes, and `JoltInstructionKind` remains the canonical flat row/discriminant used by `NormalizedInstruction`. A follow-up should split tracer's decoded-source and expanded-row APIs before shrinking `JoltInstructionKind`.
@@ -82,7 +82,7 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] `TraceRow` and related execution contract types use `jolt-riscv` normalized instruction rows plus backend-neutral register/RAM/device data, not tracer concrete cycle types.
 - [x] `tracer` implements `jolt_program::execution::ExecutionBackend` inside the `tracer` crate and adapts its concrete CPU/cycle/lazy-trace machinery to the neutral trace contract at its boundary.
 - [x] SDK host-facing analyze/trace entry points invoke execution through a generic `B: ExecutionBackend` path, with the default tracer backend selected in `jolt-sdk` rather than in `jolt-trace`, `jolt-program`, or proof crates. Proof generation remains intentionally on the prover's concrete trace path in this PR because witness generation still requires lazy tracer checkpoints, advice tape output, and final-memory data that are not part of the neutral trace-row contract.
-- [x] Tracer-internal implementation changes do not require changes to `jolt-riscv`, `jolt-program`, `jolt-core`, or SDK macros unless the stable execution contract or normalized program row semantics intentionally change.
+- [x] Tracer-internal implementation changes do not require changes to `jolt-riscv`, `jolt-program`, `jolt-prover`, or SDK macros unless the stable execution contract or normalized program row semantics intentionally change.
 - [x] `NormalizedInstruction` includes an `instruction_kind: JoltInstructionKind` field plus normalized operands, address, virtual sequence metadata, and compressed-instruction metadata.
 - [x] `jolt-riscv` documents that `JoltInstructionKind` is the canonical flat row identity in this PR, while `SourceInstructionKind` is only a decoder-facing mirror and the true source/final split remains follow-up work.
 - [x] `jolt-program::preprocess` owns materialized bytecode/RAM/program preprocessing artifacts consumed by both prover and verifier setup.
@@ -105,7 +105,7 @@ Keep the implementation PR's new checks focused on targeted `jolt-program`, `tra
 - [x] The verifier-facing path does not depend on CPU execution, lazy tracing, memory-device emulation, advice I/O, or prover-only witness generation.
 - [x] `cargo tree -p tracer` shows `tracer` depending on `jolt-riscv` and `jolt-program`, but neither lower-level crate depending back on `tracer`.
 - [x] `cargo tree -p jolt-program` shows no dependency on `tracer` while still compiling the execution trait module.
-- [x] `cargo tree -p jolt-core --features host` does not require `tracer` solely to name program preprocessing or bytecode rows.
+- [x] `cargo tree -p jolt-prover --features host` does not require `tracer` solely to name program preprocessing or bytecode rows.
 - [x] Fixture consistency tests prove byte-for-byte or structure-for-structure parity with the current RV64 expansion output for supported RV64 instruction families, with explicit tests for documented behavior corrections such as CSR address `0` rejection.
 - [x] Tests cover recursive expansion, `rd = x0`, virtual-register clearing, compressed source instructions, and bytecode PC mapping.
 - [x] The crate dependency surface is suitable for future formal verification and extraction work: no CPU, memory-device, prover, transcript, or ELF parser dependency in `jolt-program::expand`.
@@ -218,7 +218,7 @@ tracer
   -> implements jolt_program::execution::ExecutionBackend
   -> calls jolt-program::expand when trace-time expansion is required
 
-jolt-core verifier
+jolt-prover verifier
   -> consumes JoltVerifierPreprocessing
   -> depends on program preprocessing artifacts, not on tracer execution
 ```
@@ -237,7 +237,7 @@ jolt-program
   execution traits
         ^
         |
-jolt-core, jolt-sdk, tracer
+jolt-prover, jolt-sdk, tracer
         ^            ^
         |            |
  proof setup   default tracer backend selected here
@@ -259,15 +259,15 @@ The broader program boundary should be evaluated in the same design pass:
 | Program preprocessing digest and serialization | Yes; verifier binds preprocessing or its committed digest to the proof context | `jolt-program::preprocess` |
 | Jolt-ready program artifact used as a backend input | No for verification from serialized preprocessing; yes for host proving/tracing | `jolt-program` root or `jolt-program::execution` |
 | Stable execution backend trait and neutral trace row contract | No for proof verification; yes for host/SDK dependency isolation | `jolt-program::execution` |
-| PCS verifier setup and optional BlindFold setup | Yes, but these are proof-system setup artifacts rather than program artifacts | stay in `jolt-core` verifier or a proof-system setup crate |
+| PCS verifier setup and optional BlindFold setup | Yes, but these are proof-system setup artifacts rather than program artifacts | stay in `jolt-prover` verifier or a proof-system setup crate |
 | CPU execution and trace production | No | `tracer` |
 | Memory-device emulation and I/O side effects | No, except the verifier consumes public `JoltDevice`/memory layout data supplied with the proof API | concrete behavior in `tracer`; neutral public data in `common` or `jolt-program::execution` |
 | Advice tape I/O | No for verification, except commitments/public inputs already represented in proof and verifier inputs | prover/host tracing crates |
-| Prover witness generation and prover-facing polynomial preprocessing | No | `jolt-core` prover |
+| Prover witness generation and prover-facing polynomial preprocessing | No | `jolt-prover` prover |
 
 #### Crate Placement And Dependency Direction
 
-New library code should live under `crates/jolt-program` and be added to the root workspace `members` and `[workspace.dependencies]`, matching the newer crate layout used by `jolt-riscv`, `jolt-openings`, and related libraries. Existing top-level crates such as `tracer`, `common`, `jolt-core`, and `jolt-sdk` can depend on `jolt-program` through workspace dependencies. `jolt-riscv` already exists and should be refactored in place rather than replaced by a sibling instruction crate.
+New library code should live under `crates/jolt-program` and be added to the root workspace `members` and `[workspace.dependencies]`, matching the newer crate layout used by `jolt-riscv`, `jolt-openings`, and related libraries. Existing top-level crates such as `tracer`, `common`, `jolt-prover`, and `jolt-sdk` can depend on `jolt-program` through workspace dependencies. `jolt-riscv` already exists and should be refactored in place rather than replaced by a sibling instruction crate.
 
 It is acceptable for `tracer` to import `jolt-program`, but only if `jolt-program` does not depend back on `tracer`. That import should have two narrow purposes: consume `jolt-program` program-construction APIs and implement `jolt_program::execution::ExecutionBackend` for the tracer backend. The current code does not yet satisfy that shape: the concrete `Instruction`, `Cycle`, `RISCVInstruction`, `NormalizedInstruction`, and per-instruction structs live in `tracer`, and `crates/jolt-riscv/Cargo.toml` has a direct `tracer = { workspace = true, features = ["std"] }` dependency for those types. Therefore `jolt-program::expand` cannot both depend on `tracer::instruction::*` and be imported by `tracer` without creating a dependency cycle.
 
@@ -318,12 +318,12 @@ jolt-riscv
 jolt-program
         ^
         |
-jolt-core, jolt-sdk, tracer
+jolt-prover, jolt-sdk, tracer
 ```
 
 This direction keeps `tracer` as an execution engine while allowing it to reuse the same bytecode expansion module as program preprocessing. It also gives formal verification tools a target that is not downstream of the emulator.
 
-The intended stability invariant is stronger than "there is no dependency cycle": tracer-internal implementation changes should be isolated to `tracer`. `jolt-program::execution` is the contract tracer implements, so lower `jolt-*` crates should change only when the normalized program row, `JoltProgram` input, or execution backend contract changes intentionally. In particular, renaming tracer's `Cycle`, changing lazy trace iteration internals, reorganizing CPU state, or altering memory-device implementation details should not require edits to `jolt-riscv`, `jolt-program`, `jolt-core`, or SDK macro generation.
+The intended stability invariant is stronger than "there is no dependency cycle": tracer-internal implementation changes should be isolated to `tracer`. `jolt-program::execution` is the contract tracer implements, so lower `jolt-*` crates should change only when the normalized program row, `JoltProgram` input, or execution backend contract changes intentionally. In particular, renaming tracer's `Cycle`, changing lazy trace iteration internals, reorganizing CPU state, or altering memory-device implementation details should not require edits to `jolt-riscv`, `jolt-program`, `jolt-prover`, or SDK macro generation.
 
 Tracer-free cycle traits now live in `jolt-riscv::trace`, next to the static instruction vocabulary used by lookup-table code. Default backend selection belongs in `jolt-sdk`, which is already the user-facing host API layer and can import both `jolt-program` and `tracer`.
 
@@ -469,14 +469,14 @@ The `object` dependency should be feature-gated and used only by `jolt-program::
 
 `jolt-program::preprocess` owns materialized program preprocessing artifacts used by both prover and verifier:
 
-- `preprocess/bytecode.rs`: move `BytecodePreprocessing`, `BytecodePCMapper`, and bytecode preprocessing errors from `jolt-core/src/zkvm/bytecode/mod.rs`.
-- `preprocess/ram.rs`: move `RAMPreprocessing` and pure RAM initialization helpers from `jolt-core/src/zkvm/ram/mod.rs`. Dependency purity is binding for `compute_min_ram_K`: move it only if it stays dependency-light. If relocating it would drag `jolt-core`, PCS setup, prover-only modules, or proof-system configuration into `jolt-program::preprocess`, leave `compute_min_ram_K` in `jolt-core` and have it consume the pure RAM preprocessing surface from `jolt-program::preprocess`.
+- `preprocess/bytecode.rs`: move `BytecodePreprocessing`, `BytecodePCMapper`, and bytecode preprocessing errors from `jolt-prover/src/zkvm/bytecode/mod.rs`.
+- `preprocess/ram.rs`: move `RAMPreprocessing` and pure RAM initialization helpers from `jolt-prover/src/zkvm/ram/mod.rs`. Dependency purity is binding for `compute_min_ram_K`: move it only if it stays dependency-light. If relocating it would drag `jolt-prover`, PCS setup, prover-only modules, or proof-system configuration into `jolt-program::preprocess`, leave `compute_min_ram_K` in `jolt-prover` and have it consume the pure RAM preprocessing surface from `jolt-program::preprocess`.
 - `preprocess/program.rs`: move the current shared layer into the final `JoltProgramPreprocessing` type, including canonical serialization and `digest()`.
 - `preprocess/error.rs`: consolidate bytecode/RAM/program preprocessing errors.
 
-This module is intentionally program-level rather than verifier-only. The current code already has a `JoltSharedPreprocessing` layer containing `Arc<BytecodePreprocessing>`, `RAMPreprocessing`, `MemoryLayout`, and `max_padded_trace_length`; both `JoltProverPreprocessing` and `JoltVerifierPreprocessing` wrap that shared layer. This PR should cut over that layer to `JoltProgramPreprocessing` in `jolt-program::preprocess`. `JoltProverPreprocessing` and `JoltVerifierPreprocessing` should remain in `jolt-core` unless a later proof-system setup refactor moves them, because they add PCS prover/verifier setup and optional BlindFold setup rather than program preprocessing semantics.
+This module is intentionally program-level rather than verifier-only. The current code already has a `JoltSharedPreprocessing` layer containing `Arc<BytecodePreprocessing>`, `RAMPreprocessing`, `MemoryLayout`, and `max_padded_trace_length`; both `JoltProverPreprocessing` and `JoltVerifierPreprocessing` wrap that shared layer. This PR should cut over that layer to `JoltProgramPreprocessing` in `jolt-program::preprocess`. `JoltProverPreprocessing` and `JoltVerifierPreprocessing` should remain in `jolt-prover` unless a later proof-system setup refactor moves them, because they add PCS prover/verifier setup and optional BlindFold setup rather than program preprocessing semantics.
 
-`jolt-program::preprocess` should not own committed-bytecode or committed-program-image derivation. Those artifacts require PCS prover setup, Dory geometry, trusted commitments, and prover opening hints. They should remain in `jolt-core` or a future PCS-aware committed-program crate that consumes `JoltProgramPreprocessing`.
+`jolt-program::preprocess` should not own committed-bytecode or committed-program-image derivation. Those artifacts require PCS prover setup, Dory geometry, trusted commitments, and prover opening hints. They should remain in `jolt-prover` or a future PCS-aware committed-program crate that consumes `JoltProgramPreprocessing`.
 
 `jolt-program::execution` owns the backend-neutral tracing contract, not a tracer implementation:
 
@@ -514,7 +514,7 @@ This module is the answer to the "changing tracer should not touch lower crates"
 - imports `jolt-program::image` for ELF decode where tracing from ELF is needed.
 - implements `jolt_program::execution::ExecutionBackend` and adapts tracer-local `Cycle`/lazy trace output to `TraceRow`/`TraceOutput` at the crate boundary.
 
-`jolt-core` remains the proof system:
+`jolt-prover` remains the proof system:
 
 - imports program preprocessing artifacts from `jolt-program::preprocess`;
 - keeps prover/verifier protocols, sumchecks, commitments, witness generation, and proof serialization;
@@ -538,11 +538,11 @@ Target dependency edges:
 
 | Crate | May depend on | Must not depend on |
 |-------|---------------|--------------------|
-| `jolt-riscv` | `common`, `jolt-platform`, `serde`, `ark-serialize`, `strum`, `paste`, `derive_more`, optional test utilities | `tracer`, `jolt-core`, `jolt-program`, `object` |
-| `jolt-program` | `jolt-riscv`, `common`, `ark-serialize`, `blake2`, `thiserror`, `serde`, optional `object` and `tracing` behind image/host features | `tracer`, `jolt-core`, PCS implementations, Dory setup, prover-only modules |
-| `tracer` | `jolt-riscv`, `jolt-program`, `common`, `jolt-platform` | `jolt-core` |
-| `jolt-core` | `jolt-riscv`, `jolt-program`, proof-system crates, `common` | `tracer` for program preprocessing types |
-| `jolt-sdk` | `jolt-program`, `jolt-core`, `tracer` for default host backend wiring | making `jolt-riscv`, `jolt-program`, or verifier-facing generated types depend on tracer concrete internals |
+| `jolt-riscv` | `common`, `jolt-platform`, `serde`, `ark-serialize`, `strum`, `paste`, `derive_more`, optional test utilities | `tracer`, `jolt-prover`, `jolt-program`, `object` |
+| `jolt-program` | `jolt-riscv`, `common`, `ark-serialize`, `blake2`, `thiserror`, `serde`, optional `object` and `tracing` behind image/host features | `tracer`, `jolt-prover`, PCS implementations, Dory setup, prover-only modules |
+| `tracer` | `jolt-riscv`, `jolt-program`, `common`, `jolt-platform` | `jolt-prover` |
+| `jolt-prover` | `jolt-riscv`, `jolt-program`, proof-system crates, `common` | `tracer` for program preprocessing types |
+| `jolt-sdk` | `jolt-program`, `jolt-prover`, `tracer` for default host backend wiring | making `jolt-riscv`, `jolt-program`, or verifier-facing generated types depend on tracer concrete internals |
 
 The implementation PR must not introduce a new cycle. Its final state should remove the `tracer -> jolt-program -> tracer` cycle risk entirely by moving shared instruction vocabulary and metadata below both crates.
 
@@ -568,7 +568,7 @@ Existing crate `Cargo.toml` updates:
 - `crates/jolt-riscv/Cargo.toml`: remove the direct dependency on `tracer`; keep only lower-level dependencies needed by static instruction data, flags, decoding, and serialization.
 - `crates/jolt-riscv/Cargo.toml`: expose a `test-utils` feature for randomized `JoltCycle` test helpers without adding a production tracer dependency.
 - `jolt-sdk/Cargo.toml`: import `tracer` for default host backend wiring.
-- `jolt-core/Cargo.toml`: add `jolt-riscv` and `jolt-program`; remove program-preprocessing dependence on `tracer` where feasible.
+- `jolt-prover/Cargo.toml`: add `jolt-riscv` and `jolt-program`; remove program-preprocessing dependence on `tracer` where feasible.
 - `jolt-sdk/Cargo.toml` and `jolt-sdk/macros/Cargo.toml`: update imports only as needed for generated preprocessing functions.
 
 The crate should provide explicit APIs along these lines:
@@ -701,7 +701,7 @@ Defining `ExecutionBackend` in `tracer` would preserve the current ownership pro
 
 This spec was checked against two ongoing branches, but neither branch expands the scope of this PR.
 
-The `refactor/crates` branch is useful as a point of comparison for proof-system setup boundaries. Its `jolt-zkvm::preprocessing` work computes module/protocol shape and PCS setup for compiled modules; it does not extract ELF/program bytecode or RAM preprocessing out of `jolt-core`. This supports keeping `jolt-program::preprocess` focused on materialized program artifacts while leaving PCS setup and prover/verifier keys in `jolt-core` or a later proof-system setup crate.
+The `refactor/crates` branch is useful as a point of comparison for proof-system setup boundaries. Its `jolt-zkvm::preprocessing` work computes module/protocol shape and PCS setup for compiled modules; it does not extract ELF/program bytecode or RAM preprocessing out of `jolt-prover`. This supports keeping `jolt-program::preprocess` focused on materialized program artifacts while leaving PCS setup and prover/verifier keys in `jolt-prover` or a later proof-system setup crate.
 
 The bytecode-commitment PR [#1344](https://github.com/a16z/jolt/pull/1344), branch `amir/bytecode-commitment-merged`, is useful as a point of comparison for future committed-program integration. That branch distinguishes full program preprocessing from committed program preprocessing: the prover still needs full bytecode, RAM/program image data, and opening hints, while the verifier should only need metadata plus trusted bytecode and program-image commitments. This PR should not absorb that committed path. Instead, `jolt-program::preprocess` should provide the materialized input that committed-program preprocessing can consume later. Commitment derivation, trusted commitments, Dory geometry, and opening hints remain outside this crate.
 
@@ -714,7 +714,7 @@ jolt-program::preprocess
       -> RAM/program-image preprocessing
       -> memory layout, trace bound, entry metadata, digest
 
-jolt-core or future committed-program crate
+jolt-prover or future committed-program crate
   -> consumes JoltProgramPreprocessing
   -> derives committed bytecode/program-image artifacts using PCS setup
   -> gives prover full data plus hints
@@ -723,7 +723,7 @@ jolt-core or future committed-program crate
 
 ### Implementation Findings
 
-During the initial cutover, moving bytecode preprocessing to `NormalizedInstruction` exposed one proof-semantics subtlety that was previously hidden by `jolt-core`'s per-instruction concrete `Flags` impls. `virtual_sequence_remaining == Some(0)` does not by itself mean the R1CS `IsLastInSequence` flag should be set. In current proof semantics, `IsLastInSequence` is only used to skip `NextPCEqPCPlusOneIfInline` for `JALR` at the end of trap-related inline sequences, where the next PC may jump to a trap handler instead of advancing to the next virtual bytecode row. Other final helper instructions, such as an `ADDI` with `virtual_sequence_remaining == Some(0)`, must remain `VirtualInstruction` rows but must not set `IsLastInSequence`; otherwise the `NextPCEqPCPlusOneIfInline` constraint is incorrectly suppressed.
+During the initial cutover, moving bytecode preprocessing to `NormalizedInstruction` exposed one proof-semantics subtlety that was previously hidden by `jolt-prover`'s per-instruction concrete `Flags` impls. `virtual_sequence_remaining == Some(0)` does not by itself mean the R1CS `IsLastInSequence` flag should be set. In current proof semantics, `IsLastInSequence` is only used to skip `NextPCEqPCPlusOneIfInline` for `JALR` at the end of trap-related inline sequences, where the next PC may jump to a trap handler instead of advancing to the next virtual bytecode row. Other final helper instructions, such as an `ADDI` with `virtual_sequence_remaining == Some(0)`, must remain `VirtualInstruction` rows but must not set `IsLastInSequence`; otherwise the `NextPCEqPCPlusOneIfInline` constraint is incorrectly suppressed.
 
 The canonical flag behavior should therefore live in `jolt-riscv`: `VirtualInstruction` is derived from `virtual_sequence_remaining.is_some()`, `DoNotUpdateUnexpandedPC` is derived from `virtual_sequence_remaining.unwrap_or(0) != 0`, and `IsLastInSequence` is derived from `instruction_kind == JoltInstructionKind::JALR && virtual_sequence_remaining == Some(0)`. The implementation should keep an expanded-bytecode parity test that compares normalized flags against the existing concrete instruction flags so future changes to this behavior are intentional.
 
@@ -733,7 +733,7 @@ The CSR cutover exposed one intentional behavior correction rather than a compat
 
 RV64 ELF decode has one additional boundary to keep explicit. Registered custom inline opcodes carry dispatch metadata in `opcode`, `funct3`, and `funct7`; a generic `JoltInstructionKind::Inline` row alone is not enough to reconstruct the concrete tracer instruction. The normalized inline row should therefore preserve this dispatch metadata, while the registered-inline sequence/advice registry can remain a separate execution-boundary question until it is intentionally moved out of tracer.
 
-The execution-backend cutover should proceed incrementally. The implementation now provides the stable lower hook: `jolt-core::host::Program` can build a `jolt_program::JoltProgram` and run it through any `jolt_program::execution::ExecutionBackend`, while existing tracer-returning host convenience APIs remain available for compatibility. A follow-up SDK pass should move generated default host tracing/proving conveniences onto that hook, constructing `tracer::TracerBackend` in SDK wiring rather than asking lower program/preprocessing layers to name tracer internals.
+The execution-backend cutover should proceed incrementally. The implementation now provides the stable lower hook: `jolt-prover::host::Program` can build a `jolt_program::JoltProgram` and run it through any `jolt_program::execution::ExecutionBackend`, while existing tracer-returning host convenience APIs remain available for compatibility. A follow-up SDK pass should move generated default host tracing/proving conveniences onto that hook, constructing `tracer::TracerBackend` in SDK wiring rather than asking lower program/preprocessing layers to name tracer internals.
 
 ## Documentation
 
@@ -794,12 +794,12 @@ Update the Jolt book only if the crate is exposed to users or changes contributo
 - `crates/jolt-riscv/src/normalized.rs`: define `NormalizedInstruction` with an `instruction_kind` field.
 - `crates/jolt-riscv/src/jolt_instruction.rs`: remove the blanket impl over `tracer::instruction::RISCVInstruction`; define only the marker/conversion trait without depending on tracer.
 - `crates/jolt-riscv/src/trace.rs`: own `JoltCycle` and any tracer-free cycle-view helpers used by lookup-table code.
-- `jolt-core/Cargo.toml`: add `jolt-riscv` and `jolt-program`.
-- `jolt-core/src/zkvm/bytecode/mod.rs`: move or reexport materialized bytecode preprocessing from `jolt-program::preprocess`.
-- `jolt-core/src/zkvm/ram/mod.rs`: move or reexport pure RAM preprocessing from `jolt-program::preprocess`; leave prover/verifier sumcheck modules in `jolt-core`.
-- `jolt-core/src/zkvm/verifier.rs`: use program preprocessing types from `jolt-program::preprocess`, while keeping `JoltVerifierPreprocessing` if PCS setup remains in `jolt-core`.
-- `jolt-core/src/zkvm/prover.rs`: update imports for program preprocessing, bytecode preprocessing, RAM preprocessing, and program instruction types.
-- `jolt-core/src/poly/**`, `jolt-core/src/subprotocols/**`, `jolt-core/src/zkvm/**`: update imports from `tracer::instruction` to `jolt-riscv` where the code needs `NormalizedInstruction`, `JoltInstructionKind`, `JoltInstruction`, or static instruction data.
+- `jolt-prover/Cargo.toml`: add `jolt-riscv` and `jolt-program`.
+- `jolt-prover/src/zkvm/bytecode/mod.rs`: move or reexport materialized bytecode preprocessing from `jolt-program::preprocess`.
+- `jolt-prover/src/zkvm/ram/mod.rs`: move or reexport pure RAM preprocessing from `jolt-program::preprocess`; leave prover/verifier sumcheck modules in `jolt-prover`.
+- `jolt-prover/src/zkvm/verifier.rs`: use program preprocessing types from `jolt-program::preprocess`, while keeping `JoltVerifierPreprocessing` if PCS setup remains in `jolt-prover`.
+- `jolt-prover/src/zkvm/prover.rs`: update imports for program preprocessing, bytecode preprocessing, RAM preprocessing, and program instruction types.
+- `jolt-prover/src/poly/**`, `jolt-prover/src/subprotocols/**`, `jolt-prover/src/zkvm/**`: update imports from `tracer::instruction` to `jolt-riscv` where the code needs `NormalizedInstruction`, `JoltInstructionKind`, `JoltInstruction`, or static instruction data.
 - `jolt-sdk/macros/src/lib.rs`: generated preprocessing functions should call the modular decode/expand/program-preprocess path; generated prove/analyze/trace entry points should accept an execution backend through `jolt_program::execution::ExecutionBackend` or construct the default `tracer::TracerBackend` in SDK host wiring, without naming tracer internals in lower-level generated types.
 - `book/**` or developer docs: add an architecture page or section if maintainers want crate-boundary docs in the book.
 
@@ -822,7 +822,7 @@ Do not delete tracer's concrete instruction structs, instruction-format structs,
 5. [x] Move RV64 opcode decode into `jolt-program::image` and RV64 compressed-instruction decompression helpers into `jolt-riscv`; reject RV32/ELF32 in the new program pipeline.
 6. [x] Export the canonical instruction-kind list from `jolt-riscv` as a macro such as `jolt_riscv::for_each_instruction_kind!`, and use it from `tracer` to generate its concrete `Instruction`, `Cycle`, and `RISCVCycle<T>`.
 7. [x] Remove the `JoltInstruction` blanket impl over `tracer::instruction::RISCVInstruction`; add concrete tracer adapter impls only in `tracer` if needed.
-8. [x] Update `tracer` and `jolt-core` imports to compile against the strengthened `jolt-riscv` normalized row and `jolt-program` pipeline.
+8. [x] Update `tracer` and `jolt-prover` imports to compile against the strengthened `jolt-riscv` normalized row and `jolt-program` pipeline.
 9. [x] Add `jolt_program::image::decode_elf` by moving the non-execution logic from `tracer::decode`.
 10. [x] Update all call sites of `tracer::decode` that only need ELF decoding to call `jolt_program::image::decode_elf`; keep `tracer::decode` only if it remains a tracer-specific execution API rather than a compatibility shim.
 11. [x] Move `VirtualRegisterAllocator`, `InstrAssembler`, recursive `add_to_sequence`, and per-instruction inline expansion logic into `jolt-program::expand`, with `InstrAssembler` borrowing `&mut ExpansionAllocator`.
@@ -831,11 +831,11 @@ Do not delete tracer's concrete instruction structs, instruction-format structs,
 14. [x] Move decode ownership to `jolt-program`; remove the former `jolt-trace` decode path entirely.
 15. [x] Fold the remaining `jolt-trace` cycle trait into `jolt-riscv::trace`; move tracer-backed trace convenience APIs to `jolt-sdk` or rewrite them over `ExecutionBackend`.
 16. [x] Move `BytecodePreprocessing`, `BytecodePCMapper`, pure `RAMPreprocessing`, and `JoltProgramPreprocessing` into `jolt-program::preprocess`.
-17. [x] Keep `compute_min_ram_K` in `jolt-core` if moving it would pull prover-only or proof-system dependencies into `jolt-program::preprocess`.
+17. [x] Keep `compute_min_ram_K` in `jolt-prover` if moving it would pull prover-only or proof-system dependencies into `jolt-program::preprocess`.
 18. [x] Add `JoltProgram` or the final equivalent built-program artifact that packages decoded image data, expanded bytecode, and preprocessing inputs for execution backends.
 19. [x] Add `jolt-program::execution` with `ExecutionBackend`, `TraceSource`, `TraceInputs`, `TraceRow`, `TraceOutput`, and trace error types expressed without tracer concrete types.
 20. [x] Implement `ExecutionBackend` in `tracer`, adapting `Cpu`, `Cycle`, `LazyTraceIterator`, register state, RAM accesses, device output, and final memory into the neutral execution contract at the tracer boundary.
-21. [x] Update `jolt-core` prover/verifier code to consume the moved preprocessing types.
+21. [x] Update `jolt-prover` prover/verifier code to consume the moved preprocessing types.
 22. [x] Update SDK macro-generated preprocessing to use the modular path.
 23. [x] Update SDK host-facing trace/analyze entry points to use `B: ExecutionBackend` or construct a default `tracer::TracerBackend`, keeping tracer concrete types out of lower generated APIs. Prove remains on the concrete prover witness API in this PR, as documented above.
 24. [x] Add expansion parity tests before removing old expansion entry points.
@@ -853,8 +853,8 @@ cargo fmt -q
 cargo clippy --all --features host -q --all-targets -- -D warnings
 cargo clippy --all --features host,zk -q --all-targets -- -D warnings
 cargo nextest run --cargo-quiet
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
 cargo nextest run -p jolt-riscv --cargo-quiet
 cargo nextest run -p jolt-program --cargo-quiet
 cargo tree -p tracer
@@ -869,9 +869,9 @@ The dependency checks should confirm that `jolt-riscv` and `jolt-program` do not
 
 - `crates/jolt-trace/src/program.rs`: current `decode` path calls `tracer::decode` and then expands with `Instruction::inline_sequence`.
 - `crates/jolt-riscv/Cargo.toml`: currently depends on `tracer`; this must invert so `tracer` depends on `jolt-riscv`.
-- `jolt-core/src/zkvm/verifier.rs`: current home of `JoltSharedPreprocessing` and `JoltVerifierPreprocessing`; the program/shared layer should move to `jolt-program::preprocess`, while proof-system setup can remain in `jolt-core`.
-- `jolt-core/src/zkvm/bytecode/mod.rs`: bytecode preprocessing and PC mapping consume expanded `Instruction` rows.
-- `jolt-core/src/zkvm/ram/mod.rs`: RAM preprocessing consumes ELF memory initialization bytes.
+- `jolt-prover/src/zkvm/verifier.rs`: current home of `JoltSharedPreprocessing` and `JoltVerifierPreprocessing`; the program/shared layer should move to `jolt-program::preprocess`, while proof-system setup can remain in `jolt-prover`.
+- `jolt-prover/src/zkvm/bytecode/mod.rs`: bytecode preprocessing and PC mapping consume expanded `Instruction` rows.
+- `jolt-prover/src/zkvm/ram/mod.rs`: RAM preprocessing consumes ELF memory initialization bytes.
 - `jolt-sdk/macros/src/lib.rs`: generated preprocessing calls `program.decode()` before constructing the current `JoltSharedPreprocessing`; after this PR they should construct `JoltProgramPreprocessing` through the modular path.
 - `tracer/src/instruction/mod.rs`: `Instruction::inline_sequence` handles `rd = x0`, dispatch, and recursive expansion entry points.
 - `tracer/src/utils/inline_helpers.rs`: `InstrAssembler` recursively expands helper-emitted instructions through `add_to_sequence`.

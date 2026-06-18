@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-core = { workspace = true, features = ["host"] }
+jolt-prover = { workspace = true, features = ["host"] }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }

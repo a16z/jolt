@@ -5,7 +5,7 @@ edition = "2021"
 [dependencies]
 paste.workspace = true
 
-jolt-core = { path = "../jolt-core" }
+jolt-prover = { path = "../jolt-prover" }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
 z3 = "0.20.0"

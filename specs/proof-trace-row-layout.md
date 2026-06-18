@@ -11,7 +11,7 @@
 > parity tests, and one default layout have landed; consumer cutover and the
 > performance gate are deferred follow-ups.
 >
-> The type lives in the new `crates/` (not the deprecating `jolt-core`):
+> The type lives in the new `crates/` (not the deprecating `jolt-prover`):
 >
 > **Landed (Execution slices 1–3):**
 > - `crates/jolt-riscv/src/trace_row.rs`: `JoltTraceRow` with the **Option C
@@ -22,7 +22,7 @@
 >   construction-time range checks for immediates and register ids; loud
 >   `TraceRowError` (a `thiserror` enum) on memory-row contract violations.
 >   `from_components` is the producer contract and depends only on `jolt-riscv`
->   (no `jolt-core`, no `tracer`, no lookup tables).
+>   (no `jolt-prover`, no `tracer`, no lookup tables).
 > - `crates/jolt-lookup-tables/src/traits.rs`: `InstructionLookupTable for
 >   JoltTraceRow`, delegating through the row's cached `instruction_kind()` (this
 >   crate owns `LookupTableKind`, so the accessor cannot live in `jolt-riscv`).
@@ -33,7 +33,7 @@
 >   `tracer -> jolt-riscv`.
 > - Tests: jolt-riscv per-class aliasing (non-memory / LD / SD), no-op/`Default`
 >   parity, size/overflow/rejection; and the layout guard — a `host`-gated **real
->   fibonacci-trace** parity test in `jolt-core` comparing every accessor (built
+>   fibonacci-trace** parity test in `jolt-prover` comparing every accessor (built
 >   via the tracer conversion) against `R1CSCycleInputs::from_trace`.
 >
 > **Deferred (Execution slices 4–11):** the `jolt-eval`
@@ -264,8 +264,8 @@ Run the normal checks for any implementation PR:
 cargo fmt -q
 cargo clippy --all --features host -q --all-targets -- -D warnings
 cargo clippy --all --features host,zk -q --all-targets -- -D warnings
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-core muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
 ```
 
 Add focused tests:
@@ -1131,7 +1131,7 @@ should remain `Copy`, and construction should avoid heap allocation per row.
 - Current Rust tracer `Cycle` size assertion:
   `tracer/src/instruction/mod.rs::rv64imac_cycle_size`
 - Current R1CS memory/register equality constraints:
-  `jolt-core/src/zkvm/r1cs/constraints.rs`
+  `jolt-prover/src/zkvm/r1cs/constraints.rs`
 - Companion C++ tracer prior art in Quang's local companion checkout, not a
   repo-local `a16z/jolt` path:
   `/Users/quang.dao/Documents/SNARKs/jolt-cpp/src/tracer/trace_owner.hpp`

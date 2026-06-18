@@ -5,7 +5,7 @@ use arbitrary::{Arbitrary, Unstructured};
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
-use jolt_core::host::Program;
+use jolt_prover::host::Program;
 
 use tracer::instruction::Cycle;
 
@@ -173,7 +173,7 @@ impl Invariant for SoundnessInvariant {
 
         // 4. Decode to get program_size, then trace to get actual length
         let (_bytecode, _memory_init, program_size, _e_entry) =
-            jolt_core::guest::program::decode(&elf_bytes);
+            jolt_prover::guest::program::decode(&elf_bytes);
         memory_config.program_size = Some(program_size);
 
         let program = guests::GuestProgram::new(&elf_bytes, &memory_config);
@@ -407,9 +407,9 @@ diff --git a/src/lib.rs b/src/lib.rs
     #[test]
     fn filter_drops_path_traversal() {
         let patch = "\
-diff --git a/../../jolt-core/src/lib.rs b/../../jolt-core/src/lib.rs
---- a/../../jolt-core/src/lib.rs
-+++ b/../../jolt-core/src/lib.rs
+diff --git a/../../jolt-prover/src/lib.rs b/../../jolt-prover/src/lib.rs
+--- a/../../jolt-prover/src/lib.rs
++++ b/../../jolt-prover/src/lib.rs
 @@ -1 +1 @@
 -safe
 +malicious

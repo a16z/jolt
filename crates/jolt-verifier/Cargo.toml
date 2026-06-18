@@ -13,10 +13,9 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b"]
-jolt-core-compat = []
-core-fixtures = ["jolt-core/host", "jolt-core-compat"]
+prover-fixtures = ["jolt-prover/host"]
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
-zk = []
+zk = ["jolt-prover/zk"]
 transcript-blake2b = []
 transcript-keccak = []
 transcript-poseidon = []
@@ -41,8 +40,8 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-core = { workspace = true, features = ["minimal"] }
-jolt-core-verifier-bridge.workspace = true
+bincode.workspace = true
+jolt-prover = { workspace = true, features = ["minimal"] }
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }

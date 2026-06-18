@@ -1,4 +1,4 @@
-use jolt_core::zkvm::{
+use jolt_prover::zkvm::{
     instruction::{
         CircuitFlags, Flags as _, InterleavedBitsMarker as _, SupportedInstruction as _,
     },
@@ -100,7 +100,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         let name = self.name();
         let num_variables = 2 * J::XLEN;
         let interleaving = self.interleaving;
-        let lookup_table = match jolt_core::zkvm::instruction::InstructionLookup::<
+        let lookup_table = match jolt_prover::zkvm::instruction::InstructionLookup::<
             { common::constants::XLEN },
         >::lookup_table(&self.row)
         .map(|t| ZkLeanLookupTable::from(t).name())
