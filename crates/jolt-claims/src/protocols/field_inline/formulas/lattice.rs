@@ -1,8 +1,8 @@
 use jolt_field::Field;
 
 use crate::protocols::jolt::{
-    weighted_byte_decode_terms, LatticePackedFamilyId, LatticePackedViewFormula,
-    LatticePackedViewTerm,
+    weighted_byte_decode_terms, LatticePackedFamilyId, LatticePackedValidityRequirement,
+    LatticePackedViewFormula, LatticePackedViewTerm,
 };
 
 pub fn field_rd_inc_lattice_view_formula<F: Field>(
@@ -22,6 +22,20 @@ pub fn field_rd_inc_byte_terms<F: Field>(byte_width: usize) -> Vec<LatticePacked
         place *= F::from_u64(256);
     }
     terms
+}
+
+pub fn field_rd_inc_validity_requirements(
+    byte_width: usize,
+) -> Vec<LatticePackedValidityRequirement> {
+    (0..byte_width)
+        .map(|index| {
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::FieldRdIncByte { index },
+                1,
+                256,
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -50,5 +64,24 @@ mod tests {
         );
         assert_eq!(second_byte.limb, 0);
         assert_eq!(second_byte.symbol, 3);
+    }
+
+    #[test]
+    fn field_rd_inc_validity_requirements_cover_byte_families() {
+        assert_eq!(
+            field_rd_inc_validity_requirements(2),
+            vec![
+                LatticePackedValidityRequirement::exact_one_hot(
+                    LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+                    1,
+                    256,
+                ),
+                LatticePackedValidityRequirement::exact_one_hot(
+                    LatticePackedFamilyId::FieldRdIncByte { index: 1 },
+                    1,
+                    256,
+                ),
+            ]
+        );
     }
 }

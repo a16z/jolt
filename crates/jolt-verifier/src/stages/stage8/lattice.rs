@@ -71,14 +71,7 @@ pub fn derive_akita_packed_witness_layout(
     )?;
 
     if config.lattice.field_inline.enabled {
-        specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
-            PackedFamilySpec::direct(
-                PackedFamilyId::FieldRdIncByte { index },
-                trace,
-                1,
-                PackedAlphabet::Byte,
-            )
-        }));
+        extend_field_rd_inc_families(&mut specs, trace)?;
     }
 
     if config.lattice.advice.trusted {
@@ -747,6 +740,35 @@ fn extend_validity_requirement_families(
         ));
     }
     Ok(())
+}
+
+#[cfg(feature = "field-inline")]
+fn extend_field_rd_inc_families(
+    specs: &mut Vec<PackedFamilySpec>,
+    domain: PackedFactDomain,
+) -> Result<(), VerifierError> {
+    extend_validity_requirement_families(
+        specs,
+        &field_lattice::field_rd_inc_validity_requirements(AkitaField::NUM_BYTES),
+        domain,
+    )
+}
+
+#[cfg(not(feature = "field-inline"))]
+fn extend_field_rd_inc_families(
+    specs: &mut Vec<PackedFamilySpec>,
+    domain: PackedFactDomain,
+) -> Result<(), VerifierError> {
+    let requirements = (0..AkitaField::NUM_BYTES)
+        .map(|index| {
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::FieldRdIncByte { index },
+                1,
+                256,
+            )
+        })
+        .collect::<Vec<_>>();
+    extend_validity_requirement_families(specs, &requirements, domain)
 }
 
 fn extend_bytecode_families(
