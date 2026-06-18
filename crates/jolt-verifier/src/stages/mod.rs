@@ -7,6 +7,7 @@ use jolt_claims::protocols::jolt::{
     PrecommittedClaimReduction, ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
 
+pub mod relations;
 pub mod stage1;
 pub mod stage2;
 pub mod stage3;

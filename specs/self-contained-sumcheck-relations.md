@@ -246,11 +246,11 @@ output-formula resolver:
 #[serde(bound = "")]
 #[relation(InstructionReadRaf)]                    // owning relation (the id's `relation`)
 pub struct InstructionReadRafOutputOpeningClaims<F: Field> {
-    #[opening(many = LookupTableFlag)]             // Vec<F> ↔ indexed id family
+    #[opening(LookupTableFlag)]                    // Vec<F> ↔ indexed id family (arity from type)
     pub lookup_table_flags: Vec<F>,
-    #[opening(many = InstructionRa)]
+    #[opening(InstructionRa)]
     pub instruction_ra: Vec<F>,
-    #[opening(InstructionRafFlag)]                 // scalar id
+    #[opening(InstructionRafFlag)]                 // F ↔ scalar id
     pub instruction_raf_flag: F,
 }
 // generated:
@@ -436,9 +436,9 @@ Implementation notes:
   `unused_results` in generated code (`let _ = map.insert(..)`).
 - `#[derive(OutputClaims)]` needs `#[relation(..)]` (the owning relation) plus
   per-field polynomial annotations; `#[derive(InputClaims)]` needs per-field
-  `(polynomial, from = relation)` annotations. `Vec<F>` fields map to indexed id
-  families (`#[opening(many = ..)]`); scalars to single ids; nested structs
-  recurse.
+  `(polynomial, from = relation)` annotations. Opening arity is read from the
+  field type, not the annotation: `Vec<F>` fields map to indexed id families,
+  `F`/`Option<F>` fields to single ids; nested structs recurse.
 
 ## References
 

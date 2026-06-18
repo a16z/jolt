@@ -34,6 +34,7 @@ members = [
   "crates/jolt-sumcheck",
   "crates/jolt-openings",
   "crates/jolt-verifier",
+  "crates/jolt-verifier-derive",
   "crates/jolt-witness",
   "crates/jolt-prover",
   "crates/jolt-backends",
@@ -392,6 +393,7 @@ jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
+jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
 jolt-witness = { path = "./crates/jolt-witness" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-backends = { path = "./crates/jolt-backends" }
