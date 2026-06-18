@@ -39,11 +39,11 @@ use jolt_akita::{
     SparsePackedWitness,
 };
 use jolt_claims::protocols::jolt::{
-    fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
-    fused_increment_sign_lattice_view_formula, lattice_packed_validity_digest, JoltAdviceKind,
-    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticeFusedIncrementTarget,
-    LatticePackedFamilyId, LatticePackedValidityKind, LatticePackedValidityRequirement,
-    FUSED_INCREMENT_BYTE_LIMBS,
+    fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
+    fused_increment_magnitude_lattice_view_formula, fused_increment_sign_lattice_view_formula,
+    lattice_packed_validity_digest, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityKind,
+    LatticePackedValidityRequirement, FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
@@ -104,6 +104,18 @@ pub struct AkitaFusedIncrementTranslationSources {
 pub struct AkitaFusedIncrementStage6Claims {
     pub translation: FusedIncrementTranslationOutputClaims<AkitaField>,
     pub source_link: FusedIncrementSourceLinkOutputClaims<AkitaField>,
+    pub inactive_zero: FusedIncrementTranslationOutputClaims<AkitaField>,
+    pub inactive_source_link: FusedIncrementSourceLinkOutputClaims<AkitaField>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AkitaFusedIncrementStage6Derivation<'a> {
+    pub translation_opening_point: &'a [AkitaField],
+    pub source_link: &'a VerifiedBytecodeReadRafSumcheck<AkitaField>,
+    pub translation_sources: AkitaFusedIncrementTranslationSources,
+    pub inactive_zero_opening_point: &'a [AkitaField],
+    pub inactive_source_link: &'a VerifiedBytecodeReadRafSumcheck<AkitaField>,
+    pub inactive_sources: AkitaFusedIncrementTranslationSources,
 }
 
 impl AkitaPackedWitnessArtifacts {
@@ -163,32 +175,86 @@ pub fn derive_akita_fused_increment_stage6_claims<S>(
     source: &S,
     precommitted: &PrecommittedSchedule,
     log_k_chunk: usize,
-    translation_opening_point: &[AkitaField],
-    source_link: &VerifiedBytecodeReadRafSumcheck<AkitaField>,
-    translation_sources: AkitaFusedIncrementTranslationSources,
+    input: AkitaFusedIncrementStage6Derivation<'_>,
 ) -> Result<AkitaFusedIncrementStage6Claims, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let translation = derive_akita_fused_increment_translation_claim(
+        source,
+        input.translation_opening_point,
+        JoltRelationId::FusedIncrementTranslation,
+        input.translation_sources,
+    )?;
+    let source_link = derive_akita_fused_increment_source_link_claim(
+        source,
+        precommitted,
+        log_k_chunk,
+        input.source_link,
+        JoltRelationId::FusedIncrementSourceLink,
+    )?;
+    let inactive_zero = derive_akita_fused_increment_translation_claim(
+        source,
+        input.inactive_zero_opening_point,
+        JoltRelationId::FusedIncrementInactiveZero,
+        input.inactive_sources,
+    )?;
+    let inactive_source_link = derive_akita_fused_increment_source_link_claim(
+        source,
+        precommitted,
+        log_k_chunk,
+        input.inactive_source_link,
+        JoltRelationId::FusedIncrementInactiveSourceLink,
+    )?;
+
+    Ok(AkitaFusedIncrementStage6Claims {
+        translation,
+        source_link,
+        inactive_zero,
+        inactive_source_link,
+    })
+}
+
+fn derive_akita_fused_increment_translation_claim<S>(
+    source: &S,
+    opening_point: &[AkitaField],
+    relation: JoltRelationId,
+    sources: AkitaFusedIncrementTranslationSources,
+) -> Result<FusedIncrementTranslationOutputClaims<AkitaField>, VerifierError>
 where
     S: PackedWitnessSource<AkitaField>,
 {
     let magnitude = eval_akita_packed_formula(
         source,
         fused_increment_magnitude_lattice_view_formula(),
-        translation_opening_point,
-        JoltRelationId::FusedIncrementTranslation,
+        opening_point,
+        relation,
     )?;
     let sign = eval_akita_packed_formula(
         source,
         fused_increment_sign_lattice_view_formula(),
-        translation_opening_point,
-        JoltRelationId::FusedIncrementTranslation,
+        opening_point,
+        relation,
     )?;
-    let translation = FusedIncrementTranslationOutputClaims {
-        ram_source: translation_sources.ram_source,
+
+    Ok(FusedIncrementTranslationOutputClaims {
+        ram_source: sources.ram_source,
         magnitude,
         sign,
-        rd_source: translation_sources.rd_source,
-    };
+        rd_source: sources.rd_source,
+    })
+}
 
+fn derive_akita_fused_increment_source_link_claim<S>(
+    source: &S,
+    precommitted: &PrecommittedSchedule,
+    log_k_chunk: usize,
+    source_link: &VerifiedBytecodeReadRafSumcheck<AkitaField>,
+    relation: JoltRelationId,
+) -> Result<FusedIncrementSourceLinkOutputClaims<AkitaField>, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
     let bytecode_ra = source_link
         .bytecode_ra_opening_points
         .iter()
@@ -196,7 +262,7 @@ where
         .map(|(index, point)| {
             let row_point = point.get(log_k_chunk..).ok_or_else(|| {
                 akita_fused_claim_error(
-                    JoltRelationId::FusedIncrementSourceLink,
+                    relation,
                     format!(
                         "BytecodeRa({index}) source-link opening point has {} variables but needs at least {log_k_chunk}",
                         point.len()
@@ -205,58 +271,73 @@ where
             })?;
             eval_akita_jolt_lattice_opening(
                 source,
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::BytecodeRa(index),
-                    JoltRelationId::FusedIncrementSourceLink,
-                ),
+                JoltOpeningId::committed(JoltCommittedPolynomial::BytecodeRa(index), relation),
                 point,
                 row_point,
                 log_k_chunk,
                 precommitted,
-                JoltRelationId::FusedIncrementSourceLink,
+                relation,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
 
     let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
         akita_fused_claim_error(
-            JoltRelationId::FusedIncrementSourceLink,
+            relation,
             "source-link derivation requires committed-bytecode layout",
         )
     })?;
     let source_address = bytecode_layout
         .split_address_point(&source_link.r_address)
-        .map_err(|error| {
-            akita_fused_claim_error(JoltRelationId::FusedIncrementSourceLink, error)
-        })?;
+        .map_err(|error| akita_fused_claim_error(relation, error))?;
     let store_flag = eval_akita_jolt_lattice_opening(
         source,
-        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        fused_increment_bytecode_source_opening_for_relation(
+            relation,
+            LatticeFusedIncrementTarget::Ram,
+        )?,
         &source_link.r_address,
         &source_address.r_bc,
         log_k_chunk,
         precommitted,
-        JoltRelationId::FusedIncrementSourceLink,
+        relation,
     )?;
     let rd_present = eval_akita_jolt_lattice_opening(
         source,
-        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+        fused_increment_bytecode_source_opening_for_relation(
+            relation,
+            LatticeFusedIncrementTarget::Rd,
+        )?,
         &source_link.r_address,
         &source_address.r_bc,
         log_k_chunk,
         precommitted,
-        JoltRelationId::FusedIncrementSourceLink,
+        relation,
     )?;
-    let source_link = FusedIncrementSourceLinkOutputClaims {
+
+    Ok(FusedIncrementSourceLinkOutputClaims {
         bytecode_ra,
         store_flag,
         rd_present,
-    };
-
-    Ok(AkitaFusedIncrementStage6Claims {
-        translation,
-        source_link,
     })
+}
+
+fn fused_increment_bytecode_source_opening_for_relation(
+    relation: JoltRelationId,
+    target: LatticeFusedIncrementTarget,
+) -> Result<JoltOpeningId, VerifierError> {
+    match relation {
+        JoltRelationId::FusedIncrementSourceLink => {
+            Ok(fused_increment_bytecode_source_opening(target))
+        }
+        JoltRelationId::FusedIncrementInactiveSourceLink => {
+            Ok(fused_increment_inactive_bytecode_source_opening(target))
+        }
+        _ => Err(akita_fused_claim_error(
+            relation,
+            "unsupported fused increment source-link relation",
+        )),
+    }
 }
 
 pub fn akita_lattice_protocol_config_for_layout(
@@ -2363,11 +2444,19 @@ mod tests {
             &source,
             &precommitted,
             log_k_chunk,
-            &translation_point,
-            &source_link,
-            AkitaFusedIncrementTranslationSources {
-                ram_source: af(17),
-                rd_source: af(19),
+            AkitaFusedIncrementStage6Derivation {
+                translation_opening_point: &translation_point,
+                source_link: &source_link,
+                translation_sources: AkitaFusedIncrementTranslationSources {
+                    ram_source: af(17),
+                    rd_source: af(19),
+                },
+                inactive_zero_opening_point: &translation_point,
+                inactive_source_link: &source_link,
+                inactive_sources: AkitaFusedIncrementTranslationSources {
+                    ram_source: af(23),
+                    rd_source: af(29),
+                },
             },
         )
         .expect("fused increment claims should derive");
@@ -2399,6 +2488,23 @@ mod tests {
             chunk_weights[0] * bytecode_row_weights[0] + chunk_weights[1] * bytecode_row_weights[1];
         assert_eq!(
             claims.source_link,
+            FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: vec![expected_bytecode_ra],
+                store_flag: expected_source,
+                rd_present: expected_source,
+            }
+        );
+        assert_eq!(
+            claims.inactive_zero,
+            FusedIncrementTranslationOutputClaims {
+                ram_source: af(23),
+                magnitude: trace_weights[0] * af(5) + trace_weights[1] * af(9),
+                sign: trace_weights[1],
+                rd_source: af(29),
+            }
+        );
+        assert_eq!(
+            claims.inactive_source_link,
             FusedIncrementSourceLinkOutputClaims {
                 bytecode_ra: vec![expected_bytecode_ra],
                 store_flag: expected_source,

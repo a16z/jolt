@@ -32,6 +32,8 @@ pub enum JoltRelationId {
     IncClaimReduction,
     FusedIncrementTranslation,
     FusedIncrementSourceLink,
+    FusedIncrementInactiveZero,
+    FusedIncrementInactiveSourceLink,
     HammingWeightClaimReduction,
 }
 
@@ -102,6 +104,16 @@ pub enum FusedIncrementTranslationChallenge {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FusedIncrementSourceLinkChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FusedIncrementInactiveZeroChallenge {
+    Beta,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FusedIncrementInactiveSourceLinkChallenge {
     Gamma,
 }
 
@@ -255,6 +267,8 @@ pub enum JoltChallengeId {
     IncClaimReduction(IncClaimReductionChallenge),
     FusedIncrementTranslation(FusedIncrementTranslationChallenge),
     FusedIncrementSourceLink(FusedIncrementSourceLinkChallenge),
+    FusedIncrementInactiveZero(FusedIncrementInactiveZeroChallenge),
+    FusedIncrementInactiveSourceLink(FusedIncrementInactiveSourceLinkChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
     BytecodeClaimReduction(BytecodeClaimReductionChallenge),

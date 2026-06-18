@@ -484,6 +484,9 @@ fn stage6_claims_from_native<F: Field>(
         },
         fused_increment_translation: fused_increment_translation_claims_from_native(claims)?,
         fused_increment_source_link: fused_increment_source_link_claims_from_native(claims)?,
+        fused_increment_inactive_zero: fused_increment_inactive_zero_claims_from_native(claims)?,
+        fused_increment_inactive_source_link:
+            fused_increment_inactive_source_link_claims_from_native(claims)?,
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
@@ -521,6 +524,33 @@ fn fused_increment_translation_claims_from_native<F: Field>(
     }))
 }
 
+fn fused_increment_inactive_zero_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Option<FusedIncrementTranslationOutputClaims<F>>, VerifierError> {
+    let ram_source =
+        lattice::fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram);
+    let magnitude = lattice::fused_increment_inactive_magnitude_opening();
+    let sign = lattice::fused_increment_inactive_sign_opening();
+    let rd_source =
+        lattice::fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd);
+    let present = [
+        claims.get(ram_source),
+        claims.get(magnitude),
+        claims.get(sign),
+        claims.get(rd_source),
+    ];
+    if present.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+
+    Ok(Some(FusedIncrementTranslationOutputClaims {
+        ram_source: present[0].ok_or(VerifierError::MissingOpeningClaim { id: ram_source })?,
+        magnitude: present[1].ok_or(VerifierError::MissingOpeningClaim { id: magnitude })?,
+        sign: present[2].ok_or(VerifierError::MissingOpeningClaim { id: sign })?,
+        rd_source: present[3].ok_or(VerifierError::MissingOpeningClaim { id: rd_source })?,
+    }))
+}
+
 fn fused_increment_source_link_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
 ) -> Result<Option<FusedIncrementSourceLinkOutputClaims<F>>, VerifierError> {
@@ -540,6 +570,38 @@ fn fused_increment_source_link_claims_from_native<F: Field>(
         lattice::fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram);
     let rd_present =
         lattice::fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd);
+    let store_claim = claims.get(store_flag);
+    let rd_claim = claims.get(rd_present);
+    if bytecode_ra.is_empty() && store_claim.is_none() && rd_claim.is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(FusedIncrementSourceLinkOutputClaims {
+        bytecode_ra,
+        store_flag: store_claim.ok_or(VerifierError::MissingOpeningClaim { id: store_flag })?,
+        rd_present: rd_claim.ok_or(VerifierError::MissingOpeningClaim { id: rd_present })?,
+    }))
+}
+
+fn fused_increment_inactive_source_link_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Option<FusedIncrementSourceLinkOutputClaims<F>>, VerifierError> {
+    let mut bytecode_ra = Vec::new();
+    for index in 0.. {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(index),
+            JoltRelationId::FusedIncrementInactiveSourceLink,
+        );
+        let Some(opening_claim) = claims.get(id) else {
+            break;
+        };
+        bytecode_ra.push(opening_claim);
+    }
+
+    let store_flag =
+        lattice::fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram);
+    let rd_present =
+        lattice::fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd);
     let store_claim = claims.get(store_flag);
     let rd_claim = claims.get(rd_present);
     if bytecode_ra.is_empty() && store_claim.is_none() && rd_claim.is_none() {
@@ -887,6 +949,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             },
             fused_increment_translation: None,
             fused_increment_source_link: None,
+            fused_increment_inactive_zero: None,
+            fused_increment_inactive_source_link: None,
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
                 untrusted: None,

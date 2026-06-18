@@ -1180,10 +1180,11 @@ mod tests {
             claim_reductions::bytecode, dimensions::JoltFormulaDimensions,
             ra::JoltRaPolynomialLayout,
         },
-        fused_increment_bytecode_source_opening, fused_increment_magnitude_opening,
-        fused_increment_sign_opening, lattice_packed_validity_digest, JoltCommittedPolynomial,
-        JoltOneHotConfig, JoltOpeningId, JoltPolynomialId, JoltReadWriteConfig, JoltRelationId,
-        LatticeFusedIncrementTarget,
+        fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
+        fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
+        fused_increment_magnitude_opening, fused_increment_sign_opening,
+        lattice_packed_validity_digest, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId,
+        JoltPolynomialId, JoltReadWriteConfig, JoltRelationId, LatticeFusedIncrementTarget,
     };
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -2125,6 +2126,8 @@ mod tests {
                 },
                 fused_increment_translation: None,
                 fused_increment_source_link: None,
+                fused_increment_inactive_zero: None,
+                fused_increment_inactive_source_link: None,
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,
@@ -2493,6 +2496,19 @@ mod tests {
                 store_flag: zero,
                 rd_present: zero,
             });
+        output_claims.fused_increment_inactive_zero =
+            Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
+                ram_source: zero,
+                magnitude: zero,
+                sign: zero,
+                rd_source: zero,
+            });
+        output_claims.fused_increment_inactive_source_link =
+            Some(stage6::inputs::FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: field_zeros(bytecode_ra_count),
+                store_flag: zero,
+                rd_present: zero,
+            });
 
         stage6::Stage6ClearOutput {
             public: stage6::outputs::Stage6PublicOutput {
@@ -2561,6 +2577,12 @@ mod tests {
                 field_registers_inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
                 fused_increment_translation: Some(verified_stage6_sumcheck(trace_point.clone())),
                 fused_increment_source_link: Some(verified_bytecode_read_raf(
+                    bytecode_address_point.clone(),
+                    trace_point.clone(),
+                    vec![ra_point.clone(); bytecode_ra_count],
+                )),
+                fused_increment_inactive_zero: Some(verified_stage6_sumcheck(trace_point.clone())),
+                fused_increment_inactive_source_link: Some(verified_bytecode_read_raf(
                     bytecode_address_point.clone(),
                     trace_point,
                     vec![ra_point; bytecode_ra_count],
@@ -2655,6 +2677,8 @@ mod tests {
         let mut ids = vec![
             stage8_opening(fused_increment_magnitude_opening()),
             stage8_opening(fused_increment_sign_opening()),
+            stage8_opening(fused_increment_inactive_magnitude_opening()),
+            stage8_opening(fused_increment_inactive_sign_opening()),
         ];
         ids.extend((0..ra_layout.bytecode()).map(|index| {
             stage8_opening(JoltOpeningId::Polynomial {
@@ -2667,6 +2691,20 @@ mod tests {
                 LatticeFusedIncrementTarget::Ram,
             )),
             stage8_opening(fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Rd,
+            )),
+        ]);
+        ids.extend((0..ra_layout.bytecode()).map(|index| {
+            stage8_opening(JoltOpeningId::Polynomial {
+                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+                relation: JoltRelationId::FusedIncrementInactiveSourceLink,
+            })
+        }));
+        ids.extend([
+            stage8_opening(fused_increment_inactive_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            )),
+            stage8_opening(fused_increment_inactive_bytecode_source_opening(
                 LatticeFusedIncrementTarget::Rd,
             )),
         ]);

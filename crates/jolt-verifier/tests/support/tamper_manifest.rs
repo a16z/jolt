@@ -919,6 +919,22 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "active coverage needs a lattice fixture whose Stage 6 batch includes the fused source-link sumcheck",
     ),
     checked_standard(
+        "stage6.claims.fused_increment_inactive_zero",
+        "claims.stage6.fused_increment_inactive_zero",
+        VerifierPhase::Stage6,
+        MutationStrategy::AddItem,
+        TamperCoverage::Deferred,
+        "active coverage needs a lattice fixture whose Stage 6 batch includes the fused inactive-zero sumcheck",
+    ),
+    checked_standard(
+        "stage6.claims.fused_increment_inactive_source_link",
+        "claims.stage6.fused_increment_inactive_source_link",
+        VerifierPhase::Stage6,
+        MutationStrategy::AddItem,
+        TamperCoverage::Deferred,
+        "active coverage needs a lattice fixture whose Stage 6 batch includes the fused inactive source-link sumcheck",
+    ),
+    checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
         "claims.stage6.advice_cycle_phase.trusted.opening_claim",
         VerifierPhase::Stage6,
@@ -1565,6 +1581,8 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             },
             fused_increment_translation: None,
             fused_increment_source_link: None,
+            fused_increment_inactive_zero: None,
+            fused_increment_inactive_source_link: None,
             advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                 trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
                     opening_claim: zero,

@@ -16,7 +16,9 @@ use jolt_claims::protocols::jolt::{
     advice_bytes_validity_requirement, byte_decode_terms, bytecode_chunk_lattice_view_formula,
     bytecode_validity_requirements,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
+    fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
+    fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
+    fused_increment_inactive_source_opening, fused_increment_magnitude_lattice_view_formula,
     fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
     fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
     fused_increment_source_opening, fused_increment_validity_requirements,
@@ -1227,16 +1229,30 @@ where
         | JoltOpeningId::UntrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
         } => Ok(point.to_vec()),
-        id if id == fused_increment_magnitude_opening() || id == fused_increment_sign_opening() => {
+        id if id == fused_increment_magnitude_opening()
+            || id == fused_increment_sign_opening()
+            || id == fused_increment_inactive_magnitude_opening()
+            || id == fused_increment_inactive_sign_opening() =>
+        {
             Ok(point.to_vec())
         }
         id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) =>
+            || id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd)
+            || id
+                == fused_increment_inactive_bytecode_source_opening(
+                    LatticeFusedIncrementTarget::Ram,
+                )
+            || id
+                == fused_increment_inactive_bytecode_source_opening(
+                    LatticeFusedIncrementTarget::Rd,
+                ) =>
         {
             bytecode_address_row_point(point, precommitted)
         }
         id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) =>
+            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd)
+            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram)
+            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd) =>
         {
             Ok(point.to_vec())
         }
@@ -1265,7 +1281,8 @@ where
         )
         | (
             JoltCommittedPolynomial::BytecodeRa(_),
-            JoltRelationId::FusedIncrementSourceLink,
+            JoltRelationId::FusedIncrementSourceLink
+            | JoltRelationId::FusedIncrementInactiveSourceLink,
         ) => ra_row_point(point, log_k_chunk),
         (
             JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc,
@@ -1407,7 +1424,13 @@ where
         id if id == fused_increment_magnitude_opening() => {
             Ok(fused_increment_magnitude_lattice_view_formula())
         }
+        id if id == fused_increment_inactive_magnitude_opening() => {
+            Ok(fused_increment_magnitude_lattice_view_formula())
+        }
         id if id == fused_increment_sign_opening() => {
+            Ok(fused_increment_sign_lattice_view_formula())
+        }
+        id if id == fused_increment_inactive_sign_opening() => {
             Ok(fused_increment_sign_lattice_view_formula())
         }
         id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram) => {
@@ -1424,8 +1447,32 @@ where
                 precommitted,
             )
         }
+        id if id
+            == fused_increment_inactive_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            ) =>
+        {
+            fused_increment_bytecode_source_lattice_view_formula(
+                LatticeFusedIncrementTarget::Ram,
+                point,
+                precommitted,
+            )
+        }
+        id if id
+            == fused_increment_inactive_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Rd,
+            ) =>
+        {
+            fused_increment_bytecode_source_lattice_view_formula(
+                LatticeFusedIncrementTarget::Rd,
+                point,
+                precommitted,
+            )
+        }
         id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) =>
+            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd)
+            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram)
+            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd) =>
         {
             Err(unsupported_lattice_view(
                 "fused increment source outputs require a bytecode-derived packed view relation",
@@ -1516,7 +1563,9 @@ where
         ),
         (
             JoltCommittedPolynomial::BytecodeRa(index),
-            JoltRelationId::HammingWeightClaimReduction | JoltRelationId::FusedIncrementSourceLink,
+            JoltRelationId::HammingWeightClaimReduction
+            | JoltRelationId::FusedIncrementSourceLink
+            | JoltRelationId::FusedIncrementInactiveSourceLink,
         ) => {
             ra_lattice_view_formula(
                 LatticePackedFamilyId::BytecodeRa { index },

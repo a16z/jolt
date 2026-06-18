@@ -89,6 +89,12 @@ pub struct Stage6Claims<F: Field> {
     /// Lattice PCS mode only, links fused translation source outputs to bytecode lanes.
     #[serde(default)]
     pub fused_increment_source_link: Option<FusedIncrementSourceLinkOutputClaims<F>>,
+    /// Lattice PCS mode only, proves inactive bytecode sources force zero fused increments.
+    #[serde(default)]
+    pub fused_increment_inactive_zero: Option<FusedIncrementTranslationOutputClaims<F>>,
+    /// Lattice PCS mode only, links inactive-zero source outputs to bytecode lanes.
+    #[serde(default)]
+    pub fused_increment_inactive_source_link: Option<FusedIncrementSourceLinkOutputClaims<F>>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
     /// Committed program mode only.
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
@@ -164,6 +170,17 @@ mod tests {
                 store_flag: zero,
                 rd_present: zero,
             }),
+            fused_increment_inactive_zero: Some(FusedIncrementTranslationOutputClaims {
+                ram_source: zero,
+                magnitude: zero,
+                sign: zero,
+                rd_source: zero,
+            }),
+            fused_increment_inactive_source_link: Some(FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: vec![zero],
+                store_flag: zero,
+                rd_present: zero,
+            }),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
                 untrusted: None,
@@ -183,10 +200,22 @@ mod tests {
             .expect("claims should serialize to a map")
             .remove("fused_increment_source_link");
         assert!(removed.is_some());
+        let removed = value
+            .as_object_mut()
+            .expect("claims should serialize to a map")
+            .remove("fused_increment_inactive_zero");
+        assert!(removed.is_some());
+        let removed = value
+            .as_object_mut()
+            .expect("claims should serialize to a map")
+            .remove("fused_increment_inactive_source_link");
+        assert!(removed.is_some());
 
         let decoded: Stage6Claims<Fr> =
             serde_json::from_value(value).expect("missing fused field should deserialize");
         assert_eq!(decoded.fused_increment_translation, None);
         assert_eq!(decoded.fused_increment_source_link, None);
+        assert_eq!(decoded.fused_increment_inactive_zero, None);
+        assert_eq!(decoded.fused_increment_inactive_source_link, None);
     }
 }

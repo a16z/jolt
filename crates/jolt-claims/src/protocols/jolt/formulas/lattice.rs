@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{challenge, opening};
 
 use super::super::{
+    FusedIncrementInactiveSourceLinkChallenge, FusedIncrementInactiveZeroChallenge,
     FusedIncrementSourceLinkChallenge, FusedIncrementTranslationChallenge, JoltChallengeId,
     JoltExpr, JoltRelationClaims,
 };
@@ -330,6 +331,14 @@ pub fn fused_increment_source_link_relation() -> JoltRelationId {
     JoltRelationId::FusedIncrementSourceLink
 }
 
+pub fn fused_increment_inactive_zero_relation() -> JoltRelationId {
+    JoltRelationId::FusedIncrementInactiveZero
+}
+
+pub fn fused_increment_inactive_source_link_relation() -> JoltRelationId {
+    JoltRelationId::FusedIncrementInactiveSourceLink
+}
+
 pub fn fused_increment_translation_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
@@ -384,6 +393,64 @@ where
     )])
 }
 
+pub fn fused_increment_inactive_zero_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    let beta = fused_increment_inactive_zero_challenge(FusedIncrementInactiveZeroChallenge::Beta);
+    let inactive = JoltExpr::one()
+        - opening(fused_increment_inactive_source_opening(
+            LatticeFusedIncrementTarget::Ram,
+        ))
+        - opening(fused_increment_inactive_source_opening(
+            LatticeFusedIncrementTarget::Rd,
+        ));
+    let value = opening(fused_increment_inactive_magnitude_opening())
+        + beta * opening(fused_increment_inactive_sign_opening());
+
+    JoltRelationClaims::new(
+        JoltRelationId::FusedIncrementInactiveZero,
+        dimensions.sumcheck(3),
+        JoltExpr::zero(),
+        inactive * value,
+    )
+}
+
+pub fn fused_increment_inactive_source_link_claim<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    let gamma = fused_increment_inactive_source_link_challenge(
+        FusedIncrementInactiveSourceLinkChallenge::Gamma,
+    );
+    let input = opening(fused_increment_inactive_source_opening(
+        LatticeFusedIncrementTarget::Ram,
+    )) + gamma.clone()
+        * opening(fused_increment_inactive_source_opening(
+            LatticeFusedIncrementTarget::Rd,
+        ));
+    let source_output = opening(fused_increment_inactive_bytecode_source_opening(
+        LatticeFusedIncrementTarget::Ram,
+    )) + gamma
+        * opening(fused_increment_inactive_bytecode_source_opening(
+            LatticeFusedIncrementTarget::Rd,
+        ));
+    let output =
+        fused_increment_inactive_source_link_bytecode_ra_product(dimensions) * source_output;
+
+    JoltRelationClaims::new(
+        JoltRelationId::FusedIncrementInactiveSourceLink,
+        dimensions.sumcheck(),
+        input,
+        output,
+    )
+    .with_input_challenges([JoltChallengeId::from(
+        FusedIncrementInactiveSourceLinkChallenge::Gamma,
+    )])
+}
+
 fn fused_increment_translation_challenge<F>(id: FusedIncrementTranslationChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -392,6 +459,24 @@ where
 }
 
 fn fused_increment_source_link_challenge<F>(id: FusedIncrementSourceLinkChallenge) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    challenge(JoltChallengeId::from(id))
+}
+
+fn fused_increment_inactive_zero_challenge<F>(
+    id: FusedIncrementInactiveZeroChallenge,
+) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    challenge(JoltChallengeId::from(id))
+}
+
+fn fused_increment_inactive_source_link_challenge<F>(
+    id: FusedIncrementInactiveSourceLinkChallenge,
+) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -427,11 +512,35 @@ pub fn fused_increment_source_opening(target: LatticeFusedIncrementTarget) -> Jo
     )
 }
 
+pub fn fused_increment_inactive_source_opening(
+    target: LatticeFusedIncrementTarget,
+) -> JoltOpeningId {
+    JoltOpeningId::lattice(
+        JoltRelationId::FusedIncrementInactiveZero,
+        match target {
+            LatticeFusedIncrementTarget::Ram => 0,
+            LatticeFusedIncrementTarget::Rd => 1,
+        },
+    )
+}
+
 pub fn fused_increment_bytecode_source_opening(
     target: LatticeFusedIncrementTarget,
 ) -> JoltOpeningId {
     JoltOpeningId::lattice(
         JoltRelationId::FusedIncrementSourceLink,
+        match target {
+            LatticeFusedIncrementTarget::Ram => 0,
+            LatticeFusedIncrementTarget::Rd => 1,
+        },
+    )
+}
+
+pub fn fused_increment_inactive_bytecode_source_opening(
+    target: LatticeFusedIncrementTarget,
+) -> JoltOpeningId {
+    JoltOpeningId::lattice(
+        JoltRelationId::FusedIncrementInactiveSourceLink,
         match target {
             LatticeFusedIncrementTarget::Ram => 0,
             LatticeFusedIncrementTarget::Rd => 1,
@@ -450,12 +559,40 @@ pub fn fused_increment_source_link_output_openings(
     openings
 }
 
+pub fn fused_increment_inactive_zero_output_openings() -> [JoltOpeningId; 4] {
+    [
+        fused_increment_inactive_magnitude_opening(),
+        fused_increment_inactive_sign_opening(),
+        fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram),
+        fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd),
+    ]
+}
+
+pub fn fused_increment_inactive_source_link_output_openings(
+    dimensions: BytecodeReadRafDimensions,
+) -> Vec<JoltOpeningId> {
+    let mut openings = fused_increment_inactive_source_link_bytecode_ra_openings(dimensions);
+    openings.extend([
+        fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+    ]);
+    openings
+}
+
 pub fn fused_increment_magnitude_opening() -> JoltOpeningId {
     JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 2)
 }
 
 pub fn fused_increment_sign_opening() -> JoltOpeningId {
     JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 3)
+}
+
+pub fn fused_increment_inactive_magnitude_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::FusedIncrementInactiveZero, 2)
+}
+
+pub fn fused_increment_inactive_sign_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::FusedIncrementInactiveZero, 3)
 }
 
 fn signed_source_output<F>(target: LatticeFusedIncrementTarget) -> JoltExpr<F>
@@ -477,8 +614,30 @@ fn fused_increment_source_link_bytecode_ra_product<F>(
 where
     F: RingCore,
 {
+    fused_increment_bytecode_ra_product(dimensions, JoltRelationId::FusedIncrementSourceLink)
+}
+
+fn fused_increment_inactive_source_link_bytecode_ra_product<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    fused_increment_bytecode_ra_product(
+        dimensions,
+        JoltRelationId::FusedIncrementInactiveSourceLink,
+    )
+}
+
+fn fused_increment_bytecode_ra_product<F>(
+    dimensions: BytecodeReadRafDimensions,
+    relation: JoltRelationId,
+) -> JoltExpr<F>
+where
+    F: RingCore,
+{
     let mut product = JoltExpr::one();
-    for opening_id in fused_increment_source_link_bytecode_ra_openings(dimensions) {
+    for opening_id in fused_increment_bytecode_ra_openings(dimensions, relation) {
         product = product * opening(opening_id);
     }
     product
@@ -487,13 +646,24 @@ where
 fn fused_increment_source_link_bytecode_ra_openings(
     dimensions: BytecodeReadRafDimensions,
 ) -> Vec<JoltOpeningId> {
+    fused_increment_bytecode_ra_openings(dimensions, JoltRelationId::FusedIncrementSourceLink)
+}
+
+fn fused_increment_inactive_source_link_bytecode_ra_openings(
+    dimensions: BytecodeReadRafDimensions,
+) -> Vec<JoltOpeningId> {
+    fused_increment_bytecode_ra_openings(
+        dimensions,
+        JoltRelationId::FusedIncrementInactiveSourceLink,
+    )
+}
+
+fn fused_increment_bytecode_ra_openings(
+    dimensions: BytecodeReadRafDimensions,
+    relation: JoltRelationId,
+) -> Vec<JoltOpeningId> {
     (0..dimensions.num_committed_ra_polys())
-        .map(|index| {
-            JoltOpeningId::committed(
-                JoltCommittedPolynomial::BytecodeRa(index),
-                JoltRelationId::FusedIncrementSourceLink,
-            )
-        })
+        .map(|index| JoltOpeningId::committed(JoltCommittedPolynomial::BytecodeRa(index), relation))
         .collect()
 }
 
@@ -1011,6 +1181,73 @@ mod tests {
     }
 
     #[test]
+    fn fused_increment_inactive_zero_claim_batches_magnitude_and_sign() {
+        let claims = fused_increment_inactive_zero_claim::<Fr>(TraceDimensions::new(5));
+
+        assert_eq!(
+            fused_increment_inactive_zero_relation(),
+            JoltRelationId::FusedIncrementInactiveZero
+        );
+        assert_eq!(claims.id, JoltRelationId::FusedIncrementInactiveZero);
+        assert_eq!(claims.sumcheck, TraceDimensions::new(5).sumcheck(3));
+        assert!(claims.input.required_openings.is_empty());
+        assert_eq!(
+            claims.output.required_openings,
+            fused_increment_inactive_zero_output_openings()
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![JoltChallengeId::from(
+                FusedIncrementInactiveZeroChallenge::Beta
+            )]
+        );
+    }
+
+    #[test]
+    fn fused_increment_inactive_source_link_claim_batches_inactive_sources() {
+        let dimensions = BytecodeReadRafDimensions::new(5, 10, 2);
+        let claims = fused_increment_inactive_source_link_claim::<Fr>(dimensions);
+        let expected_bytecode_ra = (0..2)
+            .map(|index| {
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeRa(index),
+                    JoltRelationId::FusedIncrementInactiveSourceLink,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut expected_output = expected_bytecode_ra.clone();
+        expected_output.extend([
+            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+        ]);
+
+        assert_eq!(
+            fused_increment_inactive_source_link_relation(),
+            JoltRelationId::FusedIncrementInactiveSourceLink
+        );
+        assert_eq!(claims.id, JoltRelationId::FusedIncrementInactiveSourceLink);
+        assert_eq!(claims.sumcheck, dimensions.sumcheck());
+        assert_eq!(
+            claims.input.required_openings,
+            vec![
+                fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram),
+                fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd),
+            ]
+        );
+        assert_eq!(claims.output.required_openings, expected_output);
+        assert_eq!(
+            fused_increment_inactive_source_link_output_openings(dimensions),
+            claims.output.required_openings
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![JoltChallengeId::from(
+                FusedIncrementInactiveSourceLinkChallenge::Gamma
+            )]
+        );
+    }
+
+    #[test]
     fn fused_increment_source_link_claim_evaluates_read_raf_source_formula() {
         let dimensions = BytecodeReadRafDimensions::new(5, 10, 2);
         let claims = fused_increment_source_link_claim::<Fr>(dimensions);
@@ -1075,6 +1312,51 @@ mod tests {
             output,
             bytecode_ra[0] * bytecode_ra[1] * (store_flag + gamma * rd_present)
         );
+    }
+
+    #[test]
+    fn fused_increment_inactive_zero_claim_evaluates_inactive_selector() {
+        let claims = fused_increment_inactive_zero_claim::<Fr>(TraceDimensions::new(5));
+        let ram_source = Fr::from_u64(0);
+        let rd_source = Fr::from_u64(0);
+        let magnitude = Fr::from_u64(19);
+        let sign = Fr::from_u64(1);
+        let beta = Fr::from_u64(23);
+        let zero = Fr::from_u64(0);
+
+        let input = claims
+            .input
+            .expression()
+            .evaluate(|_| zero, |_| zero, |_| zero);
+        let output = claims.output.expression().evaluate(
+            |id| match *id {
+                id if id
+                    == fused_increment_inactive_source_opening(
+                        LatticeFusedIncrementTarget::Ram,
+                    ) =>
+                {
+                    ram_source
+                }
+                id if id
+                    == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd) =>
+                {
+                    rd_source
+                }
+                id if id == fused_increment_inactive_magnitude_opening() => magnitude,
+                id if id == fused_increment_inactive_sign_opening() => sign,
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::FusedIncrementInactiveZero(
+                    FusedIncrementInactiveZeroChallenge::Beta,
+                ) => beta,
+                _ => zero,
+            },
+            |_| zero,
+        );
+
+        assert_eq!(input, zero);
+        assert_eq!(output, magnitude + beta * sign);
     }
 
     #[test]

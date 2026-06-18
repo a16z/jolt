@@ -16,6 +16,7 @@ use jolt_claims::protocols::jolt::{
     },
     fused_increment_bytecode_source_opening, fused_increment_source_opening, BooleanityChallenge,
     BooleanityPublic, BytecodeClaimReductionChallenge, BytecodeReadRafChallenge,
+    FusedIncrementInactiveSourceLinkChallenge, FusedIncrementInactiveZeroChallenge,
     FusedIncrementSourceLinkChallenge, FusedIncrementTranslationChallenge,
     IncClaimReductionChallenge, IncClaimReductionPublic, InstructionRaVirtualizationChallenge,
     JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltPolynomialId, JoltPublicId,
@@ -68,6 +69,8 @@ struct Stage6BatchInputClaims<F: Field> {
     field_registers_inc_claim_reduction: F,
     fused_increment_translation: Option<F>,
     fused_increment_source_link: Option<F>,
+    fused_increment_inactive_zero: Option<F>,
+    fused_increment_inactive_source_link: Option<F>,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -88,6 +91,8 @@ struct Stage6BatchExpectedOutputClaims<F: Field> {
     field_registers_inc_claim_reduction: F,
     fused_increment_translation: Option<F>,
     fused_increment_source_link: Option<F>,
+    fused_increment_inactive_zero: Option<F>,
+    fused_increment_inactive_source_link: Option<F>,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -98,6 +103,8 @@ struct Stage6BatchExpectedOutputClaims<F: Field> {
 struct FusedIncrementStageClaims<F: Field> {
     translation: Option<JoltRelationClaims<F>>,
     source_link: Option<JoltRelationClaims<F>>,
+    inactive_zero: Option<JoltRelationClaims<F>>,
+    inactive_source_link: Option<JoltRelationClaims<F>>,
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -970,13 +977,24 @@ where
         formula_dimensions.bytecode_read_raf,
         claims.fused_increment_translation.is_some(),
         claims.fused_increment_source_link.is_some(),
+        claims.fused_increment_inactive_zero.is_some(),
+        claims.fused_increment_inactive_source_link.is_some(),
     )?;
     let fused_increment_claims = fused_increment_stage_claims.translation;
     let fused_increment_source_link_claims = fused_increment_stage_claims.source_link;
+    let fused_increment_inactive_zero_claims = fused_increment_stage_claims.inactive_zero;
+    let fused_increment_inactive_source_link_claims =
+        fused_increment_stage_claims.inactive_source_link;
     if let Some(claim) = &fused_increment_claims {
         validate_compressed_stage_claim(claim)?;
     }
     if let Some(claim) = &fused_increment_source_link_claims {
+        validate_compressed_stage_claim(claim)?;
+    }
+    if let Some(claim) = &fused_increment_inactive_zero_claims {
+        validate_compressed_stage_claim(claim)?;
+    }
+    if let Some(claim) = &fused_increment_inactive_source_link_claims {
         validate_compressed_stage_claim(claim)?;
     }
 
@@ -1012,6 +1030,12 @@ where
         .as_ref()
         .map(|_| transcript.challenge_scalar());
     let fused_increment_source_link_gamma = fused_increment_source_link_claims
+        .as_ref()
+        .map(|_| transcript.challenge_scalar());
+    let fused_increment_inactive_zero_beta = fused_increment_inactive_zero_claims
+        .as_ref()
+        .map(|_| transcript.challenge_scalar());
+    let fused_increment_inactive_source_link_gamma = fused_increment_inactive_source_link_claims
         .as_ref()
         .map(|_| transcript.challenge_scalar());
 
@@ -1171,6 +1195,59 @@ where
                 )
             })
             .transpose()?,
+        fused_increment_inactive_zero: fused_increment_inactive_zero_claims
+            .as_ref()
+            .map(|claim| {
+                claim.input.expression().try_evaluate(
+                    |id| Err(VerifierError::MissingOpeningClaim { id: *id }),
+                    |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
+        fused_increment_inactive_source_link: fused_increment_inactive_source_link_claims
+            .as_ref()
+            .map(|claim| {
+                let gamma = fused_increment_inactive_source_link_gamma.ok_or(
+                    VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(FusedIncrementInactiveSourceLinkChallenge::Gamma),
+                    },
+                )?;
+                let inactive_output = claims.fused_increment_inactive_zero.as_ref().ok_or(
+                    VerifierError::MissingOpeningClaim {
+                        id: lattice::fused_increment_inactive_source_opening(
+                            LatticeFusedIncrementTarget::Ram,
+                        ),
+                    },
+                )?;
+                claim.input.expression().try_evaluate(
+                    |id| match *id {
+                        id if id
+                            == lattice::fused_increment_inactive_source_opening(
+                                LatticeFusedIncrementTarget::Ram,
+                            ) =>
+                        {
+                            Ok(inactive_output.ram_source)
+                        }
+                        id if id
+                            == lattice::fused_increment_inactive_source_opening(
+                                LatticeFusedIncrementTarget::Rd,
+                            ) =>
+                        {
+                            Ok(inactive_output.rd_source)
+                        }
+                        id => Err(VerifierError::MissingOpeningClaim { id }),
+                    },
+                    |id| match id {
+                        JoltChallengeId::FusedIncrementInactiveSourceLink(
+                            FusedIncrementInactiveSourceLinkChallenge::Gamma,
+                        ) => Ok(gamma),
+                        _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    },
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
         trusted_advice_cycle_phase: trusted_advice_claims
             .as_ref()
             .map(|claim| {
@@ -1294,6 +1371,26 @@ where
     if let (Some(claim), Some(input_claim)) = (
         &fused_increment_source_link_claims,
         input_claims.fused_increment_source_link,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &fused_increment_inactive_zero_claims,
+        input_claims.fused_increment_inactive_zero,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &fused_increment_inactive_source_link_claims,
+        input_claims.fused_increment_inactive_source_link,
     ) {
         sumcheck_claims.push(SumcheckClaim::new(
             claim.sumcheck.rounds,
@@ -2111,6 +2208,146 @@ where
         None
     };
 
+    let fused_increment_inactive_zero =
+        if let (Some(claim), Some(output_claims), Some(input_claim), Some(beta)) = (
+            &fused_increment_inactive_zero_claims,
+            claims.fused_increment_inactive_zero.as_ref(),
+            input_claims.fused_increment_inactive_zero,
+            fused_increment_inactive_zero_beta,
+        ) {
+            let point = batch
+                .try_instance_point(claim.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltRelationId::FusedIncrementInactiveZero,
+                    reason: error.to_string(),
+                })?;
+            let opening_point = trace_dimensions
+                .cycle_opening_point(point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::FusedIncrementInactiveZero,
+                    reason: error.to_string(),
+                })?;
+            let [magnitude, sign, ram_source, rd_source] =
+                lattice::fused_increment_inactive_zero_output_openings();
+            let expected_output_claim = claim.output.expression().try_evaluate(
+                |id| match *id {
+                    id if id == ram_source => Ok(output_claims.ram_source),
+                    id if id == magnitude => Ok(output_claims.magnitude),
+                    id if id == sign => Ok(output_claims.sign),
+                    id if id == rd_source => Ok(output_claims.rd_source),
+                    id => Err(VerifierError::MissingOpeningClaim { id }),
+                },
+                |id| match id {
+                    JoltChallengeId::FusedIncrementInactiveZero(
+                        FusedIncrementInactiveZeroChallenge::Beta,
+                    ) => Ok(beta),
+                    _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                },
+                |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            )?;
+            Some(VerifiedStage6Sumcheck {
+                input_claim,
+                sumcheck_point: point.to_vec(),
+                opening_point,
+                expected_output_claim,
+            })
+        } else {
+            None
+        };
+
+    let fused_increment_inactive_source_link = if let (
+        Some(claim),
+        Some(output_claims),
+        Some(input_claim),
+        Some(gamma),
+    ) = (
+        &fused_increment_inactive_source_link_claims,
+        claims.fused_increment_inactive_source_link.as_ref(),
+        input_claims.fused_increment_inactive_source_link,
+        fused_increment_inactive_source_link_gamma,
+    ) {
+        let expected_bytecode_ra = formula_dimensions
+            .bytecode_read_raf
+            .num_committed_ra_polys();
+        if output_claims.bytecode_ra.len() != expected_bytecode_ra {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::FusedIncrementInactiveSourceLink,
+                reason: format!(
+                    "fused increment inactive source-link bytecode RA claim count mismatch: expected {}, got {}",
+                    expected_bytecode_ra,
+                    output_claims.bytecode_ra.len()
+                ),
+            });
+        }
+        let point = batch
+            .try_instance_point(claim.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::FusedIncrementInactiveSourceLink,
+                reason: error.to_string(),
+            })?;
+        let opening_point = formula_dimensions
+            .bytecode_read_raf
+            .opening_point(point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::FusedIncrementInactiveSourceLink,
+                reason: error.to_string(),
+            })?;
+        let expected_output_claim = claim.output.expression().try_evaluate(
+            |id| match *id {
+                jolt_claims::protocols::jolt::JoltOpeningId::Polynomial {
+                    polynomial:
+                        JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+                    relation: JoltRelationId::FusedIncrementInactiveSourceLink,
+                } => output_claims
+                    .bytecode_ra
+                    .get(index)
+                    .copied()
+                    .ok_or(VerifierError::MissingOpeningClaim { id: *id }),
+                id if id
+                    == lattice::fused_increment_inactive_bytecode_source_opening(
+                        LatticeFusedIncrementTarget::Ram,
+                    ) =>
+                {
+                    Ok(output_claims.store_flag)
+                }
+                id if id
+                    == lattice::fused_increment_inactive_bytecode_source_opening(
+                        LatticeFusedIncrementTarget::Rd,
+                    ) =>
+                {
+                    Ok(output_claims.rd_present)
+                }
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| match id {
+                JoltChallengeId::FusedIncrementInactiveSourceLink(
+                    FusedIncrementInactiveSourceLinkChallenge::Gamma,
+                ) => Ok(gamma),
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        )?;
+        let bytecode_ra_opening_points = proof
+            .one_hot_config
+            .committed_address_chunks(&opening_point.r_address)
+            .into_iter()
+            .map(|r_address_chunk| {
+                [r_address_chunk.as_slice(), opening_point.r_cycle.as_slice()].concat()
+            })
+            .collect::<Vec<_>>();
+        Some(VerifiedBytecodeReadRafSumcheck {
+            input_claim,
+            sumcheck_point: point.to_vec(),
+            r_address: opening_point.r_address,
+            r_cycle: opening_point.r_cycle,
+            full_opening_point: opening_point.opening_point,
+            bytecode_ra_opening_points,
+            expected_output_claim,
+        })
+    } else {
+        None
+    };
+
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
         trusted_advice_claims.as_ref(),
@@ -2254,6 +2491,12 @@ where
         fused_increment_source_link: fused_increment_source_link
             .as_ref()
             .map(|verified| verified.expected_output_claim),
+        fused_increment_inactive_zero: fused_increment_inactive_zero
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        fused_increment_inactive_source_link: fused_increment_inactive_source_link
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
         trusted_advice_cycle_phase: trusted_advice
             .as_ref()
             .map(|verified| verified.expected_output_claim),
@@ -2281,6 +2524,12 @@ where
         expected_outputs_in_order.push(output_claim);
     }
     if let Some(output_claim) = expected_outputs.fused_increment_source_link {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.fused_increment_inactive_zero {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.fused_increment_inactive_source_link {
         expected_outputs_in_order.push(output_claim);
     }
     if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
@@ -2407,6 +2656,8 @@ where
             field_registers_inc_claim_reduction: field_inc_claim_reduction,
             fused_increment_translation,
             fused_increment_source_link,
+            fused_increment_inactive_zero,
+            fused_increment_inactive_source_link,
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
             bytecode_cycle_phase,
@@ -2436,6 +2687,8 @@ fn fused_increment_stage_claims_for_protocol<F: Field>(
     bytecode_dimensions: bytecode::BytecodeReadRafDimensions,
     has_translation_claims: bool,
     has_source_link_claims: bool,
+    has_inactive_zero_claims: bool,
+    has_inactive_source_link_claims: bool,
 ) -> Result<FusedIncrementStageClaims<F>, VerifierError> {
     let lattice =
         crate::config::validate_protocol_config(protocol)? == crate::config::PcsFamily::Lattice;
@@ -2444,9 +2697,19 @@ fn fused_increment_stage_claims_for_protocol<F: Field>(
             id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
         });
     }
+    if has_inactive_zero_claims && !lattice {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: lattice::fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
     if lattice && !has_translation_claims {
         return Err(VerifierError::MissingOpeningClaim {
             id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
+    if lattice && !has_inactive_zero_claims {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: lattice::fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram),
         });
     }
     if has_source_link_claims && !has_translation_claims {
@@ -2459,6 +2722,20 @@ fn fused_increment_stage_claims_for_protocol<F: Field>(
             id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
         });
     }
+    if has_inactive_source_link_claims && !has_inactive_zero_claims {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: lattice::fused_increment_inactive_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            ),
+        });
+    }
+    if has_inactive_zero_claims && !has_inactive_source_link_claims {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: lattice::fused_increment_inactive_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            ),
+        });
+    }
 
     Ok(if lattice {
         FusedIncrementStageClaims {
@@ -2466,11 +2743,19 @@ fn fused_increment_stage_claims_for_protocol<F: Field>(
             source_link: Some(lattice::fused_increment_source_link_claim(
                 bytecode_dimensions,
             )),
+            inactive_zero: Some(lattice::fused_increment_inactive_zero_claim(
+                trace_dimensions,
+            )),
+            inactive_source_link: Some(lattice::fused_increment_inactive_source_link_claim(
+                bytecode_dimensions,
+            )),
         }
     } else {
         FusedIncrementStageClaims {
             translation: None,
             source_link: None,
+            inactive_zero: None,
+            inactive_source_link: None,
         }
     })
 }
@@ -2516,6 +2801,8 @@ mod tests {
             bytecode_dimensions(),
             false,
             false,
+            false,
+            false,
         )
         .expect_err("lattice mode should require fused translation claims");
         assert!(matches!(
@@ -2530,12 +2817,32 @@ mod tests {
             bytecode_dimensions(),
             true,
             false,
+            true,
+            true,
         )
         .expect_err("lattice mode should require source-link claims with translation claims");
         assert!(matches!(
             error,
             VerifierError::MissingOpeningClaim { id }
                 if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
+        ));
+
+        let error = fused_increment_stage_claims_for_protocol::<Fr>(
+            &lattice_config(),
+            trace_dimensions(),
+            bytecode_dimensions(),
+            true,
+            true,
+            true,
+            false,
+        )
+        .expect_err("lattice mode should require inactive source-link claims");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == lattice::fused_increment_inactive_bytecode_source_opening(
+                    LatticeFusedIncrementTarget::Ram
+                )
         ));
     }
 
@@ -2545,6 +2852,8 @@ mod tests {
             &curve_config(),
             trace_dimensions(),
             bytecode_dimensions(),
+            true,
+            true,
             true,
             true,
         )
@@ -2561,6 +2870,8 @@ mod tests {
             bytecode_dimensions(),
             false,
             true,
+            false,
+            false,
         )
         .expect_err("curve mode should reject source-link claims without translation claims");
         assert!(matches!(
@@ -2576,6 +2887,8 @@ mod tests {
             &lattice_config(),
             trace_dimensions(),
             bytecode_dimensions(),
+            true,
+            true,
             true,
             true,
         )
@@ -2594,6 +2907,20 @@ mod tests {
                 .expect("source-link claims should exist")
                 .id,
             JoltRelationId::FusedIncrementSourceLink
+        );
+        assert_eq!(
+            claims
+                .inactive_zero
+                .expect("inactive-zero claims should exist")
+                .id,
+            JoltRelationId::FusedIncrementInactiveZero
+        );
+        assert_eq!(
+            claims
+                .inactive_source_link
+                .expect("inactive source-link claims should exist")
+                .id,
+            JoltRelationId::FusedIncrementInactiveSourceLink
         );
     }
 }

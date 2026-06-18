@@ -18,8 +18,8 @@ pub use akita::{
     prove_akita_jolt_packed_validity, prove_akita_packed_openings, prove_akita_packed_validity,
     prove_akita_stage8_clear_openings, prove_and_attach_akita_opening_proofs, verify_akita_clear,
     AkitaClearVectorCommitment, AkitaFusedIncrementStage6Claims,
-    AkitaFusedIncrementTranslationSources, AkitaJoltProof, AkitaPackedValidityProofArtifacts,
-    AkitaPackedWitnessArtifacts, AkitaVerifierPreprocessing,
+    AkitaFusedIncrementStage6Derivation, AkitaFusedIncrementTranslationSources, AkitaJoltProof,
+    AkitaPackedValidityProofArtifacts, AkitaPackedWitnessArtifacts, AkitaVerifierPreprocessing,
 };
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,

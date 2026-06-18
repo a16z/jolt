@@ -258,7 +258,9 @@ mod tests {
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
                 | JoltChallengeId::FusedIncrementTranslation(_)
-                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
+                | JoltChallengeId::FusedIncrementSourceLink(_)
+                | JoltChallengeId::FusedIncrementInactiveZero(_)
+                | JoltChallengeId::FusedIncrementInactiveSourceLink(_) => zero,
             },
             |_| zero,
         );
@@ -297,7 +299,9 @@ mod tests {
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_)
                 | JoltChallengeId::FusedIncrementTranslation(_)
-                | JoltChallengeId::FusedIncrementSourceLink(_) => zero,
+                | JoltChallengeId::FusedIncrementSourceLink(_)
+                | JoltChallengeId::FusedIncrementInactiveZero(_)
+                | JoltChallengeId::FusedIncrementInactiveSourceLink(_) => zero,
             },
             |_| zero,
         );

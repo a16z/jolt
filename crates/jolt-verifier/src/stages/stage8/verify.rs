@@ -30,9 +30,10 @@ use jolt_claims::protocols::jolt::{
         dimensions::JoltFormulaDimensions,
         ra::JoltRaPolynomialLayout,
     },
-    fused_increment_bytecode_source_opening, fused_increment_magnitude_opening,
-    fused_increment_sign_opening, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId,
-    JoltRelationId, LatticeFusedIncrementTarget,
+    fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
+    fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
+    fused_increment_magnitude_opening, fused_increment_sign_opening, JoltCommittedPolynomial,
+    JoltOpeningId, JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -229,6 +230,8 @@ where
         clear_claims,
         fused_increment_translation,
         fused_increment_source_link,
+        fused_increment_inactive_zero,
+        fused_increment_inactive_source_link,
     ) = match deps {
         Deps::Clear { stage6, stage7 } => (
             stage7
@@ -241,6 +244,8 @@ where
             Some((&stage6.output_claims, &stage7.output_claims)),
             stage6.batch.fused_increment_translation.as_ref(),
             stage6.batch.fused_increment_source_link.as_ref(),
+            stage6.batch.fused_increment_inactive_zero.as_ref(),
+            stage6.batch.fused_increment_inactive_source_link.as_ref(),
         ),
         Deps::Zk { stage6, stage7 } => (
             stage7
@@ -249,6 +254,8 @@ where
                 .as_slice(),
             stage6.inc_claim_reduction.opening_point.as_slice(),
             stage7.precommitted_final_openings.as_slice(),
+            None,
+            None,
             None,
             None,
             None,
@@ -307,6 +314,8 @@ where
                 &payload.packed_witness,
                 fused_increment_translation,
                 fused_increment_source_link,
+                fused_increment_inactive_zero,
+                fused_increment_inactive_source_link,
                 clear_claims.map(|(stage6, _)| stage6),
             )?;
             entries.extend(batch_entries(
@@ -561,6 +570,8 @@ fn akita_fused_increment_entries<'a, F, C>(
     packed_witness: &'a C,
     translation: Option<&VerifiedStage6Sumcheck<F>>,
     source_link: Option<&VerifiedBytecodeReadRafSumcheck<F>>,
+    inactive_zero: Option<&VerifiedStage6Sumcheck<F>>,
+    inactive_source_link: Option<&VerifiedBytecodeReadRafSumcheck<F>>,
     stage6_claims: Option<&Stage6Claims<F>>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, C>>, VerifierError>
 where
@@ -574,6 +585,16 @@ where
         reason: "Akita final batch requires verified fused increment source-link claims"
             .to_string(),
     })?;
+    let inactive_zero = inactive_zero.ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+        reason: "Akita final batch requires verified fused increment inactive-zero claims"
+            .to_string(),
+    })?;
+    let inactive_source_link =
+        inactive_source_link.ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason:
+                "Akita final batch requires verified fused increment inactive source-link claims"
+                    .to_string(),
+        })?;
     let translation_output_claims = stage6_claims
         .and_then(|stage6| stage6.fused_increment_translation.as_ref())
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
@@ -586,6 +607,18 @@ where
             reason: "Akita final batch requires fused increment source-link output claims"
                 .to_string(),
         })?;
+    let inactive_zero_output_claims = stage6_claims
+        .and_then(|stage6| stage6.fused_increment_inactive_zero.as_ref())
+        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita final batch requires fused increment inactive-zero output claims"
+                .to_string(),
+        })?;
+    let inactive_source_link_output_claims = stage6_claims
+        .and_then(|stage6| stage6.fused_increment_inactive_source_link.as_ref())
+        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita final batch requires fused increment inactive source-link output claims"
+                .to_string(),
+        })?;
     if source_link_output_claims.bytecode_ra.len() != source_link.bytecode_ra_opening_points.len() {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason: format!(
@@ -595,11 +628,26 @@ where
             ),
         });
     }
+    if inactive_source_link_output_claims.bytecode_ra.len()
+        != inactive_source_link.bytecode_ra_opening_points.len()
+    {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "fused increment inactive source-link bytecode RA claim count mismatch: expected {}, got {}",
+                inactive_source_link.bytecode_ra_opening_points.len(),
+                inactive_source_link_output_claims.bytecode_ra.len()
+            ),
+        });
+    }
 
     let translation_point = translation.opening_point.as_slice();
     let translation_scale = commitment_embedding_scale(opening_point, translation_point);
     let source_point = source_link.r_address.as_slice();
     let source_scale = commitment_embedding_scale(opening_point, source_point);
+    let inactive_zero_point = inactive_zero.opening_point.as_slice();
+    let inactive_zero_scale = commitment_embedding_scale(opening_point, inactive_zero_point);
+    let inactive_source_point = inactive_source_link.r_address.as_slice();
+    let inactive_source_scale = commitment_embedding_scale(opening_point, inactive_source_point);
     let mut entries = vec![
         Stage8BatchEntry {
             id: fused_increment_magnitude_opening().into(),
@@ -614,6 +662,20 @@ where
             opening_claim: Some(translation_output_claims.sign),
             own_point: translation_point.to_vec(),
             scale: translation_scale,
+        },
+        Stage8BatchEntry {
+            id: fused_increment_inactive_magnitude_opening().into(),
+            commitment: packed_witness,
+            opening_claim: Some(inactive_zero_output_claims.magnitude),
+            own_point: inactive_zero_point.to_vec(),
+            scale: inactive_zero_scale,
+        },
+        Stage8BatchEntry {
+            id: fused_increment_inactive_sign_opening().into(),
+            commitment: packed_witness,
+            opening_claim: Some(inactive_zero_output_claims.sign),
+            own_point: inactive_zero_point.to_vec(),
+            scale: inactive_zero_scale,
         },
     ];
 
@@ -651,6 +713,45 @@ where
             opening_claim: Some(source_link_output_claims.rd_present),
             own_point: source_point.to_vec(),
             scale: source_scale,
+        },
+    ]);
+
+    for (index, (claim, own_point)) in inactive_source_link_output_claims
+        .bytecode_ra
+        .iter()
+        .copied()
+        .zip(&inactive_source_link.bytecode_ra_opening_points)
+        .enumerate()
+    {
+        entries.push(Stage8BatchEntry {
+            id: JoltOpeningId::Polynomial {
+                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+                relation: JoltRelationId::FusedIncrementInactiveSourceLink,
+            }
+            .into(),
+            commitment: packed_witness,
+            opening_claim: Some(claim),
+            own_point: own_point.clone(),
+            scale: commitment_embedding_scale(opening_point, own_point),
+        });
+    }
+
+    entries.extend([
+        Stage8BatchEntry {
+            id: fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
+                .into(),
+            commitment: packed_witness,
+            opening_claim: Some(inactive_source_link_output_claims.store_flag),
+            own_point: inactive_source_point.to_vec(),
+            scale: inactive_source_scale,
+        },
+        Stage8BatchEntry {
+            id: fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd)
+                .into(),
+            commitment: packed_witness,
+            opening_claim: Some(inactive_source_link_output_claims.rd_present),
+            own_point: inactive_source_point.to_vec(),
+            scale: inactive_source_scale,
         },
     ]);
 
@@ -869,6 +970,8 @@ mod tests {
             &packed_witness,
             Some(&translation),
             Some(&source_link),
+            Some(&translation),
+            Some(&source_link),
             Some(&claims),
         )
         .expect("fused entries should build");
@@ -878,6 +981,8 @@ mod tests {
             vec![
                 fused_increment_magnitude_opening().into(),
                 fused_increment_sign_opening().into(),
+                fused_increment_inactive_magnitude_opening().into(),
+                fused_increment_inactive_sign_opening().into(),
                 JoltOpeningId::Polynomial {
                     polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(0)),
                     relation: JoltRelationId::FusedIncrementSourceLink,
@@ -885,6 +990,15 @@ mod tests {
                 .into(),
                 fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram).into(),
                 fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd).into(),
+                JoltOpeningId::Polynomial {
+                    polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(0)),
+                    relation: JoltRelationId::FusedIncrementInactiveSourceLink,
+                }
+                .into(),
+                fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
+                    .into(),
+                fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd)
+                    .into(),
             ]
         );
         assert_eq!(
@@ -895,9 +1009,14 @@ mod tests {
             vec![
                 Some(Fr::from_u64(11)),
                 Some(Fr::from_u64(12)),
+                Some(Fr::from_u64(11)),
+                Some(Fr::from_u64(12)),
                 Some(Fr::from_u64(30)),
                 Some(Fr::from_u64(31)),
                 Some(Fr::from_u64(32)),
+                Some(Fr::from_u64(33)),
+                Some(Fr::from_u64(34)),
+                Some(Fr::from_u64(35)),
             ]
         );
         assert!(entries
@@ -905,12 +1024,20 @@ mod tests {
             .all(|entry| entry.commitment == &packed_witness));
         assert_eq!(entries[0].own_point, translation.opening_point);
         assert_eq!(entries[1].own_point, translation.opening_point);
+        assert_eq!(entries[2].own_point, translation.opening_point);
+        assert_eq!(entries[3].own_point, translation.opening_point);
         assert_eq!(
-            entries[2].own_point,
+            entries[4].own_point,
             source_link.bytecode_ra_opening_points[0]
         );
-        assert_eq!(entries[3].own_point, source_link.r_address);
-        assert_eq!(entries[4].own_point, source_link.r_address);
+        assert_eq!(entries[5].own_point, source_link.r_address);
+        assert_eq!(entries[6].own_point, source_link.r_address);
+        assert_eq!(
+            entries[7].own_point,
+            source_link.bytecode_ra_opening_points[0]
+        );
+        assert_eq!(entries[8].own_point, source_link.r_address);
+        assert_eq!(entries[9].own_point, source_link.r_address);
     }
 
     #[test]
@@ -926,6 +1053,8 @@ mod tests {
         let error = akita_fused_increment_entries::<Fr, _>(
             &[Fr::from_u64(1)],
             &packed_witness,
+            None,
+            None,
             None,
             None,
             Some(&claims),
@@ -1045,6 +1174,17 @@ mod tests {
                 bytecode_ra: vec![Fr::from_u64(30)],
                 store_flag: Fr::from_u64(31),
                 rd_present: Fr::from_u64(32),
+            }),
+            fused_increment_inactive_zero: Some(FusedIncrementTranslationOutputClaims {
+                ram_source,
+                magnitude,
+                sign,
+                rd_source,
+            }),
+            fused_increment_inactive_source_link: Some(FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: vec![Fr::from_u64(33)],
+                store_flag: Fr::from_u64(34),
+                rd_present: Fr::from_u64(35),
             }),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
