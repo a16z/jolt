@@ -265,7 +265,16 @@ impl JoltPackedWitnessBuilder {
         row: usize,
         instruction: &JoltInstructionRow,
     ) -> Result<(), JoltPackedWitnessError> {
-        if let Some(register) = instruction.operands.rs1 {
+        let instruction = JoltInstruction::try_from(*instruction)
+            .map_err(|kind| JoltPackedWitnessError::InvalidInstructionKind { kind })?;
+        let circuit_flags = instruction.circuit_flags();
+        let instruction_flags = instruction.instruction_flags();
+        let source_row = JoltInstructionRow::from(instruction);
+        if circuit_flags.get(CircuitFlags::Store) && source_row.operands.rd.is_some() {
+            return Err(JoltPackedWitnessError::BytecodeSourceConflict { chunk, row });
+        }
+
+        if let Some(register) = source_row.operands.rs1 {
             self.emit_one(
                 PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 0 },
                 row,
@@ -273,7 +282,7 @@ impl JoltPackedWitnessBuilder {
                 register as usize,
             )?;
         }
-        if let Some(register) = instruction.operands.rs2 {
+        if let Some(register) = source_row.operands.rs2 {
             self.emit_one(
                 PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 1 },
                 row,
@@ -281,7 +290,7 @@ impl JoltPackedWitnessBuilder {
                 register as usize,
             )?;
         }
-        if let Some(register) = instruction.operands.rd {
+        if let Some(register) = source_row.operands.rd {
             self.emit_one(
                 PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
                 row,
@@ -290,10 +299,6 @@ impl JoltPackedWitnessBuilder {
             )?;
         }
 
-        let instruction = JoltInstruction::try_from(*instruction)
-            .map_err(|kind| JoltPackedWitnessError::InvalidInstructionKind { kind })?;
-        let circuit_flags = instruction.circuit_flags();
-        let instruction_flags = instruction.instruction_flags();
         self.emit_circuit_flags(chunk, row, circuit_flags)?;
         self.emit_instruction_flags(chunk, row, instruction_flags)?;
         if let Some(table) = InstructionLookupTable::<XLEN>::lookup_table(&instruction) {
@@ -308,7 +313,6 @@ impl JoltPackedWitnessBuilder {
             self.emit_one(PackedFamilyId::BytecodeRafFlag { chunk }, row, 0, 1)?;
         }
 
-        let source_row = JoltInstructionRow::from(instruction);
         self.emit_little_endian_bytes(
             PackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
             row,
@@ -522,6 +526,8 @@ pub enum JoltPackedWitnessError {
     InvalidInstructionKind { kind: JoltInstructionKind },
     #[error("fused increment row {row} exposes both store and rd-present sources")]
     FusedIncrementSourceConflict { row: usize },
+    #[error("bytecode row {chunk}:{row} exposes both store and rd-present sources")]
+    BytecodeSourceConflict { chunk: usize, row: usize },
     #[error("unknown circuit flag index {index}")]
     UnknownCircuitFlag { index: usize },
     #[error("unknown instruction flag index {index}")]
@@ -1218,6 +1224,63 @@ mod tests {
             ),
             AkitaField::one()
         );
+    }
+
+    #[test]
+    fn bytecode_packing_rejects_store_with_rd_destination() {
+        let layout = PackedWitnessLayout::new([
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeRegisterSelector {
+                    chunk: 0,
+                    selector: 2,
+                },
+                bytecode_domain(),
+                1,
+                PackedAlphabet::Fixed { size: 32 },
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeCircuitFlag {
+                    chunk: 0,
+                    flag: CircuitFlags::Store as usize,
+                },
+                bytecode_domain(),
+                1,
+                PackedAlphabet::Bit,
+            ),
+        ])
+        .expect("layout should build");
+        let bytecode = [
+            instruction(
+                JoltInstructionKind::SD,
+                0x8000_0000,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 8,
+                },
+            ),
+            instruction(
+                JoltInstructionKind::ADDI,
+                0x8000_0004,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: None,
+                    rd: Some(5),
+                    imm: 7,
+                },
+            ),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let error = builder
+            .pack_bytecode_rows(&bytecode)
+            .expect_err("ambiguous bytecode source row should reject");
+
+        assert!(matches!(
+            error,
+            JoltPackedWitnessError::BytecodeSourceConflict { chunk: 0, row: 0 }
+        ));
     }
 
     #[test]
