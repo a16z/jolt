@@ -18,9 +18,10 @@ use jolt_claims::protocols::jolt::{
     fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
     fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
     fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
-    fused_increment_source_opening, little_endian_byte_decode_terms, weighted_symbol_terms,
-    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
+    fused_increment_source_opening, fused_increment_validity_requirements,
+    little_endian_byte_decode_terms, weighted_symbol_terms, AdviceClaimReductionLayout,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
+    LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityRequirement,
     LatticePackedViewFormula, LatticePackedViewTerm, ProgramImageClaimReductionLayout,
     TracePolynomialOrder,
 };
@@ -65,20 +66,11 @@ pub fn derive_akita_packed_witness_layout(
         PackedFamilySpec::direct(PackedFamilyId::RamRa { index }, trace, 1, ra_alphabet)
     }));
 
-    specs.extend((0..8).map(|index| {
-        PackedFamilySpec::direct(
-            PackedFamilyId::IncByte { index },
-            trace,
-            1,
-            PackedAlphabet::Byte,
-        )
-    }));
-    specs.push(PackedFamilySpec::direct(
-        PackedFamilyId::IncSign,
+    extend_validity_requirement_families(
+        &mut specs,
+        &fused_increment_validity_requirements(),
         trace,
-        1,
-        PackedAlphabet::Bit,
-    ));
+    )?;
 
     if config.lattice.field_inline.enabled {
         specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
@@ -738,6 +730,22 @@ fn advice_family(kind: PackedAdviceKind, layout: &AdviceClaimReductionLayout) ->
     )
 }
 
+fn extend_validity_requirement_families(
+    specs: &mut Vec<PackedFamilySpec>,
+    requirements: &[LatticePackedValidityRequirement],
+    domain: PackedFactDomain,
+) -> Result<(), VerifierError> {
+    for requirement in requirements {
+        specs.push(PackedFamilySpec::direct(
+            akita_packed_family_id(&requirement.family),
+            domain,
+            requirement.limbs,
+            packed_alphabet_with_size(requirement.alphabet_size)?,
+        ));
+    }
+    Ok(())
+}
+
 fn extend_bytecode_families(specs: &mut Vec<PackedFamilySpec>, chunk: usize, log_bytecode: usize) {
     let domain = PackedFactDomain::BytecodeRows { log_bytecode };
     let register_alphabet = PackedAlphabet::Fixed {
@@ -836,6 +844,17 @@ fn one_hot_alphabet(log_k_chunk: usize) -> Result<PackedAlphabet, VerifierError>
 fn lookup_selector_alphabet() -> PackedAlphabet {
     PackedAlphabet::Fixed {
         size: LookupTableKind::<RISCV_XLEN>::COUNT.next_power_of_two(),
+    }
+}
+
+fn packed_alphabet_with_size(size: usize) -> Result<PackedAlphabet, VerifierError> {
+    match size {
+        0 => Err(invalid_lattice_config(
+            "packed validity requirement alphabet size must be nonzero",
+        )),
+        2 => Ok(PackedAlphabet::Bit),
+        256 => Ok(PackedAlphabet::Byte),
+        size => Ok(PackedAlphabet::Fixed { size }),
     }
 }
 
@@ -1057,6 +1076,31 @@ mod tests {
 
         validate_akita_packed_witness_layout_config(&matching_config, &layout)
             .unwrap_or_else(|error| panic!("layout config should validate: {error}"));
+    }
+
+    #[test]
+    fn derive_layout_uses_fused_increment_validity_requirements() {
+        let config = lattice_config();
+        let log_t = 3;
+        let layout = derive_akita_packed_witness_layout(
+            &config,
+            log_t,
+            8,
+            ra_layout(),
+            &precommitted_schedule(None),
+        )
+        .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+
+        for requirement in fused_increment_validity_requirements() {
+            let family_id = akita_packed_family_id(&requirement.family);
+            let family = layout
+                .family(&family_id)
+                .unwrap_or_else(|| panic!("validity family {family_id:?} should be present"));
+
+            assert_eq!(family.domain, PackedFactDomain::TraceRows { log_t });
+            assert_eq!(family.limbs, requirement.limbs);
+            assert_eq!(family.alphabet.size(), requirement.alphabet_size);
+        }
     }
 
     #[test]

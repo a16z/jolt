@@ -28,10 +28,11 @@ pub use formulas::{
         fused_increment_source_link_relation, fused_increment_source_opening,
         fused_increment_translation_claim, fused_increment_translation_input_opening,
         fused_increment_translation_output_openings, fused_increment_translation_relation,
-        little_endian_byte_decode_terms, symbol_decode_terms, weighted_byte_decode_terms,
-        weighted_symbol_terms, LatticeFinalOpeningRequirement, LatticeFusedIncrementTarget,
-        LatticePackedFamilyId, LatticePackedViewFormula, LatticePackedViewTerm,
-        FUSED_INCREMENT_BYTE_LIMBS,
+        fused_increment_validity_requirements, little_endian_byte_decode_terms,
+        symbol_decode_terms, weighted_byte_decode_terms, weighted_symbol_terms,
+        LatticeFinalOpeningRequirement, LatticeFusedIncrementTarget, LatticePackedFamilyId,
+        LatticePackedValidityKind, LatticePackedValidityRequirement, LatticePackedViewFormula,
+        LatticePackedViewTerm, FUSED_INCREMENT_BYTE_LIMBS,
     },
 };
 pub use ids::{

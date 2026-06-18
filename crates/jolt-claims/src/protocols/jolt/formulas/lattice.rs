@@ -102,6 +102,63 @@ impl<F> LatticePackedViewTerm<F> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LatticePackedValidityKind {
+    ExactOneHot,
+    OptionalOneHot,
+    BooleanIndicator { symbol: usize },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LatticePackedValidityRequirement {
+    pub family: LatticePackedFamilyId,
+    pub limbs: usize,
+    pub alphabet_size: usize,
+    pub kind: LatticePackedValidityKind,
+}
+
+impl LatticePackedValidityRequirement {
+    pub fn exact_one_hot(
+        family: LatticePackedFamilyId,
+        limbs: usize,
+        alphabet_size: usize,
+    ) -> Self {
+        Self {
+            family,
+            limbs,
+            alphabet_size,
+            kind: LatticePackedValidityKind::ExactOneHot,
+        }
+    }
+
+    pub fn optional_one_hot(
+        family: LatticePackedFamilyId,
+        limbs: usize,
+        alphabet_size: usize,
+    ) -> Self {
+        Self {
+            family,
+            limbs,
+            alphabet_size,
+            kind: LatticePackedValidityKind::OptionalOneHot,
+        }
+    }
+
+    pub fn boolean_indicator(
+        family: LatticePackedFamilyId,
+        limbs: usize,
+        alphabet_size: usize,
+        symbol: usize,
+    ) -> Self {
+        Self {
+            family,
+            limbs,
+            alphabet_size,
+            kind: LatticePackedValidityKind::BooleanIndicator { symbol },
+        }
+    }
+}
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LatticeFusedIncrementTarget {
     Ram,
@@ -335,6 +392,25 @@ pub fn fused_increment_magnitude_terms<F: Field>() -> Vec<LatticePackedViewTerm<
 
 pub fn fused_increment_sign_lattice_view_formula<F>() -> LatticePackedViewFormula<F> {
     LatticePackedViewFormula::direct(LatticePackedFamilyId::IncSign, 0, 1)
+}
+
+pub fn fused_increment_validity_requirements() -> Vec<LatticePackedValidityRequirement> {
+    let mut requirements = (0..FUSED_INCREMENT_BYTE_LIMBS)
+        .map(|index| {
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::IncByte { index },
+                1,
+                256,
+            )
+        })
+        .collect::<Vec<_>>();
+    requirements.push(LatticePackedValidityRequirement::boolean_indicator(
+        LatticePackedFamilyId::IncSign,
+        1,
+        2,
+        1,
+    ));
+    requirements
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -906,6 +982,40 @@ mod tests {
         assert_eq!(
             find_term(terms, LatticePackedFamilyId::IncByte { index: 7 }, 0, 2).coefficient,
             Fr::from_u64(1u64 << 57)
+        );
+    }
+
+    #[test]
+    fn fused_increment_validity_requirements_cover_bytes_and_sign() {
+        let requirements = fused_increment_validity_requirements();
+
+        assert_eq!(requirements.len(), FUSED_INCREMENT_BYTE_LIMBS + 1);
+        assert_eq!(
+            requirements[0],
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::IncByte { index: 0 },
+                1,
+                256,
+            )
+        );
+        assert_eq!(
+            requirements[FUSED_INCREMENT_BYTE_LIMBS - 1],
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::IncByte {
+                    index: FUSED_INCREMENT_BYTE_LIMBS - 1
+                },
+                1,
+                256,
+            )
+        );
+        assert_eq!(
+            requirements[FUSED_INCREMENT_BYTE_LIMBS],
+            LatticePackedValidityRequirement::boolean_indicator(
+                LatticePackedFamilyId::IncSign,
+                1,
+                2,
+                1,
+            )
         );
     }
 
