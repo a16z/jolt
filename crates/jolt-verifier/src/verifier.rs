@@ -1673,6 +1673,29 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "akita")]
+    #[test]
+    fn stage8_statement_helper_requires_lattice_validity_surface() {
+        let (preprocessing, _checked, config, mut proof) = lattice_validity_surface_fixture();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        proof.stages.lattice_packed_validity_sumcheck_proof = None;
+
+        let result = stage8_batch_statement_with_config_and_transcript::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(&preprocessing, &public_io, &proof, None, &config);
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::MissingAkitaPackedValidityProof {
+                field: "sumcheck_proof"
+            })
+        ));
+    }
+
     #[test]
     fn curve_validity_surface_rejects_unexpected_lattice_material() {
         let preprocessing = test_preprocessing();
