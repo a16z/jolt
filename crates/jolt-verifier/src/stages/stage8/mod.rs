@@ -18,6 +18,11 @@ pub use lattice::{
     LatticePackedValidityBatch, LatticePackedValidityBatchStatement,
     LatticePackedValidityStatement, LatticePackedValidityStatementKind,
 };
+#[cfg(feature = "akita")]
+pub(crate) use lattice::{
+    field_element_canonical_factors, field_element_canonical_value_from_openings,
+    FieldCanonicalFactor,
+};
 pub use outputs::{
     Stage8BatchStatement, Stage8ClaimMode, Stage8ClearBatchStatement, Stage8ClearOutput,
     Stage8LogicalManifest, Stage8LogicalOpening, Stage8OpeningId, Stage8OpeningStatement,

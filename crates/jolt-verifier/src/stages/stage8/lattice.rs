@@ -3,6 +3,8 @@ use crate::{
     stages::PrecommittedSchedule,
     VerifierError,
 };
+#[cfg(feature = "field-inline")]
+use jolt_akita::AKITA_FIELD_MODULUS;
 use jolt_akita::{
     AkitaField, PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId,
     PackedFamilySpec, PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
@@ -64,6 +66,19 @@ pub enum LatticePackedValidityStatementKind {
     BooleanIndicator,
     FusedIncrementCanonicalZero,
     BytecodeStoreRdDisjoint,
+    FieldElementCanonicalBytes,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FieldCanonicalFactor {
+    Range {
+        byte_index: usize,
+        start_symbol: usize,
+    },
+    Eq {
+        byte_index: usize,
+        symbol: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,6 +299,15 @@ pub fn derive_akita_packed_validity_statements(
                     degree: 3,
                 });
             }
+            LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => {
+                let row_vars = validate_field_element_canonical_bytes_layout(layout, requirement)?;
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::FieldElementCanonicalBytes,
+                    num_vars: row_vars,
+                    degree: canonical_field_byte_width(requirement)?,
+                });
+            }
         }
     }
     Ok(statements)
@@ -391,6 +415,113 @@ fn bytecode_store_rd_disjoint_chunk(
     Ok(*chunk)
 }
 
+fn validate_field_element_canonical_bytes_layout(
+    layout: &PackedWitnessLayout,
+    requirement: &LatticePackedValidityRequirement,
+) -> Result<usize, VerifierError> {
+    let byte_width = canonical_field_byte_width(requirement)?;
+    if requirement.family != (LatticePackedFamilyId::FieldRdIncByte { index: 0 })
+        || requirement.limbs != 1
+        || requirement.alphabet_size != 256
+    {
+        return Err(invalid_lattice_config(
+            "field-element canonical-byte validity must be anchored on FieldRdIncByte[0]",
+        ));
+    }
+    let first_id = PackedFamilyId::FieldRdIncByte { index: 0 };
+    let first = layout.family(&first_id).ok_or_else(|| {
+        invalid_lattice_config("field-element canonical-byte validity requires FieldRdIncByte[0]")
+    })?;
+    if first.limbs != 1 || first.alphabet.size() != 256 {
+        return Err(invalid_lattice_config(
+            "field-element canonical-byte validity requires byte one-hot families",
+        ));
+    }
+    let rows = first.domain.rows().map_err(|error| {
+        invalid_lattice_config(format!(
+            "field-element canonical-byte row domain is invalid: {error}"
+        ))
+    })?;
+    let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
+    for index in 1..byte_width {
+        let family_id = PackedFamilyId::FieldRdIncByte { index };
+        let family = layout.family(&family_id).ok_or_else(|| {
+            invalid_lattice_config(format!(
+                "field-element canonical-byte validity requires {family_id:?}"
+            ))
+        })?;
+        if family.domain != first.domain || family.limbs != 1 || family.alphabet.size() != 256 {
+            return Err(invalid_lattice_config(format!(
+                "field-element canonical-byte validity requires {family_id:?} to be a byte family over the FieldRdIncByte[0] row domain"
+            )));
+        }
+    }
+    Ok(row_vars)
+}
+
+fn canonical_field_byte_width(
+    requirement: &LatticePackedValidityRequirement,
+) -> Result<usize, VerifierError> {
+    let LatticePackedValidityKind::FieldElementCanonicalBytes {
+        byte_width,
+        modulus,
+    } = requirement.kind
+    else {
+        return Err(invalid_lattice_config(
+            "field-element canonical-byte statement has a non-canonical requirement",
+        ));
+    };
+    if byte_width == 0 || byte_width > u128::BITS as usize / 8 || modulus == 0 {
+        return Err(invalid_lattice_config(
+            "field-element canonical-byte validity requires a nonzero u128 modulus and 1..=16 bytes",
+        ));
+    }
+    if byte_width < u128::BITS as usize / 8 && modulus >= (1u128 << (8 * byte_width)) {
+        return Err(invalid_lattice_config(
+            "field-element canonical-byte modulus does not fit in the declared byte width",
+        ));
+    }
+    Ok(byte_width)
+}
+
+pub(crate) fn field_element_canonical_factors(
+    requirement: &LatticePackedValidityRequirement,
+) -> Result<Vec<FieldCanonicalFactor>, VerifierError> {
+    let LatticePackedValidityKind::FieldElementCanonicalBytes {
+        byte_width: _,
+        modulus,
+    } = requirement.kind
+    else {
+        return Err(invalid_lattice_config(
+            "field-element canonical-byte statement has a non-canonical requirement",
+        ));
+    };
+    let byte_width = canonical_field_byte_width(requirement)?;
+    let modulus_bytes = modulus.to_le_bytes();
+    let mut factors = Vec::with_capacity(2 * byte_width - 1);
+    for byte_index in (0..byte_width).rev() {
+        let modulus_byte = modulus_bytes[byte_index] as usize;
+        let start_symbol = if byte_index == 0 {
+            modulus_byte
+        } else {
+            modulus_byte + 1
+        };
+        if start_symbol < 256 {
+            factors.push(FieldCanonicalFactor::Range {
+                byte_index,
+                start_symbol,
+            });
+        }
+        if byte_index > 0 {
+            factors.push(FieldCanonicalFactor::Eq {
+                byte_index,
+                symbol: modulus_byte,
+            });
+        }
+    }
+    Ok(factors)
+}
+
 pub fn lattice_packed_validity_claims<F>(
     statements: &[LatticePackedValidityStatement],
 ) -> Vec<SumcheckClaim<F>>
@@ -426,6 +557,10 @@ fn validity_statement_opening_count(statement: &LatticePackedValidityStatement) 
             FUSED_INCREMENT_BYTE_LIMBS + 1
         }
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => 2,
+        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
+            field_element_canonical_factors(&statement.requirement)
+                .map_or(0, |factors| factors.len())
+        }
     }
 }
 
@@ -499,7 +634,7 @@ where
         })?;
         expected_final_claim += reduction.batching_coefficients[index]
             * eq_mask
-            * validity_statement_value_from_openings(statement.kind, statement_openings);
+            * validity_statement_value_from_openings(statement, statement_openings)?;
 
         for (factor, opening_claim) in statement_openings.iter().copied().enumerate() {
             claims.push(BatchOpeningClaim {
@@ -646,6 +781,15 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
                 transcript.append(&U64Word(4));
                 transcript.append(&U64Word(0));
             }
+            LatticePackedValidityKind::FieldElementCanonicalBytes {
+                byte_width,
+                modulus,
+            } => {
+                transcript.append(&U64Word(5));
+                transcript.append(&U64Word(byte_width as u64));
+                transcript.append(&U64Word((modulus & u64::MAX as u128) as u64));
+                transcript.append(&U64Word((modulus >> u64::BITS) as u64));
+            }
         }
     }
 }
@@ -658,29 +802,78 @@ fn validity_statement_kind_tag(kind: LatticePackedValidityStatementKind) -> u64 
         LatticePackedValidityStatementKind::BooleanIndicator => 3,
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => 4,
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => 5,
+        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => 6,
     }
 }
 
 fn validity_statement_value_from_openings<F>(
-    kind: LatticePackedValidityStatementKind,
+    statement: &LatticePackedValidityStatement,
     openings: &[F],
-) -> F
+) -> Result<F, VerifierError>
 where
     F: Field,
 {
-    match kind {
+    let value = match statement.kind {
         LatticePackedValidityStatementKind::CellBooleanity
         | LatticePackedValidityStatementKind::ExactOneHotRowSum
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => {
-            validity_violation(kind, openings[0])
+            validity_violation(statement.kind, openings[0])
         }
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => openings
             .iter()
             .copied()
             .fold(F::one(), |acc, opening| acc * opening),
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => openings[0] * openings[1],
+        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
+            field_element_canonical_value_from_openings(statement, openings)?
+        }
+    };
+    Ok(value)
+}
+
+pub(crate) fn field_element_canonical_value_from_openings<F>(
+    statement: &LatticePackedValidityStatement,
+    openings: &[F],
+) -> Result<F, VerifierError>
+where
+    F: Field,
+{
+    let byte_width = canonical_field_byte_width(&statement.requirement)?;
+    let factors = field_element_canonical_factors(&statement.requirement)?;
+    if openings.len() != factors.len() {
+        return Err(invalid_lattice_config(format!(
+            "field-element canonical-byte statement expects {} openings, got {}",
+            factors.len(),
+            openings.len()
+        )));
     }
+
+    let mut equality = vec![None; byte_width];
+    let mut range = vec![None; byte_width];
+    for (factor, opening) in factors.iter().copied().zip(openings.iter().copied()) {
+        match factor {
+            FieldCanonicalFactor::Eq { byte_index, .. } => equality[byte_index] = Some(opening),
+            FieldCanonicalFactor::Range { byte_index, .. } => range[byte_index] = Some(opening),
+        }
+    }
+
+    let mut equal_higher_bytes = F::one();
+    let mut invalid = F::zero();
+    for byte_index in (0..byte_width).rev() {
+        if let Some(range_opening) = range[byte_index] {
+            invalid += equal_higher_bytes * range_opening;
+        }
+        if byte_index > 0 {
+            let Some(equality_opening) = equality[byte_index] else {
+                return Err(invalid_lattice_config(format!(
+                    "field-element canonical-byte statement is missing equality factor for byte {byte_index}",
+                )));
+            };
+            equal_higher_bytes *= equality_opening;
+        }
+    }
+    Ok(invalid)
 }
 
 fn validity_violation<F>(kind: LatticePackedValidityStatementKind, opening: F) -> F
@@ -698,7 +891,8 @@ where
             difference * difference
         }
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => opening,
+        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => opening,
     }
 }
 
@@ -716,6 +910,9 @@ where
     }
     if statement.kind == LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint {
         return bytecode_store_rd_disjoint_physical_view(layout, statement, point, factor);
+    }
+    if statement.kind == LatticePackedValidityStatementKind::FieldElementCanonicalBytes {
+        return field_element_canonical_physical_view(layout, statement, point, factor);
     }
     if factor != 0 {
         return Err(invalid_lattice_config(format!(
@@ -777,6 +974,9 @@ where
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => {
             return bytecode_store_rd_disjoint_physical_view(layout, statement, point, factor);
         }
+        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
+            return field_element_canonical_physical_view(layout, statement, point, factor);
+        }
     };
 
     Ok(PhysicalView::PackedLinear {
@@ -825,6 +1025,73 @@ where
             PackedLinearTerm::new(F::one(), family_id.physical_ref(), 0, symbol)
                 .with_row_point(point.to_vec()),
         ],
+    })
+}
+
+fn field_element_canonical_physical_view<F>(
+    layout: &PackedWitnessLayout,
+    statement: &LatticePackedValidityStatement,
+    point: &[F],
+    factor: usize,
+) -> Result<PhysicalView<F>, VerifierError>
+where
+    F: Field,
+{
+    let factors = field_element_canonical_factors(&statement.requirement)?;
+    let factor = factors.get(factor).copied().ok_or_else(|| {
+        invalid_lattice_config(format!(
+            "field-element canonical-byte statement has no opening factor {factor}"
+        ))
+    })?;
+    let family_id = match factor {
+        FieldCanonicalFactor::Eq { byte_index, .. }
+        | FieldCanonicalFactor::Range { byte_index, .. } => {
+            PackedFamilyId::FieldRdIncByte { index: byte_index }
+        }
+    };
+    let family = layout.family(&family_id).ok_or_else(|| {
+        invalid_lattice_config(format!(
+            "field-element canonical-byte factor requires {family_id:?}"
+        ))
+    })?;
+    if family.limbs != 1 || family.alphabet.size() != 256 {
+        return Err(invalid_lattice_config(format!(
+            "field-element canonical-byte factor {family_id:?} must be a byte family",
+        )));
+    }
+    let rows = family.domain.rows().map_err(|error| {
+        invalid_lattice_config(format!(
+            "field-element canonical-byte factor {family_id:?} has invalid row domain: {error}"
+        ))
+    })?;
+    let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
+    if point.len() != row_vars {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "field-element canonical-byte point has {} variables but statement requires {row_vars}",
+                point.len()
+            ),
+        });
+    }
+
+    let terms = match factor {
+        FieldCanonicalFactor::Eq { symbol, .. } => {
+            vec![
+                PackedLinearTerm::new(F::one(), family_id.physical_ref(), 0, symbol)
+                    .with_row_point(point.to_vec()),
+            ]
+        }
+        FieldCanonicalFactor::Range { start_symbol, .. } => (start_symbol..256)
+            .map(|symbol| {
+                PackedLinearTerm::new(F::one(), family_id.physical_ref(), 0, symbol)
+                    .with_row_point(point.to_vec())
+            })
+            .collect(),
+    };
+
+    Ok(PhysicalView::PackedLinear {
+        layout_digest: layout.digest,
+        terms,
     })
 }
 
@@ -986,7 +1253,8 @@ where
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => shape.row_vars + shape.limb_vars,
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => shape.row_vars,
+        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => shape.row_vars,
     };
     if point.len() != expected {
         return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
@@ -1205,7 +1473,8 @@ fn requirement_covers_term(
             symbol == indicator && indicator < requirement.alphabet_size
         }
         LatticePackedValidityKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityKind::BytecodeStoreRdDisjoint => false,
+        | LatticePackedValidityKind::BytecodeStoreRdDisjoint
+        | LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => false,
     }
 }
 
@@ -1809,6 +2078,7 @@ fn extend_validity_requirement_families(
             requirement.kind,
             LatticePackedValidityKind::FusedIncrementCanonicalZero
                 | LatticePackedValidityKind::BytecodeStoreRdDisjoint
+                | LatticePackedValidityKind::FieldElementCanonicalBytes { .. }
         ) {
             continue;
         }
@@ -1824,7 +2094,12 @@ fn extend_validity_requirement_families(
 
 #[cfg(feature = "field-inline")]
 fn field_rd_inc_validity_requirements() -> Vec<LatticePackedValidityRequirement> {
-    field_lattice::field_rd_inc_validity_requirements(AkitaField::NUM_BYTES)
+    let mut requirements = field_lattice::field_rd_inc_validity_requirements(AkitaField::NUM_BYTES);
+    requirements.push(field_lattice::field_rd_inc_canonical_bytes_requirement(
+        AkitaField::NUM_BYTES,
+        AKITA_FIELD_MODULUS,
+    ));
+    requirements
 }
 
 #[cfg(not(feature = "field-inline"))]
@@ -2342,6 +2617,40 @@ mod tests {
     }
 
     #[test]
+    fn derive_validity_statements_adds_field_element_canonical_bytes() {
+        let layout = PackedWitnessLayout::new((0..2).map(|index| {
+            PackedFamilySpec::direct(
+                PackedFamilyId::FieldRdIncByte { index },
+                PackedFactDomain::TraceRows { log_t: 3 },
+                1,
+                PackedAlphabet::Byte,
+            )
+        }))
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
+        let requirement = LatticePackedValidityRequirement::field_element_canonical_bytes(
+            LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+            2,
+            257,
+        );
+
+        let statements =
+            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
+                .unwrap_or_else(|error| {
+                    panic!("field canonical-byte validity statement should derive: {error}")
+                });
+
+        assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0].requirement, requirement);
+        assert_eq!(
+            statements[0].kind,
+            LatticePackedValidityStatementKind::FieldElementCanonicalBytes
+        );
+        assert_eq!(statements[0].num_vars, 3);
+        assert_eq!(statements[0].degree, 2);
+        assert_eq!(lattice_packed_validity_opening_count(&statements), 3);
+    }
+
+    #[test]
     fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
             PackedFamilyId::ProgramImageInit,
@@ -2568,6 +2877,91 @@ mod tests {
         );
         assert_eq!(term.coefficient, Fr::from_u64(1));
         assert_eq!(term.row_point, point);
+    }
+
+    #[test]
+    fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
+        let layout = PackedWitnessLayout::new((0..2).map(|index| {
+            PackedFamilySpec::direct(
+                PackedFamilyId::FieldRdIncByte { index },
+                PackedFactDomain::TraceRows { log_t: 2 },
+                1,
+                PackedAlphabet::Byte,
+            )
+        }))
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
+        let requirement = LatticePackedValidityRequirement::field_element_canonical_bytes(
+            LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+            2,
+            257,
+        );
+        let statement = LatticePackedValidityStatement {
+            requirement,
+            kind: LatticePackedValidityStatementKind::FieldElementCanonicalBytes,
+            num_vars: 2,
+            degree: 2,
+        };
+        let point = vec![Fr::from_u64(2), Fr::from_u64(3)];
+        let eq_point = vec![Fr::from_u64(5), Fr::from_u64(7)];
+        let batching_coefficient = Fr::from_u64(11);
+        let opening_claims = [Fr::from_u64(13), Fr::from_u64(17), Fr::from_u64(19)];
+        let reduction = BatchedEvaluationClaim {
+            reduction: EvaluationClaim::new(point.clone(), Fr::from_u64(23)),
+            batching_coefficients: vec![batching_coefficient],
+            max_num_vars: 2,
+            max_degree: 2,
+        };
+
+        let batch = build_lattice_packed_validity_batch(
+            &layout,
+            std::slice::from_ref(&statement),
+            99_u64,
+            std::slice::from_ref(&eq_point),
+            &reduction,
+            &opening_claims,
+        )
+        .unwrap_or_else(|error| panic!("field canonical-byte batch should build: {error}"));
+
+        let expected_eq = try_eq_mle(&point, &eq_point)
+            .unwrap_or_else(|error| panic!("eq mask should evaluate: {error}"));
+        let expected_invalid_indicator = opening_claims[0] + opening_claims[1] * opening_claims[2];
+        assert_eq!(
+            batch.expected_final_claim,
+            batching_coefficient * expected_eq * expected_invalid_indicator
+        );
+        assert_eq!(batch.statement.claims.len(), 3);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[0].view else {
+            panic!("high-byte range factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 254);
+        assert_eq!(
+            terms[0].family,
+            PackedFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
+        );
+        assert_eq!(terms[0].symbol, 2);
+        assert_eq!(terms[253].symbol, 255);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[1].view else {
+            panic!("high-byte equality factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 1);
+        assert_eq!(
+            terms[0].family,
+            PackedFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
+        );
+        assert_eq!(terms[0].symbol, 1);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[2].view else {
+            panic!("low-byte range factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 255);
+        assert_eq!(
+            terms[0].family,
+            PackedFamilyId::FieldRdIncByte { index: 0 }.physical_ref()
+        );
+        assert_eq!(terms[0].symbol, 1);
+        assert_eq!(terms[254].symbol, 255);
     }
 
     #[test]

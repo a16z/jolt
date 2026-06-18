@@ -1,4 +1,5 @@
 use akita_config::CommitmentConfig;
+use akita_field::PseudoMersenneField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CpuPreparedSetup, DensePoly};
 use akita_types::{
@@ -16,6 +17,8 @@ use crate::layout::PackedWitnessLayout;
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
 pub const AKITA_D: usize = AkitaConfig::D;
+pub const AKITA_FIELD_MODULUS: u128 =
+    u128::MAX - (<AkitaField as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
 pub(crate) type NativeScheme = AkitaCommitmentScheme<AKITA_D, AkitaConfig>;
 pub(crate) type NativeCommitment = NativeRingCommitment<AkitaField, AKITA_D>;

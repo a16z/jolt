@@ -38,6 +38,17 @@ pub fn field_rd_inc_validity_requirements(
         .collect()
 }
 
+pub fn field_rd_inc_canonical_bytes_requirement(
+    byte_width: usize,
+    modulus: u128,
+) -> LatticePackedValidityRequirement {
+    LatticePackedValidityRequirement::field_element_canonical_bytes(
+        LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+        byte_width,
+        modulus,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +93,18 @@ mod tests {
                     256,
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn field_rd_inc_canonical_bytes_requirement_anchors_byte_family() {
+        assert_eq!(
+            field_rd_inc_canonical_bytes_requirement(2, 257),
+            LatticePackedValidityRequirement::field_element_canonical_bytes(
+                LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+                2,
+                257,
+            )
         );
     }
 }

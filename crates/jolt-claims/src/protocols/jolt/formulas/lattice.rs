@@ -112,6 +112,7 @@ pub enum LatticePackedValidityKind {
     BooleanIndicator { symbol: usize },
     FusedIncrementCanonicalZero,
     BytecodeStoreRdDisjoint,
+    FieldElementCanonicalBytes { byte_width: usize, modulus: u128 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,6 +184,22 @@ impl LatticePackedValidityRequirement {
             kind: LatticePackedValidityKind::BytecodeStoreRdDisjoint,
         }
     }
+
+    pub fn field_element_canonical_bytes(
+        family: LatticePackedFamilyId,
+        byte_width: usize,
+        modulus: u128,
+    ) -> Self {
+        Self {
+            family,
+            limbs: 1,
+            alphabet_size: 256,
+            kind: LatticePackedValidityKind::FieldElementCanonicalBytes {
+                byte_width,
+                modulus,
+            },
+        }
+    }
 }
 
 pub type LatticePackedValidityDigest = [u8; 32];
@@ -230,6 +247,14 @@ fn write_validity_kind(bytes: &mut Vec<u8>, kind: &LatticePackedValidityKind) {
         }
         LatticePackedValidityKind::FusedIncrementCanonicalZero => bytes.push(3),
         LatticePackedValidityKind::BytecodeStoreRdDisjoint => bytes.push(4),
+        LatticePackedValidityKind::FieldElementCanonicalBytes {
+            byte_width,
+            modulus,
+        } => {
+            bytes.push(5);
+            write_usize(bytes, *byte_width);
+            bytes.extend_from_slice(&modulus.to_le_bytes());
+        }
     }
 }
 

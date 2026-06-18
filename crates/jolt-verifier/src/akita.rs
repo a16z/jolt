@@ -22,10 +22,12 @@ use crate::{
         stage8::{
             akita_packed_family_id, akita_packed_view_formula, build_lattice_packed_validity_batch,
             derive_akita_packed_validity_requirements, derive_akita_packed_validity_statements,
+            field_element_canonical_factors, field_element_canonical_value_from_openings,
             jolt_lattice_view_formula, lattice_packed_validity_claims,
             lattice_packed_validity_opening_count, sample_lattice_packed_validity_eq_points,
-            validate_akita_packed_witness_layout_config, LatticePackedValidityStatement,
-            LatticePackedValidityStatementKind, Stage8BatchStatement,
+            validate_akita_packed_witness_layout_config, FieldCanonicalFactor,
+            LatticePackedValidityStatement, LatticePackedValidityStatementKind,
+            Stage8BatchStatement,
         },
         PrecommittedSchedule,
     },
@@ -1360,6 +1362,10 @@ where
             let openings = validity_opening_values(source, statement, point)?;
             openings[0] * openings[1]
         }
+        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
+            let openings = validity_opening_values(source, statement, point)?;
+            field_element_canonical_value_from_openings(statement, &openings)?
+        }
         _ => validity_violation(
             statement.kind,
             validity_opening_value(source, statement, point)?,
@@ -1382,6 +1388,13 @@ where
                 bytecode_store_rd_disjoint_factor_value(source, statement, point, 0)?,
                 bytecode_store_rd_disjoint_factor_value(source, statement, point, 1)?,
             ]);
+        }
+        if statement.kind == LatticePackedValidityStatementKind::FieldElementCanonicalBytes {
+            let factors = field_element_canonical_factors(&statement.requirement)?;
+            return factors
+                .into_iter()
+                .map(|factor| field_element_canonical_factor_value(source, point, factor))
+                .collect();
         }
         return validity_opening_value(source, statement, point).map(|value| vec![value]);
     }
@@ -1456,6 +1469,12 @@ where
                 reason: "bytecode Store/Rd disjointness has multiple opening factors".to_string(),
             })
         }
+        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
+            Err(VerifierError::InvalidProtocolConfig {
+                reason: "field-element canonical-byte validity has multiple opening factors"
+                    .to_string(),
+            })
+        }
     }
 }
 
@@ -1471,7 +1490,8 @@ fn validity_violation(kind: LatticePackedValidityStatementKind, opening: AkitaFi
             difference * difference
         }
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => opening,
+        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => opening,
     }
 }
 
@@ -1562,6 +1582,69 @@ where
         return Err(error);
     }
     Ok(value)
+}
+
+fn field_element_canonical_factor_value<S>(
+    source: &S,
+    point: &[AkitaField],
+    factor: FieldCanonicalFactor,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let (byte_index, symbol_filter) = match factor {
+        FieldCanonicalFactor::Eq { byte_index, symbol } => {
+            return weighted_field_rd_inc_byte_symbol_value(source, point, byte_index, symbol);
+        }
+        FieldCanonicalFactor::Range {
+            byte_index,
+            start_symbol,
+        } => (byte_index, start_symbol..256),
+    };
+
+    let mut value = AkitaField::zero();
+    for symbol in symbol_filter {
+        value += weighted_field_rd_inc_byte_symbol_value(source, point, byte_index, symbol)?;
+    }
+    Ok(value)
+}
+
+fn weighted_field_rd_inc_byte_symbol_value<S>(
+    source: &S,
+    point: &[AkitaField],
+    byte_index: usize,
+    symbol: usize,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let family_id = PackedFamilyId::FieldRdIncByte { index: byte_index };
+    let family =
+        source
+            .layout()
+            .family(&family_id)
+            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                reason: format!("field-element canonical-byte factor requires {family_id:?}"),
+            })?;
+    let rows = family
+        .domain
+        .rows()
+        .map_err(|error| VerifierError::InvalidProtocolConfig {
+            reason: format!(
+                "field-element canonical-byte factor {family_id:?} has invalid row domain: {error}"
+            ),
+        })?;
+    let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
+    if point.len() != row_vars {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "field-element canonical-byte point has {} variables but statement requires {row_vars}",
+                point.len()
+            ),
+        });
+    }
+    let row_weights = EqPolynomial::<AkitaField>::evals(point, None);
+    weighted_direct_symbol_value(source, &family_id, &row_weights, symbol)
 }
 
 fn bytecode_store_rd_disjoint_factor_value<S>(
@@ -1720,7 +1803,8 @@ fn split_validity_point(
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => shape.row + shape.limb,
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => shape.row,
+        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => shape.row,
     };
     if point.len() != expected {
         return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
@@ -1912,6 +1996,8 @@ mod tests {
         Stage8PhysicalManifest,
     };
     use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
+    #[cfg(feature = "field-inline")]
+    use jolt_akita::AKITA_FIELD_MODULUS;
     use jolt_akita::{
         AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec,
         SparsePackedWitness,
@@ -2864,6 +2950,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "field-inline",
+        ignore = "field-inline canonical-byte validity makes the real Akita proof fixture expensive; run explicitly with --run-ignored"
+    )]
     fn packed_validity_helper_proves_real_akita_opening_proof() {
         run_on_large_stack(|| {
             let log_t = 0;
@@ -2954,6 +3044,87 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[ignore = "real Akita negative canonical-byte proof takes over two minutes; run explicitly with --run-ignored"]
+    fn packed_validity_rejects_noncanonical_field_rd_inc_bytes() {
+        run_on_large_stack(|| {
+            let log_t = 0;
+            let log_k_chunk = 1;
+            let precommitted = PrecommittedSchedule::new(
+                TracePolynomialOrder::CycleMajor,
+                log_t,
+                log_k_chunk,
+                None,
+                None,
+                Some(CommittedProgramSchedule {
+                    bytecode_len: 1,
+                    bytecode_chunk_count: 1,
+                    program_image_len_words: 1,
+                    program_image_start_index: 0,
+                }),
+            )
+            .expect("precommitted schedule should build");
+            let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+            config.lattice.program_mode = ProgramMode::Committed;
+            config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+            config.lattice.packed_witness.layout_digest = Some([0; 32]);
+            config.lattice.packed_witness.d_pack = Some(0);
+            config.lattice.packed_witness.validity_digest = Some([0; 32]);
+
+            let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+                &config,
+                log_t,
+                log_k_chunk,
+                JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+                &precommitted,
+            )
+            .expect("layout should derive");
+            config.lattice.packed_witness.layout_digest = Some(layout.digest);
+            config.lattice.packed_witness.d_pack = Some(layout.dimension);
+            let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
+                .expect("validity requirements should derive");
+            config.lattice.packed_witness.validity_digest =
+                Some(lattice_packed_validity_digest(&requirements));
+
+            let modulus_bytes = AKITA_FIELD_MODULUS.to_le_bytes();
+            let source =
+                validity_source_with_field_rd_inc_bytes(&layout, &requirements, &modulus_bytes);
+            let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+            let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+            let artifacts = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
+                .expect("packed witness should commit");
+
+            let mut prover_transcript = Blake2bTranscript::new(b"akita-validity");
+            let validity = prove_akita_packed_validity(
+                &prover_setup,
+                &mut prover_transcript,
+                &artifacts,
+                &source,
+                &precommitted,
+            )
+            .expect("invalid packed witness can still produce a proof transcript");
+
+            let mut verifier_transcript = Blake2bTranscript::new(b"akita-validity");
+            let error = verify_validity_artifacts(
+                &verifier_setup,
+                &mut verifier_transcript,
+                &artifacts,
+                &precommitted,
+                &validity,
+            )
+            .expect_err("noncanonical field bytes should reject");
+            assert!(matches!(
+                error,
+                VerifierError::AkitaPackedValidityOutputMismatch
+                    | VerifierError::AkitaPackedValiditySumcheckFailed { .. }
+                    | VerifierError::AkitaPackedValidityOpeningVerificationFailed { .. }
+            ));
+        });
+    }
+
     fn validity_default_source(
         layout: &PackedWitnessLayout,
         requirements: &[LatticePackedValidityRequirement],
@@ -2984,6 +3155,44 @@ mod tests {
         }
         SparsePackedWitness::try_from_cells(layout.clone(), cells)
             .expect("default validity source should build")
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn validity_source_with_field_rd_inc_bytes(
+        layout: &PackedWitnessLayout,
+        requirements: &[LatticePackedValidityRequirement],
+        bytes: &[u8],
+    ) -> SparsePackedWitness<AkitaField> {
+        let mut cells = Vec::new();
+        for requirement in requirements {
+            let family_id = akita_packed_family_id(&requirement.family);
+            let family = layout
+                .family(&family_id)
+                .expect("validity family should exist");
+            let rows = family.domain.rows().expect("family rows should derive");
+            if !matches!(requirement.kind, LatticePackedValidityKind::ExactOneHot) {
+                continue;
+            }
+            let symbol = match requirement.family {
+                LatticePackedFamilyId::FieldRdIncByte { index } => bytes[index] as usize,
+                _ => 0,
+            };
+            for row in 0..rows {
+                for limb in 0..requirement.limbs {
+                    cells.push((
+                        PackedCellAddress {
+                            family: family_id.clone(),
+                            row,
+                            limb,
+                            symbol,
+                        },
+                        AkitaField::one(),
+                    ));
+                }
+            }
+        }
+        SparsePackedWitness::try_from_cells(layout.clone(), cells)
+            .expect("field RdInc validity source should build")
     }
 
     fn verify_validity_artifacts<T>(

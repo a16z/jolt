@@ -22,7 +22,7 @@ pub use types::{
     AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaConfig, AkitaField,
     AkitaHidingCommitment, AkitaLayoutDigest, AkitaPackedBatchProof, AkitaPackedReductionProof,
     AkitaPackedViewStatement, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
-    AkitaVerifierSetup, AkitaViewFormula, AKITA_D,
+    AkitaVerifierSetup, AkitaViewFormula, AKITA_D, AKITA_FIELD_MODULUS,
 };
 pub use views::{
     PackedViewCatalog, PackedViewEntry, PackedViewError, PackedViewFormula, PackedViewTerm,
