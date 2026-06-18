@@ -624,7 +624,8 @@ where
             formula_dimensions.ra_layout,
             &checked.precommitted,
         )?;
-        stage8::validate_akita_packed_witness_layout_config(config, &layout)
+        stage8::validate_akita_packed_witness_layout_config(config, &layout)?;
+        stage8::validate_akita_packed_witness_validity_config(config, &checked.precommitted)
     }
 }
 
@@ -772,6 +773,9 @@ where
             transcript.append(&payload.packed_witness);
             absorb_labeled_bytes(transcript, b"akita_layout_digest", &payload.layout_digest);
             absorb_labeled_u64(transcript, b"akita_d_pack", payload.d_pack as u64);
+            if let Some(validity_digest) = proof.protocol.lattice.packed_witness.validity_digest {
+                absorb_labeled_bytes(transcript, b"akita_validity_digest", &validity_digest);
+            }
         }
     }
     Ok(())
@@ -912,8 +916,9 @@ mod tests {
             ra::JoltRaPolynomialLayout,
         },
         fused_increment_bytecode_source_opening, fused_increment_magnitude_opening,
-        fused_increment_sign_opening, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId,
-        JoltPolynomialId, JoltReadWriteConfig, JoltRelationId, LatticeFusedIncrementTarget,
+        fused_increment_sign_opening, lattice_packed_validity_digest, JoltCommittedPolynomial,
+        JoltOneHotConfig, JoltOpeningId, JoltPolynomialId, JoltReadWriteConfig, JoltRelationId,
+        LatticeFusedIncrementTarget,
     };
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -1106,6 +1111,7 @@ mod tests {
         config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
         config.lattice.packed_witness.layout_digest = Some([7; 32]);
         config.lattice.packed_witness.d_pack = Some(43);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
 
         let mut proof = proof_with_zk(false, clear_claims());
         proof.protocol = config;
@@ -1130,6 +1136,7 @@ mod tests {
         config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
         config.lattice.packed_witness.layout_digest = Some([7; 32]);
         config.lattice.packed_witness.d_pack = Some(43);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
 
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -1177,7 +1184,11 @@ mod tests {
         let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
             .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
         let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
-        let config = lattice_config(layout.digest, layout.dimension);
+        let config = lattice_config_with_derived_validity(
+            layout.digest,
+            layout.dimension,
+            &checked.precommitted,
+        );
         proof.protocol = config;
         proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
             TestCommitment,
@@ -1227,7 +1238,11 @@ mod tests {
         ))
         .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
         let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
-        let config = lattice_config(layout.digest, layout.dimension);
+        let config = lattice_config_with_derived_validity(
+            layout.digest,
+            layout.dimension,
+            &checked.precommitted,
+        );
         proof.protocol = config;
         proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
             TestCommitment,
@@ -1367,6 +1382,7 @@ mod tests {
     fn absorb_commitments_accepts_akita_payload_and_binds_layout_digest() {
         let preprocessing = committed_test_preprocessing();
         let layout_digest = [9; 32];
+        let validity_digest = [11; 32];
         let proof =
             proof_with_lattice_payload(&lattice_config(layout_digest, 44), layout_digest, 44);
         let mut transcript = RecordingTranscript::new(b"test");
@@ -1375,6 +1391,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("Akita commitment absorption should succeed: {error}"));
 
         assert!(contains_subslice(&transcript.bytes, &layout_digest));
+        assert!(contains_subslice(&transcript.bytes, &validity_digest));
     }
 
     #[test]
@@ -1898,11 +1915,26 @@ mod tests {
         config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
         config.lattice.packed_witness.layout_digest = Some(layout_digest);
         config.lattice.packed_witness.d_pack = Some(d_pack);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
         #[cfg(feature = "field-inline")]
         {
             config.lattice.field_inline.enabled = true;
             config.lattice.packed_witness.field_rd_inc_family = true;
         }
+        config
+    }
+
+    #[cfg(feature = "akita")]
+    fn lattice_config_with_derived_validity(
+        layout_digest: [u8; 32],
+        d_pack: usize,
+        precommitted: &crate::stages::PrecommittedSchedule,
+    ) -> JoltProtocolConfig {
+        let mut config = lattice_config(layout_digest, d_pack);
+        let requirements = stage8::derive_akita_packed_validity_requirements(&config, precommitted)
+            .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        config.lattice.packed_witness.validity_digest =
+            Some(lattice_packed_validity_digest(&requirements));
         config
     }
 

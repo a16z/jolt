@@ -2492,6 +2492,7 @@ mod tests {
         config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
         config.lattice.packed_witness.layout_digest = Some([7; 32]);
         config.lattice.packed_witness.d_pack = Some(8);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
         config
     }
 

@@ -3146,6 +3146,7 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
+ "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-field 0.1.0",
  "jolt-lookup-tables",

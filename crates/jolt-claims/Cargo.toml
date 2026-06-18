@@ -13,6 +13,7 @@ default = []
 field-inline = []
 
 [dependencies]
+blake2.workspace = true
 derive_more.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true

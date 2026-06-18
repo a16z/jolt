@@ -32,8 +32,9 @@ use jolt_akita::{
 };
 use jolt_claims::protocols::jolt::{
     fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
-    fused_increment_sign_lattice_view_formula, JoltCommittedPolynomial, JoltOpeningId,
-    JoltRelationId, LatticeFusedIncrementTarget,
+    fused_increment_sign_lattice_view_formula, lattice_packed_validity_digest, JoltAdviceKind,
+    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticeFusedIncrementTarget,
+    LatticePackedFamilyId, LatticePackedValidityRequirement,
 };
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
@@ -239,6 +240,7 @@ where
 pub fn akita_lattice_protocol_config_for_layout(
     layout: &PackedWitnessLayout,
 ) -> JoltProtocolConfig {
+    let validity_requirements = akita_lattice_validity_requirements_for_layout(layout);
     let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
     config.lattice = LatticeConfig {
         program_mode: ProgramMode::Committed,
@@ -246,6 +248,7 @@ pub fn akita_lattice_protocol_config_for_layout(
         packed_witness: PackedWitnessConfig {
             layout_digest: Some(layout.digest),
             d_pack: Some(layout.dimension),
+            validity_digest: Some(lattice_packed_validity_digest(&validity_requirements)),
             field_rd_inc_family: layout_has_field_rd_inc(layout),
             trusted_advice_family: layout_has_advice(layout, PackedAdviceKind::Trusted),
             untrusted_advice_family: layout_has_advice(layout, PackedAdviceKind::Untrusted),
@@ -260,6 +263,118 @@ pub fn akita_lattice_protocol_config_for_layout(
         zk: false,
     };
     config
+}
+
+pub fn akita_lattice_validity_requirements_for_layout(
+    layout: &PackedWitnessLayout,
+) -> Vec<LatticePackedValidityRequirement> {
+    layout
+        .families
+        .iter()
+        .filter_map(|family| {
+            let limbs = family.limbs;
+            let alphabet_size = family.alphabet.size();
+            match family.id {
+                PackedFamilyId::IncByte { index } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::IncByte { index },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::IncSign => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::IncSign,
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackedFamilyId::FieldRdIncByte { index } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::FieldRdIncByte { index },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::AdviceBytes { kind, index } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::AdviceBytes {
+                            kind: jolt_advice_kind(kind),
+                            index,
+                        },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+                    Some(LatticePackedValidityRequirement::optional_one_hot(
+                        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag },
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag },
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackedFamilyId::BytecodeLookupSelector { chunk } => {
+                    Some(LatticePackedValidityRequirement::optional_one_hot(
+                        LatticePackedFamilyId::BytecodeLookupSelector { chunk },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::BytecodeRafFlag { chunk } => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::BytecodeRafFlag { chunk },
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::BytecodeImmBytes { chunk } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::BytecodeImmBytes { chunk },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::ProgramImageInit => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::ProgramImageInit,
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackedFamilyId::InstructionRa { .. }
+                | PackedFamilyId::BytecodeRa { .. }
+                | PackedFamilyId::RamRa { .. }
+                | PackedFamilyId::FieldRdIncSign
+                | PackedFamilyId::BytecodeChunk { .. }
+                | PackedFamilyId::Custom { .. } => None,
+            }
+        })
+        .collect()
 }
 
 pub fn commit_akita_packed_witness<S>(
@@ -760,6 +875,13 @@ fn akita_witness_error(reason: impl ToString) -> VerifierError {
     }
 }
 
+fn jolt_advice_kind(kind: PackedAdviceKind) -> JoltAdviceKind {
+    match kind {
+        PackedAdviceKind::Trusted => JoltAdviceKind::Trusted,
+        PackedAdviceKind::Untrusted => JoltAdviceKind::Untrusted,
+    }
+}
+
 fn layout_has_field_rd_inc(layout: &PackedWitnessLayout) -> bool {
     layout
         .families
@@ -894,6 +1016,12 @@ mod tests {
             Some(layout.digest)
         );
         assert_eq!(config.lattice.packed_witness.d_pack, Some(layout.dimension));
+        assert_eq!(
+            config.lattice.packed_witness.validity_digest,
+            Some(lattice_packed_validity_digest(
+                &akita_lattice_validity_requirements_for_layout(&layout)
+            ))
+        );
         assert_eq!(config.lattice.program_mode, ProgramMode::Committed);
         assert_eq!(
             config.lattice.increment_mode,

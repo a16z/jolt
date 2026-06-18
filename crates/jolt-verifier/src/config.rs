@@ -64,6 +64,8 @@ pub enum IncrementCommitmentMode {
 pub struct PackedWitnessConfig {
     pub layout_digest: Option<[u8; 32]>,
     pub d_pack: Option<usize>,
+    #[serde(default)]
+    pub validity_digest: Option<[u8; 32]>,
     pub field_rd_inc_family: bool,
     pub trusted_advice_family: bool,
     pub untrusted_advice_family: bool,
@@ -115,6 +117,7 @@ impl JoltProtocolConfig {
                 packed_witness: PackedWitnessConfig {
                     layout_digest: None,
                     d_pack: None,
+                    validity_digest: None,
                     field_rd_inc_family: false,
                     trusted_advice_family: false,
                     untrusted_advice_family: false,
@@ -169,6 +172,7 @@ pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
         packed_witness: PackedWitnessConfig {
             layout_digest: None,
             d_pack: None,
+            validity_digest: None,
             field_rd_inc_family: false,
             trusted_advice_family: false,
             untrusted_advice_family: false,
@@ -238,9 +242,10 @@ fn validate_lattice_config(config: &JoltProtocolConfig) -> Result<(), VerifierEr
     }
     if config.lattice.packed_witness.layout_digest.is_none()
         || config.lattice.packed_witness.d_pack.is_none()
+        || config.lattice.packed_witness.validity_digest.is_none()
     {
         return Err(invalid_config(
-            "lattice PCS mode requires a packed witness layout digest and D_pack",
+            "lattice PCS mode requires packed witness layout, validity, and D_pack bindings",
         ));
     }
     Ok(())
@@ -282,6 +287,7 @@ mod tests {
         config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
         config.lattice.packed_witness.layout_digest = Some([7; 32]);
         config.lattice.packed_witness.d_pack = Some(43);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
         config
     }
 
@@ -394,8 +400,11 @@ mod tests {
         no_digest.lattice.packed_witness.layout_digest = None;
         let mut no_dimension = valid_lattice_config();
         no_dimension.lattice.packed_witness.d_pack = None;
+        let mut no_validity = valid_lattice_config();
+        no_validity.lattice.packed_witness.validity_digest = None;
 
         assert!(invalid(&no_digest));
         assert!(invalid(&no_dimension));
+        assert!(invalid(&no_validity));
     }
 }

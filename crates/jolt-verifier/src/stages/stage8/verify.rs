@@ -725,6 +725,7 @@ where
         &checked.precommitted,
     )?;
     super::validate_akita_packed_witness_layout_config(config, &packed_layout)?;
+    super::validate_akita_packed_witness_validity_config(config, &checked.precommitted)?;
     let physical = super::jolt_lattice_physical_manifest(
         logical,
         &packed_layout,

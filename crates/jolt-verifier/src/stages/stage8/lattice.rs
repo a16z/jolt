@@ -19,11 +19,12 @@ use jolt_claims::protocols::jolt::{
     fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
     fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
     fused_increment_source_opening, fused_increment_validity_requirements,
-    little_endian_byte_decode_terms, program_image_validity_requirement, weighted_symbol_terms,
-    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
-    LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
-    ProgramImageClaimReductionLayout, TracePolynomialOrder,
+    lattice_packed_validity_digest, little_endian_byte_decode_terms,
+    program_image_validity_requirement, weighted_symbol_terms, AdviceClaimReductionLayout,
+    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
+    LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityRequirement,
+    LatticePackedViewFormula, LatticePackedViewTerm, ProgramImageClaimReductionLayout,
+    TracePolynomialOrder,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_poly::EqPolynomial;
@@ -104,6 +105,62 @@ pub fn derive_akita_packed_witness_layout(
     specs.push(program_image_family(program_image_layout)?);
 
     PackedWitnessLayout::new(specs).map_err(|error| invalid_lattice_config(error.to_string()))
+}
+
+pub fn derive_akita_packed_validity_requirements(
+    config: &JoltProtocolConfig,
+    precommitted: &PrecommittedSchedule,
+) -> Result<Vec<LatticePackedValidityRequirement>, VerifierError> {
+    if validate_protocol_config(config)? != PcsFamily::Lattice {
+        return Err(invalid_lattice_config(
+            "Akita packed witness validity derivation requires lattice PCS mode",
+        ));
+    }
+
+    let mut requirements = fused_increment_validity_requirements();
+    if config.lattice.field_inline.enabled {
+        requirements.extend(field_rd_inc_validity_requirements());
+    }
+    if config.lattice.advice.trusted {
+        let _ = require_advice_layout(precommitted, JoltAdviceKind::Trusted)?;
+        requirements.push(advice_bytes_validity_requirement(JoltAdviceKind::Trusted));
+    }
+    if config.lattice.advice.untrusted {
+        let _ = require_advice_layout(precommitted, JoltAdviceKind::Untrusted)?;
+        requirements.push(advice_bytes_validity_requirement(JoltAdviceKind::Untrusted));
+    }
+
+    let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+        invalid_precommitted_schedule(
+            "lattice committed-program mode requires a bytecode claim-reduction layout",
+        )
+    })?;
+    for index in 0..bytecode_layout.chunk_count() {
+        requirements.extend(bytecode_validity_requirements(index, AkitaField::NUM_BYTES));
+    }
+
+    let _ = precommitted.program_image.as_ref().ok_or_else(|| {
+        invalid_precommitted_schedule(
+            "lattice committed-program mode requires a program-image claim-reduction layout",
+        )
+    })?;
+    requirements.push(program_image_validity_requirement());
+
+    Ok(requirements)
+}
+
+pub fn validate_akita_packed_witness_validity_config(
+    config: &JoltProtocolConfig,
+    precommitted: &PrecommittedSchedule,
+) -> Result<(), VerifierError> {
+    let requirements = derive_akita_packed_validity_requirements(config, precommitted)?;
+    let digest = lattice_packed_validity_digest(&requirements);
+    if config.lattice.packed_witness.validity_digest != Some(digest) {
+        return Err(invalid_lattice_config(
+            "configured Akita packed witness validity digest does not match derived requirements",
+        ));
+    }
+    Ok(())
 }
 
 pub fn validate_akita_packed_witness_layout_config(
@@ -743,23 +800,13 @@ fn extend_validity_requirement_families(
 }
 
 #[cfg(feature = "field-inline")]
-fn extend_field_rd_inc_families(
-    specs: &mut Vec<PackedFamilySpec>,
-    domain: PackedFactDomain,
-) -> Result<(), VerifierError> {
-    extend_validity_requirement_families(
-        specs,
-        &field_lattice::field_rd_inc_validity_requirements(AkitaField::NUM_BYTES),
-        domain,
-    )
+fn field_rd_inc_validity_requirements() -> Vec<LatticePackedValidityRequirement> {
+    field_lattice::field_rd_inc_validity_requirements(AkitaField::NUM_BYTES)
 }
 
 #[cfg(not(feature = "field-inline"))]
-fn extend_field_rd_inc_families(
-    specs: &mut Vec<PackedFamilySpec>,
-    domain: PackedFactDomain,
-) -> Result<(), VerifierError> {
-    let requirements = (0..AkitaField::NUM_BYTES)
+fn field_rd_inc_validity_requirements() -> Vec<LatticePackedValidityRequirement> {
+    (0..AkitaField::NUM_BYTES)
         .map(|index| {
             LatticePackedValidityRequirement::exact_one_hot(
                 LatticePackedFamilyId::FieldRdIncByte { index },
@@ -767,8 +814,23 @@ fn extend_field_rd_inc_families(
                 256,
             )
         })
-        .collect::<Vec<_>>();
-    extend_validity_requirement_families(specs, &requirements, domain)
+        .collect()
+}
+
+#[cfg(feature = "field-inline")]
+fn extend_field_rd_inc_families(
+    specs: &mut Vec<PackedFamilySpec>,
+    domain: PackedFactDomain,
+) -> Result<(), VerifierError> {
+    extend_validity_requirement_families(specs, &field_rd_inc_validity_requirements(), domain)
+}
+
+#[cfg(not(feature = "field-inline"))]
+fn extend_field_rd_inc_families(
+    specs: &mut Vec<PackedFamilySpec>,
+    domain: PackedFactDomain,
+) -> Result<(), VerifierError> {
+    extend_validity_requirement_families(specs, &field_rd_inc_validity_requirements(), domain)
 }
 
 fn extend_bytecode_families(
@@ -899,6 +961,7 @@ mod tests {
         config.lattice.packed_witness = PackedWitnessConfig {
             layout_digest: Some([0; 32]),
             d_pack: Some(0),
+            validity_digest: Some([0; 32]),
             field_rd_inc_family: false,
             trusted_advice_family: false,
             untrusted_advice_family: false,
@@ -1055,6 +1118,30 @@ mod tests {
 
         validate_akita_packed_witness_layout_config(&matching_config, &layout)
             .unwrap_or_else(|error| panic!("layout config should validate: {error}"));
+    }
+
+    #[test]
+    fn validate_validity_config_rejects_mismatched_digest() {
+        let mut config = lattice_config();
+        let schedule = precommitted_schedule(None);
+        let requirements = derive_akita_packed_validity_requirements(&config, &schedule)
+            .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        let digest = lattice_packed_validity_digest(&requirements);
+        config.lattice.packed_witness.validity_digest = Some(digest);
+
+        validate_akita_packed_witness_validity_config(&config, &schedule).unwrap_or_else(|error| {
+            panic!("validity config should match derived requirements: {error}")
+        });
+
+        let mut wrong_digest = digest;
+        wrong_digest[0] ^= 1;
+        config.lattice.packed_witness.validity_digest = Some(wrong_digest);
+
+        assert!(matches!(
+            validate_akita_packed_witness_validity_config(&config, &schedule),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("validity digest")
+        ));
     }
 
     #[test]

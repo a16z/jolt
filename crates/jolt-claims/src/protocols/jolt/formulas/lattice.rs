@@ -1,3 +1,5 @@
+use blake2::digest::consts::U32;
+use blake2::{Blake2b, Digest};
 use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
@@ -156,6 +158,136 @@ impl LatticePackedValidityRequirement {
             alphabet_size,
             kind: LatticePackedValidityKind::BooleanIndicator { symbol },
         }
+    }
+}
+
+pub type LatticePackedValidityDigest = [u8; 32];
+
+pub fn lattice_packed_validity_digest(
+    requirements: &[LatticePackedValidityRequirement],
+) -> LatticePackedValidityDigest {
+    let mut encoded_requirements = requirements
+        .iter()
+        .map(encode_validity_requirement)
+        .collect::<Vec<_>>();
+    encoded_requirements.sort();
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"jolt-claims/lattice-packed-validity/v1");
+    write_usize(&mut bytes, encoded_requirements.len());
+    for requirement in encoded_requirements {
+        bytes.extend_from_slice(&requirement);
+    }
+
+    let mut hasher = Blake2b::<U32>::new();
+    hasher.update(&bytes);
+    let result = hasher.finalize();
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&result);
+    digest
+}
+
+fn encode_validity_requirement(requirement: &LatticePackedValidityRequirement) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    write_family_id(&mut bytes, &requirement.family);
+    write_usize(&mut bytes, requirement.limbs);
+    write_usize(&mut bytes, requirement.alphabet_size);
+    write_validity_kind(&mut bytes, &requirement.kind);
+    bytes
+}
+
+fn write_validity_kind(bytes: &mut Vec<u8>, kind: &LatticePackedValidityKind) {
+    match kind {
+        LatticePackedValidityKind::ExactOneHot => bytes.push(0),
+        LatticePackedValidityKind::OptionalOneHot => bytes.push(1),
+        LatticePackedValidityKind::BooleanIndicator { symbol } => {
+            bytes.push(2);
+            write_usize(bytes, *symbol);
+        }
+    }
+}
+
+fn write_family_id(bytes: &mut Vec<u8>, id: &LatticePackedFamilyId) {
+    match id {
+        LatticePackedFamilyId::InstructionRa { index } => {
+            bytes.push(0);
+            write_usize(bytes, *index);
+        }
+        LatticePackedFamilyId::BytecodeRa { index } => {
+            bytes.push(1);
+            write_usize(bytes, *index);
+        }
+        LatticePackedFamilyId::RamRa { index } => {
+            bytes.push(2);
+            write_usize(bytes, *index);
+        }
+        LatticePackedFamilyId::IncByte { index } => {
+            bytes.push(3);
+            write_usize(bytes, *index);
+        }
+        LatticePackedFamilyId::IncSign => bytes.push(4),
+        LatticePackedFamilyId::FieldRdIncByte { index } => {
+            bytes.push(9);
+            write_usize(bytes, *index);
+        }
+        LatticePackedFamilyId::FieldRdIncSign => bytes.push(10),
+        LatticePackedFamilyId::AdviceBytes { kind, index } => {
+            bytes.push(11);
+            bytes.push(advice_kind_tag(*kind));
+            write_usize(bytes, *index);
+        }
+        LatticePackedFamilyId::BytecodeChunk { index } => {
+            bytes.push(12);
+            write_usize(bytes, *index);
+        }
+        LatticePackedFamilyId::ProgramImageInit => bytes.push(13),
+        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+            bytes.push(15);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *selector);
+        }
+        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+            bytes.push(16);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *flag);
+        }
+        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+            bytes.push(17);
+            write_usize(bytes, *chunk);
+            write_usize(bytes, *flag);
+        }
+        LatticePackedFamilyId::BytecodeLookupSelector { chunk } => {
+            bytes.push(18);
+            write_usize(bytes, *chunk);
+        }
+        LatticePackedFamilyId::BytecodeRafFlag { chunk } => {
+            bytes.push(19);
+            write_usize(bytes, *chunk);
+        }
+        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+            bytes.push(20);
+            write_usize(bytes, *chunk);
+        }
+        LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
+            bytes.push(21);
+            write_usize(bytes, *chunk);
+        }
+        LatticePackedFamilyId::Custom { namespace, index } => {
+            bytes.push(14);
+            bytes.extend_from_slice(&namespace.to_le_bytes());
+            write_usize(bytes, *index);
+        }
+    }
+}
+
+fn write_usize(bytes: &mut Vec<u8>, value: usize) {
+    bytes.extend_from_slice(&(value as u64).to_le_bytes());
+}
+
+fn advice_kind_tag(kind: JoltAdviceKind) -> u8 {
+    match kind {
+        JoltAdviceKind::Trusted => 0,
+        JoltAdviceKind::Untrusted => 1,
     }
 }
 
@@ -1082,6 +1214,35 @@ mod tests {
                 2,
                 1,
             )
+        );
+    }
+
+    #[test]
+    fn packed_validity_digest_is_order_stable_and_kind_sensitive() {
+        let exact = LatticePackedValidityRequirement::exact_one_hot(
+            LatticePackedFamilyId::IncByte { index: 0 },
+            1,
+            256,
+        );
+        let sign = LatticePackedValidityRequirement::boolean_indicator(
+            LatticePackedFamilyId::IncSign,
+            1,
+            2,
+            1,
+        );
+        let optional = LatticePackedValidityRequirement::optional_one_hot(
+            LatticePackedFamilyId::IncByte { index: 0 },
+            1,
+            256,
+        );
+
+        assert_eq!(
+            lattice_packed_validity_digest(&[exact.clone(), sign.clone()]),
+            lattice_packed_validity_digest(&[sign, exact.clone()])
+        );
+        assert_ne!(
+            lattice_packed_validity_digest(&[exact]),
+            lattice_packed_validity_digest(&[optional])
         );
     }
 
