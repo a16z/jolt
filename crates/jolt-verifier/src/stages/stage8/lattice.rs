@@ -24,7 +24,7 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
     LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityKind,
     LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
-    ProgramImageClaimReductionLayout, TracePolynomialOrder,
+    ProgramImageClaimReductionLayout, TracePolynomialOrder, FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_openings::{
@@ -58,6 +58,7 @@ pub enum LatticePackedValidityStatementKind {
     ExactOneHotRowSum,
     OptionalOneHotRowSum,
     BooleanIndicator,
+    FusedIncrementCanonicalZero,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -260,9 +261,60 @@ pub fn derive_akita_packed_validity_statements(
                     degree: 3,
                 });
             }
+            LatticePackedValidityKind::FusedIncrementCanonicalZero => {
+                let row_vars = validate_fused_increment_canonical_zero_layout(layout, requirement)?;
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::FusedIncrementCanonicalZero,
+                    num_vars: row_vars,
+                    degree: FUSED_INCREMENT_BYTE_LIMBS + 2,
+                });
+            }
         }
     }
     Ok(statements)
+}
+
+fn validate_fused_increment_canonical_zero_layout(
+    layout: &PackedWitnessLayout,
+    requirement: &LatticePackedValidityRequirement,
+) -> Result<usize, VerifierError> {
+    if requirement.family != LatticePackedFamilyId::IncSign
+        || requirement.limbs != 1
+        || requirement.alphabet_size != 2
+    {
+        return Err(invalid_lattice_config(
+            "fused increment canonical-zero validity must be anchored on IncSign",
+        ));
+    }
+    let sign = layout.family(&PackedFamilyId::IncSign).ok_or_else(|| {
+        invalid_lattice_config("fused increment canonical-zero validity requires IncSign")
+    })?;
+    if sign.limbs != 1 || sign.alphabet.size() != 2 {
+        return Err(invalid_lattice_config(
+            "fused increment canonical-zero validity requires a boolean IncSign family",
+        ));
+    }
+    let rows = sign.domain.rows().map_err(|error| {
+        invalid_lattice_config(format!(
+            "fused increment canonical-zero IncSign row domain is invalid: {error}"
+        ))
+    })?;
+    let row_vars = power_of_two_log(rows, "fused increment canonical-zero row count")?;
+    for index in 0..FUSED_INCREMENT_BYTE_LIMBS {
+        let family_id = PackedFamilyId::IncByte { index };
+        let family = layout.family(&family_id).ok_or_else(|| {
+            invalid_lattice_config(format!(
+                "fused increment canonical-zero validity requires {family_id:?}"
+            ))
+        })?;
+        if family.domain != sign.domain || family.limbs != 1 || family.alphabet.size() != 256 {
+            return Err(invalid_lattice_config(format!(
+                "fused increment canonical-zero validity requires {family_id:?} to be a byte family over the IncSign row domain"
+            )));
+        }
+    }
+    Ok(row_vars)
 }
 
 pub fn lattice_packed_validity_claims<F>(
@@ -279,6 +331,27 @@ where
             claimed_sum: F::zero(),
         })
         .collect()
+}
+
+pub fn lattice_packed_validity_opening_count(
+    statements: &[LatticePackedValidityStatement],
+) -> usize {
+    statements
+        .iter()
+        .map(validity_statement_opening_count)
+        .sum()
+}
+
+fn validity_statement_opening_count(statement: &LatticePackedValidityStatement) -> usize {
+    match statement.kind {
+        LatticePackedValidityStatementKind::CellBooleanity
+        | LatticePackedValidityStatementKind::ExactOneHotRowSum
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum
+        | LatticePackedValidityStatementKind::BooleanIndicator => 1,
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
+            FUSED_INCREMENT_BYTE_LIMBS + 1
+        }
+    }
 }
 
 pub fn sample_lattice_packed_validity_eq_points<F, T>(
@@ -316,9 +389,10 @@ where
             statements.len()
         )));
     }
-    if opening_claims.len() != statements.len() {
+    let expected_opening_claims = lattice_packed_validity_opening_count(statements);
+    if opening_claims.len() != expected_opening_claims {
         return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
-            expected: statements.len(),
+            expected: expected_opening_claims,
             got: opening_claims.len(),
         });
     }
@@ -333,14 +407,16 @@ where
     }
 
     let mut expected_final_claim = F::zero();
-    let mut claims = Vec::with_capacity(statements.len());
+    let mut claims = Vec::with_capacity(expected_opening_claims);
+    let mut opening_offset = 0;
     for (index, statement) in statements.iter().enumerate() {
         let point = reduction
             .try_instance_point(statement.num_vars)
             .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
                 reason: error.to_string(),
             })?;
-        let opening_claim = opening_claims[index];
+        let opening_count = validity_statement_opening_count(statement);
+        let statement_openings = &opening_claims[opening_offset..opening_offset + opening_count];
         let eq_mask = try_eq_mle(point, &eq_points[index]).map_err(|error| {
             VerifierError::AkitaPackedValiditySumcheckFailed {
                 reason: error.to_string(),
@@ -348,16 +424,19 @@ where
         })?;
         expected_final_claim += reduction.batching_coefficients[index]
             * eq_mask
-            * validity_violation(statement.kind, opening_claim);
+            * validity_statement_value_from_openings(statement.kind, statement_openings);
 
-        claims.push(BatchOpeningClaim {
-            id: index,
-            relation: index,
-            commitment: commitment.clone(),
-            claim: opening_claim,
-            view: validity_physical_view(layout, statement, point)?,
-            scale: F::one(),
-        });
+        for (factor, opening_claim) in statement_openings.iter().copied().enumerate() {
+            claims.push(BatchOpeningClaim {
+                id: opening_offset + factor,
+                relation: index,
+                commitment: commitment.clone(),
+                claim: opening_claim,
+                view: validity_factor_physical_view(layout, statement, point, factor)?,
+                scale: F::one(),
+            });
+        }
+        opening_offset += opening_count;
     }
 
     let point = reduction.reduction.point.as_slice().to_vec();
@@ -395,9 +474,10 @@ where
 {
     let requirements = derive_akita_packed_validity_requirements(config, precommitted)?;
     let statements = derive_akita_packed_validity_statements(layout, &requirements)?;
-    if opening_claims.len() != statements.len() {
+    let expected_opening_claims = lattice_packed_validity_opening_count(&statements);
+    if opening_claims.len() != expected_opening_claims {
         return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
-            expected: statements.len(),
+            expected: expected_opening_claims,
             got: opening_claims.len(),
         });
     }
@@ -483,6 +563,10 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
                 transcript.append(&U64Word(2));
                 transcript.append(&U64Word(symbol as u64));
             }
+            LatticePackedValidityKind::FusedIncrementCanonicalZero => {
+                transcript.append(&U64Word(3));
+                transcript.append(&U64Word(0));
+            }
         }
     }
 }
@@ -493,6 +577,28 @@ fn validity_statement_kind_tag(kind: LatticePackedValidityStatementKind) -> u64 
         LatticePackedValidityStatementKind::ExactOneHotRowSum => 1,
         LatticePackedValidityStatementKind::OptionalOneHotRowSum => 2,
         LatticePackedValidityStatementKind::BooleanIndicator => 3,
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => 4,
+    }
+}
+
+fn validity_statement_value_from_openings<F>(
+    kind: LatticePackedValidityStatementKind,
+    openings: &[F],
+) -> F
+where
+    F: Field,
+{
+    match kind {
+        LatticePackedValidityStatementKind::CellBooleanity
+        | LatticePackedValidityStatementKind::ExactOneHotRowSum
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum
+        | LatticePackedValidityStatementKind::BooleanIndicator => {
+            validity_violation(kind, openings[0])
+        }
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => openings
+            .iter()
+            .copied()
+            .fold(F::one(), |acc, opening| acc * opening),
     }
 }
 
@@ -510,17 +616,28 @@ where
             let difference = opening - F::one();
             difference * difference
         }
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => opening,
     }
 }
 
-fn validity_physical_view<F>(
+fn validity_factor_physical_view<F>(
     layout: &PackedWitnessLayout,
     statement: &LatticePackedValidityStatement,
     point: &[F],
+    factor: usize,
 ) -> Result<PhysicalView<F>, VerifierError>
 where
     F: Field,
 {
+    if statement.kind == LatticePackedValidityStatementKind::FusedIncrementCanonicalZero {
+        return fused_increment_canonical_zero_physical_view(layout, point, factor);
+    }
+    if factor != 0 {
+        return Err(invalid_lattice_config(format!(
+            "packed validity statement {:?} has no opening factor {factor}",
+            statement.kind
+        )));
+    }
     let family_id = akita_packed_family_id(&statement.requirement.family);
     let shape = validity_statement_shape(layout, statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
@@ -569,12 +686,73 @@ where
             }
             terms
         }
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
+            return fused_increment_canonical_zero_physical_view(layout, point, factor);
+        }
     };
 
     Ok(PhysicalView::PackedLinear {
         layout_digest: layout.digest,
         terms,
     })
+}
+
+fn fused_increment_canonical_zero_physical_view<F>(
+    layout: &PackedWitnessLayout,
+    point: &[F],
+    factor: usize,
+) -> Result<PhysicalView<F>, VerifierError>
+where
+    F: Field,
+{
+    let (family_id, symbol) = fused_increment_canonical_zero_factor(factor)?;
+    let family = layout.family(&family_id).ok_or_else(|| {
+        invalid_lattice_config(format!(
+            "fused increment canonical-zero factor requires {family_id:?}"
+        ))
+    })?;
+    if family.limbs != 1 {
+        return Err(invalid_lattice_config(format!(
+            "fused increment canonical-zero factor {family_id:?} must have one limb"
+        )));
+    }
+    let rows = family.domain.rows().map_err(|error| {
+        invalid_lattice_config(format!(
+            "fused increment canonical-zero factor {family_id:?} has invalid row domain: {error}"
+        ))
+    })?;
+    let row_vars = power_of_two_log(rows, "fused increment canonical-zero row count")?;
+    if point.len() != row_vars {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "fused increment canonical-zero point has {} variables but statement requires {row_vars}",
+                point.len()
+            ),
+        });
+    }
+
+    Ok(PhysicalView::PackedLinear {
+        layout_digest: layout.digest,
+        terms: vec![
+            PackedLinearTerm::new(F::one(), family_id.physical_ref(), 0, symbol)
+                .with_row_point(point.to_vec()),
+        ],
+    })
+}
+
+fn fused_increment_canonical_zero_factor(
+    factor: usize,
+) -> Result<(PackedFamilyId, usize), VerifierError> {
+    if factor == 0 {
+        return Ok((PackedFamilyId::IncSign, 1));
+    }
+    let byte_index = factor - 1;
+    if byte_index < FUSED_INCREMENT_BYTE_LIMBS {
+        return Ok((PackedFamilyId::IncByte { index: byte_index }, 0));
+    }
+    Err(invalid_lattice_config(format!(
+        "fused increment canonical-zero has no opening factor {factor}"
+    )))
 }
 
 #[derive(Clone, Copy)]
@@ -650,6 +828,7 @@ where
         LatticePackedValidityStatementKind::ExactOneHotRowSum
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => shape.row_vars + shape.limb_vars,
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => shape.row_vars,
     };
     if point.len() != expected {
         return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
@@ -867,6 +1046,7 @@ fn requirement_covers_term(
         LatticePackedValidityKind::BooleanIndicator { symbol: indicator } => {
             symbol == indicator && indicator < requirement.alphabet_size
         }
+        LatticePackedValidityKind::FusedIncrementCanonicalZero => false,
     }
 }
 
@@ -1419,6 +1599,12 @@ fn extend_validity_requirement_families(
     domain: PackedFactDomain,
 ) -> Result<(), VerifierError> {
     for requirement in requirements {
+        if matches!(
+            requirement.kind,
+            LatticePackedValidityKind::FusedIncrementCanonicalZero
+        ) {
+            continue;
+        }
         specs.push(PackedFamilySpec::direct(
             akita_packed_family_id(&requirement.family),
             domain,
@@ -1696,6 +1882,28 @@ mod tests {
             .unwrap_or_else(|| panic!("missing physical term"))
     }
 
+    fn fused_increment_validity_layout(log_t: usize) -> PackedWitnessLayout {
+        let trace = PackedFactDomain::TraceRows { log_t };
+        let mut specs = (0..FUSED_INCREMENT_BYTE_LIMBS)
+            .map(|index| {
+                PackedFamilySpec::direct(
+                    PackedFamilyId::IncByte { index },
+                    trace,
+                    1,
+                    PackedAlphabet::Byte,
+                )
+            })
+            .collect::<Vec<_>>();
+        specs.push(PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            trace,
+            1,
+            PackedAlphabet::Bit,
+        ));
+        PackedWitnessLayout::new(specs)
+            .unwrap_or_else(|error| panic!("fused increment layout should build: {error}"))
+    }
+
     #[test]
     fn derive_layout_includes_base_lattice_families() {
         let config = lattice_config();
@@ -1850,6 +2058,31 @@ mod tests {
     }
 
     #[test]
+    fn derive_validity_statements_adds_fused_increment_canonical_zero() {
+        let layout = fused_increment_validity_layout(4);
+        let requirement = LatticePackedValidityRequirement::fused_increment_canonical_zero();
+
+        let statements =
+            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
+                .unwrap_or_else(|error| {
+                    panic!("canonical-zero validity statement should derive: {error}")
+                });
+
+        assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0].requirement, requirement);
+        assert_eq!(
+            statements[0].kind,
+            LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
+        );
+        assert_eq!(statements[0].num_vars, 4);
+        assert_eq!(statements[0].degree, FUSED_INCREMENT_BYTE_LIMBS + 2);
+        assert_eq!(
+            lattice_packed_validity_opening_count(&statements),
+            FUSED_INCREMENT_BYTE_LIMBS + 1
+        );
+    }
+
+    #[test]
     fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
             PackedFamilyId::ProgramImageInit,
@@ -1924,6 +2157,90 @@ mod tests {
         let term = find_physical_term(terms, PackedFamilyId::ProgramImageInit, 1, 3);
         assert_eq!(term.row_point, vec![Fr::from_u64(2)]);
         assert_eq!(term.coefficient, limb_weights[1] * symbol_weights[3]);
+    }
+
+    #[test]
+    fn validity_batch_builder_lowers_fused_increment_canonical_zero_factors() {
+        let layout = fused_increment_validity_layout(4);
+        let statement = LatticePackedValidityStatement {
+            requirement: LatticePackedValidityRequirement::fused_increment_canonical_zero(),
+            kind: LatticePackedValidityStatementKind::FusedIncrementCanonicalZero,
+            num_vars: 4,
+            degree: FUSED_INCREMENT_BYTE_LIMBS + 2,
+        };
+        let point = vec![
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+        ];
+        let eq_point = vec![
+            Fr::from_u64(11),
+            Fr::from_u64(13),
+            Fr::from_u64(17),
+            Fr::from_u64(19),
+        ];
+        let batching_coefficient = Fr::from_u64(23);
+        let opening_claims = (0..=FUSED_INCREMENT_BYTE_LIMBS)
+            .map(|index| Fr::from_u64(29 + index as u64))
+            .collect::<Vec<_>>();
+        let reduction = BatchedEvaluationClaim {
+            reduction: EvaluationClaim::new(point.clone(), Fr::from_u64(31)),
+            batching_coefficients: vec![batching_coefficient],
+            max_num_vars: 4,
+            max_degree: FUSED_INCREMENT_BYTE_LIMBS + 2,
+        };
+
+        let batch = build_lattice_packed_validity_batch(
+            &layout,
+            std::slice::from_ref(&statement),
+            99_u64,
+            std::slice::from_ref(&eq_point),
+            &reduction,
+            &opening_claims,
+        )
+        .unwrap_or_else(|error| panic!("canonical-zero batch should build: {error}"));
+
+        let expected_eq = try_eq_mle(&point, &eq_point)
+            .unwrap_or_else(|error| panic!("eq mask should evaluate: {error}"));
+        let opening_product = opening_claims
+            .iter()
+            .copied()
+            .fold(Fr::from_u64(1), |acc, opening| acc * opening);
+        assert_eq!(
+            batch.expected_final_claim,
+            batching_coefficient * expected_eq * opening_product
+        );
+        assert_eq!(batch.statement.claims.len(), FUSED_INCREMENT_BYTE_LIMBS + 1);
+
+        let PhysicalView::PackedLinear {
+            layout_digest,
+            terms,
+        } = &batch.statement.claims[0].view
+        else {
+            panic!("canonical-zero sign factor should use a packed linear view");
+        };
+        assert_eq!(layout_digest, &layout.digest);
+        assert_eq!(terms.len(), 1);
+        assert_eq!(terms[0].family, PackedFamilyId::IncSign.physical_ref());
+        assert_eq!(terms[0].limb, 0);
+        assert_eq!(terms[0].symbol, 1);
+        assert_eq!(terms[0].coefficient, Fr::from_u64(1));
+        assert_eq!(terms[0].row_point, point);
+
+        for index in 0..FUSED_INCREMENT_BYTE_LIMBS {
+            let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[index + 1].view
+            else {
+                panic!("canonical-zero byte factor should use a packed linear view");
+            };
+            assert_eq!(terms.len(), 1);
+            assert_eq!(
+                terms[0].family,
+                PackedFamilyId::IncByte { index }.physical_ref()
+            );
+            assert_eq!(terms[0].limb, 0);
+            assert_eq!(terms[0].symbol, 0);
+        }
     }
 
     #[test]

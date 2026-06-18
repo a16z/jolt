@@ -23,9 +23,9 @@ use crate::{
             akita_packed_family_id, akita_packed_view_formula, build_lattice_packed_validity_batch,
             derive_akita_packed_validity_requirements, derive_akita_packed_validity_statements,
             jolt_lattice_view_formula, lattice_packed_validity_claims,
-            sample_lattice_packed_validity_eq_points, validate_akita_packed_witness_layout_config,
-            LatticePackedValidityStatement, LatticePackedValidityStatementKind,
-            Stage8BatchStatement,
+            lattice_packed_validity_opening_count, sample_lattice_packed_validity_eq_points,
+            validate_akita_packed_witness_layout_config, LatticePackedValidityStatement,
+            LatticePackedValidityStatementKind, Stage8BatchStatement,
         },
         PrecommittedSchedule,
     },
@@ -43,6 +43,7 @@ use jolt_claims::protocols::jolt::{
     fused_increment_sign_lattice_view_formula, lattice_packed_validity_digest, JoltAdviceKind,
     JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticeFusedIncrementTarget,
     LatticePackedFamilyId, LatticePackedValidityKind, LatticePackedValidityRequirement,
+    FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
@@ -289,7 +290,7 @@ pub fn akita_lattice_protocol_config_for_layout(
 pub fn akita_lattice_validity_requirements_for_layout(
     layout: &PackedWitnessLayout,
 ) -> Vec<LatticePackedValidityRequirement> {
-    layout
+    let mut requirements = layout
         .families
         .iter()
         .filter_map(|family| {
@@ -395,7 +396,14 @@ pub fn akita_lattice_validity_requirements_for_layout(
                 | PackedFamilyId::Custom { .. } => None,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if layout.family(&PackedFamilyId::IncSign).is_some()
+        && (0..FUSED_INCREMENT_BYTE_LIMBS)
+            .all(|index| layout.family(&PackedFamilyId::IncByte { index }).is_some())
+    {
+        requirements.push(LatticePackedValidityRequirement::fused_increment_canonical_zero());
+    }
+    requirements
 }
 
 pub fn commit_akita_packed_witness<S>(
@@ -561,17 +569,15 @@ where
         max_degree,
         transcript,
     )?;
-    let opening_claims = statements
-        .iter()
-        .map(|statement| {
-            let point = reduction
-                .try_instance_point(statement.num_vars)
-                .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
-                    reason: error.to_string(),
-                })?;
-            validity_opening_value(source, statement, point)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut opening_claims = Vec::with_capacity(lattice_packed_validity_opening_count(&statements));
+    for statement in &statements {
+        let point = reduction
+            .try_instance_point(statement.num_vars)
+            .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: error.to_string(),
+            })?;
+        opening_claims.extend(validity_opening_values(source, statement, point)?);
+    }
     let batch = build_lattice_packed_validity_batch(
         &artifacts.layout,
         &statements,
@@ -1250,11 +1256,42 @@ where
             reason: error.to_string(),
         }
     })?;
-    Ok(eq_mask
-        * validity_violation(
+    let value = match statement.kind {
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
+            validity_opening_values(source, statement, point)?
+                .into_iter()
+                .fold(AkitaField::one(), |acc, opening| acc * opening)
+        }
+        _ => validity_violation(
             statement.kind,
             validity_opening_value(source, statement, point)?,
-        ))
+        ),
+    };
+    Ok(eq_mask * value)
+}
+
+fn validity_opening_values<S>(
+    source: &S,
+    statement: &LatticePackedValidityStatement,
+    point: &[AkitaField],
+) -> Result<Vec<AkitaField>, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    if statement.kind != LatticePackedValidityStatementKind::FusedIncrementCanonicalZero {
+        return validity_opening_value(source, statement, point).map(|value| vec![value]);
+    }
+
+    let mut values = Vec::with_capacity(FUSED_INCREMENT_BYTE_LIMBS + 1);
+    values.push(fused_increment_canonical_zero_factor_value(
+        source, point, 0,
+    )?);
+    for factor in 1..=FUSED_INCREMENT_BYTE_LIMBS {
+        values.push(fused_increment_canonical_zero_factor_value(
+            source, point, factor,
+        )?);
+    }
+    Ok(values)
 }
 
 fn validity_opening_value<S>(
@@ -1305,6 +1342,11 @@ where
                 SymbolWeights::Fixed(symbol),
             )
         }
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
+            Err(VerifierError::InvalidProtocolConfig {
+                reason: "canonical-zero validity has multiple opening factors".to_string(),
+            })
+        }
     }
 }
 
@@ -1319,7 +1361,97 @@ fn validity_violation(kind: LatticePackedValidityStatementKind, opening: AkitaFi
             let difference = opening - AkitaField::one();
             difference * difference
         }
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => opening,
     }
+}
+
+fn fused_increment_canonical_zero_factor_value<S>(
+    source: &S,
+    point: &[AkitaField],
+    factor: usize,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let (family_id, symbol) = if factor == 0 {
+        (PackedFamilyId::IncSign, 1)
+    } else {
+        let byte_index = factor - 1;
+        if byte_index >= FUSED_INCREMENT_BYTE_LIMBS {
+            return Err(VerifierError::InvalidProtocolConfig {
+                reason: format!("fused increment canonical-zero has no opening factor {factor}"),
+            });
+        }
+        (PackedFamilyId::IncByte { index: byte_index }, 0)
+    };
+    let family =
+        source
+            .layout()
+            .family(&family_id)
+            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                reason: format!("fused increment canonical-zero factor requires {family_id:?}"),
+            })?;
+    let rows = family
+        .domain
+        .rows()
+        .map_err(|error| VerifierError::InvalidProtocolConfig {
+            reason: format!(
+                "fused increment canonical-zero factor {family_id:?} has invalid row domain: {error}"
+            ),
+        })?;
+    let row_vars = power_of_two_log(rows, "fused increment canonical-zero row count")?;
+    if point.len() != row_vars {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "fused increment canonical-zero point has {} variables but statement requires {row_vars}",
+                point.len()
+            ),
+        });
+    }
+    let row_weights = EqPolynomial::<AkitaField>::evals(point, None);
+    weighted_direct_symbol_value(source, &family_id, &row_weights, symbol)
+}
+
+fn weighted_direct_symbol_value<S>(
+    source: &S,
+    family_id: &PackedFamilyId,
+    row_weights: &[AkitaField],
+    symbol: usize,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let mut value = AkitaField::zero();
+    let mut error = None;
+    source.for_each_nonzero(|rank, cell| {
+        if error.is_some() {
+            return;
+        }
+        let Some(address) = source.layout().unrank(rank) else {
+            error = Some(
+                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                    reason: format!("packed validity source emitted out-of-layout rank {rank}"),
+                },
+            );
+            return;
+        };
+        if &address.family != family_id || address.limb != 0 || address.symbol != symbol {
+            return;
+        }
+        let Some(row_weight) = row_weights.get(address.row).copied() else {
+            error = Some(
+                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                    reason: format!("packed validity row {} is outside row weights", address.row),
+                },
+            );
+            return;
+        };
+        value += row_weight * cell;
+    });
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(value)
 }
 
 #[derive(Clone, Copy)]
@@ -1388,6 +1520,7 @@ fn split_validity_point(
         LatticePackedValidityStatementKind::ExactOneHotRowSum
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => shape.row + shape.limb,
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => shape.row,
     };
     if point.len() != expected {
         return Err(VerifierError::AkitaPackedValiditySumcheckFailed {

@@ -109,6 +109,7 @@ pub enum LatticePackedValidityKind {
     ExactOneHot,
     OptionalOneHot,
     BooleanIndicator { symbol: usize },
+    FusedIncrementCanonicalZero,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +160,15 @@ impl LatticePackedValidityRequirement {
             kind: LatticePackedValidityKind::BooleanIndicator { symbol },
         }
     }
+
+    pub fn fused_increment_canonical_zero() -> Self {
+        Self {
+            family: LatticePackedFamilyId::IncSign,
+            limbs: 1,
+            alphabet_size: 2,
+            kind: LatticePackedValidityKind::FusedIncrementCanonicalZero,
+        }
+    }
 }
 
 pub type LatticePackedValidityDigest = [u8; 32];
@@ -204,6 +214,7 @@ fn write_validity_kind(bytes: &mut Vec<u8>, kind: &LatticePackedValidityKind) {
             bytes.push(2);
             write_usize(bytes, *symbol);
         }
+        LatticePackedValidityKind::FusedIncrementCanonicalZero => bytes.push(3),
     }
 }
 
@@ -542,6 +553,7 @@ pub fn fused_increment_validity_requirements() -> Vec<LatticePackedValidityRequi
         2,
         1,
     ));
+    requirements.push(LatticePackedValidityRequirement::fused_increment_canonical_zero());
     requirements
 }
 
@@ -1187,7 +1199,7 @@ mod tests {
     fn fused_increment_validity_requirements_cover_bytes_and_sign() {
         let requirements = fused_increment_validity_requirements();
 
-        assert_eq!(requirements.len(), FUSED_INCREMENT_BYTE_LIMBS + 1);
+        assert_eq!(requirements.len(), FUSED_INCREMENT_BYTE_LIMBS + 2);
         assert_eq!(
             requirements[0],
             LatticePackedValidityRequirement::exact_one_hot(
@@ -1214,6 +1226,10 @@ mod tests {
                 2,
                 1,
             )
+        );
+        assert_eq!(
+            requirements[FUSED_INCREMENT_BYTE_LIMBS + 1],
+            LatticePackedValidityRequirement::fused_increment_canonical_zero()
         );
     }
 

@@ -12,11 +12,11 @@ pub use lattice::{
     derive_akita_packed_witness_layout, jolt_lattice_physical_manifest,
     jolt_lattice_physical_manifest_with_validity, jolt_lattice_view_formula,
     jolt_lattice_view_formulas, lattice_packed_validity_claims,
-    sample_lattice_packed_validity_eq_points, validate_akita_packed_witness_layout_config,
-    validate_akita_packed_witness_validity_config, verify_lattice_packed_validity_proof,
-    JoltLatticeViewFormulaWithRowPoint, LatticePackedValidityBatch,
-    LatticePackedValidityBatchStatement, LatticePackedValidityStatement,
-    LatticePackedValidityStatementKind,
+    lattice_packed_validity_opening_count, sample_lattice_packed_validity_eq_points,
+    validate_akita_packed_witness_layout_config, validate_akita_packed_witness_validity_config,
+    verify_lattice_packed_validity_proof, JoltLatticeViewFormulaWithRowPoint,
+    LatticePackedValidityBatch, LatticePackedValidityBatchStatement,
+    LatticePackedValidityStatement, LatticePackedValidityStatementKind,
 };
 pub use outputs::{
     Stage8BatchStatement, Stage8ClaimMode, Stage8ClearBatchStatement, Stage8ClearOutput,

@@ -883,9 +883,10 @@ where
         let requirements =
             stage8::derive_akita_packed_validity_requirements(config, &checked.precommitted)?;
         let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)?;
-        if validity_claims.opening_claims.len() != statements.len() {
+        let expected_opening_claims = stage8::lattice_packed_validity_opening_count(&statements);
+        if validity_claims.opening_claims.len() != expected_opening_claims {
             return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
-                expected: statements.len(),
+                expected: expected_opening_claims,
                 got: validity_claims.opening_claims.len(),
             });
         }
@@ -2414,7 +2415,10 @@ mod tests {
         };
         claims.stage7.lattice_packed_validity =
             Some(stage7::inputs::LatticePackedValidityOutputClaims {
-                opening_claims: vec![Fr::zero(); statements.len()],
+                opening_claims: vec![
+                    Fr::zero();
+                    stage8::lattice_packed_validity_opening_count(&statements)
+                ],
             });
     }
 
