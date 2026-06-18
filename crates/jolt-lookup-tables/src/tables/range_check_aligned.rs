@@ -32,6 +32,10 @@ impl<const XLEN: usize> LookupTable for RangeCheckAlignedTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for RangeCheckAlignedTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::LowerWord, Prefixes::Lsb]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LowerWord, Suffixes::Lsb]
     }

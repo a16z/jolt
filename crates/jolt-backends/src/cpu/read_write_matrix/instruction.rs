@@ -1241,7 +1241,7 @@ fn active_prefix_indices(tables: &[LookupTableKind<RV64_XLEN>]) -> Vec<usize> {
     let mut active = [false; NUM_PREFIXES];
     tables
         .iter()
-        .flat_map(LookupTableKind::required_prefixes)
+        .flat_map(LookupTableKind::prefixes)
         .for_each(|&prefix| mark_prefix_and_dependencies(prefix, &mut active));
     active
         .iter()

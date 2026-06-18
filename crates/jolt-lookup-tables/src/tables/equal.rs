@@ -34,6 +34,10 @@ impl<const XLEN: usize> LookupTable for EqualTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for EqualTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::Eq]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::Eq]
     }

@@ -50,6 +50,10 @@ impl<const XLEN: usize> LookupTable for SignExtendHalfWordTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::LowerHalfWord, Prefixes::SignExtensionUpperHalf]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,

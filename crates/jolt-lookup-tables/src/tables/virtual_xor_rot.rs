@@ -43,6 +43,16 @@ impl<const XLEN: usize, const ROTATION: u32> LookupTable for VirtualXORROTTable<
 impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
     for VirtualXORROTTable<XLEN, ROTATION>
 {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        match ROTATION {
+            16 => &[Prefixes::XorRot16],
+            24 => &[Prefixes::XorRot24],
+            32 => &[Prefixes::XorRot32],
+            63 => &[Prefixes::XorRot63],
+            _ => unreachable!("unsupported rotation {ROTATION}"),
+        }
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         debug_assert_eq!(XLEN, 64);
         match ROTATION {

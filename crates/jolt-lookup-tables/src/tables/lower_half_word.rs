@@ -34,6 +34,10 @@ impl<const XLEN: usize> LookupTable for LowerHalfWordTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for LowerHalfWordTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::LowerHalfWord]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LowerHalfWord]
     }
