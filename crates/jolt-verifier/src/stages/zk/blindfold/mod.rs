@@ -123,7 +123,7 @@ use super::{
 };
 use crate::stages::{
     stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
-    stage6::{outputs::BytecodeReductionWeights, verify_b},
+    stage6::{outputs::BytecodeReductionWeights, verify},
     stage8::outputs::Stage8OpeningId,
 };
 use crate::VerifierError;
@@ -1006,9 +1006,9 @@ where
             id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
         }
     })?;
-    verify_b::bytecode_reduction_weights(
+    verify::bytecode_reduction_weights(
         layout,
-        verify_b::BytecodeReductionWeightInputs {
+        verify::BytecodeReductionWeightInputs {
             eta,
             stage1_gammas: &input.stage6.public.stage1_gammas,
             stage2_gammas: &input.stage6.public.stage2_gammas,

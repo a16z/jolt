@@ -43,9 +43,9 @@ use jolt_witness::{protocols::jolt_vm::JoltVmNamespace, WitnessProvider};
 /// split stage 6 into stage 6a (ADDRESS phase) and stage 6b (CYCLE phase):
 ///
 /// - Stage 6a is a batched sumcheck over the bytecode read-RAF + booleanity
-///   address-binding phases (`verify_a.rs`). Its output openings
+///   address-binding phases. Its output openings
 ///   (`Stage6AddressPhaseClaims`) become the input claims of the cycle phase.
-/// - Stage 6b is the batched cycle-phase sumcheck (`verify_b.rs`): bytecode
+/// - Stage 6b is the batched cycle-phase sumcheck: bytecode
 ///   read-RAF + booleanity cycle phases plus the RAM-Hamming booleanity,
 ///   RAM/instruction RA-virtualization, increment claim-reduction, and advice
 ///   cycle-phase relations.
