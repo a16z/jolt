@@ -13,7 +13,7 @@ use crate::layout::{PackedCellAddress, PackedFamily, PackedWitnessLayout, Packed
 use crate::types::{
     append_field_slice, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaHidingCommitment,
     AkitaPackedBatchProof, AkitaPackedReductionProof, AkitaProverHint, AkitaProverSetup,
-    AkitaSetupParams, AkitaVerifierSetup,
+    AkitaSetupParams, AkitaVerifierSetup, AKITA_FIELD_MODULUS,
 };
 use crate::AkitaScheme;
 
@@ -989,6 +989,14 @@ fn field_from_bytes(bytes: &[u8]) -> Result<AkitaField, OpeningsError> {
             AkitaField::NUM_BYTES
         )));
     }
+    let value = u128::from_le_bytes(bytes.try_into().map_err(|_| {
+        invalid_batch("Akita packed proof field encoding must be exactly 16 bytes")
+    })?);
+    if value >= AKITA_FIELD_MODULUS {
+        return Err(invalid_batch(
+            "Akita packed proof field encoding is not canonical",
+        ));
+    }
     Ok(AkitaField::from_le_bytes_mod_order(bytes))
 }
 
@@ -1027,6 +1035,20 @@ mod tests {
 
     fn f(value: u64) -> AkitaField {
         AkitaField::from_u64(value)
+    }
+
+    #[test]
+    fn packed_proof_field_decoding_requires_canonical_bytes() {
+        let encoded = field_bytes(f(7));
+        assert_eq!(
+            field_from_bytes(&encoded).expect("canonical field bytes should decode"),
+            f(7)
+        );
+
+        assert!(matches!(
+            field_from_bytes(&AKITA_FIELD_MODULUS.to_le_bytes()),
+            Err(OpeningsError::InvalidBatch(reason)) if reason.contains("canonical")
+        ));
     }
 
     #[test]
