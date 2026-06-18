@@ -195,8 +195,10 @@ impl JoltPackedWitnessBuilder {
     ) -> Result<(), JoltPackedWitnessError> {
         let delta = if row.is_store() {
             row.ram_write_value() as i128 - row.ram_read_value() as i128
-        } else {
+        } else if row.rd_index().is_some() {
             row.rd_write_value() as i128 - row.rd_pre_value() as i128
+        } else {
+            0
         };
         self.emit_signed_increment(
             PackedFamilyId::IncByte { index: 0 },
@@ -820,6 +822,44 @@ mod tests {
                 }),
                 11,
             ),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |_, _| None)
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        for index in 0..8 {
+            assert_eq!(
+                get(&witness, PackedFamilyId::IncByte { index }, 0, 0, 0),
+                AkitaField::one()
+            );
+        }
+        assert!(get(&witness, PackedFamilyId::IncSign, 0, 0, 1).is_zero());
+    }
+
+    #[test]
+    fn fused_increment_ignores_rd_slots_without_rd_destination() {
+        let layout = increment_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::BEQ,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: None,
+                    imm: 4,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 10,
+                    rd_write_value: 3,
+                }),
+                9,
+            ),
+            JoltTraceRow::no_op(),
         ];
 
         let mut builder = JoltPackedWitnessBuilder::new(layout);
