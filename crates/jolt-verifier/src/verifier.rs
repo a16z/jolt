@@ -1905,18 +1905,27 @@ mod tests {
     }
 
     #[test]
-    fn absorb_commitments_accepts_akita_payload_and_binds_layout_digest() {
+    fn absorb_commitments_accepts_akita_payload_and_binds_layout_metadata() {
         let preprocessing = committed_test_preprocessing();
         let layout_digest = [9; 32];
+        let d_pack = 44;
         let validity_digest = [11; 32];
-        let proof =
-            proof_with_lattice_payload(&lattice_config(layout_digest, 44), layout_digest, 44);
+        let proof = proof_with_lattice_payload(
+            &lattice_config(layout_digest, d_pack),
+            layout_digest,
+            d_pack,
+        );
         let mut transcript = RecordingTranscript::new(b"test");
 
         absorb_commitments(&preprocessing, &proof, None, &mut transcript)
             .unwrap_or_else(|error| panic!("Akita commitment absorption should succeed: {error}"));
 
         assert!(contains_subslice(&transcript.bytes, &layout_digest));
+        assert!(contains_subslice(&transcript.bytes, b"akita_d_pack"));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            &u64_word_bytes(d_pack as u64)
+        ));
         assert!(contains_subslice(&transcript.bytes, &validity_digest));
     }
 
@@ -2957,6 +2966,12 @@ mod tests {
         haystack
             .windows(needle.len())
             .any(|window| window == needle)
+    }
+
+    fn u64_word_bytes(value: u64) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        bytes[24..].copy_from_slice(&value.to_be_bytes());
+        bytes
     }
 
     #[cfg(feature = "akita")]
