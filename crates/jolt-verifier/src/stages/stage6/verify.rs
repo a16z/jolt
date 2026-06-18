@@ -11,7 +11,7 @@ use jolt_claims::protocols::jolt::{
             self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafEvaluationInputs,
         },
         claim_reductions::{advice, bytecode as bytecode_reduction, increments, program_image},
-        dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
+        dimensions::{JoltFormulaDimensions, TraceDimensions, REGISTER_ADDRESS_BITS},
         instruction, lattice, ram,
     },
     fused_increment_bytecode_source_opening, fused_increment_source_opening, BooleanityChallenge,
@@ -92,6 +92,12 @@ struct Stage6BatchExpectedOutputClaims<F: Field> {
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
     program_image_claim_reduction: Option<F>,
+}
+
+#[derive(Debug)]
+struct FusedIncrementStageClaims<F: Field> {
+    translation: Option<JoltRelationClaims<F>>,
+    source_link: Option<JoltRelationClaims<F>>,
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -958,37 +964,15 @@ where
             id: program_image::cycle_phase_program_image_opening(),
         });
     }
-    let fused_increment_claims = if claims.fused_increment_translation.is_some() {
-        if crate::config::validate_protocol_config(&proof.protocol)?
-            != crate::config::PcsFamily::Lattice
-        {
-            return Err(VerifierError::UnexpectedOpeningClaim {
-                id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
-            });
-        }
-        Some(lattice::fused_increment_translation_claim::<PCS::Field>(
-            trace_dimensions,
-        ))
-    } else {
-        None
-    };
-    if claims.fused_increment_source_link.is_some() && fused_increment_claims.is_none() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-        });
-    }
-    if fused_increment_claims.is_some() && claims.fused_increment_source_link.is_none() {
-        return Err(VerifierError::MissingOpeningClaim {
-            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-        });
-    }
-    let fused_increment_source_link_claims = if claims.fused_increment_source_link.is_some() {
-        Some(lattice::fused_increment_source_link_claim::<PCS::Field>(
-            formula_dimensions.bytecode_read_raf,
-        ))
-    } else {
-        None
-    };
+    let fused_increment_stage_claims = fused_increment_stage_claims_for_protocol::<PCS::Field>(
+        &proof.protocol,
+        trace_dimensions,
+        formula_dimensions.bytecode_read_raf,
+        claims.fused_increment_translation.is_some(),
+        claims.fused_increment_source_link.is_some(),
+    )?;
+    let fused_increment_claims = fused_increment_stage_claims.translation;
+    let fused_increment_source_link_claims = fused_increment_stage_claims.source_link;
     if let Some(claim) = &fused_increment_claims {
         validate_compressed_stage_claim(claim)?;
     }
@@ -2444,4 +2428,171 @@ fn validate_compressed_stage_claim<F: Field>(
         return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage: claim.id });
     }
     Ok(())
+}
+
+fn fused_increment_stage_claims_for_protocol<F: Field>(
+    protocol: &crate::config::JoltProtocolConfig,
+    trace_dimensions: TraceDimensions,
+    bytecode_dimensions: bytecode::BytecodeReadRafDimensions,
+    has_translation_claims: bool,
+    has_source_link_claims: bool,
+) -> Result<FusedIncrementStageClaims<F>, VerifierError> {
+    let lattice =
+        crate::config::validate_protocol_config(protocol)? == crate::config::PcsFamily::Lattice;
+    if has_translation_claims && !lattice {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
+    if lattice && !has_translation_claims {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
+    if has_source_link_claims && !has_translation_claims {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
+    if has_translation_claims && !has_source_link_claims {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        });
+    }
+
+    Ok(if lattice {
+        FusedIncrementStageClaims {
+            translation: Some(lattice::fused_increment_translation_claim(trace_dimensions)),
+            source_link: Some(lattice::fused_increment_source_link_claim(
+                bytecode_dimensions,
+            )),
+        }
+    } else {
+        FusedIncrementStageClaims {
+            translation: None,
+            source_link: None,
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "test setup should fail loudly when helper contracts change"
+    )]
+
+    use super::*;
+    use crate::config::{IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode};
+    use jolt_field::Fr;
+
+    fn lattice_config() -> JoltProtocolConfig {
+        let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+        config.lattice.program_mode = ProgramMode::Committed;
+        config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some([7; 32]);
+        config.lattice.packed_witness.d_pack = Some(8);
+        config
+    }
+
+    fn curve_config() -> JoltProtocolConfig {
+        JoltProtocolConfig::for_zk(false)
+    }
+
+    fn trace_dimensions() -> TraceDimensions {
+        TraceDimensions::new(2)
+    }
+
+    fn bytecode_dimensions() -> bytecode::BytecodeReadRafDimensions {
+        bytecode::BytecodeReadRafDimensions::new(2, 1, 1)
+    }
+
+    #[test]
+    fn lattice_stage6_requires_fused_increment_translation_claims() {
+        let error = fused_increment_stage_claims_for_protocol::<Fr>(
+            &lattice_config(),
+            trace_dimensions(),
+            bytecode_dimensions(),
+            false,
+            false,
+        )
+        .expect_err("lattice mode should require fused translation claims");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
+        ));
+
+        let error = fused_increment_stage_claims_for_protocol::<Fr>(
+            &lattice_config(),
+            trace_dimensions(),
+            bytecode_dimensions(),
+            true,
+            false,
+        )
+        .expect_err("lattice mode should require source-link claims with translation claims");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
+        ));
+    }
+
+    #[test]
+    fn curve_stage6_rejects_fused_increment_translation_claims() {
+        let error = fused_increment_stage_claims_for_protocol::<Fr>(
+            &curve_config(),
+            trace_dimensions(),
+            bytecode_dimensions(),
+            true,
+            true,
+        )
+        .expect_err("curve mode should reject fused translation claims");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedOpeningClaim { id }
+                if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
+        ));
+
+        let error = fused_increment_stage_claims_for_protocol::<Fr>(
+            &curve_config(),
+            trace_dimensions(),
+            bytecode_dimensions(),
+            false,
+            true,
+        )
+        .expect_err("curve mode should reject source-link claims without translation claims");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedOpeningClaim { id }
+                if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
+        ));
+    }
+
+    #[test]
+    fn lattice_stage6_builds_fused_increment_stage_claims() {
+        let claims = fused_increment_stage_claims_for_protocol::<Fr>(
+            &lattice_config(),
+            trace_dimensions(),
+            bytecode_dimensions(),
+            true,
+            true,
+        )
+        .expect("lattice mode with both claim sets should build stage claims");
+
+        assert_eq!(
+            claims
+                .translation
+                .expect("translation claims should exist")
+                .id,
+            JoltRelationId::FusedIncrementTranslation
+        );
+        assert_eq!(
+            claims
+                .source_link
+                .expect("source-link claims should exist")
+                .id,
+            JoltRelationId::FusedIncrementSourceLink
+        );
+    }
 }
