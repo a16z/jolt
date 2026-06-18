@@ -1788,10 +1788,35 @@ mod tests {
 
         let expected_ids =
             akita_snapshot_opening_ids(formula_dimensions.ra_layout, &checked.precommitted);
+        let dense_increment_ids = dense_increment_opening_ids();
         assert_eq!(batch.opening_ids, expected_ids);
         assert_eq!(batch.statement.claims.len(), expected_ids.len());
         assert_eq!(batch.statement.layout_digest, layout.digest);
         assert_eq!(batch.physical_manifest.layout_digest, layout.digest);
+        assert!(dense_increment_ids
+            .iter()
+            .all(|id| !batch.opening_ids.contains(id)));
+        assert!(dense_increment_ids.iter().all(|id| {
+            batch
+                .logical_manifest
+                .openings
+                .iter()
+                .all(|opening| opening.id != *id)
+        }));
+        assert!(dense_increment_ids.iter().all(|id| {
+            batch
+                .physical_manifest
+                .openings
+                .iter()
+                .all(|opening| opening.id != *id && opening.relation != *id)
+        }));
+        assert!(dense_increment_ids.iter().all(|id| {
+            batch
+                .statement
+                .claims
+                .iter()
+                .all(|claim| claim.id != *id && claim.relation != *id)
+        }));
         assert!(batch
             .statement
             .claims
@@ -2837,6 +2862,20 @@ mod tests {
     #[cfg(feature = "akita")]
     fn stage8_opening(id: JoltOpeningId) -> stage8::Stage8OpeningId {
         stage8::Stage8OpeningId::from(id)
+    }
+
+    #[cfg(feature = "akita")]
+    fn dense_increment_opening_ids() -> [stage8::Stage8OpeningId; 2] {
+        [
+            stage8_opening(JoltOpeningId::committed(
+                JoltCommittedPolynomial::RamInc,
+                JoltRelationId::IncClaimReduction,
+            )),
+            stage8_opening(JoltOpeningId::committed(
+                JoltCommittedPolynomial::RdInc,
+                JoltRelationId::IncClaimReduction,
+            )),
+        ]
     }
 
     #[cfg(feature = "akita")]
