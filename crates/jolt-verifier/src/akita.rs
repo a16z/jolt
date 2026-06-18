@@ -9,7 +9,7 @@ use crate::{
     },
     preprocessing::JoltVerifierPreprocessing,
     proof::{AkitaCommitmentPayload, ClearOnlyVectorCommitment, CommitmentPayload, JoltProof},
-    stages::stage8::validate_akita_packed_witness_layout_config,
+    stages::stage8::{validate_akita_packed_witness_layout_config, Stage8BatchStatement},
     VerifierError,
 };
 use common::jolt_device::JoltDevice;
@@ -219,6 +219,55 @@ where
     .map_err(|error| VerifierError::FinalOpeningBatchFailed {
         reason: error.to_string(),
     })
+}
+
+pub fn prove_akita_stage8_clear_openings<T, S>(
+    setup: &AkitaProverSetup,
+    transcript: &mut T,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+    statement: &Stage8BatchStatement<AkitaField, AkitaCommitment>,
+) -> Result<AkitaPackedBatchProof, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    let Stage8BatchStatement::Clear(statement) = statement else {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita packed opening proving requires a clear Stage 8 statement".to_string(),
+        });
+    };
+    prove_akita_packed_openings(setup, transcript, artifacts, source, &statement.statement)
+}
+
+pub fn prove_akita_jolt_final_openings<T, S>(
+    setup: &AkitaProverSetup,
+    preprocessing: &AkitaVerifierPreprocessing,
+    public_io: &JoltDevice,
+    proof: &AkitaJoltProof,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+) -> Result<AkitaPackedBatchProof, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    let (statement, mut transcript) =
+        crate::verifier::stage8_batch_statement_with_config_and_transcript::<
+            AkitaField,
+            AkitaPackedScheme,
+            AkitaClearVectorCommitment,
+            T,
+            _,
+        >(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+            &artifacts.protocol,
+        )?;
+    prove_akita_stage8_clear_openings(setup, &mut transcript, artifacts, source, &statement)
 }
 
 pub fn verify_akita_clear<T>(
@@ -456,15 +505,23 @@ mod tests {
     )]
 
     use super::*;
+    use crate::stages::stage8::{
+        Stage8BatchStatement, Stage8ClearBatchStatement, Stage8LogicalManifest, Stage8OpeningId,
+        Stage8PhysicalManifest,
+    };
     use jolt_akita::{
         AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec,
         SparsePackedWitness,
+    };
+    use jolt_claims::protocols::jolt::{
+        fused_increment_sign_opening, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
     };
     use jolt_field::FixedByteSize;
     use jolt_openings::{
         BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
         PackedLinearTerm, PhysicalView,
     };
+    use jolt_poly::Point;
     use jolt_riscv::{
         CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NonMemoryState,
         NormalizedOperands, StoreState,
@@ -826,14 +883,19 @@ mod tests {
             .clone();
         let instruction_claim = AkitaField::from_u64(22);
         let sign_claim = AkitaField::from_u64(15);
+        let instruction_id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::InstructionRa(0),
+            JoltRelationId::HammingWeightClaimReduction,
+        ));
+        let sign_id = Stage8OpeningId::from(fused_increment_sign_opening());
         let statement = BatchOpeningStatement {
             logical_point: Vec::new(),
             pcs_point: Vec::new(),
             layout_digest: layout.digest,
             claims: vec![
                 BatchOpeningClaim {
-                    id: 0usize,
-                    relation: 0usize,
+                    id: instruction_id,
+                    relation: instruction_id,
                     commitment: commitment.clone(),
                     claim: instruction_claim,
                     view: PhysicalView::PackedLinear {
@@ -849,8 +911,8 @@ mod tests {
                     scale: AkitaField::from_u64(3),
                 },
                 BatchOpeningClaim {
-                    id: 1usize,
-                    relation: 1usize,
+                    id: sign_id,
+                    relation: sign_id,
                     commitment: commitment.clone(),
                     claim: sign_claim,
                     view: PhysicalView::PackedLinear {
@@ -867,26 +929,43 @@ mod tests {
                 },
             ],
         };
+        let stage8_statement = Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
+            logical_manifest: Stage8LogicalManifest {
+                openings: Vec::new(),
+                pcs_opening_point: Point::high_to_low(Vec::<AkitaField>::new()),
+            },
+            physical_manifest: Stage8PhysicalManifest {
+                openings: Vec::new(),
+                layout_digest: layout.digest,
+            },
+            opening_ids: vec![instruction_id, sign_id],
+            opening_claims: Vec::new(),
+            pcs_opening_point: Point::high_to_low(Vec::<AkitaField>::new()),
+            statement: statement.clone(),
+        });
 
         let mut prover_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
-        let proof = prove_akita_packed_openings(
+        let proof = prove_akita_stage8_clear_openings(
             &prover_setup,
             &mut prover_transcript,
             &artifact,
             &source,
-            &statement,
+            &stage8_statement,
         )
         .expect("packed batch proof should be produced");
 
-        let mut wrong_statement = statement.clone();
-        wrong_statement.claims[0].commitment.layout_digest = [9; 32];
+        let mut wrong_stage8_statement = stage8_statement.clone();
+        let Stage8BatchStatement::Clear(wrong_statement) = &mut wrong_stage8_statement else {
+            unreachable!("test statement is clear");
+        };
+        wrong_statement.statement.claims[0].commitment.layout_digest = [9; 32];
         let mut wrong_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
-        let error = prove_akita_packed_openings(
+        let error = prove_akita_stage8_clear_openings(
             &prover_setup,
             &mut wrong_transcript,
             &artifact,
             &source,
-            &wrong_statement,
+            &wrong_stage8_statement,
         )
         .expect_err("non-artifact commitment should reject");
         assert!(matches!(
@@ -923,6 +1002,17 @@ mod tests {
             &JoltProtocolConfig,
         ) -> Result<(), VerifierError>;
         let _verify: VerifyFn = verify_akita_clear::<TestTranscript>;
+        type ProveFn = fn(
+            &AkitaProverSetup,
+            &AkitaVerifierPreprocessing,
+            &JoltDevice,
+            &AkitaJoltProof,
+            Option<&AkitaCommitment>,
+            &AkitaPackedWitnessArtifacts,
+            &SparsePackedWitness<AkitaField>,
+        ) -> Result<AkitaPackedBatchProof, VerifierError>;
+        let _prove: ProveFn =
+            prove_akita_jolt_final_openings::<TestTranscript, SparsePackedWitness<AkitaField>>;
     }
 
     #[test]

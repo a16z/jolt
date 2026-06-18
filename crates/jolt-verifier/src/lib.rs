@@ -13,7 +13,8 @@ pub mod verifier;
 #[cfg(feature = "akita")]
 pub use akita::{
     akita_lattice_protocol_config_for_layout, commit_akita_packed_witness,
-    commit_akita_packed_witness_with_config, prove_akita_packed_openings, verify_akita_clear,
+    commit_akita_packed_witness_with_config, prove_akita_jolt_final_openings,
+    prove_akita_packed_openings, prove_akita_stage8_clear_openings, verify_akita_clear,
     AkitaClearVectorCommitment, AkitaJoltProof, AkitaPackedWitnessArtifacts,
     AkitaVerifierPreprocessing,
 };
