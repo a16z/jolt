@@ -354,7 +354,11 @@ fn collect_guest_proofs(
         preprocess_guest_prover(&mut guest_prog, max_trace_length, bytecode_chunk_count);
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
-        jolt_sdk::verifier_preprocessing_from_prover(&guest_prover_preprocessing);
+        jolt_sdk::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover::<
+            jolt_sdk::F,
+            jolt_sdk::Curve,
+            jolt_sdk::PCS,
+        >(&guest_prover_preprocessing);
 
     let inputs = guest.inputs();
     info!("Got inputs: {inputs:?}");
@@ -415,7 +419,12 @@ fn collect_guest_proofs(
         push_record(&mut all_groups_data, &io_device);
 
         info!("  Verifying...");
-        let is_valid = jolt_sdk::verify_rv64imac(
+        let is_valid = jolt_sdk::jolt_verifier::verify::<
+            jolt_sdk::VerifierField,
+            jolt_sdk::VerifierPCS,
+            jolt_sdk::VerifierVC,
+            jolt_sdk::VerifierTranscript,
+        >(
             &guest_verifier_preprocessing,
             &io_device,
             &proof,
@@ -549,7 +558,11 @@ fn run_recursion_proof(
     let recursion_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
     let recursion_verifier_preprocessing =
-        jolt_sdk::verifier_preprocessing_from_prover(&recursion_prover_preprocessing);
+        jolt_sdk::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover::<
+            jolt_sdk::F,
+            jolt_sdk::Curve,
+            jolt_sdk::PCS,
+        >(&recursion_prover_preprocessing);
 
     // update program_size in memory_config now that we know it
     recursion.memory_config.program_size = Some(
@@ -585,7 +598,12 @@ fn run_recursion_proof(
                     &recursion_prover_preprocessing,
                 )
                 .expect("prover should produce verifier-native proof");
-            let is_valid = jolt_sdk::verify_rv64imac(
+            let is_valid = jolt_sdk::jolt_verifier::verify::<
+                jolt_sdk::VerifierField,
+                jolt_sdk::VerifierPCS,
+                jolt_sdk::VerifierVC,
+                jolt_sdk::VerifierTranscript,
+            >(
                 &recursion_verifier_preprocessing,
                 &io_device,
                 &proof,

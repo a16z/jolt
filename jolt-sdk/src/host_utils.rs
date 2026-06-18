@@ -40,21 +40,22 @@ pub use jolt_prover::zkvm::{
 pub use jolt_prover::AdviceTape;
 
 #[cfg(feature = "host")]
-pub type JoltVerifierPreprocessing<ProverF = F, ProverC = Curve, ProverPCS = PCS> =
-    jolt_prover::zkvm::proof::VerifierPreprocessing<ProverF, ProverC, ProverPCS>;
-#[cfg(feature = "host")]
-pub type RV64IMACProof = jolt_prover::zkvm::proof::RV64IMACProof;
-#[cfg(feature = "host")]
-pub type JoltProof = RV64IMACProof;
-#[cfg(feature = "host")]
 pub type VerifierPCS = jolt_dory::DoryScheme;
 #[cfg(feature = "host")]
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 #[cfg(feature = "host")]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(feature = "host")]
-pub type VerifierTrustedAdviceCommitment =
-    jolt_prover::zkvm::proof::VerifierTrustedAdviceCommitment;
+pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
+#[cfg(feature = "host")]
+pub type JoltVerifierPreprocessing =
+    jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
+#[cfg(feature = "host")]
+pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+#[cfg(feature = "host")]
+pub type JoltProof = RV64IMACProof;
+#[cfg(feature = "host")]
+pub type VerifierTrustedAdviceCommitment = jolt_dory::DoryCommitment;
 
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierPCS = jolt_dory::DoryScheme;
@@ -62,6 +63,8 @@ pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierField = jolt_field::Fr;
+#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
+pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
@@ -71,78 +74,6 @@ pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
 pub type JoltProof = RV64IMACProof;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierTrustedAdviceCommitment = jolt_dory::DoryCommitment;
-
-#[cfg(feature = "host")]
-pub fn verifier_preprocessing_from_shared(
-    shared_preprocessing: JoltSharedPreprocessing,
-    generators: <PCS as CommitmentScheme>::VerifierSetup,
-    blindfold_setup: Option<BlindfoldSetup<Curve>>,
-) -> JoltVerifierPreprocessing {
-    jolt_prover::zkvm::proof::verifier_preprocessing_from_shared(
-        shared_preprocessing,
-        generators,
-        blindfold_setup,
-    )
-}
-
-#[cfg(feature = "host")]
-pub fn verifier_preprocessing_from_prover(
-    preprocessing: &JoltProverPreprocessing<F, Curve, PCS>,
-) -> JoltVerifierPreprocessing {
-    jolt_prover::zkvm::proof::verifier_preprocessing_from_prover(preprocessing)
-}
-
-#[cfg(feature = "host")]
-#[doc(hidden)]
-pub fn verifier_commitment_from_prover(
-    commitment: <PCS as CommitmentScheme>::Commitment,
-) -> VerifierTrustedAdviceCommitment {
-    jolt_prover::zkvm::proof::commitment_into_verifier::<F, PCS>(commitment)
-}
-
-#[cfg(feature = "host")]
-pub fn verify_rv64imac(
-    preprocessing: &JoltVerifierPreprocessing,
-    public_io: &JoltDevice,
-    proof: &RV64IMACProof,
-    trusted_advice_commitment: Option<&VerifierTrustedAdviceCommitment>,
-    zk: bool,
-) -> Result<(), jolt_verifier::VerifierError> {
-    jolt_verifier::verify::<
-        VerifierField,
-        VerifierPCS,
-        VerifierVC,
-        jolt_transcript::LegacyBlake2bTranscript<VerifierField>,
-    >(
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment,
-        zk,
-    )
-}
-
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub fn verify_rv64imac(
-    preprocessing: &JoltVerifierPreprocessing,
-    public_io: &JoltDevice,
-    proof: &RV64IMACProof,
-    trusted_advice_commitment: Option<&VerifierTrustedAdviceCommitment>,
-    zk: bool,
-) -> Result<(), jolt_verifier::VerifierError> {
-    jolt_verifier::verify::<
-        VerifierField,
-        VerifierPCS,
-        VerifierVC,
-        jolt_transcript::LegacyBlake2bTranscript<VerifierField>,
-    >(
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment,
-        zk,
-    )
-}
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub fn serialize_verifier_object<T: serde::Serialize>(
@@ -184,4 +115,5 @@ pub use jolt_prover::poly::commitment::commitment_scheme::CommitmentScheme;
 pub use jolt_prover::poly::commitment::dory::{DoryContext, DoryGlobals, DoryLayout};
 pub use jolt_prover::poly::multilinear_polynomial::MultilinearPolynomial;
 pub use jolt_prover::zkvm::preprocessing::BlindfoldSetup;
+pub use jolt_prover::zkvm::proof::ProofCommitmentScheme;
 pub use jolt_prover::zkvm::ram::populate_memory_states;

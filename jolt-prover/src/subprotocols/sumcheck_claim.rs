@@ -70,9 +70,7 @@ impl CachedPointRef {
     }
 }
 
-/// These are parameters needed to evaluate some verifier evaluable polynomials, but not all.
-/// They're available in only some sumcheck verifier instances, so we allow them to be options.
-// TODO: Find a better way to do this
+/// Parameters available only to verifier-evaluable polynomials that depend on RAM layout.
 #[derive(Debug, Clone)]
 pub struct VerifierEvaluationParams {
     ram_k: Option<usize>,
@@ -101,8 +99,7 @@ pub enum VerifierEvaluablePolynomial {
     EqPlusOne(CachedPointRef),
     Lt(CachedPointRef),
     Identity,
-    // TODO: We could handle this using Identity, but we would need to add binary ops and constants
-    // within this struct.
+    // RAM address unmapping needs layout parameters in addition to the challenge point.
     UnmapRamAddress,
     One,
 }

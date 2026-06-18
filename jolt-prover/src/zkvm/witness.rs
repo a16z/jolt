@@ -1,5 +1,3 @@
-#![allow(static_mut_refs)]
-
 use allocative::Allocative;
 use common::constants::XLEN;
 use common::jolt_device::MemoryLayout;

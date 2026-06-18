@@ -1,4 +1,7 @@
-#![allow(clippy::module_name_repetitions)]
+#![expect(
+    clippy::module_name_repetitions,
+    reason = "verifier-facing aliases intentionally include protocol/module names"
+)]
 //! Native proof construction for prover outputs accepted by `jolt-verifier`.
 
 #[cfg(not(feature = "zk"))]
@@ -54,7 +57,7 @@ use crate::{
         config::{OneHotConfig as ProverOneHotConfig, ReadWriteConfig as ProverReadWriteConfig},
         preprocessing::{BlindfoldSetup, JoltSharedPreprocessing},
         program::ProgramPreprocessing as ProverProgramPreprocessing,
-        proof_serialization::JoltProofParts as ProverProofParts,
+        proof_parts::JoltProofParts as ProverProofParts,
         prover::JoltProverPreprocessing,
     },
 };
@@ -71,8 +74,7 @@ use crate::{
 #[cfg(feature = "zk")]
 use jolt_blindfold::BlindFoldProof as VerifierBlindFoldProof;
 
-pub type RV64IMACProof = VerifierProof<crate::ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme>;
-pub type VerifierTrustedAdviceCommitment = DoryCommitment;
+pub type RV64IMACProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 
 pub trait ProofField: JoltField {
     type VerifierField: VerifierFieldTrait;
@@ -167,21 +169,14 @@ impl ProofCurve<crate::ark_bn254::Fr> for Bn254Curve {
     }
 }
 
-pub type VerifierProof<F, C, PCS> = JoltProof<
-    <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
-    <C as ProofCurve<F>>::VerifierVectorCommitment,
->;
-
-pub type VerifierPreprocessing<F, C, PCS> = JoltVerifierPreprocessing<
-    <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
-    <C as ProofCurve<F>>::VerifierVectorCommitment,
->;
-
 fn verifier_preprocessing_from_parts<F, C, PCS>(
     shared: &JoltSharedPreprocessing<PCS>,
     generators: PCS::VerifierSetup,
     blindfold_setup: Option<&BlindfoldSetup<C>>,
-) -> VerifierPreprocessing<F, C, PCS>
+) -> JoltVerifierPreprocessing<
+    <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
+    <C as ProofCurve<F>>::VerifierVectorCommitment,
+>
 where
     F: ProofField,
     C: ProofCurve<F>,
@@ -244,7 +239,10 @@ pub fn verifier_preprocessing_from_shared<F, C, PCS>(
     shared: JoltSharedPreprocessing<PCS>,
     generators: PCS::VerifierSetup,
     blindfold_setup: Option<BlindfoldSetup<C>>,
-) -> VerifierPreprocessing<F, C, PCS>
+) -> JoltVerifierPreprocessing<
+    <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
+    <C as ProofCurve<F>>::VerifierVectorCommitment,
+>
 where
     F: ProofField,
     C: ProofCurve<F>,
@@ -255,7 +253,10 @@ where
 
 pub fn verifier_preprocessing_from_prover<F, C, PCS>(
     preprocessing: &JoltProverPreprocessing<F, C, PCS>,
-) -> VerifierPreprocessing<F, C, PCS>
+) -> JoltVerifierPreprocessing<
+    <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
+    <C as ProofCurve<F>>::VerifierVectorCommitment,
+>
 where
     F: ProofField,
     C: ProofCurve<F>,
@@ -268,37 +269,6 @@ where
     let blindfold_setup = Some(preprocessing.blindfold_setup());
 
     verifier_preprocessing_from_parts(&preprocessing.shared, generators, blindfold_setup.as_ref())
-}
-
-pub fn commitment_into_verifier<F, PCS>(
-    commitment: PCS::Commitment,
-) -> <PCS::VerifierPcs as VerifierCommitment>::Output
-where
-    F: ProofField,
-    PCS: ProofCommitmentScheme<F>,
-{
-    PCS::commitment_into_verifier(commitment)
-}
-
-pub fn verify_rv64imac(
-    preprocessing: &VerifierPreprocessing<crate::ark_bn254::Fr, Bn254Curve, DoryCommitmentScheme>,
-    public_io: &common::jolt_device::JoltDevice,
-    proof: &RV64IMACProof,
-    trusted_advice_commitment: Option<&VerifierTrustedAdviceCommitment>,
-    zk: bool,
-) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<
-        VerifierFr,
-        DoryScheme,
-        Pedersen<Bn254G1>,
-        jolt_transcript::LegacyBlake2bTranscript<VerifierFr>,
-    >(
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment,
-        zk,
-    )
 }
 
 #[cfg(not(feature = "zk"))]
@@ -429,9 +399,19 @@ fn commitments_from_proof_payload_order<C>(
 }
 
 #[cfg(not(feature = "zk"))]
+#[expect(
+    clippy::type_complexity,
+    reason = "private converter returns the verifier-native proof with projected backend types"
+)]
 pub(crate) fn proof_parts_into_verifier<F, C, PCS, FS>(
     proof: ProverProofParts<F, C, PCS, FS>,
-) -> Result<VerifierProof<F, C, PCS>, VerifierError>
+) -> Result<
+    JoltProof<
+        <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
+        <C as ProofCurve<F>>::VerifierVectorCommitment,
+    >,
+    VerifierError,
+>
 where
     F: ProofField,
     C: ProofCurve<F>,
@@ -475,9 +455,19 @@ where
 }
 
 #[cfg(feature = "zk")]
+#[expect(
+    clippy::type_complexity,
+    reason = "private converter returns the verifier-native proof with projected backend types"
+)]
 pub(crate) fn proof_parts_into_verifier<F, C, PCS, FS>(
     proof: ProverProofParts<F, C, PCS, FS>,
-) -> Result<VerifierProof<F, C, PCS>, VerifierError>
+) -> Result<
+    JoltProof<
+        <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
+        <C as ProofCurve<F>>::VerifierVectorCommitment,
+    >,
+    VerifierError,
+>
 where
     F: ProofField,
     C: ProofCurve<F>,
@@ -745,7 +735,7 @@ where
     reason = "standard prover proofs are expected to carry a complete clear-claim payload"
 )]
 fn convert_opening_claims<F>(
-    claims: crate::zkvm::proof_serialization::Claims<F>,
+    claims: crate::zkvm::proof_parts::ProverOpeningClaims<F>,
     trace_length: usize,
 ) -> jolt_verifier::proof::ClearProofClaims<F::VerifierField>
 where

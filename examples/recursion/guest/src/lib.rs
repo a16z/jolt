@@ -69,7 +69,13 @@ fn verify(bytes: &[u8]) -> u32 {
         end_cycle_tracking("deserialize device");
 
         start_cycle_tracking("verification");
-        let is_valid = jolt::verify_rv64imac(&verifier_preprocessing, &device, &proof, None, false).is_ok();
+        let is_valid = jolt::jolt_verifier::verify::<
+            jolt::VerifierField,
+            jolt::VerifierPCS,
+            jolt::VerifierVC,
+            jolt::VerifierTranscript,
+        >(&verifier_preprocessing, &device, &proof, None, false)
+        .is_ok();
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;
     }

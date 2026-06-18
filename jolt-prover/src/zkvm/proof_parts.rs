@@ -54,7 +54,7 @@ pub(crate) struct JoltProofParts<
     pub joint_opening_proof: PCS::Proof,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     #[cfg(not(feature = "zk"))]
-    pub opening_claims: Claims<F>,
+    pub opening_claims: ProverOpeningClaims<F>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: ReadWriteConfig,
@@ -63,10 +63,10 @@ pub(crate) struct JoltProofParts<
 }
 
 #[cfg(not(feature = "zk"))]
-pub(crate) struct Claims<F: JoltField>(pub Openings<F>);
+pub(crate) struct ProverOpeningClaims<F: JoltField>(pub Openings<F>);
 
 #[cfg(not(feature = "zk"))]
-impl<F: JoltField> CanonicalSerialize for Claims<F> {
+impl<F: JoltField> CanonicalSerialize for ProverOpeningClaims<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -91,14 +91,14 @@ impl<F: JoltField> CanonicalSerialize for Claims<F> {
 }
 
 #[cfg(not(feature = "zk"))]
-impl<F: JoltField> Valid for Claims<F> {
+impl<F: JoltField> Valid for ProverOpeningClaims<F> {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
 #[cfg(not(feature = "zk"))]
-impl<F: JoltField> CanonicalDeserialize for Claims<F> {
+impl<F: JoltField> CanonicalDeserialize for ProverOpeningClaims<F> {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
@@ -111,7 +111,7 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
             let claim = F::deserialize_with_mode(&mut reader, compress, validate)?;
             claims.insert(key, (OpeningPoint::default(), claim));
         }
-        Ok(Claims(claims))
+        Ok(ProverOpeningClaims(claims))
     }
 }
 

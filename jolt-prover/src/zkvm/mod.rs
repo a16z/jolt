@@ -74,7 +74,7 @@ pub mod program;
 #[cfg(feature = "prover")]
 pub mod proof;
 #[cfg(feature = "prover")]
-pub(crate) mod proof_serialization;
+pub(crate) mod proof_parts;
 #[cfg(feature = "prover")]
 pub mod prover;
 pub mod r1cs;
@@ -314,7 +314,10 @@ macro_rules! pprof_scope {
     };
 }
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "test-only prover debug payload is compiled in host builds"
+)]
 pub struct ProverDebugInfo<F, ProofTranscript, PCS>
 where
     F: JoltField,
@@ -327,7 +330,10 @@ where
 }
 
 /// Absorb public instance data into the transcript for Fiat-Shamir.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Fiat-Shamir preamble mirrors protocol inputs"
+)]
 pub fn fiat_shamir_preamble(
     program_io: &JoltDevice,
     ram_K: usize,

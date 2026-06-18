@@ -243,13 +243,13 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_signature = if has_trusted_advice {
-            quote! { Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
+            quote! { Option<jolt::VerifierTrustedAdviceCommitment>, }
         } else {
             quote! {}
         };
 
         let commitment_param_in_closure = if has_trusted_advice {
-            quote! { trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
+            quote! { trusted_advice_commitment: Option<jolt::VerifierTrustedAdviceCommitment>, }
         } else {
             quote! {}
         };
@@ -260,19 +260,10 @@ impl MacroBuilder {
             quote! { None }
         };
 
-        let convert_trusted_advice_commitment = if has_trusted_advice {
-            quote! {
-                let trusted_advice_commitment =
-                    trusted_advice_commitment.map(jolt::verifier_commitment_from_prover);
-            }
-        } else {
-            quote! {}
-        };
-
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
-                preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>,
+                preprocessing: jolt::JoltVerifierPreprocessing,
             ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + Sync + Send
             {
                 #imports
@@ -296,8 +287,12 @@ impl MacroBuilder {
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    #convert_trusted_advice_commitment
-                    jolt::verify_rv64imac(
+                    jolt::jolt_verifier::verify::<
+                        jolt::VerifierField,
+                        jolt::VerifierPCS,
+                        jolt::VerifierVC,
+                        jolt::VerifierTranscript,
+                    >(
                         &preprocessing,
                         &io_device,
                         &proof,
@@ -719,9 +714,13 @@ impl MacroBuilder {
                 shared_preprocess: jolt::JoltSharedPreprocessing,
                 generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
-            ) -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
+            ) -> jolt::JoltVerifierPreprocessing
             {
-                jolt::verifier_preprocessing_from_shared(
+                jolt::jolt_prover::zkvm::proof::verifier_preprocessing_from_shared::<
+                    jolt::F,
+                    jolt::Curve,
+                    jolt::PCS,
+                >(
                     shared_preprocess,
                     generators,
                     blindfold_setup,
@@ -741,10 +740,14 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing<jolt::F, jolt::Curve, jolt::PCS>)
-                -> jolt::JoltVerifierPreprocessing<jolt::F, jolt::Curve, jolt::PCS>
+                -> jolt::JoltVerifierPreprocessing
             {
                 #imports
-                jolt::verifier_preprocessing_from_prover(prover_preprocessing)
+                jolt::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover::<
+                    jolt::F,
+                    jolt::Curve,
+                    jolt::PCS,
+                >(prover_preprocessing)
             }
         }
     }

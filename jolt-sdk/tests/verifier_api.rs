@@ -2,8 +2,7 @@
 #[cfg(feature = "host")]
 mod tests {
     use jolt_sdk::{
-        deserialize_verifier_object, verify_rv64imac, JoltDevice, JoltVerifierPreprocessing,
-        RV64IMACProof,
+        deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,
     };
 
     #[test]
@@ -29,7 +28,12 @@ mod tests {
         let device: JoltDevice = deserialize_verifier_object(&io_bytes).unwrap();
         let start = std::time::Instant::now();
         println!("Verifying proof...");
-        let result = verify_rv64imac(&preprocessing, &device, &proof, None, false);
+        let result = jolt_sdk::jolt_verifier::verify::<
+            jolt_sdk::VerifierField,
+            jolt_sdk::VerifierPCS,
+            jolt_sdk::VerifierVC,
+            jolt_sdk::VerifierTranscript,
+        >(&preprocessing, &device, &proof, None, false);
         let duration = start.elapsed();
         println!("Verification took: {} ms", duration.as_millis());
         assert!(result.is_ok(), "Verifier failed: {:?}", result.err());

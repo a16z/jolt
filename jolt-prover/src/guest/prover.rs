@@ -6,13 +6,12 @@ use crate::poly::commitment::dory::DoryCommitmentScheme;
 use crate::transcripts::Transcript;
 use crate::zkvm::bytecode::PreprocessingError;
 use crate::zkvm::program::ProgramPreprocessing;
-use crate::zkvm::proof::{ProofCommitmentScheme, ProofCurve, ProofField, VerifierProof};
+use crate::zkvm::proof::{ProofCommitmentScheme, ProofCurve, ProofField};
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::ProverDebugInfo;
 use common::jolt_device::MemoryLayout;
 use tracer::JoltDevice;
 
-#[allow(clippy::type_complexity)]
 #[cfg(feature = "prover")]
 pub fn preprocess(
     guest: &Program,
@@ -34,7 +33,11 @@ pub fn preprocess(
     Ok(JoltProverPreprocessing::new(shared_preprocessing))
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[expect(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "SDK generated prover API mirrors guest arguments and advice channels"
+)]
 #[cfg(feature = "prover")]
 pub fn prove<
     F: ProofField,
@@ -52,7 +55,10 @@ pub fn prove<
     preprocessing: &JoltProverPreprocessing<F, C, PCS>,
 ) -> Result<
     (
-        VerifierProof<F, C, PCS>,
+        jolt_verifier::JoltProof<
+            <PCS as ProofCommitmentScheme<F>>::VerifierPcs,
+            <C as ProofCurve<F>>::VerifierVectorCommitment,
+        >,
         JoltDevice,
         Option<ProverDebugInfo<F, FS, PCS>>,
     ),

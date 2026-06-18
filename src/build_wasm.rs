@@ -9,6 +9,7 @@ use std::{
 
 use ark_bn254::Fr;
 use eyre::Result;
+use jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
 use jolt_prover::{
     curve::Bn254Curve,
     host::Program,
@@ -18,7 +19,7 @@ use jolt_prover::{
         prover::JoltProverPreprocessing,
     },
 };
-use jolt_sdk::{serialize_verifier_object, verifier_preprocessing_from_prover};
+use jolt_sdk::serialize_verifier_object;
 use syn::{punctuated::Punctuated, Attribute, ItemFn, Meta, PathSegment, Token};
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
@@ -222,8 +223,7 @@ fn generate_wasm_verify_rs(func_names: &[String]) -> Result<()> {
     code.push_str(
         r#"use wasm_bindgen::prelude::*;
 use jolt_sdk::{
-    deserialize_verifier_object, verify_rv64imac, JoltDevice, JoltVerifierPreprocessing,
-    RV64IMACProof,
+    deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,
 };
 "#,
     );
@@ -245,7 +245,12 @@ pub fn verify_{func_name}(preprocessing_data: &[u8], proof_data: &[u8], io_data:
         Ok(d) => d,
         Err(_) => return false,
     }};
-    verify_rv64imac(&preprocessing, &program_io, &proof, None, false).is_ok()
+    jolt_sdk::jolt_verifier::verify::<
+        jolt_sdk::VerifierField,
+        jolt_sdk::VerifierPCS,
+        jolt_sdk::VerifierVC,
+        jolt_sdk::VerifierTranscript,
+    >(&preprocessing, &program_io, &proof, None, false).is_ok()
 }}
 "#
         ));

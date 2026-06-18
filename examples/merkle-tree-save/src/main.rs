@@ -43,6 +43,9 @@ pub fn main() {
         TrustedAdvice::new(leaf3),
         &prover_preprocessing,
     );
+    let verifier_trusted_advice_commitment = trusted_advice_commitment.clone().map(
+        <jolt_sdk::PCS as jolt_sdk::ProofCommitmentScheme<jolt_sdk::F>>::commitment_into_verifier,
+    );
 
     let prove_merkle_tree = guest::build_prover_merkle_tree(program, prover_preprocessing.clone());
     let verify_merkle_tree = guest::build_verifier_merkle_tree(verifier_preprocessing);
@@ -63,8 +66,6 @@ pub fn main() {
             .expect("Could not serialize proof.");
         serialize_and_print_size("io_device", "/tmp/merkle_io_device.bin", &program_io)
             .expect("Could not serialize io_device.");
-        let verifier_trusted_advice_commitment =
-            trusted_advice_commitment.map(jolt_sdk::verifier_commitment_from_prover);
         serialize_and_print_size(
             "Trusted Advice Commitment",
             "/tmp/merkle_trusted_advice.bin",
@@ -78,7 +79,7 @@ pub fn main() {
         leaf1,
         output,
         program_io.panic,
-        trusted_advice_commitment,
+        verifier_trusted_advice_commitment,
         proof,
     );
 

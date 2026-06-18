@@ -1,16 +1,8 @@
-use std::{
-    fs::File,
-    io::{Read, Write},
-    marker::PhantomData,
-    path::Path,
-};
-
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
 
 use crate::{
     curve::JoltCurve,
-    field::JoltField,
     poly::commitment::{
         commitment_scheme::CommitmentScheme, dory::DoryGlobals, pedersen::PedersenGenerators,
     },
@@ -21,12 +13,7 @@ use crate::{
             DEFAULT_COMMITTED_BYTECODE_CHUNK_COUNT,
         },
         program::{CommittedProgramProverData, ProgramMetadata, ProgramPreprocessing},
-        Serializable,
     },
-};
-#[cfg(feature = "prover")]
-use crate::{
-    poly::commitment::commitment_scheme::ZkEvalCommitment, zkvm::prover::JoltProverPreprocessing,
 };
 
 #[derive(Debug, Clone)]
@@ -287,179 +274,5 @@ impl<C: JoltCurve> std::ops::Deref for BlindfoldSetup<C> {
 impl<C: JoltCurve> From<BlindfoldSetup<C>> for PedersenGenerators<C> {
     fn from(setup: BlindfoldSetup<C>) -> Self {
         setup.0
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct JoltVerifierPreprocessing<F, C, PCS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-{
-    _curve: PhantomData<C>,
-    pub generators: PCS::VerifierSetup,
-    pub shared: JoltSharedPreprocessing<PCS>,
-    pub blindfold_setup: Option<BlindfoldSetup<C>>,
-}
-
-impl<F, C, PCS> CanonicalSerialize for JoltVerifierPreprocessing<F, C, PCS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-    PCS::VerifierSetup: CanonicalSerialize,
-    PCS::Commitment: CanonicalSerialize,
-{
-    fn serialize_with_mode<W: std::io::Write>(
-        &self,
-        mut writer: W,
-        compress: ark_serialize::Compress,
-    ) -> Result<(), ark_serialize::SerializationError> {
-        self.generators.serialize_with_mode(&mut writer, compress)?;
-        self.shared.serialize_with_mode(&mut writer, compress)?;
-        self.blindfold_setup
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
-        self.generators.serialized_size(compress)
-            + self.shared.serialized_size(compress)
-            + self.blindfold_setup.serialized_size(compress)
-    }
-}
-
-impl<F, C, PCS> CanonicalDeserialize for JoltVerifierPreprocessing<F, C, PCS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-    PCS::VerifierSetup: CanonicalDeserialize,
-    PCS::Commitment: CanonicalDeserialize,
-{
-    fn deserialize_with_mode<R: std::io::Read>(
-        mut reader: R,
-        compress: ark_serialize::Compress,
-        validate: ark_serialize::Validate,
-    ) -> Result<Self, ark_serialize::SerializationError> {
-        Ok(Self {
-            _curve: PhantomData,
-            generators: PCS::VerifierSetup::deserialize_with_mode(&mut reader, compress, validate)?,
-            shared: JoltSharedPreprocessing::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
-            blindfold_setup: Option::<BlindfoldSetup<C>>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
-        })
-    }
-}
-
-impl<F, C, PCS> ark_serialize::Valid for JoltVerifierPreprocessing<F, C, PCS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-    PCS::VerifierSetup: ark_serialize::Valid,
-    PCS::Commitment: ark_serialize::Valid,
-{
-    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
-        self.generators.check()?;
-        self.shared.check()?;
-        self.blindfold_setup.check()?;
-        Ok(())
-    }
-}
-
-impl<F, C, PCS> Serializable for JoltVerifierPreprocessing<F, C, PCS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-    PCS::VerifierSetup: CanonicalSerialize + CanonicalDeserialize,
-    PCS::Commitment: CanonicalSerialize + CanonicalDeserialize,
-{
-}
-
-impl<F, C, PCS> JoltVerifierPreprocessing<F, C, PCS>
-where
-    F: JoltField,
-    C: JoltCurve<F = F>,
-    PCS: CommitmentScheme<Field = F>,
-    PCS::VerifierSetup: CanonicalSerialize + CanonicalDeserialize,
-    PCS::Commitment: CanonicalSerialize + CanonicalDeserialize,
-{
-    pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
-        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
-        let mut file = File::create(filename.as_path())?;
-        let mut data = Vec::new();
-        self.serialize_compressed(&mut data).unwrap();
-        file.write_all(&data)?;
-        Ok(())
-    }
-
-    pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
-        let filename = Path::new(target_dir).join("jolt_verifier_preprocessing.dat");
-        let mut file = File::open(filename.as_path())?;
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
-        Ok(Self::deserialize_compressed(&*data).unwrap())
-    }
-}
-
-impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F>>
-    JoltVerifierPreprocessing<F, C, PCS>
-{
-    #[tracing::instrument(skip_all, name = "JoltVerifierPreprocessing::new")]
-    pub fn new(
-        mut shared: JoltSharedPreprocessing<PCS>,
-        generators: PCS::VerifierSetup,
-        blindfold_setup: Option<BlindfoldSetup<C>>,
-    ) -> Self {
-        shared.program = shared.program.to_verifier_program();
-        Self {
-            _curve: PhantomData,
-            generators,
-            shared,
-            blindfold_setup,
-        }
-    }
-
-    #[cfg(feature = "zk")]
-    pub fn pedersen_generators(&self, count: usize) -> PedersenGenerators<C> {
-        let gens = &self
-            .blindfold_setup
-            .as_ref()
-            .expect("BlindfoldSetup required for ZK mode")
-            .0;
-        assert!(
-            count <= gens.message_generators.len(),
-            "Requested {count} Pedersen generators but BlindfoldSetup only has {}",
-            gens.message_generators.len()
-        );
-        PedersenGenerators::new(
-            gens.message_generators[..count].to_vec(),
-            gens.blinding_generator,
-        )
-    }
-}
-
-#[cfg(feature = "prover")]
-impl<F: JoltField, C: JoltCurve<F = F>, PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<C>>
-    From<&JoltProverPreprocessing<F, C, PCS>> for JoltVerifierPreprocessing<F, C, PCS>
-{
-    fn from(prover_preprocessing: &JoltProverPreprocessing<F, C, PCS>) -> Self {
-        let shared = prover_preprocessing.shared.clone();
-        let generators = PCS::setup_verifier(&prover_preprocessing.generators);
-        #[cfg(not(feature = "zk"))]
-        let blindfold_setup = None;
-        #[cfg(feature = "zk")]
-        let blindfold_setup = Some(prover_preprocessing.blindfold_setup());
-        Self::new(shared, generators, blindfold_setup)
     }
 }

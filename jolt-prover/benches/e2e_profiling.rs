@@ -1,7 +1,7 @@
 use jolt_prover::host;
 use jolt_prover::zkvm::preprocessing::JoltSharedPreprocessing;
 use jolt_prover::zkvm::program::ProgramPreprocessing;
-use jolt_prover::zkvm::proof::{verifier_preprocessing_from_prover, verify_rv64imac};
+use jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
 use jolt_prover::zkvm::prover::JoltProverPreprocessing;
 use jolt_prover::zkvm::RV64IMACProver;
 use std::fs;
@@ -235,7 +235,12 @@ fn prove_example(
             .expect("prover should produce verifier-native proof");
 
         let verifier_preprocessing = verifier_preprocessing_from_prover(&preprocessing);
-        verify_rv64imac(
+        jolt_verifier::verify::<
+            jolt_field::Fr,
+            jolt_dory::DoryScheme,
+            jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
+            jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+        >(
             &verifier_preprocessing,
             &program_io,
             &jolt_proof,
@@ -303,7 +308,12 @@ fn prove_example_with_trace(
         .len();
 
     let verifier_preprocessing = verifier_preprocessing_from_prover(&preprocessing);
-    verify_rv64imac(
+    jolt_verifier::verify::<
+        jolt_field::Fr,
+        jolt_dory::DoryScheme,
+        jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
+        jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+    >(
         &verifier_preprocessing,
         &program_io,
         &proof,

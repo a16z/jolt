@@ -300,7 +300,10 @@ where
             })
             .collect();
         // SAFETY: Vec<ArkG1> and Vec<E::G1> have the same memory layout when E = BN254.
-        #[allow(clippy::missing_transmute_annotations)]
+        #[expect(
+            clippy::missing_transmute_annotations,
+            reason = "type aliases obscure the concrete BN254 transmute target"
+        )]
         unsafe {
             return Ok(std::mem::transmute(result));
         }
@@ -404,13 +407,16 @@ where
     };
 
     // SAFETY: Vec<ArkG1> and Vec<E::G1> have the same memory layout when E = BN254.
-    #[allow(clippy::missing_transmute_annotations)]
+    #[expect(
+        clippy::missing_transmute_annotations,
+        reason = "type aliases obscure the concrete BN254 transmute target"
+    )]
     unsafe {
         Ok(std::mem::transmute(result))
     }
 }
 
-/// Wrapper to bridge Jolt transcripts to Dory transcript trait
+/// Adapter from Jolt transcripts to Dory's transcript trait.
 #[derive(Default)]
 pub struct JoltToDoryTranscript<'a, T: Transcript> {
     transcript: Option<&'a mut T>,

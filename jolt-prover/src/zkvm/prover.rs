@@ -117,7 +117,7 @@ use crate::{
             ra_virtual::InstructionRaSumcheckProver as LookupsRaSumcheckProver,
             read_raf_checking::InstructionReadRafSumcheckProver,
         },
-        proof_serialization::JoltProofParts,
+        proof_parts::JoltProofParts,
         r1cs::key::UniformSpartanKey,
         ram::{
             gen_ram_memory_states, hamming_booleanity::HammingBooleanitySumcheckProver,
@@ -223,7 +223,10 @@ impl<
         ProofTranscript: Transcript,
     > JoltCpuProver<'a, F, C, PCS, ProofTranscript>
 {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "prover construction mirrors public inputs and advice channels"
+    )]
     pub fn gen_from_elf(
         preprocessing: &'a JoltProverPreprocessing<F, C, PCS>,
         elf_contents: &[u8],
@@ -423,7 +426,10 @@ impl<
         }
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(
+        clippy::type_complexity,
+        reason = "internal proof assembly returns prover-native parts plus debug payload"
+    )]
     #[tracing::instrument(skip_all)]
     fn prove_parts(
         mut self,
@@ -511,8 +517,9 @@ impl<
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
 
         #[cfg(not(feature = "zk"))]
-        let opening_claims =
-            crate::zkvm::proof_serialization::Claims(self.opening_accumulator.openings.clone());
+        let opening_claims = crate::zkvm::proof_parts::ProverOpeningClaims(
+            self.opening_accumulator.openings.clone(),
+        );
 
         #[cfg(test)]
         {
@@ -583,7 +590,10 @@ impl<
         self,
     ) -> Result<
         (
-            crate::zkvm::proof::VerifierProof<F, C, PCS>,
+            jolt_verifier::JoltProof<
+                <PCS as crate::zkvm::proof::ProofCommitmentScheme<F>>::VerifierPcs,
+                <C as crate::zkvm::proof::ProofCurve<F>>::VerifierVectorCommitment,
+            >,
             Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
         ),
         jolt_verifier::VerifierError,
@@ -833,8 +843,11 @@ impl<
         );
     }
 
-    /// Returns (uni_skip_proof, sumcheck_proof, challenges, initial_claim)
-    #[allow(clippy::type_complexity)]
+    /// Returns (uni_skip_proof, sumcheck_proof, challenges).
+    #[expect(
+        clippy::type_complexity,
+        reason = "stage proof functions return protocol artifacts separately"
+    )]
     #[tracing::instrument(skip_all)]
     fn prove_stage1(
         &mut self,
@@ -872,8 +885,11 @@ impl<
         (first_round_proof, sumcheck_proof, r_stage1)
     }
 
-    /// Returns (uni_skip_proof, sumcheck_proof, challenges)
-    #[allow(clippy::type_complexity)]
+    /// Returns (uni_skip_proof, sumcheck_proof, challenges).
+    #[expect(
+        clippy::type_complexity,
+        reason = "stage proof functions return protocol artifacts separately"
+    )]
     #[tracing::instrument(skip_all)]
     fn prove_stage2(
         &mut self,
@@ -2596,7 +2612,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::zkvm::proof::{
-        commitment_into_verifier, verifier_preprocessing_from_prover, verify_rv64imac,
+        verifier_preprocessing_from_prover, ProofCommitmentScheme,
         RV64IMACProof as VerifierRV64IMACProof,
     };
     use ark_bn254::Fr;
@@ -2691,10 +2707,15 @@ mod tests {
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
     ) -> Result<(), jolt_verifier::VerifierError> {
         let preprocessing = verifier_preprocessing_from_prover(preprocessing);
-        let trusted_advice_commitment =
-            trusted_advice_commitment.map(commitment_into_verifier::<Fr, DoryCommitmentScheme>);
+        let trusted_advice_commitment = trusted_advice_commitment
+            .map(<DoryCommitmentScheme as ProofCommitmentScheme<Fr>>::commitment_into_verifier);
 
-        verify_rv64imac(
+        jolt_verifier::verify::<
+            jolt_field::Fr,
+            jolt_dory::DoryScheme,
+            jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
+            jolt_transcript::LegacyBlake2bTranscript<jolt_field::Fr>,
+        >(
             &preprocessing,
             &public_io,
             &proof,

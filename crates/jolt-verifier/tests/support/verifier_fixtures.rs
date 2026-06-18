@@ -31,7 +31,7 @@ use jolt_prover::{
     zkvm::{
         preprocessing::JoltSharedPreprocessing,
         program::ProgramPreprocessing,
-        proof::{verifier_preprocessing_from_prover, ProofCommitmentScheme, VerifierProof},
+        proof::{verifier_preprocessing_from_prover, ProofCommitmentScheme},
         prover::JoltProverPreprocessing,
         RV64IMACProver,
     },
@@ -133,7 +133,7 @@ fn lock_exclusive(file: &fs::File) {
 type ProverField = jolt_prover::ark_bn254::Fr;
 type ProverCommitment = <DoryCommitmentScheme as ProverCommitmentScheme>::Commitment;
 type ProverOpeningHint = <DoryCommitmentScheme as ProverCommitmentScheme>::OpeningProofHint;
-type VerifierFixtureProof = VerifierProof<ProverField, Bn254Curve, DoryCommitmentScheme>;
+type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 type TrustedAdviceCommitter = fn(
     &JoltProverPreprocessing<ProverField, Bn254Curve, DoryCommitmentScheme>,

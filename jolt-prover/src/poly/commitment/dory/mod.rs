@@ -1,7 +1,7 @@
 //! Dory polynomial commitment scheme
 //!
-//! This module provides a Dory commitment scheme implementation that bridges
-//! between Jolt's types and final-dory's arkworks backend.
+//! This module adapts Jolt's polynomial commitment traits to final-dory's
+//! arkworks backend.
 
 mod commitment_scheme;
 mod dory_globals;
