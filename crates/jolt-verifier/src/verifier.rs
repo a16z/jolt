@@ -1535,7 +1535,7 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn lattice_validity_surface_requires_sumcheck_and_opening_proofs() {
+    fn lattice_validity_surface_requires_all_validity_material() {
         let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
         proof.stages.lattice_packed_validity_sumcheck_proof = None;
 
@@ -1553,6 +1553,19 @@ mod tests {
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
             Err(VerifierError::MissingAkitaPackedValidityProof {
                 field: "opening_proof"
+            })
+        ));
+
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("fixture should be a clear proof");
+        };
+        claims.stage7.lattice_packed_validity = None;
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::MissingAkitaPackedValidityProof {
+                field: "opening_claims"
             })
         ));
     }
@@ -1593,6 +1606,36 @@ mod tests {
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
             Err(VerifierError::UnexpectedAkitaPackedValidityProof {
                 field: "sumcheck_proof"
+            })
+        ));
+
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.lattice_packed_validity_opening_proof = Some(());
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+                field: "opening_proof"
+            })
+        ));
+
+        let mut proof = proof_with_zk(false, clear_claims());
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("fixture should be a clear proof");
+        };
+        claims.stage7.lattice_packed_validity =
+            Some(stage7::inputs::LatticePackedValidityOutputClaims {
+                opening_claims: Vec::new(),
+            });
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+                field: "opening_claims"
             })
         ));
     }
