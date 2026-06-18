@@ -3,11 +3,10 @@ use crate::{
     stages::PrecommittedSchedule,
     VerifierError,
 };
-#[cfg(feature = "field-inline")]
-use jolt_akita::AKITA_FIELD_MODULUS;
 use jolt_akita::{
     AkitaField, PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId,
     PackedFamilySpec, PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
+    AKITA_FIELD_MODULUS,
 };
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
@@ -16,7 +15,7 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::protocols::jolt::{
     advice_bytes_validity_requirement, byte_decode_terms, bytecode_chunk_lattice_view_formula,
-    bytecode_validity_requirements,
+    bytecode_imm_canonical_bytes_requirement, bytecode_validity_requirements,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
     fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
@@ -69,14 +68,18 @@ pub enum LatticePackedValidityStatementKind {
     FieldElementCanonicalBytes,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum FieldCanonicalFactor {
     Range {
         byte_index: usize,
+        family: PackedFamilyId,
+        limb: usize,
         start_symbol: usize,
     },
     Eq {
         byte_index: usize,
+        family: PackedFamilyId,
+        limb: usize,
         symbol: usize,
     },
 }
@@ -190,6 +193,11 @@ pub fn derive_akita_packed_validity_requirements(
     })?;
     for index in 0..bytecode_layout.chunk_count() {
         requirements.extend(bytecode_validity_requirements(index, AkitaField::NUM_BYTES));
+        requirements.push(bytecode_imm_canonical_bytes_requirement(
+            index,
+            AkitaField::NUM_BYTES,
+            AKITA_FIELD_MODULUS,
+        ));
     }
 
     let _ = precommitted.program_image.as_ref().ok_or_else(|| {
@@ -208,6 +216,20 @@ pub fn derive_akita_packed_validity_statements(
 ) -> Result<Vec<LatticePackedValidityStatement>, VerifierError> {
     let mut statements = Vec::new();
     for requirement in requirements {
+        if matches!(
+            requirement.kind,
+            LatticePackedValidityKind::FieldElementCanonicalBytes { .. }
+        ) {
+            let row_vars = validate_field_element_canonical_bytes_layout(layout, requirement)?;
+            statements.push(LatticePackedValidityStatement {
+                requirement: requirement.clone(),
+                kind: LatticePackedValidityStatementKind::FieldElementCanonicalBytes,
+                num_vars: row_vars,
+                degree: canonical_field_byte_width(requirement)?,
+            });
+            continue;
+        }
+
         let family_id = akita_packed_family_id(&requirement.family);
         let family = layout.family(&family_id).ok_or_else(|| {
             invalid_lattice_config(format!(
@@ -299,15 +321,9 @@ pub fn derive_akita_packed_validity_statements(
                     degree: 3,
                 });
             }
-            LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => {
-                let row_vars = validate_field_element_canonical_bytes_layout(layout, requirement)?;
-                statements.push(LatticePackedValidityStatement {
-                    requirement: requirement.clone(),
-                    kind: LatticePackedValidityStatementKind::FieldElementCanonicalBytes,
-                    num_vars: row_vars,
-                    degree: canonical_field_byte_width(requirement)?,
-                });
-            }
+            LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => unreachable!(
+                "field canonical-byte validity is handled before family shape validation"
+            ),
         }
     }
     Ok(statements)
@@ -420,43 +436,73 @@ fn validate_field_element_canonical_bytes_layout(
     requirement: &LatticePackedValidityRequirement,
 ) -> Result<usize, VerifierError> {
     let byte_width = canonical_field_byte_width(requirement)?;
-    if requirement.family != (LatticePackedFamilyId::FieldRdIncByte { index: 0 })
-        || requirement.limbs != 1
-        || requirement.alphabet_size != 256
-    {
+    if requirement.limbs != 1 || requirement.alphabet_size != 256 {
         return Err(invalid_lattice_config(
-            "field-element canonical-byte validity must be anchored on FieldRdIncByte[0]",
+            "field-element canonical-byte validity must use one byte limb and byte alphabet",
         ));
     }
-    let first_id = PackedFamilyId::FieldRdIncByte { index: 0 };
-    let first = layout.family(&first_id).ok_or_else(|| {
-        invalid_lattice_config("field-element canonical-byte validity requires FieldRdIncByte[0]")
-    })?;
-    if first.limbs != 1 || first.alphabet.size() != 256 {
-        return Err(invalid_lattice_config(
-            "field-element canonical-byte validity requires byte one-hot families",
-        ));
-    }
-    let rows = first.domain.rows().map_err(|error| {
-        invalid_lattice_config(format!(
-            "field-element canonical-byte row domain is invalid: {error}"
-        ))
-    })?;
-    let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
-    for index in 1..byte_width {
-        let family_id = PackedFamilyId::FieldRdIncByte { index };
-        let family = layout.family(&family_id).ok_or_else(|| {
-            invalid_lattice_config(format!(
-                "field-element canonical-byte validity requires {family_id:?}"
-            ))
-        })?;
-        if family.domain != first.domain || family.limbs != 1 || family.alphabet.size() != 256 {
-            return Err(invalid_lattice_config(format!(
-                "field-element canonical-byte validity requires {family_id:?} to be a byte family over the FieldRdIncByte[0] row domain"
-            )));
+
+    match &requirement.family {
+        LatticePackedFamilyId::FieldRdIncByte { index: 0 } => {
+            let first_id = PackedFamilyId::FieldRdIncByte { index: 0 };
+            let first = layout.family(&first_id).ok_or_else(|| {
+                invalid_lattice_config(
+                    "field-element canonical-byte validity requires FieldRdIncByte[0]",
+                )
+            })?;
+            if first.limbs != 1 || first.alphabet.size() != 256 {
+                return Err(invalid_lattice_config(
+                    "field-element canonical-byte validity requires byte one-hot families",
+                ));
+            }
+            let rows = first.domain.rows().map_err(|error| {
+                invalid_lattice_config(format!(
+                    "field-element canonical-byte row domain is invalid: {error}"
+                ))
+            })?;
+            let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
+            for index in 1..byte_width {
+                let family_id = PackedFamilyId::FieldRdIncByte { index };
+                let family = layout.family(&family_id).ok_or_else(|| {
+                    invalid_lattice_config(format!(
+                        "field-element canonical-byte validity requires {family_id:?}"
+                    ))
+                })?;
+                if family.domain != first.domain
+                    || family.limbs != 1
+                    || family.alphabet.size() != 256
+                {
+                    return Err(invalid_lattice_config(format!(
+                        "field-element canonical-byte validity requires {family_id:?} to be a byte family over the FieldRdIncByte[0] row domain"
+                    )));
+                }
+            }
+            Ok(row_vars)
         }
+        LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
+            let family_id = PackedFamilyId::BytecodeImmBytes { chunk: *chunk };
+            let family = layout.family(&family_id).ok_or_else(|| {
+                invalid_lattice_config(format!(
+                    "field-element canonical-byte validity requires {family_id:?}"
+                ))
+            })?;
+            if family.limbs != byte_width || family.alphabet.size() != 256 {
+                return Err(invalid_lattice_config(format!(
+                    "field-element canonical-byte validity requires {family_id:?} to expose field bytes as byte limbs"
+                )));
+            }
+            let rows = family.domain.rows().map_err(|error| {
+                invalid_lattice_config(format!(
+                    "field-element canonical-byte row domain is invalid: {error}"
+                ))
+            })?;
+            power_of_two_log(rows, "field-element canonical-byte row count")
+        }
+        _ => Err(invalid_lattice_config(format!(
+            "field-element canonical-byte validity cannot be anchored on {:?}",
+            requirement.family
+        ))),
     }
-    Ok(row_vars)
 }
 
 fn canonical_field_byte_width(
@@ -484,6 +530,31 @@ fn canonical_field_byte_width(
     Ok(byte_width)
 }
 
+fn canonical_field_byte_location(
+    requirement: &LatticePackedValidityRequirement,
+    byte_index: usize,
+) -> Result<(PackedFamilyId, usize), VerifierError> {
+    let byte_width = canonical_field_byte_width(requirement)?;
+    if byte_index >= byte_width {
+        return Err(invalid_lattice_config(format!(
+            "field-element canonical-byte index {byte_index} is outside byte width {byte_width}",
+        )));
+    }
+    match &requirement.family {
+        LatticePackedFamilyId::FieldRdIncByte { index: 0 } => {
+            Ok((PackedFamilyId::FieldRdIncByte { index: byte_index }, 0))
+        }
+        LatticePackedFamilyId::BytecodeImmBytes { chunk } => Ok((
+            PackedFamilyId::BytecodeImmBytes { chunk: *chunk },
+            byte_index,
+        )),
+        _ => Err(invalid_lattice_config(format!(
+            "field-element canonical-byte validity cannot be anchored on {:?}",
+            requirement.family
+        ))),
+    }
+}
+
 pub(crate) fn field_element_canonical_factors(
     requirement: &LatticePackedValidityRequirement,
 ) -> Result<Vec<FieldCanonicalFactor>, VerifierError> {
@@ -501,6 +572,7 @@ pub(crate) fn field_element_canonical_factors(
     let mut factors = Vec::with_capacity(2 * byte_width - 1);
     for byte_index in (0..byte_width).rev() {
         let modulus_byte = modulus_bytes[byte_index] as usize;
+        let (family, limb) = canonical_field_byte_location(requirement, byte_index)?;
         let start_symbol = if byte_index == 0 {
             modulus_byte
         } else {
@@ -509,12 +581,16 @@ pub(crate) fn field_element_canonical_factors(
         if start_symbol < 256 {
             factors.push(FieldCanonicalFactor::Range {
                 byte_index,
+                family: family.clone(),
+                limb,
                 start_symbol,
             });
         }
         if byte_index > 0 {
             factors.push(FieldCanonicalFactor::Eq {
                 byte_index,
+                family,
+                limb,
                 symbol: modulus_byte,
             });
         }
@@ -851,10 +927,10 @@ where
 
     let mut equality = vec![None; byte_width];
     let mut range = vec![None; byte_width];
-    for (factor, opening) in factors.iter().copied().zip(openings.iter().copied()) {
+    for (factor, opening) in factors.iter().zip(openings.iter().copied()) {
         match factor {
-            FieldCanonicalFactor::Eq { byte_index, .. } => equality[byte_index] = Some(opening),
-            FieldCanonicalFactor::Range { byte_index, .. } => range[byte_index] = Some(opening),
+            FieldCanonicalFactor::Eq { byte_index, .. } => equality[*byte_index] = Some(opening),
+            FieldCanonicalFactor::Range { byte_index, .. } => range[*byte_index] = Some(opening),
         }
     }
 
@@ -1038,23 +1114,21 @@ where
     F: Field,
 {
     let factors = field_element_canonical_factors(&statement.requirement)?;
-    let factor = factors.get(factor).copied().ok_or_else(|| {
+    let factor = factors.get(factor).cloned().ok_or_else(|| {
         invalid_lattice_config(format!(
             "field-element canonical-byte statement has no opening factor {factor}"
         ))
     })?;
-    let family_id = match factor {
-        FieldCanonicalFactor::Eq { byte_index, .. }
-        | FieldCanonicalFactor::Range { byte_index, .. } => {
-            PackedFamilyId::FieldRdIncByte { index: byte_index }
-        }
+    let (family_id, limb) = match &factor {
+        FieldCanonicalFactor::Eq { family, limb, .. }
+        | FieldCanonicalFactor::Range { family, limb, .. } => (family.clone(), *limb),
     };
     let family = layout.family(&family_id).ok_or_else(|| {
         invalid_lattice_config(format!(
             "field-element canonical-byte factor requires {family_id:?}"
         ))
     })?;
-    if family.limbs != 1 || family.alphabet.size() != 256 {
+    if limb >= family.limbs || family.alphabet.size() != 256 {
         return Err(invalid_lattice_config(format!(
             "field-element canonical-byte factor {family_id:?} must be a byte family",
         )));
@@ -1077,13 +1151,13 @@ where
     let terms = match factor {
         FieldCanonicalFactor::Eq { symbol, .. } => {
             vec![
-                PackedLinearTerm::new(F::one(), family_id.physical_ref(), 0, symbol)
+                PackedLinearTerm::new(F::one(), family_id.physical_ref(), limb, symbol)
                     .with_row_point(point.to_vec()),
             ]
         }
         FieldCanonicalFactor::Range { start_symbol, .. } => (start_symbol..256)
             .map(|symbol| {
-                PackedLinearTerm::new(F::one(), family_id.physical_ref(), 0, symbol)
+                PackedLinearTerm::new(F::one(), family_id.physical_ref(), limb, symbol)
                     .with_row_point(point.to_vec())
             })
             .collect(),
@@ -2651,6 +2725,35 @@ mod tests {
     }
 
     #[test]
+    fn derive_validity_statements_adds_bytecode_imm_canonical_bytes() {
+        let chunk = 2;
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::BytecodeImmBytes { chunk },
+            PackedFactDomain::BytecodeRows { log_bytecode: 3 },
+            2,
+            PackedAlphabet::Byte,
+        )])
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
+        let requirement = bytecode_imm_canonical_bytes_requirement(chunk, 2, 257);
+
+        let statements =
+            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
+                .unwrap_or_else(|error| {
+                    panic!("bytecode imm canonical-byte validity statement should derive: {error}")
+                });
+
+        assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0].requirement, requirement);
+        assert_eq!(
+            statements[0].kind,
+            LatticePackedValidityStatementKind::FieldElementCanonicalBytes
+        );
+        assert_eq!(statements[0].num_vars, 3);
+        assert_eq!(statements[0].degree, 2);
+        assert_eq!(lattice_packed_validity_opening_count(&statements), 3);
+    }
+
+    #[test]
     fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
             PackedFamilyId::ProgramImageInit,
@@ -2965,6 +3068,91 @@ mod tests {
     }
 
     #[test]
+    fn validity_batch_builder_lowers_bytecode_imm_canonical_byte_factors() {
+        let chunk = 2;
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::BytecodeImmBytes { chunk },
+            PackedFactDomain::BytecodeRows { log_bytecode: 2 },
+            2,
+            PackedAlphabet::Byte,
+        )])
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
+        let requirement = bytecode_imm_canonical_bytes_requirement(chunk, 2, 257);
+        let statement = LatticePackedValidityStatement {
+            requirement,
+            kind: LatticePackedValidityStatementKind::FieldElementCanonicalBytes,
+            num_vars: 2,
+            degree: 2,
+        };
+        let point = vec![Fr::from_u64(2), Fr::from_u64(3)];
+        let eq_point = vec![Fr::from_u64(5), Fr::from_u64(7)];
+        let batching_coefficient = Fr::from_u64(11);
+        let opening_claims = [Fr::from_u64(13), Fr::from_u64(17), Fr::from_u64(19)];
+        let reduction = BatchedEvaluationClaim {
+            reduction: EvaluationClaim::new(point.clone(), Fr::from_u64(23)),
+            batching_coefficients: vec![batching_coefficient],
+            max_num_vars: 2,
+            max_degree: 2,
+        };
+
+        let batch = build_lattice_packed_validity_batch(
+            &layout,
+            std::slice::from_ref(&statement),
+            99_u64,
+            std::slice::from_ref(&eq_point),
+            &reduction,
+            &opening_claims,
+        )
+        .unwrap_or_else(|error| panic!("bytecode imm canonical-byte batch should build: {error}"));
+
+        let expected_eq = try_eq_mle(&point, &eq_point)
+            .unwrap_or_else(|error| panic!("eq mask should evaluate: {error}"));
+        let expected_invalid_indicator = opening_claims[0] + opening_claims[1] * opening_claims[2];
+        assert_eq!(
+            batch.expected_final_claim,
+            batching_coefficient * expected_eq * expected_invalid_indicator
+        );
+        assert_eq!(batch.statement.claims.len(), 3);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[0].view else {
+            panic!("high-byte range factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 254);
+        assert_eq!(
+            terms[0].family,
+            PackedFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+        );
+        assert_eq!(terms[0].limb, 1);
+        assert_eq!(terms[0].symbol, 2);
+        assert_eq!(terms[253].limb, 1);
+        assert_eq!(terms[253].symbol, 255);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[1].view else {
+            panic!("high-byte equality factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 1);
+        assert_eq!(
+            terms[0].family,
+            PackedFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+        );
+        assert_eq!(terms[0].limb, 1);
+        assert_eq!(terms[0].symbol, 1);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[2].view else {
+            panic!("low-byte range factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 255);
+        assert_eq!(
+            terms[0].family,
+            PackedFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+        );
+        assert_eq!(terms[0].limb, 0);
+        assert_eq!(terms[0].symbol, 1);
+        assert_eq!(terms[254].limb, 0);
+        assert_eq!(terms[254].symbol, 255);
+    }
+
+    #[test]
     fn derive_validity_statements_rejects_layout_requirement_mismatch() {
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
             PackedFamilyId::IncSign,
@@ -3118,6 +3306,16 @@ mod tests {
                 .unwrap_or_else(|| panic!("bytecode layout should exist"))
                 .log_bytecode_chunk_size(),
         };
+        let validity_requirements =
+            derive_akita_packed_validity_requirements(&config, &precommitted)
+                .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        assert!(
+            validity_requirements.contains(&bytecode_imm_canonical_bytes_requirement(
+                0,
+                AkitaField::NUM_BYTES,
+                AKITA_FIELD_MODULUS,
+            ))
+        );
 
         for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
             let family_id = akita_packed_family_id(&requirement.family);

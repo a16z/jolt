@@ -19,9 +19,10 @@ pub use formulas::{
     error::{JoltFormulaDimensionsError, JoltFormulaPointError},
     lattice::{
         advice_bytes_validity_requirement, byte_decode_terms, bytecode_chunk_lattice_view_formula,
-        bytecode_rd_present_lattice_view_formula, bytecode_store_flag_lattice_view_formula,
-        bytecode_validity_requirements, final_opening_lattice_requirement,
-        fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
+        bytecode_imm_canonical_bytes_requirement, bytecode_rd_present_lattice_view_formula,
+        bytecode_store_flag_lattice_view_formula, bytecode_validity_requirements,
+        final_opening_lattice_requirement, fused_increment_bytecode_source_opening,
+        fused_increment_inactive_bytecode_source_opening,
         fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
         fused_increment_inactive_source_link_claim,
         fused_increment_inactive_source_link_output_openings,

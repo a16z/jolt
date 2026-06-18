@@ -826,6 +826,18 @@ pub fn bytecode_validity_requirements(
     requirements
 }
 
+pub fn bytecode_imm_canonical_bytes_requirement(
+    chunk: usize,
+    byte_width: usize,
+    modulus: u128,
+) -> LatticePackedValidityRequirement {
+    LatticePackedValidityRequirement::field_element_canonical_bytes(
+        LatticePackedFamilyId::BytecodeImmBytes { chunk },
+        byte_width,
+        modulus,
+    )
+}
+
 fn byte_validity_requirement(
     family: LatticePackedFamilyId,
     limbs: usize,
@@ -1651,6 +1663,18 @@ mod tests {
         );
         assert!(requirements
             .contains(&LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk)));
+    }
+
+    #[test]
+    fn bytecode_imm_canonical_bytes_requirement_anchors_bytecode_immediates() {
+        assert_eq!(
+            bytecode_imm_canonical_bytes_requirement(2, 16, 97),
+            LatticePackedValidityRequirement::field_element_canonical_bytes(
+                LatticePackedFamilyId::BytecodeImmBytes { chunk: 2 },
+                16,
+                97,
+            )
+        );
     }
 
     #[test]

@@ -1551,6 +1551,19 @@ fn weighted_direct_symbol_value<S>(
 where
     S: PackedWitnessSource<AkitaField>,
 {
+    weighted_direct_limb_symbol_value(source, family_id, row_weights, 0, symbol)
+}
+
+fn weighted_direct_limb_symbol_value<S>(
+    source: &S,
+    family_id: &PackedFamilyId,
+    row_weights: &[AkitaField],
+    limb: usize,
+    symbol: usize,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
     let mut value = AkitaField::zero();
     let mut error = None;
     source.for_each_nonzero(|rank, cell| {
@@ -1565,7 +1578,7 @@ where
             );
             return;
         };
-        if &address.family != family_id || address.limb != 0 || address.symbol != symbol {
+        if &address.family != family_id || address.limb != limb || address.symbol != symbol {
             return;
         }
         let Some(row_weight) = row_weights.get(address.row).copied() else {
@@ -1592,40 +1605,54 @@ fn field_element_canonical_factor_value<S>(
 where
     S: PackedWitnessSource<AkitaField>,
 {
-    let (byte_index, symbol_filter) = match factor {
-        FieldCanonicalFactor::Eq { byte_index, symbol } => {
-            return weighted_field_rd_inc_byte_symbol_value(source, point, byte_index, symbol);
+    let (family, limb, symbol_filter) = match factor {
+        FieldCanonicalFactor::Eq {
+            family,
+            limb,
+            symbol,
+            ..
+        } => {
+            return weighted_field_canonical_symbol_value(source, point, &family, limb, symbol);
         }
         FieldCanonicalFactor::Range {
-            byte_index,
+            family,
+            limb,
             start_symbol,
-        } => (byte_index, start_symbol..256),
+            ..
+        } => (family, limb, start_symbol..256),
     };
 
     let mut value = AkitaField::zero();
     for symbol in symbol_filter {
-        value += weighted_field_rd_inc_byte_symbol_value(source, point, byte_index, symbol)?;
+        value += weighted_field_canonical_symbol_value(source, point, &family, limb, symbol)?;
     }
     Ok(value)
 }
 
-fn weighted_field_rd_inc_byte_symbol_value<S>(
+fn weighted_field_canonical_symbol_value<S>(
     source: &S,
     point: &[AkitaField],
-    byte_index: usize,
+    family_id: &PackedFamilyId,
+    limb: usize,
     symbol: usize,
 ) -> Result<AkitaField, VerifierError>
 where
     S: PackedWitnessSource<AkitaField>,
 {
-    let family_id = PackedFamilyId::FieldRdIncByte { index: byte_index };
     let family =
         source
             .layout()
-            .family(&family_id)
+            .family(family_id)
             .ok_or_else(|| VerifierError::InvalidProtocolConfig {
                 reason: format!("field-element canonical-byte factor requires {family_id:?}"),
             })?;
+    if limb >= family.limbs || family.alphabet.size() != 256 {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: format!(
+                "field-element canonical-byte factor {family_id:?} must be a byte family"
+            ),
+        });
+    }
     let rows = family
         .domain
         .rows()
@@ -1644,7 +1671,7 @@ where
         });
     }
     let row_weights = EqPolynomial::<AkitaField>::evals(point, None);
-    weighted_direct_symbol_value(source, &family_id, &row_weights, symbol)
+    weighted_direct_limb_symbol_value(source, family_id, &row_weights, limb, symbol)
 }
 
 fn bytecode_store_rd_disjoint_factor_value<S>(
