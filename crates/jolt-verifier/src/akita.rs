@@ -798,7 +798,9 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::{
         formulas::dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
+        fused_increment_bytecode_source_opening, fused_increment_magnitude_opening,
         fused_increment_sign_opening, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+        LatticeFusedIncrementTarget,
     };
     use jolt_field::FixedByteSize;
     use jolt_openings::{
@@ -1346,6 +1348,169 @@ mod tests {
                 rd_present: expected_source,
             }
         );
+
+        let params = AkitaSetupParams::from_packed_layout(source.layout(), 1);
+        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        let commitment = artifacts
+            .payload()
+            .expect("artifact should carry Akita payload")
+            .packed_witness
+            .clone();
+        let source_address = precommitted
+            .bytecode
+            .as_ref()
+            .expect("bytecode layout should exist")
+            .split_address_point(&source_link.r_address)
+            .expect("source address should split");
+        let magnitude_view =
+            akita_packed_view_formula(&fused_increment_magnitude_lattice_view_formula())
+                .expect("magnitude formula should lower")
+                .physical_view_at(source.layout(), &translation_point)
+                .expect("magnitude view should bind row point");
+        let sign_view = akita_packed_view_formula(&fused_increment_sign_lattice_view_formula())
+            .expect("sign formula should lower")
+            .physical_view_at(source.layout(), &translation_point)
+            .expect("sign view should bind row point");
+        let bytecode_ra_formula = jolt_lattice_view_formula(
+            JoltOpeningId::committed(
+                JoltCommittedPolynomial::BytecodeRa(0),
+                JoltRelationId::FusedIncrementSourceLink,
+            ),
+            &source_link.bytecode_ra_opening_points[0],
+            log_k_chunk,
+            &precommitted,
+        )
+        .expect("bytecode RA formula should resolve");
+        let bytecode_ra_view = akita_packed_view_formula(&bytecode_ra_formula)
+            .expect("bytecode RA formula should lower")
+            .physical_view_at(
+                source.layout(),
+                &source_link.bytecode_ra_opening_points[0][log_k_chunk..],
+            )
+            .expect("bytecode RA view should bind row point");
+        let store_view = akita_packed_view_formula(
+            &jolt_lattice_view_formula(
+                fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+                &source_link.r_address,
+                log_k_chunk,
+                &precommitted,
+            )
+            .expect("store source formula should resolve"),
+        )
+        .expect("store source formula should lower")
+        .physical_view_at(source.layout(), &source_address.r_bc)
+        .expect("store source view should bind row point");
+        let rd_view = akita_packed_view_formula(
+            &jolt_lattice_view_formula(
+                fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+                &source_link.r_address,
+                log_k_chunk,
+                &precommitted,
+            )
+            .expect("rd source formula should resolve"),
+        )
+        .expect("rd source formula should lower")
+        .physical_view_at(source.layout(), &source_address.r_bc)
+        .expect("rd source view should bind row point");
+        let magnitude_id = Stage8OpeningId::from(fused_increment_magnitude_opening());
+        let sign_id = Stage8OpeningId::from(fused_increment_sign_opening());
+        let bytecode_ra_id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(0),
+            JoltRelationId::FusedIncrementSourceLink,
+        ));
+        let store_id = Stage8OpeningId::from(fused_increment_bytecode_source_opening(
+            LatticeFusedIncrementTarget::Ram,
+        ));
+        let rd_id = Stage8OpeningId::from(fused_increment_bytecode_source_opening(
+            LatticeFusedIncrementTarget::Rd,
+        ));
+        let statement = BatchOpeningStatement {
+            logical_point: Vec::new(),
+            pcs_point: Vec::new(),
+            layout_digest: source.layout().digest,
+            claims: vec![
+                BatchOpeningClaim {
+                    id: magnitude_id,
+                    relation: magnitude_id,
+                    commitment: commitment.clone(),
+                    claim: claims.translation.magnitude,
+                    view: magnitude_view,
+                    scale: AkitaField::one(),
+                },
+                BatchOpeningClaim {
+                    id: sign_id,
+                    relation: sign_id,
+                    commitment: commitment.clone(),
+                    claim: claims.translation.sign,
+                    view: sign_view,
+                    scale: AkitaField::one(),
+                },
+                BatchOpeningClaim {
+                    id: bytecode_ra_id,
+                    relation: bytecode_ra_id,
+                    commitment: commitment.clone(),
+                    claim: claims.source_link.bytecode_ra[0],
+                    view: bytecode_ra_view,
+                    scale: AkitaField::one(),
+                },
+                BatchOpeningClaim {
+                    id: store_id,
+                    relation: store_id,
+                    commitment: commitment.clone(),
+                    claim: claims.source_link.store_flag,
+                    view: store_view,
+                    scale: AkitaField::one(),
+                },
+                BatchOpeningClaim {
+                    id: rd_id,
+                    relation: rd_id,
+                    commitment: commitment.clone(),
+                    claim: claims.source_link.rd_present,
+                    view: rd_view,
+                    scale: AkitaField::one(),
+                },
+            ],
+        };
+        let opening_ids = statement
+            .claims
+            .iter()
+            .map(|claim| claim.id)
+            .collect::<Vec<_>>();
+        let stage8_statement = Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
+            logical_manifest: Stage8LogicalManifest {
+                openings: Vec::new(),
+                pcs_opening_point: Point::high_to_low(Vec::new()),
+            },
+            physical_manifest: Stage8PhysicalManifest {
+                openings: Vec::new(),
+                layout_digest: source.layout().digest,
+            },
+            opening_ids,
+            opening_claims: Vec::new(),
+            pcs_opening_point: Point::high_to_low(Vec::new()),
+            statement: statement.clone(),
+        });
+
+        let mut prover_transcript = Blake2bTranscript::new(b"derived-fused-stage6");
+        let proof = prove_akita_stage8_clear_openings(
+            &prover_setup,
+            &mut prover_transcript,
+            &artifacts,
+            &source,
+            &stage8_statement,
+        )
+        .expect("derived fused claims should prove as packed openings");
+        let mut verifier_transcript = Blake2bTranscript::new(b"derived-fused-stage6");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("derived fused packed openings should verify");
+        assert_eq!(result.joint_commitment, commitment);
     }
 
     #[test]
