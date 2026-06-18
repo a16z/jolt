@@ -4,7 +4,7 @@ use jolt_akita::{
     AkitaCommitInput, AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaScheme,
     AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilyId,
     PackedFamilySpec, PackedLayoutError, PackedWitnessLayout, PackedWitnessSource,
-    SparsePackedWitness,
+    SparsePackedWitness, AKITA_FIELD_MODULUS,
 };
 use jolt_field::Field;
 use jolt_openings::{
@@ -641,6 +641,24 @@ fn akita_packed_scheme_rejects_tampered_packed_statement() {
             hint,
         )
         .expect("packed reduction proof should be produced");
+
+        let mut noncanonical_proof = proof.clone();
+        noncanonical_proof
+            .reduction
+            .as_mut()
+            .expect("packed proof should contain a reduction")
+            .opening_eval = AKITA_FIELD_MODULUS.to_le_bytes().to_vec();
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-tamper");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &noncanonical_proof,
+        );
+        assert!(
+            result.is_err(),
+            "noncanonical packed reduction field bytes should reject"
+        );
 
         let mut claim_tampered = statement.clone();
         claim_tampered.claims[0].claim += f(1);
