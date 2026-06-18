@@ -844,6 +844,7 @@ where
     <AkitaField as WithAccumulator>::Accumulator: RingAccumulator<Element = AkitaField>,
 {
     validate_akita_verifier_setup_config(&preprocessing.pcs_setup, config)?;
+    validate_akita_proof_payload_shape(&preprocessing.pcs_setup, &proof.commitments)?;
     crate::verifier::verify_clear_with_config::<
         AkitaField,
         AkitaPackedScheme,
@@ -937,6 +938,39 @@ fn validate_akita_verifier_setup_config(
         });
     }
 
+    Ok(())
+}
+
+fn validate_akita_proof_payload_shape(
+    setup: &AkitaVerifierSetup,
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+) -> Result<(), VerifierError> {
+    let payload =
+        proof_commitments
+            .as_akita()
+            .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Lattice,
+                got: proof_commitments.family(),
+            })?;
+    validate_akita_verifier_setup_shape(setup, payload.layout_digest, payload.d_pack)?;
+    if payload.packed_witness.layout_digest != payload.layout_digest {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita packed witness commitment layout digest does not match proof payload"
+                .to_string(),
+        });
+    }
+    if payload.packed_witness.num_vars != payload.d_pack {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita packed witness commitment dimension does not match proof payload D_pack"
+                .to_string(),
+        });
+    }
+    if payload.packed_witness.poly_count != 1 {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita packed witness commitment must contain exactly one polynomial"
+                .to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -3566,6 +3600,56 @@ mod tests {
         assert!(matches!(
             validate_akita_verifier_setup_layout(&zero_group_setup, &layout),
             Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn akita_verifier_payload_shape_binds_inner_commitment_metadata() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
+            .expect("empty sparse source should build");
+        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        validate_akita_proof_payload_shape(&verifier_setup, &artifacts.commitments)
+            .expect("matching payload shape should pass");
+        let payload = artifacts
+            .commitments
+            .as_akita()
+            .expect("artifact should carry Akita payload");
+
+        let mut wrong_commitment_digest = payload.clone();
+        wrong_commitment_digest.packed_witness.layout_digest = [9; 32];
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Akita(wrong_commitment_digest),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("commitment layout digest")
+        ));
+
+        let mut wrong_commitment_dimension = payload.clone();
+        wrong_commitment_dimension.packed_witness.num_vars = layout.dimension + 1;
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Akita(wrong_commitment_dimension),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("commitment dimension")
+        ));
+
+        let mut wrong_poly_count = payload.clone();
+        wrong_poly_count.packed_witness.poly_count = 2;
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Akita(wrong_poly_count),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("exactly one polynomial")
         ));
     }
 
