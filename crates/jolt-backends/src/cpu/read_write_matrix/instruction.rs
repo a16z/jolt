@@ -1,7 +1,7 @@
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, WithAccumulator};
 use jolt_lookup_tables::{
     tables::{
-        prefixes::{PrefixCheckpoint, NUM_PREFIXES},
+        prefixes::NUM_PREFIXES,
         PrefixEval, Prefixes, Suffixes,
     },
     LookupBits, LookupTableKind, ALL_PREFIXES,
@@ -48,7 +48,13 @@ pub struct InstructionReadRafState<F: Field> {
     active_table_buckets: Vec<Vec<usize>>,
     active_prefix_indices: Vec<usize>,
     interleaved_operands: Vec<bool>,
-    prefix_checkpoints: Vec<PrefixCheckpoint<F>>,
+    prefix_checkpoints: Vec<PrefixEval<F>>,
+    /// Per-phase materialized prefix MLEs (one per `Prefixes` variant; only the
+    /// active prefixes are filled). Each is built at phase start via
+    /// `Prefixes::evaluate` over the phase's `log_m` address bits and bound
+    /// HighToLow in lockstep with `suffix_polys`; the fully-bound value seeds
+    /// the next phase's checkpoint. Replaces the streaming `prefix_mle` path.
+    prefix_polys: Vec<Polynomial<F>>,
     suffix_polys: Vec<Vec<Polynomial<F>>>,
     v: Vec<ExpandingTable<F>>,
     u_evals: Vec<F>,
@@ -104,7 +110,10 @@ where
             table_indices.push(row.table_index);
             interleaved_operands.push(row.interleaved_operands);
         }
-        let prefix_checkpoints = vec![None.into(); NUM_PREFIXES];
+        let prefix_checkpoints = ALL_PREFIXES
+            .iter()
+            .map(|prefix| prefix.default_checkpoint::<F>())
+            .collect::<Vec<_>>();
         let eq_evals = EqPolynomial::new(request.fixed_cycle_point.clone()).evaluations();
         let (active_tables, active_table_buckets): (
             Vec<LookupTableKind<RV64_XLEN>>,
@@ -141,6 +150,7 @@ where
             active_prefix_indices,
             interleaved_operands,
             prefix_checkpoints,
+            prefix_polys: Vec::new(),
             suffix_polys,
             v: (0..request.phases)
                 .map(|_| ExpandingTable::new(1 << log_m))
@@ -207,7 +217,6 @@ where
 
         if self.round < self.address_bits {
             let phase = self.round / self.log_m;
-            let round = self.round;
             #[cfg(feature = "prover-harness")]
             let address_bind_start = std::time::Instant::now();
             rayon::scope(|scope| {
@@ -223,6 +232,24 @@ where
                     #[cfg(feature = "prover-harness")]
                     record_instruction_timing(
                         "stage5.backend.bind.instruction_read_raf.address.suffix",
+                        start,
+                    );
+                });
+                let prefix_polys = &mut self.prefix_polys;
+                scope.spawn(move |_| {
+                    #[cfg(feature = "prover-harness")]
+                    let start = std::time::Instant::now();
+                    prefix_polys.par_iter_mut().for_each(|poly| {
+                        // Inactive prefixes are length-1 placeholders; only the
+                        // materialized active prefixes (len > 1) get bound, in
+                        // lockstep with the suffix polynomials.
+                        if poly.len() > 1 {
+                            poly.bind_with_order(challenge, BindingOrder::HighToLow);
+                        }
+                    });
+                    #[cfg(feature = "prover-harness")]
+                    record_instruction_timing(
+                        "stage5.backend.bind.instruction_read_raf.address.prefix",
                         start,
                     );
                 });
@@ -257,19 +284,10 @@ where
             self.address_challenges.push(challenge);
 
             self.round += 1;
-            if self.address_challenges.len().is_multiple_of(2) {
-                let suffix_len = self.address_bits - (round / self.log_m + 1) * self.log_m;
-                let len = self.address_challenges.len();
-                Prefixes::update_checkpoints(
-                    &mut self.prefix_checkpoints,
-                    &self.active_prefix_indices,
-                    self.address_challenges[len - 2],
-                    self.address_challenges[len - 1],
-                    round,
-                    suffix_len,
-                );
-            }
             if self.round.is_multiple_of(self.log_m) {
+                // Phase complete: each active prefix poly is fully bound to a
+                // single value, which becomes its checkpoint for the next phase.
+                self.checkpoint_prefixes();
                 #[cfg(feature = "prover-harness")]
                 let start = std::time::Instant::now();
                 self.raf.update_checkpoints();
@@ -457,6 +475,14 @@ where
         );
         #[cfg(feature = "prover-harness")]
         let start = std::time::Instant::now();
+        self.init_prefix_polys(phase);
+        #[cfg(feature = "prover-harness")]
+        record_instruction_timing(
+            "stage5.backend.instruction_read_raf.init_phase.prefix_materialize",
+            start,
+        );
+        #[cfg(feature = "prover-harness")]
+        let start = std::time::Instant::now();
         self.raf.init_prefix_polys(self.log_m);
         #[cfg(feature = "prover-harness")]
         record_instruction_timing(
@@ -556,6 +582,45 @@ where
             .collect();
     }
 
+    /// Materialize each active prefix as a dense MLE over the current phase's
+    /// `log_m` address bits, given the checkpoints accumulated from prior phases.
+    /// Mirrors `init_suffix_polys`' indexing (`suffix_len = (phases-phase-1)*log_m`)
+    /// so the prefix and suffix polynomials bind in lockstep. Inactive prefixes
+    /// are left as length-1 placeholders and never bound or read.
+    fn init_prefix_polys(&mut self, phase: usize) {
+        let m = 1usize << self.log_m;
+        let log_m = self.log_m;
+        let suffix_len = (self.phases - phase - 1) * self.log_m;
+        let checkpoints = &self.prefix_checkpoints;
+        let mut prefix_polys: Vec<Polynomial<F>> = (0..NUM_PREFIXES)
+            .map(|_| Polynomial::new(vec![F::zero()]))
+            .collect();
+        for &index in &self.active_prefix_indices {
+            let prefix = ALL_PREFIXES[index];
+            let evals = (0..m)
+                .into_par_iter()
+                .map(|x| {
+                    prefix
+                        .evaluate::<F>(checkpoints, LookupBits::new(x as u128, log_m), suffix_len)
+                        .value()
+                })
+                .collect::<Vec<_>>();
+            prefix_polys[index] = Polynomial::new(evals);
+        }
+        self.prefix_polys = prefix_polys;
+    }
+
+    /// At a phase boundary, copy each active prefix's fully-bound value into its
+    /// checkpoint for the next phase's materialization (and for the final cycle
+    /// claim). Matches the streaming path's per-phase checkpoint semantics.
+    fn checkpoint_prefixes(&mut self) {
+        for i in 0..self.active_prefix_indices.len() {
+            let index = self.active_prefix_indices[i];
+            self.prefix_checkpoints[index] =
+                PrefixEval::from(final_eval(&self.prefix_polys[index]));
+        }
+    }
+
     fn address_round_message(&self, previous_claim: F) -> jolt_poly::UnivariatePoly<F> {
         let read_checking = self.read_checking_message();
         let raf = self.raf.message(self.gamma, self.gamma2);
@@ -568,25 +633,20 @@ where
             return [F::zero(); 2];
         }
         let len = self.suffix_polys[0][0].len();
-        let b_len = len.trailing_zeros() as usize - 1;
-        let r_x = if self.round % 2 == 1 {
-            self.address_challenges.last().copied()
-        } else {
-            None
-        };
 
         let [eval_0, eval_2_left, eval_2_right] = (0..len / 2)
             .into_par_iter()
             .map(|row| {
-                let b = LookupBits::new(row as u128, b_len);
                 let mut prefixes_at_0 = [PrefixEval::from(F::zero()); NUM_PREFIXES];
                 let mut prefixes_at_2 = [PrefixEval::from(F::zero()); NUM_PREFIXES];
                 for &index in &self.active_prefix_indices {
-                    let prefix = ALL_PREFIXES[index];
-                    prefixes_at_0[index] =
-                        prefix.prefix_mle(&self.prefix_checkpoints, r_x, 0, b, self.round);
-                    prefixes_at_2[index] =
-                        prefix.prefix_mle(&self.prefix_checkpoints, r_x, 2, b, self.round);
+                    let (prefix_at_0, prefix_at_2) = sumcheck_eval_at_0_and_2(
+                        &self.prefix_polys[index],
+                        row,
+                        BindingOrder::HighToLow,
+                    );
+                    prefixes_at_0[index] = PrefixEval::from(prefix_at_0);
+                    prefixes_at_2[index] = PrefixEval::from(prefix_at_2);
                 }
 
                 let mut evals = [<F as WithAccumulator>::Accumulator::default(); 3];
@@ -660,7 +720,7 @@ where
             .map(Prefixes::default_checkpoint::<F>)
             .collect::<Vec<_>>();
         for &index in &self.active_prefix_indices {
-            prefix_evals[index] = self.prefix_checkpoints[index].unwrap();
+            prefix_evals[index] = self.prefix_checkpoints[index];
         }
         let empty_suffix_bits = LookupBits::new(0, 0);
         let mut table_values = [F::zero(); LookupTableKind::<RV64_XLEN>::COUNT];
