@@ -3150,6 +3150,68 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn packed_validity_value_detects_noncanonical_field_rd_inc_bytes() {
+        let log_t = 0;
+        let log_k_chunk = 1;
+        let precommitted = PrecommittedSchedule::new(
+            TracePolynomialOrder::CycleMajor,
+            log_t,
+            log_k_chunk,
+            None,
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 1,
+                bytecode_chunk_count: 1,
+                program_image_len_words: 1,
+                program_image_start_index: 0,
+            }),
+        )
+        .expect("precommitted schedule should build");
+        let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+        config.lattice.program_mode = ProgramMode::Committed;
+        config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+        config.lattice.field_inline.enabled = true;
+        config.lattice.packed_witness.field_rd_inc_family = true;
+        config.lattice.packed_witness.layout_digest = Some([0; 32]);
+        config.lattice.packed_witness.d_pack = Some(0);
+        config.lattice.packed_witness.validity_digest = Some([0; 32]);
+
+        let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+            &config,
+            log_t,
+            log_k_chunk,
+            JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+            &precommitted,
+        )
+        .expect("layout should derive");
+        let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
+            .expect("validity requirements should derive");
+        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+            .expect("validity statements should derive");
+        let source = validity_source_with_field_rd_inc_bytes(
+            &layout,
+            &requirements,
+            &AKITA_FIELD_MODULUS.to_le_bytes(),
+        );
+        let statement = statements
+            .iter()
+            .find(|statement| {
+                matches!(
+                    statement.requirement.family,
+                    LatticePackedFamilyId::FieldRdIncByte { index: 0 }
+                ) && statement.kind
+                    == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
+            })
+            .expect("FieldRdInc canonical-byte statement should exist");
+        let point = vec![AkitaField::zero(); statement.num_vars];
+        let value = validity_value(&source, statement, &point, &point)
+            .expect("validity value should evaluate");
+
+        assert_ne!(value, AkitaField::zero());
+    }
+
     #[test]
     fn packed_validity_value_detects_noncanonical_bytecode_imm_bytes() {
         let log_t = 0;
