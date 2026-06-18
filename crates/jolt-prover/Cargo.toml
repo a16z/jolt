@@ -39,7 +39,6 @@ thiserror.workspace = true
 [dev-dependencies]
 bincode.workspace = true
 blake2.workspace = true
-jolt-core = { workspace = true, features = ["host"] }
 jolt-dory = { path = "../jolt-dory" }
 jolt-field.workspace = true
 jolt-openings = { workspace = true, features = ["test-utils"] }

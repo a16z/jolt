@@ -2808,7 +2808,6 @@ dependencies = [
 name = "jolt-backends"
 version = "0.1.0"
 dependencies = [
- "criterion",
  "jolt-claims",
  "jolt-crypto",
  "jolt-field",
@@ -3275,7 +3274,6 @@ dependencies = [
  "jolt-backends",
  "jolt-blindfold",
  "jolt-claims",
- "jolt-core",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",

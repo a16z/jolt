@@ -33,6 +33,7 @@ use jolt_witness::protocols::jolt_vm::JoltVmNamespace;
 use jolt_witness::{OracleRef, WitnessProvider};
 
 use super::io::{Stage6ProverConfig, Stage6RegularBatchPrefixOutput};
+use super::relation_state::{AdviceCyclePhaseRelationState, Stage6RelationState};
 use crate::stages::invalid_sumcheck_output;
 use crate::ProverError;
 
@@ -78,29 +79,11 @@ pub(super) struct Stage6BatchContext<'a, F: Field, W> {
     address_phase: Stage6AddressPhaseClaims<F>,
 }
 
-pub(super) struct Stage6RelationState<F: Field> {
-    advice: advice::AdviceCyclePhaseRelationState<F>,
-}
-
 struct Stage6InstanceSpec<F: Field> {
     kind: Stage6InstanceKind,
     input_claim: F,
     num_vars: usize,
     degree: usize,
-}
-
-impl<F: Field> Stage6RelationState<F> {
-    pub(super) fn round_sum(&self, local_round: usize, point: F) -> Result<F, ProverError> {
-        let mut sum = F::zero();
-        for index in 0..self.advice.round_rows(local_round) {
-            sum += self.advice.round_eval(local_round, index, point);
-        }
-        Ok(sum)
-    }
-
-    pub(super) fn bind(&mut self, local_round: usize, challenge: F) {
-        self.advice.bind(local_round, challenge);
-    }
 }
 
 impl<'a, F, W> Stage6BatchContext<'a, F, W>
@@ -302,14 +285,14 @@ where
                     "Stage 6 {kind:?} advice cycle-phase polynomials are invalid: {error}"
                 ))
             })?;
-        Ok(Stage6RelationState {
-            advice: advice::AdviceCyclePhaseRelationState::new(
+        Ok(Stage6RelationState::advice(
+            AdviceCyclePhaseRelationState::new(
                 advice,
                 eq,
                 layout.cycle_phase_col_rounds(),
                 layout.cycle_phase_row_rounds(),
             ),
-        })
+        ))
     }
 
     /// Builds the per-instance opening points for the stage 6b cycle batch.

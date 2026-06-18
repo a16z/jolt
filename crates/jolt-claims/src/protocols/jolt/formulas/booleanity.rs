@@ -169,46 +169,6 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BooleanityRelationState<F: Field> {
-    eq_address_cycle: Polynomial<F>,
-    ra: Vec<Polynomial<F>>,
-    gamma_squared: F,
-}
-
-impl<F: Field> BooleanityRelationState<F> {
-    pub fn new(eq_address_cycle: Polynomial<F>, ra: Vec<Polynomial<F>>, gamma_squared: F) -> Self {
-        Self {
-            eq_address_cycle,
-            ra,
-            gamma_squared,
-        }
-    }
-
-    pub fn bind(&mut self, challenge: F) {
-        self.eq_address_cycle.bind(challenge);
-        for polynomial in &mut self.ra {
-            polynomial.bind(challenge);
-        }
-    }
-
-    pub fn round_rows(&self) -> usize {
-        self.eq_address_cycle.len() / 2
-    }
-
-    pub fn round_eval(&self, index: usize, point: F) -> F {
-        let eq = self.eq_address_cycle.sumcheck_round_eval(index, point);
-        let mut coeff = F::one();
-        let mut output = F::zero();
-        for polynomial in &self.ra {
-            let value = polynomial.sumcheck_round_eval(index, point);
-            output += coeff * (value * value - value);
-            coeff *= self.gamma_squared;
-        }
-        eq * output
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BooleanityOutputOpeningGroups {
     pub instruction_ra: Vec<JoltOpeningId>,
     pub bytecode_ra: Vec<JoltOpeningId>,
@@ -326,61 +286,6 @@ mod tests {
         assert_eq!(
             eq_address_cycle_polynomial(&address, &cycle).evals(),
             EqPolynomial::<Fr>::evals(&eq_point, None)
-        );
-    }
-
-    #[test]
-    fn booleanity_relation_state_evaluates_eq_weighted_bitness_terms() {
-        let point = Fr::from_u64(7);
-        let eq_address_cycle = Polynomial::new(vec![Fr::from_u64(2), Fr::from_u64(3)]);
-        let ra = vec![
-            Polynomial::new(vec![Fr::from_u64(5), Fr::from_u64(11)]),
-            Polynomial::new(vec![Fr::from_u64(13), Fr::from_u64(17)]),
-            Polynomial::new(vec![Fr::from_u64(19), Fr::from_u64(23)]),
-        ];
-        let gamma_squared = Fr::from_u64(29);
-        let expected = eq_address_cycle.sumcheck_round_eval(0, point)
-            * ra.iter()
-                .scan(Fr::from_u64(1), |coeff, polynomial| {
-                    let value = polynomial.sumcheck_round_eval(0, point);
-                    let term = *coeff * (value * value - value);
-                    *coeff *= gamma_squared;
-                    Some(term)
-                })
-                .sum::<Fr>();
-
-        let state = BooleanityRelationState::new(eq_address_cycle, ra, gamma_squared);
-
-        assert_eq!(state.round_rows(), 1);
-        assert_eq!(state.round_eval(0, point), expected);
-    }
-
-    #[test]
-    fn booleanity_relation_state_binds_all_polynomials() {
-        let challenge = Fr::from_u64(31);
-        let mut eq_address_cycle =
-            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 2)).collect());
-        let mut ra = vec![
-            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 7)).collect()),
-            Polynomial::new(
-                (0..4)
-                    .map(|value| Fr::from_u64(value as u64 + 13))
-                    .collect(),
-            ),
-        ];
-        let gamma_squared = Fr::from_u64(19);
-        let mut state =
-            BooleanityRelationState::new(eq_address_cycle.clone(), ra.clone(), gamma_squared);
-
-        state.bind(challenge);
-        eq_address_cycle.bind(challenge);
-        for polynomial in &mut ra {
-            polynomial.bind(challenge);
-        }
-
-        assert_eq!(
-            state,
-            BooleanityRelationState::new(eq_address_cycle, ra, gamma_squared)
         );
     }
 

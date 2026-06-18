@@ -36,7 +36,6 @@ rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-criterion = { workspace = true }
 jolt-field.workspace = true
 jolt-openings = { workspace = true, features = ["test-utils"] }
 jolt-r1cs.workspace = true

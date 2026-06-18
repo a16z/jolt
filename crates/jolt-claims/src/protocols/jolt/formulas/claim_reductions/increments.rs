@@ -147,52 +147,6 @@ pub fn claim_reduction_output_coefficient_polynomials<F: Field>(
     Ok((Polynomial::new(ram_coeff), Polynomial::new(rd_coeff)))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IncClaimReductionRelationState<F: Field> {
-    ram_coeff: Polynomial<F>,
-    rd_coeff: Polynomial<F>,
-    ram_inc: Polynomial<F>,
-    rd_inc: Polynomial<F>,
-    gamma_squared: F,
-}
-
-impl<F: Field> IncClaimReductionRelationState<F> {
-    pub fn new(
-        ram_coeff: Polynomial<F>,
-        rd_coeff: Polynomial<F>,
-        ram_inc: Polynomial<F>,
-        rd_inc: Polynomial<F>,
-        gamma_squared: F,
-    ) -> Self {
-        Self {
-            ram_coeff,
-            rd_coeff,
-            ram_inc,
-            rd_inc,
-            gamma_squared,
-        }
-    }
-
-    pub fn bind(&mut self, challenge: F) {
-        self.ram_coeff.bind(challenge);
-        self.rd_coeff.bind(challenge);
-        self.ram_inc.bind(challenge);
-        self.rd_inc.bind(challenge);
-    }
-
-    pub fn round_rows(&self) -> usize {
-        self.ram_coeff.len() / 2
-    }
-
-    pub fn round_eval(&self, index: usize, point: F) -> F {
-        self.ram_inc.sumcheck_round_eval(index, point)
-            * self.ram_coeff.sumcheck_round_eval(index, point)
-            + self.gamma_squared
-                * self.rd_inc.sumcheck_round_eval(index, point)
-                * self.rd_coeff.sumcheck_round_eval(index, point)
-    }
-}
-
 pub fn ram_inc_read_write_opening() -> JoltOpeningId {
     ram_inc_read_write()
 }
@@ -486,76 +440,6 @@ mod tests {
         assert_eq!(
             output,
             Ok(Fr::from_u64(3) + gamma * gamma * gamma * Fr::from_u64(5))
-        );
-    }
-
-    #[test]
-    fn relation_state_evaluates_increment_output_terms() {
-        let point = Fr::from_u64(7);
-        let ram_coeff = Polynomial::new(vec![Fr::from_u64(2), Fr::from_u64(3)]);
-        let rd_coeff = Polynomial::new(vec![Fr::from_u64(5), Fr::from_u64(11)]);
-        let ram_inc = Polynomial::new(vec![Fr::from_u64(13), Fr::from_u64(17)]);
-        let rd_inc = Polynomial::new(vec![Fr::from_u64(19), Fr::from_u64(23)]);
-        let gamma_squared = Fr::from_u64(29);
-        let expected = ram_inc.sumcheck_round_eval(0, point)
-            * ram_coeff.sumcheck_round_eval(0, point)
-            + gamma_squared
-                * rd_inc.sumcheck_round_eval(0, point)
-                * rd_coeff.sumcheck_round_eval(0, point);
-
-        let state = IncClaimReductionRelationState::new(
-            ram_coeff,
-            rd_coeff,
-            ram_inc,
-            rd_inc,
-            gamma_squared,
-        );
-
-        assert_eq!(state.round_rows(), 1);
-        assert_eq!(state.round_eval(0, point), expected);
-    }
-
-    #[test]
-    fn relation_state_binds_all_polynomials() {
-        let challenge = Fr::from_u64(31);
-        let mut ram_coeff =
-            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 2)).collect());
-        let mut rd_coeff =
-            Polynomial::new((0..4).map(|value| Fr::from_u64(value as u64 + 7)).collect());
-        let mut ram_inc = Polynomial::new(
-            (0..4)
-                .map(|value| Fr::from_u64(value as u64 + 13))
-                .collect(),
-        );
-        let mut rd_inc = Polynomial::new(
-            (0..4)
-                .map(|value| Fr::from_u64(value as u64 + 17))
-                .collect(),
-        );
-        let gamma_squared = Fr::from_u64(19);
-        let mut state = IncClaimReductionRelationState::new(
-            ram_coeff.clone(),
-            rd_coeff.clone(),
-            ram_inc.clone(),
-            rd_inc.clone(),
-            gamma_squared,
-        );
-
-        state.bind(challenge);
-        ram_coeff.bind(challenge);
-        rd_coeff.bind(challenge);
-        ram_inc.bind(challenge);
-        rd_inc.bind(challenge);
-
-        assert_eq!(
-            state,
-            IncClaimReductionRelationState::new(
-                ram_coeff,
-                rd_coeff,
-                ram_inc,
-                rd_inc,
-                gamma_squared
-            )
         );
     }
 
