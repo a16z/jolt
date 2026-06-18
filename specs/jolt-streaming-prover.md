@@ -5,7 +5,7 @@
 | Author(s)   | @sashafrolov,Claude            |
 | Created     | 2026-06-17                     |
 | Status      | proposed                       |
-| PR          | TBD                            |
+| PR          | #1629                        |
 
 ## Summary
 
