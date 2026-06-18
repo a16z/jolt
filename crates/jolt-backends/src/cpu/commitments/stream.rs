@@ -13,12 +13,7 @@ use jolt_witness::{
 };
 use rayon::prelude::*;
 
-#[cfg(feature = "prover-harness")]
-fn record_commitment_timing(label: &'static str, time_ms: f64) {
-    crate::timing::record_backend_timing(label, time_ms);
-}
-
-#[cfg(not(feature = "prover-harness"))]
+#[inline(always)]
 const fn record_commitment_timing(_label: &'static str, _time_ms: f64) {}
 
 pub(super) struct CpuCommitmentResult<N: WitnessNamespace, PCS: CommitmentScheme> {

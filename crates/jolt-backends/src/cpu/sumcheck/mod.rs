@@ -48,16 +48,8 @@ use crate::{
 };
 
 #[cfg(feature = "prover-harness")]
-fn record_sumcheck_timing(label: &'static str, start: std::time::Instant) {
-    crate::timing::record_backend_timing(label, start.elapsed().as_secs_f64() * 1000.0);
-}
-
-#[cfg(not(feature = "prover-harness"))]
-#[expect(
-    dead_code,
-    reason = "fallback timing hook is unused without prover-harness"
-)]
-const fn record_sumcheck_timing(_label: &'static str, _start: ()) {}
+#[inline(always)]
+const fn record_sumcheck_timing(_label: &'static str, _start: std::time::Instant) {}
 
 const RESOLUTION_TASK: &str = "sumcheck view resolution";
 const EVALUATION_TASK: &str = "sumcheck view evaluation";

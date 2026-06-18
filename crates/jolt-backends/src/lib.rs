@@ -10,8 +10,6 @@ mod error;
 mod ids;
 mod openings;
 mod sumcheck;
-#[cfg(feature = "prover-harness")]
-mod timing;
 mod traits;
 
 #[cfg(feature = "cpu")]
@@ -116,8 +114,6 @@ pub use sumcheck::{
     STAGE6_INSTRUCTION_RA_VIRTUALIZATION_OPENING_SLOT_START,
     STAGE6_RAM_HAMMING_BOOLEANITY_OPENING_SLOT, STAGE6_RAM_RA_VIRTUALIZATION_OPENING_SLOT_START,
 };
-#[cfg(feature = "prover-harness")]
-pub use timing::{reset_backend_timings, take_backend_timings, BackendTiming};
 #[cfg(feature = "zk")]
 pub use traits::BlindFoldBackend;
 pub use traits::{

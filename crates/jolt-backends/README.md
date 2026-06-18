@@ -5,13 +5,6 @@ Backend compute rails for modular proving.
 This crate owns backend traits plus request/result types. Protocol crates own
 stage order, claims, transcript labels, and verifier-visible proof shape.
 
-North-star references for CPU prover replacement work:
-
-- [`specs/jolt-prover-cpu-backend-port.md`](../../specs/jolt-prover-cpu-backend-port.md)
-- [`specs/jolt-prover-harness.md`](../../specs/jolt-prover-harness.md)
-- [`specs/jolt-core-prover-optimization-inventory.md`](../../specs/jolt-core-prover-optimization-inventory.md)
-- [`crates/jolt-prover-harness/src/optimization.rs`](../jolt-prover-harness/src/optimization.rs)
-
 Structure rules:
 
 - request/result contracts live by family, for example

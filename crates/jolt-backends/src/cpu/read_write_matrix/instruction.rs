@@ -19,16 +19,8 @@ const MAX_SUFFIXES_PER_TABLE: usize = 4;
 const MAX_INSTRUCTION_READ_RAF_FACTORS: usize = 16;
 
 #[cfg(feature = "prover-harness")]
-fn record_instruction_timing(label: &'static str, start: std::time::Instant) {
-    crate::timing::record_backend_timing(label, start.elapsed().as_secs_f64() * 1000.0);
-}
-
-#[cfg(not(feature = "prover-harness"))]
-#[expect(
-    dead_code,
-    reason = "fallback timing hook is unused without prover-harness"
-)]
-const fn record_instruction_timing(_label: &'static str, _start: ()) {}
+#[inline(always)]
+const fn record_instruction_timing(_label: &'static str, _start: std::time::Instant) {}
 
 pub struct InstructionReadRafState<F: Field> {
     round: usize,

@@ -99,6 +99,16 @@ struct Stage2ProductTailShape<F: Field> {
 struct Stage2LinearReductionShape;
 
 #[derive(Clone, Copy)]
+enum Stage2ProductInstructionTail<F: Field> {
+    Inactive,
+    Active {
+        product_shape: Stage2ProductTailShape<F>,
+        has_field_registers: bool,
+        half: usize,
+    },
+}
+
+#[derive(Clone, Copy)]
 struct Stage3InstructionShape<F: Field> {
     gamma: F,
 }
@@ -119,37 +129,17 @@ where
     F: Field,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
+    let Stage2ProductInstructionTail::Active {
+        product_shape,
+        has_field_registers,
+        half,
+    } = stage2_product_instruction_tail(state.instances.as_slice(), round, max_rounds)?
+    else {
+        return None;
+    };
     let [product, instruction, rest @ ..] = state.instances.as_slice() else {
         return None;
     };
-    if rest.len() > 1 {
-        return None;
-    }
-    let product_offset = max_rounds.checked_sub(product.num_rounds())?;
-    if round < product_offset {
-        return None;
-    }
-    let product_shape = stage2_product_tail_shape(product)?;
-    let _instruction_shape =
-        stage2_linear_reduction_shape(instruction, "instruction claim-reduction")?;
-    let field_registers_shape = match rest.first() {
-        Some(instance) => Some(stage2_linear_reduction_shape(
-            instance,
-            "field-registers claim-reduction",
-        )?),
-        None => None,
-    };
-    let half = product.polynomials.first()?.len() / 2;
-    if half == 0
-        || product.polynomials.get(1)?.len() / 2 != half
-        || product.polynomials.get(2)?.len() / 2 != half
-        || instruction.polynomials.get(1)?.len() / 2 != half
-        || rest.first().is_some_and(|instance| {
-            instance.polynomials.get(1).map_or(0, Polynomial::len) / 2 != half
-        })
-    {
-        return None;
-    }
 
     let (product_accumulators, instruction_accumulators, field_registers_accumulators) = (0..half)
         .into_par_iter()
@@ -185,7 +175,7 @@ where
                     let reduced = eval_pair_at(instruction_pairs[1], point);
                     value.fmadd(eq, reduced);
                 }
-                if field_registers_shape.is_some() {
+                if has_field_registers {
                     let field_registers = &rest[0];
                     let field_registers_pairs = [
                         product_pairs[0],
@@ -242,13 +232,63 @@ where
             UnivariatePoly::from_evals_and_hint(previous_claims[1], &instruction_evals),
         ),
     ];
-    if field_registers_shape.is_some() {
+    if has_field_registers {
         rounds.push(SumcheckRegularBatchRound::new(
             2,
             UnivariatePoly::from_evals_and_hint(previous_claims[2], &field_registers_evals),
         ));
     }
     Some(rounds)
+}
+
+fn stage2_product_instruction_tail<F>(
+    instances: &[SumcheckRegularBatchInstance<F>],
+    round: usize,
+    max_rounds: usize,
+) -> Option<Stage2ProductInstructionTail<F>>
+where
+    F: Field,
+{
+    let [product, instruction, rest @ ..] = instances else {
+        return None;
+    };
+    if rest.len() > 1 {
+        return None;
+    }
+    let product_shape = stage2_product_tail_shape(product)?;
+    let _instruction_shape =
+        stage2_linear_reduction_shape(instruction, "instruction claim-reduction")?;
+    let has_field_registers = match rest.first() {
+        Some(instance) => {
+            let _field_registers_shape =
+                stage2_linear_reduction_shape(instance, "field-registers claim-reduction")?;
+            true
+        }
+        None => false,
+    };
+
+    let product_offset = max_rounds.checked_sub(product.num_rounds())?;
+    if round < product_offset {
+        return Some(Stage2ProductInstructionTail::Inactive);
+    }
+
+    let half = product.polynomials.first()?.len() / 2;
+    if half == 0
+        || product.polynomials.get(1)?.len() / 2 != half
+        || product.polynomials.get(2)?.len() / 2 != half
+        || instruction.polynomials.get(1)?.len() / 2 != half
+        || rest.first().is_some_and(|instance| {
+            instance.polynomials.get(1).map_or(0, Polynomial::len) / 2 != half
+        })
+    {
+        return None;
+    }
+
+    Some(Stage2ProductInstructionTail::Active {
+        product_shape,
+        has_field_registers,
+        half,
+    })
 }
 
 fn stage2_product_tail_shape<F: Field>(
@@ -543,36 +583,16 @@ fn bind_stage2_product_instruction_tail<F>(
 where
     F: Field,
 {
+    let Stage2ProductInstructionTail::Active {
+        has_field_registers,
+        ..
+    } = stage2_product_instruction_tail(state.instances.as_slice(), round, max_rounds)?
+    else {
+        return Some(());
+    };
     let [product, instruction, rest @ ..] = state.instances.as_mut_slice() else {
         return None;
     };
-    if rest.len() > 1 {
-        return None;
-    }
-    let product_offset = max_rounds.checked_sub(product.num_rounds())?;
-    if round < product_offset {
-        return Some(());
-    }
-    let _product_shape = stage2_product_tail_shape(product)?;
-    let _instruction_shape =
-        stage2_linear_reduction_shape(instruction, "instruction claim-reduction")?;
-    let has_field_registers = match rest.first() {
-        Some(instance) => {
-            let _field_registers_shape =
-                stage2_linear_reduction_shape(instance, "field-registers claim-reduction")?;
-            true
-        }
-        None => false,
-    };
-
-    if product.polynomials.len() != 3
-        || instruction.polynomials.len() != 2
-        || rest
-            .first()
-            .is_some_and(|instance| instance.polynomials.len() != 2)
-    {
-        return None;
-    }
 
     rayon::scope(|scope| {
         let product_polynomials = &mut product.polynomials;
