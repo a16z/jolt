@@ -225,9 +225,31 @@ fn validate_lattice_config(config: &JoltProtocolConfig) -> Result<(), VerifierEr
             "lattice PCS mode requires fused one-hot base increments",
         ));
     }
+    #[cfg(feature = "field-inline")]
+    if !config.field_inline.enabled {
+        return Err(invalid_config(
+            "field-inline verifier builds require field-inline lattice protocols",
+        ));
+    }
+    #[cfg(not(feature = "field-inline"))]
+    if config.field_inline.enabled {
+        return Err(invalid_config(
+            "field-inline lattice protocols require the jolt-verifier field-inline feature",
+        ));
+    }
+    if config.field_inline.enabled != config.lattice.field_inline.enabled {
+        return Err(invalid_config(
+            "lattice field-inline mode must match the selected field-inline protocol",
+        ));
+    }
     if config.lattice.field_inline.enabled && !config.lattice.packed_witness.field_rd_inc_family {
         return Err(invalid_config(
             "field-inline lattice mode requires FieldRdInc packed witness families",
+        ));
+    }
+    if !config.lattice.field_inline.enabled && config.lattice.packed_witness.field_rd_inc_family {
+        return Err(invalid_config(
+            "FieldRdInc packed witness families require field-inline lattice mode",
         ));
     }
     if config.lattice.advice.trusted && !config.lattice.packed_witness.trusted_advice_family {
@@ -235,9 +257,19 @@ fn validate_lattice_config(config: &JoltProtocolConfig) -> Result<(), VerifierEr
             "trusted advice lattice mode requires trusted advice packed witness families",
         ));
     }
+    if !config.lattice.advice.trusted && config.lattice.packed_witness.trusted_advice_family {
+        return Err(invalid_config(
+            "trusted advice packed witness families require trusted advice lattice mode",
+        ));
+    }
     if config.lattice.advice.untrusted && !config.lattice.packed_witness.untrusted_advice_family {
         return Err(invalid_config(
             "untrusted advice lattice mode requires untrusted advice packed witness families",
+        ));
+    }
+    if !config.lattice.advice.untrusted && config.lattice.packed_witness.untrusted_advice_family {
+        return Err(invalid_config(
+            "untrusted advice packed witness families require untrusted advice lattice mode",
         ));
     }
     if config.lattice.packed_witness.layout_digest.is_none()
@@ -288,6 +320,11 @@ mod tests {
         config.lattice.packed_witness.layout_digest = Some([7; 32]);
         config.lattice.packed_witness.d_pack = Some(43);
         config.lattice.packed_witness.validity_digest = Some([11; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
         config
     }
 
@@ -358,9 +395,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "field-inline")]
     fn akita_field_inline_requires_layout_families() {
         let mut config = valid_lattice_config();
-        config.lattice.field_inline.enabled = true;
+        config.lattice.packed_witness.field_rd_inc_family = false;
 
         assert!(invalid(&config));
 
@@ -369,6 +407,25 @@ mod tests {
             validate_protocol_config(&config).ok(),
             Some(PcsFamily::Lattice)
         );
+    }
+
+    #[test]
+    #[cfg(feature = "field-inline")]
+    fn akita_field_inline_must_match_protocol_config() {
+        let mut config = valid_lattice_config();
+        config.lattice.field_inline.enabled = false;
+
+        assert!(invalid(&config));
+    }
+
+    #[test]
+    #[cfg(not(feature = "field-inline"))]
+    fn akita_rejects_field_inline_when_protocol_disabled() {
+        let mut config = valid_lattice_config();
+        config.lattice.field_inline.enabled = true;
+        config.lattice.packed_witness.field_rd_inc_family = true;
+
+        assert!(invalid(&config));
     }
 
     #[test]
@@ -392,6 +449,20 @@ mod tests {
             validate_protocol_config(&untrusted).ok(),
             Some(PcsFamily::Lattice)
         );
+
+        let mut extra_trusted_family = valid_lattice_config();
+        extra_trusted_family
+            .lattice
+            .packed_witness
+            .trusted_advice_family = true;
+        assert!(invalid(&extra_trusted_family));
+
+        let mut extra_untrusted_family = valid_lattice_config();
+        extra_untrusted_family
+            .lattice
+            .packed_witness
+            .untrusted_advice_family = true;
+        assert!(invalid(&extra_untrusted_family));
     }
 
     #[test]

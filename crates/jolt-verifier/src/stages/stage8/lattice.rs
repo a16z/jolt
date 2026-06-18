@@ -1990,6 +1990,11 @@ mod tests {
             trusted_advice_family: false,
             untrusted_advice_family: false,
         };
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
         config
     }
 
@@ -3339,6 +3344,7 @@ mod tests {
             .is_some());
     }
 
+    #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_layout_uses_separate_rd_inc_families() {
         let mut config = lattice_config();

@@ -759,6 +759,7 @@ where
     if proof.commitments.family() != PcsFamily::Lattice {
         return Ok(());
     }
+    validate_lattice_precommitted_surface(config, checked)?;
 
     #[cfg(not(feature = "akita"))]
     {
@@ -790,6 +791,37 @@ where
         stage8::validate_akita_packed_witness_layout_config(config, &layout)?;
         stage8::validate_akita_packed_witness_validity_config(config, &checked.precommitted)
     }
+}
+
+fn validate_lattice_precommitted_surface(
+    config: &JoltProtocolConfig,
+    checked: &CheckedInputs,
+) -> Result<(), VerifierError> {
+    let trusted_advice_present = checked.precommitted.trusted_advice.is_some();
+    if config.lattice.advice.trusted != trusted_advice_present {
+        let reason = if trusted_advice_present {
+            "trusted advice precommitted schedule requires trusted advice lattice mode"
+        } else {
+            "trusted advice lattice mode requires a trusted advice precommitted schedule"
+        };
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: reason.to_string(),
+        });
+    }
+
+    let untrusted_advice_present = checked.precommitted.untrusted_advice.is_some();
+    if config.lattice.advice.untrusted != untrusted_advice_present {
+        let reason = if untrusted_advice_present {
+            "untrusted advice precommitted schedule requires untrusted advice lattice mode"
+        } else {
+            "untrusted advice lattice mode requires an untrusted advice precommitted schedule"
+        };
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: reason.to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 fn validate_lattice_validity_proof_surface<PCS, VC, ZkProof>(
@@ -1418,6 +1450,11 @@ mod tests {
         config.lattice.packed_witness.layout_digest = Some([7; 32]);
         config.lattice.packed_witness.d_pack = Some(43);
         config.lattice.packed_witness.validity_digest = Some([11; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
 
         let mut proof = proof_with_zk(false, clear_claims());
         proof.protocol = config;
@@ -1443,6 +1480,11 @@ mod tests {
         config.lattice.packed_witness.layout_digest = Some([7; 32]);
         config.lattice.packed_witness.d_pack = Some(43);
         config.lattice.packed_witness.validity_digest = Some([11; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
 
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -1523,6 +1565,43 @@ mod tests {
         assert!(matches!(
             validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
             Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_rejects_trusted_advice_schedule_without_config() {
+        let preprocessing = committed_test_preprocessing_with_advice(64, 0);
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        proof.ram_K = 16;
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, true, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("trusted advice precommitted schedule")
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_rejects_untrusted_advice_schedule_without_config() {
+        let preprocessing = committed_test_preprocessing_with_advice(0, 64);
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        proof.ram_K = 16;
+        proof.untrusted_advice_commitment = Some(TestCommitment);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("untrusted advice precommitted schedule")
         ));
     }
 
@@ -2289,10 +2368,17 @@ mod tests {
     }
 
     fn committed_test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        committed_test_preprocessing_with_advice(0, 0)
+    }
+
+    fn committed_test_preprocessing_with_advice(
+        max_trusted_advice_size: u64,
+        max_untrusted_advice_size: u64,
+    ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
-            max_trusted_advice_size: 0,
-            max_untrusted_advice_size: 0,
+            max_trusted_advice_size,
+            max_untrusted_advice_size,
             max_input_size: 8,
             max_output_size: 8,
             stack_size: 8,

@@ -468,6 +468,11 @@ mod tests {
             trusted_advice_family: false,
             untrusted_advice_family: false,
         };
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
         config
     }
 

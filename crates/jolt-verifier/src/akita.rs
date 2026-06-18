@@ -1938,7 +1938,7 @@ mod tests {
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
     fn tiny_layout() -> PackedWitnessLayout {
-        PackedWitnessLayout::new([
+        let specs = vec![
             PackedFamilySpec::direct(
                 PackedFamilyId::InstructionRa { index: 0 },
                 PackedFactDomain::TraceRows { log_t: 0 },
@@ -1951,8 +1951,21 @@ mod tests {
                 1,
                 PackedAlphabet::Bit,
             ),
-        ])
-        .expect("layout should build")
+        ];
+        #[cfg(feature = "field-inline")]
+        let specs = {
+            let mut specs = specs;
+            specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
+                PackedFamilySpec::direct(
+                    PackedFamilyId::FieldRdIncByte { index },
+                    PackedFactDomain::TraceRows { log_t: 0 },
+                    1,
+                    PackedAlphabet::Byte,
+                )
+            }));
+            specs
+        };
+        PackedWitnessLayout::new(specs).expect("layout should build")
     }
 
     fn packed_cell(family: PackedFamilyId, symbol: usize) -> PackedCellAddress {
@@ -2069,7 +2082,7 @@ mod tests {
 
     #[test]
     fn commits_jolt_packed_witness_inputs_with_padding() {
-        let layout = PackedWitnessLayout::new([
+        let specs = vec![
             PackedFamilySpec::direct(
                 PackedFamilyId::InstructionRa { index: 0 },
                 PackedFactDomain::TraceRows { log_t: 1 },
@@ -2124,8 +2137,21 @@ mod tests {
                 1,
                 PackedAlphabet::Byte,
             ),
-        ])
-        .expect("layout should build");
+        ];
+        #[cfg(feature = "field-inline")]
+        let specs = {
+            let mut specs = specs;
+            specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
+                PackedFamilySpec::direct(
+                    PackedFamilyId::FieldRdIncByte { index },
+                    PackedFactDomain::TraceRows { log_t: 1 },
+                    1,
+                    PackedAlphabet::Byte,
+                )
+            }));
+            specs
+        };
+        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
         let rows = [
             trace_row(
                 JoltInstructionKind::ADD,
@@ -2340,6 +2366,15 @@ mod tests {
                 ),
             ]);
         }
+        #[cfg(feature = "field-inline")]
+        specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
+            PackedFamilySpec::direct(
+                PackedFamilyId::FieldRdIncByte { index },
+                PackedFactDomain::TraceRows { log_t },
+                1,
+                PackedAlphabet::Byte,
+            )
+        }));
         let layout = PackedWitnessLayout::new(specs).expect("layout should build");
         let source = SparsePackedWitness::try_from_cells(
             layout,
@@ -2853,6 +2888,11 @@ mod tests {
             config.lattice.packed_witness.layout_digest = Some([0; 32]);
             config.lattice.packed_witness.d_pack = Some(0);
             config.lattice.packed_witness.validity_digest = Some([0; 32]);
+            #[cfg(feature = "field-inline")]
+            {
+                config.lattice.field_inline.enabled = true;
+                config.lattice.packed_witness.field_rd_inc_family = true;
+            }
 
             let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
                 &config,
