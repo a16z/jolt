@@ -110,6 +110,7 @@ pub enum LatticePackedValidityKind {
     OptionalOneHot,
     BooleanIndicator { symbol: usize },
     FusedIncrementCanonicalZero,
+    BytecodeStoreRdDisjoint,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +170,18 @@ impl LatticePackedValidityRequirement {
             kind: LatticePackedValidityKind::FusedIncrementCanonicalZero,
         }
     }
+
+    pub fn bytecode_store_rd_disjoint(chunk: usize) -> Self {
+        Self {
+            family: LatticePackedFamilyId::BytecodeCircuitFlag {
+                chunk,
+                flag: CircuitFlags::Store as usize,
+            },
+            limbs: 1,
+            alphabet_size: 2,
+            kind: LatticePackedValidityKind::BytecodeStoreRdDisjoint,
+        }
+    }
 }
 
 pub type LatticePackedValidityDigest = [u8; 32];
@@ -215,6 +228,7 @@ fn write_validity_kind(bytes: &mut Vec<u8>, kind: &LatticePackedValidityKind) {
             write_usize(bytes, *symbol);
         }
         LatticePackedValidityKind::FusedIncrementCanonicalZero => bytes.push(3),
+        LatticePackedValidityKind::BytecodeStoreRdDisjoint => bytes.push(4),
     }
 }
 
@@ -613,6 +627,7 @@ pub fn bytecode_validity_requirements(
         LatticePackedFamilyId::BytecodeImmBytes { chunk },
         field_byte_width,
     ));
+    requirements.push(LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk));
     requirements
 }
 
@@ -1270,7 +1285,7 @@ mod tests {
 
         assert_eq!(
             requirements.len(),
-            3 + NUM_CIRCUIT_FLAGS + NUM_INSTRUCTION_FLAGS + 4
+            3 + NUM_CIRCUIT_FLAGS + NUM_INSTRUCTION_FLAGS + 5
         );
         assert!(
             requirements.contains(&LatticePackedValidityRequirement::optional_one_hot(
@@ -1327,6 +1342,8 @@ mod tests {
                 256,
             ))
         );
+        assert!(requirements
+            .contains(&LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk)));
     }
 
     #[test]

@@ -14,7 +14,8 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::protocols::jolt::{
     advice_bytes_validity_requirement, byte_decode_terms, bytecode_chunk_lattice_view_formula,
-    bytecode_validity_requirements, formulas::ra::JoltRaPolynomialLayout,
+    bytecode_validity_requirements,
+    formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
     fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
     fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
@@ -32,6 +33,7 @@ use jolt_openings::{
     PackedLinearTerm, PhysicalView,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial};
+use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{
     BatchedEvaluationClaim, BatchedSumcheckVerifier, ClearProof, SumcheckClaim, SumcheckProof,
 };
@@ -59,6 +61,7 @@ pub enum LatticePackedValidityStatementKind {
     OptionalOneHotRowSum,
     BooleanIndicator,
     FusedIncrementCanonicalZero,
+    BytecodeStoreRdDisjoint,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -270,6 +273,15 @@ pub fn derive_akita_packed_validity_statements(
                     degree: FUSED_INCREMENT_BYTE_LIMBS + 2,
                 });
             }
+            LatticePackedValidityKind::BytecodeStoreRdDisjoint => {
+                let row_vars = validate_bytecode_store_rd_disjoint_layout(layout, requirement)?;
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint,
+                    num_vars: row_vars,
+                    degree: 3,
+                });
+            }
         }
     }
     Ok(statements)
@@ -317,6 +329,66 @@ fn validate_fused_increment_canonical_zero_layout(
     Ok(row_vars)
 }
 
+fn validate_bytecode_store_rd_disjoint_layout(
+    layout: &PackedWitnessLayout,
+    requirement: &LatticePackedValidityRequirement,
+) -> Result<usize, VerifierError> {
+    let chunk = bytecode_store_rd_disjoint_chunk(requirement)?;
+    let store_id = PackedFamilyId::BytecodeCircuitFlag {
+        chunk,
+        flag: CircuitFlags::Store as usize,
+    };
+    let store = layout.family(&store_id).ok_or_else(|| {
+        invalid_lattice_config(format!(
+            "bytecode Store/Rd disjointness requires {store_id:?}"
+        ))
+    })?;
+    if store.limbs != 1 || store.alphabet.size() != 2 {
+        return Err(invalid_lattice_config(
+            "bytecode Store/Rd disjointness requires a boolean Store flag family",
+        ));
+    }
+
+    let rd_id = PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+    let rd = layout.family(&rd_id).ok_or_else(|| {
+        invalid_lattice_config(format!("bytecode Store/Rd disjointness requires {rd_id:?}"))
+    })?;
+    if rd.domain != store.domain
+        || rd.limbs != 1
+        || rd.alphabet.size() != 1 << REGISTER_ADDRESS_BITS
+    {
+        return Err(invalid_lattice_config(format!(
+            "bytecode Store/Rd disjointness requires {rd_id:?} to be an rd selector family over the Store flag row domain"
+        )));
+    }
+
+    let rows = store.domain.rows().map_err(|error| {
+        invalid_lattice_config(format!(
+            "bytecode Store/Rd disjointness row domain is invalid: {error}"
+        ))
+    })?;
+    power_of_two_log(rows, "bytecode Store/Rd disjointness row count")
+}
+
+fn bytecode_store_rd_disjoint_chunk(
+    requirement: &LatticePackedValidityRequirement,
+) -> Result<usize, VerifierError> {
+    let LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
+        return Err(invalid_lattice_config(
+            "bytecode Store/Rd disjointness must be anchored on the Store circuit flag",
+        ));
+    };
+    if *flag != CircuitFlags::Store as usize
+        || requirement.limbs != 1
+        || requirement.alphabet_size != 2
+    {
+        return Err(invalid_lattice_config(
+            "bytecode Store/Rd disjointness must be anchored on a boolean Store circuit flag",
+        ));
+    }
+    Ok(*chunk)
+}
+
 pub fn lattice_packed_validity_claims<F>(
     statements: &[LatticePackedValidityStatement],
 ) -> Vec<SumcheckClaim<F>>
@@ -351,6 +423,7 @@ fn validity_statement_opening_count(statement: &LatticePackedValidityStatement) 
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
             FUSED_INCREMENT_BYTE_LIMBS + 1
         }
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => 2,
     }
 }
 
@@ -567,6 +640,10 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
                 transcript.append(&U64Word(3));
                 transcript.append(&U64Word(0));
             }
+            LatticePackedValidityKind::BytecodeStoreRdDisjoint => {
+                transcript.append(&U64Word(4));
+                transcript.append(&U64Word(0));
+            }
         }
     }
 }
@@ -578,6 +655,7 @@ fn validity_statement_kind_tag(kind: LatticePackedValidityStatementKind) -> u64 
         LatticePackedValidityStatementKind::OptionalOneHotRowSum => 2,
         LatticePackedValidityStatementKind::BooleanIndicator => 3,
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => 4,
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => 5,
     }
 }
 
@@ -599,6 +677,7 @@ where
             .iter()
             .copied()
             .fold(F::one(), |acc, opening| acc * opening),
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => openings[0] * openings[1],
     }
 }
 
@@ -616,7 +695,8 @@ where
             let difference = opening - F::one();
             difference * difference
         }
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => opening,
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
+        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => opening,
     }
 }
 
@@ -631,6 +711,9 @@ where
 {
     if statement.kind == LatticePackedValidityStatementKind::FusedIncrementCanonicalZero {
         return fused_increment_canonical_zero_physical_view(layout, point, factor);
+    }
+    if statement.kind == LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint {
+        return bytecode_store_rd_disjoint_physical_view(layout, statement, point, factor);
     }
     if factor != 0 {
         return Err(invalid_lattice_config(format!(
@@ -688,6 +771,9 @@ where
         }
         LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
             return fused_increment_canonical_zero_physical_view(layout, point, factor);
+        }
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => {
+            return bytecode_store_rd_disjoint_physical_view(layout, statement, point, factor);
         }
     };
 
@@ -753,6 +839,75 @@ fn fused_increment_canonical_zero_factor(
     Err(invalid_lattice_config(format!(
         "fused increment canonical-zero has no opening factor {factor}"
     )))
+}
+
+fn bytecode_store_rd_disjoint_physical_view<F>(
+    layout: &PackedWitnessLayout,
+    statement: &LatticePackedValidityStatement,
+    point: &[F],
+    factor: usize,
+) -> Result<PhysicalView<F>, VerifierError>
+where
+    F: Field,
+{
+    let chunk = bytecode_store_rd_disjoint_chunk(&statement.requirement)?;
+    let store_id = PackedFamilyId::BytecodeCircuitFlag {
+        chunk,
+        flag: CircuitFlags::Store as usize,
+    };
+    let store = layout.family(&store_id).ok_or_else(|| {
+        invalid_lattice_config(format!(
+            "bytecode Store/Rd disjointness requires {store_id:?}"
+        ))
+    })?;
+    let rows = store.domain.rows().map_err(|error| {
+        invalid_lattice_config(format!(
+            "bytecode Store/Rd disjointness row domain is invalid: {error}"
+        ))
+    })?;
+    let row_vars = power_of_two_log(rows, "bytecode Store/Rd disjointness row count")?;
+    if point.len() != row_vars {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "bytecode Store/Rd disjointness point has {} variables but statement requires {row_vars}",
+                point.len()
+            ),
+        });
+    }
+
+    let terms = match factor {
+        0 => vec![
+            PackedLinearTerm::new(F::one(), store_id.physical_ref(), 0, 1)
+                .with_row_point(point.to_vec()),
+        ],
+        1 => {
+            let rd_id = PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+            let rd = layout.family(&rd_id).ok_or_else(|| {
+                invalid_lattice_config(format!("bytecode Store/Rd disjointness requires {rd_id:?}"))
+            })?;
+            if rd.domain != store.domain || rd.limbs != 1 {
+                return Err(invalid_lattice_config(
+                    "bytecode Store/Rd disjointness rd selector layout mismatch",
+                ));
+            }
+            (0..rd.alphabet.size())
+                .map(|symbol| {
+                    PackedLinearTerm::new(F::one(), rd_id.physical_ref(), 0, symbol)
+                        .with_row_point(point.to_vec())
+                })
+                .collect()
+        }
+        _ => {
+            return Err(invalid_lattice_config(format!(
+                "bytecode Store/Rd disjointness has no opening factor {factor}"
+            )));
+        }
+    };
+
+    Ok(PhysicalView::PackedLinear {
+        layout_digest: layout.digest,
+        terms,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -828,7 +983,8 @@ where
         LatticePackedValidityStatementKind::ExactOneHotRowSum
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => shape.row_vars + shape.limb_vars,
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => shape.row_vars,
+        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
+        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => shape.row_vars,
     };
     if point.len() != expected {
         return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
@@ -1046,7 +1202,8 @@ fn requirement_covers_term(
         LatticePackedValidityKind::BooleanIndicator { symbol: indicator } => {
             symbol == indicator && indicator < requirement.alphabet_size
         }
-        LatticePackedValidityKind::FusedIncrementCanonicalZero => false,
+        LatticePackedValidityKind::FusedIncrementCanonicalZero
+        | LatticePackedValidityKind::BytecodeStoreRdDisjoint => false,
     }
 }
 
@@ -1602,6 +1759,7 @@ fn extend_validity_requirement_families(
         if matches!(
             requirement.kind,
             LatticePackedValidityKind::FusedIncrementCanonicalZero
+                | LatticePackedValidityKind::BytecodeStoreRdDisjoint
         ) {
             continue;
         }
@@ -1904,6 +2062,30 @@ mod tests {
             .unwrap_or_else(|error| panic!("fused increment layout should build: {error}"))
     }
 
+    fn bytecode_source_validity_layout(chunk: usize, log_bytecode: usize) -> PackedWitnessLayout {
+        let domain = PackedFactDomain::BytecodeRows { log_bytecode };
+        PackedWitnessLayout::new([
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeCircuitFlag {
+                    chunk,
+                    flag: CircuitFlags::Store as usize,
+                },
+                domain,
+                1,
+                PackedAlphabet::Bit,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+                domain,
+                1,
+                PackedAlphabet::Fixed {
+                    size: 1 << REGISTER_ADDRESS_BITS,
+                },
+            ),
+        ])
+        .unwrap_or_else(|error| panic!("bytecode source layout should build: {error}"))
+    }
+
     #[test]
     fn derive_layout_includes_base_lattice_families() {
         let config = lattice_config();
@@ -2083,6 +2265,29 @@ mod tests {
     }
 
     #[test]
+    fn derive_validity_statements_adds_bytecode_store_rd_disjointness() {
+        let chunk = 2;
+        let layout = bytecode_source_validity_layout(chunk, 5);
+        let requirement = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk);
+
+        let statements =
+            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
+                .unwrap_or_else(|error| {
+                    panic!("Store/Rd disjointness validity statement should derive: {error}")
+                });
+
+        assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0].requirement, requirement);
+        assert_eq!(
+            statements[0].kind,
+            LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        );
+        assert_eq!(statements[0].num_vars, 5);
+        assert_eq!(statements[0].degree, 3);
+        assert_eq!(lattice_packed_validity_opening_count(&statements), 2);
+    }
+
+    #[test]
     fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
             PackedFamilyId::ProgramImageInit,
@@ -2241,6 +2446,74 @@ mod tests {
             assert_eq!(terms[0].limb, 0);
             assert_eq!(terms[0].symbol, 0);
         }
+    }
+
+    #[test]
+    fn validity_batch_builder_lowers_bytecode_store_rd_disjointness_factors() {
+        let chunk = 2;
+        let layout = bytecode_source_validity_layout(chunk, 3);
+        let statement = LatticePackedValidityStatement {
+            requirement: LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk),
+            kind: LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint,
+            num_vars: 3,
+            degree: 3,
+        };
+        let point = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
+        let eq_point = vec![Fr::from_u64(11), Fr::from_u64(13), Fr::from_u64(17)];
+        let batching_coefficient = Fr::from_u64(19);
+        let opening_claims = [Fr::from_u64(23), Fr::from_u64(29)];
+        let reduction = BatchedEvaluationClaim {
+            reduction: EvaluationClaim::new(point.clone(), Fr::from_u64(31)),
+            batching_coefficients: vec![batching_coefficient],
+            max_num_vars: 3,
+            max_degree: 3,
+        };
+
+        let batch = build_lattice_packed_validity_batch(
+            &layout,
+            std::slice::from_ref(&statement),
+            99_u64,
+            std::slice::from_ref(&eq_point),
+            &reduction,
+            &opening_claims,
+        )
+        .unwrap_or_else(|error| panic!("Store/Rd disjointness batch should build: {error}"));
+
+        let expected_eq = try_eq_mle(&point, &eq_point)
+            .unwrap_or_else(|error| panic!("eq mask should evaluate: {error}"));
+        assert_eq!(
+            batch.expected_final_claim,
+            batching_coefficient * expected_eq * opening_claims[0] * opening_claims[1]
+        );
+        assert_eq!(batch.statement.claims.len(), 2);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[0].view else {
+            panic!("Store factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 1);
+        assert_eq!(
+            terms[0].family,
+            PackedFamilyId::BytecodeCircuitFlag {
+                chunk,
+                flag: CircuitFlags::Store as usize
+            }
+            .physical_ref()
+        );
+        assert_eq!(terms[0].symbol, 1);
+        assert_eq!(terms[0].row_point, point);
+
+        let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[1].view else {
+            panic!("Rd-present factor should use a packed linear view");
+        };
+        assert_eq!(terms.len(), 1 << REGISTER_ADDRESS_BITS);
+        let term = find_physical_term(
+            terms,
+            PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+            0,
+            (1 << REGISTER_ADDRESS_BITS) - 1,
+        );
+        assert_eq!(term.coefficient, Fr::from_u64(1));
+        assert_eq!(term.row_point, point);
     }
 
     #[test]
