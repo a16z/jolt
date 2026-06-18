@@ -9,15 +9,23 @@ use crate::{
         ProgramMode,
     },
     preprocessing::JoltVerifierPreprocessing,
-    proof::{AkitaCommitmentPayload, ClearOnlyVectorCommitment, CommitmentPayload, JoltProof},
+    proof::{
+        AkitaCommitmentPayload, ClearOnlyCommitment, ClearOnlyVectorCommitment, CommitmentPayload,
+        JoltProof, JoltProofClaims,
+    },
     stages::{
         stage6::{
             inputs::{FusedIncrementSourceLinkOutputClaims, FusedIncrementTranslationOutputClaims},
             outputs::VerifiedBytecodeReadRafSumcheck,
         },
+        stage7::inputs::LatticePackedValidityOutputClaims,
         stage8::{
-            akita_packed_view_formula, jolt_lattice_view_formula,
-            validate_akita_packed_witness_layout_config, Stage8BatchStatement,
+            akita_packed_family_id, akita_packed_view_formula, build_lattice_packed_validity_batch,
+            derive_akita_packed_validity_requirements, derive_akita_packed_validity_statements,
+            jolt_lattice_view_formula, lattice_packed_validity_claims,
+            sample_lattice_packed_validity_eq_points, validate_akita_packed_witness_layout_config,
+            LatticePackedValidityStatement, LatticePackedValidityStatementKind,
+            Stage8BatchStatement,
         },
         PrecommittedSchedule,
     },
@@ -34,11 +42,17 @@ use jolt_claims::protocols::jolt::{
     fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
     fused_increment_sign_lattice_view_formula, lattice_packed_validity_digest, JoltAdviceKind,
     JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticeFusedIncrementTarget,
-    LatticePackedFamilyId, LatticePackedValidityRequirement,
+    LatticePackedFamilyId, LatticePackedValidityKind, LatticePackedValidityRequirement,
 };
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
+use jolt_poly::{try_eq_mle, EqPolynomial, UnivariatePoly};
 use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
+use jolt_sumcheck::{
+    append_sumcheck_claim, BatchedEvaluationClaim, ClearProof, CompressedLabeledRoundPoly,
+    CompressedSumcheckProof, EvaluationClaim, RoundMessage, SumcheckProof,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+};
 use jolt_transcript::Transcript;
 
 pub type AkitaClearVectorCommitment = ClearOnlyVectorCommitment<AkitaField>;
@@ -70,6 +84,13 @@ pub struct AkitaPackedJoltWitnessInput<'a> {
 pub struct AkitaCommittedPackedJoltWitness {
     pub artifacts: AkitaPackedWitnessArtifacts,
     pub witness: SparsePackedWitness<AkitaField>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AkitaPackedValidityProofArtifacts {
+    pub sumcheck_proof: SumcheckProof<AkitaField, ClearOnlyCommitment>,
+    pub opening_claims: LatticePackedValidityOutputClaims<AkitaField>,
+    pub opening_proof: AkitaPackedBatchProof,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,6 +505,116 @@ where
     prove_akita_packed_openings(setup, transcript, artifacts, source, &statement.statement)
 }
 
+pub fn prove_akita_packed_validity<T, S>(
+    setup: &AkitaProverSetup,
+    transcript: &mut T,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+    precommitted: &PrecommittedSchedule,
+) -> Result<AkitaPackedValidityProofArtifacts, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    if source.layout() != &artifacts.layout {
+        return Err(
+            VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                reason: "Akita packed validity source layout does not match committed artifact"
+                    .to_string(),
+            },
+        );
+    }
+
+    let requirements =
+        derive_akita_packed_validity_requirements(&artifacts.protocol, precommitted)?;
+    let statements = derive_akita_packed_validity_statements(&artifacts.layout, &requirements)?;
+    let eq_points =
+        sample_lattice_packed_validity_eq_points(transcript, &artifacts.layout, &statements);
+    let sumcheck_claims = lattice_packed_validity_claims::<AkitaField>(&statements);
+    for claim in &sumcheck_claims {
+        append_sumcheck_claim(transcript, &claim.claimed_sum);
+    }
+    let batching_coefficients = (0..statements.len())
+        .map(|_| transcript.challenge_scalar())
+        .collect::<Vec<_>>();
+    let max_num_vars = statements
+        .iter()
+        .map(|statement| statement.num_vars)
+        .max()
+        .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: "cannot prove an empty Akita packed validity batch".to_string(),
+        })?;
+    let max_degree = statements
+        .iter()
+        .map(|statement| statement.degree)
+        .max()
+        .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: "cannot prove an empty Akita packed validity batch".to_string(),
+        })?;
+
+    let (compressed, reduction) = prove_combined_validity_sumcheck(
+        source,
+        &statements,
+        &eq_points,
+        &batching_coefficients,
+        max_num_vars,
+        max_degree,
+        transcript,
+    )?;
+    let opening_claims = statements
+        .iter()
+        .map(|statement| {
+            let point = reduction
+                .try_instance_point(statement.num_vars)
+                .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+                    reason: error.to_string(),
+                })?;
+            validity_opening_value(source, statement, point)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let batch = build_lattice_packed_validity_batch(
+        &artifacts.layout,
+        &statements,
+        artifacts
+            .payload()
+            .ok_or_else(
+                || VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                    reason: "Akita packed validity artifacts do not carry an Akita payload"
+                        .to_string(),
+                },
+            )?
+            .packed_witness
+            .clone(),
+        &eq_points,
+        &reduction,
+        &opening_claims,
+    )?;
+    if reduction.reduction.value != batch.expected_final_claim {
+        return Err(VerifierError::AkitaPackedValidityOutputMismatch);
+    }
+    let opening_proof =
+        prove_akita_packed_openings(setup, transcript, artifacts, source, &batch.statement)?;
+
+    Ok(AkitaPackedValidityProofArtifacts {
+        sumcheck_proof: SumcheckProof::Clear(ClearProof::Compressed(compressed)),
+        opening_claims: LatticePackedValidityOutputClaims { opening_claims },
+        opening_proof,
+    })
+}
+
+pub fn attach_akita_packed_validity_proof(
+    proof: &mut AkitaJoltProof,
+    validity: AkitaPackedValidityProofArtifacts,
+) -> Result<(), VerifierError> {
+    proof.stages.lattice_packed_validity_sumcheck_proof = Some(validity.sumcheck_proof);
+    proof.lattice_packed_validity_opening_proof = Some(validity.opening_proof);
+    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+        return Err(VerifierError::UnexpectedBlindFoldProof);
+    };
+    claims.stage7.lattice_packed_validity = Some(validity.opening_claims);
+    Ok(())
+}
+
 pub fn prove_akita_jolt_final_openings<T, S>(
     setup: &AkitaProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
@@ -856,6 +987,421 @@ where
         .map_err(|error| akita_fused_claim_error(stage, error))
 }
 
+fn prove_combined_validity_sumcheck<T, S>(
+    source: &S,
+    statements: &[LatticePackedValidityStatement],
+    eq_points: &[Vec<AkitaField>],
+    batching_coefficients: &[AkitaField],
+    max_num_vars: usize,
+    max_degree: usize,
+    transcript: &mut T,
+) -> Result<
+    (
+        CompressedSumcheckProof<AkitaField>,
+        BatchedEvaluationClaim<AkitaField>,
+    ),
+    VerifierError,
+>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    let mut challenges = Vec::with_capacity(max_num_vars);
+    let mut round_polynomials = Vec::with_capacity(max_num_vars);
+    for _ in 0..max_num_vars {
+        let remaining = max_num_vars - challenges.len() - 1;
+        let round_evals = (0..=max_degree)
+            .map(|point| {
+                let mut prefix = challenges.clone();
+                prefix.push(AkitaField::from_u64(point as u64));
+                sum_combined_validity_over_suffix(
+                    source,
+                    statements,
+                    eq_points,
+                    batching_coefficients,
+                    max_num_vars,
+                    &prefix,
+                    remaining,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let round_poly = UnivariatePoly::from_evals(&round_evals);
+        let compressed =
+            CompressedLabeledRoundPoly::new(&round_poly, SUMCHECK_ROUND_TRANSCRIPT_LABEL);
+        <CompressedLabeledRoundPoly<'_, AkitaField> as RoundMessage>::append_to_transcript(
+            &compressed,
+            transcript,
+        );
+        let challenge = transcript.challenge();
+        round_polynomials.push(round_poly.compress());
+        challenges.push(challenge);
+    }
+
+    let value = combined_validity_value(
+        source,
+        statements,
+        eq_points,
+        batching_coefficients,
+        max_num_vars,
+        &challenges,
+    )?;
+
+    Ok((
+        CompressedSumcheckProof { round_polynomials },
+        BatchedEvaluationClaim {
+            reduction: EvaluationClaim::new(challenges, value),
+            batching_coefficients: batching_coefficients.to_vec(),
+            max_num_vars,
+            max_degree,
+        },
+    ))
+}
+
+fn sum_combined_validity_over_suffix<S>(
+    source: &S,
+    statements: &[LatticePackedValidityStatement],
+    eq_points: &[Vec<AkitaField>],
+    batching_coefficients: &[AkitaField],
+    max_num_vars: usize,
+    prefix: &[AkitaField],
+    remaining: usize,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let suffix_count = checked_power_of_two(remaining, "packed validity suffix")?;
+    let mut sum = AkitaField::zero();
+    for suffix in 0..suffix_count {
+        let mut point = prefix.to_vec();
+        append_boolean_bits(&mut point, suffix, remaining);
+        sum += combined_validity_value(
+            source,
+            statements,
+            eq_points,
+            batching_coefficients,
+            max_num_vars,
+            &point,
+        )?;
+    }
+    Ok(sum)
+}
+
+fn combined_validity_value<S>(
+    source: &S,
+    statements: &[LatticePackedValidityStatement],
+    eq_points: &[Vec<AkitaField>],
+    batching_coefficients: &[AkitaField],
+    max_num_vars: usize,
+    point: &[AkitaField],
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let mut value = AkitaField::zero();
+    for ((statement, eq_point), coefficient) in
+        statements.iter().zip(eq_points).zip(batching_coefficients)
+    {
+        let offset = max_num_vars
+            .checked_sub(statement.num_vars)
+            .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: "packed validity statement has more variables than the combined batch"
+                    .to_string(),
+            })?;
+        let instance_point = point
+            .get(offset..offset + statement.num_vars)
+            .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: "packed validity instance point is out of range".to_string(),
+            })?;
+        value += *coefficient * validity_value(source, statement, eq_point, instance_point)?;
+    }
+    Ok(value)
+}
+
+fn validity_value<S>(
+    source: &S,
+    statement: &LatticePackedValidityStatement,
+    eq_point: &[AkitaField],
+    point: &[AkitaField],
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let eq_mask = try_eq_mle(point, eq_point).map_err(|error| {
+        VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(eq_mask
+        * validity_violation(
+            statement.kind,
+            validity_opening_value(source, statement, point)?,
+        ))
+}
+
+fn validity_opening_value<S>(
+    source: &S,
+    statement: &LatticePackedValidityStatement,
+    point: &[AkitaField],
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let family_id = akita_packed_family_id(&statement.requirement.family);
+    let shape = validity_statement_shape(source.layout(), statement, &family_id)?;
+    let point_parts = split_validity_point(statement.kind, point, shape)?;
+    let row_weights = EqPolynomial::<AkitaField>::evals(point_parts.row, None);
+    let limb_weights = EqPolynomial::<AkitaField>::evals(point_parts.limb, None);
+    match statement.kind {
+        LatticePackedValidityStatementKind::CellBooleanity => {
+            let symbol_weights = EqPolynomial::<AkitaField>::evals(point_parts.symbol, None);
+            weighted_family_value(
+                source,
+                &family_id,
+                &row_weights,
+                &limb_weights,
+                SymbolWeights::Point(&symbol_weights),
+            )
+        }
+        LatticePackedValidityStatementKind::ExactOneHotRowSum
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum => weighted_family_value(
+            source,
+            &family_id,
+            &row_weights,
+            &limb_weights,
+            SymbolWeights::All,
+        ),
+        LatticePackedValidityStatementKind::BooleanIndicator => {
+            let LatticePackedValidityKind::BooleanIndicator { symbol } = statement.requirement.kind
+            else {
+                return Err(VerifierError::InvalidProtocolConfig {
+                    reason: "boolean-indicator validity statement has non-indicator requirement"
+                        .to_string(),
+                });
+            };
+            weighted_family_value(
+                source,
+                &family_id,
+                &row_weights,
+                &limb_weights,
+                SymbolWeights::Fixed(symbol),
+            )
+        }
+    }
+}
+
+fn validity_violation(kind: LatticePackedValidityStatementKind, opening: AkitaField) -> AkitaField {
+    match kind {
+        LatticePackedValidityStatementKind::CellBooleanity
+        | LatticePackedValidityStatementKind::BooleanIndicator
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum => {
+            opening * (opening - AkitaField::one())
+        }
+        LatticePackedValidityStatementKind::ExactOneHotRowSum => {
+            let difference = opening - AkitaField::one();
+            difference * difference
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ValidityStatementShape {
+    row: usize,
+    limb: usize,
+    symbol: usize,
+}
+
+struct ValidityPointParts<'a> {
+    row: &'a [AkitaField],
+    limb: &'a [AkitaField],
+    symbol: &'a [AkitaField],
+}
+
+fn validity_statement_shape(
+    layout: &PackedWitnessLayout,
+    statement: &LatticePackedValidityStatement,
+    family_id: &PackedFamilyId,
+) -> Result<ValidityStatementShape, VerifierError> {
+    let family = layout
+        .family(family_id)
+        .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+            reason: format!("packed validity statement references missing family {family_id:?}"),
+        })?;
+    if family.limbs != statement.requirement.limbs {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: format!(
+                "packed validity family {family_id:?} limb count mismatch: layout has {}, statement has {}",
+                family.limbs, statement.requirement.limbs
+            ),
+        });
+    }
+    if family.alphabet.size() != statement.requirement.alphabet_size {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: format!(
+                "packed validity family {family_id:?} alphabet mismatch: layout has {}, statement has {}",
+                family.alphabet.size(),
+                statement.requirement.alphabet_size
+            ),
+        });
+    }
+    let rows = family
+        .domain
+        .rows()
+        .map_err(|error| VerifierError::InvalidProtocolConfig {
+            reason: format!("packed validity family {family_id:?} has invalid row domain: {error}"),
+        })?;
+    Ok(ValidityStatementShape {
+        row: power_of_two_log(rows, "packed validity row count")?,
+        limb: power_of_two_log(statement.requirement.limbs, "packed validity limb count")?,
+        symbol: power_of_two_log(
+            statement.requirement.alphabet_size,
+            "packed validity alphabet size",
+        )?,
+    })
+}
+
+fn split_validity_point(
+    kind: LatticePackedValidityStatementKind,
+    point: &[AkitaField],
+    shape: ValidityStatementShape,
+) -> Result<ValidityPointParts<'_>, VerifierError> {
+    let expected = match kind {
+        LatticePackedValidityStatementKind::CellBooleanity => shape.row + shape.limb + shape.symbol,
+        LatticePackedValidityStatementKind::ExactOneHotRowSum
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum
+        | LatticePackedValidityStatementKind::BooleanIndicator => shape.row + shape.limb,
+    };
+    if point.len() != expected {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "packed validity point has {} variables but statement requires {expected}",
+                point.len()
+            ),
+        });
+    }
+    let row_end = shape.row;
+    let limb_end = row_end + shape.limb;
+    let symbol_end = limb_end + shape.symbol;
+    let symbol = if matches!(kind, LatticePackedValidityStatementKind::CellBooleanity) {
+        &point[limb_end..symbol_end]
+    } else {
+        &[]
+    };
+    Ok(ValidityPointParts {
+        row: &point[..row_end],
+        limb: &point[row_end..limb_end],
+        symbol,
+    })
+}
+
+enum SymbolWeights<'a> {
+    Point(&'a [AkitaField]),
+    All,
+    Fixed(usize),
+}
+
+fn weighted_family_value<S>(
+    source: &S,
+    family_id: &PackedFamilyId,
+    row_weights: &[AkitaField],
+    limb_weights: &[AkitaField],
+    symbol_weights: SymbolWeights<'_>,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let mut value = AkitaField::zero();
+    let mut error = None;
+    source.for_each_nonzero(|rank, cell| {
+        if error.is_some() {
+            return;
+        }
+        let Some(address) = source.layout().unrank(rank) else {
+            error = Some(
+                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                    reason: format!("packed validity source emitted out-of-layout rank {rank}"),
+                },
+            );
+            return;
+        };
+        if &address.family != family_id {
+            return;
+        }
+        let Some(row_weight) = row_weights.get(address.row).copied() else {
+            error = Some(
+                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                    reason: format!("packed validity row {} is outside row weights", address.row),
+                },
+            );
+            return;
+        };
+        let Some(limb_weight) = limb_weights.get(address.limb).copied() else {
+            error = Some(
+                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                    reason: format!(
+                        "packed validity limb {} is outside limb weights",
+                        address.limb
+                    ),
+                },
+            );
+            return;
+        };
+        let symbol_weight = match symbol_weights {
+            SymbolWeights::Point(weights) => {
+                let Some(weight) = weights.get(address.symbol).copied() else {
+                    error = Some(
+                        VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                            reason: format!(
+                                "packed validity symbol {} is outside symbol weights",
+                                address.symbol
+                            ),
+                        },
+                    );
+                    return;
+                };
+                weight
+            }
+            SymbolWeights::All => AkitaField::one(),
+            SymbolWeights::Fixed(symbol) => {
+                if address.symbol == symbol {
+                    AkitaField::one()
+                } else {
+                    AkitaField::zero()
+                }
+            }
+        };
+        value += row_weight * limb_weight * symbol_weight * cell;
+    });
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(value)
+}
+
+fn append_boolean_bits(point: &mut Vec<AkitaField>, index: usize, bits: usize) {
+    for bit in 0..bits {
+        let shift = bits - 1 - bit;
+        point.push(AkitaField::from_u64(((index >> shift) & 1) as u64));
+    }
+}
+
+fn checked_power_of_two(bits: usize, name: &'static str) -> Result<usize, VerifierError> {
+    1usize.checked_shl(bits as u32).ok_or_else(|| {
+        VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!("{name} dimension is too large"),
+        }
+    })
+}
+
+fn power_of_two_log(value: usize, name: &'static str) -> Result<usize, VerifierError> {
+    if value.is_power_of_two() {
+        Ok(value.trailing_zeros() as usize)
+    } else {
+        Err(VerifierError::InvalidProtocolConfig {
+            reason: format!("{name} must be a power of two, got {value}"),
+        })
+    }
+}
+
 fn akita_fused_claim_error(stage: JoltRelationId, reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage,
@@ -919,7 +1465,10 @@ mod tests {
         SparsePackedWitness,
     };
     use jolt_claims::protocols::jolt::{
-        formulas::dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
+        formulas::{
+            dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
+            ra::JoltRaPolynomialLayout,
+        },
         fused_increment_bytecode_source_opening, fused_increment_magnitude_opening,
         fused_increment_sign_opening, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
         LatticeFusedIncrementTarget,
@@ -1003,6 +1552,15 @@ mod tests {
 
     fn af(value: u64) -> AkitaField {
         AkitaField::from_u64(value)
+    }
+
+    fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(test)
+            .expect("failed to spawn test thread")
+            .join()
+            .expect("test thread panicked");
     }
 
     #[test]
@@ -1791,6 +2349,183 @@ mod tests {
             result.coefficients[0] * instruction_claim + result.coefficients[1] * sign_claim
         );
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    }
+
+    #[test]
+    fn packed_validity_helper_proves_real_akita_opening_proof() {
+        run_on_large_stack(|| {
+            let log_t = 0;
+            let log_k_chunk = 1;
+            let precommitted = PrecommittedSchedule::new(
+                TracePolynomialOrder::CycleMajor,
+                log_t,
+                log_k_chunk,
+                None,
+                None,
+                Some(CommittedProgramSchedule {
+                    bytecode_len: 1,
+                    bytecode_chunk_count: 1,
+                    program_image_len_words: 1,
+                    program_image_start_index: 0,
+                }),
+            )
+            .expect("precommitted schedule should build");
+            let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+            config.lattice.program_mode = ProgramMode::Committed;
+            config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+            config.lattice.packed_witness.layout_digest = Some([0; 32]);
+            config.lattice.packed_witness.d_pack = Some(0);
+            config.lattice.packed_witness.validity_digest = Some([0; 32]);
+
+            let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+                &config,
+                log_t,
+                log_k_chunk,
+                JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+                &precommitted,
+            )
+            .expect("layout should derive");
+            config.lattice.packed_witness.layout_digest = Some(layout.digest);
+            config.lattice.packed_witness.d_pack = Some(layout.dimension);
+            let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
+                .expect("validity requirements should derive");
+            config.lattice.packed_witness.validity_digest =
+                Some(lattice_packed_validity_digest(&requirements));
+            let source = validity_default_source(&layout, &requirements);
+            let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+            let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+            let artifacts = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
+                .expect("valid packed witness should commit");
+
+            let mut prover_transcript = Blake2bTranscript::new(b"akita-validity");
+            let validity = prove_akita_packed_validity(
+                &prover_setup,
+                &mut prover_transcript,
+                &artifacts,
+                &source,
+                &precommitted,
+            )
+            .expect("validity proof should prove");
+
+            let mut verifier_transcript = Blake2bTranscript::new(b"akita-validity");
+            verify_validity_artifacts(
+                &verifier_setup,
+                &mut verifier_transcript,
+                &artifacts,
+                &precommitted,
+                &validity,
+            )
+            .expect("validity proof should verify");
+            assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+            let mut tampered = validity.clone();
+            tampered.opening_claims.opening_claims[0] += AkitaField::one();
+            let mut tampered_transcript = Blake2bTranscript::new(b"akita-validity");
+            let error = verify_validity_artifacts(
+                &verifier_setup,
+                &mut tampered_transcript,
+                &artifacts,
+                &precommitted,
+                &tampered,
+            )
+            .expect_err("tampered validity opening claim should reject");
+            assert!(matches!(
+                error,
+                VerifierError::AkitaPackedValidityOutputMismatch
+                    | VerifierError::AkitaPackedValidityOpeningVerificationFailed { .. }
+            ));
+        });
+    }
+
+    fn validity_default_source(
+        layout: &PackedWitnessLayout,
+        requirements: &[LatticePackedValidityRequirement],
+    ) -> SparsePackedWitness<AkitaField> {
+        let mut cells = Vec::new();
+        for requirement in requirements {
+            let family_id = akita_packed_family_id(&requirement.family);
+            let family = layout
+                .family(&family_id)
+                .expect("validity family should exist");
+            let rows = family.domain.rows().expect("family rows should derive");
+            if !matches!(requirement.kind, LatticePackedValidityKind::ExactOneHot) {
+                continue;
+            }
+            for row in 0..rows {
+                for limb in 0..requirement.limbs {
+                    cells.push((
+                        PackedCellAddress {
+                            family: family_id.clone(),
+                            row,
+                            limb,
+                            symbol: 0,
+                        },
+                        AkitaField::one(),
+                    ));
+                }
+            }
+        }
+        SparsePackedWitness::try_from_cells(layout.clone(), cells)
+            .expect("default validity source should build")
+    }
+
+    fn verify_validity_artifacts<T>(
+        setup: &AkitaVerifierSetup,
+        transcript: &mut T,
+        artifacts: &AkitaPackedWitnessArtifacts,
+        precommitted: &PrecommittedSchedule,
+        validity: &AkitaPackedValidityProofArtifacts,
+    ) -> Result<(), VerifierError>
+    where
+        T: Transcript<Challenge = AkitaField>,
+    {
+        let requirements =
+            derive_akita_packed_validity_requirements(&artifacts.protocol, precommitted)?;
+        let statements = derive_akita_packed_validity_statements(&artifacts.layout, &requirements)?;
+        let eq_points =
+            sample_lattice_packed_validity_eq_points(transcript, &artifacts.layout, &statements);
+        let sumcheck_claims = lattice_packed_validity_claims::<AkitaField>(&statements);
+        let SumcheckProof::Clear(ClearProof::Compressed(compressed)) = &validity.sumcheck_proof
+        else {
+            return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: "test validity proof should be compressed clear".to_string(),
+            });
+        };
+        let reduction = jolt_sumcheck::BatchedSumcheckVerifier::verify_compressed(
+            &sumcheck_claims,
+            compressed,
+            transcript,
+        )
+        .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: error.to_string(),
+        })?;
+        let batch = build_lattice_packed_validity_batch(
+            &artifacts.layout,
+            &statements,
+            artifacts
+                .payload()
+                .expect("artifact should carry Akita payload")
+                .packed_witness
+                .clone(),
+            &eq_points,
+            &reduction,
+            &validity.opening_claims.opening_claims,
+        )?;
+        if reduction.reduction.value != batch.expected_final_claim {
+            return Err(VerifierError::AkitaPackedValidityOutputMismatch);
+        }
+        <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            setup,
+            transcript,
+            &batch.statement,
+            &validity.opening_proof,
+        )
+        .map(|_| ())
+        .map_err(
+            |error| VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                reason: error.to_string(),
+            },
+        )
     }
 
     #[test]

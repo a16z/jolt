@@ -12,11 +12,12 @@ pub mod verifier;
 
 #[cfg(feature = "akita")]
 pub use akita::{
-    akita_lattice_protocol_config_for_layout, commit_akita_packed_witness,
-    commit_akita_packed_witness_with_config, derive_akita_fused_increment_stage6_claims,
-    prove_akita_jolt_final_openings, prove_akita_packed_openings,
-    prove_akita_stage8_clear_openings, verify_akita_clear, AkitaClearVectorCommitment,
-    AkitaFusedIncrementStage6Claims, AkitaFusedIncrementTranslationSources, AkitaJoltProof,
+    akita_lattice_protocol_config_for_layout, attach_akita_packed_validity_proof,
+    commit_akita_packed_witness, commit_akita_packed_witness_with_config,
+    derive_akita_fused_increment_stage6_claims, prove_akita_jolt_final_openings,
+    prove_akita_packed_openings, prove_akita_packed_validity, prove_akita_stage8_clear_openings,
+    verify_akita_clear, AkitaClearVectorCommitment, AkitaFusedIncrementStage6Claims,
+    AkitaFusedIncrementTranslationSources, AkitaJoltProof, AkitaPackedValidityProofArtifacts,
     AkitaPackedWitnessArtifacts, AkitaVerifierPreprocessing,
 };
 pub use config::{
