@@ -805,7 +805,7 @@ mod tests {
     use jolt_field::FixedByteSize;
     use jolt_openings::{
         BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-        PackedLinearTerm, PhysicalView,
+        OpeningsError, PackedLinearTerm, PhysicalView,
     };
     use jolt_poly::{EqPolynomial, Point};
     use jolt_riscv::{
@@ -1511,6 +1511,23 @@ mod tests {
         )
         .expect("derived fused packed openings should verify");
         assert_eq!(result.joint_commitment, commitment);
+
+        let mut tampered_statement = statement.clone();
+        tampered_statement
+            .claims
+            .iter_mut()
+            .find(|claim| claim.id == store_id)
+            .expect("store source claim should exist")
+            .claim += AkitaField::one();
+        let mut tampered_transcript = Blake2bTranscript::new(b"derived-fused-stage6");
+        let error = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut tampered_transcript,
+            &tampered_statement,
+            &proof,
+        )
+        .expect_err("tampered fused source claim should not verify");
+        assert!(matches!(error, OpeningsError::VerificationFailed));
     }
 
     #[test]
