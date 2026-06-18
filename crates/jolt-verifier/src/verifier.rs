@@ -878,6 +878,8 @@ mod tests {
         JoltStageProofs,
     };
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
     #[cfg(feature = "akita")]
     use jolt_claims::protocols::jolt::{
         formulas::{
@@ -1293,6 +1295,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("program image schedule should exist"))
                 .image_shape()
                 .row_vars()
+        );
+        #[cfg(feature = "field-inline")]
+        assert_eq!(
+            first_row_point_len(
+                &batch,
+                stage8::Stage8OpeningId::from(field_increments::field_rd_inc_reduced_opening()),
+            ),
+            log_t
         );
     }
 
@@ -1849,6 +1859,11 @@ mod tests {
         config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
         config.lattice.packed_witness.layout_digest = Some(layout_digest);
         config.lattice.packed_witness.d_pack = Some(d_pack);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
         config
     }
 
@@ -2074,6 +2089,10 @@ mod tests {
                 LatticeFusedIncrementTarget::Rd,
             )),
         ]);
+        #[cfg(feature = "field-inline")]
+        ids.push(stage8::Stage8OpeningId::from(
+            field_increments::field_rd_inc_reduced_opening(),
+        ));
         ids.extend((0..ra_layout.instruction()).map(|index| {
             stage8_opening(JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(index),
