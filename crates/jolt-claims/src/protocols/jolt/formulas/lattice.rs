@@ -413,6 +413,72 @@ pub fn fused_increment_validity_requirements() -> Vec<LatticePackedValidityRequi
     requirements
 }
 
+pub fn advice_bytes_validity_requirement(kind: JoltAdviceKind) -> LatticePackedValidityRequirement {
+    byte_validity_requirement(LatticePackedFamilyId::AdviceBytes { kind, index: 0 }, 1)
+}
+
+pub fn program_image_validity_requirement() -> LatticePackedValidityRequirement {
+    byte_validity_requirement(LatticePackedFamilyId::ProgramImageInit, 8)
+}
+
+pub fn bytecode_validity_requirements(
+    chunk: usize,
+    field_byte_width: usize,
+) -> Vec<LatticePackedValidityRequirement> {
+    let register_count = 1usize << REGISTER_ADDRESS_BITS;
+    let mut requirements = Vec::new();
+    for selector in 0..3 {
+        requirements.push(LatticePackedValidityRequirement::optional_one_hot(
+            LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector },
+            1,
+            register_count,
+        ));
+    }
+    for flag in 0..NUM_CIRCUIT_FLAGS {
+        requirements.push(LatticePackedValidityRequirement::boolean_indicator(
+            LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag },
+            1,
+            2,
+            1,
+        ));
+    }
+    for flag in 0..NUM_INSTRUCTION_FLAGS {
+        requirements.push(LatticePackedValidityRequirement::boolean_indicator(
+            LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag },
+            1,
+            2,
+            1,
+        ));
+    }
+    requirements.push(LatticePackedValidityRequirement::optional_one_hot(
+        LatticePackedFamilyId::BytecodeLookupSelector { chunk },
+        1,
+        LookupTableKind::<XLEN>::COUNT.next_power_of_two(),
+    ));
+    requirements.push(LatticePackedValidityRequirement::boolean_indicator(
+        LatticePackedFamilyId::BytecodeRafFlag { chunk },
+        1,
+        2,
+        1,
+    ));
+    requirements.push(byte_validity_requirement(
+        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
+        8,
+    ));
+    requirements.push(byte_validity_requirement(
+        LatticePackedFamilyId::BytecodeImmBytes { chunk },
+        field_byte_width,
+    ));
+    requirements
+}
+
+fn byte_validity_requirement(
+    family: LatticePackedFamilyId,
+    limbs: usize,
+) -> LatticePackedValidityRequirement {
+    LatticePackedValidityRequirement::exact_one_hot(family, limbs, 256)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LatticeFinalOpeningRequirement {
     PackedFamily {
@@ -1015,6 +1081,96 @@ mod tests {
                 1,
                 2,
                 1,
+            )
+        );
+    }
+
+    #[test]
+    fn bytecode_validity_requirements_cover_committed_program_facts() {
+        let chunk = 2;
+        let field_byte_width = 16;
+        let requirements = bytecode_validity_requirements(chunk, field_byte_width);
+
+        assert_eq!(
+            requirements.len(),
+            3 + NUM_CIRCUIT_FLAGS + NUM_INSTRUCTION_FLAGS + 4
+        );
+        assert!(
+            requirements.contains(&LatticePackedValidityRequirement::optional_one_hot(
+                LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+                1,
+                1 << REGISTER_ADDRESS_BITS,
+            ))
+        );
+        assert!(
+            requirements.contains(&LatticePackedValidityRequirement::boolean_indicator(
+                LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag: 0 },
+                1,
+                2,
+                1,
+            ))
+        );
+        assert!(
+            requirements.contains(&LatticePackedValidityRequirement::boolean_indicator(
+                LatticePackedFamilyId::BytecodeInstructionFlag {
+                    chunk,
+                    flag: NUM_INSTRUCTION_FLAGS - 1,
+                },
+                1,
+                2,
+                1,
+            ))
+        );
+        assert!(
+            requirements.contains(&LatticePackedValidityRequirement::optional_one_hot(
+                LatticePackedFamilyId::BytecodeLookupSelector { chunk },
+                1,
+                LookupTableKind::<XLEN>::COUNT.next_power_of_two(),
+            ))
+        );
+        assert!(
+            requirements.contains(&LatticePackedValidityRequirement::boolean_indicator(
+                LatticePackedFamilyId::BytecodeRafFlag { chunk },
+                1,
+                2,
+                1,
+            ))
+        );
+        assert!(
+            requirements.contains(&LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
+                8,
+                256,
+            ))
+        );
+        assert!(
+            requirements.contains(&LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::BytecodeImmBytes { chunk },
+                field_byte_width,
+                256,
+            ))
+        );
+    }
+
+    #[test]
+    fn advice_and_program_image_validity_requirements_are_byte_facts() {
+        assert_eq!(
+            advice_bytes_validity_requirement(JoltAdviceKind::Trusted),
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::AdviceBytes {
+                    kind: JoltAdviceKind::Trusted,
+                    index: 0,
+                },
+                1,
+                256,
+            )
+        );
+        assert_eq!(
+            program_image_validity_requirement(),
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::ProgramImageInit,
+                8,
+                256,
             )
         );
     }

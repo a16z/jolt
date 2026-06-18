@@ -13,22 +13,20 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineOpeningId,
 };
 use jolt_claims::protocols::jolt::{
-    byte_decode_terms, bytecode_chunk_lattice_view_formula,
-    formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
+    advice_bytes_validity_requirement, byte_decode_terms, bytecode_chunk_lattice_view_formula,
+    bytecode_validity_requirements, formulas::ra::JoltRaPolynomialLayout,
     fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
     fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
     fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
     fused_increment_source_opening, fused_increment_validity_requirements,
-    little_endian_byte_decode_terms, weighted_symbol_terms, AdviceClaimReductionLayout,
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-    LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityRequirement,
-    LatticePackedViewFormula, LatticePackedViewTerm, ProgramImageClaimReductionLayout,
-    TracePolynomialOrder,
+    little_endian_byte_decode_terms, program_image_validity_requirement, weighted_symbol_terms,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
+    LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
+    ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
 use jolt_field::{Field, FixedByteSize};
-use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::EqPolynomial;
-use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
 use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManifest};
 
@@ -85,15 +83,15 @@ pub fn derive_akita_packed_witness_layout(
 
     if config.lattice.advice.trusted {
         specs.push(advice_family(
-            PackedAdviceKind::Trusted,
+            JoltAdviceKind::Trusted,
             require_advice_layout(precommitted, JoltAdviceKind::Trusted)?,
-        ));
+        )?);
     }
     if config.lattice.advice.untrusted {
         specs.push(advice_family(
-            PackedAdviceKind::Untrusted,
+            JoltAdviceKind::Untrusted,
             require_advice_layout(precommitted, JoltAdviceKind::Untrusted)?,
-        ));
+        )?);
     }
 
     let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
@@ -102,7 +100,7 @@ pub fn derive_akita_packed_witness_layout(
         )
     })?;
     for index in 0..bytecode_layout.chunk_count() {
-        extend_bytecode_families(&mut specs, index, bytecode_layout.log_bytecode_chunk_size());
+        extend_bytecode_families(&mut specs, index, bytecode_layout.log_bytecode_chunk_size())?;
     }
 
     let program_image_layout = precommitted.program_image.as_ref().ok_or_else(|| {
@@ -718,16 +716,21 @@ fn akita_advice_kind(kind: JoltAdviceKind) -> PackedAdviceKind {
     }
 }
 
-fn advice_family(kind: PackedAdviceKind, layout: &AdviceClaimReductionLayout) -> PackedFamilySpec {
-    PackedFamilySpec::direct(
-        PackedFamilyId::AdviceBytes { kind, index: 0 },
+fn advice_family(
+    kind: JoltAdviceKind,
+    layout: &AdviceClaimReductionLayout,
+) -> Result<PackedFamilySpec, VerifierError> {
+    let packed_kind = akita_advice_kind(kind);
+    let requirement = advice_bytes_validity_requirement(kind);
+    Ok(PackedFamilySpec::direct(
+        akita_packed_family_id(&requirement.family),
         PackedFactDomain::AdviceBytes {
-            kind,
+            kind: packed_kind,
             log_bytes: layout.advice_shape().total_vars() + 3,
         },
-        1,
-        PackedAlphabet::Byte,
-    )
+        requirement.limbs,
+        packed_alphabet_with_size(requirement.alphabet_size)?,
+    ))
 }
 
 fn extend_validity_requirement_families(
@@ -746,71 +749,30 @@ fn extend_validity_requirement_families(
     Ok(())
 }
 
-fn extend_bytecode_families(specs: &mut Vec<PackedFamilySpec>, chunk: usize, log_bytecode: usize) {
+fn extend_bytecode_families(
+    specs: &mut Vec<PackedFamilySpec>,
+    chunk: usize,
+    log_bytecode: usize,
+) -> Result<(), VerifierError> {
     let domain = PackedFactDomain::BytecodeRows { log_bytecode };
-    let register_alphabet = PackedAlphabet::Fixed {
-        size: 1usize << REGISTER_ADDRESS_BITS,
-    };
-    for selector in 0..3 {
-        specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::BytecodeRegisterSelector { chunk, selector },
-            domain,
-            1,
-            register_alphabet,
-        ));
-    }
-    for flag in 0..NUM_CIRCUIT_FLAGS {
-        specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::BytecodeCircuitFlag { chunk, flag },
-            domain,
-            1,
-            PackedAlphabet::Bit,
-        ));
-    }
-    for flag in 0..NUM_INSTRUCTION_FLAGS {
-        specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::BytecodeInstructionFlag { chunk, flag },
-            domain,
-            1,
-            PackedAlphabet::Bit,
-        ));
-    }
-    specs.push(PackedFamilySpec::direct(
-        PackedFamilyId::BytecodeLookupSelector { chunk },
+    extend_validity_requirement_families(
+        specs,
+        &bytecode_validity_requirements(chunk, AkitaField::NUM_BYTES),
         domain,
-        1,
-        lookup_selector_alphabet(),
-    ));
-    specs.push(PackedFamilySpec::direct(
-        PackedFamilyId::BytecodeRafFlag { chunk },
-        domain,
-        1,
-        PackedAlphabet::Bit,
-    ));
-    specs.push(PackedFamilySpec::direct(
-        PackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
-        domain,
-        8,
-        PackedAlphabet::Byte,
-    ));
-    specs.push(PackedFamilySpec::direct(
-        PackedFamilyId::BytecodeImmBytes { chunk },
-        domain,
-        AkitaField::NUM_BYTES,
-        PackedAlphabet::Byte,
-    ));
+    )
 }
 
 fn program_image_family(
     layout: &ProgramImageClaimReductionLayout,
 ) -> Result<PackedFamilySpec, VerifierError> {
+    let requirement = program_image_validity_requirement();
     Ok(PackedFamilySpec::direct(
-        PackedFamilyId::ProgramImageInit,
+        akita_packed_family_id(&requirement.family),
         PackedFactDomain::ProgramImageWords {
             log_words: power_of_two_log(layout.padded_len_words(), "program image length")?,
         },
-        8,
-        PackedAlphabet::Byte,
+        requirement.limbs,
+        packed_alphabet_with_size(requirement.alphabet_size)?,
     ))
 }
 
@@ -838,12 +800,6 @@ fn one_hot_alphabet(log_k_chunk: usize) -> Result<PackedAlphabet, VerifierError>
         _ => Err(invalid_lattice_config(
             "lattice one-hot chunk size is too large",
         )),
-    }
-}
-
-fn lookup_selector_alphabet() -> PackedAlphabet {
-    PackedAlphabet::Fixed {
-        size: LookupTableKind::<RISCV_XLEN>::COUNT.next_power_of_two(),
     }
 }
 
@@ -904,11 +860,12 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode;
     use jolt_claims::protocols::jolt::{
-        byte_decode_terms, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
-        LatticePackedFamilyId, LatticePackedViewFormula, LatticePackedViewTerm,
-        TracePolynomialOrder,
+        byte_decode_terms, formulas::dimensions::REGISTER_ADDRESS_BITS, JoltCommittedPolynomial,
+        JoltOpeningId, JoltRelationId, LatticePackedFamilyId, LatticePackedViewFormula,
+        LatticePackedViewTerm, TracePolynomialOrder,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_openings::{PackedLinearTerm, PhysicalView};
     use jolt_poly::{EqPolynomial, Point};
     use jolt_riscv::CircuitFlags;
@@ -1101,6 +1058,54 @@ mod tests {
             assert_eq!(family.limbs, requirement.limbs);
             assert_eq!(family.alphabet.size(), requirement.alphabet_size);
         }
+    }
+
+    #[test]
+    fn derive_layout_uses_committed_program_validity_requirements() {
+        let mut config = lattice_config();
+        config.lattice.advice.trusted = true;
+        config.lattice.packed_witness.trusted_advice_family = true;
+        let precommitted = precommitted_schedule(Some(8));
+        let layout = derive_akita_packed_witness_layout(&config, 2, 8, ra_layout(), &precommitted)
+            .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+        let bytecode_domain = PackedFactDomain::BytecodeRows {
+            log_bytecode: precommitted
+                .bytecode
+                .as_ref()
+                .unwrap_or_else(|| panic!("bytecode layout should exist"))
+                .log_bytecode_chunk_size(),
+        };
+
+        for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
+            let family_id = akita_packed_family_id(&requirement.family);
+            let family = layout
+                .family(&family_id)
+                .unwrap_or_else(|| panic!("bytecode validity family {family_id:?} should exist"));
+
+            assert_eq!(family.domain, bytecode_domain);
+            assert_eq!(family.limbs, requirement.limbs);
+            assert_eq!(family.alphabet.size(), requirement.alphabet_size);
+        }
+
+        let advice_requirement = advice_bytes_validity_requirement(JoltAdviceKind::Trusted);
+        let advice_family = layout
+            .family(&akita_packed_family_id(&advice_requirement.family))
+            .unwrap_or_else(|| panic!("trusted advice family should exist"));
+        assert_eq!(advice_family.limbs, advice_requirement.limbs);
+        assert_eq!(
+            advice_family.alphabet.size(),
+            advice_requirement.alphabet_size
+        );
+
+        let program_image_requirement = program_image_validity_requirement();
+        let program_image_family = layout
+            .family(&akita_packed_family_id(&program_image_requirement.family))
+            .unwrap_or_else(|| panic!("program image family should exist"));
+        assert_eq!(program_image_family.limbs, program_image_requirement.limbs);
+        assert_eq!(
+            program_image_family.alphabet.size(),
+            program_image_requirement.alphabet_size
+        );
     }
 
     #[test]
