@@ -134,4 +134,16 @@ pub enum VerifierError {
 
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
+
+    #[error("serialized proof length {got} exceeds maximum {max}")]
+    ProofTooLarge { got: usize, max: usize },
+
+    #[error("serialized proof has trailing bytes: consumed {consumed} of {total}")]
+    TrailingProofBytes { consumed: usize, total: usize },
+
+    #[error("proof deserialization failed: {reason}")]
+    ProofDeserializationFailed { reason: String },
+
+    #[error("proof serialization failed: {reason}")]
+    ProofSerializationFailed { reason: String },
 }

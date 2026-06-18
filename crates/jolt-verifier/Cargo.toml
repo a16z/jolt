@@ -24,6 +24,7 @@ transcript-poseidon = []
 [dependencies]
 ark-bn254 = { workspace = true, optional = true }
 ark-serialize.workspace = true
+bincode.workspace = true
 common.workspace = true
 jolt-core = { workspace = true, features = ["minimal"], optional = true }
 jolt-blindfold.workspace = true

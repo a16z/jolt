@@ -9,6 +9,12 @@ fn standard_muldiv_core_proof_is_accepted() {
 
 #[test]
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
+fn standard_muldiv_proof_canonical_bytes_roundtrip() {
+    crate::support::core_fixtures::standard_muldiv_case().assert_canonical_bytes_roundtrip();
+}
+
+#[test]
+#[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn standard_fibonacci_small_core_proof_is_accepted() {
     support::assert_accepts(
         crate::support::core_fixtures::standard_fibonacci_small_case().verify(),

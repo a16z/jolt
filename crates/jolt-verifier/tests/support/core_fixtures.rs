@@ -218,6 +218,38 @@ impl CoreVerifierCase {
             false,
         )
     }
+
+    /// Round-trips the verifier-model proof through its canonical byte encoding
+    /// and checks the size-cap and trailing/truncation rejections on a real
+    /// Dory proof (exercising the curve/field `serde` paths end to end).
+    pub fn assert_canonical_bytes_roundtrip(&self) {
+        let bytes = self.proof.to_canonical_bytes().expect("encode proof");
+        let decoded = ConvertedProof::from_canonical_bytes(&bytes).expect("decode proof");
+        assert_eq!(decoded, self.proof, "decoded proof must equal the original");
+
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(
+            matches!(
+                ConvertedProof::from_canonical_bytes(&trailing),
+                Err(VerifierError::TrailingProofBytes { .. })
+            ),
+            "trailing bytes must be rejected"
+        );
+
+        assert!(
+            matches!(
+                ConvertedProof::from_canonical_bytes_bounded(&bytes, bytes.len().saturating_sub(1)),
+                Err(VerifierError::ProofTooLarge { .. })
+            ),
+            "oversized input must be rejected before allocation"
+        );
+
+        assert!(
+            ConvertedProof::from_canonical_bytes(&bytes[..bytes.len() - 1]).is_err(),
+            "truncated input must be rejected"
+        );
+    }
 }
 
 #[cfg(not(feature = "zk"))]
