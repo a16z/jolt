@@ -473,6 +473,31 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::panic,
+        reason = "test serialization failures should fail loudly"
+    )]
+    fn commitment_payload_serialization_is_variant_tagged() {
+        let dory_value = serde_json::to_value(dory_payload())
+            .unwrap_or_else(|error| panic!("Dory payload should serialize: {error}"));
+        let akita_value = serde_json::to_value(akita_payload())
+            .unwrap_or_else(|error| panic!("Akita payload should serialize: {error}"));
+
+        assert!(dory_value.get("Dory").is_some());
+        assert!(dory_value.get("Akita").is_none());
+        assert!(akita_value.get("Akita").is_some());
+        assert!(akita_value.get("Dory").is_none());
+
+        let dory_roundtrip: CommitmentPayload<u64> = serde_json::from_value(dory_value)
+            .unwrap_or_else(|error| panic!("Dory payload should deserialize: {error}"));
+        let akita_roundtrip: CommitmentPayload<u64> = serde_json::from_value(akita_value)
+            .unwrap_or_else(|error| panic!("Akita payload should deserialize: {error}"));
+
+        assert!(matches!(dory_roundtrip, CommitmentPayload::Dory(_)));
+        assert!(matches!(akita_roundtrip, CommitmentPayload::Akita(_)));
+    }
+
+    #[test]
     fn commitment_payload_validates_against_selected_pcs_family() {
         let curve = JoltProtocolConfig::for_zk(false);
         let lattice = lattice_config();
