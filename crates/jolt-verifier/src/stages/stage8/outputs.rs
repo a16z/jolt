@@ -127,7 +127,6 @@ impl<F: Field> Stage8PhysicalManifest<F> {
         let entries = formulas
             .into_iter()
             .map(|(id, formula, row_point)| {
-                let id = Stage8OpeningId::from(id);
                 Ok((
                     id,
                     id,
@@ -370,7 +369,7 @@ mod tests {
             &logical,
             &layout,
             [(
-                jolt_id,
+                Stage8OpeningId::from(jolt_id),
                 LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
                     LatticePackedFamilyId::BytecodeChunk { index: 0 },
                     3,
@@ -437,7 +436,7 @@ mod tests {
                 &logical,
                 &layout,
                 [(
-                    supplied_id,
+                    Stage8OpeningId::from(supplied_id),
                     LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1,),
                     vec![Fr::from_u64(1)],
                 )],
@@ -481,7 +480,7 @@ mod tests {
                 &logical,
                 &layout,
                 [(
-                    jolt_id,
+                    Stage8OpeningId::from(jolt_id),
                     LatticePackedViewFormula::<Fr>::masked_decoded(
                         JoltRelationId::FusedIncrementTranslation,
                     ),

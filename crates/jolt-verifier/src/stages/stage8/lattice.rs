@@ -7,6 +7,11 @@ use jolt_akita::{
     AkitaField, PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId,
     PackedFamilySpec, PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
 };
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{
+    formulas::{claim_reductions::increments as field_increments, lattice as field_lattice},
+    FieldInlineOpeningId,
+};
 use jolt_claims::protocols::jolt::{
     byte_decode_terms, bytecode_chunk_lattice_view_formula,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
@@ -27,7 +32,7 @@ use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManifest};
 
 pub type JoltLatticeViewFormulaWithRowPoint<F> =
-    (JoltOpeningId, LatticePackedViewFormula<F>, Vec<F>);
+    (Stage8OpeningId, LatticePackedViewFormula<F>, Vec<F>);
 
 pub fn derive_akita_packed_witness_layout(
     config: &JoltProtocolConfig,
@@ -152,15 +157,33 @@ where
         .openings
         .iter()
         .map(|opening| {
-            let id = stage8_jolt_opening_id(opening.id)?;
-            let row_point = jolt_lattice_row_point(id, &opening.point, log_k_chunk, precommitted)?;
-            Ok((
-                id,
-                jolt_lattice_view_formula(id, &opening.point, log_k_chunk, precommitted)?,
-                row_point,
-            ))
+            let (formula, row_point) =
+                stage8_lattice_view_formula(opening.id, &opening.point, log_k_chunk, precommitted)?;
+            Ok((opening.id, formula, row_point))
         })
         .collect()
+}
+
+fn stage8_lattice_view_formula<F>(
+    id: Stage8OpeningId,
+    point: &[F],
+    log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
+) -> Result<(LatticePackedViewFormula<F>, Vec<F>), VerifierError>
+where
+    F: Field,
+{
+    match id {
+        Stage8OpeningId::Jolt(id) => Ok((
+            jolt_lattice_view_formula(id, point, log_k_chunk, precommitted)?,
+            jolt_lattice_row_point(id, point, log_k_chunk, precommitted)?,
+        )),
+        #[cfg(feature = "field-inline")]
+        Stage8OpeningId::FieldInline(id) => Ok((
+            field_inline_lattice_view_formula(id)?,
+            field_inline_lattice_row_point(id, point)?,
+        )),
+    }
 }
 
 pub fn jolt_lattice_physical_manifest<F>(
@@ -321,20 +344,37 @@ where
     }
 }
 
-#[cfg(not(feature = "field-inline"))]
-fn stage8_jolt_opening_id(id: Stage8OpeningId) -> Result<JoltOpeningId, VerifierError> {
-    let Stage8OpeningId::Jolt(id) = id;
-    Ok(id)
+#[cfg(feature = "field-inline")]
+fn field_inline_lattice_row_point<F>(
+    id: FieldInlineOpeningId,
+    point: &[F],
+) -> Result<Vec<F>, VerifierError>
+where
+    F: Field,
+{
+    if id == field_increments::field_rd_inc_reduced_opening() {
+        return Ok(point.to_vec());
+    }
+    Err(unsupported_lattice_view(format!(
+        "field-inline opening {id:?} has no supported lattice packed row point"
+    )))
 }
 
 #[cfg(feature = "field-inline")]
-fn stage8_jolt_opening_id(id: Stage8OpeningId) -> Result<JoltOpeningId, VerifierError> {
-    match id {
-        Stage8OpeningId::Jolt(id) => Ok(id),
-        Stage8OpeningId::FieldInline(id) => Err(unsupported_lattice_view(format!(
-            "field-inline opening {id:?} requires a field-inline lattice view policy"
-        ))),
+fn field_inline_lattice_view_formula<F>(
+    id: FieldInlineOpeningId,
+) -> Result<LatticePackedViewFormula<F>, VerifierError>
+where
+    F: Field,
+{
+    if id == field_increments::field_rd_inc_reduced_opening() {
+        return Ok(field_lattice::field_rd_inc_lattice_view_formula(
+            AkitaField::NUM_BYTES,
+        ));
     }
+    Err(unsupported_lattice_view(format!(
+        "field-inline opening {id:?} has no supported lattice packed view"
+    )))
 }
 
 pub fn jolt_lattice_view_formula<F>(
@@ -898,16 +938,23 @@ mod tests {
             .unwrap_or_else(|error| panic!("RA layout should build: {error}"))
     }
 
-    fn logical_manifest(id: JoltOpeningId, point: Vec<Fr>) -> Stage8LogicalManifest<Fr> {
+    fn logical_manifest_for_stage8(
+        id: Stage8OpeningId,
+        point: Vec<Fr>,
+    ) -> Stage8LogicalManifest<Fr> {
         Stage8LogicalManifest {
             openings: vec![Stage8LogicalOpening {
-                id: Stage8OpeningId::from(id),
+                id,
                 point,
                 claim: Some(Fr::from_u64(2)),
                 scale: Fr::from_u64(3),
             }],
             pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
         }
+    }
+
+    fn logical_manifest(id: JoltOpeningId, point: Vec<Fr>) -> Stage8LogicalManifest<Fr> {
+        logical_manifest_for_stage8(Stage8OpeningId::from(id), point)
     }
 
     fn bytecode_chunk_opening_point() -> (Vec<Fr>, Vec<Fr>) {
@@ -1116,7 +1163,7 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("RA lattice formula should resolve: {error}"));
 
-        assert_eq!(formulas[0].0, id);
+        assert_eq!(formulas[0].0, Stage8OpeningId::from(id));
         assert!(matches!(
             &formulas[0].1,
             LatticePackedViewFormula::LinearDecoded { terms }
@@ -1126,6 +1173,32 @@ mod tests {
                     && terms[2].limb == 0
                     && terms[2].symbol == 2
         ));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_rd_inc_resolves_to_packed_byte_families() {
+        let id = field_increments::field_rd_inc_reduced_opening();
+        let point = vec![Fr::from_u64(2), Fr::from_u64(3)];
+        let formulas = jolt_lattice_view_formulas(
+            &logical_manifest_for_stage8(Stage8OpeningId::from(id), point.clone()),
+            8,
+            &precommitted_schedule(None),
+        )
+        .unwrap_or_else(|error| panic!("field rd inc lattice formula should resolve: {error}"));
+
+        assert_eq!(formulas[0].0, Stage8OpeningId::from(id));
+        assert_eq!(formulas[0].2, point);
+
+        let terms = linear_decoded_terms(&formulas[0].1);
+        assert_eq!(terms.len(), AkitaField::NUM_BYTES * 256);
+        let byte_1_symbol_3 = find_lattice_term(
+            terms,
+            LatticePackedFamilyId::FieldRdIncByte { index: 1 },
+            0,
+            3,
+        );
+        assert_eq!(byte_1_symbol_3.coefficient, Fr::from_u64(3 * 256));
     }
 
     #[test]
@@ -1475,6 +1548,39 @@ mod tests {
             Err(VerifierError::FinalOpeningBatchFailed { reason })
                 if reason.contains("masked packed view")
         ));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn jolt_lattice_physical_manifest_resolves_field_inline_rd_inc() {
+        let mut config = lattice_config();
+        config.lattice.field_inline.enabled = true;
+        config.lattice.packed_witness.field_rd_inc_family = true;
+        let layout = derive_akita_packed_witness_layout(
+            &config,
+            2,
+            8,
+            ra_layout(),
+            &precommitted_schedule(None),
+        )
+        .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+        let id = field_increments::field_rd_inc_reduced_opening();
+        let row_point = vec![Fr::from_u64(11), Fr::from_u64(13)];
+
+        let manifest = jolt_lattice_physical_manifest(
+            &logical_manifest_for_stage8(Stage8OpeningId::from(id), row_point.clone()),
+            &layout,
+            8,
+            &precommitted_schedule(None),
+        )
+        .unwrap_or_else(|error| panic!("field rd inc physical manifest should resolve: {error}"));
+
+        let PhysicalView::PackedLinear { terms, .. } = &manifest.openings[0].view else {
+            panic!("field rd inc should lower to a packed linear view");
+        };
+        let term = find_physical_term(terms, PackedFamilyId::FieldRdIncByte { index: 1 }, 0, 3);
+        assert_eq!(term.coefficient, Fr::from_u64(3 * 256));
+        assert_eq!(term.row_point, row_point);
     }
 
     #[test]
