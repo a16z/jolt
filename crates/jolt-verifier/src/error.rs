@@ -48,6 +48,15 @@ pub enum VerifierError {
     )]
     AkitaPackedValidityClaimCountMismatch { expected: usize, got: usize },
 
+    #[error("Akita packed validity sumcheck failed: {reason}")]
+    AkitaPackedValiditySumcheckFailed { reason: String },
+
+    #[error("Akita packed validity sumcheck output does not match packed opening claims")]
+    AkitaPackedValidityOutputMismatch,
+
+    #[error("Akita packed validity opening proof verification failed: {reason}")]
+    AkitaPackedValidityOpeningVerificationFailed { reason: String },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

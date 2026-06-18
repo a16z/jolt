@@ -27,12 +27,17 @@ use jolt_claims::protocols::jolt::{
     ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
 use jolt_field::{Field, FixedByteSize};
-use jolt_poly::EqPolynomial;
+use jolt_openings::{BatchOpeningClaim, BatchOpeningStatement, PackedLinearTerm, PhysicalView};
+use jolt_poly::{try_eq_mle, EqPolynomial};
+use jolt_sumcheck::{BatchedEvaluationClaim, SumcheckClaim};
+use jolt_transcript::{Label, LabelWithCount, Transcript, U64Word};
 
 use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManifest};
 
 pub type JoltLatticeViewFormulaWithRowPoint<F> =
     (Stage8OpeningId, LatticePackedViewFormula<F>, Vec<F>);
+
+pub type LatticePackedValidityBatchStatement<F, C> = BatchOpeningStatement<F, C, usize, usize, F>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LatticePackedValidityStatement {
@@ -48,6 +53,12 @@ pub enum LatticePackedValidityStatementKind {
     ExactOneHotRowSum,
     OptionalOneHotRowSum,
     BooleanIndicator,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LatticePackedValidityBatch<F: Field, C> {
+    pub statement: LatticePackedValidityBatchStatement<F, C>,
+    pub expected_final_claim: F,
 }
 
 pub fn derive_akita_packed_witness_layout(
@@ -207,13 +218,13 @@ pub fn derive_akita_packed_validity_statements(
                     requirement: requirement.clone(),
                     kind: LatticePackedValidityStatementKind::CellBooleanity,
                     num_vars: row_vars + limb_vars + symbol_vars,
-                    degree: 2,
+                    degree: 3,
                 });
                 statements.push(LatticePackedValidityStatement {
                     requirement: requirement.clone(),
                     kind: LatticePackedValidityStatementKind::ExactOneHotRowSum,
                     num_vars: row_vars + limb_vars,
-                    degree: 2,
+                    degree: 3,
                 });
             }
             LatticePackedValidityKind::OptionalOneHot => {
@@ -221,13 +232,13 @@ pub fn derive_akita_packed_validity_statements(
                     requirement: requirement.clone(),
                     kind: LatticePackedValidityStatementKind::CellBooleanity,
                     num_vars: row_vars + limb_vars + symbol_vars,
-                    degree: 2,
+                    degree: 3,
                 });
                 statements.push(LatticePackedValidityStatement {
                     requirement: requirement.clone(),
                     kind: LatticePackedValidityStatementKind::OptionalOneHotRowSum,
                     num_vars: row_vars + limb_vars,
-                    degree: 2,
+                    degree: 3,
                 });
             }
             LatticePackedValidityKind::BooleanIndicator { symbol } => {
@@ -241,12 +252,354 @@ pub fn derive_akita_packed_validity_statements(
                     requirement: requirement.clone(),
                     kind: LatticePackedValidityStatementKind::BooleanIndicator,
                     num_vars: row_vars + limb_vars,
-                    degree: 2,
+                    degree: 3,
                 });
             }
         }
     }
     Ok(statements)
+}
+
+pub fn lattice_packed_validity_claims<F>(
+    statements: &[LatticePackedValidityStatement],
+) -> Vec<SumcheckClaim<F>>
+where
+    F: Field,
+{
+    statements
+        .iter()
+        .map(|statement| SumcheckClaim {
+            num_vars: statement.num_vars,
+            degree: statement.degree,
+            claimed_sum: F::zero(),
+        })
+        .collect()
+}
+
+pub fn sample_lattice_packed_validity_eq_points<F, T>(
+    transcript: &mut T,
+    layout: &PackedWitnessLayout,
+    statements: &[LatticePackedValidityStatement],
+) -> Vec<Vec<F>>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    absorb_lattice_packed_validity_metadata(transcript, layout, statements);
+    statements
+        .iter()
+        .map(|statement| transcript.challenge_vector(statement.num_vars))
+        .collect()
+}
+
+pub fn build_lattice_packed_validity_batch<F, C>(
+    layout: &PackedWitnessLayout,
+    statements: &[LatticePackedValidityStatement],
+    commitment: C,
+    eq_points: &[Vec<F>],
+    reduction: &BatchedEvaluationClaim<F>,
+    opening_claims: &[F],
+) -> Result<LatticePackedValidityBatch<F, C>, VerifierError>
+where
+    F: Field,
+    C: Clone,
+{
+    if eq_points.len() != statements.len() {
+        return Err(invalid_lattice_config(format!(
+            "packed validity equality point count {} does not match statement count {}",
+            eq_points.len(),
+            statements.len()
+        )));
+    }
+    if opening_claims.len() != statements.len() {
+        return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
+            expected: statements.len(),
+            got: opening_claims.len(),
+        });
+    }
+    if reduction.batching_coefficients.len() != statements.len() {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "batch verifier returned {} coefficients for {} packed validity statements",
+                reduction.batching_coefficients.len(),
+                statements.len()
+            ),
+        });
+    }
+
+    let mut expected_final_claim = F::zero();
+    let mut claims = Vec::with_capacity(statements.len());
+    for (index, statement) in statements.iter().enumerate() {
+        let point = reduction
+            .try_instance_point(statement.num_vars)
+            .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: error.to_string(),
+            })?;
+        let opening_claim = opening_claims[index];
+        let eq_mask = try_eq_mle(point, &eq_points[index]).map_err(|error| {
+            VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: error.to_string(),
+            }
+        })?;
+        expected_final_claim += reduction.batching_coefficients[index]
+            * eq_mask
+            * validity_violation(statement.kind, opening_claim);
+
+        claims.push(BatchOpeningClaim {
+            id: index,
+            relation: index,
+            commitment: commitment.clone(),
+            claim: opening_claim,
+            view: validity_physical_view(layout, statement, point)?,
+            scale: F::one(),
+        });
+    }
+
+    let point = reduction.reduction.point.as_slice().to_vec();
+    Ok(LatticePackedValidityBatch {
+        statement: BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest: layout.digest,
+            claims,
+        },
+        expected_final_claim,
+    })
+}
+
+fn absorb_lattice_packed_validity_metadata<F, T>(
+    transcript: &mut T,
+    layout: &PackedWitnessLayout,
+    statements: &[LatticePackedValidityStatement],
+) where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.append(&Label(b"AkitaPackedValidity"));
+    transcript.append(&LabelWithCount(
+        b"akita_validity_layout_digest",
+        layout.digest.len() as u64,
+    ));
+    transcript.append_bytes(&layout.digest);
+    transcript.append(&U64Word(layout.dimension as u64));
+    transcript.append(&U64Word(layout.cells as u64));
+    transcript.append(&LabelWithCount(
+        b"akita_validity_statements",
+        statements.len() as u64,
+    ));
+    for (index, statement) in statements.iter().enumerate() {
+        let family = akita_packed_family_id(&statement.requirement.family).physical_ref();
+        transcript.append(&U64Word(index as u64));
+        transcript.append(&U64Word(family.namespace));
+        transcript.append(&U64Word(family.id));
+        transcript.append(&U64Word(family.index));
+        transcript.append(&U64Word(statement.requirement.limbs as u64));
+        transcript.append(&U64Word(statement.requirement.alphabet_size as u64));
+        transcript.append(&U64Word(statement.num_vars as u64));
+        transcript.append(&U64Word(statement.degree as u64));
+        transcript.append(&U64Word(validity_statement_kind_tag(statement.kind)));
+        match statement.requirement.kind {
+            LatticePackedValidityKind::ExactOneHot => {
+                transcript.append(&U64Word(0));
+                transcript.append(&U64Word(0));
+            }
+            LatticePackedValidityKind::OptionalOneHot => {
+                transcript.append(&U64Word(1));
+                transcript.append(&U64Word(0));
+            }
+            LatticePackedValidityKind::BooleanIndicator { symbol } => {
+                transcript.append(&U64Word(2));
+                transcript.append(&U64Word(symbol as u64));
+            }
+        }
+    }
+}
+
+fn validity_statement_kind_tag(kind: LatticePackedValidityStatementKind) -> u64 {
+    match kind {
+        LatticePackedValidityStatementKind::CellBooleanity => 0,
+        LatticePackedValidityStatementKind::ExactOneHotRowSum => 1,
+        LatticePackedValidityStatementKind::OptionalOneHotRowSum => 2,
+        LatticePackedValidityStatementKind::BooleanIndicator => 3,
+    }
+}
+
+fn validity_violation<F>(kind: LatticePackedValidityStatementKind, opening: F) -> F
+where
+    F: Field,
+{
+    match kind {
+        LatticePackedValidityStatementKind::CellBooleanity
+        | LatticePackedValidityStatementKind::BooleanIndicator
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum => {
+            opening * (opening - F::one())
+        }
+        LatticePackedValidityStatementKind::ExactOneHotRowSum => {
+            let difference = opening - F::one();
+            difference * difference
+        }
+    }
+}
+
+fn validity_physical_view<F>(
+    layout: &PackedWitnessLayout,
+    statement: &LatticePackedValidityStatement,
+    point: &[F],
+) -> Result<PhysicalView<F>, VerifierError>
+where
+    F: Field,
+{
+    let family_id = akita_packed_family_id(&statement.requirement.family);
+    let shape = validity_statement_shape(layout, statement, &family_id)?;
+    let point_parts = split_validity_point(statement.kind, point, shape)?;
+    let limb_weights = EqPolynomial::<F>::evals(point_parts.limb, None);
+    let family = family_id.physical_ref();
+    let terms = match statement.kind {
+        LatticePackedValidityStatementKind::CellBooleanity => {
+            let symbol_weights = EqPolynomial::<F>::evals(point_parts.symbol, None);
+            let mut terms = Vec::with_capacity(shape.limbs * shape.alphabet_size);
+            for (limb, limb_weight) in limb_weights.iter().copied().enumerate() {
+                for (symbol, symbol_weight) in symbol_weights.iter().copied().enumerate() {
+                    terms.push(
+                        PackedLinearTerm::new(limb_weight * symbol_weight, family, limb, symbol)
+                            .with_row_point(point_parts.row.to_vec()),
+                    );
+                }
+            }
+            terms
+        }
+        LatticePackedValidityStatementKind::ExactOneHotRowSum
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum => {
+            let mut terms = Vec::with_capacity(shape.limbs * shape.alphabet_size);
+            for (limb, limb_weight) in limb_weights.iter().copied().enumerate() {
+                for symbol in 0..shape.alphabet_size {
+                    terms.push(
+                        PackedLinearTerm::new(limb_weight, family, limb, symbol)
+                            .with_row_point(point_parts.row.to_vec()),
+                    );
+                }
+            }
+            terms
+        }
+        LatticePackedValidityStatementKind::BooleanIndicator => {
+            let LatticePackedValidityKind::BooleanIndicator { symbol } = statement.requirement.kind
+            else {
+                return Err(invalid_lattice_config(
+                    "boolean-indicator validity statement has non-indicator requirement",
+                ));
+            };
+            let mut terms = Vec::with_capacity(shape.limbs);
+            for (limb, limb_weight) in limb_weights.iter().copied().enumerate() {
+                terms.push(
+                    PackedLinearTerm::new(limb_weight, family, limb, symbol)
+                        .with_row_point(point_parts.row.to_vec()),
+                );
+            }
+            terms
+        }
+    };
+
+    Ok(PhysicalView::PackedLinear {
+        layout_digest: layout.digest,
+        terms,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct ValidityStatementShape {
+    row_vars: usize,
+    limb_vars: usize,
+    symbol_vars: usize,
+    limbs: usize,
+    alphabet_size: usize,
+}
+
+struct ValidityPointParts<'a, F> {
+    row: &'a [F],
+    limb: &'a [F],
+    symbol: &'a [F],
+}
+
+fn validity_statement_shape(
+    layout: &PackedWitnessLayout,
+    statement: &LatticePackedValidityStatement,
+    family_id: &PackedFamilyId,
+) -> Result<ValidityStatementShape, VerifierError> {
+    let family = layout.family(family_id).ok_or_else(|| {
+        invalid_lattice_config(format!(
+            "packed validity statement references missing family {family_id:?}"
+        ))
+    })?;
+    if family.limbs != statement.requirement.limbs {
+        return Err(invalid_lattice_config(format!(
+            "packed validity family {family_id:?} limb count mismatch: layout has {}, statement has {}",
+            family.limbs, statement.requirement.limbs
+        )));
+    }
+    if family.alphabet.size() != statement.requirement.alphabet_size {
+        return Err(invalid_lattice_config(format!(
+            "packed validity family {family_id:?} alphabet mismatch: layout has {}, statement has {}",
+            family.alphabet.size(),
+            statement.requirement.alphabet_size
+        )));
+    }
+    let rows = family.domain.rows().map_err(|error| {
+        invalid_lattice_config(format!(
+            "packed validity family {family_id:?} has invalid row domain: {error}"
+        ))
+    })?;
+    let row_vars = power_of_two_log(rows, "packed validity row count")?;
+    let limb_vars = power_of_two_log(statement.requirement.limbs, "packed validity limb count")?;
+    let symbol_vars = power_of_two_log(
+        statement.requirement.alphabet_size,
+        "packed validity alphabet size",
+    )?;
+    Ok(ValidityStatementShape {
+        row_vars,
+        limb_vars,
+        symbol_vars,
+        limbs: statement.requirement.limbs,
+        alphabet_size: statement.requirement.alphabet_size,
+    })
+}
+
+fn split_validity_point<F>(
+    kind: LatticePackedValidityStatementKind,
+    point: &[F],
+    shape: ValidityStatementShape,
+) -> Result<ValidityPointParts<'_, F>, VerifierError>
+where
+    F: Field,
+{
+    let expected = match kind {
+        LatticePackedValidityStatementKind::CellBooleanity => {
+            shape.row_vars + shape.limb_vars + shape.symbol_vars
+        }
+        LatticePackedValidityStatementKind::ExactOneHotRowSum
+        | LatticePackedValidityStatementKind::OptionalOneHotRowSum
+        | LatticePackedValidityStatementKind::BooleanIndicator => shape.row_vars + shape.limb_vars,
+    };
+    if point.len() != expected {
+        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            reason: format!(
+                "packed validity point has {} variables but statement requires {expected}",
+                point.len()
+            ),
+        });
+    }
+    let row_end = shape.row_vars;
+    let limb_end = row_end + shape.limb_vars;
+    let symbol_end = limb_end + shape.symbol_vars;
+    let symbol_point = if matches!(kind, LatticePackedValidityStatementKind::CellBooleanity) {
+        &point[limb_end..symbol_end]
+    } else {
+        &[]
+    };
+    Ok(ValidityPointParts {
+        row: &point[..row_end],
+        limb: &point[row_end..limb_end],
+        symbol: symbol_point,
+    })
 }
 
 pub fn validate_akita_packed_witness_validity_config(
@@ -1158,6 +1511,7 @@ mod tests {
     use jolt_openings::{PackedLinearTerm, PhysicalView};
     use jolt_poly::{EqPolynomial, Point};
     use jolt_riscv::CircuitFlags;
+    use jolt_sumcheck::{BatchedEvaluationClaim, EvaluationClaim};
 
     fn lattice_config() -> JoltProtocolConfig {
         let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
@@ -1420,7 +1774,84 @@ mod tests {
             LatticePackedValidityStatementKind::BooleanIndicator
         );
         assert_eq!(statements[4].num_vars, 4);
-        assert!(statements.iter().all(|statement| statement.degree == 2));
+        assert!(statements.iter().all(|statement| statement.degree == 3));
+    }
+
+    #[test]
+    fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::ProgramImageInit,
+            PackedFactDomain::ProgramImageWords { log_words: 1 },
+            2,
+            PackedAlphabet::Fixed { size: 4 },
+        )])
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
+        let requirement = LatticePackedValidityRequirement::exact_one_hot(
+            LatticePackedFamilyId::ProgramImageInit,
+            2,
+            4,
+        );
+        let statement = LatticePackedValidityStatement {
+            requirement,
+            kind: LatticePackedValidityStatementKind::CellBooleanity,
+            num_vars: 4,
+            degree: 3,
+        };
+        let point = vec![
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+        ];
+        let eq_point = vec![
+            Fr::from_u64(11),
+            Fr::from_u64(13),
+            Fr::from_u64(17),
+            Fr::from_u64(19),
+        ];
+        let batching_coefficient = Fr::from_u64(23);
+        let opening_claim = Fr::from_u64(29);
+        let reduction = BatchedEvaluationClaim {
+            reduction: EvaluationClaim::new(point.clone(), Fr::from_u64(31)),
+            batching_coefficients: vec![batching_coefficient],
+            max_num_vars: 4,
+            max_degree: 3,
+        };
+
+        let batch = build_lattice_packed_validity_batch(
+            &layout,
+            std::slice::from_ref(&statement),
+            99_u64,
+            std::slice::from_ref(&eq_point),
+            &reduction,
+            &[opening_claim],
+        )
+        .unwrap_or_else(|error| panic!("validity batch should build: {error}"));
+
+        let expected_eq = try_eq_mle(&point, &eq_point)
+            .unwrap_or_else(|error| panic!("eq mask should evaluate: {error}"));
+        assert_eq!(
+            batch.expected_final_claim,
+            batching_coefficient * expected_eq * opening_claim * (opening_claim - Fr::from_u64(1))
+        );
+        assert_eq!(batch.statement.claims.len(), 1);
+        assert_eq!(batch.statement.claims[0].commitment, 99);
+        assert_eq!(batch.statement.claims[0].claim, opening_claim);
+
+        let PhysicalView::PackedLinear {
+            layout_digest,
+            terms,
+        } = &batch.statement.claims[0].view
+        else {
+            panic!("validity opening should use a packed linear view");
+        };
+        assert_eq!(layout_digest, &layout.digest);
+        assert_eq!(terms.len(), 8);
+        let limb_weights = EqPolynomial::<Fr>::evals(&point[1..2], None);
+        let symbol_weights = EqPolynomial::<Fr>::evals(&point[2..], None);
+        let term = find_physical_term(terms, PackedFamilyId::ProgramImageInit, 1, 3);
+        assert_eq!(term.row_point, vec![Fr::from_u64(2)]);
+        assert_eq!(term.coefficient, limb_weights[1] * symbol_weights[3]);
     }
 
     #[test]

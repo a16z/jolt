@@ -10,6 +10,8 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, ZkBatchOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
+#[cfg(feature = "akita")]
+use jolt_sumcheck::{BatchedSumcheckVerifier, ClearProof};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
@@ -157,6 +159,7 @@ where
         &mut transcript,
         stage7::deps(&stage4, &stage6)?,
     )?;
+    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
     let stage8 = stage8::verify(
         &checked,
         preprocessing,
@@ -289,6 +292,7 @@ where
         &mut transcript,
         stage7::deps(&stage4, &stage6)?,
     )?;
+    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
     let _stage8 = stage8::verify_clear(
         &checked,
         preprocessing,
@@ -310,7 +314,7 @@ pub fn stage8_batch_statement<F, PCS, VC, T, ZkProof>(
 ) -> Result<stage8::Stage8BatchStatement<F, PCS::Output>, VerifierError>
 where
     F: Field + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -333,7 +337,7 @@ pub fn stage8_batch_statement_with_config<F, PCS, VC, T, ZkProof>(
 ) -> Result<stage8::Stage8BatchStatement<F, PCS::Output>, VerifierError>
 where
     F: Field + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -357,7 +361,7 @@ pub fn stage8_batch_statement_with_config_and_transcript<F, PCS, VC, T, ZkProof>
 ) -> Result<(stage8::Stage8BatchStatement<F, PCS::Output>, T), VerifierError>
 where
     F: Field + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -427,6 +431,7 @@ where
         &mut transcript,
         stage7::deps(&stage4, &stage6)?,
     )?;
+    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
     let statement = stage8::batch_statement(
         &checked,
         preprocessing,
@@ -435,6 +440,145 @@ where
         stage8::deps(&stage6, &stage7)?,
     )?;
     Ok((statement, transcript))
+}
+
+fn verify_lattice_packed_validity<F, PCS, VC, T, ZkProof>(
+    config: &JoltProtocolConfig,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    checked: &CheckedInputs,
+    transcript: &mut T,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    if proof.commitments.family() != PcsFamily::Lattice {
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "akita"))]
+    {
+        let _ = (config, preprocessing, proof, checked, transcript);
+        Err(VerifierError::InvalidProtocolConfig {
+            reason: "lattice packed validity verification requires the jolt-verifier akita feature"
+                .to_string(),
+        })
+    }
+
+    #[cfg(feature = "akita")]
+    {
+        if checked.zk {
+            return Err(VerifierError::InvalidProtocolConfig {
+                reason:
+                    "lattice packed validity verification currently requires transparent claims"
+                        .to_string(),
+            });
+        }
+        let payload =
+            proof
+                .commitments
+                .as_akita()
+                .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                    reason: "lattice packed validity verification requires Akita commitments"
+                        .to_string(),
+                })?;
+        let validity_claims = proof
+            .clear_claims()?
+            .stage7
+            .lattice_packed_validity
+            .as_ref()
+            .ok_or(VerifierError::MissingAkitaPackedValidityProof {
+                field: "opening_claims",
+            })?;
+        let sumcheck_proof = proof
+            .stages
+            .lattice_packed_validity_sumcheck_proof
+            .as_ref()
+            .ok_or(VerifierError::MissingAkitaPackedValidityProof {
+                field: "sumcheck_proof",
+            })?;
+        let opening_proof = proof.lattice_packed_validity_opening_proof.as_ref().ok_or(
+            VerifierError::MissingAkitaPackedValidityProof {
+                field: "opening_proof",
+            },
+        )?;
+
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .map_err(|error| VerifierError::InvalidProtocolConfig {
+            reason: format!("invalid lattice formula dimensions: {error}"),
+        })?;
+        let layout = stage8::derive_akita_packed_witness_layout(
+            config,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            formula_dimensions.ra_layout,
+            &checked.precommitted,
+        )?;
+        let requirements =
+            stage8::derive_akita_packed_validity_requirements(config, &checked.precommitted)?;
+        let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)?;
+        if validity_claims.opening_claims.len() != statements.len() {
+            return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
+                expected: statements.len(),
+                got: validity_claims.opening_claims.len(),
+            });
+        }
+
+        let eq_points =
+            stage8::sample_lattice_packed_validity_eq_points(transcript, &layout, &statements);
+        let sumcheck_claims = stage8::lattice_packed_validity_claims(&statements);
+        let compressed = match sumcheck_proof {
+            SumcheckProof::Clear(ClearProof::Compressed(proof)) => proof,
+            SumcheckProof::Clear(ClearProof::Full(_)) => {
+                return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+                    reason: "expected compressed clear proof, got full clear".to_string(),
+                });
+            }
+            SumcheckProof::Committed(_) => {
+                return Err(VerifierError::ExpectedClearProof {
+                    field: "lattice_packed_validity_sumcheck_proof",
+                });
+            }
+        };
+        let reduction =
+            BatchedSumcheckVerifier::verify_compressed(&sumcheck_claims, compressed, transcript)
+                .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+                    reason: error.to_string(),
+                })?;
+        let batch = stage8::build_lattice_packed_validity_batch(
+            &layout,
+            &statements,
+            payload.packed_witness.clone(),
+            &eq_points,
+            &reduction,
+            &validity_claims.opening_claims,
+        )?;
+        if reduction.reduction.value != batch.expected_final_claim {
+            return Err(VerifierError::AkitaPackedValidityOutputMismatch);
+        }
+        PCS::verify_batch(
+            &preprocessing.pcs_setup,
+            transcript,
+            &batch.statement,
+            opening_proof,
+        )
+        .map_err(
+            |error| VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                reason: error.to_string(),
+            },
+        )
+        .map(|_| ())
+    }
 }
 
 fn config_zk(config: &JoltProtocolConfig) -> bool {
@@ -1027,10 +1171,13 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
     #[cfg(feature = "akita")]
     use jolt_openings::PhysicalView;
-    use jolt_openings::{CommitmentScheme, OpeningsError};
+    use jolt_openings::{
+        BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
+        OpeningsError,
+    };
     use jolt_poly::{MultilinearPoly, Polynomial};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, ProgramMetadata, RAMPreprocessing,
@@ -1099,6 +1246,43 @@ mod tests {
             _point: &[Self::Field],
             _eval: &Self::Field,
         ) {
+        }
+    }
+
+    impl BatchOpeningScheme for TestPcs {
+        fn prove_batch<T, OpeningId, RelationId>(
+            _setup: &Self::ProverSetup,
+            _transcript: &mut T,
+            _statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+            _polynomials: &[Self::Polynomial],
+            _hints: Vec<Self::OpeningHint>,
+        ) -> Result<Self::Proof, OpeningsError>
+        where
+            T: Transcript<Challenge = Self::Field>,
+        {
+            Ok(())
+        }
+
+        fn verify_batch<T, OpeningId, RelationId>(
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut T,
+            statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+            _proof: &Self::Proof,
+        ) -> Result<BatchOpeningResult<Self::Field, Self::Output>, OpeningsError>
+        where
+            T: Transcript<Challenge = Self::Field>,
+        {
+            let coefficients = vec![Fr::from_u64(1); statement.claims.len()];
+            let reduced_opening = statement
+                .claims
+                .iter()
+                .map(|claim| claim.claim * claim.scale)
+                .sum();
+            Ok(BatchOpeningResult {
+                coefficients,
+                joint_commitment: TestCommitment,
+                reduced_opening,
+            })
         }
     }
 
