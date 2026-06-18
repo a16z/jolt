@@ -193,9 +193,15 @@ impl JoltPackedWitnessBuilder {
         row_index: usize,
         row: &JoltTraceRow,
     ) -> Result<(), JoltPackedWitnessError> {
-        let delta = if row.is_store() {
+        let is_store = row.is_store();
+        let has_rd = row.rd_index().is_some();
+        if is_store && has_rd {
+            return Err(JoltPackedWitnessError::FusedIncrementSourceConflict { row: row_index });
+        }
+
+        let delta = if is_store {
             row.ram_write_value() as i128 - row.ram_read_value() as i128
-        } else if row.rd_index().is_some() {
+        } else if has_rd {
             row.rd_write_value() as i128 - row.rd_pre_value() as i128
         } else {
             0
@@ -514,6 +520,8 @@ pub enum JoltPackedWitnessError {
     },
     #[error("invalid Jolt instruction kind {kind:?}")]
     InvalidInstructionKind { kind: JoltInstructionKind },
+    #[error("fused increment row {row} exposes both store and rd-present sources")]
+    FusedIncrementSourceConflict { row: usize },
     #[error("unknown circuit flag index {index}")]
     UnknownCircuitFlag { index: usize },
     #[error("unknown instruction flag index {index}")]
@@ -879,6 +887,40 @@ mod tests {
             );
         }
         assert!(get(&witness, PackedFamilyId::IncSign, 0, 0, 1).is_zero());
+    }
+
+    #[test]
+    fn fused_increment_rejects_store_with_rd_destination() {
+        let layout = increment_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::SD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 8,
+                },
+                CapturedState::Store(StoreState {
+                    rs1_value: 1,
+                    rs2_value: 11,
+                    ram_read_value: 10,
+                    ram_address: 0x34,
+                }),
+                9,
+            ),
+            JoltTraceRow::no_op(),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let error = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |index, _| [Some(0x34), None][index])
+            .expect_err("ambiguous fused increment source should reject");
+
+        assert!(matches!(
+            error,
+            JoltPackedWitnessError::FusedIncrementSourceConflict { row: 0 }
+        ));
     }
 
     #[test]
