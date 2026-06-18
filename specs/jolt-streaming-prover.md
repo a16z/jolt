@@ -78,8 +78,8 @@ Key abstractions and boundaries:
 ### Invariants
 
 This feature is a backend change whose defining correctness property is
-**proof byte-identity** between the modular streaming prover and the `jolt-core`
-reference prover. Using the [`jolt-eval`](../jolt-eval/README.md) framework:
+**proof byte-identity** between the streaming and non-streaming builds. Using
+the [`jolt-eval`](../jolt-eval/README.md) framework:
 
 Existing invariants — all must continue to hold **unchanged**; none need
 modification:
@@ -97,15 +97,16 @@ Code skill ([.claude/skills/new-invariant](.claude/skills/new-invariant))
 following the [`jolt-eval`](../jolt-eval/README.md) framework:
 
 - **`streaming_proof_byte_identical`**: for a fixed guest program, input, and
-  RNG seed, the proof produced by the modular prover stack with `streaming`
-  enabled is byte-identical to the proof `jolt-core` produces for the same
-  inputs (same Fiat-Shamir state stream, same proof bytes, same verifier
-  outcome). Both proofs are generated on the fly within the test — `jolt-core`
-  and the modular stack are separate crates linkable in one binary, so no
-  committed baseline blob is needed. **Byte-identity is required only in non-ZK
-  mode.** Under the `zk` feature the proof embeds Pedersen-committed round
-  polynomials and BlindFold blinding whose RNG draw order can differ between the
-  two independent implementations, so byte equality may be impossible; the ZK
+  RNG seed, the proof emitted by the `streaming` build is byte-identical to a
+  committed baseline blob captured from the non-streaming build (same
+  Fiat-Shamir state stream, same proof bytes, same verifier outcome). Because
+  `streaming` is a compile-time feature, this is a golden-baseline comparison
+  (similar to the wire-format test in
+  [unify-field-hierarchy.md](./unify-field-hierarchy.md)), not a two-build
+  runtime check. **Byte-identity is required only in non-ZK mode.** Under the
+  `zk` feature the proof embeds Pedersen-committed round polynomials and
+  BlindFold blinding whose RNG draw order can differ between the streaming and
+  non-streaming code paths, so byte equality may be impossible; the ZK
   combination is therefore checked **shape-only** — identical proof layout and
   field/segment sizes, the same Fiat-Shamir-derived public values, and an
   accepting verifier outcome — rather than byte-for-byte.
@@ -128,12 +129,16 @@ its non-streaming counterpart does.
 - **Reducing the prover-memory term that is linear in the zkVM's addressable
   RAM or I/O** is out of scope; streaming addresses only the trace-derived term.
   Total prover RAM is therefore not strictly `√T` — the `√T` target describes
-  the dominant trace-derived portion.
+  the dominant trace-derived portion. We assume the non-trace term does not
+  dominate the trace-derived term — a reasonable assumption for the long
+  executions streaming targets — so streaming the trace is expected to reduce
+  each materializing stage's within-stage peak, which is why the per-stage RAM
+  gate requires a strict decrease.
 - **No change to the third-party/public API** beyond the `streaming` build flag;
   internal tuning knobs (chunk size, pass count) are not user-facing.
 - **Deprecating or removing the non-streaming path is not a goal.** Like `zk`,
   the `streaming` flag is permanent and the non-streaming path stays as the
-  default; the parallel `jolt-core` prover is the byte-identity oracle.
+  default and the byte-identity parity oracle.
 - **Streaming non-CPU backends is out of scope**: this targets the CPU prover
   only. A future GPU backend will handle streaming separately.
 
@@ -152,17 +157,21 @@ its non-streaming counterpart does.
 - [ ] Every application of the sumcheck protocol over polynomials whose size is
   proportional to `T` runs on the streaming/windowed sumcheck
   (`HalfSplitSchedule`) when `streaming` is enabled; none falls back to the
-  linear (fully materialized) sumcheck path.
+  linear (fully materialized) sumcheck path. Conversely, sumcheck applications
+  whose vectors are **not** proportional to `T` stay on the linear sumcheck and
+  do not have to be migrated to a streaming instance.
 - [ ] The `streaming_proof_byte_identical` invariant passes in non-ZK mode
-  (`--features streaming`): the modular prover stack's proof bytes match a
-  `jolt-core` proof generated on the fly for the same inputs, for the canonical
-  guests (`muldiv`, `fibonacci`, `sha2-chain`). In ZK mode
-  (`--features zk,streaming`) the same guests pass a **shape-only** check
-  (identical proof layout/segment sizes, matching Fiat-Shamir public values, and
-  an accepting verifier outcome), since byte equality across the two
-  implementations is not guaranteed under ZK randomness.
-- [ ] For each stage, the within-stage peak RAM usage strictly decreases versus
-  the non-streaming baseline for each converted stage.
+  (`--features streaming`): the `streaming` build's proof bytes match the
+  committed non-streaming baseline for the canonical guests (`muldiv`,
+  `fibonacci`, `sha2-chain`). In ZK mode (`--features zk,streaming`) the same
+  guests pass a **shape-only** check (identical proof layout/segment sizes,
+  matching Fiat-Shamir public values, and an accepting verifier outcome), since
+  byte equality across the streaming and non-streaming paths is not guaranteed
+  under ZK randomness.
+- [ ] For each converted stage that materializes the trace (or trace-derived
+  data) in the first place, the within-stage peak RAM usage strictly decreases
+  versus the non-streaming baseline. A stage that never materializes the trace
+  has nothing to stream and is exempt from this check.
 - [ ] Total peak prover RAM grows sub-linearly (≈`√T`) across at least two trace
   sizes (`sha2-chain-2^16` and `sha2-chain-2^20`).
 - [ ] End-to-end prover time with `streaming` enabled is within ~2× of the
@@ -184,12 +193,12 @@ Existing tests that must keep passing:
 
 New tests:
 
-- A byte-identity test backing the `streaming_proof_byte_identical` invariant:
-  for a fixed guest+input+seed, generate a proof from both `jolt-core` and the
-  modular prover stack (with `streaming` enabled) on the fly and assert the
-  bytes are equal in non-ZK mode, for `muldiv`, `fibonacci`, and `sha2-chain`.
-  In ZK mode the same test instead asserts shape-only equality (proof
-  layout/segment sizes, Fiat-Shamir public values, accepting verifier outcome).
+- A golden byte-identity test backing the `streaming_proof_byte_identical`
+  invariant: for a fixed guest+input+seed, serialize the `streaming` build's
+  proof and assert it equals the committed non-streaming baseline blob in non-ZK
+  mode, for `muldiv`, `fibonacci`, and `sha2-chain`. In ZK mode the same test
+  instead asserts shape-only equality (proof layout/segment sizes, Fiat-Shamir
+  public values, accepting verifier outcome).
 - A peak-RAM check confirming each stage's within-stage peak and the total
   `√T` scaling (see Performance).
 - Feature-matrix compilation/clippy + `muldiv` e2e with `streaming` enabled in
@@ -319,15 +328,16 @@ in goal-mode:
    of the existing streaming/lazy-trace scaffolding and add only the remaining
    helper functions the stages need to read it — chunked, replayable forward
    access whose chunks can be consumed in parallel — gated behind `streaming`.
-   Stand up the per-stage gate harness (the `jolt-prover-harness`): a
-   byte-identical proof comparison against a `jolt-core` proof generated on the
-   fly for the same input, and per-stage peak-RAM logging.
+   Extend the existing per-stage gate harness (the `jolt-prover-harness`, which
+   already provides `parity.rs`, `core_fixture.rs`, `frontier_stage0..8`, and
+   `metrics.rs`) with the byte-identical proof comparison against the committed
+   non-streaming baseline and per-stage peak-RAM logging.
 2. **Convert one stage at a time, stages 0 → 8 in order.** Do not start a stage
    until the previous one is accepted. For each stage `S`: replace its
    materialized-trace accesses with the streaming view (no proof-visible logic
-   changes); assert byte-identity to the `jolt-core` proof; confirm within-stage
-   peak RAM
-   strictly decreases; confirm per-stage time regression stays under 2× (an
+   changes); assert byte-identity to the non-streaming baseline; confirm
+   within-stage peak RAM strictly decreases; confirm per-stage time regression
+   stays under 2× (an
    early guard, not the final bar).
 3. **Run a whole-prover optimization pass after all 9 stages are converted**,
    since per-stage 2× guards can compound — optimize until end-to-end prover
@@ -335,7 +345,8 @@ in goal-mode:
 
 Promotion rule: a stage is "accepted" only when its trace access is fully
 streamed, its proof is byte-identical, its within-stage peak RAM strictly
-decreases, and its per-stage time regression is under 2×. The migration is done
+decreases (if the stage materialized the trace in the first place), and its
+per-stage time regression is under 2×. The migration is done
 when all 9 stages are accepted, total peak RAM scales with `√T`, and end-to-end
 prover time is within ~2× of the non-streaming baseline.
 
