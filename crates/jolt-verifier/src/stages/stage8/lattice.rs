@@ -3464,4 +3464,72 @@ mod tests {
         );
         assert_eq!(program_image.limbs, 8);
     }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn single_packed_witness_layout_includes_all_supported_lattice_families() {
+        let mut config = lattice_config();
+        config.lattice.field_inline.enabled = true;
+        config.lattice.advice.trusted = true;
+        config.lattice.advice.untrusted = true;
+        config.lattice.packed_witness.field_rd_inc_family = true;
+        config.lattice.packed_witness.trusted_advice_family = true;
+        config.lattice.packed_witness.untrusted_advice_family = true;
+
+        let layout = derive_akita_packed_witness_layout(
+            &config,
+            2,
+            8,
+            ra_layout(),
+            &precommitted_schedule_with_advice(Some(64), Some(128)),
+        )
+        .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+        let audit = layout.audit();
+
+        assert_eq!(audit.d_pack, layout.dimension);
+        assert!(audit.cells_by_domain.trace_rows > 0);
+        assert!(audit.cells_by_domain.bytecode_rows > 0);
+        assert!(audit.cells_by_domain.program_image_words > 0);
+        assert!(audit.cells_by_domain.advice_bytes > 0);
+        assert!(layout.family(&PackedFamilyId::IncSign).is_some());
+        assert!(layout
+            .family(&PackedFamilyId::IncByte { index: 7 })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::FieldRdIncByte { index: 0 })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::FieldRdIncByte {
+                index: AkitaField::NUM_BYTES - 1,
+            })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::AdviceBytes {
+                kind: PackedAdviceKind::Trusted,
+                index: 0,
+            })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::AdviceBytes {
+                kind: PackedAdviceKind::Untrusted,
+                index: 0,
+            })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 2,
+            })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
+            .is_some());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
+            .is_some());
+        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_some());
+    }
 }
