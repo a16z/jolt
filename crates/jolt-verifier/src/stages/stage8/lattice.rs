@@ -771,9 +771,7 @@ fn extend_bytecode_families(specs: &mut Vec<PackedFamilySpec>, chunk: usize, log
         PackedFamilyId::BytecodeLookupSelector { chunk },
         domain,
         1,
-        PackedAlphabet::Fixed {
-            size: LookupTableKind::<RISCV_XLEN>::COUNT,
-        },
+        lookup_selector_alphabet(),
     ));
     specs.push(PackedFamilySpec::direct(
         PackedFamilyId::BytecodeRafFlag { chunk },
@@ -832,6 +830,12 @@ fn one_hot_alphabet(log_k_chunk: usize) -> Result<PackedAlphabet, VerifierError>
         _ => Err(invalid_lattice_config(
             "lattice one-hot chunk size is too large",
         )),
+    }
+}
+
+fn lookup_selector_alphabet() -> PackedAlphabet {
+    PackedAlphabet::Fixed {
+        size: LookupTableKind::<RISCV_XLEN>::COUNT.next_power_of_two(),
     }
 }
 
@@ -1029,6 +1033,15 @@ mod tests {
         assert!(layout
             .family(&PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
             .is_some());
+        let lookup_selector = layout
+            .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
+            .unwrap_or_else(|| panic!("bytecode lookup selector family should be present"));
+        assert_eq!(
+            lookup_selector.alphabet,
+            PackedAlphabet::Fixed {
+                size: LookupTableKind::<RISCV_XLEN>::COUNT.next_power_of_two(),
+            }
+        );
         assert!(layout
             .family(&PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 })
             .is_some());
@@ -1721,6 +1734,17 @@ mod tests {
                 size: 1usize << REGISTER_ADDRESS_BITS,
             }
         );
+        let lookup_selector = layout
+            .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
+            .unwrap_or_else(|| panic!("bytecode lookup selector family should be present"));
+        assert_eq!(
+            lookup_selector.alphabet,
+            PackedAlphabet::Fixed {
+                size: LookupTableKind::<RISCV_XLEN>::COUNT.next_power_of_two(),
+            }
+        );
+        assert!(lookup_selector.alphabet.size().is_power_of_two());
+        assert!(lookup_selector.alphabet.size() >= LookupTableKind::<RISCV_XLEN>::COUNT);
 
         let imm = layout
             .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
