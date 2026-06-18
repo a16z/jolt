@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 
 use crate::{
     config::{
-        AdviceLatticeConfig, FieldInlineLatticeConfig, IncrementCommitmentMode, JoltProtocolConfig,
-        LatticeConfig, PackedWitnessConfig, PcsFamily, ProgramMode,
+        validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
+        IncrementCommitmentMode, JoltProtocolConfig, LatticeConfig, PackedWitnessConfig, PcsFamily,
+        ProgramMode,
     },
     preprocessing::JoltVerifierPreprocessing,
     proof::{AkitaCommitmentPayload, ClearOnlyVectorCommitment, CommitmentPayload, JoltProof},
@@ -15,8 +16,9 @@ use crate::{
 use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
-    AkitaProverSetup, JoltPackedWitnessBuilder, PackedAdviceKind, PackedFactDomain, PackedFamilyId,
-    PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
+    AkitaProverSetup, AkitaVerifierSetup, JoltPackedWitnessBuilder, PackedAdviceKind,
+    PackedFactDomain, PackedFamilyId, PackedWitnessLayout, PackedWitnessSource,
+    SparsePackedWitness,
 };
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
@@ -253,6 +255,7 @@ where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
 {
+    validate_akita_verifier_setup_layout(&preprocessing.pcs_setup, &artifacts.layout)?;
     let (statement, mut transcript) =
         crate::verifier::stage8_batch_statement_with_config_and_transcript::<
             AkitaField,
@@ -281,6 +284,7 @@ where
     T: Transcript<Challenge = AkitaField>,
     <AkitaField as WithAccumulator>::Accumulator: RingAccumulator<Element = AkitaField>,
 {
+    validate_akita_verifier_setup_config(&preprocessing.pcs_setup, config)?;
     crate::verifier::verify_clear_with_config::<
         AkitaField,
         AkitaPackedScheme,
@@ -293,6 +297,103 @@ where
         trusted_advice_commitment,
         config,
     )
+}
+
+fn validate_akita_verifier_setup_config(
+    setup: &AkitaVerifierSetup,
+    config: &JoltProtocolConfig,
+) -> Result<(), VerifierError> {
+    if validate_protocol_config(config)? != PcsFamily::Lattice {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita verifier setup requires lattice PCS mode".to_string(),
+        });
+    }
+
+    let packed_witness = config.lattice.packed_witness;
+    let expected_digest =
+        packed_witness
+            .layout_digest
+            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                reason: "Akita verifier setup requires a packed witness layout digest".to_string(),
+            })?;
+    let expected_dimension =
+        packed_witness
+            .d_pack
+            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                reason: "Akita verifier setup requires D_pack".to_string(),
+            })?;
+    validate_akita_verifier_setup_shape(setup, expected_digest, expected_dimension)?;
+
+    let setup_layout =
+        setup
+            .packed_layout
+            .as_ref()
+            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                reason: "Akita verifier setup requires a packed witness layout".to_string(),
+            })?;
+    if setup_layout.digest != expected_digest {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita verifier setup layout digest does not match protocol config".to_string(),
+        });
+    }
+    if setup_layout.dimension != expected_dimension {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita verifier setup layout dimension does not match protocol D_pack"
+                .to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_akita_verifier_setup_layout(
+    setup: &AkitaVerifierSetup,
+    layout: &PackedWitnessLayout,
+) -> Result<(), VerifierError> {
+    validate_akita_verifier_setup_shape(setup, layout.digest, layout.dimension)?;
+    let setup_layout =
+        setup
+            .packed_layout
+            .as_ref()
+            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                reason: "Akita verifier setup requires a packed witness layout".to_string(),
+            })?;
+    if setup_layout != layout {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita verifier setup layout does not match packed witness artifact layout"
+                .to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_akita_verifier_setup_shape(
+    setup: &AkitaVerifierSetup,
+    expected_digest: [u8; 32],
+    expected_dimension: usize,
+) -> Result<(), VerifierError> {
+    if setup.default_layout_digest != expected_digest {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita verifier setup layout digest does not match packed witness layout"
+                .to_string(),
+        });
+    }
+    if setup.max_num_vars != expected_dimension {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita verifier setup max_num_vars does not match packed witness dimension"
+                .to_string(),
+        });
+    }
+    if setup.max_num_polys_per_commitment_group == 0 {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason:
+                "Akita verifier setup must support at least one polynomial per commitment group"
+                    .to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 fn pack_bytecode_rows(
@@ -1013,6 +1114,69 @@ mod tests {
         ) -> Result<AkitaPackedBatchProof, VerifierError>;
         let _prove: ProveFn =
             prove_akita_jolt_final_openings::<TestTranscript, SparsePackedWitness<AkitaField>>;
+    }
+
+    #[test]
+    fn akita_verifier_setup_binds_protocol_config() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (_, verifier_setup) = AkitaPackedScheme::setup(params);
+        let config = akita_lattice_protocol_config_for_layout(&layout);
+
+        validate_akita_verifier_setup_config(&verifier_setup, &config)
+            .expect("setup should match generated Akita protocol config");
+
+        let mut wrong_digest = config;
+        let mut digest = layout.digest;
+        digest[0] ^= 1;
+        wrong_digest.lattice.packed_witness.layout_digest = Some(digest);
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&verifier_setup, &wrong_digest),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+
+        let mut wrong_dimension = config;
+        wrong_dimension.lattice.packed_witness.d_pack = Some(layout.dimension + 1);
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&verifier_setup, &wrong_dimension),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+
+        let mut missing_layout = verifier_setup.clone();
+        missing_layout.packed_layout = None;
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&missing_layout, &config),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn akita_verifier_setup_binds_artifact_layout() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (_, verifier_setup) = AkitaPackedScheme::setup(params);
+
+        validate_akita_verifier_setup_layout(&verifier_setup, &layout)
+            .expect("setup should match generated Akita packed layout");
+
+        let other_layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::InstructionRa { index: 1 },
+            PackedFactDomain::TraceRows { log_t: 0 },
+            1,
+            PackedAlphabet::Byte,
+        )])
+        .expect("layout should build");
+        assert!(matches!(
+            validate_akita_verifier_setup_layout(&verifier_setup, &other_layout),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+
+        let mut zero_group_setup = verifier_setup;
+        zero_group_setup.max_num_polys_per_commitment_group = 0;
+        assert!(matches!(
+            validate_akita_verifier_setup_layout(&zero_group_setup, &layout),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
     }
 
     #[test]
