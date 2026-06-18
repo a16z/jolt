@@ -82,6 +82,8 @@ pub struct JoltProof<
     pub commitments: CommitmentPayload<PCS::Output>,
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: PCS::Proof,
+    #[serde(default)]
+    pub lattice_packed_validity_opening_proof: Option<PCS::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
@@ -148,6 +150,7 @@ where
             commitments,
             stages,
             joint_opening_proof,
+            lattice_packed_validity_opening_proof: None,
             untrusted_advice_commitment,
             claims,
             trace_length,
@@ -424,6 +427,8 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    #[serde(default)]
+    pub lattice_packed_validity_sumcheck_proof: Option<SumcheckProof<F, VC::Output>>,
 }
 
 #[cfg(test)]

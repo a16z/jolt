@@ -48,6 +48,10 @@ pub struct Stage7Claims<F: Field> {
     /// Final `ProgramImageInit` claim from the program-image reduction's
     /// address phase; present only when that phase runs.
     pub program_image_address_phase: Option<ProgramImageAddressPhaseOutputClaim<F>>,
+    /// Lattice PCS mode only: final packed view openings produced by packed
+    /// validity sumchecks, in verifier-derived statement order.
+    #[serde(default)]
+    pub lattice_packed_validity: Option<LatticePackedValidityOutputClaims<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,4 +85,10 @@ pub struct BytecodeAddressPhaseOutputClaims<F: Field> {
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct ProgramImageAddressPhaseOutputClaim<F: Field> {
     pub opening_claim: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct LatticePackedValidityOutputClaims<F: Field> {
+    pub opening_claims: Vec<F>,
 }

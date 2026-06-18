@@ -271,6 +271,7 @@ where
             stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
             stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
             stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
+            lattice_packed_validity_sumcheck_proof: None,
         };
 
         Ok(Self {
@@ -278,6 +279,7 @@ where
             commitments: CommitmentPayload::Dory(commitments),
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
+            lattice_packed_validity_opening_proof: None,
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),
@@ -323,6 +325,7 @@ where
             stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
             stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
             stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
+            lattice_packed_validity_sumcheck_proof: None,
         };
 
         Ok(Self {
@@ -330,6 +333,7 @@ where
             commitments: CommitmentPayload::Dory(commitments),
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
+            lattice_packed_validity_opening_proof: None,
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),

@@ -37,6 +37,17 @@ pub enum VerifierError {
     #[error("Akita packed witness commitment failed: {reason}")]
     AkitaCommitmentFailed { reason: String },
 
+    #[error("Akita packed validity proof is missing {field}")]
+    MissingAkitaPackedValidityProof { field: &'static str },
+
+    #[error("non-lattice proof unexpectedly includes Akita packed validity {field}")]
+    UnexpectedAkitaPackedValidityProof { field: &'static str },
+
+    #[error(
+        "Akita packed validity opening claim count {got} does not match derived statement count {expected}"
+    )]
+    AkitaPackedValidityClaimCountMismatch { expected: usize, got: usize },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 

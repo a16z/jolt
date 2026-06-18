@@ -1041,6 +1041,14 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         TamperCoverage::IgnoredUntilFixture,
         "committed fixture test offsets the final program-image claim",
     ),
+    checked_standard(
+        "stage7.claims.lattice_packed_validity",
+        "claims.stage7.lattice_packed_validity",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "Akita fixture test offsets each packed validity opening claim",
+    ),
 ];
 
 pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
@@ -1597,6 +1605,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     opening_claim: zero,
                 },
             ),
+            lattice_packed_validity: None,
         },
     }
 }

@@ -34,6 +34,22 @@ use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManif
 pub type JoltLatticeViewFormulaWithRowPoint<F> =
     (Stage8OpeningId, LatticePackedViewFormula<F>, Vec<F>);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LatticePackedValidityStatement {
+    pub requirement: LatticePackedValidityRequirement,
+    pub kind: LatticePackedValidityStatementKind,
+    pub num_vars: usize,
+    pub degree: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LatticePackedValidityStatementKind {
+    CellBooleanity,
+    ExactOneHotRowSum,
+    OptionalOneHotRowSum,
+    BooleanIndicator,
+}
+
 pub fn derive_akita_packed_witness_layout(
     config: &JoltProtocolConfig,
     log_t: usize,
@@ -147,6 +163,90 @@ pub fn derive_akita_packed_validity_requirements(
     requirements.push(program_image_validity_requirement());
 
     Ok(requirements)
+}
+
+pub fn derive_akita_packed_validity_statements(
+    layout: &PackedWitnessLayout,
+    requirements: &[LatticePackedValidityRequirement],
+) -> Result<Vec<LatticePackedValidityStatement>, VerifierError> {
+    let mut statements = Vec::new();
+    for requirement in requirements {
+        let family_id = akita_packed_family_id(&requirement.family);
+        let family = layout.family(&family_id).ok_or_else(|| {
+            invalid_lattice_config(format!(
+                "packed validity requirement references missing family {family_id:?}"
+            ))
+        })?;
+        if family.limbs != requirement.limbs {
+            return Err(invalid_lattice_config(format!(
+                "packed validity family {family_id:?} limb count mismatch: layout has {}, requirement has {}",
+                family.limbs, requirement.limbs
+            )));
+        }
+        if family.alphabet.size() != requirement.alphabet_size {
+            return Err(invalid_lattice_config(format!(
+                "packed validity family {family_id:?} alphabet mismatch: layout has {}, requirement has {}",
+                family.alphabet.size(),
+                requirement.alphabet_size
+            )));
+        }
+
+        let rows = family.domain.rows().map_err(|error| {
+            invalid_lattice_config(format!(
+                "packed validity family {family_id:?} has invalid row domain: {error}"
+            ))
+        })?;
+        let row_vars = power_of_two_log(rows, "packed validity row count")?;
+        let limb_vars = power_of_two_log(requirement.limbs, "packed validity limb count")?;
+        let symbol_vars =
+            power_of_two_log(requirement.alphabet_size, "packed validity alphabet size")?;
+
+        match requirement.kind {
+            LatticePackedValidityKind::ExactOneHot => {
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::CellBooleanity,
+                    num_vars: row_vars + limb_vars + symbol_vars,
+                    degree: 2,
+                });
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::ExactOneHotRowSum,
+                    num_vars: row_vars + limb_vars,
+                    degree: 2,
+                });
+            }
+            LatticePackedValidityKind::OptionalOneHot => {
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::CellBooleanity,
+                    num_vars: row_vars + limb_vars + symbol_vars,
+                    degree: 2,
+                });
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::OptionalOneHotRowSum,
+                    num_vars: row_vars + limb_vars,
+                    degree: 2,
+                });
+            }
+            LatticePackedValidityKind::BooleanIndicator { symbol } => {
+                if symbol >= requirement.alphabet_size {
+                    return Err(invalid_lattice_config(format!(
+                        "packed validity boolean indicator symbol {symbol} is outside alphabet size {}",
+                        requirement.alphabet_size
+                    )));
+                }
+                statements.push(LatticePackedValidityStatement {
+                    requirement: requirement.clone(),
+                    kind: LatticePackedValidityStatementKind::BooleanIndicator,
+                    num_vars: row_vars + limb_vars,
+                    degree: 2,
+                });
+            }
+        }
+    }
+    Ok(statements)
 }
 
 pub fn validate_akita_packed_witness_validity_config(
@@ -1246,6 +1346,102 @@ mod tests {
             validate_akita_packed_witness_validity_config(&config, &schedule),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("validity digest")
+        ));
+    }
+
+    #[test]
+    fn derive_validity_statements_matches_requirement_semantics() {
+        let layout = PackedWitnessLayout::new([
+            PackedFamilySpec::direct(
+                PackedFamilyId::ProgramImageInit,
+                PackedFactDomain::ProgramImageWords { log_words: 2 },
+                8,
+                PackedAlphabet::Byte,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeLookupSelector { chunk: 0 },
+                PackedFactDomain::BytecodeRows { log_bytecode: 3 },
+                1,
+                PackedAlphabet::Fixed { size: 8 },
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::IncSign,
+                PackedFactDomain::TraceRows { log_t: 4 },
+                1,
+                PackedAlphabet::Bit,
+            ),
+        ])
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
+        let requirements = vec![
+            LatticePackedValidityRequirement::exact_one_hot(
+                LatticePackedFamilyId::ProgramImageInit,
+                8,
+                256,
+            ),
+            LatticePackedValidityRequirement::optional_one_hot(
+                LatticePackedFamilyId::BytecodeLookupSelector { chunk: 0 },
+                1,
+                8,
+            ),
+            LatticePackedValidityRequirement::boolean_indicator(
+                LatticePackedFamilyId::IncSign,
+                1,
+                2,
+                1,
+            ),
+        ];
+
+        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+            .unwrap_or_else(|error| panic!("validity statements should derive: {error}"));
+
+        assert_eq!(statements.len(), 5);
+        assert_eq!(
+            statements[0].kind,
+            LatticePackedValidityStatementKind::CellBooleanity
+        );
+        assert_eq!(statements[0].num_vars, 2 + 3 + 8);
+        assert_eq!(
+            statements[1].kind,
+            LatticePackedValidityStatementKind::ExactOneHotRowSum
+        );
+        assert_eq!(statements[1].num_vars, 2 + 3);
+        assert_eq!(
+            statements[2].kind,
+            LatticePackedValidityStatementKind::CellBooleanity
+        );
+        assert_eq!(statements[2].num_vars, 3 + 3);
+        assert_eq!(
+            statements[3].kind,
+            LatticePackedValidityStatementKind::OptionalOneHotRowSum
+        );
+        assert_eq!(statements[3].num_vars, 3);
+        assert_eq!(
+            statements[4].kind,
+            LatticePackedValidityStatementKind::BooleanIndicator
+        );
+        assert_eq!(statements[4].num_vars, 4);
+        assert!(statements.iter().all(|statement| statement.degree == 2));
+    }
+
+    #[test]
+    fn derive_validity_statements_rejects_layout_requirement_mismatch() {
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            PackedFactDomain::TraceRows { log_t: 4 },
+            1,
+            PackedAlphabet::Bit,
+        )])
+        .unwrap_or_else(|error| panic!("layout should build: {error}"));
+        let requirements = [LatticePackedValidityRequirement::exact_one_hot(
+            LatticePackedFamilyId::IncSign,
+            8,
+            256,
+        )];
+
+        assert!(matches!(
+            derive_akita_packed_validity_statements(&layout, &requirements),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("limb count mismatch")
         ));
     }
 

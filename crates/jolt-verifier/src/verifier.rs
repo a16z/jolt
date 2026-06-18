@@ -103,6 +103,7 @@ where
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(config, proof)?;
     validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
+    validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -234,6 +235,7 @@ where
     validate_proof_consistency(proof, false)?;
     validate_proof_config(config, proof)?;
     validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
+    validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -371,6 +373,7 @@ where
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(config, proof)?;
     validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
+    validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -626,6 +629,107 @@ where
         )?;
         stage8::validate_akita_packed_witness_layout_config(config, &layout)?;
         stage8::validate_akita_packed_witness_validity_config(config, &checked.precommitted)
+    }
+}
+
+fn validate_lattice_validity_proof_surface<PCS, VC, ZkProof>(
+    config: &JoltProtocolConfig,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    checked: &CheckedInputs,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let lattice = proof.commitments.family() == PcsFamily::Lattice;
+    let validity_claims = match &proof.claims {
+        crate::proof::JoltProofClaims::Clear(claims) => {
+            claims.stage7.lattice_packed_validity.as_ref()
+        }
+        crate::proof::JoltProofClaims::Zk { .. } => None,
+    };
+
+    if !lattice {
+        if proof
+            .stages
+            .lattice_packed_validity_sumcheck_proof
+            .is_some()
+        {
+            return Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+                field: "sumcheck_proof",
+            });
+        }
+        if proof.lattice_packed_validity_opening_proof.is_some() {
+            return Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+                field: "opening_proof",
+            });
+        }
+        if validity_claims.is_some() {
+            return Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+                field: "opening_claims",
+            });
+        }
+        return Ok(());
+    }
+
+    if proof
+        .stages
+        .lattice_packed_validity_sumcheck_proof
+        .is_none()
+    {
+        return Err(VerifierError::MissingAkitaPackedValidityProof {
+            field: "sumcheck_proof",
+        });
+    }
+    if proof.lattice_packed_validity_opening_proof.is_none() {
+        return Err(VerifierError::MissingAkitaPackedValidityProof {
+            field: "opening_proof",
+        });
+    }
+    let validity_claims =
+        validity_claims.ok_or(VerifierError::MissingAkitaPackedValidityProof {
+            field: "opening_claims",
+        })?;
+
+    #[cfg(not(feature = "akita"))]
+    {
+        let _ = (config, preprocessing, checked, validity_claims);
+        Err(VerifierError::InvalidProtocolConfig {
+            reason: "lattice packed validity proof requires the jolt-verifier akita feature"
+                .to_string(),
+        })
+    }
+
+    #[cfg(feature = "akita")]
+    {
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .map_err(|error| VerifierError::InvalidProtocolConfig {
+            reason: format!("invalid lattice formula dimensions: {error}"),
+        })?;
+        let layout = stage8::derive_akita_packed_witness_layout(
+            config,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            formula_dimensions.ra_layout,
+            &checked.precommitted,
+        )?;
+        let requirements =
+            stage8::derive_akita_packed_validity_requirements(config, &checked.precommitted)?;
+        let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)?;
+        if validity_claims.opening_claims.len() != statements.len() {
+            return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
+                expected: statements.len(),
+                got: validity_claims.opening_claims.len(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1222,6 +1326,79 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
+    fn lattice_validity_surface_accepts_derived_statement_count() {
+        let (preprocessing, checked, config, proof) = lattice_validity_surface_fixture();
+
+        validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked)
+            .unwrap_or_else(|error| panic!("validity proof surface should validate: {error}"));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_validity_surface_requires_sumcheck_and_opening_proofs() {
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        proof.stages.lattice_packed_validity_sumcheck_proof = None;
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::MissingAkitaPackedValidityProof {
+                field: "sumcheck_proof"
+            })
+        ));
+
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        proof.lattice_packed_validity_opening_proof = None;
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::MissingAkitaPackedValidityProof {
+                field: "opening_proof"
+            })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_validity_surface_rejects_wrong_opening_claim_count() {
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("fixture should be a clear proof");
+        };
+        let _ = claims
+            .stage7
+            .lattice_packed_validity
+            .as_mut()
+            .unwrap_or_else(|| panic!("fixture should include validity claims"))
+            .opening_claims
+            .pop();
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::AkitaPackedValidityClaimCountMismatch { expected, got })
+                if expected == got + 1
+        ));
+    }
+
+    #[test]
+    fn curve_validity_surface_rejects_unexpected_lattice_material() {
+        let preprocessing = test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = JoltProtocolConfig::for_zk(false);
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.stages.lattice_packed_validity_sumcheck_proof = Some(sumcheck_proof(false));
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+                field: "sumcheck_proof"
+            })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
     fn akita_stage8_batch_statement_snapshot_uses_packed_witness_views() {
         let preprocessing = committed_test_preprocessing();
         let public_io = public_io_for_preprocessing(&preprocessing);
@@ -1724,6 +1901,7 @@ mod tests {
                 },
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
+                lattice_packed_validity: None,
             },
         })
     }
@@ -1820,6 +1998,7 @@ mod tests {
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
+            lattice_packed_validity_sumcheck_proof: None,
         }
     }
 
@@ -1956,7 +2135,91 @@ mod tests {
             layout_digest,
             d_pack,
         ));
+        #[cfg(feature = "akita")]
+        attach_lattice_validity_surface(&mut proof, config);
         proof
+    }
+
+    #[cfg(feature = "akita")]
+    fn attach_lattice_validity_surface(proof: &mut TestProof, config: &JoltProtocolConfig) {
+        let precommitted = test_lattice_precommitted_schedule();
+        let log_t = proof.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            16,
+            proof.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        let layout = stage8::derive_akita_packed_witness_layout(
+            config,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            formula_dimensions.ra_layout,
+            &precommitted,
+        )
+        .unwrap_or_else(|error| panic!("packed witness layout should derive: {error}"));
+        let requirements = stage8::derive_akita_packed_validity_requirements(config, &precommitted)
+            .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)
+            .unwrap_or_else(|error| panic!("validity statements should derive: {error}"));
+
+        proof.stages.lattice_packed_validity_sumcheck_proof = Some(sumcheck_proof(false));
+        proof.lattice_packed_validity_opening_proof = Some(());
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("test lattice proof should be transparent");
+        };
+        claims.stage7.lattice_packed_validity =
+            Some(stage7::inputs::LatticePackedValidityOutputClaims {
+                opening_claims: vec![Fr::zero(); statements.len()],
+            });
+    }
+
+    #[cfg(feature = "akita")]
+    fn test_lattice_precommitted_schedule() -> PrecommittedSchedule {
+        PrecommittedSchedule::new(
+            crate::proof::TracePolynomialOrder::CycleMajor,
+            2,
+            8,
+            None,
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 16,
+                bytecode_chunk_count: 2,
+                program_image_len_words: 4,
+                program_image_start_index: 0,
+            }),
+        )
+        .unwrap_or_else(|error| panic!("test lattice precommitted schedule should build: {error}"))
+    }
+
+    #[cfg(feature = "akita")]
+    fn lattice_validity_surface_fixture() -> (
+        JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        CheckedInputs,
+        JoltProtocolConfig,
+        TestProof,
+    ) {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
+        let config = lattice_config_with_derived_validity(
+            layout.digest,
+            layout.dimension,
+            &checked.precommitted,
+        );
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+
+        (preprocessing, checked, config, proof)
     }
 
     #[cfg(feature = "akita")]
