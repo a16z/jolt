@@ -845,6 +845,11 @@ where
 {
     validate_akita_verifier_setup_config(&preprocessing.pcs_setup, config)?;
     validate_akita_proof_payload_shape(&preprocessing.pcs_setup, &proof.commitments)?;
+    validate_akita_advice_commitment_aliases(
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+    )?;
     crate::verifier::verify_clear_with_config::<
         AkitaField,
         AkitaPackedScheme,
@@ -968,6 +973,33 @@ fn validate_akita_proof_payload_shape(
     if payload.packed_witness.poly_count != 1 {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita packed witness commitment must contain exactly one polynomial"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_akita_advice_commitment_aliases(
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+    untrusted_advice_commitment: Option<&AkitaCommitment>,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+) -> Result<(), VerifierError> {
+    let payload =
+        proof_commitments
+            .as_akita()
+            .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Lattice,
+                got: proof_commitments.family(),
+            })?;
+    if untrusted_advice_commitment.is_some_and(|commitment| commitment != &payload.packed_witness) {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita untrusted advice commitment must alias the packed witness commitment"
+                .to_string(),
+        });
+    }
+    if trusted_advice_commitment.is_some_and(|commitment| commitment != &payload.packed_witness) {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita trusted advice commitment must alias the packed witness commitment"
                 .to_string(),
         });
     }
@@ -3650,6 +3682,51 @@ mod tests {
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("exactly one polynomial")
+        ));
+    }
+
+    #[test]
+    fn akita_advice_commitments_must_alias_packed_witness() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let source = SparsePackedWitness::try_new(layout, Vec::new())
+            .expect("empty sparse source should build");
+        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        let payload = artifacts
+            .commitments
+            .as_akita()
+            .expect("artifact should carry Akita payload");
+        let packed_witness = &payload.packed_witness;
+        validate_akita_advice_commitment_aliases(&artifacts.commitments, None, None)
+            .expect("absent advice commitments should pass");
+        validate_akita_advice_commitment_aliases(
+            &artifacts.commitments,
+            Some(packed_witness),
+            Some(packed_witness),
+        )
+        .expect("packed-witness advice aliases should pass");
+
+        let mut other_commitment = packed_witness.clone();
+        other_commitment.layout_digest[0] ^= 1;
+        assert!(matches!(
+            validate_akita_advice_commitment_aliases(
+                &artifacts.commitments,
+                Some(&other_commitment),
+                None,
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("untrusted advice commitment")
+        ));
+        assert!(matches!(
+            validate_akita_advice_commitment_aliases(
+                &artifacts.commitments,
+                None,
+                Some(&other_commitment),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("trusted advice commitment")
         ));
     }
 
