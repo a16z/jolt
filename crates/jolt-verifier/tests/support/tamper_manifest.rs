@@ -423,6 +423,14 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "core-fixture test offsets every Spartan outer variable opening claim",
     ),
+    checked_standard(
+        "stage1.claims.field_inline",
+        "claims.stage1.field_inline.*",
+        VerifierPhase::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "field-inline fixture needed to actively cover field Spartan outer opening claims",
+    ),
 ];
 
 pub const STAGE2_TARGETS: &[TamperTarget] = &[
@@ -513,6 +521,14 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "Stage 6 bytecode read-RAF consumes this Stage 2 pass-through claim",
+    ),
+    checked_standard(
+        "stage2.claims.batch_outputs.field_inline.product",
+        "claims.stage2.batch_outputs.field_inline.product.*",
+        VerifierPhase::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "field-inline fixture needed to actively cover field product output claims",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.instruction_claim_reduction",
@@ -625,6 +641,14 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         "core-fixture test offsets each register read-write output claim",
     ),
     checked_standard(
+        "stage4.claims.field_inline.field_registers_read_write",
+        "claims.stage4.field_inline.field_registers_read_write.*",
+        VerifierPhase::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "field-inline fixture needed to actively cover field register read-write output claims",
+    ),
+    checked_standard(
         "stage4.claims.ram_val_check",
         "claims.stage4.ram_val_check.*",
         VerifierPhase::Stage4,
@@ -722,6 +746,14 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets each register value-evaluation output claim",
+    ),
+    checked_standard(
+        "stage5.claims.field_inline.field_registers_val_evaluation",
+        "claims.stage5.field_inline.field_registers_val_evaluation.*",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "field-inline fixture needed to actively cover field register value-evaluation output claims",
     ),
 ];
 
@@ -861,6 +893,14 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "core-fixture test offsets the register increment reduction output claim",
+    ),
+    checked_standard(
+        "stage6.claims.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
+        "claims.stage6.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "field-inline fixture needed to actively cover field register increment reduction output claims",
     ),
     checked_standard(
         "stage6.claims.fused_increment_translation",
@@ -1214,6 +1254,21 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.flags.is_first_in_sequence",
             "claims.stage1.outer.flags.is_last_in_sequence",
         ],
+        "claims.stage1.field_inline.*" => vec![
+            "claims.stage1.field_inline.field_rs1_value",
+            "claims.stage1.field_inline.field_rs2_value",
+            "claims.stage1.field_inline.field_rd_value",
+            "claims.stage1.field_inline.field_product",
+            "claims.stage1.field_inline.field_inv_product",
+            "claims.stage1.field_inline.flags.add",
+            "claims.stage1.field_inline.flags.sub",
+            "claims.stage1.field_inline.flags.mul",
+            "claims.stage1.field_inline.flags.inv",
+            "claims.stage1.field_inline.flags.assert_eq",
+            "claims.stage1.field_inline.flags.load_from_x",
+            "claims.stage1.field_inline.flags.store_to_x",
+            "claims.stage1.field_inline.flags.load_imm",
+        ],
         "claims.stage2.batch_outputs.ram_read_write.*" => vec![
             "claims.stage2.batch_outputs.ram_read_write.val",
             "claims.stage2.batch_outputs.ram_read_write.ra",
@@ -1233,6 +1288,11 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.instruction_claim_reduction.right_lookup_operand",
             "claims.stage2.batch_outputs.instruction_claim_reduction.left_instruction_input",
             "claims.stage2.batch_outputs.instruction_claim_reduction.right_instruction_input",
+        ],
+        "claims.stage2.batch_outputs.field_inline.product.*" => vec![
+            "claims.stage2.batch_outputs.field_inline.product.field_rs1_value",
+            "claims.stage2.batch_outputs.field_inline.product.field_rs2_value",
+            "claims.stage2.batch_outputs.field_inline.product.field_rd_value",
         ],
         "claims.stage3.shift.*" => vec![
             "claims.stage3.shift.unexpanded_pc",
@@ -1263,6 +1323,13 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage4.registers_read_write.rd_wa",
             "claims.stage4.registers_read_write.rd_inc",
         ],
+        "claims.stage4.field_inline.field_registers_read_write.*" => vec![
+            "claims.stage4.field_inline.field_registers_read_write.field_registers_val",
+            "claims.stage4.field_inline.field_registers_read_write.field_rs1_ra",
+            "claims.stage4.field_inline.field_registers_read_write.field_rs2_ra",
+            "claims.stage4.field_inline.field_registers_read_write.field_rd_wa",
+            "claims.stage4.field_inline.field_registers_read_write.field_rd_inc",
+        ],
         "claims.stage4.ram_val_check.*" => vec![
             "claims.stage4.ram_val_check.ram_ra",
             "claims.stage4.ram_val_check.ram_inc",
@@ -1270,6 +1337,10 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
         "claims.stage5.registers_val_evaluation.*" => vec![
             "claims.stage5.registers_val_evaluation.rd_inc",
             "claims.stage5.registers_val_evaluation.rd_wa",
+        ],
+        "claims.stage5.field_inline.field_registers_val_evaluation.*" => vec![
+            "claims.stage5.field_inline.field_registers_val_evaluation.field_rd_inc",
+            "claims.stage5.field_inline.field_registers_val_evaluation.field_rd_wa",
         ],
         path => vec![path],
     }
@@ -1333,6 +1404,8 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     is_last_in_sequence: zero,
                 },
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage1::inputs::FieldInlineStage1Claims::zero(),
         },
         stage2: stage2::inputs::Stage2Claims {
             product_uniskip_output_claim: zero,
@@ -1351,6 +1424,14 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+                    product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                        field_rs1_value: zero,
+                        field_rs2_value: zero,
+                        field_rd_value: zero,
+                    },
                 },
                 instruction_claim_reduction:
                     stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
@@ -1401,6 +1482,17 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rd_wa: zero,
                 rd_inc: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage4::inputs::FieldInlineStage4Claims {
+                field_registers_read_write:
+                    stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                        field_registers_val: zero,
+                        field_rs1_ra: zero,
+                        field_rs2_ra: zero,
+                        field_rd_wa: zero,
+                        field_rd_inc: zero,
+                    },
+            },
             ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                 ram_ra: zero,
                 ram_inc: zero,
@@ -1418,6 +1510,14 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
                 rd_inc: zero,
                 rd_wa: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage5::inputs::FieldInlineStage5Claims {
+                field_registers_val_evaluation:
+                    stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                        field_rd_inc: zero,
+                        field_rd_wa: zero,
+                    },
             },
         },
         stage6: stage6::inputs::Stage6Claims {
@@ -1447,6 +1547,13 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage6::inputs::FieldInlineStage6Claims {
+                field_registers_inc_claim_reduction:
+                    stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                        field_rd_inc: zero,
+                    },
             },
             fused_increment_translation: None,
             fused_increment_source_link: None,

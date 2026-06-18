@@ -81,6 +81,8 @@ pub struct Stage6Claims<F: Field> {
     pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
     pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineStage6Claims<F>,
     /// Lattice PCS mode only, once the fused increment translation sumcheck is present.
     #[serde(default)]
     pub fused_increment_translation: Option<FusedIncrementTranslationOutputClaims<F>>,
@@ -92,6 +94,20 @@ pub struct Stage6Claims<F: Field> {
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
     /// Committed program mode only.
     pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<F>>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct FieldInlineStage6Claims<F: Field> {
+    pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputOpeningClaims<F>,
+}
+
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct FieldRegistersIncClaimReductionOutputOpeningClaims<F: Field> {
+    pub field_rd_inc: F,
 }
 
 #[cfg(test)]
@@ -131,6 +147,11 @@ mod tests {
             inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineStage6Claims {
+                field_registers_inc_claim_reduction:
+                    FieldRegistersIncClaimReductionOutputOpeningClaims { field_rd_inc: zero },
             },
             fused_increment_translation: Some(FusedIncrementTranslationOutputClaims {
                 ram_source: zero,

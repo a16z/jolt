@@ -298,7 +298,7 @@ where
                     )
                 },
                 #[cfg(feature = "field-inline")]
-                Some(&commitments.field_inline.field_registers.rd_inc),
+                &commitments.field_inline.field_registers.rd_inc,
             )?
         }
         CommitmentPayload::Akita(payload) => {
@@ -320,7 +320,7 @@ where
                 true,
                 |_| Ok(&payload.packed_witness),
                 #[cfg(feature = "field-inline")]
-                Some(&payload.packed_witness),
+                &payload.packed_witness,
             )?);
             entries
         }
@@ -829,6 +829,10 @@ mod tests {
         RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
         Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims,
     };
+    #[cfg(feature = "field-inline")]
+    use crate::stages::stage6::inputs::{
+        FieldInlineStage6Claims, FieldRegistersIncClaimReductionOutputOpeningClaims,
+    };
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[test]
@@ -1022,6 +1026,11 @@ mod tests {
             inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineStage6Claims {
+                field_registers_inc_claim_reduction:
+                    FieldRegistersIncClaimReductionOutputOpeningClaims { field_rd_inc: zero },
             },
             fused_increment_translation: Some(FusedIncrementTranslationOutputClaims {
                 ram_source,

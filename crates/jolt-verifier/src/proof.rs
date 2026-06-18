@@ -438,6 +438,8 @@ mod tests {
             1,
             2,
             JoltRaCommitments::new(vec![3], vec![4], vec![5]),
+            #[cfg(feature = "field-inline")]
+            FieldInlineCommitments::new(FieldRegistersCommitments::new(6)),
         ))
     }
 

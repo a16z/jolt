@@ -1451,6 +1451,10 @@ mod tests {
                     Vec::<TestCommitment>::new(),
                     Vec::<TestCommitment>::new(),
                 ),
+                #[cfg(feature = "field-inline")]
+                crate::proof::FieldInlineCommitments::new(
+                    crate::proof::FieldRegistersCommitments::new(TestCommitment),
+                ),
             ),
             stage_proofs(is_zk),
             (),
@@ -1479,6 +1483,8 @@ mod tests {
             stage1: stage1::inputs::Stage1Claims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
+                #[cfg(feature = "field-inline")]
+                field_inline: stage1::inputs::FieldInlineStage1Claims::zero(),
             },
             stage2: stage2::inputs::Stage2Claims {
                 product_uniskip_output_claim: zero,
@@ -1497,6 +1503,14 @@ mod tests {
                         branch_flag: zero,
                         next_is_noop: zero,
                         virtual_instruction: zero,
+                    },
+                    #[cfg(feature = "field-inline")]
+                    field_inline: stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+                        product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                            field_rs1_value: zero,
+                            field_rs2_value: zero,
+                            field_rd_value: zero,
+                        },
                     },
                     instruction_claim_reduction:
                         stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
@@ -1548,6 +1562,17 @@ mod tests {
                     rd_wa: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage4::inputs::FieldInlineStage4Claims {
+                    field_registers_read_write:
+                        stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                            field_registers_val: zero,
+                            field_rs1_ra: zero,
+                            field_rs2_ra: zero,
+                            field_rd_wa: zero,
+                            field_rd_inc: zero,
+                        },
+                },
                 ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                     ram_ra: zero,
                     ram_inc: zero,
@@ -1567,6 +1592,14 @@ mod tests {
                         rd_inc: zero,
                         rd_wa: zero,
                     },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage5::inputs::FieldInlineStage5Claims {
+                    field_registers_val_evaluation:
+                        stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                            field_rd_inc: zero,
+                            field_rd_wa: zero,
+                        },
+                },
             },
             stage6: stage6::inputs::Stage6Claims {
                 address_phase: stage6::inputs::Stage6AddressPhaseClaims {
@@ -1595,6 +1628,13 @@ mod tests {
                 inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
                     ram_inc: zero,
                     rd_inc: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage6::inputs::FieldInlineStage6Claims {
+                    field_registers_inc_claim_reduction:
+                        stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                            field_rd_inc: zero,
+                        },
                 },
                 fused_increment_translation: None,
                 fused_increment_source_link: None,
@@ -1875,6 +1915,10 @@ mod tests {
                 booleanity_gamma: zero,
                 instruction_ra_gamma_powers: Vec::new(),
                 inc_gamma: zero,
+                #[cfg(feature = "field-inline")]
+                field_inline: stage6::outputs::FieldInlineStage6PublicOutput {
+                    field_inc_gamma: zero,
+                },
                 bytecode_reduction_eta: None,
             },
             output_claims,
@@ -1917,6 +1961,8 @@ mod tests {
                         expected_output_claim: zero,
                     },
                 inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
+                #[cfg(feature = "field-inline")]
+                field_registers_inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
                 fused_increment_translation: Some(verified_stage6_sumcheck(trace_point.clone())),
                 fused_increment_source_link: Some(verified_bytecode_read_raf(
                     bytecode_address_point.clone(),
