@@ -1,8 +1,7 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
     formulas::{
-        bytecode as field_bytecode,
-        claim_reductions::increments as field_increments,
+        bytecode as field_bytecode, claim_reductions::increments as field_increments,
         dimensions::FieldRegistersTraceDimensions,
     },
     FieldInlineChallengeId, FieldInlinePublicId, FieldInlineRelationClaims,

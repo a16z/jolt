@@ -3279,7 +3279,6 @@ dependencies = [
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
- "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
  "jolt-program",

@@ -1,9 +1,6 @@
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, WithAccumulator};
 use jolt_lookup_tables::{
-    tables::{
-        prefixes::NUM_PREFIXES,
-        PrefixEval, Prefixes, Suffixes,
-    },
+    tables::{prefixes::NUM_PREFIXES, PrefixEval, Prefixes, Suffixes},
     LookupBits, LookupTableKind, ALL_PREFIXES,
 };
 use jolt_poly::{

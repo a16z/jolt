@@ -36,7 +36,6 @@ jolt-blindfold.workspace = true
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
-jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-program.workspace = true
