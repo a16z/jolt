@@ -36,6 +36,7 @@ use crate::{
         stage6::inputs::{
             AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims,
             BytecodeCyclePhaseOutputClaims, BytecodeReadRafOutputOpeningClaims,
+            FusedIncrementSourceLinkOutputClaims, FusedIncrementTranslationOutputClaims,
             IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
             ProgramImageCyclePhaseOutputClaim, RamHammingBooleanityOutputOpeningClaims,
             RamRaVirtualizationOutputOpeningClaims, Stage6AddressPhaseClaims,
@@ -60,13 +61,14 @@ use jolt_claims::protocols::jolt::{
             advice, bytecode as bytecode_claim_reduction, increments,
             instruction as instruction_claim_reduction, program_image,
         },
-        instruction, ram, registers,
+        instruction, lattice, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_remainder_output_openings,
             product_uniskip_opening, shift_output_openings,
         },
     },
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
+    LatticeFusedIncrementTarget,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -480,8 +482,8 @@ fn stage6_claims_from_native<F: Field>(
                     field_rd_inc: F::zero(),
                 },
         },
-        fused_increment_translation: None,
-        fused_increment_source_link: None,
+        fused_increment_translation: fused_increment_translation_claims_from_native(claims)?,
+        fused_increment_source_link: fused_increment_source_link_claims_from_native(claims)?,
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
@@ -492,6 +494,63 @@ fn stage6_claims_from_native<F: Field>(
             .or_else(|| claims.get(program_image::final_program_image_opening()))
             .map(|opening_claim| ProgramImageCyclePhaseOutputClaim { opening_claim }),
     })
+}
+
+fn fused_increment_translation_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Option<FusedIncrementTranslationOutputClaims<F>>, VerifierError> {
+    let ram_source = lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Ram);
+    let magnitude = lattice::fused_increment_magnitude_opening();
+    let sign = lattice::fused_increment_sign_opening();
+    let rd_source = lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Rd);
+    let present = [
+        claims.get(ram_source),
+        claims.get(magnitude),
+        claims.get(sign),
+        claims.get(rd_source),
+    ];
+    if present.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+
+    Ok(Some(FusedIncrementTranslationOutputClaims {
+        ram_source: present[0].ok_or(VerifierError::MissingOpeningClaim { id: ram_source })?,
+        magnitude: present[1].ok_or(VerifierError::MissingOpeningClaim { id: magnitude })?,
+        sign: present[2].ok_or(VerifierError::MissingOpeningClaim { id: sign })?,
+        rd_source: present[3].ok_or(VerifierError::MissingOpeningClaim { id: rd_source })?,
+    }))
+}
+
+fn fused_increment_source_link_claims_from_native<F: Field>(
+    claims: &NativeOpeningClaims<F>,
+) -> Result<Option<FusedIncrementSourceLinkOutputClaims<F>>, VerifierError> {
+    let mut bytecode_ra = Vec::new();
+    for index in 0.. {
+        let id = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(index),
+            JoltRelationId::FusedIncrementSourceLink,
+        );
+        let Some(opening_claim) = claims.get(id) else {
+            break;
+        };
+        bytecode_ra.push(opening_claim);
+    }
+
+    let store_flag =
+        lattice::fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram);
+    let rd_present =
+        lattice::fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd);
+    let store_claim = claims.get(store_flag);
+    let rd_claim = claims.get(rd_present);
+    if bytecode_ra.is_empty() && store_claim.is_none() && rd_claim.is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(FusedIncrementSourceLinkOutputClaims {
+        bytecode_ra,
+        store_flag: store_claim.ok_or(VerifierError::MissingOpeningClaim { id: store_flag })?,
+        rd_present: rd_claim.ok_or(VerifierError::MissingOpeningClaim { id: rd_present })?,
+    }))
 }
 
 fn advice_cycle_phase_claim_from_native<F: Field>(
@@ -1281,7 +1340,72 @@ fn set_optional_stage6_output<F: Field>(
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
+    if let native::JoltOpeningId::Polynomial {
+        polynomial: native::JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+        relation: JoltRelationId::FusedIncrementSourceLink,
+    } = id
+    {
+        let source_link = claims
+            .fused_increment_source_link
+            .get_or_insert_with(fused_increment_source_link_empty);
+        if source_link.bytecode_ra.len() <= index {
+            source_link.bytecode_ra.resize(index + 1, F::zero());
+        }
+        source_link.bytecode_ra[index] = opening_claim;
+        return true;
+    }
+
     match id {
+        id if id == lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) => {
+            claims
+                .fused_increment_translation
+                .get_or_insert_with(fused_increment_translation_zero)
+                .ram_source = opening_claim;
+            true
+        }
+        id if id == lattice::fused_increment_magnitude_opening() => {
+            claims
+                .fused_increment_translation
+                .get_or_insert_with(fused_increment_translation_zero)
+                .magnitude = opening_claim;
+            true
+        }
+        id if id == lattice::fused_increment_sign_opening() => {
+            claims
+                .fused_increment_translation
+                .get_or_insert_with(fused_increment_translation_zero)
+                .sign = opening_claim;
+            true
+        }
+        id if id == lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) => {
+            claims
+                .fused_increment_translation
+                .get_or_insert_with(fused_increment_translation_zero)
+                .rd_source = opening_claim;
+            true
+        }
+        id if id
+            == lattice::fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            ) =>
+        {
+            claims
+                .fused_increment_source_link
+                .get_or_insert_with(fused_increment_source_link_empty)
+                .store_flag = opening_claim;
+            true
+        }
+        id if id
+            == lattice::fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Rd,
+            ) =>
+        {
+            claims
+                .fused_increment_source_link
+                .get_or_insert_with(fused_increment_source_link_empty)
+                .rd_present = opening_claim;
+            true
+        }
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
             claims.address_phase.bytecode_read_raf = opening_claim;
             true
@@ -1304,6 +1428,25 @@ fn set_optional_stage6_output<F: Field>(
             true
         }
         _ => false,
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn fused_increment_translation_zero<F: Field>() -> FusedIncrementTranslationOutputClaims<F> {
+    FusedIncrementTranslationOutputClaims {
+        ram_source: F::zero(),
+        magnitude: F::zero(),
+        sign: F::zero(),
+        rd_source: F::zero(),
+    }
+}
+
+#[cfg(any(feature = "jolt-core-compat", test))]
+fn fused_increment_source_link_empty<F: Field>() -> FusedIncrementSourceLinkOutputClaims<F> {
+    FusedIncrementSourceLinkOutputClaims {
+        bytecode_ra: Vec::new(),
+        store_flag: F::zero(),
+        rd_present: F::zero(),
     }
 }
 
@@ -1521,6 +1664,18 @@ fn claim_from_stage6_outputs<F: Field>(
             return Some(*opening_claim);
         }
     }
+    if let Some(source_link) = &claims.fused_increment_source_link {
+        for (index, opening_claim) in source_link.bytecode_ra.iter().enumerate() {
+            if id
+                == JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeRa(index),
+                    JoltRelationId::FusedIncrementSourceLink,
+                )
+            {
+                return Some(*opening_claim);
+            }
+        }
+    }
     for (index, opening_claim) in claims.booleanity.instruction_ra.iter().enumerate() {
         if id
             == JoltOpeningId::committed(
@@ -1580,6 +1735,46 @@ fn claim_from_stage6_outputs<F: Field>(
         }
         id if id == ram_inc => Some(claims.inc_claim_reduction.ram_inc),
         id if id == rd_inc => Some(claims.inc_claim_reduction.rd_inc),
+        id if id == lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) => {
+            claims
+                .fused_increment_translation
+                .as_ref()
+                .map(|claim| claim.ram_source)
+        }
+        id if id == lattice::fused_increment_magnitude_opening() => claims
+            .fused_increment_translation
+            .as_ref()
+            .map(|claim| claim.magnitude),
+        id if id == lattice::fused_increment_sign_opening() => claims
+            .fused_increment_translation
+            .as_ref()
+            .map(|claim| claim.sign),
+        id if id == lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) => {
+            claims
+                .fused_increment_translation
+                .as_ref()
+                .map(|claim| claim.rd_source)
+        }
+        id if id
+            == lattice::fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            ) =>
+        {
+            claims
+                .fused_increment_source_link
+                .as_ref()
+                .map(|claim| claim.store_flag)
+        }
+        id if id
+            == lattice::fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Rd,
+            ) =>
+        {
+            claims
+                .fused_increment_source_link
+                .as_ref()
+                .map(|claim| claim.rd_present)
+        }
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -1607,6 +1802,17 @@ fn claim_mut_from_stage6_outputs<F: Field>(
     claims: &mut Stage6Claims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
+    if let native::JoltOpeningId::Polynomial {
+        polynomial: native::JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
+        relation: JoltRelationId::FusedIncrementSourceLink,
+    } = id
+    {
+        return claims
+            .fused_increment_source_link
+            .as_mut()
+            .and_then(|source_link| source_link.bytecode_ra.get_mut(index));
+    }
+
     for (index, opening_claim) in claims.bytecode_read_raf.bytecode_ra.iter_mut().enumerate() {
         if id
             == JoltOpeningId::committed(
@@ -1676,6 +1882,46 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         }
         id if id == ram_inc => Some(&mut claims.inc_claim_reduction.ram_inc),
         id if id == rd_inc => Some(&mut claims.inc_claim_reduction.rd_inc),
+        id if id == lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) => {
+            claims
+                .fused_increment_translation
+                .as_mut()
+                .map(|claim| &mut claim.ram_source)
+        }
+        id if id == lattice::fused_increment_magnitude_opening() => claims
+            .fused_increment_translation
+            .as_mut()
+            .map(|claim| &mut claim.magnitude),
+        id if id == lattice::fused_increment_sign_opening() => claims
+            .fused_increment_translation
+            .as_mut()
+            .map(|claim| &mut claim.sign),
+        id if id == lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) => {
+            claims
+                .fused_increment_translation
+                .as_mut()
+                .map(|claim| &mut claim.rd_source)
+        }
+        id if id
+            == lattice::fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Ram,
+            ) =>
+        {
+            claims
+                .fused_increment_source_link
+                .as_mut()
+                .map(|claim| &mut claim.store_flag)
+        }
+        id if id
+            == lattice::fused_increment_bytecode_source_opening(
+                LatticeFusedIncrementTarget::Rd,
+            ) =>
+        {
+            claims
+                .fused_increment_source_link
+                .as_mut()
+                .map(|claim| &mut claim.rd_present)
+        }
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -2100,6 +2346,161 @@ mod tests {
             Some(Fr::from_u64(11))
         );
         Ok(())
+    }
+
+    #[test]
+    fn stage6_native_claims_preserve_fused_increment_outputs() -> Result<(), VerifierError> {
+        let claims = NativeOpeningClaims {
+            claims: minimal_stage6_native_claims()
+                .into_iter()
+                .chain([
+                    (
+                        lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+                        Fr::from_u64(101),
+                    ),
+                    (
+                        lattice::fused_increment_magnitude_opening(),
+                        Fr::from_u64(102),
+                    ),
+                    (lattice::fused_increment_sign_opening(), Fr::from_u64(103)),
+                    (
+                        lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
+                        Fr::from_u64(104),
+                    ),
+                    (
+                        JoltOpeningId::committed(
+                            JoltCommittedPolynomial::BytecodeRa(0),
+                            JoltRelationId::FusedIncrementSourceLink,
+                        ),
+                        Fr::from_u64(105),
+                    ),
+                    (
+                        lattice::fused_increment_bytecode_source_opening(
+                            LatticeFusedIncrementTarget::Ram,
+                        ),
+                        Fr::from_u64(106),
+                    ),
+                    (
+                        lattice::fused_increment_bytecode_source_opening(
+                            LatticeFusedIncrementTarget::Rd,
+                        ),
+                        Fr::from_u64(107),
+                    ),
+                ])
+                .collect(),
+        };
+
+        let stage6 = stage6_claims_from_native(&claims)?;
+
+        assert_eq!(
+            stage6.fused_increment_translation,
+            Some(FusedIncrementTranslationOutputClaims {
+                ram_source: Fr::from_u64(101),
+                magnitude: Fr::from_u64(102),
+                sign: Fr::from_u64(103),
+                rd_source: Fr::from_u64(104),
+            })
+        );
+        assert_eq!(
+            stage6.fused_increment_source_link,
+            Some(FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: vec![Fr::from_u64(105)],
+                store_flag: Fr::from_u64(106),
+                rd_present: Fr::from_u64(107),
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stage6_native_claims_reject_partial_fused_increment_group() {
+        let claims = NativeOpeningClaims {
+            claims: [(
+                lattice::fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
+                Fr::from_u64(101),
+            )]
+            .into_iter()
+            .collect(),
+        };
+
+        assert!(matches!(
+            fused_increment_translation_claims_from_native(&claims),
+            Err(VerifierError::MissingOpeningClaim { id })
+                if id == lattice::fused_increment_magnitude_opening()
+        ));
+    }
+
+    #[test]
+    fn optional_stage6_claim_setters_create_fused_increment_groups() -> Result<(), VerifierError> {
+        let mut stage6 = empty_clear_claims::<Fr>(1).stage6;
+
+        assert!(set_optional_stage6_output(
+            &mut stage6,
+            lattice::fused_increment_magnitude_opening(),
+            Fr::from_u64(7),
+        ));
+        assert_eq!(
+            claim_from_stage6_outputs(&stage6, lattice::fused_increment_magnitude_opening()),
+            Some(Fr::from_u64(7))
+        );
+
+        let bytecode_ra = JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeRa(2),
+            JoltRelationId::FusedIncrementSourceLink,
+        );
+        assert!(set_optional_stage6_output(
+            &mut stage6,
+            bytecode_ra,
+            Fr::from_u64(11),
+        ));
+        assert_eq!(
+            claim_from_stage6_outputs(&stage6, bytecode_ra),
+            Some(Fr::from_u64(11))
+        );
+
+        *claim_mut_from_stage6_outputs(&mut stage6, bytecode_ra)
+            .ok_or(VerifierError::MissingOpeningClaim { id: bytecode_ra })? = Fr::from_u64(13);
+        assert_eq!(
+            claim_from_stage6_outputs(&stage6, bytecode_ra),
+            Some(Fr::from_u64(13))
+        );
+        Ok(())
+    }
+
+    fn minimal_stage6_native_claims() -> [(JoltOpeningId, Fr); 8] {
+        let [ram_hamming_weight] = ram::hamming_booleanity_output_openings();
+        let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
+        [
+            (
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeRa(0),
+                    JoltRelationId::BytecodeReadRaf,
+                ),
+                Fr::from_u64(1),
+            ),
+            (
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::InstructionRa(0),
+                    JoltRelationId::Booleanity,
+                ),
+                Fr::from_u64(2),
+            ),
+            (
+                instruction::ra_virtualization_committed_instruction_ra_opening(0),
+                Fr::from_u64(3),
+            ),
+            (ram_hamming_weight, Fr::from_u64(4)),
+            (ram_inc, Fr::from_u64(5)),
+            (rd_inc, Fr::from_u64(6)),
+            (
+                bytecode::bytecode_read_raf_address_phase_opening(),
+                Fr::from_u64(7),
+            ),
+            (
+                booleanity::booleanity_address_phase_opening(),
+                Fr::from_u64(8),
+            ),
+        ]
     }
 
     fn opening_claim(
