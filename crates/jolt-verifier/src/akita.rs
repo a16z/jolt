@@ -2479,52 +2479,25 @@ mod tests {
     where
         T: Transcript<Challenge = AkitaField>,
     {
-        let requirements =
-            derive_akita_packed_validity_requirements(&artifacts.protocol, precommitted)?;
-        let statements = derive_akita_packed_validity_statements(&artifacts.layout, &requirements)?;
-        let eq_points =
-            sample_lattice_packed_validity_eq_points(transcript, &artifacts.layout, &statements);
-        let sumcheck_claims = lattice_packed_validity_claims::<AkitaField>(&statements);
-        let SumcheckProof::Clear(ClearProof::Compressed(compressed)) = &validity.sumcheck_proof
-        else {
-            return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
-                reason: "test validity proof should be compressed clear".to_string(),
-            });
-        };
-        let reduction = jolt_sumcheck::BatchedSumcheckVerifier::verify_compressed(
-            &sumcheck_claims,
-            compressed,
+        crate::stages::stage8::verify_lattice_packed_validity_proof::<
+            AkitaField,
+            AkitaPackedScheme,
+            T,
+            ClearOnlyCommitment,
+        >(
+            setup,
             transcript,
-        )
-        .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
-            reason: error.to_string(),
-        })?;
-        let batch = build_lattice_packed_validity_batch(
+            &artifacts.protocol,
+            precommitted,
             &artifacts.layout,
-            &statements,
             artifacts
                 .payload()
                 .expect("artifact should carry Akita payload")
                 .packed_witness
                 .clone(),
-            &eq_points,
-            &reduction,
+            &validity.sumcheck_proof,
             &validity.opening_claims.opening_claims,
-        )?;
-        if reduction.reduction.value != batch.expected_final_claim {
-            return Err(VerifierError::AkitaPackedValidityOutputMismatch);
-        }
-        <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
-            setup,
-            transcript,
-            &batch.statement,
             &validity.opening_proof,
-        )
-        .map(|_| ())
-        .map_err(
-            |error| VerifierError::AkitaPackedValidityOpeningVerificationFailed {
-                reason: error.to_string(),
-            },
         )
     }
 

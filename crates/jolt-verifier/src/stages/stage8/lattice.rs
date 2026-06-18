@@ -27,9 +27,14 @@ use jolt_claims::protocols::jolt::{
     ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
 use jolt_field::{Field, FixedByteSize};
-use jolt_openings::{BatchOpeningClaim, BatchOpeningStatement, PackedLinearTerm, PhysicalView};
+use jolt_openings::{
+    BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
+    PackedLinearTerm, PhysicalView,
+};
 use jolt_poly::{try_eq_mle, EqPolynomial};
-use jolt_sumcheck::{BatchedEvaluationClaim, SumcheckClaim};
+use jolt_sumcheck::{
+    BatchedEvaluationClaim, BatchedSumcheckVerifier, ClearProof, SumcheckClaim, SumcheckProof,
+};
 use jolt_transcript::{Label, LabelWithCount, Transcript, U64Word};
 
 use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManifest};
@@ -365,6 +370,76 @@ where
         },
         expected_final_claim,
     })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Verifier helper mirrors the top-level proof, layout, transcript, and PCS inputs without introducing another wrapper type."
+)]
+pub fn verify_lattice_packed_validity_proof<F, PCS, T, RoundCommitment>(
+    setup: &PCS::VerifierSetup,
+    transcript: &mut T,
+    config: &JoltProtocolConfig,
+    precommitted: &PrecommittedSchedule,
+    layout: &PackedWitnessLayout,
+    commitment: PCS::Output,
+    sumcheck_proof: &SumcheckProof<F, RoundCommitment>,
+    opening_claims: &[F],
+    opening_proof: &PCS::Proof,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone,
+    T: Transcript<Challenge = F>,
+{
+    let requirements = derive_akita_packed_validity_requirements(config, precommitted)?;
+    let statements = derive_akita_packed_validity_statements(layout, &requirements)?;
+    if opening_claims.len() != statements.len() {
+        return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
+            expected: statements.len(),
+            got: opening_claims.len(),
+        });
+    }
+
+    let eq_points = sample_lattice_packed_validity_eq_points(transcript, layout, &statements);
+    let sumcheck_claims = lattice_packed_validity_claims(&statements);
+    let compressed = match sumcheck_proof {
+        SumcheckProof::Clear(ClearProof::Compressed(proof)) => proof,
+        SumcheckProof::Clear(ClearProof::Full(_)) => {
+            return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: "expected compressed clear proof, got full clear".to_string(),
+            });
+        }
+        SumcheckProof::Committed(_) => {
+            return Err(VerifierError::ExpectedClearProof {
+                field: "lattice_packed_validity_sumcheck_proof",
+            });
+        }
+    };
+    let reduction =
+        BatchedSumcheckVerifier::verify_compressed(&sumcheck_claims, compressed, transcript)
+            .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+                reason: error.to_string(),
+            })?;
+    let batch = build_lattice_packed_validity_batch(
+        layout,
+        &statements,
+        commitment,
+        &eq_points,
+        &reduction,
+        opening_claims,
+    )?;
+    if reduction.reduction.value != batch.expected_final_claim {
+        return Err(VerifierError::AkitaPackedValidityOutputMismatch);
+    }
+    PCS::verify_batch(setup, transcript, &batch.statement, opening_proof)
+        .map_err(
+            |error| VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                reason: error.to_string(),
+            },
+        )
+        .map(|_| ())
 }
 
 fn absorb_lattice_packed_validity_metadata<F, T>(

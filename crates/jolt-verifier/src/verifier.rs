@@ -10,8 +10,6 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, ZkBatchOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
-#[cfg(feature = "akita")]
-use jolt_sumcheck::{BatchedSumcheckVerifier, ClearProof};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
@@ -524,60 +522,17 @@ where
             formula_dimensions.ra_layout,
             &checked.precommitted,
         )?;
-        let requirements =
-            stage8::derive_akita_packed_validity_requirements(config, &checked.precommitted)?;
-        let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)?;
-        if validity_claims.opening_claims.len() != statements.len() {
-            return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
-                expected: statements.len(),
-                got: validity_claims.opening_claims.len(),
-            });
-        }
-
-        let eq_points =
-            stage8::sample_lattice_packed_validity_eq_points(transcript, &layout, &statements);
-        let sumcheck_claims = stage8::lattice_packed_validity_claims(&statements);
-        let compressed = match sumcheck_proof {
-            SumcheckProof::Clear(ClearProof::Compressed(proof)) => proof,
-            SumcheckProof::Clear(ClearProof::Full(_)) => {
-                return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
-                    reason: "expected compressed clear proof, got full clear".to_string(),
-                });
-            }
-            SumcheckProof::Committed(_) => {
-                return Err(VerifierError::ExpectedClearProof {
-                    field: "lattice_packed_validity_sumcheck_proof",
-                });
-            }
-        };
-        let reduction =
-            BatchedSumcheckVerifier::verify_compressed(&sumcheck_claims, compressed, transcript)
-                .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
-                    reason: error.to_string(),
-                })?;
-        let batch = stage8::build_lattice_packed_validity_batch(
-            &layout,
-            &statements,
-            payload.packed_witness.clone(),
-            &eq_points,
-            &reduction,
-            &validity_claims.opening_claims,
-        )?;
-        if reduction.reduction.value != batch.expected_final_claim {
-            return Err(VerifierError::AkitaPackedValidityOutputMismatch);
-        }
-        PCS::verify_batch(
+        stage8::verify_lattice_packed_validity_proof::<F, PCS, T, _>(
             &preprocessing.pcs_setup,
             transcript,
-            &batch.statement,
+            config,
+            &checked.precommitted,
+            &layout,
+            payload.packed_witness.clone(),
+            sumcheck_proof,
+            &validity_claims.opening_claims,
             opening_proof,
         )
-        .map_err(
-            |error| VerifierError::AkitaPackedValidityOpeningVerificationFailed {
-                reason: error.to_string(),
-            },
-        )
-        .map(|_| ())
     }
 }
 
