@@ -852,6 +852,41 @@ fn akita_setup_key_is_bound_to_batch_proof() {
 }
 
 #[test]
+fn akita_prover_hint_is_bound_to_statement_commitment() {
+    run_on_large_stack(|| {
+        let (prover_setup, _) = setup();
+        let poly_a = polynomial(1);
+        let poly_b = polynomial(20);
+        let other_a = polynomial(40);
+        let other_b = polynomial(60);
+        let point = vec![f(2), f(3), f(5), f(7)];
+        let eval_a = poly_a.evaluate(&point);
+        let eval_b = poly_b.evaluate(&point);
+        let (commitment, _) =
+            AkitaScheme::commit_group(&prover_setup, layout(7), &[poly_a.clone(), poly_b.clone()])
+                .expect("grouped commit should succeed");
+        let (_, other_hint) =
+            AkitaScheme::commit_group(&prover_setup, layout(7), &[other_a, other_b])
+                .expect("other grouped commit should succeed");
+        let statement = direct_statement(commitment, &point, eval_a, eval_b);
+
+        let mut transcript = Blake2bTranscript::new(b"akita-hint-binding");
+        let result = <AkitaScheme as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            &mut transcript,
+            &statement,
+            &[poly_a, poly_b],
+            vec![other_hint],
+        );
+
+        assert!(
+            matches!(result, Err(OpeningsError::InvalidBatch(message)) if message.contains("hint")),
+            "mismatched prover hint should reject"
+        );
+    });
+}
+
+#[test]
 fn akita_batch_opening_rejects_tampered_claim() {
     run_on_large_stack(|| {
         let (prover_setup, verifier_setup) = setup();
