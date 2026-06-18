@@ -1067,6 +1067,74 @@ mod tests {
     }
 
     #[test]
+    fn akita_fused_increment_entries_require_output_claims_and_ra_counts() {
+        let packed_witness = 9_u64;
+        let translation = VerifiedStage6Sumcheck {
+            input_claim: Fr::from_u64(4),
+            sumcheck_point: vec![Fr::from_u64(5), Fr::from_u64(6)],
+            opening_point: vec![Fr::from_u64(1), Fr::from_u64(2)],
+            expected_output_claim: Fr::from_u64(7),
+        };
+        let source_link = VerifiedBytecodeReadRafSumcheck {
+            input_claim: Fr::from_u64(14),
+            sumcheck_point: vec![Fr::from_u64(15), Fr::from_u64(16), Fr::from_u64(17)],
+            r_address: vec![Fr::from_u64(18), Fr::from_u64(19)],
+            r_cycle: vec![Fr::from_u64(20)],
+            full_opening_point: vec![Fr::from_u64(18), Fr::from_u64(19), Fr::from_u64(20)],
+            bytecode_ra_opening_points: vec![vec![Fr::from_u64(21), Fr::from_u64(22)]],
+            expected_output_claim: Fr::from_u64(23),
+        };
+        let mut claims = stage6_claims_with_fused_outputs(
+            Fr::from_u64(10),
+            Fr::from_u64(11),
+            Fr::from_u64(12),
+            Fr::from_u64(13),
+        );
+        claims.fused_increment_source_link = None;
+        let error = akita_fused_increment_entries(
+            &[Fr::from_u64(1)],
+            &packed_witness,
+            Some(&translation),
+            Some(&source_link),
+            Some(&translation),
+            Some(&source_link),
+            Some(&claims),
+        )
+        .err()
+        .expect("missing source-link output claims should fail");
+        assert!(error
+            .to_string()
+            .contains("fused increment source-link output claims"));
+
+        let mut claims = stage6_claims_with_fused_outputs(
+            Fr::from_u64(10),
+            Fr::from_u64(11),
+            Fr::from_u64(12),
+            Fr::from_u64(13),
+        );
+        claims
+            .fused_increment_inactive_source_link
+            .as_mut()
+            .expect("fixture should include inactive source-link claims")
+            .bytecode_ra
+            .clear();
+        let error = akita_fused_increment_entries(
+            &[Fr::from_u64(1)],
+            &packed_witness,
+            Some(&translation),
+            Some(&source_link),
+            Some(&translation),
+            Some(&source_link),
+            Some(&claims),
+        )
+        .err()
+        .expect("truncated inactive source-link bytecode RA claims should fail");
+        assert!(error
+            .to_string()
+            .contains("inactive source-link bytecode RA claim count mismatch"));
+    }
+
+    #[test]
     fn committed_program_batch_entries_require_final_openings() {
         let layout = JoltRaPolynomialLayout::new(1, 0, 0).expect("test RA layout should be valid");
         let opening_point = vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)];
