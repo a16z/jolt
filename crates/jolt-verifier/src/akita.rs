@@ -2023,11 +2023,9 @@ mod tests {
         Stage8PhysicalManifest,
     };
     use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
-    #[cfg(feature = "field-inline")]
-    use jolt_akita::AKITA_FIELD_MODULUS;
     use jolt_akita::{
         AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec,
-        SparsePackedWitness,
+        SparsePackedWitness, AKITA_FIELD_MODULUS,
     };
     use jolt_claims::protocols::jolt::{
         formulas::{
@@ -3152,36 +3150,160 @@ mod tests {
         });
     }
 
+    #[test]
+    fn packed_validity_value_detects_noncanonical_bytecode_imm_bytes() {
+        let log_t = 0;
+        let log_k_chunk = 1;
+        let precommitted = PrecommittedSchedule::new(
+            TracePolynomialOrder::CycleMajor,
+            log_t,
+            log_k_chunk,
+            None,
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 1,
+                bytecode_chunk_count: 1,
+                program_image_len_words: 1,
+                program_image_start_index: 0,
+            }),
+        )
+        .expect("precommitted schedule should build");
+        let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+        config.lattice.program_mode = ProgramMode::Committed;
+        config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some([0; 32]);
+        config.lattice.packed_witness.d_pack = Some(0);
+        config.lattice.packed_witness.validity_digest = Some([0; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
+
+        let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+            &config,
+            log_t,
+            log_k_chunk,
+            JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+            &precommitted,
+        )
+        .expect("layout should derive");
+        let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
+            .expect("validity requirements should derive");
+        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+            .expect("validity statements should derive");
+        let source = validity_source_with_bytecode_imm_bytes(
+            &layout,
+            &requirements,
+            &AKITA_FIELD_MODULUS.to_le_bytes(),
+        );
+        let statement = statements
+            .iter()
+            .find(|statement| {
+                matches!(
+                    statement.requirement.family,
+                    LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 }
+                ) && statement.kind
+                    == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
+            })
+            .expect("bytecode immediate canonical-byte statement should exist");
+        let point = vec![AkitaField::zero(); statement.num_vars];
+        let value = validity_value(&source, statement, &point, &point)
+            .expect("validity value should evaluate");
+
+        assert_ne!(value, AkitaField::zero());
+    }
+
+    #[test]
+    #[ignore = "real Akita negative canonical-byte proof is expensive; run explicitly with --run-ignored"]
+    fn packed_validity_rejects_noncanonical_bytecode_imm_bytes() {
+        run_on_large_stack(|| {
+            let log_t = 0;
+            let log_k_chunk = 1;
+            let precommitted = PrecommittedSchedule::new(
+                TracePolynomialOrder::CycleMajor,
+                log_t,
+                log_k_chunk,
+                None,
+                None,
+                Some(CommittedProgramSchedule {
+                    bytecode_len: 1,
+                    bytecode_chunk_count: 1,
+                    program_image_len_words: 1,
+                    program_image_start_index: 0,
+                }),
+            )
+            .expect("precommitted schedule should build");
+            let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+            config.lattice.program_mode = ProgramMode::Committed;
+            config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+            config.lattice.packed_witness.layout_digest = Some([0; 32]);
+            config.lattice.packed_witness.d_pack = Some(0);
+            config.lattice.packed_witness.validity_digest = Some([0; 32]);
+            #[cfg(feature = "field-inline")]
+            {
+                config.lattice.field_inline.enabled = true;
+                config.lattice.packed_witness.field_rd_inc_family = true;
+            }
+
+            let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+                &config,
+                log_t,
+                log_k_chunk,
+                JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+                &precommitted,
+            )
+            .expect("layout should derive");
+            config.lattice.packed_witness.layout_digest = Some(layout.digest);
+            config.lattice.packed_witness.d_pack = Some(layout.dimension);
+            let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
+                .expect("validity requirements should derive");
+            config.lattice.packed_witness.validity_digest =
+                Some(lattice_packed_validity_digest(&requirements));
+
+            let source = validity_source_with_bytecode_imm_bytes(
+                &layout,
+                &requirements,
+                &AKITA_FIELD_MODULUS.to_le_bytes(),
+            );
+            let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+            let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+            let artifacts = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
+                .expect("packed witness should commit");
+
+            let mut prover_transcript = Blake2bTranscript::new(b"akita-validity");
+            let validity = prove_akita_packed_validity(
+                &prover_setup,
+                &mut prover_transcript,
+                &artifacts,
+                &source,
+                &precommitted,
+            )
+            .expect("invalid packed witness can still produce a proof transcript");
+
+            let mut verifier_transcript = Blake2bTranscript::new(b"akita-validity");
+            let error = verify_validity_artifacts(
+                &verifier_setup,
+                &mut verifier_transcript,
+                &artifacts,
+                &precommitted,
+                &validity,
+            )
+            .expect_err("noncanonical bytecode immediate bytes should reject");
+            assert!(matches!(
+                error,
+                VerifierError::AkitaPackedValidityOutputMismatch
+                    | VerifierError::AkitaPackedValiditySumcheckFailed { .. }
+                    | VerifierError::AkitaPackedValidityOpeningVerificationFailed { .. }
+            ));
+        });
+    }
+
     fn validity_default_source(
         layout: &PackedWitnessLayout,
         requirements: &[LatticePackedValidityRequirement],
     ) -> SparsePackedWitness<AkitaField> {
-        let mut cells = Vec::new();
-        for requirement in requirements {
-            let family_id = akita_packed_family_id(&requirement.family);
-            let family = layout
-                .family(&family_id)
-                .expect("validity family should exist");
-            let rows = family.domain.rows().expect("family rows should derive");
-            if !matches!(requirement.kind, LatticePackedValidityKind::ExactOneHot) {
-                continue;
-            }
-            for row in 0..rows {
-                for limb in 0..requirement.limbs {
-                    cells.push((
-                        PackedCellAddress {
-                            family: family_id.clone(),
-                            row,
-                            limb,
-                            symbol: 0,
-                        },
-                        AkitaField::one(),
-                    ));
-                }
-            }
-        }
-        SparsePackedWitness::try_from_cells(layout.clone(), cells)
-            .expect("default validity source should build")
+        validity_source_with_symbols(layout, requirements, |_, _| 0)
     }
 
     #[cfg(feature = "field-inline")]
@@ -3190,6 +3312,28 @@ mod tests {
         requirements: &[LatticePackedValidityRequirement],
         bytes: &[u8],
     ) -> SparsePackedWitness<AkitaField> {
+        validity_source_with_symbols(layout, requirements, |family, _| match family {
+            LatticePackedFamilyId::FieldRdIncByte { index } => bytes[*index] as usize,
+            _ => 0,
+        })
+    }
+
+    fn validity_source_with_bytecode_imm_bytes(
+        layout: &PackedWitnessLayout,
+        requirements: &[LatticePackedValidityRequirement],
+        bytes: &[u8],
+    ) -> SparsePackedWitness<AkitaField> {
+        validity_source_with_symbols(layout, requirements, |family, limb| match family {
+            LatticePackedFamilyId::BytecodeImmBytes { .. } => bytes[limb] as usize,
+            _ => 0,
+        })
+    }
+
+    fn validity_source_with_symbols(
+        layout: &PackedWitnessLayout,
+        requirements: &[LatticePackedValidityRequirement],
+        mut symbol_for: impl FnMut(&LatticePackedFamilyId, usize) -> usize,
+    ) -> SparsePackedWitness<AkitaField> {
         let mut cells = Vec::new();
         for requirement in requirements {
             let family_id = akita_packed_family_id(&requirement.family);
@@ -3200,12 +3344,9 @@ mod tests {
             if !matches!(requirement.kind, LatticePackedValidityKind::ExactOneHot) {
                 continue;
             }
-            let symbol = match requirement.family {
-                LatticePackedFamilyId::FieldRdIncByte { index } => bytes[index] as usize,
-                _ => 0,
-            };
             for row in 0..rows {
                 for limb in 0..requirement.limbs {
+                    let symbol = symbol_for(&requirement.family, limb);
                     cells.push((
                         PackedCellAddress {
                             family: family_id.clone(),
@@ -3219,7 +3360,7 @@ mod tests {
             }
         }
         SparsePackedWitness::try_from_cells(layout.clone(), cells)
-            .expect("field RdInc validity source should build")
+            .expect("validity source should build")
     }
 
     fn verify_validity_artifacts<T>(
