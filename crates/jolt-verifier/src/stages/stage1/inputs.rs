@@ -2,10 +2,6 @@
 
 use std::collections::{btree_map::Entry, BTreeMap};
 
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::{
-    formulas::spartan as field_spartan, FieldInlineOpFlag, FieldInlineVirtualPolynomial,
-};
 use jolt_claims::protocols::jolt::{
     formulas::spartan::{outer_opening, SpartanOuterDimensions},
     JoltRelationId, JoltVirtualPolynomial,
@@ -21,11 +17,8 @@ use crate::VerifierError;
 pub struct Stage1Claims<F: Field> {
     pub uniskip_output_claim: F,
     pub outer: SpartanOuterClaims<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineStage1Claims<F>,
 }
 
-#[cfg(not(feature = "field-inline"))]
 pub fn stage1_claims_from_r1cs_inputs<F: Field>(
     uniskip_output_claim: F,
     claims: impl IntoIterator<Item = (JoltVirtualPolynomial, F)>,
@@ -33,19 +26,6 @@ pub fn stage1_claims_from_r1cs_inputs<F: Field>(
     Ok(Stage1Claims {
         uniskip_output_claim,
         outer: spartan_outer_claims_from_r1cs_inputs(claims)?,
-    })
-}
-
-#[cfg(feature = "field-inline")]
-pub fn stage1_claims_from_r1cs_inputs<F: Field>(
-    uniskip_output_claim: F,
-    claims: impl IntoIterator<Item = (JoltVirtualPolynomial, F)>,
-    field_inline_claims: impl IntoIterator<Item = (FieldInlineVirtualPolynomial, F)>,
-) -> Result<Stage1Claims<F>, VerifierError> {
-    Ok(Stage1Claims {
-        uniskip_output_claim,
-        outer: spartan_outer_claims_from_r1cs_inputs(claims)?,
-        field_inline: field_inline_stage1_claims_from_r1cs_inputs(field_inline_claims)?,
     })
 }
 
@@ -54,15 +34,7 @@ impl<F: Field> Stage1Claims<F> {
         &self,
         dimensions: &SpartanOuterDimensions,
     ) -> Result<Vec<F>, VerifierError> {
-        let claims = self.outer.r1cs_input_claims(dimensions)?;
-        #[cfg(feature = "field-inline")]
-        {
-            let mut claims = claims;
-            claims.extend(self.field_inline.r1cs_input_claims()?);
-            Ok(claims)
-        }
-        #[cfg(not(feature = "field-inline"))]
-        Ok(claims)
+        self.outer.r1cs_input_claims(dimensions)
     }
 }
 
@@ -245,172 +217,20 @@ impl<F: Field> SpartanOuterFlagClaims<F> {
     }
 }
 
-#[cfg(feature = "field-inline")]
-pub fn field_inline_stage1_claims_from_r1cs_inputs<F: Field>(
-    claims: impl IntoIterator<Item = (FieldInlineVirtualPolynomial, F)>,
-) -> Result<FieldInlineStage1Claims<F>, VerifierError> {
-    let mut values = collect_field_inline_r1cs_inputs(claims)?;
-    let field_inline = FieldInlineStage1Claims {
-        field_rs1_value: take_field_inline_r1cs_input(
-            &mut values,
-            FieldInlineVirtualPolynomial::FieldRs1Value,
-        )?,
-        field_rs2_value: take_field_inline_r1cs_input(
-            &mut values,
-            FieldInlineVirtualPolynomial::FieldRs2Value,
-        )?,
-        field_rd_value: take_field_inline_r1cs_input(
-            &mut values,
-            FieldInlineVirtualPolynomial::FieldRdValue,
-        )?,
-        field_product: take_field_inline_r1cs_input(
-            &mut values,
-            FieldInlineVirtualPolynomial::FieldProduct,
-        )?,
-        field_inv_product: take_field_inline_r1cs_input(
-            &mut values,
-            FieldInlineVirtualPolynomial::FieldInvProduct,
-        )?,
-        flags: FieldInlineStage1FlagClaims {
-            add: take_field_inline_flag(&mut values, FieldInlineOpFlag::Add)?,
-            sub: take_field_inline_flag(&mut values, FieldInlineOpFlag::Sub)?,
-            mul: take_field_inline_flag(&mut values, FieldInlineOpFlag::Mul)?,
-            inv: take_field_inline_flag(&mut values, FieldInlineOpFlag::Inv)?,
-            assert_eq: take_field_inline_flag(&mut values, FieldInlineOpFlag::AssertEq)?,
-            load_from_x: take_field_inline_flag(&mut values, FieldInlineOpFlag::LoadFromX)?,
-            store_to_x: take_field_inline_flag(&mut values, FieldInlineOpFlag::StoreToX)?,
-            load_imm: take_field_inline_flag(&mut values, FieldInlineOpFlag::LoadImm)?,
-        },
-    };
-    reject_extra_field_inline_r1cs_inputs(&values)?;
-    Ok(field_inline)
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct FieldInlineStage1Claims<F: Field> {
-    pub field_rs1_value: F,
-    pub field_rs2_value: F,
-    pub field_rd_value: F,
-    pub field_product: F,
-    pub field_inv_product: F,
-    pub flags: FieldInlineStage1FlagClaims<F>,
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: Field> FieldInlineStage1Claims<F> {
-    pub fn zero() -> Self {
-        let zero = F::zero();
-        Self {
-            field_rs1_value: zero,
-            field_rs2_value: zero,
-            field_rd_value: zero,
-            field_product: zero,
-            field_inv_product: zero,
-            flags: FieldInlineStage1FlagClaims::zero(),
-        }
-    }
-
-    pub fn r1cs_input_claims(&self) -> Result<Vec<F>, VerifierError> {
-        field_spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-            .iter()
-            .copied()
-            .map(|variable| {
-                self.claim(variable)
-                    .ok_or_else(|| VerifierError::MissingFieldInlineOpeningClaim {
-                        id: field_spartan::outer_opening(variable),
-                    })
-            })
-            .collect()
-    }
-
-    pub fn claim(&self, variable: FieldInlineVirtualPolynomial) -> Option<F> {
-        match variable {
-            FieldInlineVirtualPolynomial::FieldRs1Value => Some(self.field_rs1_value),
-            FieldInlineVirtualPolynomial::FieldRs2Value => Some(self.field_rs2_value),
-            FieldInlineVirtualPolynomial::FieldRdValue => Some(self.field_rd_value),
-            FieldInlineVirtualPolynomial::FieldProduct => Some(self.field_product),
-            FieldInlineVirtualPolynomial::FieldInvProduct => Some(self.field_inv_product),
-            FieldInlineVirtualPolynomial::FieldOpFlag(flag) => self.flags.claim(flag),
-            _ => None,
-        }
-    }
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct FieldInlineStage1FlagClaims<F: Field> {
-    pub add: F,
-    pub sub: F,
-    pub mul: F,
-    pub inv: F,
-    pub assert_eq: F,
-    pub load_from_x: F,
-    pub store_to_x: F,
-    pub load_imm: F,
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: Field> FieldInlineStage1FlagClaims<F> {
-    pub fn zero() -> Self {
-        let zero = F::zero();
-        Self {
-            add: zero,
-            sub: zero,
-            mul: zero,
-            inv: zero,
-            assert_eq: zero,
-            load_from_x: zero,
-            store_to_x: zero,
-            load_imm: zero,
-        }
-    }
-
-    fn claim(&self, flag: FieldInlineOpFlag) -> Option<F> {
-        match flag {
-            FieldInlineOpFlag::Add => Some(self.add),
-            FieldInlineOpFlag::Sub => Some(self.sub),
-            FieldInlineOpFlag::Mul => Some(self.mul),
-            FieldInlineOpFlag::Inv => Some(self.inv),
-            FieldInlineOpFlag::AssertEq => Some(self.assert_eq),
-            FieldInlineOpFlag::LoadFromX => Some(self.load_from_x),
-            FieldInlineOpFlag::StoreToX => Some(self.store_to_x),
-            FieldInlineOpFlag::LoadImm => Some(self.load_imm),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage1SpartanOuterOpening {
     Jolt(JoltVirtualPolynomial),
-    #[cfg(feature = "field-inline")]
-    FieldInline(FieldInlineVirtualPolynomial),
 }
 
 pub fn spartan_outer_opening_order(
     dimensions: &SpartanOuterDimensions,
 ) -> Vec<Stage1SpartanOuterOpening> {
-    let openings = dimensions
+    dimensions
         .variables()
         .iter()
         .copied()
         .map(Stage1SpartanOuterOpening::Jolt)
-        .collect::<Vec<_>>();
-    #[cfg(feature = "field-inline")]
-    {
-        let mut openings = openings;
-        openings.extend(
-            field_spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-                .iter()
-                .copied()
-                .map(Stage1SpartanOuterOpening::FieldInline),
-        );
-        openings
-    }
-    #[cfg(not(feature = "field-inline"))]
-    openings
+        .collect::<Vec<_>>()
 }
 
 fn collect_r1cs_inputs<F: Field>(
@@ -432,44 +252,12 @@ fn collect_r1cs_inputs<F: Field>(
     Ok(values)
 }
 
-#[cfg(feature = "field-inline")]
-fn collect_field_inline_r1cs_inputs<F: Field>(
-    claims: impl IntoIterator<Item = (FieldInlineVirtualPolynomial, F)>,
-) -> Result<BTreeMap<FieldInlineVirtualPolynomial, F>, VerifierError> {
-    let mut values = BTreeMap::new();
-    for (variable, value) in claims {
-        match values.entry(variable) {
-            Entry::Vacant(entry) => {
-                let _ = entry.insert(value);
-            }
-            Entry::Occupied(_) => {
-                return Err(stage1_public_input_failed(format!(
-                    "duplicate Stage 1 field-inline R1CS input {variable:?}"
-                )));
-            }
-        }
-    }
-    Ok(values)
-}
-
 fn take_r1cs_input<F: Field>(
     values: &mut BTreeMap<JoltVirtualPolynomial, F>,
     variable: JoltVirtualPolynomial,
 ) -> Result<F, VerifierError> {
     values.remove(&variable).ok_or_else(|| {
         stage1_public_input_failed(format!("missing Stage 1 R1CS input {variable:?}"))
-    })
-}
-
-#[cfg(feature = "field-inline")]
-fn take_field_inline_r1cs_input<F: Field>(
-    values: &mut BTreeMap<FieldInlineVirtualPolynomial, F>,
-    variable: FieldInlineVirtualPolynomial,
-) -> Result<F, VerifierError> {
-    values.remove(&variable).ok_or_else(|| {
-        stage1_public_input_failed(format!(
-            "missing Stage 1 field-inline R1CS input {variable:?}"
-        ))
     })
 }
 
@@ -480,32 +268,12 @@ fn take_flag<F: Field>(
     take_r1cs_input(values, JoltVirtualPolynomial::OpFlags(flag))
 }
 
-#[cfg(feature = "field-inline")]
-fn take_field_inline_flag<F: Field>(
-    values: &mut BTreeMap<FieldInlineVirtualPolynomial, F>,
-    flag: FieldInlineOpFlag,
-) -> Result<F, VerifierError> {
-    take_field_inline_r1cs_input(values, FieldInlineVirtualPolynomial::FieldOpFlag(flag))
-}
-
 fn reject_extra_r1cs_inputs<F: Field>(
     values: &BTreeMap<JoltVirtualPolynomial, F>,
 ) -> Result<(), VerifierError> {
     if let Some(variable) = values.keys().next() {
         return Err(stage1_public_input_failed(format!(
             "unexpected Stage 1 R1CS input {variable:?}"
-        )));
-    }
-    Ok(())
-}
-
-#[cfg(feature = "field-inline")]
-fn reject_extra_field_inline_r1cs_inputs<F: Field>(
-    values: &BTreeMap<FieldInlineVirtualPolynomial, F>,
-) -> Result<(), VerifierError> {
-    if let Some(variable) = values.keys().next() {
-        return Err(stage1_public_input_failed(format!(
-            "unexpected Stage 1 field-inline R1CS input {variable:?}"
         )));
     }
     Ok(())

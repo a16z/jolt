@@ -29,10 +29,6 @@ pub struct Stage2ProductUniSkipInputValues<F: Field> {
     pub product: F,
     pub should_branch: F,
     pub should_jump: F,
-    #[cfg(feature = "field-inline")]
-    pub field_product: F,
-    #[cfg(feature = "field-inline")]
-    pub field_inv_product: F,
 }
 
 impl<F: Field> Stage2ProductUniSkipInputValues<F> {
@@ -41,10 +37,6 @@ impl<F: Field> Stage2ProductUniSkipInputValues<F> {
             product: stage1.outer.product,
             should_branch: stage1.outer.should_branch,
             should_jump: stage1.outer.should_jump,
-            #[cfg(feature = "field-inline")]
-            field_product: stage1.field_inline.field_product,
-            #[cfg(feature = "field-inline")]
-            field_inv_product: stage1.field_inline.field_inv_product,
         }
     }
 }
@@ -65,29 +57,13 @@ pub fn product_uniskip_input_claim<F: Field>(
         + *should_branch * values.should_branch
         + *should_jump * values.should_jump;
 
-    #[cfg(feature = "field-inline")]
-    {
-        let [field_product, field_inv_product] = rest else {
-            return Err(stage2_product_public_input_failed(format!(
-                "Stage 2 field-inline product uni-skip expected 5 weights, got {}",
-                weights.len()
-            )));
-        };
-        Ok(claim
-            + *field_product * values.field_product
-            + *field_inv_product * values.field_inv_product)
+    if !rest.is_empty() {
+        return Err(stage2_product_public_input_failed(format!(
+            "Stage 2 product uni-skip expected 3 weights, got {}",
+            weights.len()
+        )));
     }
-
-    #[cfg(not(feature = "field-inline"))]
-    {
-        if !rest.is_empty() {
-            return Err(stage2_product_public_input_failed(format!(
-                "Stage 2 product uni-skip expected 3 weights, got {}",
-                weights.len()
-            )));
-        }
-        Ok(claim)
-    }
+    Ok(claim)
 }
 
 fn stage2_product_public_input_failed(reason: String) -> VerifierError {
@@ -109,8 +85,6 @@ pub struct Stage2Claims<F: Field> {
 pub struct Stage2BatchOutputOpeningClaims<F: Field> {
     pub ram_read_write: RamReadWriteOutputOpeningClaims<F>,
     pub product_remainder: ProductRemainderOutputOpeningClaims<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineStage2OutputOpeningClaims<F>,
     pub instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims<F>,
     pub ram_raf_evaluation: F,
     pub ram_output_check: F,
@@ -135,22 +109,6 @@ pub struct ProductRemainderOutputOpeningClaims<F: Field> {
     pub branch_flag: F,
     pub next_is_noop: F,
     pub virtual_instruction: F,
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct FieldInlineStage2OutputOpeningClaims<F: Field> {
-    pub product: FieldInlineProductOutputOpeningClaims<F>,
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct FieldInlineProductOutputOpeningClaims<F: Field> {
-    pub field_rs1_value: F,
-    pub field_rs2_value: F,
-    pub field_rd_value: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

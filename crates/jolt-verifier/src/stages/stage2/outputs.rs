@@ -17,8 +17,6 @@ pub struct Stage2PublicOutput<F: Field> {
     pub product_tau_high: F,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_gamma: F,
     pub output_address_challenges: Vec<F>,
 }
 
@@ -39,8 +37,6 @@ pub struct Stage2ZkOutput<F: Field, C> {
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub ram_val_check_inputs: Stage2RamValCheckInputs<F>,
     pub ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineStage2ZkOutput<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,12 +49,6 @@ pub struct Stage2RamValCheckInputs<F: Field> {
 pub struct Stage2RamRaClaimReductionInputs<F: Field> {
     pub ram_raf_evaluation_opening_point: Vec<F>,
     pub ram_read_write_opening_point: Vec<F>,
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldInlineStage2ZkOutput<F: Field> {
-    pub field_registers_claim_reduction_opening_point: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,14 +75,10 @@ pub struct VerifiedStage2Batch<F: Field> {
     pub expected_final_claim: F,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_gamma: F,
     pub output_address_challenges: Vec<F>,
     pub ram_read_write: VerifiedStage2Sumcheck<F>,
     pub product_remainder: VerifiedStage2Sumcheck<F>,
     pub instruction_claim_reduction: VerifiedStage2Sumcheck<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction: VerifiedStage2Sumcheck<F>,
     pub ram_raf_evaluation: VerifiedStage2Sumcheck<F>,
     pub ram_output_check: VerifiedStage2Sumcheck<F>,
 }

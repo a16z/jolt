@@ -37,9 +37,6 @@ where
         formula_dimensions.instruction_ra_virtualization,
     );
     let inc_claims = increments::claim_reduction::<PCS::Field>(trace_dimensions);
-    #[cfg(feature = "field-inline")]
-    let field_inc_claims =
-        field_increments::claim_reduction::<PCS::Field>(FieldRegistersTraceDimensions::new(log_t));
     let (trusted_layout, trusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Trusted);
     let (untrusted_layout, untrusted_claims) = advice_cycle_claim(input, JoltAdviceKind::Untrusted);
     let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().map(|layout| {
@@ -61,60 +58,6 @@ where
         &instruction_ra_claims,
         &inc_claims,
     )?;
-    #[cfg(feature = "field-inline")]
-    {
-        values.challenge(
-            FieldInlineChallengeId::from(FieldRegistersIncClaimReductionChallenge::Gamma),
-            input.stage6.public.field_inline.field_inc_gamma,
-        )?;
-        let field_inc_point = input
-            .stage6
-            .batch_consistency
-            .try_instance_point(field_inc_claims.sumcheck.rounds)
-            .map_err(|error| stage_sumcheck_error(JoltRelationId::IncClaimReduction, error))?;
-        let field_inc_opening_point = trace_dimensions
-            .cycle_opening_point(&field_inc_point)
-            .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?;
-        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
-        let field_read_write_cycle = input
-            .stage4
-            .field_registers_read_write_opening_point
-            .get(field_log_k..)
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: format!(
-                    "field-register read-write opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
-                    input.stage4.field_registers_read_write_opening_point.len()
-                ),
-            })?;
-        let field_val_evaluation_cycle = input
-            .stage5
-            .field_inline
-            .field_registers_val_evaluation
-            .opening_point
-            .get(field_log_k..)
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: format!(
-                    "field-register val-evaluation opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
-                    input.stage5
-                        .field_inline
-                        .field_registers_val_evaluation
-                        .opening_point
-                        .len()
-                ),
-            })?;
-        values.public(
-            FieldInlinePublicId::from(FieldRegistersIncClaimReductionPublic::EqReadWrite),
-            try_eq_mle(&field_inc_opening_point, field_read_write_cycle)
-                .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
-        )?;
-        values.public(
-            FieldInlinePublicId::from(FieldRegistersIncClaimReductionPublic::EqValEvaluation),
-            try_eq_mle(&field_inc_opening_point, field_val_evaluation_cycle)
-                .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
-        )?;
-    }
     if let (Some(layout), Some(_claim), Some(public)) = (
         trusted_layout.as_ref(),
         trusted_claims.as_ref(),
@@ -177,9 +120,6 @@ where
     )?;
 
     let bytecode_input_expr = map_jolt_expr(bytecode_claims.input.expression().clone());
-    #[cfg(feature = "field-inline")]
-    let bytecode_input_expr = bytecode_input_expr
-        + map_field_inline_bytecode_expr(field_bytecode::read_raf_input_extension::<PCS::Field>());
 
     let mut batch_claims = vec![
         (
@@ -213,12 +153,6 @@ where
             map_jolt_expr(inc_claims.output.expression().clone()),
         ),
     ];
-    #[cfg(feature = "field-inline")]
-    batch_claims.push((
-        field_inc_claims.sumcheck.rounds,
-        map_field_inline_expr(field_inc_claims.input.expression().clone()),
-        map_field_inline_expr(field_inc_claims.output.expression().clone()),
-    ));
     if let Some(claim) = trusted_claims {
         batch_claims.push((
             claim.sumcheck.rounds,
@@ -267,10 +201,6 @@ where
     ));
     output_ids.extend(map_jolt_opening_ids(
         increments::claim_reduction_output_openings().to_vec(),
-    ));
-    #[cfg(feature = "field-inline")]
-    output_ids.extend(map_field_inline_opening_ids(
-        field_increments::claim_reduction_output_openings().to_vec(),
     ));
     if let Some(layout) = trusted_layout {
         output_ids.extend(map_jolt_opening_ids(advice::cycle_phase_output_openings(

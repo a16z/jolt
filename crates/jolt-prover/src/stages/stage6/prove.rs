@@ -1,7 +1,5 @@
-#[cfg(feature = "field-inline")]
-use jolt_backends::field_register_read_write_rows;
+use jolt_backends::Stage6RegularBatchSumcheckBackend;
 use jolt_backends::SumcheckBackend;
-use jolt_backends::{Stage6RegularBatchSumcheckBackend, SumcheckFieldRegistersReadWriteRow};
 use jolt_claims::protocols::jolt::formulas::{booleanity, bytecode};
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 #[cfg(feature = "zk")]
@@ -29,8 +27,8 @@ use super::batch::{evaluate_advice_cycle_phase_opening, Stage6BatchContext, Stag
 #[cfg(feature = "zk")]
 use super::io::Stage6CommittedProofComponent;
 use super::io::{
-    Stage6FieldInlineWitness, Stage6ProofComponent, Stage6ProverConfig, Stage6ProverInput,
-    Stage6RegularBatchPrefixOutput, Stage6RegularBatchProofOutput,
+    Stage6ProofComponent, Stage6ProverConfig, Stage6ProverInput, Stage6RegularBatchPrefixOutput,
+    Stage6RegularBatchProofOutput,
 };
 use super::prepare::Stage6BackendStates;
 #[cfg(feature = "zk")]
@@ -49,8 +47,8 @@ use jolt_witness::{protocols::jolt_vm::JoltVmNamespace, WitnessProvider};
 ///   (`Stage6AddressPhaseClaims`) become the input claims of the cycle phase.
 /// - Stage 6b is the batched cycle-phase sumcheck (`verify_b.rs`): bytecode
 ///   read-RAF + booleanity cycle phases plus the RAM-Hamming booleanity,
-///   RAM/instruction RA-virtualization, increment claim-reduction, optional
-///   field-register increment claim-reduction, and advice cycle-phase relations.
+///   RAM/instruction RA-virtualization, increment claim-reduction, and advice
+///   cycle-phase relations.
 ///
 /// The two phases share the bytecode/booleanity backend states, which transition
 /// from their address phase to their cycle phase internally as challenges are
@@ -63,7 +61,7 @@ pub fn prove<F, W, B, T, C>(
 ) -> Result<Stage6ProofComponent<F, SumcheckProof<F, C>>, ProverError>
 where
     F: Field,
-    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows + Stage6FieldInlineWitness<F>,
+    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows,
     B: SumcheckBackend<F, JoltVmNamespace> + Stage6RegularBatchSumcheckBackend<F>,
     T: Transcript<Challenge = F>,
 {
@@ -86,15 +84,10 @@ where
         input.stage5,
         transcript,
     )?;
-    #[cfg(feature = "field-inline")]
-    let field_register_rows = Some(field_register_read_write_rows(input.witness)?);
-    #[cfg(not(feature = "field-inline"))]
-    let field_register_rows = None;
     let round_capacity = input.config.log_t + input.config.bytecode_read_raf_dimensions.log_k();
     let run = prove_stage6_sumchecks_with_recorders(
         input.config.clone(),
         input.witness,
-        field_register_rows,
         backend,
         input.stage1,
         input.stage2,
@@ -134,7 +127,7 @@ pub fn prove_committed_proof_component<F, W, B, T, VC>(
 ) -> Result<Stage6CommittedProofComponent<F, VC>, ProverError>
 where
     F: Field,
-    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows + Stage6FieldInlineWitness<F>,
+    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows,
     B: SumcheckBackend<F, JoltVmNamespace> + Stage6RegularBatchSumcheckBackend<F>,
     T: Transcript<Challenge = F>,
     VC: VectorCommitment<Field = F>,
@@ -158,14 +151,9 @@ where
         input.stage5,
         transcript,
     )?;
-    #[cfg(feature = "field-inline")]
-    let field_register_rows = Some(field_register_read_write_rows(input.witness)?);
-    #[cfg(not(feature = "field-inline"))]
-    let field_register_rows = None;
     let run = prove_stage6_sumchecks_with_recorders(
         input.config.clone(),
         input.witness,
-        field_register_rows,
         backend,
         input.stage1,
         input.stage2,
@@ -248,7 +236,6 @@ impl<F: Field> Stage6AddressInstance<F> {
 fn prove_stage6_sumchecks_with_recorders<F, W, B, T, S>(
     config: Stage6ProverConfig,
     witness: &W,
-    field_register_rows: Option<Vec<SumcheckFieldRegistersReadWriteRow<F>>>,
     backend: &mut B,
     stage1: &Stage1ClearOutput<F>,
     stage2: &Stage2ClearOutput<F>,
@@ -327,7 +314,6 @@ where
         &prefix,
         address_run.bytecode_read_raf_state,
         address_run.booleanity_state,
-        field_register_rows,
         backend,
     )?;
 
@@ -670,12 +656,6 @@ where
                             &backend_states.inc_claim_reduction,
                             *previous_claim,
                         )?,
-                    #[cfg(feature = "field-inline")]
-                    Stage6InstanceKind::FieldRegistersIncClaimReduction => backend
-                        .evaluate_sumcheck_field_registers_inc_claim_reduction_round(
-                            &backend_states.field_registers_inc_claim_reduction,
-                            *previous_claim,
-                        )?,
                     Stage6InstanceKind::AdviceCyclePhase(JoltAdviceKind::Trusted) => {
                         let relation = trusted_advice_relation.as_ref().ok_or_else(|| {
                             invalid_sumcheck_output("Stage 6 trusted advice relation is missing")
@@ -766,12 +746,6 @@ where
                             &mut backend_states.inc_claim_reduction,
                             challenge,
                         )?,
-                    #[cfg(feature = "field-inline")]
-                    Stage6InstanceKind::FieldRegistersIncClaimReduction => backend
-                        .bind_sumcheck_field_registers_inc_claim_reduction_state(
-                            &mut backend_states.field_registers_inc_claim_reduction,
-                            challenge,
-                        )?,
                     Stage6InstanceKind::AdviceCyclePhase(JoltAdviceKind::Trusted) => {
                         let relation = trusted_advice_relation.as_mut().ok_or_else(|| {
                             invalid_sumcheck_output("Stage 6 trusted advice relation is missing")
@@ -827,10 +801,6 @@ where
             &backend_states.instruction_ra_virtualization,
         )?,
         backend.output_sumcheck_inc_claim_reduction_state(&backend_states.inc_claim_reduction)?,
-        #[cfg(feature = "field-inline")]
-        backend.output_sumcheck_field_registers_inc_claim_reduction_state(
-            &backend_states.field_registers_inc_claim_reduction,
-        )?,
         trusted_advice_claim,
         untrusted_advice_claim,
     );

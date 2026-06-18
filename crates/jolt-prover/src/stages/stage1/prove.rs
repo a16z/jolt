@@ -1,6 +1,4 @@
-#[cfg(feature = "field-inline")]
-use jolt_backends::stage1_field_inline_r1cs_input_slot;
-#[cfg(any(feature = "field-inline", all(test, not(feature = "field-inline"))))]
+#[cfg(test)]
 use jolt_backends::SumcheckMaterializationOutput;
 use jolt_backends::{
     spartan_outer_row, stage1_r1cs_input_slot, BackendValueSlot, SumcheckBackend,
@@ -12,12 +10,8 @@ use jolt_backends::{
     SPARTAN_OUTER_REMAINDER_RELATION, SPARTAN_OUTER_UNISKIP_RELATION,
     STAGE1_SPARTAN_OUTER_OPTIMIZATION_IDS,
 };
-#[cfg(any(feature = "field-inline", all(test, not(feature = "field-inline"))))]
+#[cfg(test)]
 use jolt_backends::{SumcheckMaterializationRequest, SumcheckViewMaterializationRequest};
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::{
-    formulas::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, FieldInlineVirtualPolynomial,
-};
 use jolt_claims::protocols::jolt::{
     formulas::spartan::{SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS},
     JoltVirtualPolynomial,
@@ -52,20 +46,16 @@ use jolt_transcript::Transcript;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage1::Stage1PublicOutput;
 use jolt_verifier::stages::stage1::{stage1_clear_output, Stage1ClearOutput};
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::{
-    FieldInlineNamespace, FieldInlineRegisterReadWriteRows,
-};
 use jolt_witness::protocols::jolt_vm::JoltVmSpartanOuterRows;
 use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmSpartanOuterRow};
 use jolt_witness::WitnessProvider;
-#[cfg(any(feature = "field-inline", all(test, not(feature = "field-inline"))))]
+#[cfg(test)]
 use jolt_witness::{OracleRef, ViewRequirement};
 
 #[cfg(feature = "zk")]
 use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
 use crate::stages::invalid_sumcheck_output;
-#[cfg(any(feature = "field-inline", all(test, not(feature = "field-inline"))))]
+#[cfg(test)]
 use crate::stages::primary_view_requirement;
 use crate::ProverError;
 
@@ -111,8 +101,6 @@ pub struct Stage1ProofComponent<F: Field, Proof> {
     pub uniskip_output_claim: F,
     pub remainder_output_claim: F,
     pub r1cs_input_claims: Vec<Stage1R1csInputClaim<F>>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline_r1cs_input_claims: Vec<Stage1FieldInlineR1csInputClaim<F>>,
     /// Verifier-mirroring Stage 1 output that downstream stages consume as a
     /// dependency, produced by the clear prover (`prove`). The pure-backend test
     /// path (`from_backend_result`) leaves it `None`; the full-proof
@@ -150,29 +138,14 @@ impl<F: Field> Stage1R1csInputClaim<F> {
     }
 }
 
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage1FieldInlineR1csInputClaim<F: Field> {
-    pub variable: FieldInlineVirtualPolynomial,
-    pub slot: BackendValueSlot,
-    pub value: F,
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: Field> Stage1FieldInlineR1csInputClaim<F> {
-    pub(crate) fn verifier_input(&self) -> (FieldInlineVirtualPolynomial, F) {
-        (self.variable, self.value)
-    }
-}
-
-#[cfg(all(test, not(feature = "field-inline")))]
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stage1R1csMaterializationRequest {
     materializations: SumcheckMaterializationRequest<JoltVmNamespace>,
     r1cs_inputs: Vec<Stage1R1csInputRequest>,
 }
 
-#[cfg(all(test, not(feature = "field-inline")))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Stage1R1csInputRequest {
     variable: JoltVirtualPolynomial,
@@ -180,22 +153,7 @@ struct Stage1R1csInputRequest {
     view: ViewRequirement<JoltVmNamespace>,
 }
 
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage1FieldInlineR1csMaterializationRequest {
-    materializations: SumcheckMaterializationRequest<FieldInlineNamespace>,
-    r1cs_inputs: Vec<Stage1FieldInlineR1csInputRequest>,
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Stage1FieldInlineR1csInputRequest {
-    variable: FieldInlineVirtualPolynomial,
-    slot: BackendValueSlot,
-    view: ViewRequirement<FieldInlineNamespace>,
-}
-
-#[cfg(all(test, not(feature = "field-inline")))]
+#[cfg(test)]
 fn build_stage1_r1cs_materialization_request<F, W>(
     config: Stage1ProverConfig,
     witness: &W,
@@ -234,43 +192,6 @@ where
     })
 }
 
-#[cfg(feature = "field-inline")]
-fn build_stage1_field_inline_r1cs_materialization_request<F, W>(
-    witness: &W,
-) -> Result<Stage1FieldInlineR1csMaterializationRequest, ProverError>
-where
-    F: Field,
-    W: WitnessProvider<F, FieldInlineNamespace>,
-{
-    let r1cs_inputs = FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, variable)| {
-            let oracle = OracleRef::virtual_polynomial(variable);
-            let view = primary_view_requirement::<F, W, FieldInlineNamespace>(witness, oracle)?;
-            Ok(Stage1FieldInlineR1csInputRequest {
-                variable,
-                slot: stage1_field_inline_r1cs_input_slot(index),
-                view,
-            })
-        })
-        .collect::<Result<Vec<_>, ProverError>>()?;
-    let views = r1cs_inputs
-        .iter()
-        .map(|input| SumcheckViewMaterializationRequest::new(input.slot, input.view))
-        .collect();
-
-    Ok(Stage1FieldInlineR1csMaterializationRequest {
-        materializations: SumcheckMaterializationRequest::new(
-            "stage1.field_inline.spartan_outer.r1cs_inputs.materialize",
-            views,
-        ),
-        r1cs_inputs,
-    })
-}
-
-#[cfg(not(feature = "field-inline"))]
 /// Proves Stage 1 with the trace-row Spartan-outer CPU kernel, in verifier
 /// order: prelude challenges, uni-skip, remainder, opening claims.
 pub fn prove<F, W, B, T, C>(
@@ -319,100 +240,7 @@ where
     )
 }
 
-#[cfg(feature = "field-inline")]
-/// Proves Stage 1 with the composed Jolt VM + field-inline Spartan-outer
-/// relation, in verifier order.
-pub fn prove<F, W, B, T, C>(
-    input: Stage1ProverInput<'_, W>,
-    backend: &mut B,
-    transcript: &mut T,
-) -> Result<Stage1ProofComponent<F, SumcheckProof<F, C>>, ProverError>
-where
-    F: Field,
-    W: JoltVmSpartanOuterRows
-        + WitnessProvider<F, JoltVmNamespace>
-        + WitnessProvider<F, FieldInlineNamespace>
-        + FieldInlineRegisterReadWriteRows<F>,
-    B: SumcheckBackend<F, JoltVmNamespace> + SumcheckBackend<F, FieldInlineNamespace>,
-    T: Transcript<Challenge = F>,
-{
-    let config = input.config;
-    let spartan_rows = materialize_stage1_spartan_outer_rows(config, input.witness)?;
-    let backend_rows = spartan_rows
-        .iter()
-        .copied()
-        .map(spartan_outer_row)
-        .collect::<Vec<_>>();
-    if field_inline_rows_are_inactive(input.witness)? {
-        let context = SpartanOuterContext::new(config, Vec::new());
-        return prove_stage1_transparent_sumchecks_with_context(
-            config,
-            backend,
-            transcript,
-            context,
-            Some(&backend_rows),
-            |_, backend, tau| {
-                prove_uniskip_round_poly_from_spartan_outer_backend_rows(
-                    config,
-                    &backend_rows,
-                    backend,
-                    tau,
-                )
-            },
-            |context, _backend, opening_point| {
-                let r1cs_input_claims =
-                    evaluate_stage1_r1cs_inputs_from_spartan_outer_rows_at_point(
-                        context.config,
-                        &spartan_rows,
-                        &opening_point,
-                    )?;
-                Ok(Stage1OpeningClaims {
-                    r1cs_input_claims,
-                    field_inline_r1cs_input_claims: zero_field_inline_r1cs_input_claims(),
-                })
-            },
-        );
-    }
-    let mut r1cs_inputs = stage1_r1cs_inputs_from_spartan_outer_rows(config, &spartan_rows)?;
-
-    let field_inline_request =
-        build_stage1_field_inline_r1cs_materialization_request::<F, W>(input.witness)?;
-    let field_inline_materializations =
-        <B as SumcheckBackend<F, FieldInlineNamespace>>::materialize_sumcheck_views(
-            backend,
-            &field_inline_request.materializations,
-            input.witness,
-        )?;
-    r1cs_inputs.extend(materialized_stage1_field_inline_r1cs_inputs(
-        config,
-        &field_inline_request,
-        field_inline_materializations,
-    )?);
-    let context = SpartanOuterContext::new(config, r1cs_inputs);
-
-    prove_stage1_transparent_sumchecks_with_context(
-        config,
-        backend,
-        transcript,
-        context,
-        None,
-        prove_uniskip_round_poly,
-        |context, backend, opening_point| {
-            let r1cs_input_claims =
-                evaluate_stage1_r1cs_inputs_from_context(context, &opening_point)?;
-            let field_inline_r1cs_input_claims =
-                evaluate_stage1_field_inline_r1cs_inputs_from_context(context, &opening_point)?;
-            let _ = backend;
-            Ok(Stage1OpeningClaims {
-                r1cs_input_claims,
-                #[cfg(feature = "field-inline")]
-                field_inline_r1cs_input_claims,
-            })
-        },
-    )
-}
-
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 pub fn prove_committed_proof_component<F, W, B, T, VC>(
     input: Stage1ProverInput<'_, W>,
     backend: &mut B,
@@ -463,103 +291,7 @@ where
     )
 }
 
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-pub fn prove_committed_proof_component<F, W, B, T, VC>(
-    input: Stage1ProverInput<'_, W>,
-    backend: &mut B,
-    transcript: &mut T,
-    vc_setup: &VC::Setup,
-) -> Result<Stage1CommittedProofComponent<F, VC>, ProverError>
-where
-    F: Field,
-    W: JoltVmSpartanOuterRows
-        + WitnessProvider<F, JoltVmNamespace>
-        + WitnessProvider<F, FieldInlineNamespace>
-        + FieldInlineRegisterReadWriteRows<F>,
-    B: SumcheckBackend<F, JoltVmNamespace> + SumcheckBackend<F, FieldInlineNamespace>,
-    T: Transcript<Challenge = F>,
-    VC: VectorCommitment<Field = F>,
-    VC::Output: jolt_transcript::AppendToTranscript,
-{
-    let config = input.config;
-    let spartan_rows = materialize_stage1_spartan_outer_rows(config, input.witness)?;
-    let backend_rows = spartan_rows
-        .iter()
-        .copied()
-        .map(spartan_outer_row)
-        .collect::<Vec<_>>();
-    if field_inline_rows_are_inactive(input.witness)? {
-        let context = SpartanOuterContext::new(config, Vec::new());
-        return prove_stage1_committed_sumchecks_with_context::<F, B, T, VC, _, _>(
-            config,
-            backend,
-            transcript,
-            vc_setup,
-            context,
-            Some(&backend_rows),
-            |_, backend, tau| {
-                prove_uniskip_round_poly_from_spartan_outer_backend_rows(
-                    config,
-                    &backend_rows,
-                    backend,
-                    tau,
-                )
-            },
-            |context, _backend, opening_point| {
-                let r1cs_input_claims =
-                    evaluate_stage1_r1cs_inputs_from_spartan_outer_rows_at_point(
-                        context.config,
-                        &spartan_rows,
-                        &opening_point,
-                    )?;
-                Ok(Stage1OpeningClaims {
-                    r1cs_input_claims,
-                    field_inline_r1cs_input_claims: zero_field_inline_r1cs_input_claims(),
-                })
-            },
-        );
-    }
-    let mut r1cs_inputs = stage1_r1cs_inputs_from_spartan_outer_rows(config, &spartan_rows)?;
-
-    let field_inline_request =
-        build_stage1_field_inline_r1cs_materialization_request::<F, W>(input.witness)?;
-    let field_inline_materializations =
-        <B as SumcheckBackend<F, FieldInlineNamespace>>::materialize_sumcheck_views(
-            backend,
-            &field_inline_request.materializations,
-            input.witness,
-        )?;
-    r1cs_inputs.extend(materialized_stage1_field_inline_r1cs_inputs(
-        config,
-        &field_inline_request,
-        field_inline_materializations,
-    )?);
-    let context = SpartanOuterContext::new(config, r1cs_inputs);
-
-    prove_stage1_committed_sumchecks_with_context::<F, B, T, VC, _, _>(
-        config,
-        backend,
-        transcript,
-        vc_setup,
-        context,
-        None,
-        prove_uniskip_round_poly,
-        |context, backend, opening_point| {
-            let r1cs_input_claims =
-                evaluate_stage1_r1cs_inputs_from_context(context, &opening_point)?;
-            let field_inline_r1cs_input_claims =
-                evaluate_stage1_field_inline_r1cs_inputs_from_context(context, &opening_point)?;
-            let _ = backend;
-            Ok(Stage1OpeningClaims {
-                r1cs_input_claims,
-                #[cfg(feature = "field-inline")]
-                field_inline_r1cs_input_claims,
-            })
-        },
-    )
-}
-
-#[cfg(all(test, not(feature = "field-inline")))]
+#[cfg(test)]
 pub(super) fn prove_stage1_transparent_sumchecks<F, W, B, T, C>(
     config: Stage1ProverConfig,
     witness: &W,
@@ -684,11 +416,6 @@ where
             .r1cs_input_claims
             .iter()
             .map(Stage1R1csInputClaim::verifier_input),
-        #[cfg(feature = "field-inline")]
-        opening_claims
-            .field_inline_r1cs_input_claims
-            .iter()
-            .map(Stage1FieldInlineR1csInputClaim::verifier_input),
     )?);
 
     Ok(Stage1ProofComponent {
@@ -699,8 +426,6 @@ where
         uniskip_output_claim,
         remainder_output_claim: remainder.output_claim,
         r1cs_input_claims: opening_claims.r1cs_input_claims,
-        #[cfg(feature = "field-inline")]
-        field_inline_r1cs_input_claims: opening_claims.field_inline_r1cs_input_claims,
         verifier_output,
     })
 }
@@ -801,11 +526,6 @@ where
             .r1cs_input_claims
             .iter()
             .map(Stage1R1csInputClaim::verifier_input),
-        #[cfg(feature = "field-inline")]
-        opening_claims
-            .field_inline_r1cs_input_claims
-            .iter()
-            .map(Stage1FieldInlineR1csInputClaim::verifier_input),
     )?;
 
     Ok(Stage1CommittedProofComponent {
@@ -840,38 +560,7 @@ where
     Ok(rows)
 }
 
-#[cfg(feature = "field-inline")]
-fn stage1_r1cs_inputs_from_spartan_outer_rows<F>(
-    config: Stage1ProverConfig,
-    rows: &[JoltVmSpartanOuterRow],
-) -> Result<Vec<Vec<F>>, ProverError>
-where
-    F: Field,
-{
-    let expected_rows = checked_trace_rows(config.log_t, "Stage 1")?;
-    if rows.len() != expected_rows {
-        return Err(ProverError::InvalidStageRequest {
-            reason: format!(
-                "Stage 1 Spartan outer row cache has {} rows, expected {expected_rows}",
-                rows.len()
-            ),
-        });
-    }
-    let dimensions = config.dimensions();
-    let variables = dimensions.variables();
-    let mut values = variables
-        .iter()
-        .map(|_| Vec::with_capacity(rows.len()))
-        .collect::<Vec<_>>();
-    for row in rows {
-        for (column, &variable) in values.iter_mut().zip(variables) {
-            column.push(spartan_outer_row_value(row, variable)?);
-        }
-    }
-    Ok(values)
-}
-
-#[cfg(any(test, feature = "field-inline"))]
+#[cfg(test)]
 fn evaluate_stage1_r1cs_inputs_from_context<F>(
     context: &SpartanOuterContext<F>,
     point: &[F],
@@ -1077,37 +766,7 @@ fn accumulate_bool<F: Field>(accumulator: &mut F, scale: F, flag: bool) {
     }
 }
 
-#[cfg(feature = "field-inline")]
-fn evaluate_stage1_field_inline_r1cs_inputs_from_context<F>(
-    context: &SpartanOuterContext<F>,
-    point: &[F],
-) -> Result<Vec<Stage1FieldInlineR1csInputClaim<F>>, ProverError>
-where
-    F: Field,
-{
-    let start = context.config.dimensions().variables().len();
-    let values = evaluate_context_r1cs_columns(
-        context,
-        start,
-        FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS.len(),
-        point,
-    )?;
-    FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-        .iter()
-        .copied()
-        .enumerate()
-        .zip(values)
-        .map(|((index, variable), value)| {
-            Ok(Stage1FieldInlineR1csInputClaim {
-                variable,
-                slot: stage1_field_inline_r1cs_input_slot(index),
-                value,
-            })
-        })
-        .collect()
-}
-
-#[cfg(any(test, feature = "field-inline"))]
+#[cfg(test)]
 fn evaluate_context_r1cs_columns<F>(
     context: &SpartanOuterContext<F>,
     start: usize,
@@ -1152,21 +811,6 @@ where
             .map(Vec::as_slice)
             .collect::<Vec<_>>(),
     ))
-}
-
-#[cfg(feature = "field-inline")]
-fn spartan_outer_row_value<F>(
-    row: &JoltVmSpartanOuterRow,
-    variable: JoltVirtualPolynomial,
-) -> Result<F, ProverError>
-where
-    F: Field,
-{
-    spartan_outer_row_value_known(row, variable).ok_or_else(|| {
-        invalid_sumcheck_output(format!(
-            "unsupported Stage 1 Spartan outer R1CS input {variable:?}"
-        ))
-    })
 }
 
 fn spartan_outer_row_variable_supported(variable: JoltVirtualPolynomial) -> bool {
@@ -1341,36 +985,6 @@ where
 
 struct Stage1OpeningClaims<F: Field> {
     r1cs_input_claims: Vec<Stage1R1csInputClaim<F>>,
-    #[cfg(feature = "field-inline")]
-    field_inline_r1cs_input_claims: Vec<Stage1FieldInlineR1csInputClaim<F>>,
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_rows_are_inactive<F, FI>(witness: &FI) -> Result<bool, ProverError>
-where
-    F: Field,
-    FI: FieldInlineRegisterReadWriteRows<F>,
-{
-    Ok(witness
-        .field_inline_register_read_write_rows()?
-        .into_iter()
-        .all(|row| {
-            row.rs1.is_none() && row.rs2.is_none() && row.rd.is_none() && row.rd_increment.is_zero()
-        }))
-}
-
-#[cfg(feature = "field-inline")]
-fn zero_field_inline_r1cs_input_claims<F: Field>() -> Vec<Stage1FieldInlineR1csInputClaim<F>> {
-    FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, variable)| Stage1FieldInlineR1csInputClaim {
-            variable,
-            slot: stage1_field_inline_r1cs_input_slot(index),
-            value: F::zero(),
-        })
-        .collect()
 }
 
 impl<F: Field> Stage1OpeningClaims<F> {
@@ -1380,17 +994,6 @@ impl<F: Field> Stage1OpeningClaims<F> {
             .iter()
             .map(|claim| claim.value)
             .collect::<Vec<_>>();
-        #[cfg(feature = "field-inline")]
-        {
-            let mut values = values;
-            values.extend(
-                self.field_inline_r1cs_input_claims
-                    .iter()
-                    .map(|claim| claim.value),
-            );
-            values
-        }
-        #[cfg(not(feature = "field-inline"))]
         {
             values
         }
@@ -1403,7 +1006,7 @@ struct RemainderEvalParams<'a, F: Field> {
     batching_coefficient: F,
 }
 
-#[cfg(all(test, not(feature = "field-inline")))]
+#[cfg(test)]
 fn materialized_stage1_r1cs_inputs<F>(
     config: Stage1ProverConfig,
     request: &Stage1R1csMaterializationRequest,
@@ -1450,54 +1053,7 @@ where
     Ok(inputs)
 }
 
-#[cfg(feature = "field-inline")]
-fn materialized_stage1_field_inline_r1cs_inputs<F>(
-    config: Stage1ProverConfig,
-    request: &Stage1FieldInlineR1csMaterializationRequest,
-    materializations: Vec<SumcheckMaterializationOutput<F>>,
-) -> Result<Vec<Vec<F>>, ProverError>
-where
-    F: Field,
-{
-    let mut by_slot = std::collections::BTreeMap::new();
-    for output in materializations {
-        if by_slot.insert(output.slot, output.values).is_some() {
-            return Err(invalid_sumcheck_output(format!(
-                "duplicate Stage 1 field-inline R1CS materialization slot {:?}",
-                output.slot
-            )));
-        }
-    }
-    let expected_len = 1usize << config.log_t;
-    let inputs = request
-        .r1cs_inputs
-        .iter()
-        .map(|input| {
-            let values = by_slot.remove(&input.slot).ok_or_else(|| {
-                invalid_sumcheck_output(format!(
-                    "missing Stage 1 field-inline R1CS materialization for {:?}",
-                    input.variable
-                ))
-            })?;
-            if values.len() != expected_len {
-                return Err(invalid_sumcheck_output(format!(
-                    "Stage 1 field-inline R1CS input {:?} materialized {} rows, expected {expected_len}",
-                    input.variable,
-                    values.len()
-                )));
-            }
-            Ok(values)
-        })
-        .collect::<Result<Vec<_>, ProverError>>()?;
-    if let Some(slot) = by_slot.keys().next() {
-        return Err(invalid_sumcheck_output(format!(
-            "unexpected Stage 1 field-inline R1CS materialization slot {slot:?}"
-        )));
-    }
-    Ok(inputs)
-}
-
-#[cfg(any(test, feature = "field-inline"))]
+#[cfg(test)]
 fn prove_uniskip_round_poly<F, B>(
     context: &SpartanOuterContext<F>,
     backend: &mut B,

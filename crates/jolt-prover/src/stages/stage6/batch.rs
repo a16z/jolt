@@ -1,8 +1,3 @@
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::{
-    formulas::{bytecode as field_bytecode, claim_reductions::increments as field_increments},
-    FieldRegistersTraceDimensions,
-};
 use jolt_claims::protocols::jolt::{
     formulas::{booleanity, bytecode},
     JoltCommittedPolynomial,
@@ -12,8 +7,6 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedReductionLayout,
 };
 use jolt_field::Field;
-#[cfg(feature = "field-inline")]
-use jolt_riscv::JoltInstructionRow;
 use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
 use jolt_verifier::stages::stage6::inputs::{AdviceCyclePhaseOutputClaim, Stage6Claims};
 use jolt_verifier::stages::stage6::outputs::AdviceCyclePhasePublicOutput;
@@ -31,13 +24,6 @@ use jolt_verifier::stages::stage6::{
     Stage6IncClaimReductionExpectedOutputInputs,
     Stage6InstructionRaVirtualizationExpectedOutputInputs, Stage6InstructionReadRafPoint,
     Stage6RamRaVirtualizationExpectedOutputInputs, Stage6RamReducedOpeningPoint,
-};
-#[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage6::{
-    stage6_field_inline_bytecode_register_points,
-    stage6_field_registers_inc_claim_reduction_cycle_points,
-    stage6_field_registers_inc_claim_reduction_expected_output,
-    FieldInlineStage6IncClaimReductionExpectedOutputInputs,
 };
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
@@ -58,8 +44,6 @@ pub(super) enum Stage6InstanceKind {
     RamRaVirtualization,
     InstructionRaVirtualization,
     IncClaimReduction,
-    #[cfg(feature = "field-inline")]
-    FieldRegistersIncClaimReduction,
     AdviceCyclePhase(JoltAdviceKind),
 }
 
@@ -151,10 +135,6 @@ where
         let instruction_ra_claims =
             instruction::ra_virtualization::<F>(config.instruction_ra_virtualization_dimensions);
         let inc_claims = increments::claim_reduction::<F>(config.trace_dimensions());
-        #[cfg(feature = "field-inline")]
-        let field_inc_claims = field_increments::claim_reduction::<F>(
-            FieldRegistersTraceDimensions::new(config.log_t),
-        );
 
         let mut specs = vec![
             Stage6InstanceSpec {
@@ -194,13 +174,6 @@ where
                 degree: inc_claims.sumcheck.degree,
             },
         ];
-        #[cfg(feature = "field-inline")]
-        specs.push(Stage6InstanceSpec {
-            kind: Stage6InstanceKind::FieldRegistersIncClaimReduction,
-            input_claim: prefix.input_claims.field_registers_inc_claim_reduction,
-            num_vars: field_inc_claims.sumcheck.rounds,
-            degree: field_inc_claims.sumcheck.degree,
-        });
 
         if let Some(input_claim) = prefix.input_claims.trusted_advice_cycle_phase {
             let layout = config.trusted_advice_layout.as_ref().ok_or_else(|| {
@@ -376,11 +349,6 @@ where
         )?;
         let inc_claim_reduction =
             self.instance_point(sumcheck_point, Stage6InstanceKind::IncClaimReduction)?;
-        #[cfg(feature = "field-inline")]
-        let field_registers_inc_claim_reduction = self.instance_point(
-            sumcheck_point,
-            Stage6InstanceKind::FieldRegistersIncClaimReduction,
-        )?;
 
         let trusted_advice_cycle_phase =
             self.advice_cycle_phase_sumcheck_point(sumcheck_point, JoltAdviceKind::Trusted)?;
@@ -397,8 +365,6 @@ where
                 ram_ra_virtualization: &ram_ra_virtualization,
                 instruction_ra_virtualization: &instruction_ra_virtualization,
                 inc_claim_reduction: &inc_claim_reduction,
-                #[cfg(feature = "field-inline")]
-                field_registers_inc_claim_reduction: &field_registers_inc_claim_reduction,
                 trusted_advice_cycle_phase: trusted_advice_cycle_phase.as_deref(),
                 untrusted_advice_cycle_phase: untrusted_advice_cycle_phase.as_deref(),
             },
@@ -470,15 +436,6 @@ where
                 openings.inc_claim_reduction.ram_inc,
                 openings.inc_claim_reduction.rd_inc,
             )?,
-            #[cfg(feature = "field-inline")]
-            field_registers_inc_claim_reduction: self
-                .expected_field_registers_inc_claim_reduction_output(
-                    &points.field_registers_inc_claim_reduction_opening_point,
-                    openings
-                        .field_inline
-                        .field_registers_inc_claim_reduction
-                        .field_rd_inc,
-                )?,
             trusted_advice_cycle_phase: self.expected_advice_output(
                 JoltAdviceKind::Trusted,
                 points.trusted_advice_cycle_phase.as_ref(),
@@ -610,32 +567,6 @@ where
         .map_err(|error| invalid_sumcheck_output(error.to_string()))
     }
 
-    #[cfg(feature = "field-inline")]
-    fn expected_field_registers_inc_claim_reduction_output(
-        &self,
-        opening_point: &[F],
-        field_rd_inc: F,
-    ) -> Result<F, ProverError> {
-        let field_log_k = self.config.field_inline.field_register_log_k;
-        let cycles = stage6_field_registers_inc_claim_reduction_cycle_points(
-            self.stage4,
-            self.stage5,
-            field_log_k,
-            self.config.log_t,
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        stage6_field_registers_inc_claim_reduction_expected_output(
-            FieldInlineStage6IncClaimReductionExpectedOutputInputs {
-                opening_point,
-                read_write_cycle: cycles.read_write_cycle,
-                val_evaluation_cycle: cycles.val_evaluation_cycle,
-                field_rd_inc,
-                gamma: self.prefix.challenges.field_inc_gamma,
-            },
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
     fn expected_advice_output(
         &self,
         kind: JoltAdviceKind,
@@ -694,15 +625,6 @@ where
             stage_cycles[3].as_slice(),
             stage_cycles[4].as_slice(),
         ];
-        #[cfg(feature = "field-inline")]
-        let base_bytecode_rows = context
-            .rows
-            .iter()
-            .map(field_bytecode::base_jolt_bytecode_row)
-            .collect::<Vec<_>>();
-        #[cfg(feature = "field-inline")]
-        let bytecode_rows = base_bytecode_rows.as_slice();
-        #[cfg(not(feature = "field-inline"))]
         let bytecode_rows = context.rows.as_slice();
 
         let public_values = if let Some(public_values) =
@@ -743,63 +665,7 @@ where
             .map_err(|error| invalid_sumcheck_output(error.to_string()))?
         };
 
-        #[cfg(feature = "field-inline")]
-        let public_values = {
-            let mut public_values = public_values;
-            self.add_field_inline_bytecode_public_values(
-                &mut public_values,
-                &context.rows,
-                &opening.r_address,
-                &opening.r_cycle,
-                &stage_cycles[0],
-            )?;
-            public_values
-        };
-
         Ok(public_values)
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn add_field_inline_bytecode_public_values(
-        &self,
-        bytecode_public_values: &mut bytecode::BytecodeReadRafPublicValues<F>,
-        bytecode_rows: &[JoltInstructionRow],
-        r_address: &[F],
-        r_cycle: &[F],
-        stage1_cycle: &[F],
-    ) -> Result<(), ProverError> {
-        let field_log_k = self.config.field_inline.field_register_log_k;
-        let field_register_points = stage6_field_inline_bytecode_register_points(
-            self.stage4,
-            self.stage5,
-            field_log_k,
-            self.config.log_t,
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        let field_inline_bytecode = bytecode_rows
-            .iter()
-            .map(field_bytecode::field_inline_bytecode_row)
-            .collect::<Vec<_>>();
-        let field_values = field_bytecode::read_raf_public_values(
-            field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
-                bytecode: &field_inline_bytecode,
-                field_register_log_k: field_log_k,
-                r_address,
-                r_cycle,
-                stage1_cycle_point: stage1_cycle,
-                field_register_read_write_point: field_register_points.read_write_address,
-                field_register_read_write_cycle_point: field_register_points.read_write_cycle,
-                field_register_val_evaluation_point: field_register_points.val_evaluation_address,
-                field_register_val_evaluation_cycle_point: field_register_points
-                    .val_evaluation_cycle,
-                stage1_gammas: &self.prefix.challenges.stage1_gammas,
-                stage4_gammas: &self.prefix.challenges.stage4_gammas,
-                stage5_gammas: &self.prefix.challenges.stage5_gammas,
-            },
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        field_bytecode::merge_read_raf_public_values(bytecode_public_values, field_values);
-        Ok(())
     }
 
     pub(super) fn instance(

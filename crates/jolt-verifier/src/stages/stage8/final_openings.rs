@@ -6,10 +6,6 @@
 //! [`stage8_final_opening_order`] this module exposes, so the prover and
 //! verifier cannot drift on opening order or transcript absorption.
 
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::{
-    formulas::claim_reductions::increments as field_increments, FieldInlineCommittedPolynomial,
-};
 use jolt_claims::protocols::jolt::{
     formulas::{
         committed_openings::{
@@ -33,18 +29,12 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage8FinalOpening {
     Jolt(JoltCommittedPolynomial),
-    #[cfg(feature = "field-inline")]
-    FieldInline(FieldInlineCommittedPolynomial),
 }
 
 impl Stage8FinalOpening {
     pub fn id(self) -> Stage8OpeningId {
         match self {
             Self::Jolt(polynomial) => committed_openings::final_opening_id(polynomial).into(),
-            #[cfg(feature = "field-inline")]
-            Self::FieldInline(FieldInlineCommittedPolynomial::FieldRdInc) => {
-                field_increments::field_rd_inc_reduced_opening().into()
-            }
         }
     }
 }
@@ -115,9 +105,8 @@ pub struct Stage8FinalOpeningBatchInput<'a, F: Field> {
 /// Canonical stage 8 final-opening order.
 ///
 /// Mirrors [`final_opening_polynomial_order`](committed_openings::final_opening_polynomial_order)
-/// for the non-committed-program case, additionally inserting the field-inline
-/// `FieldRdInc` increment opening immediately after `RdInc` so the prover and
-/// verifier RLC batches share one source of truth.
+/// for the non-committed-program case so the prover and verifier RLC batches
+/// share one source of truth.
 pub fn stage8_final_opening_order(
     layout: JoltRaPolynomialLayout,
     include_trusted_advice: bool,
@@ -130,10 +119,6 @@ pub fn stage8_final_opening_order(
     ));
     openings.push(Stage8FinalOpening::Jolt(JoltCommittedPolynomial::RamInc));
     openings.push(Stage8FinalOpening::Jolt(JoltCommittedPolynomial::RdInc));
-    #[cfg(feature = "field-inline")]
-    openings.push(Stage8FinalOpening::FieldInline(
-        FieldInlineCommittedPolynomial::FieldRdInc,
-    ));
     openings.extend(
         (0..layout.instruction())
             .map(JoltCommittedPolynomial::InstructionRa)
@@ -167,10 +152,7 @@ pub fn stage8_final_opening_count(
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
 ) -> usize {
-    2 + field_inline_final_opening_count()
-        + layout.total()
-        + usize::from(include_trusted_advice)
-        + usize::from(include_untrusted_advice)
+    2 + layout.total() + usize::from(include_trusted_advice) + usize::from(include_untrusted_advice)
 }
 
 /// Resolves the per-polynomial opening claim, embedding scale, and opening id
@@ -195,15 +177,6 @@ pub fn stage8_final_opening_claims<F: Field>(
                 input.stage6,
                 input.stage7,
             )?,
-            #[cfg(feature = "field-inline")]
-            Stage8FinalOpening::FieldInline(polynomial) => {
-                field_inline_final_opening_claim_and_scale(
-                    polynomial,
-                    input.opening_point,
-                    input.inc_claim_reduction_opening_point,
-                    input.stage6,
-                )
-            }
         };
         claims.push(Stage8FinalOpeningClaim {
             opening,
@@ -327,16 +300,6 @@ where
     })
 }
 
-#[cfg(feature = "field-inline")]
-const fn field_inline_final_opening_count() -> usize {
-    1
-}
-
-#[cfg(not(feature = "field-inline"))]
-const fn field_inline_final_opening_count() -> usize {
-    0
-}
-
 fn jolt_final_opening_claim_and_scale<F: Field>(
     polynomial: JoltCommittedPolynomial,
     opening_point: &[F],
@@ -397,25 +360,6 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
                 ),
             })
         }
-    }
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_final_opening_claim_and_scale<F: Field>(
-    polynomial: FieldInlineCommittedPolynomial,
-    opening_point: &[F],
-    inc_claim_reduction_opening_point: &[F],
-    stage6: &Stage6ClearOutput<F>,
-) -> (F, F) {
-    match polynomial {
-        FieldInlineCommittedPolynomial::FieldRdInc => (
-            stage6
-                .output_claims
-                .field_inline
-                .field_registers_inc_claim_reduction
-                .field_rd_inc,
-            commitment_embedding_scale(opening_point, inc_claim_reduction_opening_point),
-        ),
     }
 }
 

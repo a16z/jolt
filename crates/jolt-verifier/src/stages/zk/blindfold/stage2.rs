@@ -131,22 +131,6 @@ where
         eq_spartan,
     )?;
 
-    #[cfg(feature = "field-inline")]
-    let field_registers_claim_reduction = field_registers_claim_reduction::claim_reduction::<
-        PCS::Field,
-    >(FieldRegistersTraceDimensions::new(log_t));
-    #[cfg(feature = "field-inline")]
-    {
-        values.challenge(
-            FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::Gamma),
-            input.stage2.public.field_registers_claim_reduction_gamma,
-        )?;
-        values.challenge(
-            FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::EqSpartan),
-            product_tau_low_eq,
-        )?;
-    }
-
     let active_stage2_rounds = log_t + log_k;
     let phase1_offset = input
         .stage2
@@ -199,10 +183,6 @@ where
     output_ids.extend(map_jolt_opening_ids(
         product_remainder_output_openings().to_vec(),
     ));
-    #[cfg(feature = "field-inline")]
-    output_ids.extend(map_field_inline_opening_ids(
-        field_product::selected_product_remainder_output_openings().to_vec(),
-    ));
     let instruction_outputs =
         jolt_claims::protocols::jolt::formulas::claim_reductions::instruction::claim_reduction_output_openings();
     output_ids.push(VerifierOpeningId::Jolt(instruction_outputs[1]));
@@ -227,29 +207,6 @@ where
             VerifierOpeningId::Jolt(product_remainder_output_openings()[1]),
         ),
     ];
-    #[cfg(feature = "field-inline")]
-    let aliases = {
-        let mut aliases = aliases;
-        let [field_rs1, field_rs2, field_rd] =
-            field_product::selected_product_remainder_output_openings();
-        let [claim_rd, claim_rs1, claim_rs2] =
-            field_registers_claim_reduction::claim_reduction_output_openings();
-        aliases.extend([
-            OpeningAlias::new(
-                VerifierOpeningId::FieldInline(claim_rd),
-                VerifierOpeningId::FieldInline(field_rd),
-            ),
-            OpeningAlias::new(
-                VerifierOpeningId::FieldInline(claim_rs1),
-                VerifierOpeningId::FieldInline(field_rs1),
-            ),
-            OpeningAlias::new(
-                VerifierOpeningId::FieldInline(claim_rs2),
-                VerifierOpeningId::FieldInline(field_rs2),
-            ),
-        ]);
-        aliases
-    };
 
     let mut batch_claims = vec![
         (
@@ -268,12 +225,6 @@ where
             map_jolt_expr(instruction_reduction.output.expression().clone()),
         ),
     ];
-    #[cfg(feature = "field-inline")]
-    batch_claims.push((
-        field_registers_claim_reduction.sumcheck.rounds,
-        map_field_inline_expr(field_registers_claim_reduction.input.expression().clone()),
-        map_field_inline_expr(field_registers_claim_reduction.output.expression().clone()),
-    ));
     batch_claims.extend([
         (
             ram_raf.sumcheck.rounds,
@@ -354,43 +305,15 @@ fn selected_product_uniskip_input_expr<F: Field>(
         *should_jump_weight,
     );
 
-    #[cfg(feature = "field-inline")]
-    {
-        let [field_product_weight, field_inv_product_weight] = rest else {
-            return Err(VerifierError::BlindFoldConstructionFailed {
-                reason: format!(
-                    "stage2.product_uniskip: expected two field weights, got {}",
-                    rest.len()
-                ),
-            });
-        };
-        Ok(expr
-            + scale_expr(
-                opening(VerifierOpeningId::FieldInline(
-                    field_spartan::outer_opening(FieldInlineVirtualPolynomial::FieldProduct),
-                )),
-                *field_product_weight,
-            )
-            + scale_expr(
-                opening(VerifierOpeningId::FieldInline(
-                    field_spartan::outer_opening(FieldInlineVirtualPolynomial::FieldInvProduct),
-                )),
-                *field_inv_product_weight,
-            ))
+    if !rest.is_empty() {
+        return Err(VerifierError::BlindFoldConstructionFailed {
+            reason: format!(
+                "stage2.product_uniskip: expected no field weights, got {}",
+                rest.len()
+            ),
+        });
     }
-
-    #[cfg(not(feature = "field-inline"))]
-    {
-        if !rest.is_empty() {
-            return Err(VerifierError::BlindFoldConstructionFailed {
-                reason: format!(
-                    "stage2.product_uniskip: expected no field weights, got {}",
-                    rest.len()
-                ),
-            });
-        }
-        Ok(expr)
-    }
+    Ok(expr)
 }
 
 fn selected_product_remainder_output_expr<F: Field>(
@@ -432,37 +355,6 @@ fn selected_product_remainder_output_expr<F: Field>(
             -*should_jump_weight,
         );
 
-    #[cfg(feature = "field-inline")]
-    let (left, right) = {
-        let [field_product_weight, field_inv_product_weight] = rest else {
-            return Err(VerifierError::BlindFoldConstructionFailed {
-                reason: format!(
-                    "stage2.batch: expected two field product weights, got {}",
-                    rest.len()
-                ),
-            });
-        };
-        let [field_rs1, field_rs2, field_rd] =
-            field_product::selected_product_remainder_output_openings();
-        (
-            left_base
-                + scale_expr(
-                    opening(VerifierOpeningId::FieldInline(field_rs1)),
-                    *field_product_weight + *field_inv_product_weight,
-                ),
-            right_base
-                + scale_expr(
-                    opening(VerifierOpeningId::FieldInline(field_rs2)),
-                    *field_product_weight,
-                )
-                + scale_expr(
-                    opening(VerifierOpeningId::FieldInline(field_rd)),
-                    *field_inv_product_weight,
-                ),
-        )
-    };
-
-    #[cfg(not(feature = "field-inline"))]
     let (left, right) = {
         if !rest.is_empty() {
             return Err(VerifierError::BlindFoldConstructionFailed {

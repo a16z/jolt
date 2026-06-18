@@ -14,19 +14,6 @@ workspace = true
 [features]
 default = []
 prover-harness = ["jolt-backends/prover-harness"]
-field-inline = [
-  "jolt-backends/field-inline",
-  "jolt-claims/field-inline",
-  "jolt-program/field-inline",
-  "jolt-r1cs/field-inline",
-  "jolt-riscv/field-inline",
-  "jolt-sdk/field-inline",
-  "jolt-verifier/field-inline",
-  "jolt-witness/field-inline",
-  "muldiv-guest/field-inline",
-  "sha2-chain-guest/field-inline",
-  "tracer/field-inline",
-]
 zk = ["jolt-backends/zk", "jolt-verifier/zk"]
 
 [dependencies]

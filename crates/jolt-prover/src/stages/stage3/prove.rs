@@ -280,9 +280,9 @@ fn take_registers_claim_reduction_materialization<F: Field>(
 /// openings, then assemble the verifier-owned `stage3_sumcheck_proof`,
 /// [`Stage3Claims`], and [`Stage3ClearOutput`] for Stage 4 and later stages.
 ///
-/// Stage 3 has no field-inline-specific relation, so this single entrypoint is
-/// shared across feature modes. ZK committed proof component assembly is layered on top
-/// of the same gamma derivation and statement order.
+/// This single entrypoint is shared across feature modes. ZK committed proof
+/// component assembly is layered on top of the same gamma derivation and
+/// statement order.
 struct Stage3RegularBatchProofOutput<F: Field, C> {
     proof: SumcheckProof<F, C>,
     #[cfg(feature = "zk")]

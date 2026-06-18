@@ -42,11 +42,3 @@ pub use verify::{
     Stage6RamRaVirtualizationExpectedOutputInputs, Stage6RamReducedOpeningPoint,
     Stage6TranscriptChallenges,
 };
-#[cfg(feature = "field-inline")]
-pub use verify::{
-    stage6_field_inline_bytecode_register_points,
-    stage6_field_registers_inc_claim_reduction_cycle_points,
-    stage6_field_registers_inc_claim_reduction_expected_output,
-    FieldInlineStage6BytecodeRegisterPoints, FieldInlineStage6IncClaimReductionCyclePoints,
-    FieldInlineStage6IncClaimReductionExpectedOutputInputs,
-};

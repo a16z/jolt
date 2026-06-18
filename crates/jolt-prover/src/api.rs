@@ -12,10 +12,6 @@ use jolt_openings::ZkOpeningScheme;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
 use jolt_transcript::AppendToTranscript;
 use jolt_verifier::JoltProof;
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::{
-    FieldInlineNamespace, FieldInlineRegisterReadWriteRows,
-};
 use jolt_witness::{
     protocols::jolt_vm::{
         JoltVmNamespace, JoltVmRegisterReadWriteRows, JoltVmSpartanOuterRows, JoltVmStage2Rows,
@@ -29,36 +25,6 @@ use crate::stages::stage0;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 #[doc(hidden)]
-#[cfg(feature = "field-inline")]
-pub trait FieldInlineProverWitness<F>:
-    CommittedWitnessProvider<F, FieldInlineNamespace>
-    + WitnessProvider<F, FieldInlineNamespace>
-    + FieldInlineRegisterReadWriteRows<F>
-    + Sync
-where
-    F: Field,
-{
-}
-
-#[cfg(feature = "field-inline")]
-impl<F, T> FieldInlineProverWitness<F> for T
-where
-    F: Field,
-    T: CommittedWitnessProvider<F, FieldInlineNamespace>
-        + WitnessProvider<F, FieldInlineNamespace>
-        + FieldInlineRegisterReadWriteRows<F>
-        + Sync,
-{
-}
-
-#[doc(hidden)]
-#[cfg(not(feature = "field-inline"))]
-pub trait FieldInlineProverWitness<F> {}
-
-#[cfg(not(feature = "field-inline"))]
-impl<F, T> FieldInlineProverWitness<F> for T {}
-
-#[doc(hidden)]
 pub trait JoltVmProverWitness<F>:
     CommittedWitnessProvider<F, JoltVmNamespace>
     + WitnessProvider<F, JoltVmNamespace>
@@ -70,7 +36,6 @@ pub trait JoltVmProverWitness<F>:
     + JoltVmRegisterReadWriteRows
     + JoltVmStage5InstructionReadRafRows
     + JoltVmStage6Rows
-    + FieldInlineProverWitness<F>
     + Sync
 where
     F: Field,
@@ -90,42 +55,11 @@ where
         + JoltVmRegisterReadWriteRows
         + JoltVmStage5InstructionReadRafRows
         + JoltVmStage6Rows
-        + FieldInlineProverWitness<F>
         + Sync,
 {
 }
 
 #[doc(hidden)]
-#[cfg(feature = "field-inline")]
-pub trait ClearProverBackend<F>:
-    SumcheckBackend<F, JoltVmNamespace>
-    + SumcheckBackend<F, FieldInlineNamespace>
-    + RamReadWriteSumcheckBackend<F>
-    + Stage3SpartanSumcheckBackend<F>
-    + Stage4ReadWriteSumcheckBackend<F>
-    + Stage5ValueEvaluationSumcheckBackend<F>
-    + Stage6RegularBatchSumcheckBackend<F>
-where
-    F: Field,
-{
-}
-
-#[cfg(feature = "field-inline")]
-impl<F, T> ClearProverBackend<F> for T
-where
-    F: Field,
-    T: SumcheckBackend<F, JoltVmNamespace>
-        + SumcheckBackend<F, FieldInlineNamespace>
-        + RamReadWriteSumcheckBackend<F>
-        + Stage3SpartanSumcheckBackend<F>
-        + Stage4ReadWriteSumcheckBackend<F>
-        + Stage5ValueEvaluationSumcheckBackend<F>
-        + Stage6RegularBatchSumcheckBackend<F>,
-{
-}
-
-#[doc(hidden)]
-#[cfg(not(feature = "field-inline"))]
 pub trait ClearProverBackend<F>:
     SumcheckBackend<F, JoltVmNamespace>
     + RamReadWriteSumcheckBackend<F>
@@ -138,7 +72,6 @@ where
 {
 }
 
-#[cfg(not(feature = "field-inline"))]
 impl<F, T> ClearProverBackend<F> for T
 where
     F: Field,

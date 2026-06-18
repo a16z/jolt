@@ -1,8 +1,3 @@
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::formulas::{
-    claim_reductions::registers as field_registers_claim_reduction,
-    dimensions::FieldRegistersTraceDimensions,
-};
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::instruction as instruction_claim_reduction,
@@ -55,8 +50,6 @@ pub struct Stage2BatchInputClaims<F: Field> {
     pub ram_read_write: F,
     pub product_remainder: F,
     pub instruction_claim_reduction: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction: F,
     pub ram_raf_evaluation: F,
     pub ram_output_check: F,
 }
@@ -66,8 +59,6 @@ pub struct Stage2BatchExpectedOutputClaims<F: Field> {
     pub ram_read_write: F,
     pub product_remainder: F,
     pub instruction_claim_reduction: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction: F,
     pub ram_raf_evaluation: F,
     pub ram_output_check: F,
 }
@@ -90,15 +81,11 @@ struct Stage2ZkBatch<F: Field, C> {
     batching_coefficients: Vec<F>,
     ram_read_write_gamma: F,
     instruction_gamma: F,
-    #[cfg(feature = "field-inline")]
-    field_registers_claim_reduction_gamma: F,
     output_address_challenges: Vec<F>,
     consistency: jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: committed::CommittedOutputClaimOutput<C>,
     ram_val_check_inputs: Stage2RamValCheckInputs<F>,
     ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
-    #[cfg(feature = "field-inline")]
-    field_inline: super::outputs::FieldInlineStage2ZkOutput<F>,
 }
 
 enum Stage2Batch<F: Field, C> {
@@ -110,10 +97,7 @@ enum Stage2Batch<F: Field, C> {
 }
 
 const PRODUCT_UNISKIP_OUTPUT_CLAIMS: usize = 1;
-#[cfg(not(feature = "field-inline"))]
 const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 15;
-#[cfg(feature = "field-inline")]
-const STAGE2_BATCH_OUTPUT_CLAIMS: usize = 18;
 
 fn selected_product_uniskip_sumcheck() -> jolt_claims::protocols::jolt::JoltSumcheckSpec {
     jolt_claims::protocols::jolt::JoltSumcheckSpec::centered_integer(
@@ -139,8 +123,6 @@ pub struct Stage2BatchInputClaimRequest<'a, F: Field> {
     pub product_uniskip_output_claim: F,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_gamma: F,
 }
 
 /// Evaluates each stage 2 batch instance's input claim from the stage 1 openings
@@ -227,13 +209,6 @@ pub fn stage2_batch_input_claims<F: Field>(
                 },
                 |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
             )?,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction: request.stage1.field_inline.field_rd_value
-            + request.field_registers_claim_reduction_gamma
-                * request.stage1.field_inline.field_rs1_value
-            + request.field_registers_claim_reduction_gamma
-                * request.field_registers_claim_reduction_gamma
-                * request.stage1.field_inline.field_rs2_value,
         ram_raf_evaluation: ram_raf_evaluation_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == ram_address_spartan => Ok(request.stage1.outer.ram_address),
@@ -259,10 +234,6 @@ pub struct Stage2BatchOpeningPoints<F: Field> {
     pub product_opening: Vec<F>,
     pub instruction_sumcheck: Vec<F>,
     pub instruction_opening: Vec<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_sumcheck: Vec<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_opening: Vec<F>,
     pub ram_raf_sumcheck: Vec<F>,
     pub ram_raf_opening: Vec<F>,
     pub ram_output_check_sumcheck: Vec<F>,
@@ -344,10 +315,6 @@ pub fn stage2_batch_opening_points<F: Field>(
         product_opening: product_opening.clone(),
         instruction_sumcheck,
         instruction_opening,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction_sumcheck: product_sumcheck,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction_opening: product_opening,
         ram_raf_sumcheck: terminal_point.clone(),
         ram_raf_opening,
         ram_output_check_sumcheck: terminal_point,
@@ -369,8 +336,6 @@ pub struct Stage2ExpectedOutputRequest<'a, F: Field> {
     pub product_uniskip: Stage2ProductUniSkipOutputClaimData<'a, F>,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_gamma: F,
     pub output_address_challenges: &'a [F],
     pub opening_points: &'a Stage2BatchOpeningPoints<F>,
     pub claims: &'a Stage2BatchOutputOpeningClaims<F>,
@@ -434,27 +399,6 @@ pub fn stage2_expected_outputs<F: Field>(
         * request.claims.product_remainder.right_instruction_input
         + *should_branch_weight * request.claims.product_remainder.branch_flag
         + *should_jump_weight * (F::from_u64(1) - request.claims.product_remainder.next_is_noop);
-    #[cfg(feature = "field-inline")]
-    let (product_left, product_right) = {
-        let [field_product_weight, field_inv_product_weight] = rest else {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::SpartanProductVirtualization,
-                reason: format!(
-                    "Stage 2 field product remainder expected two field weights, got {}",
-                    rest.len()
-                ),
-            });
-        };
-        (
-            product_left_base
-                + (*field_product_weight + *field_inv_product_weight)
-                    * request.claims.field_inline.product.field_rs1_value,
-            product_right_base
-                + *field_product_weight * request.claims.field_inline.product.field_rs2_value
-                + *field_inv_product_weight * request.claims.field_inline.product.field_rd_value,
-        )
-    };
-    #[cfg(not(feature = "field-inline"))]
     let (product_left, product_right) = {
         if !rest.is_empty() {
             return Err(VerifierError::StageClaimPublicInputFailed {
@@ -529,24 +473,6 @@ pub fn stage2_expected_outputs<F: Field>(
                         )
                     }));
 
-    #[cfg(feature = "field-inline")]
-    let field_registers_claim_reduction = {
-        let eq_spartan = try_eq_mle(
-            &request
-                .opening_points
-                .field_registers_claim_reduction_opening,
-            request.product_uniskip.tau_low,
-        )
-        .map_err(|error| {
-            stage2_public_input_failed(JoltRelationId::SpartanProductVirtualization, error)
-        })?;
-        let gamma = request.field_registers_claim_reduction_gamma;
-        eq_spartan
-            * (request.claims.field_inline.product.field_rd_value
-                + gamma * request.claims.field_inline.product.field_rs1_value
-                + gamma * gamma * request.claims.field_inline.product.field_rs2_value)
-    };
-
     if request.opening_points.ram_raf_opening.len() < request.log_k {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamRafEvaluation,
@@ -608,8 +534,6 @@ pub fn stage2_expected_outputs<F: Field>(
         ram_read_write,
         product_remainder,
         instruction_claim_reduction,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction,
         ram_raf_evaluation,
         ram_output_check,
     })
@@ -619,45 +543,21 @@ pub fn stage2_expected_final_claim<F: Field>(
     coefficients: &[F],
     expected_outputs: &Stage2BatchExpectedOutputClaims<F>,
 ) -> Result<F, VerifierError> {
-    #[cfg(not(feature = "field-inline"))]
-    {
-        let [ram_read_write_coefficient, product_coefficient, instruction_coefficient, ram_raf_coefficient, ram_output_coefficient] =
-            coefficients
-        else {
-            return Err(VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RamReadWriteChecking,
-                reason: "Stage 2 batch verifier returned the wrong number of coefficients"
-                    .to_string(),
-            });
-        };
-        Ok(
-            *ram_read_write_coefficient * expected_outputs.ram_read_write
-                + *product_coefficient * expected_outputs.product_remainder
-                + *instruction_coefficient * expected_outputs.instruction_claim_reduction
-                + *ram_raf_coefficient * expected_outputs.ram_raf_evaluation
-                + *ram_output_coefficient * expected_outputs.ram_output_check,
-        )
-    }
-    #[cfg(feature = "field-inline")]
-    {
-        let [ram_read_write_coefficient, product_coefficient, instruction_coefficient, field_registers_coefficient, ram_raf_coefficient, ram_output_coefficient] =
-            coefficients
-        else {
-            return Err(VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::RamReadWriteChecking,
-                reason: "Stage 2 batch verifier returned the wrong number of coefficients"
-                    .to_string(),
-            });
-        };
-        Ok(
-            *ram_read_write_coefficient * expected_outputs.ram_read_write
-                + *product_coefficient * expected_outputs.product_remainder
-                + *instruction_coefficient * expected_outputs.instruction_claim_reduction
-                + *field_registers_coefficient * expected_outputs.field_registers_claim_reduction
-                + *ram_raf_coefficient * expected_outputs.ram_raf_evaluation
-                + *ram_output_coefficient * expected_outputs.ram_output_check,
-        )
-    }
+    let [ram_read_write_coefficient, product_coefficient, instruction_coefficient, ram_raf_coefficient, ram_output_coefficient] =
+        coefficients
+    else {
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::RamReadWriteChecking,
+            reason: "Stage 2 batch verifier returned the wrong number of coefficients".to_string(),
+        });
+    };
+    Ok(
+        *ram_read_write_coefficient * expected_outputs.ram_read_write
+            + *product_coefficient * expected_outputs.product_remainder
+            + *instruction_coefficient * expected_outputs.instruction_claim_reduction
+            + *ram_raf_coefficient * expected_outputs.ram_raf_evaluation
+            + *ram_output_coefficient * expected_outputs.ram_output_check,
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -676,8 +576,6 @@ pub struct Stage2RegularBatchClearRequest<F: Field> {
     pub output_claim: F,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_gamma: F,
     pub output_address_challenges: Vec<F>,
     pub input_claims: Stage2BatchInputClaims<F>,
     pub opening_points: Stage2BatchOpeningPoints<F>,
@@ -715,8 +613,6 @@ pub fn stage2_clear_output<F: Field>(
         product_tau_high: request.product_uniskip.tau_high,
         ram_read_write_gamma: request.batch.ram_read_write_gamma,
         instruction_gamma: request.batch.instruction_gamma,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction_gamma: request.batch.field_registers_claim_reduction_gamma,
         output_address_challenges: request.batch.output_address_challenges.clone(),
     };
 
@@ -738,10 +634,6 @@ pub fn stage2_clear_output<F: Field>(
             expected_final_claim,
             ram_read_write_gamma: request.batch.ram_read_write_gamma,
             instruction_gamma: request.batch.instruction_gamma,
-            #[cfg(feature = "field-inline")]
-            field_registers_claim_reduction_gamma: request
-                .batch
-                .field_registers_claim_reduction_gamma,
             output_address_challenges: request.batch.output_address_challenges,
             ram_read_write: VerifiedStage2Sumcheck {
                 input_claim: request.batch.input_claims.ram_read_write,
@@ -760,22 +652,6 @@ pub fn stage2_clear_output<F: Field>(
                 sumcheck_point: request.batch.opening_points.instruction_sumcheck,
                 opening_point: request.batch.opening_points.instruction_opening,
                 expected_output_claim: request.batch.expected_outputs.instruction_claim_reduction,
-            },
-            #[cfg(feature = "field-inline")]
-            field_registers_claim_reduction: VerifiedStage2Sumcheck {
-                input_claim: request.batch.input_claims.field_registers_claim_reduction,
-                sumcheck_point: request
-                    .batch
-                    .opening_points
-                    .field_registers_claim_reduction_sumcheck,
-                opening_point: request
-                    .batch
-                    .opening_points
-                    .field_registers_claim_reduction_opening,
-                expected_output_claim: request
-                    .batch
-                    .expected_outputs
-                    .field_registers_claim_reduction,
             },
             ram_raf_evaluation: VerifiedStage2Sumcheck {
                 input_claim: request.batch.input_claims.ram_raf_evaluation,
@@ -809,12 +685,6 @@ pub fn stage2_output_claim_values<F: Field>(claims: &Stage2BatchOutputOpeningCla
         claims.product_remainder.next_is_noop,
         claims.product_remainder.virtual_instruction,
     ];
-    #[cfg(feature = "field-inline")]
-    values.extend([
-        claims.field_inline.product.field_rs1_value,
-        claims.field_inline.product.field_rs2_value,
-        claims.field_inline.product.field_rd_value,
-    ]);
     values.extend([
         claims.instruction_claim_reduction.left_lookup_operand,
         claims.instruction_claim_reduction.right_lookup_operand,
@@ -890,8 +760,6 @@ where
                 product_tau_high: product_uniskip.tau_high,
                 ram_read_write_gamma: batch.ram_read_write_gamma,
                 instruction_gamma: batch.instruction_gamma,
-                #[cfg(feature = "field-inline")]
-                field_registers_claim_reduction_gamma: batch.field_registers_claim_reduction_gamma,
                 output_address_challenges: batch.output_address_challenges.clone(),
             };
 
@@ -911,8 +779,6 @@ where
                 product_tau_high: product_uniskip.tau_high,
                 ram_read_write_gamma: batch.ram_read_write_gamma,
                 instruction_gamma: batch.instruction_gamma,
-                #[cfg(feature = "field-inline")]
-                field_registers_claim_reduction_gamma: batch.field_registers_claim_reduction_gamma,
                 output_address_challenges: batch.output_address_challenges,
             };
 
@@ -924,8 +790,6 @@ where
                 batch_output_claims: batch.output_claims,
                 ram_val_check_inputs: batch.ram_val_check_inputs,
                 ram_ra_claim_reduction_inputs: batch.ram_ra_claim_reduction_inputs,
-                #[cfg(feature = "field-inline")]
-                field_inline: batch.field_inline,
             }))
         }
         (Stage2ProductUniSkip::Clear(_), Stage2Batch::Zk(_)) => {
@@ -1109,18 +973,10 @@ where
     let product_remainder_claims = product_remainder::<PCS::Field>(product_dimensions);
     let instruction_claim_reduction_claims =
         instruction_claim_reduction::claim_reduction::<PCS::Field>(trace_dimensions);
-    #[cfg(feature = "field-inline")]
-    let field_registers_claim_reduction_claims = field_registers_claim_reduction::claim_reduction::<
-        PCS::Field,
-    >(FieldRegistersTraceDimensions::new(log_t));
     let ram_raf_evaluation_claims = ram::raf_evaluation::<PCS::Field>(raf_dimensions);
     let ram_output_check_claims = ram::output_check::<PCS::Field>(read_write_dimensions);
-    // Stage 2 batches the regular post-product-uniskip sumchecks. Field-inline
-    // inserts its claim reduction at the same product point when enabled.
     let ram_read_write_gamma = transcript.challenge_scalar();
     let instruction_gamma = transcript.challenge_scalar();
-    #[cfg(feature = "field-inline")]
-    let field_registers_claim_reduction_gamma = transcript.challenge_scalar();
     let output_address_challenges = (0..log_k)
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
@@ -1144,15 +1000,6 @@ where
             });
         }
     }
-    #[cfg(feature = "field-inline")]
-    {
-        if field_registers_claim_reduction_claims.sumcheck.degree == 0 {
-            return Err(VerifierError::InvalidStageSumcheckDegree {
-                stage: JoltRelationId::SpartanProductVirtualization,
-                degree: field_registers_claim_reduction_claims.sumcheck.degree,
-            });
-        }
-    }
 
     match (deps, product_uniskip) {
         (Deps::Clear { stage1 }, Stage2ProductUniSkip::Clear(product_uniskip)) => {
@@ -1173,8 +1020,6 @@ where
                 product_uniskip_output_claim: claims.product_uniskip_output_claim,
                 ram_read_write_gamma,
                 instruction_gamma,
-                #[cfg(feature = "field-inline")]
-                field_registers_claim_reduction_gamma,
             })?;
 
             // The claim order here must match the output-claim reconstruction below and
@@ -1196,12 +1041,6 @@ where
                     input_claims.instruction_claim_reduction,
                 ),
             ];
-            #[cfg(feature = "field-inline")]
-            sumcheck_claims.push(SumcheckClaim::new(
-                field_registers_claim_reduction_claims.sumcheck.rounds,
-                field_registers_claim_reduction_claims.sumcheck.degree,
-                input_claims.field_registers_claim_reduction,
-            ));
             sumcheck_claims.extend([
                 SumcheckClaim::new(
                     ram_raf_evaluation_claims.sumcheck.rounds,
@@ -1244,21 +1083,6 @@ where
                     reason: error.to_string(),
                 })?;
             let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
-
-            #[cfg(feature = "field-inline")]
-            let (
-                field_registers_claim_reduction_point,
-                field_registers_claim_reduction_opening_point,
-            ) = {
-                let point = batch
-                    .try_instance_point(field_registers_claim_reduction_claims.sumcheck.rounds)
-                    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                        stage: JoltRelationId::SpartanProductVirtualization,
-                        reason: error.to_string(),
-                    })?;
-                let opening_point = point.iter().rev().copied().collect::<Vec<_>>();
-                (point.to_vec(), opening_point)
-            };
 
             let instruction_point = batch
                 .try_instance_point(instruction_claim_reduction_claims.sumcheck.rounds)
@@ -1325,12 +1149,6 @@ where
                 product_opening: product_opening_point.clone(),
                 instruction_sumcheck: instruction_point.to_vec(),
                 instruction_opening: instruction_opening_point.clone(),
-                #[cfg(feature = "field-inline")]
-                field_registers_claim_reduction_sumcheck: field_registers_claim_reduction_point
-                    .clone(),
-                #[cfg(feature = "field-inline")]
-                field_registers_claim_reduction_opening:
-                    field_registers_claim_reduction_opening_point.clone(),
                 ram_raf_sumcheck: ram_raf_evaluation_point.to_vec(),
                 ram_raf_opening: ram_raf_opening_point.clone(),
                 ram_output_check_sumcheck: ram_output_check_point.to_vec(),
@@ -1346,8 +1164,6 @@ where
                 },
                 ram_read_write_gamma,
                 instruction_gamma,
-                #[cfg(feature = "field-inline")]
-                field_registers_claim_reduction_gamma,
                 output_address_challenges: &output_address_challenges,
                 opening_points: &opening_points,
                 claims: &claims.batch_outputs,
@@ -1371,8 +1187,6 @@ where
                     expected_final_claim,
                     ram_read_write_gamma,
                     instruction_gamma,
-                    #[cfg(feature = "field-inline")]
-                    field_registers_claim_reduction_gamma,
                     output_address_challenges,
                     ram_read_write: VerifiedStage2Sumcheck {
                         input_claim: input_claims.ram_read_write,
@@ -1391,13 +1205,6 @@ where
                         sumcheck_point: instruction_point.to_vec(),
                         opening_point: instruction_opening_point,
                         expected_output_claim: expected_outputs.instruction_claim_reduction,
-                    },
-                    #[cfg(feature = "field-inline")]
-                    field_registers_claim_reduction: VerifiedStage2Sumcheck {
-                        input_claim: input_claims.field_registers_claim_reduction,
-                        sumcheck_point: field_registers_claim_reduction_point,
-                        opening_point: field_registers_claim_reduction_opening_point,
-                        expected_output_claim: expected_outputs.field_registers_claim_reduction,
                     },
                     ram_raf_evaluation: VerifiedStage2Sumcheck {
                         input_claim: input_claims.ram_raf_evaluation,
@@ -1430,11 +1237,6 @@ where
                     instruction_claim_reduction_claims.sumcheck.degree,
                 ),
             ];
-            #[cfg(feature = "field-inline")]
-            statements.push(SumcheckStatement::new(
-                field_registers_claim_reduction_claims.sumcheck.rounds,
-                field_registers_claim_reduction_claims.sumcheck.degree,
-            ));
             statements.extend([
                 SumcheckStatement::new(
                     ram_raf_evaluation_claims.sumcheck.rounds,
@@ -1475,17 +1277,6 @@ where
                     stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
-            #[cfg(feature = "field-inline")]
-            let field_registers_claim_reduction_opening_point = consistency
-                .try_instance_point(field_registers_claim_reduction_claims.sumcheck.rounds)
-                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltRelationId::SpartanProductVirtualization,
-                    reason: error.to_string(),
-                })?
-                .iter()
-                .rev()
-                .copied()
-                .collect::<Vec<_>>();
             let active_stage2_rounds = log_t + log_k;
             let phase1_offset =
                 consistency
@@ -1539,8 +1330,6 @@ where
                 batching_coefficients: consistency.batching_coefficients.clone(),
                 ram_read_write_gamma,
                 instruction_gamma,
-                #[cfg(feature = "field-inline")]
-                field_registers_claim_reduction_gamma,
                 output_address_challenges,
                 ram_val_check_inputs: Stage2RamValCheckInputs {
                     ram_read_write_opening_point: ram_read_write_opening_point
@@ -1551,10 +1340,6 @@ where
                 ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs {
                     ram_raf_evaluation_opening_point: ram_raf_opening_point,
                     ram_read_write_opening_point: ram_read_write_opening_point.opening_point,
-                },
-                #[cfg(feature = "field-inline")]
-                field_inline: super::outputs::FieldInlineStage2ZkOutput {
-                    field_registers_claim_reduction_opening_point,
                 },
                 consistency,
                 output_claims,

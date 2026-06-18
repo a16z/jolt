@@ -1,5 +1,3 @@
-#[cfg(feature = "field-inline")]
-use jolt_backends::poly::collect_stage8_field_rd_inc_rows;
 use jolt_backends::poly::{Stage8JointRlcConfig, Stage8JointRlcSource};
 use jolt_claims::protocols::jolt::{
     formulas::dimensions::TracePolynomialOrder, formulas::ra::JoltRaPolynomialLayout,
@@ -103,10 +101,7 @@ where
     <F as jolt_field::WithAccumulator>::Accumulator: jolt_field::RingAccumulator<Element = F>,
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic,
     PCS::Output: HomomorphicCommitment<F>,
-    W: WitnessProvider<F, JoltVmNamespace>
-        + JoltVmStage6Rows
-        + crate::api::FieldInlineProverWitness<F>
-        + Sync,
+    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows + Sync,
     T: Transcript<Challenge = F>,
 {
     let final_opening_batch = stage8_clear_final_opening_batch(
@@ -123,12 +118,6 @@ where
     )?;
 
     let combined_hint = PCS::combine_hints(hints, &gamma_powers);
-    #[cfg(feature = "field-inline")]
-    let field_rd_inc = Some(collect_stage8_field_rd_inc_rows(
-        witness,
-        1usize << config.log_t,
-    )?);
-    #[cfg(not(feature = "field-inline"))]
     let field_rd_inc = None;
     let joint_polynomial = Stage8JointRlcSource::new(
         stage8_joint_rlc_config(config),
@@ -175,10 +164,7 @@ where
     <F as jolt_field::WithAccumulator>::Accumulator: jolt_field::RingAccumulator<Element = F>,
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic + ZkOpeningScheme,
     PCS::Output: HomomorphicCommitment<F>,
-    W: WitnessProvider<F, JoltVmNamespace>
-        + JoltVmStage6Rows
-        + crate::api::FieldInlineProverWitness<F>
-        + Sync,
+    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage6Rows + Sync,
     T: Transcript<Challenge = F>,
 {
     let final_opening_batch = stage8_zk_final_opening_batch(
@@ -195,12 +181,6 @@ where
     )?;
 
     let combined_hint = PCS::combine_hints(hints, &gamma_powers);
-    #[cfg(feature = "field-inline")]
-    let field_rd_inc = Some(collect_stage8_field_rd_inc_rows(
-        witness,
-        1usize << config.log_t,
-    )?);
-    #[cfg(not(feature = "field-inline"))]
     let field_rd_inc = None;
     let joint_polynomial = Stage8JointRlcSource::new(
         stage8_joint_rlc_config(config),

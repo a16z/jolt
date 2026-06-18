@@ -136,7 +136,7 @@ fn prove_and_verify<Output>(
     let public_io = trace.device.clone();
     let program_preprocessing = program_preprocessing(&program, &public_io, max_trace_length);
     let proof_parameters = proof_parameters(&program_preprocessing, &trace);
-    let preprocessing = prover_preprocessing(program_preprocessing, max_trace_length, &program);
+    let preprocessing = prover_preprocessing(program_preprocessing, max_trace_length);
     let witness = trace_witness(
         &program,
         preprocessing
@@ -149,11 +149,6 @@ fn prove_and_verify<Output>(
     );
     let mut backend = CpuBackend::default();
     let config = proof_parameters;
-
-    #[cfg(feature = "field-inline")]
-    let witness = witness
-        .with_field_inline()
-        .expect("field-inline witness should build from the traced program");
 
     let prover_output = jolt_prover::prove_with_components(
         &preprocessing,
@@ -228,7 +223,6 @@ fn program_preprocessing(
 fn prover_preprocessing(
     program: JoltProgramPreprocessing,
     max_trace_length: usize,
-    jolt_program: &JoltProgram,
 ) -> JoltProverPreprocessing<Pcs, Vc> {
     let max_log_t = max_trace_length.next_power_of_two().trailing_zeros() as usize;
     let max_log_k_chunk = if max_log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
@@ -244,20 +238,6 @@ fn prover_preprocessing(
         &pcs_setup,
         zk_vector_commitment_capacity_requirement(),
     );
-
-    #[cfg(feature = "field-inline")]
-    let verifier = {
-        let code_size = verifier
-            .program
-            .as_full()
-            .expect("prover preprocessing should retain the full program preprocessing")
-            .bytecode
-            .code_size;
-        verifier.with_field_inline_bytecode(field_inline_bytecode(jolt_program, code_size))
-    };
-
-    #[cfg(not(feature = "field-inline"))]
-    let _ = jolt_program;
 
     JoltProverPreprocessing::new(verifier, pcs_setup)
 }
@@ -372,20 +352,4 @@ fn remap_address(address: u64, layout: &MemoryLayout) -> Option<u64> {
     } else {
         Some((address - layout.get_lowest_address()) / 8)
     }
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_bytecode(
-    program: &JoltProgram,
-    padded_len: usize,
-) -> Vec<jolt_claims::protocols::field_inline::formulas::bytecode::FieldInlineBytecodeRow> {
-    use jolt_claims::protocols::field_inline::formulas::bytecode as field_bytecode;
-
-    let mut rows = program
-        .expanded_bytecode
-        .iter()
-        .map(field_bytecode::field_inline_bytecode_row)
-        .collect::<Vec<_>>();
-    rows.resize(padded_len, Default::default());
-    rows
 }

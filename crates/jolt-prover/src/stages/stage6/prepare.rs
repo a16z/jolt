@@ -1,17 +1,11 @@
 use common::jolt_device::JoltDevice;
-#[cfg(feature = "field-inline")]
-use jolt_backends::SumcheckBytecodeReadRafExtraStageValues;
-#[cfg(feature = "field-inline")]
-use jolt_backends::SumcheckFieldRegistersIncClaimReductionStateRequest;
 use jolt_backends::{
     stage6_bytecode_pc_indices, stage6_hamming_weight, stage6_inc_rows, stage6_ra_rows,
     Stage6RegularBatchSumcheckBackend, SumcheckBooleanityStateRequest,
-    SumcheckBytecodeReadRafStateRequest, SumcheckFieldRegistersReadWriteRow,
-    SumcheckIncClaimReductionStateRequest, SumcheckInstructionRaVirtualizationStateRequest,
-    SumcheckRamHammingBooleanityStateRequest, SumcheckRamRaVirtualizationStateRequest,
+    SumcheckBytecodeReadRafStateRequest, SumcheckIncClaimReductionStateRequest,
+    SumcheckInstructionRaVirtualizationStateRequest, SumcheckRamHammingBooleanityStateRequest,
+    SumcheckRamRaVirtualizationStateRequest,
 };
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::formulas::bytecode as field_bytecode;
 use jolt_claims::protocols::jolt::{
     formulas::{booleanity::BooleanityDimensions, bytecode},
     JoltFormulaDimensions,
@@ -28,11 +22,6 @@ use jolt_verifier::stages::stage6::{
     stage6_stage1_cycle_binding, stage6_stage5_ram_reduced_opening_point,
     Stage6PreAddressChallenges, Stage6TranscriptChallenges,
 };
-#[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage6::{
-    stage6_field_inline_bytecode_register_points,
-    stage6_field_registers_inc_claim_reduction_cycle_points,
-};
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
     stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
@@ -46,9 +35,6 @@ use crate::stages::advice::advice_layouts;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 pub(super) const STAGE6_REGULAR_BATCH_OPT_IDS: &[&str] = &["cpu_stage6_regular_batch_sumcheck"];
-#[cfg(feature = "field-inline")]
-pub(super) const STAGE6_FIELD_INLINE_INC_OPT_IDS: &[&str] =
-    &["cpu_field_inline_stage6_registers_inc_claim_reduction"];
 
 pub(super) struct Stage6BackendStates<B, F>
 where
@@ -61,8 +47,6 @@ where
     pub(super) ram_ra_virtualization: B::RamRaVirtualizationState,
     pub(super) instruction_ra_virtualization: B::InstructionRaVirtualizationState,
     pub(super) inc_claim_reduction: B::IncClaimReductionState,
-    #[cfg(feature = "field-inline")]
-    pub(super) field_registers_inc_claim_reduction: B::FieldRegistersIncClaimReductionState,
 }
 
 pub(crate) fn prover_config<PCS, VC>(
@@ -168,8 +152,6 @@ fn pre_address_input_claim_challenge_values<F: Field>(
         stage5_gammas: &pre.stage5_gammas,
         instruction_ra_gamma: F::zero(),
         inc_gamma: F::zero(),
-        #[cfg(feature = "field-inline")]
-        field_inc_gamma: F::zero(),
     }
 }
 
@@ -231,15 +213,6 @@ where
     })?;
     let register_points =
         stage6_bytecode_register_points(stage4, stage5).map_err(invalid_stage_request)?;
-    #[cfg(feature = "field-inline")]
-    let base_bytecode_rows = bytecode_context
-        .rows
-        .iter()
-        .map(field_bytecode::base_jolt_bytecode_row)
-        .collect::<Vec<_>>();
-    #[cfg(feature = "field-inline")]
-    let bytecode_rows = base_bytecode_rows.as_slice();
-    #[cfg(not(feature = "field-inline"))]
     let bytecode_rows = bytecode_context.rows.as_slice();
     let stage_values = bytecode::read_raf_stage_values(bytecode::BytecodeReadRafStageValueInputs {
         bytecode: bytecode_rows,
@@ -252,69 +225,6 @@ where
         stage5_gammas: &pre.stage5_gammas,
     });
     Ok(stage_values)
-}
-
-#[cfg(feature = "field-inline")]
-pub(super) fn field_inline_bytecode_extra_stage_values<F>(
-    config: &Stage6ProverConfig,
-    pre: &Stage6PreAddressChallenges<F>,
-    stage1: &Stage1ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    stage5: &Stage5ClearOutput<F>,
-) -> Result<Vec<SumcheckBytecodeReadRafExtraStageValues<F>>, ProverError>
-where
-    F: Field,
-{
-    let bytecode_context = config.bytecode_context.as_ref().ok_or_else(|| {
-        invalid_stage_request("Stage 6 bytecode context is required for read-RAF evaluation")
-    })?;
-    let field_log_k = config.field_inline.field_register_log_k;
-    let field_register_points =
-        stage6_field_inline_bytecode_register_points(stage4, stage5, field_log_k, config.log_t)
-            .map_err(invalid_stage_request)?;
-    let field_inline_bytecode = bytecode_context
-        .rows
-        .iter()
-        .map(field_bytecode::field_inline_bytecode_row)
-        .collect::<Vec<_>>();
-    let field_stage_values = field_bytecode::read_raf_stage_values(
-        field_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
-            bytecode: &field_inline_bytecode,
-            field_register_read_write_point: field_register_points.read_write_address,
-            field_register_val_evaluation_point: field_register_points.val_evaluation_address,
-            stage1_gammas: &pre.stage1_gammas,
-            stage4_gammas: &pre.stage4_gammas,
-            stage5_gammas: &pre.stage5_gammas,
-        },
-    );
-
-    let mut stage1_values = Vec::with_capacity(bytecode_context.rows.len());
-    let mut stage4_values = Vec::with_capacity(bytecode_context.rows.len());
-    let mut stage5_values = Vec::with_capacity(bytecode_context.rows.len());
-    for values in field_stage_values {
-        stage1_values.push(values[0]);
-        stage4_values.push(values[3]);
-        stage5_values.push(values[4]);
-    }
-    let stage1_cycle = stage6_stage1_cycle_binding(stage1)
-        .map_err(invalid_stage_request)?
-        .iter()
-        .rev()
-        .copied()
-        .collect();
-    Ok(vec![
-        SumcheckBytecodeReadRafExtraStageValues::new(0, stage1_values, stage1_cycle),
-        SumcheckBytecodeReadRafExtraStageValues::new(
-            3,
-            stage4_values,
-            field_register_points.read_write_cycle.to_vec(),
-        ),
-        SumcheckBytecodeReadRafExtraStageValues::new(
-            4,
-            stage5_values,
-            field_register_points.val_evaluation_cycle.to_vec(),
-        ),
-    ])
 }
 
 #[expect(
@@ -357,10 +267,6 @@ where
         config.committed_chunk_bits,
     )
     .with_optimization_ids(STAGE6_REGULAR_BATCH_OPT_IDS);
-    #[cfg(feature = "field-inline")]
-    let bytecode_request = bytecode_request.with_extra_stage_values(
-        field_inline_bytecode_extra_stage_values(config, pre, stage1, stage4, stage5)?,
-    );
     let bytecode_read_raf =
         backend.materialize_sumcheck_bytecode_read_raf_state(&bytecode_request)?;
 
@@ -398,14 +304,6 @@ pub(super) fn materialize_cycle_phase_states<F, W, B>(
     prefix: &Stage6RegularBatchPrefixOutput<F>,
     bytecode_read_raf: B::BytecodeReadRafState,
     booleanity: B::BooleanityState,
-    #[cfg_attr(
-        not(feature = "field-inline"),
-        expect(
-            unused_variables,
-            reason = "field-inline rows are only used under field-inline"
-        )
-    )]
-    field_register_rows: Option<Vec<SumcheckFieldRegistersReadWriteRow<F>>>,
     backend: &mut B,
 ) -> Result<Stage6BackendStates<B, F>, ProverError>
 where
@@ -481,34 +379,6 @@ where
     let inc_claim_reduction =
         backend.materialize_sumcheck_inc_claim_reduction_state(&inc_request)?;
 
-    #[cfg(feature = "field-inline")]
-    let field_registers_inc_claim_reduction = {
-        let field_register_rows = field_register_rows.ok_or_else(|| {
-            invalid_stage_request("Stage 6 field-register rows are required under field-inline")
-        })?;
-        let field_log_k = config.field_inline.field_register_log_k;
-        let [read_write_cycle, val_evaluation_cycle] =
-            stage6_field_registers_inc_claim_reduction_cycle_points(
-                stage4,
-                stage5,
-                field_log_k,
-                config.log_t,
-            )
-            .map_err(invalid_stage_request)?
-            .reversed_cycles();
-        let request = SumcheckFieldRegistersIncClaimReductionStateRequest::new(
-            "Stage 6 field-register increment claim-reduction",
-            field_register_rows,
-            read_write_cycle,
-            val_evaluation_cycle,
-            prefix.challenges.field_inc_gamma,
-            prefix.input_claims.field_registers_inc_claim_reduction,
-            config.log_t,
-        )
-        .with_optimization_ids(STAGE6_FIELD_INLINE_INC_OPT_IDS);
-        backend.materialize_sumcheck_field_registers_inc_claim_reduction_state(&request)?
-    };
-
     Ok(Stage6BackendStates {
         bytecode_read_raf,
         booleanity,
@@ -516,8 +386,6 @@ where
         ram_ra_virtualization,
         instruction_ra_virtualization,
         inc_claim_reduction,
-        #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction,
     })
 }
 

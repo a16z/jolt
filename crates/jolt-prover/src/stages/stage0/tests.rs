@@ -7,8 +7,6 @@ use jolt_backends::{
     Backend, BackendError, CommitmentBackend, CommitmentMode, CommitmentRequest, CommitmentResult,
     CommitmentSlot, CommittedPolynomialOutput, StreamedWitnessOutput,
 };
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TracePolynomialOrder, ra::JoltRaPolynomialLayout},
     JoltCommittedPolynomial,
@@ -17,10 +15,6 @@ use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_openings::{mock::MockCommitmentScheme, CommitmentScheme};
 use jolt_poly::Polynomial;
 use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::{
-    FieldInlineNamespace, FieldInlineRegisterReadWriteRow, FieldInlineRegisterReadWriteRows,
-};
 use jolt_witness::{
     protocols::jolt_vm::JoltVmNamespace, CommittedWitnessProvider, MaterializationPolicy,
     NamespaceId, OracleDescriptor, OracleKind, OracleRef, PolynomialEncoding, PolynomialView,
@@ -97,57 +91,6 @@ impl<F> CommittedWitnessProvider<F, TestNamespace> for TestWitness {
     }
 }
 
-#[cfg(feature = "field-inline")]
-impl<F> WitnessProvider<F, FieldInlineNamespace> for JoltVmTestWitness {
-    fn describe_oracle(
-        &self,
-        oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
-        Ok(OracleDescriptor::new(
-            oracle,
-            WitnessDimensions::new(2),
-            PolynomialEncoding::Dense,
-        ))
-    }
-
-    fn view_requirements(
-        &self,
-        oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<Vec<ViewRequirement<FieldInlineNamespace>>, WitnessError> {
-        Ok(vec![ViewRequirement::new(
-            oracle,
-            PolynomialEncoding::Dense,
-            MaterializationPolicy::Streaming,
-            RetentionHint::ThroughBlindFold,
-        )])
-    }
-
-    fn oracle_view(
-        &self,
-        _requirement: ViewRequirement<FieldInlineNamespace>,
-    ) -> Result<PolynomialView<'_, F, FieldInlineNamespace>, WitnessError> {
-        Err(WitnessError::UnsupportedView {
-            view: "test field-inline oracle views",
-        })
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F> CommittedWitnessProvider<F, FieldInlineNamespace> for JoltVmTestWitness {
-    fn committed_oracle_order(&self) -> Result<Vec<FieldInlineCommittedPolynomial>, WitnessError> {
-        Ok(vec![FieldInlineCommittedPolynomial::FieldRdInc])
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: jolt_field::Field> FieldInlineRegisterReadWriteRows<F> for JoltVmTestWitness {
-    fn field_inline_register_read_write_rows(
-        &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
-        Ok(Vec::new())
-    }
-}
-
 type MockPcs = MockCommitmentScheme<Fr>;
 
 fn mock_commitment(seed: u64) -> <MockPcs as jolt_crypto::Commitment>::Output {
@@ -184,37 +127,11 @@ fn jolt_commitment_result(
     CommitmentResult::new(Vec::new(), Vec::new(), commitments)
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn assemble_test_jolt_commitment_stage(
     result: CommitmentResult<JoltVmNamespace, MockPcs>,
     config: CommitmentStageConfig,
 ) -> Result<CommitmentComponent<MockPcs>, ProverError> {
     CommitmentComponent::from_backend_result(result, config)
-}
-
-#[cfg(feature = "field-inline")]
-fn assemble_test_jolt_commitment_stage(
-    result: CommitmentResult<JoltVmNamespace, MockPcs>,
-    config: CommitmentStageConfig,
-) -> Result<CommitmentComponent<MockPcs>, ProverError> {
-    CommitmentComponent::from_backend_result(result, field_inline_commitment_result(99), config)
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_commitment_result(
-    seed: u64,
-) -> CommitmentResult<FieldInlineNamespace, MockCommitmentScheme<Fr>> {
-    CommitmentResult::new(
-        Vec::new(),
-        Vec::new(),
-        vec![CommittedPolynomialOutput::new(
-            CommitmentSlot(0),
-            OracleRef::committed(FieldInlineCommittedPolynomial::FieldRdInc),
-            2,
-            mock_commitment(seed),
-            (),
-        )],
-    )
 }
 
 #[derive(Debug, Default)]
@@ -295,8 +212,6 @@ impl<F> CommittedWitnessProvider<F, JoltVmNamespace> for JoltVmTestWitness {
 #[derive(Debug, Default)]
 struct JoltVmRecordingBackend {
     last_request: Option<CommitmentRequest<JoltVmNamespace>>,
-    #[cfg(feature = "field-inline")]
-    last_field_inline_request: Option<CommitmentRequest<FieldInlineNamespace>>,
 }
 
 impl Backend for JoltVmRecordingBackend {
@@ -327,32 +242,6 @@ impl CommitmentBackend<Fr, JoltVmNamespace, MockPcs> for JoltVmRecordingBackend 
             })
             .collect();
         Ok(CommitmentResult::new(Vec::new(), Vec::new(), commitments))
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl CommitmentBackend<Fr, FieldInlineNamespace, MockPcs> for JoltVmRecordingBackend {
-    fn commit<W>(
-        &mut self,
-        request: &CommitmentRequest<FieldInlineNamespace>,
-        _witness: &W,
-        _setup: &(),
-    ) -> Result<CommitmentResult<FieldInlineNamespace, MockPcs>, BackendError>
-    where
-        W: WitnessProvider<Fr, FieldInlineNamespace> + Sync + ?Sized,
-    {
-        self.last_field_inline_request = Some(request.clone());
-        Ok(CommitmentResult::new(
-            Vec::new(),
-            vec![StreamedWitnessOutput::new(CommitmentSlot(0), Vec::new())],
-            vec![CommittedPolynomialOutput::new(
-                CommitmentSlot(0),
-                OracleRef::committed(FieldInlineCommittedPolynomial::FieldRdInc),
-                4,
-                mock_commitment(42),
-                (),
-            )],
-        ))
     }
 }
 
@@ -423,23 +312,6 @@ fn canonical_stage0_contract_requests_and_assembles_verifier_fields() -> Result<
     assert_eq!(
         output.untrusted_advice_commitment.as_ref(),
         Some(&mock_commitment(9))
-    );
-    #[cfg(feature = "field-inline")]
-    {
-        let field_inline_request = backend
-            .last_field_inline_request
-            .expect("recording backend should capture field-inline Stage 0 request");
-        assert_eq!(field_inline_request.items.len(), 1);
-        assert_eq!(field_inline_request.items[0].mode, CommitmentMode::Zk);
-        assert_eq!(
-            field_inline_request.items[0].requirement.oracle,
-            OracleRef::committed(FieldInlineCommittedPolynomial::FieldRdInc)
-        );
-    }
-    #[cfg(feature = "field-inline")]
-    assert_eq!(
-        output.commitments.field_inline.field_registers.rd_inc,
-        mock_commitment(42)
     );
     Ok(())
 }
@@ -611,34 +483,4 @@ fn jolt_commitment_output_rejects_duplicate_slots() {
         ProverError::InvalidCommitmentOutput { reason }
             if reason.contains("duplicate Jolt commitment output slot CommitmentSlot(0)")
     ));
-}
-
-#[cfg(feature = "field-inline")]
-#[test]
-fn jolt_commitment_output_includes_field_inline_commitment() -> Result<(), String> {
-    let result = jolt_commitment_result(vec![
-        jolt_output(0, JoltCommittedPolynomial::RamInc, 2),
-        jolt_output(1, JoltCommittedPolynomial::RdInc, 1),
-        jolt_output(2, JoltCommittedPolynomial::InstructionRa(0), 3),
-        jolt_output(3, JoltCommittedPolynomial::InstructionRa(1), 4),
-        jolt_output(4, JoltCommittedPolynomial::BytecodeRa(0), 5),
-        jolt_output(6, JoltCommittedPolynomial::RamRa(0), 6),
-        jolt_output(8, JoltCommittedPolynomial::RamRa(1), 7),
-    ]);
-    let output = CommitmentComponent::from_backend_result(
-        result,
-        field_inline_commitment_result(11),
-        stage_config(false, false),
-    )
-    .map_err(|e| e.to_string())?;
-
-    assert_eq!(
-        output.commitments.field_inline.field_registers.rd_inc,
-        mock_commitment(11)
-    );
-    assert!(output
-        .prover_state
-        .field_inline_opening_hints
-        .contains_key(&FieldInlineCommittedPolynomial::FieldRdInc));
-    Ok(())
 }

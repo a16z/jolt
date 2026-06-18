@@ -1,5 +1,3 @@
-#[cfg(feature = "field-inline")]
-use jolt_backends::SumcheckFieldRegistersIncClaimReductionOutput;
 use jolt_backends::{
     SumcheckBooleanityOutput, SumcheckBytecodeReadRafOutput, SumcheckIncClaimReductionOutput,
     SumcheckInstructionRaVirtualizationOutput, SumcheckRamHammingBooleanityOutput,
@@ -11,10 +9,6 @@ use jolt_verifier::stages::stage6::inputs::{
     IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
     RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
     Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6Claims,
-};
-#[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage6::inputs::{
-    FieldInlineStage6Claims, FieldRegistersIncClaimReductionOutputOpeningClaims,
 };
 
 #[expect(
@@ -28,8 +22,6 @@ pub(super) fn output_claims_from_backend<F: Field>(
     ram_ra_virtualization: SumcheckRamRaVirtualizationOutput<F>,
     instruction_ra_virtualization: SumcheckInstructionRaVirtualizationOutput<F>,
     inc_claim_reduction: SumcheckIncClaimReductionOutput<F>,
-    #[cfg(feature = "field-inline")]
-    field_registers_inc_claim_reduction: SumcheckFieldRegistersIncClaimReductionOutput<F>,
     trusted_advice: Option<AdviceCyclePhaseOutputClaim<F>>,
     untrusted_advice: Option<AdviceCyclePhaseOutputClaim<F>>,
 ) -> Stage6Claims<F> {
@@ -54,13 +46,6 @@ pub(super) fn output_claims_from_backend<F: Field>(
         inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
             ram_inc: inc_claim_reduction.ram_inc,
             rd_inc: inc_claim_reduction.rd_inc,
-        },
-        #[cfg(feature = "field-inline")]
-        field_inline: FieldInlineStage6Claims {
-            field_registers_inc_claim_reduction:
-                FieldRegistersIncClaimReductionOutputOpeningClaims {
-                    field_rd_inc: field_registers_inc_claim_reduction.field_rd_inc,
-                },
         },
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: trusted_advice,

@@ -70,7 +70,6 @@ jobs:
           --message-format=short
           -p jolt-claims
           -p jolt-r1cs
-          -p jolt-verifier
           -p tracer
           -p jolt-program
           -p jolt-riscv
@@ -310,7 +309,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo nextest run -p jolt-claims -p jolt-r1cs -p jolt-verifier \
+          cargo nextest run -p jolt-claims -p jolt-r1cs \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
 

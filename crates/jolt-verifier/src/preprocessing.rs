@@ -1,8 +1,6 @@
 //! Verifier preprocessing inputs.
 
 use common::jolt_device::MemoryLayout;
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::formulas::bytecode::FieldInlineBytecodeRow;
 use jolt_crypto::{DeriveSetup, VectorCommitment};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
@@ -109,8 +107,6 @@ where
 {
     pub program: ProgramPreprocessing<PCS>,
     pub preprocessing_digest: [u8; 32],
-    #[cfg(feature = "field-inline")]
-    pub field_inline_bytecode: Option<Vec<FieldInlineBytecodeRow>>,
     pub pcs_setup: PCS::VerifierSetup,
     pub vc_setup: Option<VC::Setup>,
 }
@@ -129,17 +125,9 @@ where
         Self {
             program,
             preprocessing_digest,
-            #[cfg(feature = "field-inline")]
-            field_inline_bytecode: None,
             pcs_setup,
             vc_setup,
         }
-    }
-
-    #[cfg(feature = "field-inline")]
-    pub fn with_field_inline_bytecode(mut self, bytecode: Vec<FieldInlineBytecodeRow>) -> Self {
-        self.field_inline_bytecode = Some(bytecode);
-        self
     }
 
     /// Reuses the PCS setup source to derive the vector-commitment setup.
@@ -155,8 +143,6 @@ where
         Self {
             program,
             preprocessing_digest,
-            #[cfg(feature = "field-inline")]
-            field_inline_bytecode: None,
             pcs_setup: PCS::verifier_setup(pcs_prover_setup),
             vc_setup: Some(VC::Setup::derive(pcs_prover_setup, vc_capacity)),
         }

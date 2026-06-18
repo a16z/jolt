@@ -12,8 +12,6 @@ use crate::{
     verifier::CheckedInputs,
     VerifierError,
 };
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
 use jolt_claims::protocols::jolt::{
     formulas::{
         committed_openings::{
@@ -42,16 +40,6 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     /// Lagrange factor embedding this polynomial's own opening point into the
     /// unified opening point.
     scale: F,
-}
-
-#[cfg(feature = "field-inline")]
-const fn field_inline_final_opening_count() -> usize {
-    1
-}
-
-#[cfg(not(feature = "field-inline"))]
-const fn field_inline_final_opening_count() -> usize {
-    0
 }
 
 pub fn verify<F, PCS, VC, T, ZkProof>(
@@ -287,7 +275,7 @@ where
         committed_program.map(|committed| committed.bytecode_chunk_count()),
     );
 
-    let mut entries = Vec::with_capacity(order.len() + field_inline_final_opening_count());
+    let mut entries = Vec::with_capacity(order.len());
     // Core's final PCS batch order intentionally differs from proof payload order.
     for polynomial in order {
         let id = final_opening_id(polynomial);
@@ -399,20 +387,6 @@ where
             opening_claim,
             scale: commitment_embedding_scale(opening_point, own_point),
         });
-        #[cfg(feature = "field-inline")]
-        if polynomial == JoltCommittedPolynomial::RdInc {
-            entries.push(Stage8BatchEntry {
-                id: field_increments::field_rd_inc_reduced_opening().into(),
-                commitment: &proof.commitments.field_inline.field_registers.rd_inc,
-                opening_claim: clear_claims.map(|(stage6, _)| {
-                    stage6
-                        .field_inline
-                        .field_registers_inc_claim_reduction
-                        .field_rd_inc
-                }),
-                scale: commitment_embedding_scale(opening_point, inc_opening_point),
-            });
-        }
     }
     Ok(entries)
 }

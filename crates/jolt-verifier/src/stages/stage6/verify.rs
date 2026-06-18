@@ -1,13 +1,3 @@
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::{
-    formulas::{
-        bytecode as field_bytecode, claim_reductions::increments as field_increments,
-        dimensions::FieldRegistersTraceDimensions,
-    },
-    FieldInlineChallengeId, FieldInlinePublicId, FieldInlineRelationClaims,
-    FieldInlineVirtualPolynomial, FieldRegistersIncClaimReductionChallenge,
-    FieldRegistersIncClaimReductionPublic,
-};
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{self, BooleanityDimensions},
@@ -63,16 +53,6 @@ use crate::{
     VerifierError,
 };
 
-#[cfg(feature = "field-inline")]
-const fn field_inline_stage6_output_claim_count() -> usize {
-    1
-}
-
-#[cfg(not(feature = "field-inline"))]
-const fn field_inline_stage6_output_claim_count() -> usize {
-    0
-}
-
 // WARNING: this is the verifier-internal batch claim record used by the
 // canonical `verify()` implementation. It intentionally tracks the
 // bytecode/program-image claim reductions that new 09 added to the Stage 6
@@ -89,8 +69,6 @@ struct VerifyStage6BatchInputClaims<F: Field> {
     ram_ra_virtualization: F,
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
-    #[cfg(feature = "field-inline")]
-    field_registers_inc_claim_reduction: F,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -107,8 +85,6 @@ struct VerifyStage6BatchExpectedOutputClaims<F: Field> {
     ram_ra_virtualization: F,
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
-    #[cfg(feature = "field-inline")]
-    field_registers_inc_claim_reduction: F,
     trusted_advice_cycle_phase: Option<F>,
     untrusted_advice_cycle_phase: Option<F>,
     bytecode_claim_reduction: Option<F>,
@@ -178,9 +154,6 @@ where
         formula_dimensions.instruction_ra_virtualization,
     );
     let inc_claims = increments::claim_reduction::<PCS::Field>(trace_dimensions);
-    #[cfg(feature = "field-inline")]
-    let field_inc_claims =
-        field_increments::claim_reduction::<PCS::Field>(FieldRegistersTraceDimensions::new(log_t));
 
     let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
     let untrusted_advice_layout = checked.precommitted.untrusted_advice.as_ref();
@@ -208,8 +181,6 @@ where
     ] {
         validate_compressed_stage_claim(claim)?;
     }
-    #[cfg(feature = "field-inline")]
-    validate_compressed_field_inline_stage_claim(&field_inc_claims)?;
     for claim in [
         &trusted_advice_claims,
         &untrusted_advice_claims,
@@ -261,7 +232,6 @@ where
 
     let public = |instruction_ra_gamma_powers: Vec<PCS::Field>,
                   inc_gamma: PCS::Field,
-                  #[cfg(feature = "field-inline")] field_inc_gamma: PCS::Field,
                   eta: Option<PCS::Field>,
                   address_phase_challenges: Vec<PCS::Field>,
                   address_phase_batching_coefficients: Vec<PCS::Field>,
@@ -282,8 +252,6 @@ where
         booleanity_gamma,
         instruction_ra_gamma_powers: instruction_ra_gamma_powers.clone(),
         inc_gamma,
-        #[cfg(feature = "field-inline")]
-        field_inline: super::outputs::FieldInlineStage6PublicOutput { field_inc_gamma },
         bytecode_reduction_eta: eta,
     };
 
@@ -305,8 +273,6 @@ where
                 .num_virtual_ra_polys(),
         );
         let inc_gamma = transcript.challenge_scalar();
-        #[cfg(feature = "field-inline")]
-        let field_inc_gamma = transcript.challenge_scalar();
         let eta = committed_program.then(|| transcript.challenge_scalar());
 
         let mut statements = vec![
@@ -329,11 +295,6 @@ where
             ),
             SumcheckStatement::new(inc_claims.sumcheck.rounds, inc_claims.sumcheck.degree),
         ];
-        #[cfg(feature = "field-inline")]
-        statements.push(SumcheckStatement::new(
-            field_inc_claims.sumcheck.rounds,
-            field_inc_claims.sumcheck.degree,
-        ));
         if let Some(claim) = &trusted_advice_claims {
             statements.push(SumcheckStatement::new(
                 claim.sumcheck.rounds,
@@ -486,22 +447,6 @@ where
                     stage: JoltRelationId::IncClaimReduction,
                     reason: error.to_string(),
                 })?;
-        #[cfg(feature = "field-inline")]
-        let (field_inc_point, field_inc_opening_point) = {
-            let field_inc_point = consistency
-                .try_instance_point(field_inc_claims.sumcheck.rounds)
-                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                    stage: JoltRelationId::IncClaimReduction,
-                    reason: error.to_string(),
-                })?;
-            let field_inc_opening_point = trace_dimensions
-                .cycle_opening_point(&field_inc_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::IncClaimReduction,
-                    reason: error.to_string(),
-                })?;
-            (field_inc_point, field_inc_opening_point)
-        };
 
         let trusted_advice = if let (Some(layout), Some(claim)) =
             (trusted_advice_layout, trusted_advice_claims.as_ref())
@@ -586,7 +531,6 @@ where
             + ram_ra_output_openings.len()
             + flat_instruction_ra_output_openings.len()
             + 2
-            + field_inline_stage6_output_claim_count()
             + usize::from(trusted_advice_claims.is_some())
             + usize::from(untrusted_advice_claims.is_some())
             + bytecode_reduction_output_claims
@@ -604,8 +548,6 @@ where
             public: public(
                 instruction_ra_gamma_powers,
                 inc_gamma,
-                #[cfg(feature = "field-inline")]
-                field_inc_gamma,
                 eta,
                 stage6a.address_phase_consistency.challenges(),
                 stage6a
@@ -660,13 +602,6 @@ where
                 sumcheck_point: inc_point,
                 opening_point: inc_opening_point,
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: super::outputs::FieldInlineStage6ZkOutput {
-                field_registers_inc_claim_reduction: Stage6SumcheckPublicOutput {
-                    sumcheck_point: field_inc_point,
-                    opening_point: field_inc_opening_point,
-                },
-            },
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
             bytecode_cycle_phase,
@@ -714,9 +649,6 @@ where
     );
     let [ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation] =
         increments::claim_reduction_input_openings();
-    #[cfg(feature = "field-inline")]
-    let [field_rd_inc_read_write, field_rd_inc_val_evaluation] =
-        field_increments::claim_reduction_input_openings();
 
     let bytecode_read_raf_address_input = bytecode_address_claims.input.expression().try_evaluate(
         |id| {
@@ -917,8 +849,6 @@ where
         .copied()
         .unwrap_or_else(PCS::Field::one);
     let inc_gamma = transcript.challenge_scalar();
-    #[cfg(feature = "field-inline")]
-    let field_inc_gamma = transcript.challenge_scalar();
     let eta = committed_program.then(|| transcript.challenge_scalar());
 
     let input_claims = VerifyStage6BatchInputClaims {
@@ -979,37 +909,6 @@ where
                 _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-        #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction: field_inc_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == field_rd_inc_read_write => Ok(stage4
-                    .output_claims
-                    .field_inline
-                    .field_registers_read_write
-                    .field_rd_inc),
-                id if id == field_rd_inc_val_evaluation => Ok(stage5
-                    .output_claims
-                    .field_inline
-                    .field_registers_val_evaluation
-                    .field_rd_inc),
-                id => Err(VerifierError::MissingFieldInlineOpeningClaim { id }),
-            },
-            |id| match id {
-                FieldInlineChallengeId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionChallenge::Gamma,
-                ) => Ok(field_inc_gamma),
-                _ => Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::IncClaimReduction,
-                    reason: format!("missing field-inline challenge input {id:?}"),
-                }),
-            },
-            |id| {
-                Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::IncClaimReduction,
-                    reason: format!("missing field-inline public input {id:?}"),
-                })
-            },
         )?,
         trusted_advice_cycle_phase: trusted_advice_claims
             .as_ref()
@@ -1115,12 +1014,6 @@ where
             input_claims.inc_claim_reduction,
         ),
     ];
-    #[cfg(feature = "field-inline")]
-    sumcheck_claims.push(SumcheckClaim::new(
-        field_inc_claims.sumcheck.rounds,
-        field_inc_claims.sumcheck.degree,
-        input_claims.field_registers_inc_claim_reduction,
-    ));
     if let (Some(claim), Some(input_claim)) = (
         &trusted_advice_claims,
         input_claims.trusted_advice_cycle_phase,
@@ -1656,96 +1549,6 @@ where
             _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
         },
     )?;
-    #[cfg(feature = "field-inline")]
-    let (field_inc_point, field_inc_opening_point, field_inc_output) = {
-        let field_inc_point = batch
-            .try_instance_point(field_inc_claims.sumcheck.rounds)
-            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: error.to_string(),
-            })?;
-        let field_inc_opening_point = trace_dimensions
-            .cycle_opening_point(field_inc_point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: error.to_string(),
-            })?;
-        let field_log_k = proof.protocol.field_inline.field_register_log_k;
-        if stage4.batch.field_registers_read_write.opening_point.len() < field_log_k {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: format!(
-                    "field-register read-write opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
-                    stage4.batch.field_registers_read_write.opening_point.len()
-                ),
-            });
-        }
-        if stage5
-            .batch
-            .field_registers_val_evaluation
-            .opening_point
-            .len()
-            < field_log_k
-        {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: format!(
-                    "field-register val-evaluation opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
-                    stage5.batch.field_registers_val_evaluation.opening_point.len()
-                ),
-            });
-        }
-        let (_, field_read_write_cycle) = stage4
-            .batch
-            .field_registers_read_write
-            .opening_point
-            .split_at(field_log_k);
-        let (_, field_val_evaluation_cycle) = stage5
-            .batch
-            .field_registers_val_evaluation
-            .opening_point
-            .split_at(field_log_k);
-        let eq_field_read_write = try_eq_mle(&field_inc_opening_point, field_read_write_cycle)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: error.to_string(),
-            })?;
-        let eq_field_val_evaluation =
-            try_eq_mle(&field_inc_opening_point, field_val_evaluation_cycle).map_err(|error| {
-                VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::IncClaimReduction,
-                    reason: error.to_string(),
-                }
-            })?;
-        let [field_rd_inc] = field_increments::claim_reduction_output_openings();
-        let output = field_inc_claims.output.expression().try_evaluate(
-            |id| match *id {
-                id if id == field_rd_inc => Ok(claims
-                    .field_inline
-                    .field_registers_inc_claim_reduction
-                    .field_rd_inc),
-                id => Err(VerifierError::MissingFieldInlineOpeningClaim { id }),
-            },
-            |id| match id {
-                FieldInlineChallengeId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionChallenge::Gamma,
-                ) => Ok(field_inc_gamma),
-                _ => Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::IncClaimReduction,
-                    reason: format!("missing field-inline challenge input {id:?}"),
-                }),
-            },
-            |id| match id {
-                FieldInlinePublicId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionPublic::EqReadWrite,
-                ) => Ok(eq_field_read_write),
-                FieldInlinePublicId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionPublic::EqValEvaluation,
-                ) => Ok(eq_field_val_evaluation),
-            },
-        )?;
-        (field_inc_point.to_vec(), field_inc_opening_point, output)
-    };
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
@@ -1882,8 +1685,6 @@ where
         ram_ra_virtualization: ram_ra_output,
         instruction_ra_virtualization: instruction_ra_output,
         inc_claim_reduction: inc_output,
-        #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction: field_inc_output,
         trusted_advice_cycle_phase: trusted_advice
             .as_ref()
             .map(|verified| verified.expected_output_claim),
@@ -1905,8 +1706,6 @@ where
         expected_outputs.instruction_ra_virtualization,
         expected_outputs.inc_claim_reduction,
     ];
-    #[cfg(feature = "field-inline")]
-    expected_outputs_in_order.push(expected_outputs.field_registers_inc_claim_reduction);
     if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
         expected_outputs_in_order.push(output_claim);
     }
@@ -1952,8 +1751,6 @@ where
         public: public(
             instruction_ra_gamma_powers,
             inc_gamma,
-            #[cfg(feature = "field-inline")]
-            field_inc_gamma,
             eta,
             address_batch.reduction.point.as_slice().to_vec(),
             address_batch.batching_coefficients.clone(),
@@ -2027,13 +1824,6 @@ where
                 opening_point: inc_opening_point,
                 expected_output_claim: expected_outputs.inc_claim_reduction,
             },
-            #[cfg(feature = "field-inline")]
-            field_registers_inc_claim_reduction: VerifiedStage6Sumcheck {
-                input_claim: input_claims.field_registers_inc_claim_reduction,
-                sumcheck_point: field_inc_point,
-                opening_point: field_inc_opening_point,
-                expected_output_claim: expected_outputs.field_registers_inc_claim_reduction,
-            },
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
             bytecode_cycle_phase,
@@ -2053,22 +1843,6 @@ fn validate_compressed_stage_claim<F: Field>(
     }
     if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
         return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage: claim.id });
-    }
-    Ok(())
-}
-
-#[cfg(feature = "field-inline")]
-fn validate_compressed_field_inline_stage_claim<F: Field>(
-    claim: &FieldInlineRelationClaims<F>,
-) -> Result<(), VerifierError> {
-    if claim.sumcheck.degree == 0 {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::IncClaimReduction,
-            reason: format!(
-                "field-inline stage {:?} sumcheck degree is invalid: {}",
-                claim.id, claim.sumcheck.degree
-            ),
-        });
     }
     Ok(())
 }
@@ -2102,8 +1876,6 @@ pub struct Stage6BatchInputClaims<F: Field> {
     pub ram_ra_virtualization: F,
     pub instruction_ra_virtualization: F,
     pub inc_claim_reduction: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_inc_claim_reduction: F,
     pub trusted_advice_cycle_phase: Option<F>,
     pub untrusted_advice_cycle_phase: Option<F>,
 }
@@ -2127,8 +1899,6 @@ pub struct Stage6TranscriptChallenges<F: Field> {
     pub instruction_ra_gamma_powers: Vec<F>,
     pub instruction_ra_gamma: F,
     pub inc_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_inc_gamma: F,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2141,8 +1911,6 @@ pub struct Stage6InputClaimChallengeValues<'a, F: Field> {
     pub stage5_gammas: &'a [F],
     pub instruction_ra_gamma: F,
     pub inc_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_inc_gamma: F,
 }
 
 impl<F: Field> Stage6TranscriptChallenges<F> {
@@ -2156,8 +1924,6 @@ impl<F: Field> Stage6TranscriptChallenges<F> {
             stage5_gammas: &self.stage5_gammas,
             instruction_ra_gamma: self.instruction_ra_gamma,
             inc_gamma: self.inc_gamma,
-            #[cfg(feature = "field-inline")]
-            field_inc_gamma: self.field_inc_gamma,
         }
     }
 }
@@ -2487,90 +2253,6 @@ pub fn stage6_inc_claim_reduction_cycle_points<'a, F: Field>(
     })
 }
 
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug)]
-pub struct FieldInlineStage6IncClaimReductionCyclePoints<'a, F: Field> {
-    pub read_write_cycle: &'a [F],
-    pub val_evaluation_cycle: &'a [F],
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: Field> FieldInlineStage6IncClaimReductionCyclePoints<'_, F> {
-    pub fn reversed_cycles(&self) -> [Vec<F>; 2] {
-        [
-            self.read_write_cycle.iter().rev().copied().collect(),
-            self.val_evaluation_cycle.iter().rev().copied().collect(),
-        ]
-    }
-}
-
-#[cfg(feature = "field-inline")]
-pub fn stage6_field_registers_inc_claim_reduction_cycle_points<'a, F: Field>(
-    stage4: &'a Stage4ClearOutput<F>,
-    stage5: &'a Stage5ClearOutput<F>,
-    field_log_k: usize,
-    log_t: usize,
-) -> Result<FieldInlineStage6IncClaimReductionCyclePoints<'a, F>, VerifierError> {
-    let expected_len = field_log_k + log_t;
-    let (_, read_write_cycle) = stage6_checked_exact_split(
-        "Stage 6 field-register read-write opening",
-        &stage4.batch.field_registers_read_write.opening_point,
-        field_log_k,
-        expected_len,
-        JoltRelationId::IncClaimReduction,
-    )?;
-    let (_, val_evaluation_cycle) = stage6_checked_exact_split(
-        "Stage 6 field-register value-evaluation opening",
-        &stage5.batch.field_registers_val_evaluation.opening_point,
-        field_log_k,
-        expected_len,
-        JoltRelationId::IncClaimReduction,
-    )?;
-    Ok(FieldInlineStage6IncClaimReductionCyclePoints {
-        read_write_cycle,
-        val_evaluation_cycle,
-    })
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug)]
-pub struct FieldInlineStage6BytecodeRegisterPoints<'a, F: Field> {
-    pub read_write_address: &'a [F],
-    pub read_write_cycle: &'a [F],
-    pub val_evaluation_address: &'a [F],
-    pub val_evaluation_cycle: &'a [F],
-}
-
-#[cfg(feature = "field-inline")]
-pub fn stage6_field_inline_bytecode_register_points<'a, F: Field>(
-    stage4: &'a Stage4ClearOutput<F>,
-    stage5: &'a Stage5ClearOutput<F>,
-    field_log_k: usize,
-    log_t: usize,
-) -> Result<FieldInlineStage6BytecodeRegisterPoints<'a, F>, VerifierError> {
-    let expected_len = field_log_k + log_t;
-    let (read_write_address, read_write_cycle) = stage6_checked_exact_split(
-        "Stage 6 field-register read-write opening",
-        &stage4.batch.field_registers_read_write.opening_point,
-        field_log_k,
-        expected_len,
-        JoltRelationId::BytecodeReadRaf,
-    )?;
-    let (val_evaluation_address, val_evaluation_cycle) = stage6_checked_exact_split(
-        "Stage 6 field-register value-evaluation opening",
-        &stage5.batch.field_registers_val_evaluation.opening_point,
-        field_log_k,
-        expected_len,
-        JoltRelationId::BytecodeReadRaf,
-    )?;
-    Ok(FieldInlineStage6BytecodeRegisterPoints {
-        read_write_address,
-        read_write_cycle,
-        val_evaluation_address,
-        val_evaluation_cycle,
-    })
-}
-
 pub fn stage6_validate_dependencies<F: Field>(
     stage3: &Stage3ClearOutput<F>,
 ) -> Result<(), VerifierError> {
@@ -2723,20 +2405,6 @@ pub fn stage6_batch_input_claims<F: Field>(
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction: {
-            let read_write_inc = stage4
-                .output_claims
-                .field_inline
-                .field_registers_read_write
-                .field_rd_inc;
-            let val_evaluation_inc = stage5
-                .output_claims
-                .field_inline
-                .field_registers_val_evaluation
-                .field_rd_inc;
-            read_write_inc + challenges.field_inc_gamma * val_evaluation_inc
-        },
         trusted_advice_cycle_phase: trusted_advice_claims
             .as_ref()
             .map(|claim| {
@@ -2920,73 +2588,6 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?;
 
-        #[cfg(feature = "field-inline")]
-        let input_claim = {
-            let mut input_claim = input_claim;
-            let field_openings = field_bytecode::read_raf_input_openings();
-            input_claim += field_bytecode::read_raf_input_extension::<F>().try_evaluate(
-                |id| {
-                    for (index, flag) in field_bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS
-                        .into_iter()
-                        .enumerate()
-                    {
-                        if *id == field_openings[index] {
-                            return stage1
-                                .field_inline
-                                .claim(FieldInlineVirtualPolynomial::FieldOpFlag(flag))
-                                .ok_or(VerifierError::MissingFieldInlineOpeningClaim { id: *id });
-                        }
-                    }
-                    if *id == field_openings[8] {
-                        return Ok(stage4
-                            .output_claims
-                            .field_inline
-                            .field_registers_read_write
-                            .field_rd_wa);
-                    }
-                    if *id == field_openings[9] {
-                        return Ok(stage4
-                            .output_claims
-                            .field_inline
-                            .field_registers_read_write
-                            .field_rs1_ra);
-                    }
-                    if *id == field_openings[10] {
-                        return Ok(stage4
-                            .output_claims
-                            .field_inline
-                            .field_registers_read_write
-                            .field_rs2_ra);
-                    }
-                    if *id == field_openings[11] {
-                        return Ok(stage5
-                            .output_claims
-                            .field_inline
-                            .field_registers_val_evaluation
-                            .field_rd_wa);
-                    }
-                    Err(VerifierError::MissingFieldInlineOpeningClaim { id: *id })
-                },
-                |id| match id {
-                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
-                        Ok(bytecode_gamma)
-                    }
-                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage1Gamma) => {
-                        Ok(challenges.stage1_gammas[1])
-                    }
-                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage4Gamma) => {
-                        Ok(challenges.stage4_gammas[1])
-                    }
-                    JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage5Gamma) => {
-                        Ok(challenges.stage5_gammas[1])
-                    }
-                    _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-                },
-                |()| Ok(F::zero()),
-            )?;
-            input_claim
-        };
-
         Ok(input_claim)
     }
 }
@@ -3034,8 +2635,6 @@ pub struct Stage6PostAddressChallenges<F: Field> {
     pub instruction_ra_gamma_powers: Vec<F>,
     pub instruction_ra_gamma: F,
     pub inc_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_inc_gamma: F,
 }
 
 pub fn stage6_pre_address_transcript_challenges<F, T>(
@@ -3093,14 +2692,10 @@ where
         .copied()
         .unwrap_or_else(F::one);
     let inc_gamma = transcript.challenge_scalar();
-    #[cfg(feature = "field-inline")]
-    let field_inc_gamma = transcript.challenge_scalar();
     Stage6PostAddressChallenges {
         instruction_ra_gamma_powers,
         instruction_ra_gamma,
         inc_gamma,
-        #[cfg(feature = "field-inline")]
-        field_inc_gamma,
     }
 }
 
@@ -3123,8 +2718,6 @@ impl<F: Field> Stage6TranscriptChallenges<F> {
             instruction_ra_gamma_powers: post.instruction_ra_gamma_powers,
             instruction_ra_gamma: post.instruction_ra_gamma,
             inc_gamma: post.inc_gamma,
-            #[cfg(feature = "field-inline")]
-            field_inc_gamma: post.field_inc_gamma,
         }
     }
 }
@@ -3154,10 +2747,6 @@ pub fn stage6_public_output<F: Field>(
         instruction_ra_gamma_powers: transcript_challenges.instruction_ra_gamma_powers.clone(),
         inc_gamma: transcript_challenges.inc_gamma,
         bytecode_reduction_eta,
-        #[cfg(feature = "field-inline")]
-        field_inline: super::outputs::FieldInlineStage6PublicOutput {
-            field_inc_gamma: transcript_challenges.field_inc_gamma,
-        },
     }
 }
 
@@ -3281,16 +2870,6 @@ pub fn stage6_clear_output<F: Field>(
                 sumcheck_point: request.points.inc_claim_reduction_sumcheck_point.clone(),
                 opening_point: request.points.inc_claim_reduction_opening_point.clone(),
                 expected_output_claim: request.expected_outputs.inc_claim_reduction,
-            },
-            // Field-inline placeholder: this request-based Stage 6 reconstruction
-            // does not thread field-register inc-claim-reduction data. Field-inline
-            // is not exercised by the muldiv gates.
-            #[cfg(feature = "field-inline")]
-            field_registers_inc_claim_reduction: VerifiedStage6Sumcheck {
-                input_claim: F::zero(),
-                sumcheck_point: Vec::new(),
-                opening_point: Vec::new(),
-                expected_output_claim: F::zero(),
             },
             trusted_advice_cycle_phase,
             untrusted_advice_cycle_phase,
@@ -3644,37 +3223,6 @@ pub fn stage6_booleanity_expected_output<F: Field>(
     )
 }
 
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug)]
-pub struct FieldInlineStage6IncClaimReductionExpectedOutputInputs<'a, F: Field> {
-    pub opening_point: &'a [F],
-    pub read_write_cycle: &'a [F],
-    pub val_evaluation_cycle: &'a [F],
-    pub field_rd_inc: F,
-    pub gamma: F,
-}
-
-#[cfg(feature = "field-inline")]
-pub fn stage6_field_registers_inc_claim_reduction_expected_output<F: Field>(
-    inputs: FieldInlineStage6IncClaimReductionExpectedOutputInputs<'_, F>,
-) -> Result<F, VerifierError> {
-    let eq_read_write =
-        try_eq_mle(inputs.opening_point, inputs.read_write_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: error.to_string(),
-            }
-        })?;
-    let eq_val_evaluation =
-        try_eq_mle(inputs.opening_point, inputs.val_evaluation_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::IncClaimReduction,
-                reason: error.to_string(),
-            }
-        })?;
-    Ok((eq_read_write + inputs.gamma * eq_val_evaluation) * inputs.field_rd_inc)
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6BatchExpectedOutputClaims<F: Field> {
     pub bytecode_read_raf: F,
@@ -3683,8 +3231,6 @@ pub struct Stage6BatchExpectedOutputClaims<F: Field> {
     pub ram_ra_virtualization: F,
     pub instruction_ra_virtualization: F,
     pub inc_claim_reduction: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_inc_claim_reduction: F,
     pub trusted_advice_cycle_phase: Option<F>,
     pub untrusted_advice_cycle_phase: Option<F>,
 }
@@ -3697,8 +3243,6 @@ pub struct Stage6BatchPointInputs<'a, F: Field> {
     pub ram_ra_virtualization: &'a [F],
     pub instruction_ra_virtualization: &'a [F],
     pub inc_claim_reduction: &'a [F],
-    #[cfg(feature = "field-inline")]
-    pub field_registers_inc_claim_reduction: &'a [F],
     pub trusted_advice_cycle_phase: Option<&'a [F]>,
     pub untrusted_advice_cycle_phase: Option<&'a [F]>,
 }
@@ -3736,10 +3280,6 @@ pub struct Stage6BatchPoints<F: Field> {
     pub instruction_ra_opening_points: Vec<Vec<F>>,
     pub inc_claim_reduction_sumcheck_point: Vec<F>,
     pub inc_claim_reduction_opening_point: Vec<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_inc_claim_reduction_sumcheck_point: Vec<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_inc_claim_reduction_opening_point: Vec<F>,
     pub trusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
     pub untrusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
 }
@@ -3807,15 +3347,6 @@ pub fn stage6_batch_points<F: Field>(
             reason: error.to_string(),
         })?;
 
-    #[cfg(feature = "field-inline")]
-    let field_registers_inc_claim_reduction_opening_point = context
-        .trace_dimensions
-        .cycle_opening_point(inputs.field_registers_inc_claim_reduction)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::IncClaimReduction,
-            reason: error.to_string(),
-        })?;
-
     Ok(Stage6BatchPoints {
         bytecode_read_raf_sumcheck_point: inputs.bytecode_read_raf.to_vec(),
         bytecode_read_raf_r_address: bytecode_opening.r_address,
@@ -3836,12 +3367,6 @@ pub fn stage6_batch_points<F: Field>(
         instruction_ra_opening_points,
         inc_claim_reduction_sumcheck_point: inputs.inc_claim_reduction.to_vec(),
         inc_claim_reduction_opening_point: inc_opening,
-        #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction_sumcheck_point: inputs
-            .field_registers_inc_claim_reduction
-            .to_vec(),
-        #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction_opening_point,
         trusted_advice_cycle_phase: stage6_advice_cycle_phase_points(
             JoltAdviceKind::Trusted,
             context.trusted_advice_layout,
@@ -3900,8 +3425,6 @@ pub fn stage6_expected_output_claim_values<F: Field>(
         expected_outputs.instruction_ra_virtualization,
         expected_outputs.inc_claim_reduction,
     ];
-    #[cfg(feature = "field-inline")]
-    values.push(expected_outputs.field_registers_inc_claim_reduction);
     if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
         values.push(output_claim);
     }
@@ -3937,12 +3460,6 @@ pub const fn stage6_bytecode_gamma_count() -> usize {
     8
 }
 
-#[cfg(feature = "field-inline")]
-pub const fn stage6_stage1_gamma_count() -> usize {
-    field_bytecode::FIELD_INLINE_BYTECODE_STAGE1_GAMMA_COUNT
-}
-
-#[cfg(not(feature = "field-inline"))]
 pub const fn stage6_stage1_gamma_count() -> usize {
     2 + NUM_CIRCUIT_FLAGS
 }
@@ -3955,22 +3472,10 @@ pub const fn stage6_stage3_gamma_count() -> usize {
     9
 }
 
-#[cfg(feature = "field-inline")]
-pub const fn stage6_stage4_gamma_count() -> usize {
-    field_bytecode::FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT
-}
-
-#[cfg(not(feature = "field-inline"))]
 pub const fn stage6_stage4_gamma_count() -> usize {
     3
 }
 
-#[cfg(feature = "field-inline")]
-pub const fn stage6_stage5_gamma_count(lookup_table_flag_count: usize) -> usize {
-    2 + lookup_table_flag_count + field_bytecode::FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS
-}
-
-#[cfg(not(feature = "field-inline"))]
 pub const fn stage6_stage5_gamma_count(lookup_table_flag_count: usize) -> usize {
     2 + lookup_table_flag_count
 }
@@ -4041,13 +3546,6 @@ pub fn stage6_output_claim_values<F: Field>(
     );
     values.push(claims.inc_claim_reduction.ram_inc);
     values.push(claims.inc_claim_reduction.rd_inc);
-    #[cfg(feature = "field-inline")]
-    values.push(
-        claims
-            .field_inline
-            .field_registers_inc_claim_reduction
-            .field_rd_inc,
-    );
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
         values.push(opening_claim.opening_claim);
     }
@@ -4066,8 +3564,6 @@ pub fn stage6_input_claim_values<F: Field>(claims: &Stage6BatchInputClaims<F>) -
         claims.instruction_ra_virtualization,
         claims.inc_claim_reduction,
     ];
-    #[cfg(feature = "field-inline")]
-    values.push(claims.field_registers_inc_claim_reduction);
     if let Some(input_claim) = claims.trusted_advice_cycle_phase {
         values.push(input_claim);
     }

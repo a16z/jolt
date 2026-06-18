@@ -16,10 +16,6 @@ use jolt_poly::Polynomial;
 use jolt_sumcheck::{ClearProof, ClearSumcheckProof, SumcheckProof};
 #[cfg(feature = "zk")]
 use jolt_transcript::{Blake2bTranscript, Transcript};
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-use jolt_witness::protocols::jolt_vm::field_inline::{
-    FieldInlineNamespace, FieldInlineRegisterReadWriteRow, FieldInlineRegisterReadWriteRows,
-};
 #[cfg(feature = "zk")]
 use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage2Rows, JoltVmStage2TraceRow};
 #[cfg(feature = "zk")]
@@ -43,7 +39,7 @@ use crate::stages::stage1::prove::{
 };
 
 #[test]
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 fn stage2_committed_proof_component_produces_native_verifier_output(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let public_io = test_public_io();
@@ -128,79 +124,6 @@ fn stage2_committed_proof_component_produces_native_verifier_output(
     Ok(())
 }
 
-#[test]
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-fn stage2_field_inline_committed_proof_component_produces_native_verifier_output(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let public_io = test_public_io();
-    let trace_length = 16;
-    let ram_k = 16;
-    let witness = SatisfyingStage2Witness {
-        final_ram_state: public_io_ram_state(&public_io, ram_k)?,
-    };
-    let mut backend = CpuBackend::default();
-    let vc_setup = pedersen_setup(64);
-    let checked = checked_inputs(public_io.clone(), trace_length, ram_k, &vc_setup);
-    let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage2-field-inline-zk-test");
-
-    let stage1 = prove_stage1_committed_proof_component::<Fr, _, _, _, Pedersen<Bn254G1>>(
-        Stage1ProverInput::new(Stage1ProverConfig::new(4), &witness),
-        &mut backend,
-        &mut prover_transcript,
-        &vc_setup,
-    )?;
-    let stage2 = prove_stage2_committed_proof_component::<Fr, _, _, _, Pedersen<Bn254G1>>(
-        Stage2ProverInput::new(stage2_config(), &checked, &stage1.verifier_output, &witness),
-        &mut backend,
-        &vc_setup,
-        &mut prover_transcript,
-    )?;
-
-    assert_eq!(stage2.product_uniskip_output_claim_values.len(), 1);
-    assert_eq!(stage2.batch_output_claim_values.len(), 18);
-    assert_eq!(
-        stage2.batch_committed_witness.round_coefficients.len(),
-        stage2_config().log_t + stage2_config().log_k
-    );
-
-    let proof = stage2_zk_proof(
-        stage1.uniskip_proof.clone(),
-        stage1.remainder_proof.clone(),
-        stage2.product_uniskip_proof.clone(),
-        stage2.regular_batch_proof.clone(),
-        trace_length,
-        ram_k,
-    );
-    let preprocessing = verifier_preprocessing(public_io, trace_length, Some(vc_setup))
-        .with_field_inline_bytecode(Vec::new());
-    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage2-field-inline-zk-test");
-    let stage1_native = jolt_verifier::stages::stage1::verify(
-        &checked,
-        &preprocessing,
-        &proof,
-        &mut verifier_transcript,
-    )?;
-    let stage2_native = jolt_verifier::stages::stage2::verify(
-        &checked,
-        &preprocessing,
-        &proof,
-        &mut verifier_transcript,
-        jolt_verifier::stages::stage2::inputs::deps(&stage1_native),
-    )?;
-    let jolt_verifier::stages::stage2::Stage2Output::Zk(stage2_native) = stage2_native else {
-        return Err("Stage 2 verifier did not return field-inline ZK output".into());
-    };
-
-    assert_eq!(stage2_native.public, stage2.public);
-    assert_eq!(
-        stage2_native.batch_output_claims.shape.output_claim_count,
-        stage2.batch_output_claim_values.len()
-    );
-    assert_eq!(verifier_transcript.state(), prover_transcript.state());
-
-    Ok(())
-}
-
 #[cfg(feature = "zk")]
 fn stage2_config() -> Stage2BatchProverConfig {
     Stage2BatchProverConfig::new(
@@ -261,7 +184,7 @@ fn empty_precommitted_schedule(trace_length: usize) -> jolt_verifier::stages::Pr
     .expect("empty precommitted schedule has no candidates and cannot fail")
 }
 
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 fn checked_inputs(
     public_io: JoltDevice,
     trace_length: usize,
@@ -278,26 +201,6 @@ fn checked_inputs(
         trusted_advice_commitment_present: false,
         vc_capacity: Some(Pedersen::<Bn254G1>::capacity(vc_setup)),
         precommitted: empty_precommitted_schedule(trace_length),
-    }
-}
-
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-fn checked_inputs(
-    public_io: JoltDevice,
-    trace_length: usize,
-    ram_k: usize,
-    vc_setup: &PedersenSetup<Bn254G1>,
-) -> jolt_verifier::CheckedInputs {
-    jolt_verifier::CheckedInputs {
-        public_io,
-        zk: true,
-        trace_length,
-        ram_K: ram_k,
-        entry_address: 0,
-        preprocessing_digest: [0; 32],
-        trusted_advice_commitment_present: false,
-        vc_capacity: Some(Pedersen::<Bn254G1>::capacity(vc_setup)),
-        field_inline_bytecode_transcript: Vec::new(),
     }
 }
 
@@ -325,7 +228,7 @@ fn verifier_preprocessing(
     )
 }
 
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 fn stage2_zk_proof(
     stage1_uniskip_proof: SumcheckProof<Fr, Bn254G1>,
     stage1_remainder_proof: SumcheckProof<Fr, Bn254G1>,
@@ -344,40 +247,6 @@ fn stage2_zk_proof(
         commitment.clone(),
         commitment,
         jolt_verifier::proof::JoltRaCommitments::new(Vec::new(), Vec::new(), Vec::new()),
-    );
-    stage2_zk_proof_with_commitments(
-        commitments,
-        stage1_uniskip_proof,
-        stage1_remainder_proof,
-        stage2_uniskip_proof,
-        stage2_batch_proof,
-        trace_length,
-        ram_k,
-    )
-}
-
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-fn stage2_zk_proof(
-    stage1_uniskip_proof: SumcheckProof<Fr, Bn254G1>,
-    stage1_remainder_proof: SumcheckProof<Fr, Bn254G1>,
-    stage2_uniskip_proof: SumcheckProof<Fr, Bn254G1>,
-    stage2_batch_proof: SumcheckProof<Fr, Bn254G1>,
-    trace_length: usize,
-    ram_k: usize,
-) -> jolt_verifier::proof::JoltProof<
-    jolt_openings::mock::MockCommitmentScheme<Fr>,
-    Pedersen<Bn254G1>,
-    (),
-> {
-    type MockPcs = jolt_openings::mock::MockCommitmentScheme<Fr>;
-    let commitment = <MockPcs as Commitment>::Output::default();
-    let commitments = jolt_verifier::proof::JoltCommitments::new(
-        commitment.clone(),
-        commitment.clone(),
-        jolt_verifier::proof::JoltRaCommitments::new(Vec::new(), Vec::new(), Vec::new()),
-        jolt_verifier::proof::FieldInlineCommitments::new(
-            jolt_verifier::proof::FieldRegistersCommitments::new(commitment),
-        ),
     );
     stage2_zk_proof_with_commitments(
         commitments,
@@ -591,49 +460,5 @@ impl JoltVmStage2Rows for SatisfyingStage2Witness {
 
     fn final_ram_state_words(&self) -> Result<Vec<u64>, WitnessError> {
         Ok(self.final_ram_state.clone())
-    }
-}
-
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-impl WitnessProvider<Fr, FieldInlineNamespace> for SatisfyingStage2Witness {
-    fn describe_oracle(
-        &self,
-        oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
-        Ok(OracleDescriptor::new(
-            oracle,
-            WitnessDimensions::new(4),
-            PolynomialEncoding::Dense,
-        ))
-    }
-
-    fn view_requirements(
-        &self,
-        oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<Vec<ViewRequirement<FieldInlineNamespace>>, WitnessError> {
-        let descriptor = self.describe_oracle(oracle)?;
-        Ok(vec![ViewRequirement::new(
-            descriptor.reference,
-            descriptor.encoding,
-            MaterializationPolicy::BackendChoice,
-            RetentionHint::ThroughStage8,
-        )])
-    }
-
-    fn oracle_view(
-        &self,
-        requirement: ViewRequirement<FieldInlineNamespace>,
-    ) -> Result<PolynomialView<'_, Fr, FieldInlineNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(requirement.oracle)?;
-        Ok(PolynomialView::owned(descriptor, vec![Fr::from_u64(0); 16]))
-    }
-}
-
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-impl FieldInlineRegisterReadWriteRows<Fr> for SatisfyingStage2Witness {
-    fn field_inline_register_read_write_rows(
-        &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<Fr>>, WitnessError> {
-        Ok(vec![FieldInlineRegisterReadWriteRow::default(); 16])
     }
 }

@@ -7,30 +7,20 @@ use jolt_backends::{
     CommitmentBackend, CommitmentMode, CommitmentRequest, CommitmentRequestItem, CommitmentResult,
     CommitmentSlot, TracePolynomialEmbedding,
 };
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TracePolynomialOrder, ra::JoltRaPolynomialLayout},
     JoltCommittedPolynomial,
 };
 use jolt_openings::CommitmentScheme;
 use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
-#[cfg(feature = "field-inline")]
-use jolt_verifier::proof::{FieldInlineCommitments, FieldRegistersCommitments};
 use jolt_verifier::proof::{JoltCommitments, JoltRaCommitments};
 use jolt_verifier::stages::stage8::{stage8_final_opening_order, Stage8FinalOpening};
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::FieldInlineNamespace;
 use jolt_witness::{
     protocols::jolt_vm::JoltVmNamespace, CommittedWitnessProvider, MaterializationPolicy,
     OracleKind, OracleRef, RetentionHint, ViewRequirement, WitnessNamespace,
 };
 
 use crate::ProverError;
-
-#[cfg(feature = "field-inline")]
-pub type FieldInlineCommitmentWitness<'a, F> =
-    dyn CommittedWitnessProvider<F, FieldInlineNamespace> + Sync + 'a;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentStageConfig {
@@ -106,8 +96,6 @@ pub struct CommitmentComponent<PCS: CommitmentScheme> {
 #[derive(Clone)]
 pub(crate) struct CommitmentProverState<OpeningHint> {
     pub opening_hints: BTreeMap<JoltCommittedPolynomial, OpeningHint>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline_opening_hints: BTreeMap<FieldInlineCommittedPolynomial, OpeningHint>,
 }
 
 pub type Stage8OpeningInputs<PCS> = (
@@ -118,10 +106,6 @@ pub type Stage8OpeningInputs<PCS> = (
 impl<PCS: CommitmentScheme> CommitmentComponent<PCS> {
     pub fn from_backend_result(
         result: CommitmentResult<JoltVmNamespace, PCS>,
-        #[cfg(feature = "field-inline")] field_inline_result: CommitmentResult<
-            FieldInlineNamespace,
-            PCS,
-        >,
         config: CommitmentStageConfig,
     ) -> Result<Self, ProverError> {
         let mut jolt_outputs =
@@ -131,31 +115,13 @@ impl<PCS: CommitmentScheme> CommitmentComponent<PCS> {
         let jolt = take_jolt_commitments(&mut jolt_outputs, config)?;
         let opening_hints = jolt_outputs.finish()?;
 
-        #[cfg(feature = "field-inline")]
-        let mut field_inline_outputs =
-            CommitmentOutputMap::<FieldInlineCommittedPolynomial, PCS>::from_backend_result(
-                "field-inline",
-                field_inline_result,
-            )?;
-        #[cfg(feature = "field-inline")]
-        let field_inline = take_field_inline_commitments(&mut field_inline_outputs)?;
-        #[cfg(feature = "field-inline")]
-        let field_inline_opening_hints = field_inline_outputs.finish()?;
-
-        #[cfg(not(feature = "field-inline"))]
         let commitments = JoltCommitments::new(jolt.rd_inc, jolt.ram_inc, jolt.ra);
-        #[cfg(feature = "field-inline")]
-        let commitments = JoltCommitments::new(jolt.rd_inc, jolt.ram_inc, jolt.ra, field_inline);
 
         Ok(Self {
             commitments,
             trusted_advice_commitment: jolt.trusted_advice_commitment,
             untrusted_advice_commitment: jolt.untrusted_advice_commitment,
-            prover_state: CommitmentProverState {
-                opening_hints,
-                #[cfg(feature = "field-inline")]
-                field_inline_opening_hints,
-            },
+            prover_state: CommitmentProverState { opening_hints },
         })
     }
 
@@ -180,17 +146,6 @@ impl<PCS: CommitmentScheme> CommitmentComponent<PCS> {
                 Stage8FinalOpening::Jolt(polynomial) => {
                     let commitment = self.jolt_stage8_commitment(polynomial)?;
                     push_jolt_stage8_opening(
-                        &mut ordered_commitments,
-                        &mut opening_hints,
-                        commitment,
-                        &self.prover_state,
-                        polynomial,
-                    )?;
-                }
-                #[cfg(feature = "field-inline")]
-                Stage8FinalOpening::FieldInline(polynomial) => {
-                    let commitment = self.field_inline_stage8_commitment(polynomial);
-                    push_field_inline_stage8_opening(
                         &mut ordered_commitments,
                         &mut opening_hints,
                         commitment,
@@ -246,18 +201,6 @@ impl<PCS: CommitmentScheme> CommitmentComponent<PCS> {
             }
         }
     }
-
-    #[cfg(feature = "field-inline")]
-    fn field_inline_stage8_commitment(
-        &self,
-        polynomial: FieldInlineCommittedPolynomial,
-    ) -> &PCS::Output {
-        match polynomial {
-            FieldInlineCommittedPolynomial::FieldRdInc => {
-                &self.commitments.field_inline.field_registers.rd_inc
-            }
-        }
-    }
 }
 
 fn missing_stage8_commitment(polynomial: JoltCommittedPolynomial) -> ProverError {
@@ -289,30 +232,6 @@ where
     Ok(())
 }
 
-#[cfg(feature = "field-inline")]
-fn push_field_inline_stage8_opening<C, H>(
-    commitments: &mut Vec<C>,
-    hints: &mut Vec<H>,
-    commitment: &C,
-    prover_state: &CommitmentProverState<H>,
-    polynomial: FieldInlineCommittedPolynomial,
-) -> Result<(), ProverError>
-where
-    C: Clone,
-    H: Clone,
-{
-    commitments.push(commitment.clone());
-    let hint = prover_state
-        .field_inline_opening_hints
-        .get(&polynomial)
-        .cloned()
-        .ok_or_else(|| ProverError::InvalidStageRequest {
-            reason: format!("Stage 8 field-inline opening hint is missing for {polynomial:?}"),
-        })?;
-    hints.push(hint);
-    Ok(())
-}
-
 pub fn prove<F, W, B, PCS>(
     input: CommitmentStageInput<'_, W, PCS>,
     backend: &mut B,
@@ -320,9 +239,7 @@ pub fn prove<F, W, B, PCS>(
 where
     F: jolt_field::Field,
     PCS: CommitmentScheme<Field = F>,
-    W: CommittedWitnessProvider<F, JoltVmNamespace>
-        + crate::api::FieldInlineProverWitness<F>
-        + Sync,
+    W: CommittedWitnessProvider<F, JoltVmNamespace> + Sync,
     B: CommitmentStageBackend<F, PCS>,
 {
     let mode = match input.protocol.zk {
@@ -338,69 +255,21 @@ where
         input.config.trace_polynomial_order,
         trace_embedding,
     )?;
-    #[cfg(feature = "field-inline")]
-    let field_inline_result = backend.commit_field_inline(
-        input.witness,
-        input.setup,
-        mode,
-        input.config.trace_polynomial_order,
-        trace_embedding,
-    )?;
 
-    CommitmentComponent::from_backend_result(
-        result,
-        #[cfg(feature = "field-inline")]
-        field_inline_result,
-        input.config,
-    )
+    CommitmentComponent::from_backend_result(result, input.config)
 }
 
 pub trait CommitmentStageBackend<F, PCS>: CommitmentBackend<F, JoltVmNamespace, PCS>
 where
     PCS: CommitmentScheme<Field = F>,
 {
-    #[cfg(feature = "field-inline")]
-    fn commit_field_inline(
-        &mut self,
-        witness: &FieldInlineCommitmentWitness<'_, F>,
-        setup: &PCS::ProverSetup,
-        mode: CommitmentMode,
-        trace_polynomial_order: TracePolynomialOrder,
-        trace_embedding: Option<TracePolynomialEmbedding>,
-    ) -> Result<CommitmentResult<FieldInlineNamespace, PCS>, ProverError>;
 }
 
-#[cfg(not(feature = "field-inline"))]
 impl<F, PCS, B> CommitmentStageBackend<F, PCS> for B
 where
     PCS: CommitmentScheme<Field = F>,
     B: CommitmentBackend<F, JoltVmNamespace, PCS>,
 {
-}
-
-#[cfg(feature = "field-inline")]
-impl<F, PCS, B> CommitmentStageBackend<F, PCS> for B
-where
-    PCS: CommitmentScheme<Field = F>,
-    B: CommitmentBackend<F, JoltVmNamespace, PCS> + CommitmentBackend<F, FieldInlineNamespace, PCS>,
-{
-    fn commit_field_inline(
-        &mut self,
-        witness: &FieldInlineCommitmentWitness<'_, F>,
-        setup: &PCS::ProverSetup,
-        mode: CommitmentMode,
-        trace_polynomial_order: TracePolynomialOrder,
-        trace_embedding: Option<TracePolynomialEmbedding>,
-    ) -> Result<CommitmentResult<FieldInlineNamespace, PCS>, ProverError> {
-        commit::<F, FieldInlineNamespace, FieldInlineCommitmentWitness<'_, F>, Self, PCS>(
-            witness,
-            self,
-            setup,
-            mode,
-            trace_polynomial_order,
-            trace_embedding,
-        )
-    }
 }
 
 pub(super) fn build_commitment_request<F, N, W>(
@@ -610,19 +479,6 @@ where
             config.include_untrusted_advice,
         )?,
     })
-}
-
-#[cfg(feature = "field-inline")]
-fn take_field_inline_commitments<PCS>(
-    outputs: &mut CommitmentOutputMap<FieldInlineCommittedPolynomial, PCS>,
-) -> Result<FieldInlineCommitments<PCS::Output>, ProverError>
-where
-    PCS: CommitmentScheme,
-{
-    let field_rd_inc = outputs.take(FieldInlineCommittedPolynomial::FieldRdInc)?;
-    Ok(FieldInlineCommitments::new(FieldRegistersCommitments::new(
-        field_rd_inc,
-    )))
 }
 
 fn final_opening_trace_embedding(

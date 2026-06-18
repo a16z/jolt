@@ -1,5 +1,3 @@
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineConfig;
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::BooleanityDimensions, bytecode::BytecodeReadRafDimensions,
@@ -24,8 +22,6 @@ use jolt_verifier::stages::{
     stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
 };
 use jolt_verifier::CheckedInputs;
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::FieldInlineRegisterReadWriteRows;
 
 #[cfg(feature = "zk")]
 use crate::committed::CommittedSumcheckWitness;
@@ -48,8 +44,6 @@ pub struct Stage6ProverConfig {
     pub trusted_advice_layout: Option<AdviceClaimReductionLayout>,
     pub untrusted_advice_layout: Option<AdviceClaimReductionLayout>,
     pub bytecode_context: Option<Stage6BytecodeContext>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineConfig,
 }
 
 impl Stage6ProverConfig {
@@ -79,8 +73,6 @@ impl Stage6ProverConfig {
             trusted_advice_layout,
             untrusted_advice_layout,
             bytecode_context: None,
-            #[cfg(feature = "field-inline")]
-            field_inline: FieldInlineConfig::native_v1(),
         }
     }
 
@@ -190,20 +182,3 @@ pub(super) struct Stage6RegularBatchProofOutput<F: Field, Proof> {
     pub(super) proof: SumcheckProof<F, Proof>,
     pub(super) verifier_output: Stage6ClearOutput<F>,
 }
-
-#[cfg(feature = "field-inline")]
-pub trait Stage6FieldInlineWitness<F: Field>: FieldInlineRegisterReadWriteRows<F> {}
-
-#[cfg(feature = "field-inline")]
-impl<F, T> Stage6FieldInlineWitness<F> for T
-where
-    F: Field,
-    T: FieldInlineRegisterReadWriteRows<F>,
-{
-}
-
-#[cfg(not(feature = "field-inline"))]
-pub trait Stage6FieldInlineWitness<F: Field> {}
-
-#[cfg(not(feature = "field-inline"))]
-impl<F: Field, T> Stage6FieldInlineWitness<F> for T {}

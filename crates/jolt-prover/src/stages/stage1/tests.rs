@@ -1,12 +1,7 @@
 use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 
-#[cfg(any(
-    feature = "field-inline",
-    all(feature = "zk", not(feature = "field-inline"))
-))]
+#[cfg(feature = "zk")]
 use jolt_backends::cpu::CpuBackend;
-#[cfg(feature = "field-inline")]
-use jolt_backends::stage1_field_inline_r1cs_input_slot;
 use jolt_backends::{
     stage1_r1cs_input_slot, Backend, BackendError, BackendRelationId, BackendValueSlot,
     SumcheckBackend, SumcheckEvaluationOutput, SumcheckEvaluationRequest, SumcheckInstanceRequest,
@@ -16,17 +11,11 @@ use jolt_backends::{
     STAGE1_SPARTAN_OUTER_OPTIMIZATION_IDS, STAGE1_UNISKIP_INPUT_SLOT, STAGE1_UNISKIP_OUTPUT_SLOT,
     STAGE1_UNISKIP_SLOT,
 };
-#[cfg(not(feature = "field-inline"))]
 use jolt_backends::{
     SumcheckLinearProductOutput, SumcheckLinearProductRequest, SumcheckMaterializationOutput,
     SumcheckMaterializationRequest, SumcheckPrefixProductSumRequest,
     SumcheckSpartanOuterRemainderRound, SumcheckSpartanOuterRemainderState,
     SumcheckSpartanOuterRemainderStateRequest,
-};
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::{
-    formulas::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, FieldInlineOpFlag,
-    FieldInlineVirtualPolynomial,
 };
 use jolt_claims::protocols::jolt::{
     formulas::spartan::{SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS},
@@ -34,14 +23,11 @@ use jolt_claims::protocols::jolt::{
 };
 #[cfg(feature = "zk")]
 use jolt_crypto::{Bn254, JoltGroup, PedersenSetup, VectorCommitment};
-#[cfg(any(feature = "field-inline", feature = "zk"))]
+#[cfg(feature = "zk")]
 use jolt_crypto::{Bn254G1, Commitment, Pedersen};
 use jolt_field::{Fr, FromPrimitiveInt};
-#[cfg(any(feature = "field-inline", feature = "zk"))]
+#[cfg(feature = "zk")]
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "field-inline")]
-use jolt_poly::Polynomial;
-#[cfg(not(feature = "field-inline"))]
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges, SPARTAN_OUTER_REMAINDER_DEGREE,
@@ -50,17 +36,11 @@ use jolt_r1cs::constraints::jolt::{
 use jolt_sumcheck::{
     BatchedSumcheckVerifier, CenteredIntegerDomain, SumcheckClaim, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
-#[cfg(any(feature = "field-inline", feature = "zk"))]
+#[cfg(feature = "zk")]
 use jolt_sumcheck::{ClearProof, ClearSumcheckProof, SumcheckProof};
 use jolt_transcript::{Blake2bTranscript, Transcript};
-#[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage1::field_inline_stage1_claims_from_r1cs_inputs;
 use jolt_verifier::stages::stage1::{
     spartan_outer_claims_from_r1cs_inputs, stage1_claims_from_r1cs_inputs,
-};
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::{
-    FieldInlineNamespace, FieldInlineRegisterReadWriteRow, FieldInlineRegisterReadWriteRows,
 };
 use jolt_witness::protocols::jolt_vm::{JoltVmSpartanOuterRow, JoltVmSpartanOuterRows};
 use jolt_witness::{
@@ -72,28 +52,16 @@ use jolt_witness::{
 use crate::stages::primary_view_requirement;
 use crate::ProverError;
 
-#[cfg(feature = "field-inline")]
-use super::prove::prove as prove_stage1_public;
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 use super::prove::prove_committed_proof_component as prove_stage1_committed_proof_component;
-#[cfg(not(feature = "field-inline"))]
 use super::prove::prove_stage1_transparent_sumchecks;
-#[cfg(feature = "field-inline")]
-use super::prove::Stage1FieldInlineR1csInputClaim;
-#[cfg(any(feature = "field-inline", feature = "zk"))]
+#[cfg(feature = "zk")]
 use super::prove::Stage1ProverInput;
 use super::prove::{Stage1ProofComponent, Stage1ProverConfig, Stage1R1csInputClaim};
 
 fn verifier_r1cs_inputs<F: jolt_field::Field>(
     claims: &[Stage1R1csInputClaim<F>],
 ) -> impl Iterator<Item = (JoltVirtualPolynomial, F)> + '_ {
-    claims.iter().map(|claim| (claim.variable, claim.value))
-}
-
-#[cfg(feature = "field-inline")]
-fn verifier_field_inline_r1cs_inputs<F: jolt_field::Field>(
-    claims: &[Stage1FieldInlineR1csInputClaim<F>],
-) -> impl Iterator<Item = (FieldInlineVirtualPolynomial, F)> + '_ {
     claims.iter().map(|claim| (claim.variable, claim.value))
 }
 
@@ -309,8 +277,6 @@ where
         uniskip_output_claim,
         remainder_output_claim,
         r1cs_input_claims,
-        #[cfg(feature = "field-inline")]
-        field_inline_r1cs_input_claims: Vec::new(),
         verifier_output: None,
     })
 }
@@ -590,7 +556,6 @@ fn stage1_evaluation_helper_runs_backend_owned_view_evaluations(
 }
 
 #[test]
-#[cfg(not(feature = "field-inline"))]
 fn stage1_transparent_helper_produces_verifier_compatible_sumchecks(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let witness = SatisfyingStage1Witness;
@@ -647,7 +612,7 @@ fn stage1_transparent_helper_produces_verifier_compatible_sumchecks(
 }
 
 #[test]
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 fn stage1_committed_proof_component_produces_native_verifier_output(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let witness = SatisfyingStage1Witness;
@@ -728,198 +693,7 @@ fn stage1_committed_proof_component_produces_native_verifier_output(
     Ok(())
 }
 
-#[test]
-#[cfg(feature = "field-inline")]
-fn stage1_field_inline_prove_produces_verifier_compatible_sumchecks(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let witness = SatisfyingStage1Witness;
-    let config = Stage1ProverConfig::new(4);
-    let mut backend = CpuBackend::default();
-    let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage1-field-inline-test");
-
-    let output = prove_stage1_public::<Fr, _, _, _, Bn254G1>(
-        Stage1ProverInput::new(config, &witness),
-        &mut backend,
-        &mut prover_transcript,
-    )?;
-    let prover_verifier_output = output
-        .verifier_output
-        .clone()
-        .ok_or("field-inline Stage 1 prover did not return verifier output")?;
-
-    assert_eq!(
-        output.field_inline_r1cs_input_claims.len(),
-        FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS.len()
-    );
-
-    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1-field-inline-test");
-    let tau = verifier_transcript.challenge_vector(config.log_t + 2);
-    let uniskip_reduction = output.uniskip_proof.verify(
-        &SumcheckClaim::new(1, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, Fr::from_u64(0)),
-        CenteredIntegerDomain::new(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE),
-        UNISKIP_ROUND_TRANSCRIPT_LABEL,
-        &mut verifier_transcript,
-    )?;
-    assert_eq!(uniskip_reduction.value, output.uniskip_output_claim);
-
-    verifier_transcript.append_labeled(b"opening_claim", &output.uniskip_output_claim);
-    let remainder_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &[SumcheckClaim::new(
-            config.log_t + 1,
-            SPARTAN_OUTER_REMAINDER_DEGREE,
-            output.uniskip_output_claim,
-        )],
-        &output.remainder_proof,
-        &mut verifier_transcript,
-    )?;
-    let mut r1cs_input_claims = output
-        .r1cs_input_claims
-        .iter()
-        .map(|claim| claim.value)
-        .collect::<Vec<_>>();
-    r1cs_input_claims.extend(
-        output
-            .field_inline_r1cs_input_claims
-            .iter()
-            .map(|claim| claim.value),
-    );
-    let expected_remainder = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-        tau: &tau,
-        uniskip: uniskip_reduction.point[0],
-        remainder: &remainder_batch.reduction.point,
-    })?
-    .expected_output_claim(&r1cs_input_claims)?
-        * remainder_batch.batching_coefficients[0];
-    assert_eq!(remainder_batch.reduction.value, expected_remainder);
-    for opening_claim in &r1cs_input_claims {
-        verifier_transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
-
-    let stage_claims = stage1_claims_from_r1cs_inputs(
-        output.uniskip_output_claim,
-        verifier_r1cs_inputs(&output.r1cs_input_claims),
-        verifier_field_inline_r1cs_inputs(&output.field_inline_r1cs_input_claims),
-    )?;
-    let proof = field_inline_stage1_proof(output, stage_claims, 1 << config.log_t);
-    let checked = jolt_verifier::CheckedInputs {
-        public_io: common::jolt_device::JoltDevice::default(),
-        zk: false,
-        trace_length: 1 << config.log_t,
-        ram_K: 16,
-        entry_address: 0,
-        preprocessing_digest: [0; 32],
-        trusted_advice_commitment_present: false,
-        vc_capacity: None,
-        field_inline_bytecode_transcript: Vec::new(),
-    };
-    let preprocessing = jolt_verifier::JoltVerifierPreprocessing::<
-        jolt_openings::mock::MockCommitmentScheme<Fr>,
-        Pedersen<Bn254G1>,
-    >::new(
-        empty_program_preprocessing(1 << config.log_t),
-        [0; 32],
-        (),
-        None,
-    );
-    let mut native_transcript = Blake2bTranscript::<Fr>::new(b"stage1-field-inline-test");
-    let native_output = jolt_verifier::stages::stage1::verify(
-        &checked,
-        &preprocessing,
-        &proof,
-        &mut native_transcript,
-    )?;
-    let jolt_verifier::stages::stage1::Stage1Output::Clear(native_output) = native_output else {
-        return Err("field-inline Stage 1 verifier did not return clear output".into());
-    };
-    assert_eq!(prover_verifier_output, native_output);
-    assert_eq!(native_transcript.state(), prover_transcript.state());
-
-    Ok(())
-}
-
-#[test]
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-fn stage1_field_inline_committed_proof_component_produces_native_verifier_output(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let witness = SatisfyingStage1Witness;
-    let config = Stage1ProverConfig::new(4);
-    let mut backend = CpuBackend::default();
-    let vc_setup = pedersen_setup(64);
-    let mut prover_transcript = Blake2bTranscript::<Fr>::new(b"stage1-field-inline-zk-test");
-
-    let output = super::prove::prove_committed_proof_component::<Fr, _, _, _, Pedersen<Bn254G1>>(
-        Stage1ProverInput::new(config, &witness),
-        &mut backend,
-        &mut prover_transcript,
-        &vc_setup,
-    )?;
-
-    assert_eq!(output.uniskip_output_claim_values.len(), 1);
-    assert_eq!(
-        output.remainder_output_claim_values.len(),
-        SPARTAN_OUTER_R1CS_INPUTS.len() + FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS.len()
-    );
-    assert_eq!(
-        output.remainder_committed_witness.round_coefficients.len(),
-        config.log_t + 1
-    );
-
-    let trace_length = 1 << config.log_t;
-    let proof = field_inline_stage1_zk_proof(
-        output.uniskip_proof.clone(),
-        output.remainder_proof.clone(),
-        trace_length,
-    );
-    let checked = jolt_verifier::CheckedInputs {
-        public_io: common::jolt_device::JoltDevice::default(),
-        zk: true,
-        trace_length,
-        ram_K: 16,
-        entry_address: 0,
-        preprocessing_digest: [0; 32],
-        trusted_advice_commitment_present: false,
-        vc_capacity: Some(Pedersen::<Bn254G1>::capacity(&vc_setup)),
-        field_inline_bytecode_transcript: Vec::new(),
-    };
-    let preprocessing = jolt_verifier::JoltVerifierPreprocessing::<
-        jolt_openings::mock::MockCommitmentScheme<Fr>,
-        Pedersen<Bn254G1>,
-    >::new(
-        empty_program_preprocessing(trace_length),
-        [0; 32],
-        (),
-        Some(vc_setup),
-    )
-    .with_field_inline_bytecode(Vec::new());
-    let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1-field-inline-zk-test");
-    let native_output = jolt_verifier::stages::stage1::verify(
-        &checked,
-        &preprocessing,
-        &proof,
-        &mut verifier_transcript,
-    )?;
-    let jolt_verifier::stages::stage1::Stage1Output::Zk(native_output) = native_output else {
-        return Err("field-inline Stage 1 verifier did not return ZK output".into());
-    };
-
-    assert_eq!(native_output.public, output.public);
-    assert_eq!(
-        native_output
-            .remainder_output_claims
-            .shape
-            .output_claim_count,
-        output.remainder_output_claim_values.len()
-    );
-    assert_eq!(verifier_transcript.state(), prover_transcript.state());
-
-    Ok(())
-}
-
-#[cfg(any(
-    feature = "field-inline",
-    all(feature = "zk", not(feature = "field-inline"))
-))]
+#[cfg(feature = "zk")]
 fn empty_program_preprocessing(
     trace_length: usize,
 ) -> jolt_program::preprocess::JoltProgramPreprocessing {
@@ -933,10 +707,7 @@ fn empty_program_preprocessing(
 
 /// A schedule with no committed program and no advice: every layout is `None`,
 /// so the log_t/log_k_chunk inputs do not affect the resulting value.
-#[cfg(any(
-    feature = "field-inline",
-    all(feature = "zk", not(feature = "field-inline"))
-))]
+#[cfg(feature = "zk")]
 #[expect(
     clippy::expect_used,
     reason = "Test helper; the empty schedule is infallible."
@@ -1003,7 +774,6 @@ fn stage1_r1cs_inputs_assemble_verifier_spartan_outer_claims(
 }
 
 #[test]
-#[cfg(not(feature = "field-inline"))]
 fn stage1_r1cs_inputs_assemble_verifier_stage_claims() -> Result<(), Box<dyn std::error::Error>> {
     let claims = r1cs_claims();
     let stage_claims =
@@ -1036,52 +806,6 @@ fn stage1_r1cs_claim_assembly_rejects_duplicate_inputs() {
     assert!(spartan_outer_claims_from_r1cs_inputs(verifier_r1cs_inputs(&claims)).is_err());
 }
 
-#[test]
-#[cfg(feature = "field-inline")]
-fn stage1_field_inline_r1cs_inputs_assemble_verifier_stage_claims(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let base_claims = r1cs_claims();
-    let field_claims = field_inline_r1cs_claims();
-    let field_inline = field_inline_stage1_claims_from_r1cs_inputs(
-        verifier_field_inline_r1cs_inputs(&field_claims),
-    )?;
-
-    assert_eq!(
-        field_inline.field_rs1_value,
-        field_inline_value_for(FieldInlineVirtualPolynomial::FieldRs1Value)
-    );
-    assert_eq!(
-        field_inline.field_inv_product,
-        field_inline_value_for(FieldInlineVirtualPolynomial::FieldInvProduct)
-    );
-    assert_eq!(
-        field_inline.flags.mul,
-        field_inline_value_for(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::Mul
-        ))
-    );
-
-    let stage_claims = stage1_claims_from_r1cs_inputs(
-        Fr::from_u64(77),
-        verifier_r1cs_inputs(&base_claims),
-        verifier_field_inline_r1cs_inputs(&field_claims),
-    )?;
-    assert_eq!(stage_claims.uniskip_output_claim, Fr::from_u64(77));
-    assert_eq!(
-        stage_claims.field_inline.flags.load_imm,
-        field_inline_value_for(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::LoadImm
-        ))
-    );
-    assert_eq!(
-        stage_claims
-            .spartan_outer_claims(&SpartanOuterDimensions::rv64(4))?
-            .len(),
-        SPARTAN_OUTER_R1CS_INPUTS.len() + FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS.len()
-    );
-    Ok(())
-}
-
 fn value_for(variable: JoltVirtualPolynomial) -> Fr {
     SPARTAN_OUTER_R1CS_INPUTS
         .iter()
@@ -1102,146 +826,7 @@ fn r1cs_claims() -> Vec<Stage1R1csInputClaim<Fr>> {
         .collect()
 }
 
-#[cfg(feature = "field-inline")]
-fn field_inline_value_for(variable: FieldInlineVirtualPolynomial) -> Fr {
-    FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-        .iter()
-        .position(|candidate| *candidate == variable)
-        .map_or(Fr::from_u64(0), |index| Fr::from_u64(200 + index as u64))
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_r1cs_claims() -> Vec<Stage1FieldInlineR1csInputClaim<Fr>> {
-    FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(index, variable)| Stage1FieldInlineR1csInputClaim {
-            variable,
-            slot: stage1_field_inline_r1cs_input_slot(index),
-            value: Fr::from_u64(200 + index as u64),
-        })
-        .collect()
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_stage1_proof(
-    output: Stage1ProofComponent<Fr, SumcheckProof<Fr, Bn254G1>>,
-    stage1: jolt_verifier::stages::stage1::inputs::Stage1Claims<Fr>,
-    trace_length: usize,
-) -> jolt_verifier::proof::JoltProof<jolt_openings::mock::MockCommitmentScheme<Fr>, Pedersen<Bn254G1>>
-{
-    type MockPcs = jolt_openings::mock::MockCommitmentScheme<Fr>;
-    let commitment = <MockPcs as Commitment>::Output::default();
-    let commitments = jolt_verifier::proof::JoltCommitments::new(
-        commitment.clone(),
-        commitment.clone(),
-        jolt_verifier::proof::JoltRaCommitments::new(Vec::new(), Vec::new(), Vec::new()),
-        jolt_verifier::proof::FieldInlineCommitments::new(
-            jolt_verifier::proof::FieldRegistersCommitments::new(commitment),
-        ),
-    );
-    let empty = SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default()));
-    let stages = jolt_verifier::proof::JoltStageProofs {
-        stage1_uni_skip_first_round_proof: output.uniskip_proof,
-        stage1_sumcheck_proof: output.remainder_proof,
-        stage2_uni_skip_first_round_proof: empty.clone(),
-        stage2_sumcheck_proof: empty.clone(),
-        stage3_sumcheck_proof: empty.clone(),
-        stage4_sumcheck_proof: empty.clone(),
-        stage5_sumcheck_proof: empty.clone(),
-        stage6a_sumcheck_proof: empty.clone(),
-        stage6b_sumcheck_proof: empty.clone(),
-        stage7_sumcheck_proof: empty,
-    };
-    let mut claims = jolt_verifier::compat::claims::empty_clear_opening_claims(trace_length);
-    claims.stage1 = stage1;
-    let poly = Polynomial::new(vec![Fr::from_u64(0)]);
-    let mut transcript = Blake2bTranscript::<Fr>::new(b"stage1-field-inline-opening");
-    let opening_proof = MockPcs::open(&poly, &[], Fr::from_u64(0), &(), None, &mut transcript);
-    jolt_verifier::proof::JoltProof::<MockPcs, Pedersen<Bn254G1>>::new(
-        commitments,
-        stages,
-        opening_proof,
-        None,
-        jolt_verifier::proof::JoltProofClaims::Clear(claims),
-        trace_length,
-        16,
-        jolt_claims::protocols::jolt::JoltReadWriteConfig {
-            ram_rw_phase1_num_rounds: 1,
-            ram_rw_phase2_num_rounds: 1,
-            registers_rw_phase1_num_rounds: 1,
-            registers_rw_phase2_num_rounds: 1,
-        },
-        jolt_claims::protocols::jolt::JoltOneHotConfig {
-            log_k_chunk: 4,
-            lookups_ra_virtual_log_k_chunk: 16,
-        },
-        jolt_verifier::proof::TracePolynomialOrder::AddressMajor,
-    )
-}
-
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-fn field_inline_stage1_zk_proof(
-    uniskip_proof: SumcheckProof<Fr, Bn254G1>,
-    remainder_proof: SumcheckProof<Fr, Bn254G1>,
-    trace_length: usize,
-) -> jolt_verifier::proof::JoltProof<
-    jolt_openings::mock::MockCommitmentScheme<Fr>,
-    Pedersen<Bn254G1>,
-    (),
-> {
-    type MockPcs = jolt_openings::mock::MockCommitmentScheme<Fr>;
-    let commitment = <MockPcs as Commitment>::Output::default();
-    let commitments = jolt_verifier::proof::JoltCommitments::new(
-        commitment.clone(),
-        commitment.clone(),
-        jolt_verifier::proof::JoltRaCommitments::new(Vec::new(), Vec::new(), Vec::new()),
-        jolt_verifier::proof::FieldInlineCommitments::new(
-            jolt_verifier::proof::FieldRegistersCommitments::new(commitment),
-        ),
-    );
-    let empty = SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default()));
-    let stages = jolt_verifier::proof::JoltStageProofs {
-        stage1_uni_skip_first_round_proof: uniskip_proof,
-        stage1_sumcheck_proof: remainder_proof,
-        stage2_uni_skip_first_round_proof: empty.clone(),
-        stage2_sumcheck_proof: empty.clone(),
-        stage3_sumcheck_proof: empty.clone(),
-        stage4_sumcheck_proof: empty.clone(),
-        stage5_sumcheck_proof: empty.clone(),
-        stage6a_sumcheck_proof: empty.clone(),
-        stage6b_sumcheck_proof: empty.clone(),
-        stage7_sumcheck_proof: empty,
-    };
-    let poly = jolt_poly::Polynomial::new(vec![Fr::from_u64(0)]);
-    let mut transcript = Blake2bTranscript::<Fr>::new(b"stage1-field-inline-zk-opening");
-    let opening_proof = MockPcs::open(&poly, &[], Fr::from_u64(0), &(), None, &mut transcript);
-    jolt_verifier::proof::JoltProof::<MockPcs, Pedersen<Bn254G1>, ()>::new(
-        commitments,
-        stages,
-        opening_proof,
-        None,
-        jolt_verifier::proof::JoltProofClaims::Zk {
-            blindfold_proof: (),
-        },
-        trace_length,
-        16,
-        jolt_claims::protocols::jolt::JoltReadWriteConfig {
-            ram_rw_phase1_num_rounds: 1,
-            ram_rw_phase2_num_rounds: 1,
-            registers_rw_phase1_num_rounds: 1,
-            registers_rw_phase2_num_rounds: 1,
-        },
-        jolt_claims::protocols::jolt::JoltOneHotConfig {
-            log_k_chunk: 4,
-            lookups_ra_virtual_log_k_chunk: 16,
-        },
-        jolt_verifier::proof::TracePolynomialOrder::AddressMajor,
-    )
-}
-
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 fn stage1_zk_proof(
     uniskip_proof: SumcheckProof<Fr, Bn254G1>,
     remainder_proof: SumcheckProof<Fr, Bn254G1>,
@@ -1445,59 +1030,10 @@ impl JoltVmSpartanOuterRows for SatisfyingStage1Witness {
     }
 }
 
-#[cfg(feature = "field-inline")]
-impl FieldInlineRegisterReadWriteRows<Fr> for SatisfyingStage1Witness {
-    fn field_inline_register_read_write_rows(
-        &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<Fr>>, WitnessError> {
-        Ok(vec![FieldInlineRegisterReadWriteRow::default(); 16])
-    }
-}
-
 fn satisfying_stage1_value(variable: JoltVirtualPolynomial) -> Fr {
     match variable {
         JoltVirtualPolynomial::NextUnexpandedPC => Fr::from_u64(4),
         _ => Fr::from_u64(0),
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl WitnessProvider<Fr, FieldInlineNamespace> for SatisfyingStage1Witness {
-    fn describe_oracle(
-        &self,
-        oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
-        let OracleKind::Virtual(_) = oracle.kind else {
-            return Err(WitnessError::UnknownOracle {
-                namespace: FieldInlineNamespace::ID.name,
-            });
-        };
-        Ok(OracleDescriptor::new(
-            oracle,
-            WitnessDimensions::new(4),
-            PolynomialEncoding::Dense,
-        ))
-    }
-
-    fn view_requirements(
-        &self,
-        oracle: OracleRef<FieldInlineNamespace>,
-    ) -> Result<Vec<ViewRequirement<FieldInlineNamespace>>, WitnessError> {
-        let descriptor = self.describe_oracle(oracle)?;
-        Ok(vec![ViewRequirement::new(
-            descriptor.reference,
-            descriptor.encoding,
-            MaterializationPolicy::BackendChoice,
-            RetentionHint::ThroughBlindFold,
-        )])
-    }
-
-    fn oracle_view(
-        &self,
-        requirement: ViewRequirement<FieldInlineNamespace>,
-    ) -> Result<PolynomialView<'_, Fr, FieldInlineNamespace>, WitnessError> {
-        let descriptor = self.describe_oracle(requirement.oracle)?;
-        Ok(PolynomialView::owned(descriptor, vec![Fr::from_u64(0); 16]))
     }
 }
 
@@ -1570,17 +1106,14 @@ impl SumcheckBackend<Fr, JoltVmNamespace> for RecordingSumcheckBackend {
     }
 }
 
-#[cfg(not(feature = "field-inline"))]
 struct EvaluationBackend;
 
-#[cfg(not(feature = "field-inline"))]
 impl Backend for EvaluationBackend {
     fn name(&self) -> &'static str {
         "evaluation"
     }
 }
 
-#[cfg(not(feature = "field-inline"))]
 impl SumcheckBackend<Fr, JoltVmNamespace> for EvaluationBackend {
     type Proof = ();
 
@@ -1836,7 +1369,6 @@ impl SumcheckBackend<Fr, JoltVmNamespace> for EvaluationBackend {
     }
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_blend_row_weights(selector: Fr, zero: &[Fr], one: &[Fr]) -> Vec<Fr> {
     if selector == Fr::from_u64(0) {
         return zero.to_vec();
@@ -1850,7 +1382,6 @@ fn test_blend_row_weights(selector: Fr, zero: &[Fr], one: &[Fr]) -> Vec<Fr> {
         .collect()
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_weighted_linear_rows(
     rows: &[Vec<(usize, Fr)>],
     row_weights: &[Fr],
@@ -1871,7 +1402,6 @@ fn test_weighted_linear_rows(
         .sum()
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_weighted_linear_rows_at_row(
     rows: &[Vec<(usize, Fr)>],
     row_weights: &[Fr],
@@ -1899,7 +1429,6 @@ fn test_weighted_linear_rows_at_row(
         .sum()
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_linear_row(
     row: &[(usize, Fr)],
     input_columns: &[usize],
@@ -1926,7 +1455,6 @@ fn test_linear_row(
         .sum()
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_linear_row_at_row(
     row: &[(usize, Fr)],
     input_columns: &[usize],
@@ -1954,12 +1482,10 @@ fn test_linear_row_at_row(
         .sum()
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_eq_factor(challenge: Fr, value: Fr) -> Fr {
     challenge * value + (Fr::from_u64(1) - challenge) * (Fr::from_u64(1) - value)
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_sum_bound_pair_endpoints(
     eq_tensor: &TensorEqTable<Fr>,
     left: &[Fr],
@@ -1985,7 +1511,6 @@ fn test_sum_bound_pair_endpoints(
     (q_at_zero, q_at_infinity)
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn test_bind_low_variable(values: &mut [Fr], active_len: usize, point: Fr) -> usize {
     let next_len = active_len / 2;
     let one_minus_point = Fr::from_u64(1) - point;

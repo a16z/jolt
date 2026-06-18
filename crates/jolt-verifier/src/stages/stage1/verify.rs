@@ -298,7 +298,5 @@ where
         uniskip,
         remainder,
         outer: claims.outer.clone(),
-        #[cfg(feature = "field-inline")]
-        field_inline: claims.field_inline.clone(),
     }))
 }

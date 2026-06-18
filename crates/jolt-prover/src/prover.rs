@@ -259,11 +259,6 @@ where
             .r1cs_input_claims
             .iter()
             .map(crate::stages::stage1::prove::Stage1R1csInputClaim::verifier_input),
-        #[cfg(feature = "field-inline")]
-        stage1
-            .field_inline_r1cs_input_claims
-            .iter()
-            .map(crate::stages::stage1::prove::Stage1FieldInlineR1csInputClaim::verifier_input),
     )?;
     let stage_proofs = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
@@ -722,9 +717,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     B: stage0::CommitmentStageBackend<PCS::Field, PCS>,
-    W: CommittedWitnessProvider<PCS::Field, JoltVmNamespace>
-        + crate::api::FieldInlineProverWitness<PCS::Field>
-        + Sync,
+    W: CommittedWitnessProvider<PCS::Field, JoltVmNamespace> + Sync,
 {
     let proof_parameters = *config;
     let formula_dimensions = proof_parameters_formula_dimensions(preprocessing, proof_parameters)?;

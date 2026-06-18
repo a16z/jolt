@@ -1,7 +1,5 @@
 //! Typed outputs produced by stage 1 verification.
 
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
 use jolt_claims::protocols::jolt::JoltVirtualPolynomial;
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
@@ -10,8 +8,6 @@ use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsis
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
-#[cfg(feature = "field-inline")]
-use super::inputs::{field_inline_stage1_claims_from_r1cs_inputs, FieldInlineStage1Claims};
 use super::inputs::{spartan_outer_claims_from_r1cs_inputs, SpartanOuterClaims};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,8 +24,6 @@ pub struct Stage1ClearOutput<F: Field> {
     pub uniskip: VerifiedSpartanOuterSumcheck<F>,
     pub remainder: VerifiedSpartanOuterSumcheck<F>,
     pub outer: SpartanOuterClaims<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineStage1Claims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,7 +49,6 @@ pub struct VerifiedSpartanOuterSumcheck<F: Field> {
     pub expected_output_claim: F,
 }
 
-#[cfg(not(feature = "field-inline"))]
 #[expect(
     clippy::too_many_arguments,
     reason = "Mirrors Stage1ClearOutput, which decomposes the uni-skip/remainder reductions into distinct Fiat-Shamir values."
@@ -89,45 +82,6 @@ pub fn stage1_clear_output<F: Field>(
         uniskip,
         remainder,
         outer: spartan_outer_claims_from_r1cs_inputs(r1cs_input_claims)?,
-    })
-}
-
-#[cfg(feature = "field-inline")]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Mirrors Stage1ClearOutput, which decomposes the uni-skip/remainder reductions into distinct Fiat-Shamir values."
-)]
-pub fn stage1_clear_output<F: Field>(
-    tau: Vec<F>,
-    uniskip_challenge: F,
-    uniskip_output_claim: F,
-    remainder_batching_coefficient: F,
-    remainder_challenges: Vec<F>,
-    remainder_output_claim: F,
-    expected_remainder_output_claim: F,
-    r1cs_input_claims: impl IntoIterator<Item = (JoltVirtualPolynomial, F)>,
-    field_inline_r1cs_input_claims: impl IntoIterator<Item = (FieldInlineVirtualPolynomial, F)>,
-) -> Result<Stage1ClearOutput<F>, VerifierError> {
-    let uniskip = stage1_uniskip_output(uniskip_challenge, uniskip_output_claim);
-    let remainder = stage1_remainder_output(
-        uniskip_output_claim,
-        remainder_batching_coefficient,
-        remainder_challenges,
-        remainder_output_claim,
-        expected_remainder_output_claim,
-    );
-    let public = stage1_public_output(
-        tau,
-        uniskip_challenge,
-        remainder_batching_coefficient,
-        &remainder,
-    );
-    Ok(Stage1ClearOutput {
-        public,
-        uniskip,
-        remainder,
-        outer: spartan_outer_claims_from_r1cs_inputs(r1cs_input_claims)?,
-        field_inline: field_inline_stage1_claims_from_r1cs_inputs(field_inline_r1cs_input_claims)?,
     })
 }
 

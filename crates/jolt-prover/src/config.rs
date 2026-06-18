@@ -6,19 +6,16 @@ use crate::error::ProverError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProverFeatureSet {
     pub zk: bool,
-    pub field_inline: bool,
 }
 
 impl ProverFeatureSet {
     pub const COMPILED: Self = Self {
         zk: cfg!(feature = "zk"),
-        field_inline: cfg!(feature = "field-inline"),
     };
 
     pub fn from_protocol(protocol: &JoltProtocolConfig) -> Self {
         Self {
             zk: matches!(protocol.zk, ZkConfig::BlindFold),
-            field_inline: protocol.field_inline.enabled,
         }
     }
 }
@@ -54,8 +51,8 @@ impl ProverConfig {
         }
     }
 
-    /// The compile-relevant feature subset (`zk`, `field_inline`) this binary
-    /// proves with, derived from the pinned [`JOLT_VERIFIER_CONFIG`].
+    /// The compile-relevant feature subset (`zk`) this binary proves with,
+    /// derived from the pinned [`JOLT_VERIFIER_CONFIG`].
     pub fn features() -> ProverFeatureSet {
         ProverFeatureSet::from_protocol(&JOLT_VERIFIER_CONFIG)
     }

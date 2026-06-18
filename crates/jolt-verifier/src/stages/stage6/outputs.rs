@@ -36,19 +36,9 @@ pub struct Stage6PublicOutput<F: Field> {
     pub booleanity_gamma: F,
     pub instruction_ra_gamma_powers: Vec<F>,
     pub inc_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineStage6PublicOutput<F>,
     /// Committed program mode only: bytecode claim-reduction batching
     /// challenge (core's `eta`).
     pub bytecode_reduction_eta: Option<F>,
-}
-
-/// Field-inline-only Stage 6 public output (the field-register increment
-/// claim-reduction batching gamma).
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldInlineStage6PublicOutput<F: Field> {
-    pub field_inc_gamma: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,18 +75,10 @@ pub struct Stage6ZkOutput<F: Field, C> {
     pub ram_ra_virtualization: RamRaVirtualizationPublicOutput<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationPublicOutput<F>,
     pub inc_claim_reduction: Stage6SumcheckPublicOutput<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineStage6ZkOutput<F>,
     pub trusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
     pub untrusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
     pub bytecode_cycle_phase: Option<CommittedReductionCyclePhasePublicOutput<F>>,
     pub program_image_cycle_phase: Option<CommittedReductionCyclePhasePublicOutput<F>>,
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldInlineStage6ZkOutput<F: Field> {
-    pub field_registers_inc_claim_reduction: Stage6SumcheckPublicOutput<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,8 +105,6 @@ pub struct VerifiedStage6Batch<F: Field> {
     pub ram_ra_virtualization: VerifiedRamRaVirtualizationSumcheck<F>,
     pub instruction_ra_virtualization: VerifiedInstructionRaVirtualizationSumcheck<F>,
     pub inc_claim_reduction: VerifiedStage6Sumcheck<F>,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_inc_claim_reduction: VerifiedStage6Sumcheck<F>,
     pub trusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub untrusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub bytecode_cycle_phase: Option<VerifiedBytecodeCyclePhaseSumcheck<F>>,

@@ -110,7 +110,7 @@ fn run_sha2_case(writer: &mut impl Write, case: BenchCase, samples: usize) -> Be
         bench_modular_sha2_chain(writer, case, modular_mode_label(), samples);
     write_stats(writer, &modular_stats);
 
-    #[cfg(not(any(feature = "zk", feature = "field-inline")))]
+    #[cfg(not(feature = "zk"))]
     {
         let core_stats = bench_core_sha2_chain(&run_input, samples);
         write_stats(writer, &core_stats);
@@ -122,7 +122,7 @@ fn run_sha2_case(writer: &mut impl Write, case: BenchCase, samples: usize) -> Be
         }
     }
 
-    #[cfg(any(feature = "zk", feature = "field-inline"))]
+    #[cfg(feature = "zk")]
     {
         let _ = run_input;
         BenchCaseOutcome { core_ratio: None }
@@ -357,8 +357,7 @@ fn bench_modular_sha2_chain(
     let program_preprocessing =
         program_preprocessing(&program, &public_io, case.target_trace_length);
     let proof_parameters = proof_parameters(&program_preprocessing, &trace);
-    let preprocessing =
-        prover_preprocessing(program_preprocessing, &program, case.target_trace_length);
+    let preprocessing = prover_preprocessing(program_preprocessing, case.target_trace_length);
     let witness = trace_witness(
         &program,
         preprocessing
@@ -370,11 +369,6 @@ fn bench_modular_sha2_chain(
         proof_parameters,
     );
     let config = proof_parameters;
-
-    #[cfg(feature = "field-inline")]
-    let witness = witness
-        .with_field_inline()
-        .expect("field-inline witness should build from the traced program");
 
     let stats = measure(bench_id, samples, || {
         let mut backend = CpuBackend::default();
@@ -412,7 +406,7 @@ fn bench_modular_sha2_chain(
     (stats, run_input)
 }
 
-#[cfg(not(any(feature = "zk", feature = "field-inline")))]
+#[cfg(not(feature = "zk"))]
 fn bench_core_sha2_chain(run_input: &Sha2RunInput, samples: usize) -> BenchStats {
     let mut program = sha2_chain_guest::compile_sha2_chain(TARGET_DIR);
     let shared_preprocessing = sha2_chain_guest::preprocess_shared_sha2_chain(&mut program)
@@ -448,11 +442,10 @@ fn bench_core_sha2_chain(run_input: &Sha2RunInput, samples: usize) -> BenchStats
 }
 
 fn modular_mode_label() -> &'static str {
-    match (cfg!(feature = "zk"), cfg!(feature = "field-inline")) {
-        (false, false) => "jolt-prover-transparent",
-        (true, false) => "jolt-prover-zk",
-        (false, true) => "jolt-prover-field-inline",
-        (true, true) => "jolt-prover-zk-field-inline",
+    if cfg!(feature = "zk") {
+        "jolt-prover-zk"
+    } else {
+        "jolt-prover-transparent"
     }
 }
 
@@ -520,7 +513,7 @@ impl BenchStats {
         }
     }
 
-    #[cfg(not(any(feature = "zk", feature = "field-inline")))]
+    #[cfg(not(feature = "zk"))]
     fn mean_seconds(&self) -> f64 {
         self.mean.as_secs_f64()
     }
@@ -594,7 +587,6 @@ fn program_preprocessing(
 
 fn prover_preprocessing(
     program: JoltProgramPreprocessing,
-    jolt_program: &JoltProgram,
     max_trace_length: usize,
 ) -> JoltProverPreprocessing<Pcs, Vc> {
     let max_log_t = max_trace_length.next_power_of_two().trailing_zeros() as usize;
@@ -611,20 +603,6 @@ fn prover_preprocessing(
         &pcs_setup,
         zk_vector_commitment_capacity_requirement(),
     );
-
-    #[cfg(feature = "field-inline")]
-    let verifier = {
-        let code_size = verifier
-            .program
-            .as_full()
-            .expect("prover preprocessing should retain the full program preprocessing")
-            .bytecode
-            .code_size;
-        verifier.with_field_inline_bytecode(field_inline_bytecode(jolt_program, code_size))
-    };
-
-    #[cfg(not(feature = "field-inline"))]
-    let _ = jolt_program;
 
     JoltProverPreprocessing::new(verifier, pcs_setup)
 }
@@ -743,20 +721,4 @@ fn remap_address(address: u64, layout: &MemoryLayout) -> Option<u64> {
     } else {
         Some((address - layout.get_lowest_address()) / 8)
     }
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_bytecode(
-    program: &JoltProgram,
-    padded_len: usize,
-) -> Vec<jolt_claims::protocols::field_inline::formulas::bytecode::FieldInlineBytecodeRow> {
-    use jolt_claims::protocols::field_inline::formulas::bytecode as field_bytecode;
-
-    let mut rows = program
-        .expanded_bytecode
-        .iter()
-        .map(field_bytecode::field_inline_bytecode_row)
-        .collect::<Vec<_>>();
-    rows.resize(padded_len, Default::default());
-    rows
 }

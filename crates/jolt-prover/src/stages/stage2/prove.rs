@@ -13,14 +13,6 @@ use jolt_backends::{
     SumcheckRamRafStateRequest, SumcheckRamReadWriteRow, SumcheckRamReadWriteStateRequest,
     SumcheckRegularBatchInstance, SumcheckRegularBatchState,
 };
-#[cfg(feature = "field-inline")]
-use jolt_backends::{
-    stage2_field_inline_factor_openings, stage2_field_inline_materialize_product_factors,
-    stage2_field_inline_product_uniskip_extended_evals,
-    stage2_field_inline_regular_batch_instances, Stage2FieldInlineMaterializedFactors,
-    Stage2FieldInlineProductUniskipEvalRequest, Stage2FieldInlineRegularBatchInstanceRequest,
-};
-#[cfg(not(feature = "field-inline"))]
 use jolt_backends::{
     stage2_product_uniskip_extended_eval_outputs, stage2_product_uniskip_extended_eval_request,
     stage2_product_uniskip_rows_from_stage2_trace, stage2_regular_batch_instances,
@@ -44,10 +36,6 @@ use jolt_verifier::stages::stage2::inputs::{
     ProductRemainderOutputOpeningClaims, RamReadWriteOutputOpeningClaims,
     Stage2BatchOutputOpeningClaims, Stage2Claims, Stage2ProductUniSkipInputValues,
 };
-#[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage2::inputs::{
-    FieldInlineProductOutputOpeningClaims, FieldInlineStage2OutputOpeningClaims,
-};
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage2::outputs::Stage2PublicOutput;
@@ -61,8 +49,6 @@ use jolt_verifier::stages::stage2::{
     Stage2RegularBatchClearRequest,
 };
 use jolt_verifier::CheckedInputs;
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::FieldInlineNamespace;
 use jolt_witness::{
     protocols::jolt_vm::{JoltVmNamespace, JoltVmStage2Rows, JoltVmStage2TraceRow},
     WitnessProvider,
@@ -104,10 +90,6 @@ pub struct Stage2ProductUniSkipInput<F: Field> {
     pub product: F,
     pub should_branch: F,
     pub should_jump: F,
-    #[cfg(feature = "field-inline")]
-    pub field_product: F,
-    #[cfg(feature = "field-inline")]
-    pub field_inv_product: F,
 }
 
 impl<F: Field> Stage2ProductUniSkipInput<F> {
@@ -119,10 +101,6 @@ impl<F: Field> Stage2ProductUniSkipInput<F> {
             product: stage1.outer.product,
             should_branch: stage1.outer.should_branch,
             should_jump: stage1.outer.should_jump,
-            #[cfg(feature = "field-inline")]
-            field_product: stage1.field_inline.field_product,
-            #[cfg(feature = "field-inline")]
-            field_inv_product: stage1.field_inline.field_inv_product,
         }
     }
 
@@ -131,10 +109,6 @@ impl<F: Field> Stage2ProductUniSkipInput<F> {
             product: self.product,
             should_branch: self.should_branch,
             should_jump: self.should_jump,
-            #[cfg(feature = "field-inline")]
-            field_product: self.field_product,
-            #[cfg(feature = "field-inline")]
-            field_inv_product: self.field_inv_product,
         }
     }
 }
@@ -203,8 +177,6 @@ pub struct Stage2RegularBatchPrefixOutput<F: Field> {
     pub input_claims: Stage2BatchInputClaims<F>,
     pub ram_read_write_gamma: F,
     pub instruction_gamma: F,
-    #[cfg(feature = "field-inline")]
-    pub field_registers_claim_reduction_gamma: F,
     pub output_address_challenges: Vec<F>,
 }
 
@@ -246,10 +218,6 @@ where
             output_claim: input.batch_output_claim,
             ram_read_write_gamma: input.batch_prefix.ram_read_write_gamma,
             instruction_gamma: input.batch_prefix.instruction_gamma,
-            #[cfg(feature = "field-inline")]
-            field_registers_claim_reduction_gamma: input
-                .batch_prefix
-                .field_registers_claim_reduction_gamma,
             output_address_challenges: input.batch_prefix.output_address_challenges.clone(),
             input_claims: input.batch_prefix.input_claims.clone(),
             opening_points: input.opening_points,
@@ -324,7 +292,6 @@ struct Stage2RegularBatchPrepareInput<'a, F: Field, C> {
     product_uniskip: &'a Stage2ProductUniSkipOutput<F, C>,
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn prepare_stage2_regular_batch<F, T, C>(
     input: Stage2RegularBatchPrepareInput<'_, F, C>,
     transcript: &mut T,
@@ -361,50 +328,6 @@ where
     })
 }
 
-#[cfg(feature = "field-inline")]
-fn prepare_stage2_regular_batch<F, T, C>(
-    input: Stage2RegularBatchPrepareInput<'_, F, C>,
-    field_factors: &Stage2FieldInlineMaterializedFactors<F>,
-    transcript: &mut T,
-) -> Result<PreparedStage2RegularBatch<F>, ProverError>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    let prefix = derive_stage2_regular_batch_prefix(
-        input.config,
-        input.stage1,
-        input.product_uniskip,
-        transcript,
-    )?;
-    let backend_rows = ram_read_write_rows_from_trace(input.rows);
-    let ram_requests = build_ram_state_requests(
-        input.config,
-        input.checked,
-        backend_rows,
-        input.initial_ram_state,
-        input.final_ram_state,
-        input.product_uniskip,
-        &prefix,
-    )?;
-    let instances = build_regular_batch_instances(
-        input.config,
-        input.rows,
-        input.product_uniskip,
-        &prefix,
-        field_factors,
-    )?;
-
-    Ok(PreparedStage2RegularBatch {
-        prefix,
-        ram_read_write: ram_requests.ram_read_write,
-        ram_raf: ram_requests.ram_raf,
-        ram_output_check: ram_requests.ram_output_check,
-        instances,
-    })
-}
-
-#[cfg(not(feature = "field-inline"))]
 fn stage2_batch_output_claims<F: Field>(
     ram_read_write: RamReadWriteOutputOpeningClaims<F>,
     tail: Stage2TailOutputOpenings<F>,
@@ -419,24 +342,6 @@ fn stage2_batch_output_claims<F: Field>(
     }
 }
 
-#[cfg(feature = "field-inline")]
-fn stage2_batch_output_claims<F: Field>(
-    ram_read_write: RamReadWriteOutputOpeningClaims<F>,
-    tail: Stage2TailOutputOpenings<F>,
-    field_inline: FieldInlineStage2OutputOpeningClaims<F>,
-    terminal: Stage2RamTerminalOutputOpeningClaims<F>,
-) -> Stage2BatchOutputOpeningClaims<F> {
-    Stage2BatchOutputOpeningClaims {
-        ram_read_write,
-        product_remainder: tail.product_remainder,
-        field_inline,
-        instruction_claim_reduction: tail.instruction_claim_reduction,
-        ram_raf_evaluation: terminal.ram_raf_evaluation,
-        ram_output_check: terminal.ram_output_check,
-    }
-}
-
-#[cfg(not(feature = "field-inline"))]
 pub fn prove<F, W, B, T, C>(
     input: Stage2ProverInput<'_, F, W>,
     backend: &mut B,
@@ -543,130 +448,7 @@ where
     })
 }
 
-#[cfg(feature = "field-inline")]
-pub fn prove<F, W, B, T, C>(
-    input: Stage2ProverInput<'_, F, W>,
-    backend: &mut B,
-    transcript: &mut T,
-) -> Result<Stage2ProofComponent<F, SumcheckProof<F, C>>, ProverError>
-where
-    F: Field,
-    W: JoltVmStage2Rows
-        + WitnessProvider<F, JoltVmNamespace>
-        + WitnessProvider<F, FieldInlineNamespace>,
-    B: SumcheckBackend<F, JoltVmNamespace>
-        + SumcheckBackend<F, FieldInlineNamespace>
-        + RamReadWriteSumcheckBackend<F>,
-    T: Transcript<Challenge = F>,
-{
-    validate_stage2_request(input.checked, input.config, false, "clear")?;
-
-    let stage2_rows = input.witness.stage2_rows()?;
-    let initial_ram_state = input.witness.initial_ram_state_words()?;
-    let final_ram_state = input.witness.final_ram_state_words()?;
-    let field_factors = stage2_field_inline_materialize_product_factors(
-        input.config.log_t,
-        input.witness,
-        backend,
-    )?;
-
-    let product_input = Stage2ProductUniSkipInput::from_stage1(input.stage1);
-    let product_uniskip = prove_stage2_product_uniskip_from_stage2_rows_field_inline::<F, T, C>(
-        Stage2ProverConfig::new(input.config.log_t),
-        &product_input,
-        &stage2_rows,
-        &field_factors,
-        transcript,
-    )?;
-
-    let prepared = prepare_stage2_regular_batch(
-        Stage2RegularBatchPrepareInput {
-            config: input.config,
-            checked: input.checked,
-            stage1: input.stage1,
-            rows: &stage2_rows,
-            initial_ram_state: &initial_ram_state,
-            final_ram_state: &final_ram_state,
-            product_uniskip: &product_uniskip,
-        },
-        &field_factors,
-        transcript,
-    )?;
-    let batch = prove_regular_batch_sumcheck::<F, T, C, B>(
-        prepared.ram_read_write,
-        prepared.ram_raf,
-        prepared.ram_output_check,
-        prepared.instances,
-        backend,
-        transcript,
-    )?;
-    let opening_points =
-        stage2_opening_points(input.config, &batch.challenges, &product_uniskip.tau_low)?;
-
-    let ram_read_write = batch.ram_read_write.clone();
-    let tail_openings = evaluate_stage2_tail_openings_from_rows(
-        input.config,
-        &stage2_rows,
-        &opening_points.product_opening,
-        &opening_points.instruction_opening,
-    )?;
-    let field_inline = evaluate_stage2_field_inline_openings_from_factors(
-        input.config,
-        &field_factors,
-        &opening_points.field_registers_claim_reduction_opening,
-    )?;
-    let terminal = Stage2RamTerminalOutputOpeningClaims {
-        ram_raf_evaluation: batch.ram_raf_evaluation,
-        ram_output_check: batch.ram_output_check,
-    };
-
-    let output_claims =
-        stage2_batch_output_claims(ram_read_write, tail_openings, field_inline, terminal);
-    let (expected_outputs, expected_final_claim) = expected_regular_batch_outputs(
-        input.config,
-        input.checked,
-        &product_uniskip,
-        &prepared.prefix,
-        &batch.batching_coefficients,
-        &opening_points,
-        &output_claims,
-    )?;
-    if batch.output_claim != expected_final_claim {
-        return Err(stage2_regular_batch_output_mismatch(
-            batch.output_claim,
-            expected_final_claim,
-            &expected_outputs,
-        ));
-    }
-
-    let recorded = batch
-        .proof
-        .finish(&stage2_output_claim_values(&output_claims), transcript)?;
-
-    let claims = Stage2Claims {
-        product_uniskip_output_claim: product_uniskip.output_claim,
-        batch_outputs: output_claims.clone(),
-    };
-    let verifier_output = stage2_verifier_output(Stage2VerifierOutputInput {
-        output_claims,
-        product_uniskip: &product_uniskip,
-        batch_prefix: &prepared.prefix,
-        batch_challenges: &batch.challenges,
-        batching_coefficients: &batch.batching_coefficients,
-        batch_output_claim: batch.output_claim,
-        opening_points,
-        expected_outputs,
-    })?;
-
-    Ok(Stage2ProofComponent {
-        product_uniskip_proof: product_uniskip.proof,
-        regular_batch_proof: recorded.proof,
-        claims,
-        verifier_output,
-    })
-}
-
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 pub fn prove_committed_proof_component<F, W, B, T, VC>(
     input: Stage2ProverInput<'_, F, W>,
     backend: &mut B,
@@ -780,138 +562,6 @@ where
     })
 }
 
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-pub fn prove_committed_proof_component<F, W, B, T, VC>(
-    input: Stage2ProverInput<'_, F, W>,
-    backend: &mut B,
-    vc_setup: &VC::Setup,
-    transcript: &mut T,
-) -> Result<Stage2CommittedProofComponent<F, VC>, ProverError>
-where
-    F: Field,
-    W: JoltVmStage2Rows
-        + WitnessProvider<F, JoltVmNamespace>
-        + WitnessProvider<F, FieldInlineNamespace>,
-    B: SumcheckBackend<F, JoltVmNamespace>
-        + SumcheckBackend<F, FieldInlineNamespace>
-        + RamReadWriteSumcheckBackend<F>,
-    T: Transcript<Challenge = F>,
-    VC: VectorCommitment<Field = F>,
-{
-    validate_stage2_request(input.checked, input.config, true, "committed")?;
-
-    let stage2_rows = input.witness.stage2_rows()?;
-    let initial_ram_state = input.witness.initial_ram_state_words()?;
-    let final_ram_state = input.witness.final_ram_state_words()?;
-    let field_factors = stage2_field_inline_materialize_product_factors(
-        input.config.log_t,
-        input.witness,
-        backend,
-    )?;
-
-    let product_input = Stage2ProductUniSkipInput::from_stage1(input.stage1);
-    let product_uniskip =
-        prove_stage2_product_uniskip_committed_from_stage2_rows_field_inline::<F, T, VC>(
-            Stage2ProverConfig::new(input.config.log_t),
-            &product_input,
-            &stage2_rows,
-            &field_factors,
-            vc_setup,
-            transcript,
-        )?;
-
-    let prepared = prepare_stage2_regular_batch(
-        Stage2RegularBatchPrepareInput {
-            config: input.config,
-            checked: input.checked,
-            stage1: input.stage1,
-            rows: &stage2_rows,
-            initial_ram_state: &initial_ram_state,
-            final_ram_state: &final_ram_state,
-            product_uniskip: &product_uniskip.output,
-        },
-        &field_factors,
-        transcript,
-    )?;
-    let batch = prove_regular_batch_sumcheck_committed::<F, T, B, VC>(
-        prepared.ram_read_write,
-        prepared.ram_raf,
-        prepared.ram_output_check,
-        prepared.instances,
-        backend,
-        vc_setup,
-        transcript,
-    )?;
-    let opening_points = stage2_opening_points(
-        input.config,
-        &batch.challenges,
-        &product_uniskip.output.tau_low,
-    )?;
-
-    let ram_read_write = batch.ram_read_write.clone();
-    let tail_openings = evaluate_stage2_tail_openings_from_rows(
-        input.config,
-        &stage2_rows,
-        &opening_points.product_opening,
-        &opening_points.instruction_opening,
-    )?;
-    let field_inline = evaluate_stage2_field_inline_openings_from_factors(
-        input.config,
-        &field_factors,
-        &opening_points.field_registers_claim_reduction_opening,
-    )?;
-    let terminal = Stage2RamTerminalOutputOpeningClaims {
-        ram_raf_evaluation: batch.ram_raf_evaluation,
-        ram_output_check: batch.ram_output_check,
-    };
-
-    let output_claims =
-        stage2_batch_output_claims(ram_read_write, tail_openings, field_inline, terminal);
-    let (expected_outputs, expected_final_claim) = expected_regular_batch_outputs(
-        input.config,
-        input.checked,
-        &product_uniskip.output,
-        &prepared.prefix,
-        &batch.batching_coefficients,
-        &opening_points,
-        &output_claims,
-    )?;
-    if batch.output_claim != expected_final_claim {
-        return Err(stage2_regular_batch_output_mismatch(
-            batch.output_claim,
-            expected_final_claim,
-            &expected_outputs,
-        ));
-    }
-
-    let batch_output_claim_values = stage2_output_claim_values(&output_claims);
-    let verifier_output = stage2_verifier_output(Stage2VerifierOutputInput {
-        output_claims,
-        product_uniskip: &product_uniskip.output,
-        batch_prefix: &prepared.prefix,
-        batch_challenges: &batch.challenges,
-        batching_coefficients: &batch.batching_coefficients,
-        batch_output_claim: batch.output_claim,
-        opening_points,
-        expected_outputs,
-    })?;
-    let recorded = batch.proof.finish(&batch_output_claim_values, transcript)?;
-
-    Ok(Stage2CommittedProofComponent {
-        product_uniskip_proof: product_uniskip.output.proof,
-        regular_batch_proof: recorded.proof,
-        public: verifier_output.public.clone(),
-        verifier_output,
-        product_uniskip_output_claim_values: product_uniskip.output_claim_values,
-        batch_output_claim_values,
-        product_uniskip_committed_witness: product_uniskip.committed_witness,
-        batch_committed_witness: recorded.committed_witness.ok_or_else(|| {
-            invalid_sumcheck_output("Stage 2 committed batch witness material is missing")
-        })?,
-    })
-}
-
-#[cfg(not(feature = "field-inline"))]
 fn prove_stage2_product_uniskip_from_stage2_rows<F, B, T, C>(
     config: Stage2ProverConfig,
     input: &Stage2ProductUniSkipInput<F>,
@@ -939,7 +589,7 @@ where
     )
 }
 
-#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[cfg(feature = "zk")]
 fn prove_stage2_product_uniskip_committed_from_stage2_rows<F, B, T, VC>(
     config: Stage2ProverConfig,
     input: &Stage2ProductUniSkipInput<F>,
@@ -959,75 +609,6 @@ where
         config,
         stage2_rows,
         backend,
-        &input.tau_low,
-    )?;
-    prove_stage2_product_uniskip_committed_with_extended_evals::<F, T, VC>(
-        input,
-        &base_evals,
-        &extended_evals,
-        vc_setup,
-        transcript,
-    )
-}
-
-#[cfg(feature = "field-inline")]
-fn prove_stage2_product_uniskip_from_stage2_rows_field_inline<F, T, C>(
-    config: Stage2ProverConfig,
-    input: &Stage2ProductUniSkipInput<F>,
-    stage2_rows: &[JoltVmStage2TraceRow],
-    field_factors: &Stage2FieldInlineMaterializedFactors<F>,
-    transcript: &mut T,
-) -> Result<Stage2ProductUniSkipOutput<F, C>, ProverError>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    let base_evals = [
-        input.product,
-        input.should_branch,
-        input.should_jump,
-        input.field_product,
-        input.field_inv_product,
-    ];
-    let extended_evals = product_uniskip_extended_evals_field_inline_from_stage2_rows(
-        config,
-        stage2_rows,
-        field_factors,
-        &input.tau_low,
-    )?;
-    prove_stage2_product_uniskip_with_extended_evals(
-        input,
-        &base_evals,
-        &extended_evals,
-        transcript,
-    )
-}
-
-#[cfg(all(feature = "zk", feature = "field-inline"))]
-fn prove_stage2_product_uniskip_committed_from_stage2_rows_field_inline<F, T, VC>(
-    config: Stage2ProverConfig,
-    input: &Stage2ProductUniSkipInput<F>,
-    stage2_rows: &[JoltVmStage2TraceRow],
-    field_factors: &Stage2FieldInlineMaterializedFactors<F>,
-    vc_setup: &VC::Setup,
-    transcript: &mut T,
-) -> Result<CommittedProductUniSkip<F, VC::Output>, ProverError>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-    VC: VectorCommitment<Field = F>,
-{
-    let base_evals = [
-        input.product,
-        input.should_branch,
-        input.should_jump,
-        input.field_product,
-        input.field_inv_product,
-    ];
-    let extended_evals = product_uniskip_extended_evals_field_inline_from_stage2_rows(
-        config,
-        stage2_rows,
-        field_factors,
         &input.tau_low,
     )?;
     prove_stage2_product_uniskip_committed_with_extended_evals::<F, T, VC>(
@@ -1146,8 +727,6 @@ where
 {
     let ram_read_write_gamma = transcript.challenge_scalar();
     let instruction_gamma = transcript.challenge_scalar();
-    #[cfg(feature = "field-inline")]
-    let field_registers_claim_reduction_gamma = transcript.challenge_scalar();
     let output_address_challenges = (0..config.log_k)
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
@@ -1160,16 +739,12 @@ where
         product_uniskip_output_claim: product_uniskip.output_claim,
         ram_read_write_gamma,
         instruction_gamma,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction_gamma,
     })?;
 
     Ok(Stage2RegularBatchPrefixOutput {
         input_claims,
         ram_read_write_gamma,
         instruction_gamma,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction_gamma,
         output_address_challenges,
     })
 }
@@ -1211,25 +786,6 @@ where
     })
 }
 
-#[cfg(feature = "field-inline")]
-fn evaluate_stage2_field_inline_openings_from_factors<F>(
-    config: Stage2BatchProverConfig,
-    factors: &Stage2FieldInlineMaterializedFactors<F>,
-    opening_point: &[F],
-) -> Result<FieldInlineStage2OutputOpeningClaims<F>, ProverError>
-where
-    F: Field,
-{
-    let openings = stage2_field_inline_factor_openings(config.log_t, factors, opening_point)?;
-    Ok(FieldInlineStage2OutputOpeningClaims {
-        product: FieldInlineProductOutputOpeningClaims {
-            field_rs1_value: openings.field_rs1_value,
-            field_rs2_value: openings.field_rs2_value,
-            field_rd_value: openings.field_rd_value,
-        },
-    })
-}
-
 struct RegularBatchProof<F: Field, Proof> {
     proof: Proof,
     challenges: Vec<F>,
@@ -1258,7 +814,6 @@ fn stage2_regular_batch_output_mismatch<F: Field>(
     expected_final_claim: F,
     expected_outputs: &Stage2BatchExpectedOutputClaims<F>,
 ) -> ProverError {
-    #[cfg(not(feature = "field-inline"))]
     let reason = format!(
         "Stage 2 regular batch final claim did not match output openings: got {}, expected {}; components ram_read_write={}, product_remainder={}, instruction_claim_reduction={}, ram_raf_evaluation={}, ram_output_check={}",
         batch_output_claim,
@@ -1266,18 +821,6 @@ fn stage2_regular_batch_output_mismatch<F: Field>(
         expected_outputs.ram_read_write,
         expected_outputs.product_remainder,
         expected_outputs.instruction_claim_reduction,
-        expected_outputs.ram_raf_evaluation,
-        expected_outputs.ram_output_check,
-    );
-    #[cfg(feature = "field-inline")]
-    let reason = format!(
-        "Stage 2 regular batch final claim did not match output openings: got {}, expected {}; components ram_read_write={}, product_remainder={}, instruction_claim_reduction={}, field_registers_claim_reduction={}, ram_raf_evaluation={}, ram_output_check={}",
-        batch_output_claim,
-        expected_final_claim,
-        expected_outputs.ram_read_write,
-        expected_outputs.product_remainder,
-        expected_outputs.instruction_claim_reduction,
-        expected_outputs.field_registers_claim_reduction,
         expected_outputs.ram_raf_evaluation,
         expected_outputs.ram_output_check,
     );
@@ -1513,7 +1056,6 @@ fn trim_round_polynomial<F: Field>(poly: UnivariatePoly<F>) -> UnivariatePoly<F>
     UnivariatePoly::new(coefficients)
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn build_regular_batch_instances<F, C>(
     config: Stage2BatchProverConfig,
     rows: &[JoltVmStage2TraceRow],
@@ -1534,38 +1076,6 @@ where
         instruction_gamma: prefix.instruction_gamma,
     };
     stage2_regular_batch_instances(&request).map_err(ProverError::from)
-}
-
-#[cfg(feature = "field-inline")]
-fn build_regular_batch_instances<F, C>(
-    config: Stage2BatchProverConfig,
-    rows: &[JoltVmStage2TraceRow],
-    product_uniskip: &Stage2ProductUniSkipOutput<F, C>,
-    prefix: &Stage2RegularBatchPrefixOutput<F>,
-    field_factors: &Stage2FieldInlineMaterializedFactors<F>,
-) -> Result<Vec<SumcheckRegularBatchInstance<F>>, ProverError>
-where
-    F: Field,
-{
-    let base = Stage2RegularBatchInstanceRequest {
-        log_t: config.log_t,
-        rows,
-        tau_low: &product_uniskip.tau_low,
-        tau_high: product_uniskip.tau_high,
-        product_challenge: product_uniskip.challenge,
-        product_output_claim: product_uniskip.output_claim,
-        instruction_claim_reduction_input_claim: prefix.input_claims.instruction_claim_reduction,
-        instruction_gamma: prefix.instruction_gamma,
-    };
-    let request = Stage2FieldInlineRegularBatchInstanceRequest {
-        base,
-        field_factors,
-        field_registers_claim_reduction_input_claim: prefix
-            .input_claims
-            .field_registers_claim_reduction,
-        field_registers_claim_reduction_gamma: prefix.field_registers_claim_reduction_gamma,
-    };
-    stage2_field_inline_regular_batch_instances(&request).map_err(ProverError::from)
 }
 
 fn build_ram_state_requests<F: Field>(
@@ -1620,8 +1130,6 @@ fn expected_regular_batch_outputs<F: Field>(
         },
         ram_read_write_gamma: prefix.ram_read_write_gamma,
         instruction_gamma: prefix.instruction_gamma,
-        #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction_gamma: prefix.field_registers_claim_reduction_gamma,
         output_address_challenges: &prefix.output_address_challenges,
         opening_points,
         claims,
@@ -1633,7 +1141,6 @@ fn expected_regular_batch_outputs<F: Field>(
     Ok((expected_outputs, final_claim))
 }
 
-#[cfg(not(feature = "field-inline"))]
 fn product_uniskip_extended_evals_from_stage2_rows<F, B>(
     config: Stage2ProverConfig,
     stage2_rows: &[JoltVmStage2TraceRow],
@@ -1650,25 +1157,4 @@ where
     let outputs = backend.evaluate_sumcheck_product_uniskip_rows(&request)?;
     stage2_product_uniskip_extended_eval_outputs(outputs, PRODUCT_UNISKIP_EXTENDED_EVAL_COUNT)
         .map_err(ProverError::from)
-}
-
-#[cfg(feature = "field-inline")]
-fn product_uniskip_extended_evals_field_inline_from_stage2_rows<F>(
-    config: Stage2ProverConfig,
-    stage2_rows: &[JoltVmStage2TraceRow],
-    field_factors: &Stage2FieldInlineMaterializedFactors<F>,
-    tau_low: &[F],
-) -> Result<Vec<F>, ProverError>
-where
-    F: Field,
-{
-    let request = Stage2FieldInlineProductUniskipEvalRequest {
-        log_t: config.log_t,
-        stage2_rows,
-        field_factors,
-        tau_low,
-        domain_size: SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-        extended_eval_count: PRODUCT_UNISKIP_EXTENDED_EVAL_COUNT,
-    };
-    stage2_field_inline_product_uniskip_extended_evals(&request).map_err(ProverError::from)
 }

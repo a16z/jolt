@@ -17,16 +17,7 @@ where
         .proof
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
-    #[cfg(feature = "field-inline")]
-    let field_register_dimensions = input
-        .proof
-        .protocol
-        .field_inline
-        .read_write_dimensions(log_t);
     let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
-    #[cfg(feature = "field-inline")]
-    let field_registers_claims =
-        field_registers::read_write_checking::<PCS::Field>(field_register_dimensions);
     let ram_init = ram_val_check_init(input)?;
     let ram_val_claims = ram::val_check::<PCS::Field>(trace_dimensions, ram_init);
 
@@ -61,35 +52,6 @@ where
         try_eq_mle(&registers_reduction_opening, &registers_opening.r_cycle)
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
-
-    #[cfg(feature = "field-inline")]
-    {
-        values.challenge(
-            FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::Gamma),
-            input.stage4.public.field_registers_gamma,
-        )?;
-        let field_registers_point = input
-            .stage4
-            .batch_consistency
-            .try_instance_point(field_registers_claims.sumcheck.rounds)
-            .map_err(|error| {
-                stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error)
-            })?;
-        let field_registers_opening = field_register_dimensions
-            .read_write_opening_point(&field_registers_point)
-            .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?;
-        values.challenge(
-            FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::EqCycle),
-            try_eq_mle(
-                &input
-                    .stage2
-                    .field_inline
-                    .field_registers_claim_reduction_opening_point,
-                &field_registers_opening.r_cycle,
-            )
-            .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
-        )?;
-    }
 
     values.challenge(
         JoltChallengeId::from(RamValCheckChallenge::Gamma),
@@ -134,10 +96,6 @@ where
     output_ids.extend(map_jolt_opening_ids(
         registers::read_write_checking_output_openings().to_vec(),
     ));
-    #[cfg(feature = "field-inline")]
-    output_ids.extend(map_field_inline_opening_ids(
-        field_registers::read_write_checking_output_openings().to_vec(),
-    ));
     output_ids.extend(map_jolt_opening_ids(
         ram::val_check_output_openings().to_vec(),
     ));
@@ -147,12 +105,6 @@ where
         map_jolt_expr(registers_claims.input.expression().clone()),
         map_jolt_expr(registers_claims.output.expression().clone()),
     )];
-    #[cfg(feature = "field-inline")]
-    batch_claims.push((
-        field_registers_claims.sumcheck.rounds,
-        map_field_inline_expr(field_registers_claims.input.expression().clone()),
-        map_field_inline_expr(field_registers_claims.output.expression().clone()),
-    ));
     batch_claims.push((
         ram_val_claims.sumcheck.rounds,
         map_jolt_expr(ram_val_claims.input.expression().clone()),
