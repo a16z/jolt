@@ -212,7 +212,11 @@ impl JoltPackedWitnessBuilder {
             .family(&PackedFamilyId::FieldRdIncByte { index: 0 })
             .is_some()
         {
-            let rd_delta = row.rd_write_value() as i128 - row.rd_pre_value() as i128;
+            let rd_delta = if row.rd_index().is_some() {
+                row.rd_write_value() as i128 - row.rd_pre_value() as i128
+            } else {
+                0
+            };
             let encoded = AkitaField::from_i128(rd_delta).to_bytes_le_vec();
             for (index, byte) in encoded.into_iter().enumerate() {
                 self.emit_byte(PackedFamilyId::FieldRdIncByte { index }, row_index, 0, byte)?;
@@ -999,6 +1003,43 @@ mod tests {
             .layout()
             .family(&PackedFamilyId::FieldRdIncSign)
             .is_none());
+    }
+
+    #[test]
+    fn field_rd_inc_ignores_rd_slots_without_rd_destination() {
+        let layout = field_rd_inc_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::BEQ,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: None,
+                    imm: 4,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 10,
+                    rd_write_value: 3,
+                }),
+                9,
+            ),
+            JoltTraceRow::no_op(),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |_, _| None)
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        for index in 0..AkitaField::NUM_BYTES {
+            assert_eq!(
+                get(&witness, PackedFamilyId::FieldRdIncByte { index }, 0, 0, 0),
+                AkitaField::one()
+            );
+        }
     }
 
     #[test]
