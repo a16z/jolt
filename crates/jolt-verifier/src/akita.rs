@@ -628,7 +628,12 @@ where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
 {
-    validate_akita_verifier_setup_layout(&preprocessing.pcs_setup, &artifacts.layout)?;
+    validate_akita_artifacts_for_proof(
+        &preprocessing.pcs_setup,
+        &proof.protocol,
+        &proof.commitments,
+        artifacts,
+    )?;
     let (checked, mut transcript) =
         crate::verifier::lattice_packed_validity_transcript_with_config::<
             AkitaField,
@@ -702,7 +707,12 @@ where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
 {
-    validate_akita_verifier_setup_layout(&preprocessing.pcs_setup, &artifacts.layout)?;
+    validate_akita_artifacts_for_proof(
+        &preprocessing.pcs_setup,
+        &proof.protocol,
+        &proof.commitments,
+        artifacts,
+    )?;
     let (statement, mut transcript) =
         crate::verifier::stage8_batch_statement_with_config_and_transcript::<
             AkitaField,
@@ -744,6 +754,41 @@ where
         trusted_advice_commitment,
         config,
     )
+}
+
+fn validate_akita_artifacts_for_proof(
+    setup: &AkitaVerifierSetup,
+    proof_protocol: &JoltProtocolConfig,
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+    artifacts: &AkitaPackedWitnessArtifacts,
+) -> Result<(), VerifierError> {
+    validate_akita_verifier_setup_layout(setup, &artifacts.layout)?;
+    validate_akita_packed_witness_layout_config(&artifacts.protocol, &artifacts.layout)?;
+    if proof_protocol != &artifacts.protocol {
+        return Err(VerifierError::ProtocolConfigMismatch {
+            expected: artifacts.protocol,
+            got: *proof_protocol,
+        });
+    }
+    let artifact_payload =
+        artifacts
+            .payload()
+            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
+                reason: "Akita proof assembly requires Akita packed witness artifacts".to_string(),
+            })?;
+    let proof_payload =
+        proof_commitments
+            .as_akita()
+            .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Lattice,
+                got: proof_commitments.family(),
+            })?;
+    if proof_payload != artifact_payload {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita proof commitments do not match packed witness artifacts".to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_akita_verifier_setup_config(
@@ -2701,5 +2746,70 @@ mod tests {
             .expect_err("layout mismatch should reject");
 
         assert!(matches!(error, VerifierError::InvalidProtocolConfig { .. }));
+    }
+
+    #[test]
+    fn akita_artifact_preflight_rejects_stale_protocol_and_commitments() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let source = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (
+                    packed_cell(PackedFamilyId::InstructionRa { index: 0 }, 7),
+                    AkitaField::one(),
+                ),
+                (packed_cell(PackedFamilyId::IncSign, 1), AkitaField::one()),
+            ],
+        )
+        .expect("source should build");
+        let other_source = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (
+                    packed_cell(PackedFamilyId::InstructionRa { index: 0 }, 8),
+                    AkitaField::one(),
+                ),
+                (packed_cell(PackedFamilyId::IncSign, 0), AkitaField::one()),
+            ],
+        )
+        .expect("other source should build");
+        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        let other_artifacts = commit_akita_packed_witness(&prover_setup, &other_source)
+            .expect("other packed witness should commit");
+
+        validate_akita_artifacts_for_proof(
+            &verifier_setup,
+            &artifacts.protocol,
+            &artifacts.commitments,
+            &artifacts,
+        )
+        .expect("matching artifacts should pass preflight");
+
+        let mut stale_protocol = artifacts.protocol;
+        stale_protocol.lattice.packed_witness.d_pack = Some(layout.dimension + 1);
+        assert!(matches!(
+            validate_akita_artifacts_for_proof(
+                &verifier_setup,
+                &stale_protocol,
+                &artifacts.commitments,
+                &artifacts,
+            ),
+            Err(VerifierError::ProtocolConfigMismatch { expected, got })
+                if expected == artifacts.protocol && got == stale_protocol
+        ));
+
+        assert!(matches!(
+            validate_akita_artifacts_for_proof(
+                &verifier_setup,
+                &artifacts.protocol,
+                &other_artifacts.commitments,
+                &artifacts,
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("do not match packed witness artifacts")
+        ));
     }
 }
