@@ -34,20 +34,6 @@ use crate::{
     VerifierError,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage5BatchInputClaims<F: Field> {
-    instruction_read_raf: F,
-    ram_ra_claim_reduction: F,
-    registers_val_evaluation: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage5BatchExpectedOutputClaims<F: Field> {
-    instruction_read_raf: F,
-    ram_ra_claim_reduction: F,
-    registers_val_evaluation: F,
-}
-
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -202,8 +188,6 @@ where
             })
             .collect::<Vec<_>>();
 
-        let [ram_ra_raf, ram_ra_read_write, ram_ra_val_check] =
-            ram::ra_claim_reduction_input_openings();
         let ram_point = consistency
             .try_instance_point(ram_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -216,49 +200,21 @@ where
                 stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
-        let ram_raf_opening_point = &stage2
-            .ram_ra_claim_reduction_inputs
-            .ram_raf_evaluation_opening_point;
-        let ram_read_write_opening_point = &stage2
-            .ram_ra_claim_reduction_inputs
-            .ram_read_write_opening_point;
-        let ram_val_check_opening_point = &stage4.ram_val_check_opening_point;
-        for (label, opening_point) in [
-            ("RAM RAF evaluation", ram_raf_opening_point),
-            ("RAM read-write", ram_read_write_opening_point),
-            ("RAM value check", ram_val_check_opening_point),
-        ] {
-            if opening_point.len() != log_k + log_t {
-                return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamRaClaimReduction,
-                    reason: format!(
-                        "{label} opening point length mismatch: expected {}, got {}",
-                        log_k + log_t,
-                        opening_point.len()
-                    ),
-                });
-            }
-        }
-        let (ram_raf_address, _ram_raf_cycle) = ram_raf_opening_point.split_at(log_k);
-        let (ram_read_write_address, _ram_read_write_cycle) =
-            ram_read_write_opening_point.split_at(log_k);
-        let (ram_val_check_address, _ram_val_check_cycle) =
-            ram_val_check_opening_point.split_at(log_k);
-        if ram_raf_address != ram_read_write_address {
-            return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltRelationId::RamRaClaimReduction,
-                left: ram_ra_raf,
-                right: ram_ra_read_write,
-            });
-        }
-        if ram_val_check_address != ram_read_write_address {
-            return Err(VerifierError::StageClaimOpeningMismatch {
-                stage: JoltRelationId::RamRaClaimReduction,
-                left: ram_ra_val_check,
-                right: ram_ra_read_write,
-            });
-        }
-        let ram_opening_point = [ram_read_write_address, ram_cycle.as_slice()].concat();
+        let dependency_points =
+            stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
+                trace_dimensions,
+                ram_log_k: log_k,
+                ram_raf_opening_point: &stage2
+                    .ram_ra_claim_reduction_inputs
+                    .ram_raf_evaluation_opening_point,
+                ram_read_write_opening_point: &stage2
+                    .ram_ra_claim_reduction_inputs
+                    .ram_read_write_opening_point,
+                ram_val_check_opening_point: &stage4.ram_val_check_opening_point,
+                registers_read_write_opening_point: &stage4.registers_read_write_opening_point,
+            })?;
+        let ram_opening_point =
+            [dependency_points.ram_address_point, ram_cycle.as_slice()].concat();
 
         let registers_point = consistency
             .try_instance_point(registers_claims.sumcheck.rounds)
@@ -272,20 +228,11 @@ where
                 stage: JoltRelationId::RegistersValEvaluation,
                 reason: error.to_string(),
             })?;
-        if stage4.registers_read_write_opening_point.len() != REGISTER_ADDRESS_BITS + log_t {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RegistersValEvaluation,
-                reason: format!(
-                    "register read-write opening point length mismatch: expected {}, got {}",
-                    REGISTER_ADDRESS_BITS + log_t,
-                    stage4.registers_read_write_opening_point.len()
-                ),
-            });
-        }
-        let (register_address, _registers_read_write_cycle) = stage4
-            .registers_read_write_opening_point
-            .split_at(REGISTER_ADDRESS_BITS);
-        let registers_opening_point = [register_address, registers_cycle.as_slice()].concat();
+        let registers_opening_point = [
+            dependency_points.register_address_point,
+            registers_cycle.as_slice(),
+        ]
+        .concat();
 
         return Ok(Stage5Output::Zk(Stage5ZkOutput {
             public: public(
@@ -373,7 +320,7 @@ where
     let [ram_ra_raf, ram_ra_read_write, ram_ra_val_check] =
         ram::ra_claim_reduction_input_openings();
     let [registers_val] = registers::val_evaluation_input_openings();
-    let input_claims = Stage5BatchInputClaims {
+    let input_claims = Stage5InputClaims {
         instruction_read_raf: instruction_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == lookup_output => Ok(reduced_lookup_output),
@@ -569,61 +516,37 @@ where
             stage: JoltRelationId::RamRaClaimReduction,
             reason: error.to_string(),
         })?;
-    let ram_raf_opening_point = &stage2.batch.ram_raf_evaluation.opening_point;
-    let ram_read_write_opening_point = &stage2.batch.ram_read_write.opening_point;
-    let ram_val_check_opening_point = &stage4.batch.ram_val_check.opening_point;
-    for (label, opening_point) in [
-        ("RAM RAF evaluation", ram_raf_opening_point),
-        ("RAM read-write", ram_read_write_opening_point),
-        ("RAM value check", ram_val_check_opening_point),
-    ] {
-        if opening_point.len() != log_k + log_t {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: format!(
-                    "{label} opening point length mismatch: expected {}, got {}",
-                    log_k + log_t,
-                    opening_point.len()
-                ),
-            });
-        }
-    }
-    let (ram_raf_address, ram_raf_cycle) = ram_raf_opening_point.split_at(log_k);
-    let (ram_read_write_address, ram_read_write_cycle) =
-        ram_read_write_opening_point.split_at(log_k);
-    let (ram_val_check_address, ram_val_check_cycle) = ram_val_check_opening_point.split_at(log_k);
-    if ram_raf_address != ram_read_write_address {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::RamRaClaimReduction,
-            left: ram_ra_raf,
-            right: ram_ra_read_write,
-        });
-    }
-    if ram_val_check_address != ram_read_write_address {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::RamRaClaimReduction,
-            left: ram_ra_val_check,
-            right: ram_ra_read_write,
-        });
-    }
+    let dependency_points =
+        stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
+            trace_dimensions,
+            ram_log_k: log_k,
+            ram_raf_opening_point: &stage2.batch.ram_raf_evaluation.opening_point,
+            ram_read_write_opening_point: &stage2.batch.ram_read_write.opening_point,
+            ram_val_check_opening_point: &stage4.batch.ram_val_check.opening_point,
+            registers_read_write_opening_point: &stage4.batch.registers_read_write.opening_point,
+        })?;
     let ram_public_values = ram::RamRaClaimReductionPublicValues {
-        eq_cycle_raf: try_eq_mle(ram_raf_cycle, &ram_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
+        eq_cycle_raf: try_eq_mle(dependency_points.ram_raf_fixed_cycle_point, &ram_cycle).map_err(
+            |error| VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
-            }
+            },
+        )?,
+        eq_cycle_read_write: try_eq_mle(
+            dependency_points.ram_read_write_fixed_cycle_point,
+            &ram_cycle,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamRaClaimReduction,
+            reason: error.to_string(),
         })?,
-        eq_cycle_read_write: try_eq_mle(ram_read_write_cycle, &ram_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: error.to_string(),
-            }
-        })?,
-        eq_cycle_val_check: try_eq_mle(ram_val_check_cycle, &ram_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: error.to_string(),
-            }
+        eq_cycle_val_check: try_eq_mle(
+            dependency_points.ram_val_check_fixed_cycle_point,
+            &ram_cycle,
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamRaClaimReduction,
+            reason: error.to_string(),
         })?,
     };
     let [ram_ra_reduced] = ram::ra_claim_reduction_output_openings();
@@ -643,7 +566,7 @@ where
             _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
         },
     )?;
-    let ram_opening_point = [ram_read_write_address, ram_cycle.as_slice()].concat();
+    let ram_opening_point = [dependency_points.ram_address_point, ram_cycle.as_slice()].concat();
 
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)
@@ -657,20 +580,10 @@ where
             stage: JoltRelationId::RegistersValEvaluation,
             reason: error.to_string(),
         })?;
-    let registers_read_write_opening_point = &stage4.batch.registers_read_write.opening_point;
-    if registers_read_write_opening_point.len() != REGISTER_ADDRESS_BITS + log_t {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RegistersValEvaluation,
-            reason: format!(
-                "register read-write opening point length mismatch: expected {}, got {}",
-                REGISTER_ADDRESS_BITS + log_t,
-                registers_read_write_opening_point.len()
-            ),
-        });
-    }
-    let (register_address, registers_read_write_cycle) =
-        registers_read_write_opening_point.split_at(REGISTER_ADDRESS_BITS);
-    let lt_cycle = LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle);
+    let lt_cycle = LtPolynomial::evaluate(
+        &registers_cycle,
+        dependency_points.register_fixed_cycle_point,
+    );
     let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
     let registers_output = registers_claims.output.expression().try_evaluate(
         |id| match *id {
@@ -686,26 +599,19 @@ where
         },
         |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
     )?;
-    let registers_opening_point = [register_address, registers_cycle.as_slice()].concat();
+    let registers_opening_point = [
+        dependency_points.register_address_point,
+        registers_cycle.as_slice(),
+    ]
+    .concat();
 
-    let expected_outputs = Stage5BatchExpectedOutputClaims {
+    let expected_outputs = Stage5ExpectedOutputClaims {
         instruction_read_raf: instruction_output,
         ram_ra_claim_reduction: ram_output,
         registers_val_evaluation: registers_output,
     };
-    let coefficients = batch.batching_coefficients.as_slice();
-    let expected_final_claim = {
-        let [instruction_coefficient, ram_coefficient, registers_coefficient] = coefficients else {
-            return Err(VerifierError::StageClaimSumcheckFailed {
-                stage: JoltRelationId::InstructionReadRaf,
-                reason: "Stage 5 batch verifier returned the wrong number of coefficients"
-                    .to_string(),
-            });
-        };
-        *instruction_coefficient * expected_outputs.instruction_read_raf
-            + *ram_coefficient * expected_outputs.ram_ra_claim_reduction
-            + *registers_coefficient * expected_outputs.registers_val_evaluation
-    };
+    let expected_final_claim =
+        stage5_expected_final_claim(batch.batching_coefficients.as_slice(), &expected_outputs)?;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: JoltRelationId::InstructionReadRaf,

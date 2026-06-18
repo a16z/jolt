@@ -63,15 +63,6 @@ struct Stage7BatchInputClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage7InlineExpectedOutputClaims<F: Field> {
-    hamming_weight_claim_reduction: F,
-    trusted_advice_address_phase: Option<F>,
-    untrusted_advice_address_phase: Option<F>,
-    bytecode_address_phase: Option<F>,
-    program_image_address_phase: Option<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7InputClaims<F: Field> {
     pub hamming_weight_claim_reduction: F,
     pub trusted_advice_address_phase: Option<F>,
@@ -191,7 +182,7 @@ fn stage7_advice_address_output_claim<F: Field>(
 /// Prover-facing expected-output container modeling the hamming + advice
 /// reduction families. The verifier's own inline computation additionally
 /// folds in the committed bytecode and program-image reductions via
-/// [`Stage7InlineExpectedOutputClaims`]; both share the same canonical order
+/// [`Stage7BatchInputClaims`]; both share the same canonical order
 /// (hamming, trusted advice, untrusted advice, ...).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7BatchExpectedOutputClaims<F: Field> {
@@ -1072,7 +1063,7 @@ where
         });
     }
 
-    let expected_outputs = Stage7InlineExpectedOutputClaims {
+    let expected_outputs = Stage7BatchInputClaims {
         hamming_weight_claim_reduction: hamming_output,
         trusted_advice_address_phase: trusted_advice
             .as_ref()

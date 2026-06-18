@@ -31,6 +31,9 @@ use crate::{
     VerifierError,
 };
 
+/// An instance sumcheck point paired with its reversed opening point.
+type OpeningPointPair<F> = (Vec<F>, Vec<F>);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3InputClaims<F: Field> {
     pub shift: F,
@@ -457,29 +460,28 @@ where
         reason: error.to_string(),
     })?;
 
-    let shift_point = batch
-        .try_instance_point(shift_claims.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::SpartanShift,
-            reason: error.to_string(),
-        })?;
-    let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
+    let extract_opening_point =
+        |rounds, stage| -> Result<OpeningPointPair<PCS::Field>, VerifierError> {
+            let point = batch.try_instance_point(rounds).map_err(|error| {
+                VerifierError::StageClaimSumcheckFailed {
+                    stage,
+                    reason: error.to_string(),
+                }
+            })?;
+            let opening_point = point.iter().rev().copied().collect::<Vec<_>>();
+            Ok((point.to_vec(), opening_point))
+        };
 
-    let instruction_point = batch
-        .try_instance_point(instruction_claims.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            reason: error.to_string(),
-        })?;
-    let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
-
-    let registers_point = batch
-        .try_instance_point(registers_claims.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::RegistersClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
+    let (shift_point, shift_opening_point) =
+        extract_opening_point(shift_claims.sumcheck.rounds, JoltRelationId::SpartanShift)?;
+    let (instruction_point, instruction_opening_point) = extract_opening_point(
+        instruction_claims.sumcheck.rounds,
+        JoltRelationId::InstructionInputVirtualization,
+    )?;
+    let (registers_point, registers_opening_point) = extract_opening_point(
+        registers_claims.sumcheck.rounds,
+        JoltRelationId::RegistersClaimReduction,
+    )?;
 
     let expected_outputs = stage3_expected_output_claims(Stage3ExpectedOutputRequest {
         dimensions,
@@ -515,19 +517,19 @@ where
             expected_final_claim,
             shift: VerifiedStage3Sumcheck {
                 input_claim: input_claims.shift,
-                sumcheck_point: shift_point.to_vec(),
+                sumcheck_point: shift_point,
                 opening_point: shift_opening_point,
                 expected_output_claim: expected_outputs.shift,
             },
             instruction_input: VerifiedStage3Sumcheck {
                 input_claim: input_claims.instruction_input,
-                sumcheck_point: instruction_point.to_vec(),
+                sumcheck_point: instruction_point,
                 opening_point: instruction_opening_point,
                 expected_output_claim: expected_outputs.instruction_input,
             },
             registers_claim_reduction: VerifiedStage3Sumcheck {
                 input_claim: input_claims.registers_claim_reduction,
-                sumcheck_point: registers_point.to_vec(),
+                sumcheck_point: registers_point,
                 opening_point: registers_opening_point,
                 expected_output_claim: expected_outputs.registers_claim_reduction,
             },

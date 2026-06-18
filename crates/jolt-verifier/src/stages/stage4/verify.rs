@@ -275,20 +275,11 @@ where
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
 
     let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
-    if registers_claims.sumcheck.degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage: registers_claims.id,
-            degree: registers_claims.sumcheck.degree,
-        });
-    }
-    if !matches!(
-        registers_claims.sumcheck.domain,
-        JoltSumcheckDomain::BooleanHypercube
-    ) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
-            stage: registers_claims.id,
-        });
-    }
+    check_boolean_hypercube(
+        registers_claims.id,
+        registers_claims.sumcheck.degree,
+        &registers_claims.sumcheck.domain,
+    )?;
     let registers_gamma = transcript.challenge_scalar();
 
     let (ram_read_write_opening_point, ram_output_check_opening_point) = match deps {
@@ -328,20 +319,11 @@ where
     let ram_val_check_gamma = transcript.challenge_scalar();
 
     let ram_val_check_sumcheck = ram::val_check_sumcheck(trace_dimensions);
-    if ram_val_check_sumcheck.degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage: JoltRelationId::RamValCheck,
-            degree: ram_val_check_sumcheck.degree,
-        });
-    }
-    if !matches!(
-        ram_val_check_sumcheck.domain,
-        JoltSumcheckDomain::BooleanHypercube
-    ) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
-            stage: JoltRelationId::RamValCheck,
-        });
-    }
+    check_boolean_hypercube(
+        JoltRelationId::RamValCheck,
+        ram_val_check_sumcheck.degree,
+        &ram_val_check_sumcheck.domain,
+    )?;
 
     let public =
         |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| Stage4PublicOutput {
@@ -751,6 +733,20 @@ fn collect_advice_contribution<F: Field>(
         opening_claim,
         opening_point,
     });
+    Ok(())
+}
+
+fn check_boolean_hypercube(
+    stage: JoltRelationId,
+    degree: usize,
+    domain: &JoltSumcheckDomain,
+) -> Result<(), VerifierError> {
+    if degree == 0 {
+        return Err(VerifierError::InvalidStageSumcheckDegree { stage, degree });
+    }
+    if !matches!(domain, JoltSumcheckDomain::BooleanHypercube) {
+        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage });
+    }
     Ok(())
 }
 
