@@ -10,15 +10,30 @@ use crate::{
     },
     preprocessing::JoltVerifierPreprocessing,
     proof::{AkitaCommitmentPayload, ClearOnlyVectorCommitment, CommitmentPayload, JoltProof},
-    stages::stage8::{validate_akita_packed_witness_layout_config, Stage8BatchStatement},
+    stages::{
+        stage6::{
+            inputs::{FusedIncrementSourceLinkOutputClaims, FusedIncrementTranslationOutputClaims},
+            outputs::VerifiedBytecodeReadRafSumcheck,
+        },
+        stage8::{
+            akita_packed_view_formula, jolt_lattice_view_formula,
+            validate_akita_packed_witness_layout_config, Stage8BatchStatement,
+        },
+        PrecommittedSchedule,
+    },
     VerifierError,
 };
 use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
     AkitaProverSetup, AkitaVerifierSetup, JoltPackedWitnessBuilder, PackedAdviceKind,
-    PackedFactDomain, PackedFamilyId, PackedWitnessLayout, PackedWitnessSource,
+    PackedFactDomain, PackedFamilyId, PackedViewFormula, PackedWitnessLayout, PackedWitnessSource,
     SparsePackedWitness,
+};
+use jolt_claims::protocols::jolt::{
+    fused_increment_bytecode_source_opening, fused_increment_magnitude_lattice_view_formula,
+    fused_increment_sign_lattice_view_formula, JoltCommittedPolynomial, JoltOpeningId,
+    JoltRelationId, LatticeFusedIncrementTarget,
 };
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
@@ -54,6 +69,18 @@ pub struct AkitaPackedJoltWitnessInput<'a> {
 pub struct AkitaCommittedPackedJoltWitness {
     pub artifacts: AkitaPackedWitnessArtifacts,
     pub witness: SparsePackedWitness<AkitaField>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AkitaFusedIncrementTranslationSources {
+    pub ram_source: AkitaField,
+    pub rd_source: AkitaField,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AkitaFusedIncrementStage6Claims {
+    pub translation: FusedIncrementTranslationOutputClaims<AkitaField>,
+    pub source_link: FusedIncrementSourceLinkOutputClaims<AkitaField>,
 }
 
 impl AkitaPackedWitnessArtifacts {
@@ -107,6 +134,106 @@ pub fn commit_akita_packed_jolt_witness(
     let witness = build_akita_packed_jolt_witness(input)?;
     let artifacts = commit_akita_packed_witness(setup, &witness)?;
     Ok(AkitaCommittedPackedJoltWitness { artifacts, witness })
+}
+
+pub fn derive_akita_fused_increment_stage6_claims<S>(
+    source: &S,
+    precommitted: &PrecommittedSchedule,
+    log_k_chunk: usize,
+    translation_opening_point: &[AkitaField],
+    source_link: &VerifiedBytecodeReadRafSumcheck<AkitaField>,
+    translation_sources: AkitaFusedIncrementTranslationSources,
+) -> Result<AkitaFusedIncrementStage6Claims, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let magnitude = eval_akita_packed_formula(
+        source,
+        fused_increment_magnitude_lattice_view_formula(),
+        translation_opening_point,
+        JoltRelationId::FusedIncrementTranslation,
+    )?;
+    let sign = eval_akita_packed_formula(
+        source,
+        fused_increment_sign_lattice_view_formula(),
+        translation_opening_point,
+        JoltRelationId::FusedIncrementTranslation,
+    )?;
+    let translation = FusedIncrementTranslationOutputClaims {
+        ram_source: translation_sources.ram_source,
+        magnitude,
+        sign,
+        rd_source: translation_sources.rd_source,
+    };
+
+    let bytecode_ra = source_link
+        .bytecode_ra_opening_points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let row_point = point.get(log_k_chunk..).ok_or_else(|| {
+                akita_fused_claim_error(
+                    JoltRelationId::FusedIncrementSourceLink,
+                    format!(
+                        "BytecodeRa({index}) source-link opening point has {} variables but needs at least {log_k_chunk}",
+                        point.len()
+                    ),
+                )
+            })?;
+            eval_akita_jolt_lattice_opening(
+                source,
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeRa(index),
+                    JoltRelationId::FusedIncrementSourceLink,
+                ),
+                point,
+                row_point,
+                log_k_chunk,
+                precommitted,
+                JoltRelationId::FusedIncrementSourceLink,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+        akita_fused_claim_error(
+            JoltRelationId::FusedIncrementSourceLink,
+            "source-link derivation requires committed-bytecode layout",
+        )
+    })?;
+    let source_address = bytecode_layout
+        .split_address_point(&source_link.r_address)
+        .map_err(|error| {
+            akita_fused_claim_error(JoltRelationId::FusedIncrementSourceLink, error)
+        })?;
+    let store_flag = eval_akita_jolt_lattice_opening(
+        source,
+        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+        &source_link.r_address,
+        &source_address.r_bc,
+        log_k_chunk,
+        precommitted,
+        JoltRelationId::FusedIncrementSourceLink,
+    )?;
+    let rd_present = eval_akita_jolt_lattice_opening(
+        source,
+        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+        &source_link.r_address,
+        &source_address.r_bc,
+        log_k_chunk,
+        precommitted,
+        JoltRelationId::FusedIncrementSourceLink,
+    )?;
+    let source_link = FusedIncrementSourceLinkOutputClaims {
+        bytecode_ra,
+        store_flag,
+        rd_present,
+    };
+
+    Ok(AkitaFusedIncrementStage6Claims {
+        translation,
+        source_link,
+    })
 }
 
 pub fn akita_lattice_protocol_config_for_layout(
@@ -570,6 +697,60 @@ fn advice_domain_name(kind: PackedAdviceKind) -> &'static str {
     }
 }
 
+fn eval_akita_jolt_lattice_opening<S>(
+    source: &S,
+    id: JoltOpeningId,
+    formula_point: &[AkitaField],
+    row_point: &[AkitaField],
+    log_k_chunk: usize,
+    precommitted: &PrecommittedSchedule,
+    stage: JoltRelationId,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let formula = jolt_lattice_view_formula(id, formula_point, log_k_chunk, precommitted)?;
+    eval_akita_packed_formula(source, formula, row_point, stage)
+}
+
+fn eval_akita_packed_formula<S>(
+    source: &S,
+    formula: jolt_claims::protocols::jolt::LatticePackedViewFormula<AkitaField>,
+    row_point: &[AkitaField],
+    stage: JoltRelationId,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let formula = akita_packed_view_formula(&formula)
+        .map_err(|error| akita_fused_claim_error(stage, error))?;
+    eval_akita_packed_view(source, &formula, row_point, stage)
+}
+
+fn eval_akita_packed_view<S>(
+    source: &S,
+    formula: &PackedViewFormula<AkitaField>,
+    row_point: &[AkitaField],
+    stage: JoltRelationId,
+) -> Result<AkitaField, VerifierError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    formula
+        .eval_row_point(source, row_point)
+        .map_err(|error| akita_fused_claim_error(stage, error))
+}
+
+fn akita_fused_claim_error(stage: JoltRelationId, reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimPublicInputFailed {
+        stage,
+        reason: format!(
+            "Akita fused increment claim derivation failed: {}",
+            reason.to_string()
+        ),
+    }
+}
+
 fn akita_witness_error(reason: impl ToString) -> VerifierError {
     VerifierError::AkitaCommitmentFailed {
         reason: format!(
@@ -610,11 +791,13 @@ mod tests {
         Stage8BatchStatement, Stage8ClearBatchStatement, Stage8LogicalManifest, Stage8OpeningId,
         Stage8PhysicalManifest,
     };
+    use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
     use jolt_akita::{
         AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec,
         SparsePackedWitness,
     };
     use jolt_claims::protocols::jolt::{
+        formulas::dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
         fused_increment_sign_opening, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
     };
     use jolt_field::FixedByteSize;
@@ -622,10 +805,10 @@ mod tests {
         BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
         PackedLinearTerm, PhysicalView,
     };
-    use jolt_poly::Point;
+    use jolt_poly::{EqPolynomial, Point};
     use jolt_riscv::{
-        CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NonMemoryState,
-        NormalizedOperands, StoreState,
+        CapturedState, CircuitFlags, JoltInstructionKind, JoltInstructionRow, JoltTraceRow,
+        NonMemoryState, NormalizedOperands, StoreState,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
@@ -692,6 +875,10 @@ mod tests {
             bytecode_pc,
         )
         .expect("trace row should build")
+    }
+
+    fn af(value: u64) -> AkitaField {
+        AkitaField::from_u64(value)
     }
 
     #[test]
@@ -954,6 +1141,210 @@ mod tests {
                 ))
                 .expect("padded trusted advice byte should exist"),
             AkitaField::one()
+        );
+    }
+
+    #[test]
+    fn derives_fused_increment_stage6_claims_from_packed_witness() {
+        let log_t = 1;
+        let log_k_chunk = 2;
+        let bytecode_log_rows = 1;
+        let mut specs = (0..8)
+            .map(|index| {
+                PackedFamilySpec::direct(
+                    PackedFamilyId::IncByte { index },
+                    PackedFactDomain::TraceRows { log_t },
+                    1,
+                    PackedAlphabet::Byte,
+                )
+            })
+            .collect::<Vec<_>>();
+        specs.extend([
+            PackedFamilySpec::direct(
+                PackedFamilyId::IncSign,
+                PackedFactDomain::TraceRows { log_t },
+                1,
+                PackedAlphabet::Bit,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeRa { index: 0 },
+                PackedFactDomain::TraceRows { log_t },
+                1,
+                PackedAlphabet::Fixed {
+                    size: 1 << log_k_chunk,
+                },
+            ),
+        ]);
+        for chunk in 0..2 {
+            specs.extend([
+                PackedFamilySpec::direct(
+                    PackedFamilyId::BytecodeCircuitFlag {
+                        chunk,
+                        flag: CircuitFlags::Store as usize,
+                    },
+                    PackedFactDomain::BytecodeRows {
+                        log_bytecode: bytecode_log_rows,
+                    },
+                    1,
+                    PackedAlphabet::Bit,
+                ),
+                PackedFamilySpec::direct(
+                    PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+                    PackedFactDomain::BytecodeRows {
+                        log_bytecode: bytecode_log_rows,
+                    },
+                    1,
+                    PackedAlphabet::Fixed {
+                        size: 1 << REGISTER_ADDRESS_BITS,
+                    },
+                ),
+            ]);
+        }
+        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
+        let source = SparsePackedWitness::try_from_cells(
+            layout,
+            [
+                (
+                    packed_cell_at(PackedFamilyId::IncByte { index: 0 }, 0, 0, 5),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(PackedFamilyId::IncByte { index: 0 }, 1, 0, 9),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(PackedFamilyId::IncSign, 1, 0, 1),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(PackedFamilyId::BytecodeRa { index: 0 }, 0, 0, 1),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(PackedFamilyId::BytecodeRa { index: 0 }, 1, 0, 3),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(
+                        PackedFamilyId::BytecodeCircuitFlag {
+                            chunk: 0,
+                            flag: CircuitFlags::Store as usize,
+                        },
+                        0,
+                        0,
+                        1,
+                    ),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(
+                        PackedFamilyId::BytecodeCircuitFlag {
+                            chunk: 1,
+                            flag: CircuitFlags::Store as usize,
+                        },
+                        1,
+                        0,
+                        1,
+                    ),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(
+                        PackedFamilyId::BytecodeRegisterSelector {
+                            chunk: 0,
+                            selector: 2,
+                        },
+                        0,
+                        0,
+                        5,
+                    ),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(
+                        PackedFamilyId::BytecodeRegisterSelector {
+                            chunk: 1,
+                            selector: 2,
+                        },
+                        1,
+                        0,
+                        7,
+                    ),
+                    AkitaField::one(),
+                ),
+            ],
+        )
+        .expect("source should build");
+        let precommitted = PrecommittedSchedule::new(
+            TracePolynomialOrder::CycleMajor,
+            log_t,
+            log_k_chunk,
+            None,
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 4,
+                bytecode_chunk_count: 2,
+                program_image_len_words: 1,
+                program_image_start_index: 0,
+            }),
+        )
+        .expect("precommitted schedule should build");
+        let translation_point = [af(3)];
+        let source_link = VerifiedBytecodeReadRafSumcheck {
+            input_claim: AkitaField::zero(),
+            sumcheck_point: Vec::new(),
+            r_address: vec![af(11), af(13)],
+            r_cycle: vec![af(7)],
+            full_opening_point: vec![af(11), af(13), af(7)],
+            bytecode_ra_opening_points: vec![vec![af(2), af(5), af(7)]],
+            expected_output_claim: AkitaField::zero(),
+        };
+
+        let claims = derive_akita_fused_increment_stage6_claims(
+            &source,
+            &precommitted,
+            log_k_chunk,
+            &translation_point,
+            &source_link,
+            AkitaFusedIncrementTranslationSources {
+                ram_source: af(17),
+                rd_source: af(19),
+            },
+        )
+        .expect("fused increment claims should derive");
+
+        let trace_weights = EqPolynomial::<AkitaField>::evals(&translation_point, None);
+        assert_eq!(
+            claims.translation,
+            FusedIncrementTranslationOutputClaims {
+                ram_source: af(17),
+                magnitude: trace_weights[0] * af(5) + trace_weights[1] * af(9),
+                sign: trace_weights[1],
+                rd_source: af(19),
+            }
+        );
+        let bytecode_ra_address_weights = EqPolynomial::<AkitaField>::evals(
+            &source_link.bytecode_ra_opening_points[0][..2],
+            None,
+        );
+        let bytecode_ra_cycle_weights = EqPolynomial::<AkitaField>::evals(
+            &source_link.bytecode_ra_opening_points[0][2..],
+            None,
+        );
+        let expected_bytecode_ra = bytecode_ra_cycle_weights[0] * bytecode_ra_address_weights[1]
+            + bytecode_ra_cycle_weights[1] * bytecode_ra_address_weights[3];
+        let chunk_weights = EqPolynomial::<AkitaField>::evals(&source_link.r_address[..1], None);
+        let bytecode_row_weights =
+            EqPolynomial::<AkitaField>::evals(&source_link.r_address[1..], None);
+        let expected_source =
+            chunk_weights[0] * bytecode_row_weights[0] + chunk_weights[1] * bytecode_row_weights[1];
+        assert_eq!(
+            claims.source_link,
+            FusedIncrementSourceLinkOutputClaims {
+                bytecode_ra: vec![expected_bytecode_ra],
+                store_flag: expected_source,
+                rd_present: expected_source,
+            }
         );
     }
 
