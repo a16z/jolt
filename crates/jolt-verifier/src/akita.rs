@@ -615,6 +615,80 @@ pub fn attach_akita_packed_validity_proof(
     Ok(())
 }
 
+pub fn prove_akita_jolt_packed_validity<T, S>(
+    setup: &AkitaProverSetup,
+    preprocessing: &AkitaVerifierPreprocessing,
+    public_io: &JoltDevice,
+    proof: &AkitaJoltProof,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+) -> Result<AkitaPackedValidityProofArtifacts, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    validate_akita_verifier_setup_layout(&preprocessing.pcs_setup, &artifacts.layout)?;
+    let (checked, mut transcript) =
+        crate::verifier::lattice_packed_validity_transcript_with_config::<
+            AkitaField,
+            AkitaPackedScheme,
+            AkitaClearVectorCommitment,
+            T,
+            _,
+        >(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+            &artifacts.protocol,
+        )?;
+    prove_akita_packed_validity(
+        setup,
+        &mut transcript,
+        artifacts,
+        source,
+        &checked.precommitted,
+    )
+}
+
+pub fn prove_and_attach_akita_opening_proofs<T, S>(
+    setup: &AkitaProverSetup,
+    preprocessing: &AkitaVerifierPreprocessing,
+    public_io: &JoltDevice,
+    proof: &mut AkitaJoltProof,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+) -> Result<(), VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    let mut candidate = proof.clone();
+    let validity = prove_akita_jolt_packed_validity::<T, S>(
+        setup,
+        preprocessing,
+        public_io,
+        &candidate,
+        trusted_advice_commitment,
+        artifacts,
+        source,
+    )?;
+    attach_akita_packed_validity_proof(&mut candidate, validity)?;
+    candidate.joint_opening_proof = prove_akita_jolt_final_openings::<T, S>(
+        setup,
+        preprocessing,
+        public_io,
+        &candidate,
+        trusted_advice_commitment,
+        artifacts,
+        source,
+    )?;
+    *proof = candidate;
+    Ok(())
+}
+
 pub fn prove_akita_jolt_final_openings<T, S>(
     setup: &AkitaProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
@@ -2523,6 +2597,31 @@ mod tests {
         ) -> Result<AkitaPackedBatchProof, VerifierError>;
         let _prove: ProveFn =
             prove_akita_jolt_final_openings::<TestTranscript, SparsePackedWitness<AkitaField>>;
+        type ProveValidityFn = fn(
+            &AkitaProverSetup,
+            &AkitaVerifierPreprocessing,
+            &JoltDevice,
+            &AkitaJoltProof,
+            Option<&AkitaCommitment>,
+            &AkitaPackedWitnessArtifacts,
+            &SparsePackedWitness<AkitaField>,
+        )
+            -> Result<AkitaPackedValidityProofArtifacts, VerifierError>;
+        let _prove_validity: ProveValidityFn =
+            prove_akita_jolt_packed_validity::<TestTranscript, SparsePackedWitness<AkitaField>>;
+        type AttachOpeningsFn = fn(
+            &AkitaProverSetup,
+            &AkitaVerifierPreprocessing,
+            &JoltDevice,
+            &mut AkitaJoltProof,
+            Option<&AkitaCommitment>,
+            &AkitaPackedWitnessArtifacts,
+            &SparsePackedWitness<AkitaField>,
+        ) -> Result<(), VerifierError>;
+        let _attach_openings: AttachOpeningsFn = prove_and_attach_akita_opening_proofs::<
+            TestTranscript,
+            SparsePackedWitness<AkitaField>,
+        >;
     }
 
     #[test]

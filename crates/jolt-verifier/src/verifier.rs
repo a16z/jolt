@@ -364,6 +364,73 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
+    let (checked, mut transcript, stage6, stage7) =
+        stage7_transcript_with_config_impl::<F, PCS, VC, T, ZkProof>(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+            config,
+            true,
+        )?;
+    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
+    let statement = stage8::batch_statement(
+        &checked,
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        stage8::deps(&stage6, &stage7)?,
+    )?;
+    Ok((statement, transcript))
+}
+
+pub fn lattice_packed_validity_transcript_with_config<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<(CheckedInputs, T), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let (checked, transcript, _, _) = stage7_transcript_with_config_impl::<F, PCS, VC, T, ZkProof>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        config,
+        false,
+    )?;
+    Ok((checked, transcript))
+}
+
+type Stage7TranscriptContext<F, C, T> = (
+    CheckedInputs,
+    T,
+    stage6::Stage6Output<F, C>,
+    stage7::Stage7Output<F, C>,
+);
+
+fn stage7_transcript_with_config_impl<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+    require_lattice_validity_surface: bool,
+) -> Result<Stage7TranscriptContext<F, VC::Output, T>, VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
     let zk = config_zk(config);
     let checked = validate_inputs(
         preprocessing,
@@ -375,7 +442,9 @@ where
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(config, proof)?;
     validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
-    validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
+    if require_lattice_validity_surface {
+        validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
+    }
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -429,15 +498,7 @@ where
         &mut transcript,
         stage7::deps(&stage4, &stage6)?,
     )?;
-    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
-    let statement = stage8::batch_statement(
-        &checked,
-        preprocessing,
-        proof,
-        trusted_advice_commitment,
-        stage8::deps(&stage6, &stage7)?,
-    )?;
-    Ok((statement, transcript))
+    Ok((checked, transcript, stage6, stage7))
 }
 
 fn verify_lattice_packed_validity<F, PCS, VC, T, ZkProof>(
