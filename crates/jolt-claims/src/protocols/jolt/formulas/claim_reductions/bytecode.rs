@@ -264,7 +264,20 @@ impl BytecodeClaimReductionLayout {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
-        let scale = self.eq_combined(&inputs, &opening_point)?
+        self.address_phase_final_output_weights_at_opening_point(inputs, &opening_point)
+    }
+
+    /// `ChunkOutputWeight(i)` values from the reduction's already-derived
+    /// address-phase opening point, rather than re-deriving it from the
+    /// cycle/sumcheck challenges. Lets the stage 7 relation object's
+    /// `resolve_public` recover the weights from the opening point it produced in
+    /// `derive_opening_points`.
+    pub fn address_phase_final_output_weights_at_opening_point<F: Field>(
+        &self,
+        inputs: BytecodeOutputWeightInputs<'_, F>,
+        opening_point: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        let scale = self.eq_combined(&inputs, opening_point)?
             * precommitted_skip_round_scale::<F>(&self.precommitted);
         self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
     }

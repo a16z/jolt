@@ -275,7 +275,19 @@ impl AdviceClaimReductionLayout {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
-        let eq_eval = final_advice_eq_eval(reference_opening_point, &opening_point)?;
+        self.address_phase_scale_at_opening_point(reference_opening_point, &opening_point)
+    }
+
+    /// `FinalScale` value from the reduction's already-derived address-phase
+    /// opening point, rather than re-deriving it from the cycle/sumcheck
+    /// challenges. Lets the stage 7 relation object's `resolve_public` recover the
+    /// scale from the opening point it produced in `derive_opening_points`.
+    pub fn address_phase_scale_at_opening_point<F: Field>(
+        &self,
+        reference_opening_point: &[F],
+        opening_point: &[F],
+    ) -> Result<F, JoltFormulaPointError> {
+        let eq_eval = final_advice_eq_eval(reference_opening_point, opening_point)?;
         Ok(eq_eval * precommitted_skip_round_scale::<F>(&self.precommitted))
     }
 }
