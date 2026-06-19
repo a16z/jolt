@@ -11,16 +11,19 @@
 
 ## Scope
 
-Jolt PIOP relations keep logical polynomial names. Akita opens one physical
-PackedWitness. The integration needs a deterministic translation from final
-logical claims to packed-view claims over `W_pack`.
+Jolt PIOP relations keep logical polynomial names. Akita opens one proof-owned
+physical PackedWitness for packed facts. The integration needs a deterministic
+translation from final logical claims either to packed-view claims over `W_pack`
+or to separate precommitted openings.
 
 In scope:
 
 ```text
-- logical claim order vs PackedWitness layout
+- logical claim order vs physical opening targets
+- PackedWitness layout
 - direct one-hot views
 - linear decoded views
+- precommitted opening targets
 - masked decoded views
 - Stage 8 translation rules
 - extra sumchecks required by masked views
@@ -41,6 +44,8 @@ Assumptions:
   row point r.
 - Prefix-packed W_pack exists as specified by the PackedWitness component.
 - Committed bytecode objects exist through the roadmap background interface.
+- TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted
+  commitment objects.
 - Logical opening IDs include relation IDs.
 - Translation layout is public or transcript-bound before translation
   challenges.
@@ -58,10 +63,20 @@ PackedWitness layout:
   packed W_pack families and domains.
 
 translation layout:
-  map logical opening ID -> view expression.
+  map logical opening ID -> physical opening target.
 ```
 
-View expression:
+Physical opening target:
+
+```text
+PackedWitnessView:
+  view expression over W_pack.
+
+PrecommittedOpening:
+  original commitment handle plus opening relation for a precommitted object.
+```
+
+Packed view expression:
 
 ```text
 View {
@@ -231,8 +246,8 @@ New increment/advice one-hot facts:
   components.
 
 Committed bytecode views:
-  use committed-program reductions plus PackedWitness bytecode/program-image
-  families.
+  use committed-program reductions plus separate openings of BytecodeChunk(i) or
+  ProgramImageInit against their original commitments.
 ```
 
 Stage placement:
@@ -244,15 +259,18 @@ Stage 6/7:
 
 Stage 8:
   deterministic direct/linear translation of final logical claims.
-  final Akita packed-view opening over W_pack.
+  final Akita packed-view opening over W_pack for proof-owned packed claims.
+  separate precommitted openings for TrustedAdvice, BytecodeChunk(i), and
+  ProgramImageInit.
 ```
 
 Stage 8 statement construction:
 
 ```text
 for each logical opening:
-  resolve view expression
-  add physical terms to BatchOpeningStatement
+  resolve physical opening target
+  add packed physical terms to the W_pack BatchOpeningStatement, or add a
+  precommitted opening requirement
   record coefficient mapping logical claim -> physical statement
 
 for direct/linear views:
@@ -267,9 +285,10 @@ Transcript:
 ```text
 1. logical final-opening manifest.
 2. PackedWitness layout digest.
-3. logical claims.
-4. translation challenges, if any.
-5. Akita batch-opening challenges.
+3. precommitted commitment handles and opening manifests.
+4. logical claims.
+5. translation challenges, if any.
+6. Akita batch-opening challenges.
 ```
 
 Implementation plan:
@@ -284,9 +303,11 @@ jolt-claims:
 jolt-verifier:
   build LogicalOpeningManifest from stage outputs and protocol config.
   enable lattice view resolution only when the selected PCS family is lattice.
-  resolve each logical opening through ViewResolver.
-  reject unresolved or unsupported views.
-  construct BatchOpeningStatement claims.
+  resolve each logical opening through ViewResolver into either PackedWitnessView
+  or PrecommittedOpening.
+  reject unresolved, unsupported, or misclassified views.
+  construct packed BatchOpeningStatement claims and separate precommitted opening
+  statements.
 
 jolt-akita:
   accepts PhysicalView formulas.
@@ -323,6 +344,10 @@ pub enum PhysicalView {
         relation: JoltRelationId,
         output_openings: Vec<JoltOpeningId>,
     },
+    Precommitted {
+        commitment: CommitmentRef,
+        relation: JoltRelationId,
+    },
 }
 
 pub struct DecodeTerm {
@@ -345,10 +370,13 @@ fn resolve(id, relation, config, layouts) -> PhysicalView:
     return ReducedMasked(...)
 
   if id is BytecodeChunk/ProgramImageInit:
-    return LinearDecode(committed-program PackedWitness facts)
+    return Precommitted(original committed-program commitment, relation)
 
-  if id is advice:
-    return LinearDecode(advice PackedWitness facts)
+  if id is TrustedAdvice:
+    return Precommitted(original trusted-advice commitment, relation)
+
+  if id is UntrustedAdvice:
+    return LinearDecode(proof-owned advice PackedWitness facts)
 ```
 
 Claim coefficient construction:
@@ -389,8 +417,10 @@ unsupported views:
 - Direct and linear decoded translations do not add hidden row sums.
 - Masked decoded translations are proven by explicit PIOP relations.
 - Translation coefficients are bound before Akita batch challenges.
-- Committed bytecode logical openings resolve through committed-program
-  PackedWitness families when lattice mode supports ProgramMode::Committed.
+- Committed bytecode logical openings resolve through precommitted-program
+  openings when lattice mode supports ProgramMode::Committed.
+- TrustedAdvice resolves through its precommitted advice commitment; it cannot be
+  satisfied only by a W_pack view.
 - A direct/linear view may only use facts at the same row point as the logical
   claim.
 - A decoded view cannot assume one-hot validity; validity is a separate
@@ -430,9 +460,9 @@ masked_translation_tamper_rejects:
 same_polynomial_different_relation_ids_distinct:
   relation ID participates in view lookup.
 
-committed_program_view_uses_packed_witness_family:
-  BytecodeChunk and ProgramImageInit resolve to non-trace PackedWitness
-  families.
+precommitted_program_view_uses_original_commitment:
+  BytecodeChunk and ProgramImageInit resolve to precommitted opening targets,
+  not PackedWitness families.
 ```
 
 ## Performance

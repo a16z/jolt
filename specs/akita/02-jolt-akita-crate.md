@@ -38,7 +38,9 @@ Out of scope:
 Assumptions:
 
 ```text
-- Akita verifies openings of a prefix-packed PackedWitness.
+- Akita verifies openings of a proof-owned prefix-packed PackedWitness.
+- TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are verifier-bound
+  precommitted objects and are not proved by merely opening W_pack.
 - Akita lattice mode is transparent until a lattice hiding protocol is
   specified.
 - Claim-field mode is explicit in setup/config and transcript binding.
@@ -101,11 +103,17 @@ Commitment class:
 
 ```text
 PackedWitness:
-  the single Akita commitment used by lattice mode.
+  the single proof-owned Akita commitment used by lattice mode.
+
+Precommitted objects:
+  TrustedAdvice, BytecodeChunk(i), and ProgramImageInit keep their original
+  commitments and opening proofs outside the W_pack packed-view statement.
 
 Rejected:
-  separate main/aux Akita commitments for advice or committed bytecode.
-  non-Akita committed object path for a lattice-supported committed object.
+  separate main/aux proof-owned Akita commitments.
+  treating a precommitted object packed into W_pack as an opening of its
+  original commitment.
+  non-Akita committed object path for a proof-owned lattice-supported object.
 ```
 
 Adapter rule:
@@ -329,8 +337,9 @@ step C:
   decoded statement.
 
 step D:
-  committed bytecode, program image, advice, and field-inline families are
-  supported or rejected by explicit error.
+  proof-owned advice and field-inline families are supported or rejected by
+  explicit error; precommitted objects are rejected from the packed-view
+  statement unless an explicit binding protocol is supplied.
 ```
 
 ## Invariants
@@ -345,7 +354,9 @@ step D:
 - Transparent-only config rejects ZK proof mode.
 - Setup key is transcript-bound before Akita proof challenges.
 - Unsupported view formulas fail closed.
-- The lattice statement uses exactly one PackedWitness commitment.
+- The lattice packed-view statement uses exactly one PackedWitness commitment.
+- Precommitted-object commitments are verified by their own opening statements,
+  not by jolt-akita's W_pack proof.
 - AkitaProverHint is bound to the same layout digest and commitment digest used
   by the batch proof.
 - The adapter result cannot introduce new logical opening IDs.

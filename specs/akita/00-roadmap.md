@@ -64,8 +64,9 @@ jolt-openings:
 
 PCS adapters:
   Dory opens ordinary committed multilinear polynomials.
-  Akita opens one packed physical witness through view relations supplied by
-  the lattice extension and verifier resolver.
+  Akita opens one proof-owned packed physical witness through view relations
+  supplied by the lattice extension and verifier resolver.
+  Precommitted objects are opened against their own commitments.
 ```
 
 ```text
@@ -73,7 +74,8 @@ PCS adapters:
 - Akita may replace RLC batching with packed-opening relations.
 - The verifier sees one generic batch-opening interface.
 - The PIOP can keep logical claims over Jolt objects.
-- The commit path uses one Akita-efficient PackedWitness object.
+- The proof-owned commit path uses one Akita-efficient PackedWitness object.
+- Verifier/preprocessing commitments are not silently replaced by W_pack.
 ```
 
 In scope:
@@ -86,7 +88,7 @@ In scope:
 - prefix-packed PackedWitness geometry.
 - translation from logical claims to packed physical views.
 - fused one-hot base increment representation.
-- field-inline, advice, committed bytecode, and program-image packing policy.
+- field-inline, advice, and precommitted-data opening policy.
 - verifier config, proof payload, and rejection tests.
 ```
 
@@ -96,7 +98,7 @@ Out of scope:
 - implementing committed bytecode.
 - changing the core Jolt sumcheck protocol for Dory.
 - treating Akita-specific packed views as logical Jolt polynomials.
-- splitting the Akita target into multiple physical witness commitments.
+- adding a second proof-owned Akita PackedWitness commitment.
 - supporting Akita ZK before a BlindFold-like lattice hiding layer exists.
 ```
 
@@ -170,8 +172,9 @@ Interface requirements for Akita:
 - Committed-program domains may differ from the trace domain.
 - Stage 8 receives committed-program final logical claims through the same
   logical opening manifest as other Jolt claims.
-- In lattice mode, committed bytecode chunks and ProgramImageInit are families
-  inside the PackedWitness unless a feature is explicitly rejected.
+- In lattice mode, committed bytecode chunks and ProgramImageInit remain
+  precommitted physical objects and require separate openings against their
+  original commitments.
 - Increment selection reuses committed bytecode facts:
     Ram source = Store circuit flag.
     Rd source = sum of rd one-hot lanes.
@@ -195,6 +198,12 @@ physical object:
 view:
   A deterministic expression that recovers a logical object evaluation from one
   or more physical objects.
+
+precommitted object:
+  A physical object already bound by verifier preprocessing or trusted advice.
+  Example: TrustedAdvice, BytecodeChunk(i), ProgramImageInit.
+  Akita W_pack cannot serve as its opening unless an explicit future binding
+  protocol proves equivalence to the original commitment.
 ```
 
 The Dory path keeps the existing shape:
@@ -212,21 +221,26 @@ Check:
   P_joint(r) = sum_i gamma^i y_i
 ```
 
-The Akita path uses the same logical claims but a different physical opening
-shape:
+The Akita path uses the same logical claims but partitions them by physical
+commitment class:
 
 ```text
 Given logical claims:
   p_0(r) = y_0, ..., p_{m-1}(r) = y_{m-1}
 
-Resolve each p_i into a physical view:
+Resolve each proof-owned p_i into a physical view:
   p_i(r) = View_i(W_pack; r)
 
 Ask Akita to prove the batched view relation:
-  { View_i(W_pack; r) = y_i }_{i=0}^{m-1}
+  { View_i(W_pack; r) = y_i } for proof-owned packed claims
+
+For precommitted p_j:
+  open p_j(r) = y_j against its original commitment.
 
 Stage 8 remains generic:
-  it builds a BatchOpeningStatement and dispatches to PCS::prove_batch/verify_batch.
+  it builds opening statements and dispatches to the selected batch-opening
+  implementation. Dory may keep one homomorphic batch; Akita uses one
+  packed-view batch plus separate precommitted openings.
 ```
 
 Module ownership:
@@ -284,9 +298,10 @@ Milestone details:
   real backend is wired in.
 
 03-prefix-packed-witness:
-  All lattice-visible committed facts are packed into one Akita-friendly
+  Proof-owned lattice-visible facts are packed into one Akita-friendly
   PackedWitness. The layout records fact families, alphabets, row domains,
-  offsets, and dimension effects.
+  offsets, and dimension effects. Precommitted facts are excluded unless a
+  future binding protocol preserves their original commitments.
 
 04-logical-views-and-translation:
   Final logical openings remain Jolt claims.
@@ -298,8 +313,8 @@ Milestone details:
   committed bytecode lanes.
 
 06-advice-and-aux-onehotting:
-  Advice, field-inline, program image, bytecode chunks, and future blinding
-  data get canonical packing policies inside PackedWitness.
+  Advice, field-inline, precommitted program data, and future blinding data get
+  canonical opening policies. Only proof-owned data enters PackedWitness.
 
 07-verifier-config-and-tests:
   The verifier exposes curve/lattice PCS-family config, rejects unsupported
@@ -321,6 +336,9 @@ Milestone details:
   Stage 8 dispatch, and rejection behavior.
 - BytecodeRa trace facts and program bytecode commitments remain separate
   objects.
+- TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted
+  objects; lattice verification must open them against their original
+  commitments, not only through W_pack.
 - Any one-hot committed logical value has an explicit decode relation and an
   explicit validity relation.
 - Base increment source is canonical:
@@ -356,8 +374,8 @@ increment_decode_validity:
   the PIOP.
 
 aux_policy_rejection:
-  unsupported advice, field-inline, bytecode, program-image, or blinding
-  layouts fail before opening verification.
+  unsupported advice, field-inline, precommitted-program, or blinding layouts
+  fail before opening verification.
 
 verifier_config_rejection:
   invalid PCS/config/proof payload combinations are rejected deterministically.
@@ -398,10 +416,12 @@ Target performance:
 ```text
 - Prefix-packed W_pack is deterministic and streamable.
 - Base increment magnitude facts are fused for RamInc/RdInc.
-- Advice and bytecode data use canonical byte-limb one-hot representations.
+- Proof-owned advice data uses canonical byte-limb one-hot representations.
+- Precommitted bytecode/program-image data keeps separate commitment openings.
 - Field-inline has a separate packed family inside W_pack.
-- The verifier opens one Akita packed-view relation for the final same-point
-  claims whenever the PIOP has reduced claims to a common r.
+- The verifier opens one Akita packed-view relation for proof-owned same-point
+  claims whenever the PIOP has reduced claims to a common r, plus separate
+  openings for any precommitted claims.
 ```
 
 ## Questions

@@ -46,8 +46,11 @@ Assumptions:
   Akita short-witness relation.
 - Stage 8 owns the logical final-opening manifest.
 - PCS implementations own the physical opening strategy.
-- Akita lattice mode uses one PackedWitness commitment for all supported
-  lattice-visible committed facts.
+- Akita lattice mode uses one proof-owned PackedWitness commitment for
+  non-precommitted packed facts.
+- Precommitted facts, such as TrustedAdvice, BytecodeChunk(i), and
+  ProgramImageInit, keep their original commitments and require separate
+  openings unless a future protocol proves an explicit binding to W_pack.
 - The packed-view reduction is generic with respect to the PCS family. Akita is
   one backend that can satisfy it; later hash-based PCS modes may also use the
   packed option.
@@ -115,6 +118,7 @@ opening claims:
   opening ID
   relation ID
   commitment reference
+  commitment class: proof-owned packed witness or precommitted object
   clear claimed value in clear mode; no claim payload in ZK verifier statements
   physical view formula
   optional embedding scale from prior reductions
@@ -254,22 +258,41 @@ domain. Lattice fused increment views are already trace-domain views of
 Akita implementation:
 
 ```text
-1. transcript-bind PackedWitness layout, physical views, point, and claims.
-2. use the generic packed-view reduction to form one packed-view opening
-   relation.
-3. verify the Akita physical proof for that relation.
-4. derive logical coefficients internally for claim binding.
+1. partition final openings by physical commitment class.
+2. transcript-bind PackedWitness layout, packed physical views, point, and
+   claims.
+3. use the generic packed-view reduction to form one packed-view opening
+   relation for W_pack claims.
+4. verify the Akita physical proof for that relation.
+5. verify precommitted claims against their original commitments through their
+   owning opening path.
+6. derive logical coefficients internally for claim binding.
 ```
+
+Only the W_pack partition is an Akita packed-view relation. The precommitted
+partition is required because Akita does not provide the additive homomorphism
+needed to batch unrelated commitments into W_pack after the commitments were
+already fixed.
 
 Akita non-requirements:
 
 ```text
-- no requirement to compute C_joint = sum_i gamma_i * C_i.
-- no requirement that every logical claim maps to a standalone physical
-  commitment.
-- no requirement that W_pack is materialized.
-- no requirement that current Akita public point-opening APIs are sufficient;
-  jolt-akita may supply a packed-view adapter.
+1. no requirement to compute C_joint = sum_i gamma_i * C_i.
+2. no requirement that every logical claim maps to a standalone physical
+   commitment.
+3. no requirement that W_pack is materialized.
+4. no requirement that current Akita public point-opening APIs are sufficient;
+   jolt-akita may supply a packed-view adapter.
+```
+
+Akita rejected behavior:
+
+```text
+1. satisfying a TrustedAdvice, BytecodeChunk(i), or ProgramImageInit final claim
+   only by opening W_pack.
+2. using the generic packed-view reduction to form one packed-view opening
+   relation that mixes precommitted commitments into the proof-owned packed
+   witness without an explicit binding protocol.
 ```
 
 Same-point scope:
@@ -297,6 +320,7 @@ Akita:
   one PackedWitness commitment is planned before Stage 8 challenges.
   layout, fact families, offsets, domains, and decode formulas are fixed before
   the packed-opening challenge is sampled.
+  precommitted commitments are planned and bound separately before Stage 8.
 ```
 
 The commit-planning object may live outside `jolt-openings`, but the protocol
@@ -517,10 +541,11 @@ transcript binding:
   relation, not a protocol change.
 - Akita's BatchOpening implementation cannot require additive commitment
   combination.
-- The statement type can represent committed-program openings from
-  ProgramMode::Committed as PackedWitness views.
+- The statement type can represent both packed-view openings and separate
+  precommitted openings from ProgramMode::Committed.
 - The lattice statement has one Akita commitment handle unless the verifier
-  rejects the feature combination.
+  rejects the feature combination; this does not include precommitted object
+  commitment handles.
 ```
 
 ## Tests
@@ -575,6 +600,10 @@ akita_packed_view_statement_has_one_commitment:
   lattice-family statement has one PackedWitness commitment and no Stage 8
   Dory-style joint commitment requirement.
 
+akita_precommitted_claims_use_original_commitments:
+  TrustedAdvice, BytecodeChunk(i), and ProgramImageInit cannot be satisfied by
+  only opening W_pack.
+
 akita_increment_views_do_not_use_dense_scale:
   fused RamInc/RdInc claims have no Dory dense-increment embedding scale.
 ```
@@ -606,7 +635,8 @@ Dory:
 Akita:
   no additive-combine requirement.
   physical proof cost is delegated to jolt-akita.
-  logical batching cost is one packed-view relation over W_pack.
+  proof-owned logical batching cost is one packed-view relation over W_pack.
+  precommitted claims pay their separate opening cost.
 
 Hash PCS:
   may reuse the same generic packed-view reduction if it can prove the resulting

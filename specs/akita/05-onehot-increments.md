@@ -125,6 +125,8 @@ expanded `Cycle` sequence before fused increments are enabled.
 
 No base increment selector is committed. Selection is derived from committed
 bytecode facts.
+Those bytecode facts remain precommitted-program facts; the fused-increment
+packed witness does not by itself open the BytecodeChunk commitments.
 
 Logical reconstruction:
 
@@ -241,6 +243,8 @@ Add formulas:
 Reuse existing bytecode read-RAF staged row semantics for Store/RdPresent.
 Do not add a new committed selector family unless those staged claims cannot
 expose the required Store and rd-present evaluations.
+Do not add BytecodeChunk lanes to W_pack unless a future protocol also proves
+binding to the original BytecodeChunk commitments.
 ```
 
 `jolt-verifier`:
@@ -295,6 +299,8 @@ for each trace row x:
 - Magnitude zero implies sign zero.
 - Inactive rows have zero magnitude and sign zero.
 - StoreFlag and RdPresent are derived from committed expanded bytecode rows.
+- BytecodeChunk commitments are opened or otherwise bound separately from the
+  fused-increment W_pack facts.
 - StoreFlag * RdPresent = 0.
 - RamInc/RdInc logical claims are reconstructed by masked translation.
 - The signed decode is sign-magnitude, not two's complement.

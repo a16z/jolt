@@ -11,9 +11,10 @@
 
 ## Scope
 
-Akita commits supported lattice facts through one physical object `W_pack`.
-`W_pack` is a prefix-packed one-hot object, not the Dory list of logical
-polynomials.
+Akita commits supported proof-owned lattice facts through one physical object
+`W_pack`. `W_pack` is a prefix-packed one-hot object, not the Dory list of
+logical polynomials and not a replacement for verifier/preprocessing
+commitments.
 
 In scope:
 
@@ -38,8 +39,11 @@ Assumptions:
 
 ```text
 - Trace length is T = 2^n.
-- Packed facts may be trace-domain, bytecode-domain, program-image-domain, or
-  advice-domain facts.
+- Packed facts may be trace-domain, proof-owned advice-domain, or other
+  proof-owned auxiliary facts.
+- TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted and are
+  excluded from W_pack unless a future binding protocol proves equivalence to
+  their original commitments.
 - Akita setup cost is sensitive to D_pack = ceil_log2(total packed cells).
 - The prover can stream nonzero one-hot facts without materializing W_pack.
 - Padding to 2^D_pack is an ambient domain property, not a witness construction
@@ -191,6 +195,9 @@ Base increment source is not a PackedWitness family:
 ```text
 Ram source = committed bytecode Store flag.
 Rd source  = committed bytecode rd one-hot presence.
+These source facts come from the committed-bytecode opening path, not from a
+proof-owned W_pack family, unless a future bound precommitted packed view is
+specified.
 ```
 
 Padding:
@@ -245,16 +252,13 @@ field-inline facts:
   field-inline advice/aux bytes when enabled.
 
 advice facts:
-  TrustedAdvice bytes.
   UntrustedAdvice bytes.
 
-committed bytecode facts:
-  BytecodeChunk(i) optional selector lanes.
-  BytecodeChunk(i) boolean flag lanes.
-  BytecodeChunk(i) scalar lanes after canonical byte decomposition.
-
-program image facts:
+excluded precommitted facts:
+  TrustedAdvice bytes.
+  BytecodeChunk(i) committed bytecode lanes.
   ProgramImageInit little-endian word bytes.
+  These are opened against their original commitments.
 ```
 
 Layout:
@@ -284,7 +288,8 @@ jolt-claims:
   define stable PackedFamilyId values in the lattice extension.
   expose RA fact counts through existing one-hot dimensions.
   expose fused base increment fact families through lattice increment mode.
-  expose field-inline/advice/committed-program families through lattice policy.
+  expose field-inline/proof-owned-advice families through lattice policy.
+  expose precommitted-program opening IDs separately from PackedWitness families.
 
 jolt-akita:
   implement PackedWitnessLayout and PackedFamily.
@@ -327,8 +332,6 @@ pub enum Alphabet {
 
 pub enum FactDomain {
     TraceRows { log_t: usize },
-    BytecodeRows { log_bytecode: usize },
-    ProgramImageWords { log_words: usize },
     AdviceBytes { kind: AdviceKind, log_bytes: usize },
 }
 ```
@@ -341,8 +344,8 @@ fn build_packed_witness_layout(config, dimensions) -> PackedWitnessLayout:
   append RA families from OneHotConfig dimensions
   append fused base increment magnitude/sign families
   append field-inline families when field-inline is enabled
-  append advice byte families when advice is enabled
-  append committed bytecode/program-image families when ProgramMode::Committed
+  append proof-owned advice byte families when advice is enabled
+  do not append TrustedAdvice, BytecodeChunk(i), or ProgramImageInit
   sort families by FactId
   offset = 0
   for family:
@@ -362,7 +365,7 @@ fact_count_by_alphabet:
   number of bit, byte, and fixed-alphabet families.
 
 cells_by_domain:
-  TraceRows, BytecodeRows, ProgramImageWords, AdviceBytes.
+  TraceRows and proof-owned AdviceBytes.
 
 cells_per_trace_row:
   trace-domain contribution normalized by T.
@@ -426,7 +429,8 @@ FactId ordering:
 ## Invariants
 
 ```text
-- The layout uniquely maps every supported logical fact to packed cell ranges.
+- The layout uniquely maps every supported proof-owned packed fact to packed cell
+  ranges.
 - Bit facts cost 2T cells, not 256T cells.
 - Dummy cells are zero and not addressable by logical opening IDs.
 - D_pack is computed from layout cell count, not from prover witness length.
@@ -436,7 +440,9 @@ FactId ordering:
 - Fact family ordering is stable across prover and verifier.
 - The dimension reported to Akita equals layout.D_pack.
 - Backend-specific setup padding is reported separately from Jolt cell padding.
-- W_pack contains all supported lattice-visible committed facts.
+- W_pack contains only supported proof-owned packed facts.
+- Precommitted facts remain outside the PackedWitness layout unless an explicit
+  binding protocol is specified.
 - PackedWitnessSource emits only cells owned by PackedWitnessLayout.
 - ViewCatalog entries reference existing fact families and cannot create new
   cells.
@@ -475,9 +481,9 @@ dummy_cells_are_zero_and_unreferenced:
 layout_sort_order_is_stable:
   changing input insertion order does not change digest.
 
-committed_program_families_use_non_trace_domains:
-  BytecodeChunk and ProgramImageInit dimensions are computed from their own
-  domains, not from T.
+precommitted_program_families_are_excluded:
+  TrustedAdvice, BytecodeChunk(i), and ProgramImageInit do not change D_pack
+  unless an explicit bound-precommitted packed-view protocol is enabled.
 
 planner_audit_fields_are_reported:
   layout tests expose fact_count_by_alphabet, cells_by_domain,

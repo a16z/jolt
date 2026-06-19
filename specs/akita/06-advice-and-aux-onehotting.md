@@ -1,8 +1,8 @@
-# Spec: Akita Advice And Program Data One-Hotting
+# Spec: Akita Advice And Program Data Opening Policy
 
 | Field | Value |
 |-------|-------|
-| Component | advice, field-inline, and committed-program packing |
+| Component | advice, field-inline, and committed-program opening policy |
 | Depends On | 00-roadmap.md, 04-logical-views-and-translation.md, 05-onehot-increments.md |
 | Unlocks | verifier config |
 | Author(s) | Markos Georghiades, Codex |
@@ -11,18 +11,19 @@
 
 ## Scope
 
-Lattice mode packs all supported non-increment data into the same
-`PackedWitness` commitment as RA and fused base increments.
+Lattice mode packs proof-owned non-increment data into the same `PackedWitness`
+commitment as RA and fused base increments. Precommitted data stays bound to its
+original commitment and is opened separately.
 
 In scope:
 
 ```text
-- trusted advice.
-- untrusted advice.
+- trusted advice opening policy.
+- untrusted advice packing policy.
 - arbitrary byte/field data decomposition.
 - field-inline data and FieldRdInc policy.
-- committed bytecode chunks.
-- committed program image.
+- committed bytecode chunk opening policy.
+- committed program image opening policy.
 - canonical byte ordering.
 - ZK rejection policy.
 ```
@@ -42,7 +43,9 @@ Assumptions:
 - Committed bytecode chunks encode expanded bytecode rows.
 - Program image words are little-endian u64 words.
 - Arbitrary field data has no small alphabet unless decomposed.
-- Lattice mode targets one Akita proof over one PackedWitness.
+- Lattice mode targets one Akita proof over one proof-owned PackedWitness, plus
+  separate openings for precommitted objects.
+- TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted.
 - ZK is rejected for now.
 ```
 
@@ -96,12 +99,11 @@ Any value represented as one-hot bytes must name:
 Advice:
 
 ```text
-TrustedAdviceByte(j)
 UntrustedAdviceByte(j)
 
 lifecycle:
-  TrustedAdviceByte is preprocessing-owned when trusted advice is present.
   UntrustedAdviceByte is proof-owned.
+  TrustedAdvice is preprocessing-owned when present and is not a W_pack family.
 
 domain:
   advice byte index domain, not trace domain.
@@ -114,6 +116,10 @@ rows:
 Advice values are byte data. If a higher-level value is a field element or word,
 the owner module must serialize it through the canonical encoding above before
 emitting bytes.
+
+Trusted advice final openings are verified against the trusted-advice
+precommitment. They may only enter a packed view in a future protocol that also
+proves binding to that precommitment.
 
 Field-inline:
 
@@ -138,10 +144,11 @@ Reason:
 If a future field-inline path proves a smaller structured representation, it
 must replace this policy with an explicit decode invariant.
 
-Committed bytecode:
+Committed bytecode opening policy:
 
 ```text
-BytecodeChunk(i) families are over committed bytecode chunk rows and lanes.
+BytecodeChunk(i) is a precommitted object over committed bytecode chunk rows and
+lanes. Its final openings are not W_pack claims.
 
 Lane classes:
   optional register selector lanes:
@@ -157,7 +164,8 @@ Lane classes:
     unexpanded_pc, imm.
 ```
 
-Committed bytecode representation:
+Committed bytecode representation for separate openings or future bound packed
+precommitted views:
 
 ```text
 selector/flag lanes:
@@ -176,7 +184,9 @@ Reason:
 Program image:
 
 ```text
-ProgramImageInitWordByte(j), j in [0, 8)
+ProgramImageInit is a precommitted object.
+ProgramImageInitWordByte(j), j in [0, 8) is the canonical decomposition if a
+future bound packed precommitted view is added.
 
 domain:
   committed program-image word domain.
@@ -198,7 +208,7 @@ future:
 
 ## Layout
 
-Each family contributes:
+Each proof-owned packed family contributes:
 
 ```text
 cells_f = rows_f * limbs_f * alphabet_f
@@ -212,29 +222,18 @@ advice bytes:
   limbs_f = 1
   alphabet_f = 256
 
-program image u64 words:
-  rows_f = program_image_words
-  limbs_f = 8
-  alphabet_f = 256
-
-bytecode register selector lane:
-  rows_f = bytecode_chunk_rows
-  limbs_f = 1
-  alphabet_f = 32
-
-bytecode flag lane:
-  rows_f = bytecode_chunk_rows
-  limbs_f = 1
-  alphabet_f = 2
+precommitted program objects:
+  TrustedAdvice, BytecodeChunk(i), and ProgramImageInit do not contribute to
+  D_pack unless a future bound packed precommitted view is enabled.
 ```
 
-All families enter the same global cell sum:
+All proof-owned packed families enter the same global cell sum:
 
 ```text
 D_pack = ceil_log2(sum_f cells_f)
 ```
 
-There is no second packed dimension in the target lattice protocol.
+There is no second proof-owned packed dimension in the target lattice protocol.
 
 ## Stage Interaction
 
@@ -266,7 +265,9 @@ Advice:
 
 ```text
 Existing advice reductions produce final logical advice openings.
-Lattice view resolution maps those openings to advice byte families in W_pack.
+Lattice view resolution maps untrusted advice openings to proof-owned advice
+byte families in W_pack.
+Trusted advice openings resolve to the trusted-advice precommitment.
 ```
 
 Field-inline:
@@ -281,21 +282,24 @@ Committed bytecode:
 
 ```text
 Committed-program reductions produce BytecodeChunk(i) final logical openings.
-Lattice view resolution maps those openings to committed-bytecode families.
+Lattice view resolution maps those openings to separate openings against the
+BytecodeChunk(i) commitments.
 ```
 
 Program image:
 
 ```text
 ProgramImageClaimReduction produces ProgramImageInit final logical openings.
-Lattice view resolution maps those openings to program-image byte families.
+Lattice view resolution maps those openings to a separate opening against the
+ProgramImageInit commitment.
 ```
 
 Stage 8:
 
 ```text
-All supported final logical claims are packed-view claims over one W_pack.
-Akita receives one PackedWitness commitment and one packed-view proof.
+Proof-owned final logical claims are packed-view claims over one W_pack.
+TrustedAdvice, BytecodeChunk(i), and ProgramImageInit receive separate openings
+against their original commitments.
 ```
 
 ## Implementation
@@ -304,26 +308,21 @@ Akita receives one PackedWitness commitment and one packed-view proof.
 
 ```text
 Define lattice family IDs for:
-  TrustedAdviceByte.
   UntrustedAdviceByte.
   FieldRdInc bytes.
-  committed bytecode optional selector lanes.
-  committed bytecode boolean flag lanes.
-  committed bytecode scalar byte lanes.
-  ProgramImageInit word bytes.
 
 Define decode formulas for:
   byte arrays.
   canonical field elements.
-  committed bytecode scalar lanes.
-  program image words.
 
 Define validity formulas for:
   one-hot byte families.
-  optional one-hot committed-bytecode selector lanes.
-  boolean committed-bytecode flag lanes.
   canonical field-byte encodings.
-  fixed-length program-image word bytes.
+
+Define precommitted opening policies for:
+  TrustedAdvice.
+  BytecodeChunk(i).
+  ProgramImageInit.
 ```
 
 `jolt-verifier`:
@@ -332,16 +331,21 @@ Define validity formulas for:
 When PCS family is lattice:
   require ProgramMode::Committed.
   enable field-inline only when FieldRdInc byte policy is available.
-  enable advice only when advice byte families are available.
+  enable untrusted advice only when proof-owned advice byte families are
+  available.
+  enable trusted advice only when a trusted-advice precommitment and separate
+  opening path are available.
+  require separate precommitted openings for BytecodeChunk(i) and
+  ProgramImageInit.
   reject ZK.
-  derive all families into one PackedWitnessLayout.
+  derive all proof-owned families into one PackedWitnessLayout.
 ```
 
 `jolt-akita`:
 
 ```text
 Accept PackedWitnessLayout with heterogeneous alphabets.
-Reject dense non-PackedWitness commitments.
+Reject dense proof-owned facts that bypass PackedWitness.
 Reject byte-decode views unless the backend or adapter proves the linear view.
 ```
 
@@ -356,7 +360,9 @@ Do not emit global dummy cells.
 ## Invariants
 
 ```text
-- Lattice mode uses one PackedWitness commitment for supported committed facts.
+- Lattice mode uses one PackedWitness commitment for supported proof-owned
+  packed facts.
+- Precommitted facts keep separate openings against their original commitments.
 - Advice domains are advice domains, not trace domains.
 - Field-inline FieldRdInc is separate from base fused increments.
 - Field elements use canonical representatives in [0, p).
@@ -368,7 +374,7 @@ Do not emit global dummy cells.
   presence lanes.
 - BytecodeChunk(i) and ProgramImageInit do not inherit trace-domain row count.
 - ZK with lattice is rejected until a hiding protocol is specified.
-- No dense non-PackedWitness path is silently enabled.
+- No dense proof-owned path bypasses PackedWitness silently.
 ```
 
 ## Tests
@@ -376,17 +382,18 @@ Do not emit global dummy cells.
 Targeted tests:
 
 ```text
-advice_bytes_use_advice_domain:
-  advice family cells are computed from advice byte length, not T.
+untrusted_advice_bytes_use_advice_domain:
+  untrusted advice family cells are computed from advice byte length, not T.
 
-trusted_advice_encoding_roundtrip:
-  trusted advice bytes decode to the original byte stream.
+trusted_advice_uses_precommitted_opening:
+  trusted advice final openings are checked against the trusted-advice
+  precommitment, not W_pack.
 
 untrusted_advice_encoding_roundtrip:
   untrusted advice bytes decode to the original byte stream.
 
 advice_byte_onehot_validity_rejects:
-  malformed TrustedAdviceByte or UntrustedAdviceByte limb rejects.
+  malformed UntrustedAdviceByte limb rejects.
 
 field_element_encoding_is_canonical:
   non-canonical field byte representation rejects.
@@ -394,33 +401,20 @@ field_element_encoding_is_canonical:
 field_rd_inc_uses_field_family:
   FieldRdInc does not reuse base IncByte/IncSign families.
 
-program_image_bytes_are_little_endian:
-  u64 word 0x0807060504030201 maps to bytes 1..8.
+precommitted_program_openings_use_original_commitments:
+  BytecodeChunk(i) and ProgramImageInit openings are checked against their
+  preprocessing commitments.
 
-bytecode_chunk_uses_bytecode_domain:
-  committed bytecode family rows are chunk rows/lanes, not trace rows.
-
-bytecode_scalar_lane_byte_roundtrip:
-  unexpanded_pc/imm byte limbs decode to the committed scalar lane value.
-
-bytecode_optional_selector_validity_rejects:
-  malformed rs1, rs2, rd, or lookup optional one-hot lane rejects.
-
-bytecode_flag_booleanity_rejects:
-  malformed circuit flag, instruction flag, or RAF bit rejects.
-
-bytecode_pc_uses_u64_bytes:
-  unexpanded_pc lane encodes the u64 address in 8 little-endian bytes.
-
-bytecode_imm_uses_canonical_field_bytes:
-  imm lane encodes the field element F::from_i128(imm) canonically.
+precommitted_program_not_in_w_pack:
+  enabling ProgramMode::Committed does not add BytecodeChunk(i) or
+  ProgramImageInit families to the proof-owned PackedWitness layout.
 
 zk_lattice_rejects:
   lattice family with zk feature fails before proof verification.
 
-single_packed_witness_layout_includes_all_supported_families:
-  enabling advice, field-inline, and ProgramMode::Committed changes D_pack,
-  not a second packed dimension.
+single_packed_witness_layout_includes_all_proof_owned_families:
+  enabling untrusted advice and field-inline changes D_pack, while
+  precommitted-program openings do not.
 ```
 
 ## Performance
@@ -436,21 +430,22 @@ field-inline:
   is specified.
 
 bytecode:
-  selector/flag lanes are cheap relative to byte-decomposed scalar lanes.
+  separate opening cost is paid against committed bytecode commitments.
 
 program image:
-  cost scales with program-image word count * 8 byte limbs.
+  separate opening cost is paid against the program-image commitment.
 
 setup:
-  one D_pack accounts for all families.
+  one D_pack accounts for proof-owned packed families.
 ```
 
 Rejected:
 
 ```text
 - forcing advice into trace-sized rows.
-- separate Akita proofs for advice or committed program objects.
-- dense non-PackedWitness commitments in lattice mode.
+- satisfying precommitted advice or committed program objects only through
+  W_pack.
+- dense proof-owned commitments that bypass PackedWitness in lattice mode.
 - byte-decomposing field data without canonical representative checks.
 - using big-endian byte ordering for program image or advice integers.
 - silently enabling ZK blinding families.

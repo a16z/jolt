@@ -46,7 +46,9 @@ Assumptions:
 ```text
 - Committed bytecode/program-image support is already ported.
 - jolt-claims lattice extension defines PackedWitness families and views.
-- jolt-akita verifies one PackedWitness packed-view proof.
+- jolt-akita verifies one proof-owned PackedWitness packed-view proof.
+- TrustedAdvice, BytecodeChunk(i), and ProgramImageInit use separate openings
+  against their original commitments.
 - Dory remains the default curve PCS.
 - Akita is transparent-only for this target.
 ```
@@ -129,8 +131,10 @@ field-inline:
   PackedWitnessLayout.
 
 advice:
-  allowed only when trusted/untrusted advice byte families are present in
-  PackedWitnessLayout.
+  untrusted advice is allowed only when proof-owned advice byte families are
+  present in PackedWitnessLayout.
+  trusted advice is allowed only when a trusted-advice precommitment and
+  separate opening path are present.
 
 zk:
   rejected.
@@ -175,6 +179,8 @@ PackedWitness layout digest.
 D_pack.
 Akita setup key.
 Akita packed-view proof.
+Precommitted opening proof material for TrustedAdvice, BytecodeChunk(i), and
+ProgramImageInit when those claims are present.
 Protocol header:
   ProgramMode::Committed.
   IncrementCommitmentMode::FusedOneHot.
@@ -228,11 +234,14 @@ Dispatch:
 ```text
 1. derive logical final-opening manifest from stage outputs and config.
 2. derive PackedWitnessLayout when PCS family is lattice.
-3. resolve logical openings to physical views.
-4. build BatchOpeningStatement.
-5. call selected PCS BatchOpeningScheme.
-6. bind returned opening data to transcript.
-7. return logical coefficients for clear-mode checks.
+3. resolve logical openings to physical opening targets.
+4. partition proof-owned W_pack claims from precommitted claims.
+5. build a packed BatchOpeningStatement for W_pack claims.
+6. build separate precommitted opening statements for TrustedAdvice,
+   BytecodeChunk(i), and ProgramImageInit.
+7. call selected opening implementations.
+8. bind returned opening data to transcript.
+9. return logical coefficients for clear-mode checks.
 ```
 
 Stage 8 must not decode increments or byte data directly. It consumes view
@@ -248,7 +257,8 @@ formulas from the lattice extension.
 5. PackedWitness layout digest mismatch.
 6. missing final logical openings.
 7. view resolution failure.
-8. final BatchOpening failure.
+8. precommitted opening statement/proof mismatch.
+9. final BatchOpening failure.
 ```
 
 Transcript:
@@ -258,9 +268,10 @@ Transcript:
 2. preprocessing digest.
 3. PCS commitments.
 4. PackedWitness layout digest when lattice.
-5. stage claims.
-6. final batch-opening statement.
-7. PCS batch proof outputs.
+5. precommitted opening manifests when lattice.
+6. stage claims.
+7. final batch-opening statements.
+8. PCS batch proof outputs.
 ```
 
 ## Implementation
@@ -292,7 +303,9 @@ Split Stage 8 into:
   logical manifest builder.
   PackedWitness layout derivation.
   physical view resolver.
+  opening partitioner.
   BatchOpeningStatement construction.
+  precommitted opening statement construction.
   BatchOpeningScheme dispatch.
   output coefficient binding.
 ```
@@ -326,6 +339,11 @@ fn resolve_physical_views<F>(
     layout: &PackedWitnessLayout,
 ) -> Result<Vec<PhysicalView>, VerifierError>;
 
+fn partition_opening_targets<F>(
+    logical: LogicalOpeningManifest<F>,
+    views: Vec<PhysicalView>,
+) -> Result<OpeningJobs<F>, VerifierError>;
+
 fn build_batch_statement<F, C>(
     logical: LogicalOpeningManifest<F>,
     views: Vec<PhysicalView>,
@@ -345,8 +363,11 @@ fn build_batch_statement<F, C>(
 - Lattice mode rejects dense and separate base increments.
 - Lattice mode rejects ZK.
 - Field-inline cannot bypass PackedWitnessLayout.
-- Advice cannot bypass PackedWitnessLayout.
+- Untrusted advice cannot bypass PackedWitnessLayout.
+- Trusted advice cannot bypass its precommitted opening path.
 - Akita payload contains exactly one PackedWitness commitment.
+- Akita payload carries separate precommitted opening proof material when
+  precommitted claims are present.
 - PackedWitness D_pack matches Akita setup key constraints.
 - ProgramMode::Committed final openings are present before Stage 8 dispatch.
 - Proof serialization is unambiguous across Dory and Akita modes.
@@ -385,7 +406,10 @@ akita_field_inline_requires_layout_families:
   field-inline enabled without FieldRdInc families rejects.
 
 akita_advice_requires_layout_families:
-  advice enabled without advice byte families rejects.
+  untrusted advice enabled without advice byte families rejects.
+
+akita_trusted_advice_requires_precommitted_opening:
+  trusted advice enabled without a separate trusted-advice opening path rejects.
 
 akita_payload_mode_mismatch_rejects:
   Dory payload under Akita config and Akita payload under Dory config fail.
@@ -400,12 +424,17 @@ akita_committed_program_openings_missing_rejects:
   ProgramMode::Committed proof without BytecodeChunk/ProgramImageInit final
   openings fails.
 
+akita_committed_program_precommitted_opening_missing_rejects:
+  ProgramMode::Committed proof that only opens W_pack for BytecodeChunk or
+  ProgramImageInit fails.
+
 akita_single_packed_witness_payload:
   Akita payload with extra packed commitments rejects.
 
 stage8_batch_statement_snapshot:
-  statement contains deterministic opening IDs, view formulas, claims, and the
-  PackedWitness commitment handle for a fixed fixture.
+  statement contains deterministic opening IDs, packed view formulas,
+  precommitted opening targets, claims, and commitment handles for a fixed
+  fixture.
 ```
 
 Targeted command filters:
@@ -427,9 +456,11 @@ Dory:
 Akita:
   one PackedWitness commitment.
   one packed-view proof.
+  separate precommitted openings for trusted advice, committed bytecode, and
+  program image when present.
   no verifier materialization of W_pack.
-  one D_pack accounts for RA, fused increments, advice, field-inline,
-  committed bytecode, and program image.
+  one D_pack accounts for RA, fused increments, untrusted advice, and
+  field-inline proof-owned facts.
 ```
 
 Rejected:
@@ -437,10 +468,10 @@ Rejected:
 ```text
 - hidden conversion from Akita batch proof into Dory-style RLC.
 - verifier materialization of W_pack.
-- separate Akita proofs for advice or committed program objects.
+- satisfying trusted advice or committed program objects only through W_pack.
 - config combinations that silently change setup dimension.
 - accepting unsupported features by falling back to Dory semantics.
-- running field-inline/advice/zk outside PackedWitnessLayout.
+- running field-inline/untrusted-advice/zk outside PackedWitnessLayout.
 ```
 
 ## Questions
