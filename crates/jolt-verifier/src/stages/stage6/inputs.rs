@@ -73,44 +73,61 @@ pub fn deps<'a, F: Field, C>(
     }
 }
 
+/// The stage 6 produced opening claims, generic over the cell (`F` on the wire,
+/// `Vec<F>` for derived points, `OpeningClaim<F>` (point + value) on the clear
+/// path). The per-relation members are each `#[derive(OutputClaims)]` structs;
+/// the address-phase and committed-reduction members are hand-written but follow
+/// the same cell convention.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Stage6OutputClaims<F: Field> {
-    pub address_phase: Stage6AddressPhaseClaims<F>,
-    pub bytecode_read_raf: BytecodeReadRafOutputClaims<F>,
-    pub booleanity: BooleanityOutputClaims<F>,
-    pub ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
-    pub ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
-    pub instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
-    pub inc_claim_reduction: IncClaimReductionOutputClaims<F>,
-    pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub struct Stage6OutputClaims<C> {
+    pub address_phase: Stage6AddressPhaseClaims<C>,
+    pub bytecode_read_raf: BytecodeReadRafOutputClaims<C>,
+    pub booleanity: BooleanityOutputClaims<C>,
+    pub ram_hamming_booleanity: RamHammingBooleanityOutputClaims<C>,
+    pub ram_ra_virtualization: RamRaVirtualizationOutputClaims<C>,
+    pub instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<C>,
+    pub inc_claim_reduction: IncClaimReductionOutputClaims<C>,
+    pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<C>,
     /// Committed program mode only.
-    pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
+    pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<C>>,
     /// Committed program mode only.
-    pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<F>>,
+    pub program_image_claim_reduction: Option<ProgramImageCyclePhaseOutputClaim<C>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Stage6AddressPhaseClaims<F: Field> {
-    pub bytecode_read_raf: F,
-    pub booleanity: F,
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub struct Stage6AddressPhaseClaims<C> {
+    pub bytecode_read_raf: C,
+    pub booleanity: C,
     /// `BytecodeValStage(s)` openings staged at the address-phase point;
     /// present only in committed program mode.
-    pub bytecode_val_stages: Option<[F; NUM_BYTECODE_VAL_STAGES]>,
+    pub bytecode_val_stages: Option<[C; NUM_BYTECODE_VAL_STAGES]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Stage6AdviceCyclePhaseClaims<F: Field> {
-    pub trusted: Option<AdviceCyclePhaseOutputClaim<F>>,
-    pub untrusted: Option<AdviceCyclePhaseOutputClaim<F>>,
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub struct Stage6AdviceCyclePhaseClaims<C> {
+    pub trusted: Option<AdviceCyclePhaseOutputClaim<C>>,
+    pub untrusted: Option<AdviceCyclePhaseOutputClaim<C>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct AdviceCyclePhaseOutputClaim<F: Field> {
-    pub opening_claim: F,
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub struct AdviceCyclePhaseOutputClaim<C> {
+    pub opening_claim: C,
 }
 
 /// Openings cached when the committed-bytecode claim reduction's cycle phase
@@ -118,16 +135,22 @@ pub struct AdviceCyclePhaseOutputClaim<F: Field> {
 /// per-chunk `BytecodeChunk(i)` claims when the reduction finishes in the
 /// cycle phase.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub enum BytecodeCyclePhaseOutputClaims<F: Field> {
-    Intermediate(F),
-    Chunks(Vec<F>),
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub enum BytecodeCyclePhaseOutputClaims<C> {
+    Intermediate(C),
+    Chunks(Vec<C>),
 }
 
 /// Opening cached when the program-image claim reduction's cycle phase
 /// completes (the intermediate or final `ProgramImageInit` claim).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct ProgramImageCyclePhaseOutputClaim<F: Field> {
-    pub opening_claim: F,
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub struct ProgramImageCyclePhaseOutputClaim<C> {
+    pub opening_claim: C,
 }
