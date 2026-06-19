@@ -36,7 +36,6 @@ impl AkitaScheme {
         layout_digest: [u8; 32],
         polynomials: &[Polynomial<AkitaField>],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        validate_setup_layout_digest(setup.default_layout_digest, layout_digest)?;
         let num_vars = validate_commit_polynomials(setup, polynomials)?;
         let dense = dense_polynomials(polynomials)?;
         let dense_refs = dense.iter().collect::<Vec<_>>();
@@ -66,6 +65,7 @@ impl AkitaScheme {
         setup: &AkitaProverSetup,
         input: AkitaCommitInput,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        validate_setup_layout_digest(setup.default_layout_digest, input.layout_digest)?;
         Self::commit_group(setup, input.layout_digest, &[input.polynomial])
     }
 
@@ -616,7 +616,7 @@ fn validate_verifier_setup(
 fn validate_setup_shape(
     max_num_vars: usize,
     max_num_polys_per_commitment_group: usize,
-    default_layout_digest: [u8; 32],
+    _default_layout_digest: [u8; 32],
     commitment: &AkitaCommitment,
 ) -> Result<(), OpeningsError> {
     if commitment.num_vars > max_num_vars {
@@ -631,7 +631,6 @@ fn validate_setup_shape(
             commitment.num_vars
         )));
     }
-    validate_setup_layout_digest(default_layout_digest, commitment.layout_digest)?;
     if commitment.poly_count > max_num_polys_per_commitment_group {
         return Err(invalid_batch(format!(
             "Akita commitment covers {} polynomials but setup supports {}",
@@ -852,7 +851,10 @@ fn transparent_zk_error() -> OpeningsError {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
+
     use super::*;
+    use jolt_openings::BatchOpeningClaim;
 
     #[derive(Default)]
     struct RecordingTranscript {
@@ -904,6 +906,55 @@ mod tests {
             &transcript.bytes,
             LAYERZERO_AKITA_REV.as_bytes()
         ));
+    }
+
+    #[test]
+    fn direct_commit_group_uses_statement_bound_layout_digest() {
+        let setup_params = AkitaSetupParams::new(1, 1, [7; 32]);
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params);
+        let polynomial = Polynomial::new(vec![AkitaField::from_u64(2), AkitaField::from_u64(5)]);
+        let layout_digest = [9; 32];
+        let (commitment, hint) = AkitaScheme::commit_group(
+            &prover_setup,
+            layout_digest,
+            std::slice::from_ref(&polynomial),
+        )
+        .expect("direct commitment may use its own layout digest");
+        assert_eq!(commitment.layout_digest, layout_digest);
+
+        let point = vec![AkitaField::from_u64(3)];
+        let claim = polynomial.evaluate(&point);
+        let statement = BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest,
+            claims: vec![BatchOpeningClaim {
+                id: (),
+                relation: (),
+                commitment: commitment.clone(),
+                claim,
+                view: PhysicalView::Direct,
+                scale: AkitaField::one(),
+            }],
+        };
+        let mut prover_transcript = RecordingTranscript::new(b"akita-direct-layout");
+        let proof = AkitaScheme::prove_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &[polynomial],
+            vec![hint],
+        )
+        .expect("direct proof should prove");
+
+        let mut verifier_transcript = RecordingTranscript::new(b"akita-direct-layout");
+        let _ = AkitaScheme::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("direct proof should verify");
     }
 
     fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {

@@ -244,6 +244,9 @@ Dispatch:
    BytecodeChunk(i), and ProgramImageInit.
    Fused-increment StoreFlag/RdPresent source claims use the same
    precommitted BytecodeChunk opening path.
+7. prover-side Akita helpers receive one precommitted polynomial/hint input per
+   separate precommitted statement and attach the resulting proofs to
+   `lattice_precommitted_opening_proofs` in the same order.
 7. call selected opening implementations.
 8. bind returned opening data to transcript.
 9. return logical coefficients for clear-mode checks.
@@ -376,6 +379,9 @@ fn build_batch_statement<F, C>(
 - Akita payload contains exactly one PackedWitness commitment.
 - Akita payload carries separate precommitted opening proof material when
   precommitted claims are present.
+- Prover helper rejects a precommitted statement unless the supplied hint
+  matches that statement's commitment and the statement uses direct physical
+  views.
 - PackedWitness D_pack matches Akita setup key constraints.
 - ProgramMode::Committed final openings are present before Stage 8 dispatch.
 - Proof serialization is unambiguous across Dory and Akita modes.

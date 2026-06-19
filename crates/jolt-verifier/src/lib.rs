@@ -17,11 +17,14 @@ pub use akita::{
     akita_lattice_protocol_config_for_layout, attach_akita_packed_validity_proof,
     commit_akita_packed_witness, commit_akita_packed_witness_with_config,
     derive_akita_fused_increment_stage6_claims, prove_akita_jolt_final_openings,
-    prove_akita_jolt_packed_validity, prove_akita_packed_openings, prove_akita_packed_validity,
-    prove_akita_stage8_clear_openings, prove_and_attach_akita_opening_proofs, verify_akita_clear,
+    prove_akita_jolt_final_openings_with_precommitted, prove_akita_jolt_packed_validity,
+    prove_akita_packed_openings, prove_akita_packed_validity, prove_akita_stage8_clear_openings,
+    prove_akita_stage8_clear_openings_with_precommitted, prove_and_attach_akita_opening_proofs,
+    prove_and_attach_akita_opening_proofs_with_precommitted, verify_akita_clear,
     AkitaClearVectorCommitment, AkitaFusedIncrementStage6Claims,
     AkitaFusedIncrementStage6Derivation, AkitaFusedIncrementTranslationSources, AkitaJoltProof,
-    AkitaPackedValidityProofArtifacts, AkitaPackedWitnessArtifacts, AkitaVerifierPreprocessing,
+    AkitaPackedValidityProofArtifacts, AkitaPackedWitnessArtifacts, AkitaPrecommittedOpeningInput,
+    AkitaStage8ClearOpeningProofs, AkitaVerifierPreprocessing,
 };
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,

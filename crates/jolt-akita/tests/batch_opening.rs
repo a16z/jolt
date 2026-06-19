@@ -859,10 +859,23 @@ fn akita_commit_group_rejects_invalid_shapes() {
 }
 
 #[test]
-fn akita_commit_group_rejects_setup_layout_and_dimension_mismatch() {
+fn akita_direct_commit_group_accepts_statement_layout_and_rejects_dimension_mismatch() {
     let (prover_setup, _) = setup();
-    let wrong_layout = AkitaScheme::commit_group(&prover_setup, layout(8), &[polynomial(1)]);
-    assert!(matches!(wrong_layout, Err(OpeningsError::InvalidBatch(_))));
+    let statement_layout = AkitaScheme::commit_group(&prover_setup, layout(8), &[polynomial(1)])
+        .expect("direct commitments carry their statement layout digest");
+    assert_eq!(statement_layout.0.layout_digest, layout(8));
+
+    let wrong_packed_layout = AkitaScheme::commit_packed_witness(
+        &prover_setup,
+        AkitaCommitInput {
+            layout_digest: layout(8),
+            polynomial: polynomial(1),
+        },
+    );
+    assert!(matches!(
+        wrong_packed_layout,
+        Err(OpeningsError::InvalidBatch(_))
+    ));
 
     let (wrong_dimension_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7)));
     let wrong_dimension =

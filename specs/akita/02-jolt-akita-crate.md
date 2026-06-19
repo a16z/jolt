@@ -348,6 +348,11 @@ step D:
   proof-owned advice and field-inline families are supported or rejected by
   explicit error; precommitted objects are rejected from the packed-view
   statement unless an explicit binding protocol is supplied.
+
+step E:
+  prover-facing verifier helpers accept separate precommitted opening inputs
+  and produce one precommitted opening proof per verifier-built precommitted
+  statement, in statement order.
 ```
 
 ## Invariants
@@ -365,6 +370,9 @@ step D:
 - The lattice packed-view statement uses exactly one PackedWitness commitment.
 - Precommitted-object commitments are verified by their own opening statements,
   not by jolt-akita's W_pack proof.
+- Direct/native Akita commitments may carry the layout digest of their own
+  opening statement. Only the packed witness commitment is required to match the
+  packed setup layout digest.
 - AkitaProverHint is bound to the same layout digest and commitment digest used
   by the batch proof.
 - The adapter result cannot introduce new logical opening IDs.

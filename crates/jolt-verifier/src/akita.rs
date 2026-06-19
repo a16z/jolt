@@ -28,7 +28,7 @@ use crate::{
             lattice_packed_validity_opening_count, sample_lattice_packed_validity_eq_points,
             validate_akita_packed_witness_layout_config, FieldCanonicalFactor,
             LatticePackedValidityStatement, LatticePackedValidityStatementKind,
-            Stage8BatchStatement,
+            Stage8BatchStatement, Stage8OpeningId,
         },
         PrecommittedSchedule,
     },
@@ -48,8 +48,8 @@ use jolt_claims::protocols::jolt::{
     LatticePackedValidityRequirement, FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
-use jolt_openings::BatchOpeningStatement;
-use jolt_poly::{try_eq_mle, EqPolynomial, UnivariatePoly};
+use jolt_openings::{BatchOpeningScheme, BatchOpeningStatement, PhysicalView};
+use jolt_poly::{try_eq_mle, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, JoltInstructionRow, JoltTraceRow};
 use jolt_sumcheck::{
     append_sumcheck_claim, BatchedEvaluationClaim, ClearProof, CompressedLabeledRoundPoly,
@@ -87,6 +87,18 @@ pub struct AkitaPackedJoltWitnessInput<'a> {
 pub struct AkitaCommittedPackedJoltWitness {
     pub artifacts: AkitaPackedWitnessArtifacts,
     pub witness: SparsePackedWitness<AkitaField>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AkitaPrecommittedOpeningInput<'a> {
+    pub polynomial: &'a Polynomial<AkitaField>,
+    pub hint: &'a AkitaProverHint,
+}
+
+#[derive(Clone, Debug)]
+pub struct AkitaStage8ClearOpeningProofs {
+    pub packed: AkitaPackedBatchProof,
+    pub precommitted: Vec<AkitaPackedBatchProof>,
 }
 
 #[derive(Clone, Debug)]
@@ -601,18 +613,124 @@ where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
 {
+    prove_akita_stage8_clear_openings_with_precommitted(
+        setup,
+        transcript,
+        artifacts,
+        source,
+        statement,
+        &[],
+    )
+    .map(|proofs| proofs.packed)
+}
+
+pub fn prove_akita_stage8_clear_openings_with_precommitted<T, S>(
+    setup: &AkitaProverSetup,
+    transcript: &mut T,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+    statement: &Stage8BatchStatement<AkitaField, AkitaCommitment>,
+    precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
+) -> Result<AkitaStage8ClearOpeningProofs, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
     let Stage8BatchStatement::Clear(statement) = statement else {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason: "Akita packed opening proving requires a clear Stage 8 statement".to_string(),
         });
     };
-    if !statement.precommitted_statements.is_empty() {
+    let packed =
+        prove_akita_packed_openings(setup, transcript, artifacts, source, &statement.statement)?;
+    let precommitted = prove_akita_precommitted_opening_batches(
+        setup,
+        transcript,
+        &statement.precommitted_statements,
+        precommitted_inputs,
+    )?;
+    Ok(AkitaStage8ClearOpeningProofs {
+        packed,
+        precommitted,
+    })
+}
+
+fn prove_akita_precommitted_opening_batches<T>(
+    setup: &AkitaProverSetup,
+    transcript: &mut T,
+    statements: &[BatchOpeningStatement<
+        AkitaField,
+        AkitaCommitment,
+        Stage8OpeningId,
+        Stage8OpeningId,
+    >],
+    inputs: &[AkitaPrecommittedOpeningInput<'_>],
+) -> Result<Vec<AkitaPackedBatchProof>, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+{
+    if statements.len() != inputs.len() {
         return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita precommitted openings require separate precommitted prover inputs"
-                .to_string(),
+            reason: format!(
+                "expected {} Akita precommitted opening inputs, got {}",
+                statements.len(),
+                inputs.len()
+            ),
         });
     }
-    prove_akita_packed_openings(setup, transcript, artifacts, source, &statement.statement)
+
+    statements
+        .iter()
+        .zip(inputs)
+        .enumerate()
+        .map(|(index, (statement, input))| {
+            validate_akita_precommitted_opening_input(index, statement, input)?;
+            AkitaPackedScheme::prove_batch(
+                setup,
+                transcript,
+                statement,
+                std::slice::from_ref(input.polynomial),
+                vec![input.hint.clone()],
+            )
+            .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                reason: error.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn validate_akita_precommitted_opening_input(
+    index: usize,
+    statement: &BatchOpeningStatement<
+        AkitaField,
+        AkitaCommitment,
+        Stage8OpeningId,
+        Stage8OpeningId,
+    >,
+    input: &AkitaPrecommittedOpeningInput<'_>,
+) -> Result<(), VerifierError> {
+    if statement.claims.is_empty() {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!("Akita precommitted opening statement {index} has no claims"),
+        });
+    }
+    for claim in &statement.claims {
+        if !matches!(claim.view, PhysicalView::Direct) {
+            return Err(VerifierError::FinalOpeningBatchFailed {
+                reason: format!(
+                    "Akita precommitted opening statement {index} must use direct physical views"
+                ),
+            });
+        }
+        if !input.hint.matches_commitment(&claim.commitment) {
+            return Err(VerifierError::FinalOpeningBatchFailed {
+                reason: format!(
+                    "Akita precommitted opening input {index} does not match statement commitment"
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn prove_akita_packed_validity<T, S>(
@@ -778,6 +896,36 @@ where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
 {
+    prove_and_attach_akita_opening_proofs_with_precommitted::<T, S>(
+        setup,
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        artifacts,
+        source,
+        &[],
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "prover helper mirrors proof attachment inputs and adds precommitted openings"
+)]
+pub fn prove_and_attach_akita_opening_proofs_with_precommitted<T, S>(
+    setup: &AkitaProverSetup,
+    preprocessing: &AkitaVerifierPreprocessing,
+    public_io: &JoltDevice,
+    proof: &mut AkitaJoltProof,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+    precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
+) -> Result<(), VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
     let mut candidate = proof.clone();
     let validity = prove_akita_jolt_packed_validity::<T, S>(
         setup,
@@ -789,7 +937,7 @@ where
         source,
     )?;
     attach_akita_packed_validity_proof(&mut candidate, validity)?;
-    candidate.joint_opening_proof = prove_akita_jolt_final_openings::<T, S>(
+    let opening_proofs = prove_akita_jolt_final_openings_with_precommitted::<T, S>(
         setup,
         preprocessing,
         public_io,
@@ -797,7 +945,10 @@ where
         trusted_advice_commitment,
         artifacts,
         source,
+        precommitted_inputs,
     )?;
+    candidate.joint_opening_proof = opening_proofs.packed;
+    candidate.lattice_precommitted_opening_proofs = opening_proofs.precommitted;
     *proof = candidate;
     Ok(())
 }
@@ -836,6 +987,54 @@ where
             &artifacts.protocol,
         )?;
     prove_akita_stage8_clear_openings(setup, &mut transcript, artifacts, source, &statement)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "prover helper mirrors final opening inputs and adds precommitted openings"
+)]
+pub fn prove_akita_jolt_final_openings_with_precommitted<T, S>(
+    setup: &AkitaProverSetup,
+    preprocessing: &AkitaVerifierPreprocessing,
+    public_io: &JoltDevice,
+    proof: &AkitaJoltProof,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+    artifacts: &AkitaPackedWitnessArtifacts,
+    source: &S,
+    precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
+) -> Result<AkitaStage8ClearOpeningProofs, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    validate_akita_artifacts_for_proof(
+        &preprocessing.pcs_setup,
+        &proof.protocol,
+        &proof.commitments,
+        artifacts,
+    )?;
+    let (statement, mut transcript) =
+        crate::verifier::stage8_batch_statement_with_config_and_transcript::<
+            AkitaField,
+            AkitaPackedScheme,
+            AkitaClearVectorCommitment,
+            T,
+            _,
+        >(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+            &artifacts.protocol,
+        )?;
+    prove_akita_stage8_clear_openings_with_precommitted(
+        setup,
+        &mut transcript,
+        artifacts,
+        source,
+        &statement,
+        precommitted_inputs,
+    )
 }
 
 pub fn verify_akita_clear<T>(
@@ -2169,8 +2368,8 @@ mod tests {
     };
     use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
     use jolt_akita::{
-        AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec,
-        SparsePackedWitness, AKITA_FIELD_MODULUS,
+        AkitaScheme, AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain,
+        PackedFamilySpec, SparsePackedWitness, AKITA_FIELD_MODULUS,
     };
     use jolt_claims::protocols::jolt::{
         bytecode_imm_canonical_bytes_requirement,
@@ -2789,6 +2988,141 @@ mod tests {
             result.coefficients[0] * instruction_claim + result.coefficients[1] * sign_claim
         );
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    }
+
+    #[test]
+    fn stage8_clear_openings_prove_separate_precommitted_batches() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let sign_family = PackedFamilyId::IncSign;
+        let source = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [(packed_cell(sign_family.clone(), 1), AkitaField::from_u64(5))],
+        )
+        .expect("source should build");
+        let artifact = commit_akita_packed_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        let packed_commitment = artifact
+            .payload()
+            .expect("artifact should carry Akita payload")
+            .packed_witness
+            .clone();
+        let sign_id = Stage8OpeningId::from(fused_increment_sign_opening());
+        let packed_statement = BatchOpeningStatement {
+            logical_point: Vec::new(),
+            pcs_point: Vec::new(),
+            layout_digest: layout.digest,
+            claims: vec![BatchOpeningClaim {
+                id: sign_id,
+                relation: sign_id,
+                commitment: packed_commitment.clone(),
+                claim: AkitaField::from_u64(15),
+                view: PhysicalView::PackedLinear {
+                    layout_digest: layout.digest,
+                    terms: vec![PackedLinearTerm::new(
+                        AkitaField::from_u64(3),
+                        sign_family.physical_ref(),
+                        0,
+                        1,
+                    )
+                    .with_row_point(Vec::new())],
+                },
+                scale: AkitaField::from_u64(7),
+            }],
+        };
+
+        let precommitted_point = vec![AkitaField::zero(); layout.dimension];
+        let mut precommitted_evals = vec![AkitaField::zero(); 1usize << layout.dimension];
+        precommitted_evals[0] = AkitaField::from_u64(19);
+        let precommitted_poly = Polynomial::new(precommitted_evals);
+        let precommitted_digest = [11; 32];
+        let (precommitted_commitment, precommitted_hint) = AkitaScheme::commit_group(
+            &prover_setup,
+            precommitted_digest,
+            std::slice::from_ref(&precommitted_poly),
+        )
+        .expect("precommitted commitment should commit");
+        let precommitted_id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::TrustedAdvice,
+            JoltRelationId::AdviceClaimReduction,
+        ));
+        let precommitted_statement = BatchOpeningStatement {
+            logical_point: precommitted_point.clone(),
+            pcs_point: precommitted_point,
+            layout_digest: precommitted_digest,
+            claims: vec![BatchOpeningClaim {
+                id: precommitted_id,
+                relation: precommitted_id,
+                commitment: precommitted_commitment.clone(),
+                claim: AkitaField::from_u64(19),
+                view: PhysicalView::Direct,
+                scale: AkitaField::from_u64(2),
+            }],
+        };
+        let stage8_statement = Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
+            logical_manifest: Stage8LogicalManifest {
+                openings: Vec::new(),
+                pcs_opening_point: Point::high_to_low(Vec::<AkitaField>::new()),
+            },
+            physical_manifest: Stage8PhysicalManifest {
+                openings: Vec::new(),
+                layout_digest: layout.digest,
+            },
+            opening_ids: vec![sign_id, precommitted_id],
+            opening_claims: Vec::new(),
+            pcs_opening_point: Point::high_to_low(Vec::<AkitaField>::new()),
+            statement: packed_statement.clone(),
+            precommitted_statements: vec![precommitted_statement.clone()],
+        });
+        let precommitted_inputs = [AkitaPrecommittedOpeningInput {
+            polynomial: &precommitted_poly,
+            hint: &precommitted_hint,
+        }];
+
+        let mut prover_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
+        let proofs = prove_akita_stage8_clear_openings_with_precommitted(
+            &prover_setup,
+            &mut prover_transcript,
+            &artifact,
+            &source,
+            &stage8_statement,
+            &precommitted_inputs,
+        )
+        .expect("stage8 proofs should be produced");
+        assert_eq!(proofs.precommitted.len(), 1);
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
+        let _ = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &packed_statement,
+            &proofs.packed,
+        )
+        .expect("packed proof should verify");
+        let _ = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &precommitted_statement,
+            &proofs.precommitted[0],
+        )
+        .expect("precommitted proof should verify");
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+        let mut missing_input_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
+        let error = prove_akita_stage8_clear_openings(
+            &prover_setup,
+            &mut missing_input_transcript,
+            &artifact,
+            &source,
+            &stage8_statement,
+        )
+        .expect_err("precommitted statement requires input");
+        assert!(matches!(
+            error,
+            VerifierError::FinalOpeningBatchFailed { reason }
+                if reason.contains("expected 1 Akita precommitted opening inputs")
+        ));
     }
 
     #[test]
