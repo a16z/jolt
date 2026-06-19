@@ -11,21 +11,18 @@ use jolt_claims::protocols::jolt::{
             committed_address_chunks, JoltFormulaDimensions, TraceDimensions, REGISTER_ADDRESS_BITS,
         },
         instruction::{self, InstructionRaVirtualizationDimensions},
-        ram::{self, RamRaVirtualizationDimensions},
+        ram,
     },
-    AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
-    BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, BytecodeReadRafChallenge,
-    InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltAdviceKind,
-    JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
-    PrecommittedClaimReduction, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-    RamHammingBooleanityPublic, RamRaVirtualizationPublic,
+    AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
+    BytecodeReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims,
+    JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial, PrecommittedClaimReduction,
+    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{try_eq_mle, Point};
+use jolt_poly::Point;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
@@ -752,7 +749,11 @@ where
                 stage: JoltRelationId::BytecodeReadRaf,
                 reason: "Stage 1 remainder point is empty".to_string(),
             })?;
-    let stage1_cycle = stage1_cycle_binding.iter().rev().copied().collect::<Vec<_>>();
+    let stage1_cycle = stage1_cycle_binding
+        .iter()
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
     let stage2_cycle = stage2.output_claims.product_remainder_point().to_vec();
     let stage3_cycle = stage3.output_claims.shift_opening_point().to_vec();
     let (stage4_register_address, stage4_cycle) = stage4
@@ -761,8 +762,9 @@ where
         .registers_val
         .point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (stage5_register_address, stage5_cycle) =
-        stage5.registers_opening_point().split_at(REGISTER_ADDRESS_BITS);
+    let (stage5_register_address, stage5_cycle) = stage5
+        .registers_opening_point()
+        .split_at(REGISTER_ADDRESS_BITS);
     let entry_bytecode_index = preprocessing
         .program
         .entry_bytecode_index()
@@ -795,8 +797,9 @@ where
         .registers_val
         .point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (_, registers_val_evaluation_cycle) =
-        stage5.registers_opening_point().split_at(REGISTER_ADDRESS_BITS);
+    let (_, registers_val_evaluation_cycle) = stage5
+        .registers_opening_point()
+        .split_at(REGISTER_ADDRESS_BITS);
     let bytecode_table = if committed_program {
         None
     } else {
@@ -900,7 +903,9 @@ where
         bytecode_read_raf: relations
             .bytecode_read_raf
             .input_claim(&relations.bytecode_read_raf_inputs)?,
-        booleanity: relations.booleanity.input_claim(&relations.booleanity_inputs)?,
+        booleanity: relations
+            .booleanity
+            .input_claim(&relations.booleanity_inputs)?,
         ram_hamming_booleanity: relations
             .ram_hamming
             .input_claim(&relations.ram_hamming_inputs)?,
@@ -2446,304 +2451,6 @@ pub fn stage6_bytecode_read_raf_expected_output<F: Field>(
                 .public_values
                 .value(*public_id)
                 .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Stage6BytecodeReadRafOutputCoefficientInputs<'a, F: Field> {
-    pub dimensions: BytecodeReadRafDimensions,
-    pub public_values: &'a bytecode::BytecodeReadRafPublicValues<F>,
-    pub gamma: F,
-}
-
-pub fn stage6_bytecode_read_raf_output_coefficient<F: Field>(
-    inputs: Stage6BytecodeReadRafOutputCoefficientInputs<'_, F>,
-) -> Result<F, VerifierError> {
-    let output_openings = bytecode::read_raf_output_openings(inputs.dimensions);
-    let bytecode_ra = vec![F::one(); output_openings.bytecode_ra.len()];
-    stage6_bytecode_read_raf_expected_output(Stage6BytecodeReadRafExpectedOutputInputs {
-        dimensions: inputs.dimensions,
-        public_values: inputs.public_values,
-        bytecode_ra: &bytecode_ra,
-        gamma: inputs.gamma,
-    })
-}
-
-pub fn stage6_advice_cycle_phase_expected_output<F: Field>(
-    layout: &AdviceClaimReductionLayout,
-    kind: JoltAdviceKind,
-    reference_opening_point: &[F],
-    sumcheck_point: &[F],
-    opening_claim: F,
-) -> Result<F, VerifierError> {
-    let claim = advice::cycle_phase::<F>(kind, layout.dimensions());
-    let output_openings = advice::cycle_phase_output_openings(kind, layout.dimensions());
-    claim.output.expression().try_evaluate(
-        |id| {
-            if output_openings.contains(id) {
-                Ok(opening_claim)
-            } else {
-                Err(VerifierError::MissingOpeningClaim { id: *id })
-            }
-        },
-        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        |id| match id {
-            JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
-                public_kind,
-            )) if *public_kind == kind => layout
-                .cycle_phase_final_output_scale(reference_opening_point, sumcheck_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::AdviceClaimReductionCyclePhase,
-                    reason: error.to_string(),
-                }),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Stage6IncClaimReductionExpectedOutputInputs<'a, F: Field> {
-    pub opening_point: &'a [F],
-    pub ram_read_write_cycle: &'a [F],
-    pub ram_val_check_cycle: &'a [F],
-    pub registers_read_write_cycle: &'a [F],
-    pub registers_val_evaluation_cycle: &'a [F],
-    pub ram_inc: F,
-    pub rd_inc: F,
-    pub gamma: F,
-}
-
-pub fn stage6_inc_claim_reduction_expected_output<F: Field>(
-    inputs: Stage6IncClaimReductionExpectedOutputInputs<'_, F>,
-) -> Result<F, VerifierError> {
-    increments::claim_reduction_output_claim(increments::ClaimReductionOutputClaimInputs {
-        coefficients: increments::ClaimReductionOutputCoefficientInputs {
-            opening_point: inputs.opening_point,
-            ram_read_write_cycle: inputs.ram_read_write_cycle,
-            ram_val_check_cycle: inputs.ram_val_check_cycle,
-            registers_read_write_cycle: inputs.registers_read_write_cycle,
-            registers_val_evaluation_cycle: inputs.registers_val_evaluation_cycle,
-            gamma: inputs.gamma,
-        },
-        ram_inc: inputs.ram_inc,
-        rd_inc: inputs.rd_inc,
-    })
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::IncClaimReduction,
-        reason: error.to_string(),
-    })
-}
-
-pub fn stage6_ram_hamming_booleanity_expected_output<F: Field>(
-    sumcheck_point: &[F],
-    stage1_cycle_binding: &[F],
-    ram_hamming_weight: F,
-) -> Result<F, VerifierError> {
-    let eq_spartan_outer_cycle =
-        try_eq_mle(sumcheck_point, stage1_cycle_binding).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamHammingBooleanity,
-                reason: error.to_string(),
-            }
-        })?;
-    let claim = ram::hamming_booleanity::<F>(
-        jolt_claims::protocols::jolt::formulas::dimensions::TraceDimensions::new(
-            sumcheck_point.len(),
-        ),
-    );
-    let [ram_hamming_weight_opening] = ram::hamming_booleanity_output_openings();
-    claim.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == ram_hamming_weight_opening => Ok(ram_hamming_weight),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        |id| match *id {
-            JoltPublicId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => {
-                Ok(eq_spartan_outer_cycle)
-            }
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Stage6RamRaVirtualizationExpectedOutputInputs<'a, F: Field> {
-    pub dimensions: RamRaVirtualizationDimensions,
-    pub r_cycle: &'a [F],
-    pub ram_reduced_cycle: &'a [F],
-    pub ram_ra: &'a [F],
-}
-
-pub fn stage6_ram_ra_virtualization_expected_output<F: Field>(
-    inputs: Stage6RamRaVirtualizationExpectedOutputInputs<'_, F>,
-) -> Result<F, VerifierError> {
-    let output_openings = ram::ra_virtualization_output_openings(inputs.dimensions);
-    if inputs.ram_ra.len() != output_openings.len() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaVirtualization,
-            reason: format!(
-                "RAM RA virtualization claim count mismatch: expected {}, got {}",
-                output_openings.len(),
-                inputs.ram_ra.len()
-            ),
-        });
-    }
-    let eq_cycle = try_eq_mle(inputs.ram_reduced_cycle, inputs.r_cycle).map_err(|error| {
-        VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaVirtualization,
-            reason: error.to_string(),
-        }
-    })?;
-    let claim = ram::ra_virtualization::<F>(inputs.dimensions);
-    claim.output.expression().try_evaluate(
-        |id| {
-            for (index, opening) in output_openings.iter().enumerate() {
-                if *id == *opening {
-                    return Ok(inputs.ram_ra[index]);
-                }
-            }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
-        },
-        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        |id| match *id {
-            JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) => Ok(eq_cycle),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Stage6InstructionRaVirtualizationExpectedOutputInputs<'a, F: Field> {
-    pub dimensions: InstructionRaVirtualizationDimensions,
-    pub instruction_read_raf_cycle: &'a [F],
-    pub r_cycle: &'a [F],
-    pub committed_instruction_ra: &'a [F],
-    pub gamma: F,
-}
-
-pub fn stage6_instruction_ra_virtualization_expected_output<F: Field>(
-    inputs: Stage6InstructionRaVirtualizationExpectedOutputInputs<'_, F>,
-) -> Result<F, VerifierError> {
-    let output_openings = instruction::ra_virtualization_output_openings(inputs.dimensions);
-    let flat_output_openings = output_openings.all();
-    if inputs.committed_instruction_ra.len() != flat_output_openings.len() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::InstructionRaVirtualization,
-            reason: format!(
-                "instruction RA virtualization claim count mismatch: expected {}, got {}",
-                flat_output_openings.len(),
-                inputs.committed_instruction_ra.len()
-            ),
-        });
-    }
-    let eq_cycle =
-        try_eq_mle(inputs.instruction_read_raf_cycle, inputs.r_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::InstructionRaVirtualization,
-                reason: error.to_string(),
-            }
-        })?;
-    let claim = instruction::ra_virtualization::<F>(inputs.dimensions);
-    claim.output.expression().try_evaluate(
-        |id| {
-            for (index, opening) in flat_output_openings.iter().enumerate() {
-                if *id == *opening {
-                    return Ok(inputs.committed_instruction_ra[index]);
-                }
-            }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
-        },
-        |id| match id {
-            JoltChallengeId::InstructionRaVirtualization(
-                InstructionRaVirtualizationChallenge::Gamma,
-            ) => Ok(inputs.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| match *id {
-            JoltPublicId::InstructionRaVirtualization(
-                InstructionRaVirtualizationPublic::EqCycle,
-            ) => Ok(eq_cycle),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Stage6BooleanityExpectedOutputInputs<'a, F: Field> {
-    pub dimensions: BooleanityDimensions,
-    pub sumcheck_point: &'a [F],
-    pub reference: &'a Stage6BooleanityReference<F>,
-    pub instruction_ra: &'a [F],
-    pub bytecode_ra: &'a [F],
-    pub ram_ra: &'a [F],
-    pub gamma: F,
-}
-
-pub fn stage6_booleanity_expected_output<F: Field>(
-    inputs: Stage6BooleanityExpectedOutputInputs<'_, F>,
-) -> Result<F, VerifierError> {
-    let output_openings = booleanity::booleanity_output_opening_groups(inputs.dimensions.layout);
-    if inputs.instruction_ra.len() != output_openings.instruction_ra.len()
-        || inputs.bytecode_ra.len() != output_openings.bytecode_ra.len()
-        || inputs.ram_ra.len() != output_openings.ram_ra.len()
-    {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::Booleanity,
-            reason: format!(
-                "booleanity RA claim count mismatch: expected ({}, {}, {}), got ({}, {}, {})",
-                output_openings.instruction_ra.len(),
-                output_openings.bytecode_ra.len(),
-                output_openings.ram_ra.len(),
-                inputs.instruction_ra.len(),
-                inputs.bytecode_ra.len(),
-                inputs.ram_ra.len()
-            ),
-        });
-    }
-    let reference_eq_point = inputs
-        .reference
-        .address
-        .iter()
-        .rev()
-        .chain(inputs.reference.cycle.iter().rev())
-        .copied()
-        .collect::<Vec<_>>();
-    let eq_address_cycle =
-        try_eq_mle(inputs.sumcheck_point, &reference_eq_point).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::Booleanity,
-                reason: error.to_string(),
-            }
-        })?;
-    let claim = booleanity::booleanity::<F>(inputs.dimensions);
-    claim.output.expression().try_evaluate(
-        |id| {
-            for (index, opening) in output_openings.instruction_ra.iter().enumerate() {
-                if *id == *opening {
-                    return Ok(inputs.instruction_ra[index]);
-                }
-            }
-            for (index, opening) in output_openings.bytecode_ra.iter().enumerate() {
-                if *id == *opening {
-                    return Ok(inputs.bytecode_ra[index]);
-                }
-            }
-            for (index, opening) in output_openings.ram_ra.iter().enumerate() {
-                if *id == *opening {
-                    return Ok(inputs.ram_ra[index]);
-                }
-            }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
-        },
-        |id| match id {
-            JoltChallengeId::Booleanity(BooleanityChallenge::Gamma) => Ok(inputs.gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| match id {
-            JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) => Ok(eq_address_cycle),
             _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
         },
     )

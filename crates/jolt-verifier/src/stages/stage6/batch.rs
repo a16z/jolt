@@ -16,10 +16,8 @@
 
 use jolt_claims::protocols::jolt::{
     formulas::{
-        booleanity::BooleanityDimensions,
-        bytecode::BytecodeReadRafDimensions,
-        dimensions::TraceDimensions,
-        instruction::InstructionRaVirtualizationDimensions,
+        booleanity::BooleanityDimensions, bytecode::BytecodeReadRafDimensions,
+        dimensions::TraceDimensions, instruction::InstructionRaVirtualizationDimensions,
         ram::RamRaVirtualizationDimensions,
     },
     AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationClaims,
@@ -197,8 +195,8 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
         stage5: &Stage5ClearOutput<F>,
     ) -> Result<Self, VerifierError> {
         let bytecode_read_raf = match params.bytecode_table {
-            Some(bytecode) => BytecodeReadRafCycle::Full(BytecodeReadRaf::new(
-                BytecodeReadRafCycleInputs {
+            Some(bytecode) => {
+                BytecodeReadRafCycle::Full(BytecodeReadRaf::new(BytecodeReadRafCycleInputs {
                     dimensions: params.bytecode_dimensions,
                     gamma: params.bytecode_gamma,
                     bytecode,
@@ -209,8 +207,8 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
                     entry_bytecode_index: params.entry_bytecode_index,
                     stage_gammas: params.stage_gammas.clone(),
                     committed_chunk_bits: params.committed_chunk_bits,
-                },
-            )),
+                }))
+            }
             None => BytecodeReadRafCycle::Committed(BytecodeReadRafCommitted::new(
                 BytecodeReadRafCommittedCycleInputs {
                     dimensions: params.bytecode_dimensions,
@@ -273,18 +271,19 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
         );
         let inc_inputs = IncClaimReductionInputClaims::from_upstream(stage2, stage4, stage5);
 
-        let advice_relation = |kind: JoltAdviceKind, layout: Option<&AdviceClaimReductionLayout>| {
-            layout.and_then(|layout| {
-                stage4
-                    .ram_val_check_init
-                    .advice_contributions
-                    .iter()
-                    .find(|contribution| contribution.kind == kind)
-                    .map(|contribution| {
-                        AdviceCyclePhase::new(kind, layout, contribution.opening.point.clone())
-                    })
-            })
-        };
+        let advice_relation =
+            |kind: JoltAdviceKind, layout: Option<&AdviceClaimReductionLayout>| {
+                layout.and_then(|layout| {
+                    stage4
+                        .ram_val_check_init
+                        .advice_contributions
+                        .iter()
+                        .find(|contribution| contribution.kind == kind)
+                        .map(|contribution| {
+                            AdviceCyclePhase::new(kind, layout, contribution.opening.point.clone())
+                        })
+                })
+            };
         let trusted_advice = advice_relation(JoltAdviceKind::Trusted, params.trusted_advice_layout);
         let untrusted_advice =
             advice_relation(JoltAdviceKind::Untrusted, params.untrusted_advice_layout);
@@ -295,9 +294,11 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             params.eta,
             &params.bytecode_reduction_weights,
         ) {
-            (Some(layout), Some(eta), Some(weights)) => {
-                Some(BytecodeReductionCyclePhase::new(layout, eta, weights.clone()))
-            }
+            (Some(layout), Some(eta), Some(weights)) => Some(BytecodeReductionCyclePhase::new(
+                layout,
+                eta,
+                weights.clone(),
+            )),
             _ => None,
         };
         let bytecode_reduction_inputs = bytecode_reduction.as_ref().map(|_| {
@@ -313,11 +314,9 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             )
         });
 
-        let program_image_reduction = params
-            .program_image_reduction_layout
-            .map(|layout| {
-                ProgramImageReductionCyclePhase::new(layout, params.program_image_r_addr_rw.clone())
-            });
+        let program_image_reduction = params.program_image_reduction_layout.map(|layout| {
+            ProgramImageReductionCyclePhase::new(layout, params.program_image_r_addr_rw.clone())
+        });
         let program_image_reduction_inputs = program_image_reduction
             .as_ref()
             .map(|_| ProgramImageReductionCyclePhaseInputClaims::from_upstream(stage4))
@@ -375,7 +374,8 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
             ),
             claim(
                 self.instruction_ra.sumcheck_relation(),
-                self.instruction_ra.input_claim(&self.instruction_ra_inputs)?,
+                self.instruction_ra
+                    .input_claim(&self.instruction_ra_inputs)?,
             ),
             claim(
                 self.inc.sumcheck_relation(),

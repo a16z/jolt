@@ -7,23 +7,18 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, JoltAdviceKind, PrecommittedReductionLayout,
 };
 use jolt_field::Field;
+use jolt_verifier::stages::relations::{zip_openings, SumcheckInstance};
+use jolt_verifier::stages::stage6::batch::{Stage6Relations, Stage6RelationsParams};
 use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
 use jolt_verifier::stages::stage6::inputs::{AdviceCyclePhaseOutputClaim, Stage6OutputClaims};
-use jolt_verifier::stages::stage6::outputs::AdviceCyclePhasePublicOutput;
 use jolt_verifier::stages::stage6::{
-    stage6_advice_cycle_phase_expected_output, stage6_advice_cycle_phase_reference,
-    stage6_batch_points, stage6_booleanity_expected_output, stage6_bytecode_cycle_points,
-    stage6_bytecode_read_raf_expected_output, stage6_bytecode_register_points,
-    stage6_inc_claim_reduction_cycle_points, stage6_inc_claim_reduction_expected_output,
-    stage6_instruction_ra_virtualization_expected_output, stage6_instruction_read_raf_point,
-    stage6_ram_hamming_booleanity_expected_output, stage6_ram_ra_virtualization_expected_output,
-    stage6_stage1_cycle_binding, stage6_stage5_ram_reduced_opening_point,
+    stage6_advice_cycle_phase_reference, stage6_batch_points, stage6_bytecode_cycle_points,
+    stage6_bytecode_register_points, stage6_inc_claim_reduction_cycle_points,
+    stage6_instruction_read_raf_point, stage6_stage1_cycle_binding,
+    stage6_stage5_ram_reduced_opening_point, AdviceCyclePhaseOutputClaims,
     Stage6AdviceCyclePhaseReference, Stage6BatchExpectedOutputClaims, Stage6BatchInputClaims,
     Stage6BatchPointContext, Stage6BatchPointInputs, Stage6BatchPoints,
-    Stage6BooleanityExpectedOutputInputs, Stage6BytecodeReadRafExpectedOutputInputs,
-    Stage6IncClaimReductionExpectedOutputInputs,
-    Stage6InstructionRaVirtualizationExpectedOutputInputs, Stage6InstructionReadRafPoint,
-    Stage6RamRaVirtualizationExpectedOutputInputs, Stage6RamReducedOpeningPoint,
+    Stage6InstructionReadRafPoint, Stage6RamReducedOpeningPoint,
 };
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
@@ -77,6 +72,12 @@ pub(super) struct Stage6BatchContext<'a, F: Field, W> {
     /// Stage 6a address-phase output openings used as the bytecode/booleanity
     /// cycle-phase input claims.
     address_phase: Stage6AddressPhaseClaims<F>,
+    /// Stage 6a bytecode address-phase sumcheck challenges; reversed, they are the
+    /// bytecode cycle relation's `r_address`.
+    bytecode_address_challenges: Vec<F>,
+    /// Stage 6a booleanity address-phase sumcheck challenges; reversed, they are
+    /// the booleanity cycle relation's `r_address`.
+    booleanity_address_challenges: Vec<F>,
 }
 
 struct Stage6InstanceSpec<F: Field> {
@@ -106,6 +107,8 @@ where
         stage5: &'a Stage5ClearOutput<F>,
         prefix: &'a Stage6RegularBatchPrefixOutput<F>,
         address_phase: &Stage6AddressPhaseClaims<F>,
+        bytecode_address_challenges: &[F],
+        booleanity_address_challenges: &[F],
     ) -> Result<Self, ProverError> {
         let bytecode_claims =
             bytecode::read_raf_cycle_phase::<F>(config.bytecode_read_raf_dimensions);
@@ -225,7 +228,108 @@ where
             instances,
             max_num_vars,
             address_phase: address_phase.clone(),
+            bytecode_address_challenges: bytecode_address_challenges.to_vec(),
+            booleanity_address_challenges: booleanity_address_challenges.to_vec(),
         })
+    }
+
+    /// Builds the stage-6b cycle relation bundle shared with the verifier, sourcing
+    /// its construction points from the prover's config and the stage-1..5 clear
+    /// outputs. The bytecode/booleanity `r_address` are the reversed stage-6a
+    /// address challenges (matching the verifier's reversed address opening point).
+    /// The modular prover only supports full programs, so there are no committed
+    /// claim reductions.
+    fn cycle_relations(&self) -> Result<Stage6Relations<'_, F>, ProverError> {
+        let config = &self.config;
+        let bytecode_context = config.bytecode_context.as_ref().ok_or_else(|| {
+            invalid_stage_request("Stage 6 bytecode context is required for the cycle relations")
+        })?;
+        let stage_cycle_points = stage6_bytecode_cycle_points(
+            self.stage1,
+            self.stage2,
+            self.stage3,
+            self.stage4,
+            self.stage5,
+        )
+        .map_err(invalid_stage_request)?;
+        let register_points = stage6_bytecode_register_points(self.stage4, self.stage5)
+            .map_err(invalid_stage_request)?;
+        let ram_reduced =
+            stage6_stage5_ram_reduced_opening_point(self.stage5, config.log_k, config.log_t)
+                .map_err(invalid_stage_request)?;
+        let instruction_read_raf = stage6_instruction_read_raf_point(self.stage5);
+        let inc_cycles = stage6_inc_claim_reduction_cycle_points(
+            self.stage2,
+            self.stage4,
+            self.stage5,
+            config.log_k,
+        )
+        .map_err(invalid_stage_request)?;
+        let challenges = &self.prefix.challenges;
+        let reversed = |challenges: &[F]| challenges.iter().rev().copied().collect::<Vec<_>>();
+
+        Stage6Relations::build(
+            Stage6RelationsParams {
+                bytecode_dimensions: config.bytecode_read_raf_dimensions,
+                booleanity_dimensions: config.booleanity_dimensions,
+                trace_dimensions: config.trace_dimensions(),
+                ram_ra_dimensions: config.ram_ra_virtualization_dimensions,
+                instruction_ra_dimensions: config.instruction_ra_virtualization_dimensions,
+                committed_chunk_bits: config.committed_chunk_bits,
+                bytecode_table: Some(&bytecode_context.rows),
+                entry_bytecode_index: bytecode_context.entry_bytecode_index,
+                bytecode_r_address: reversed(&self.bytecode_address_challenges),
+                booleanity_r_address: reversed(&self.booleanity_address_challenges),
+                address_bytecode_read_raf: self.address_phase.bytecode_read_raf,
+                address_booleanity: self.address_phase.booleanity,
+                address_val_stages: self
+                    .address_phase
+                    .bytecode_val_stages
+                    .map_or_else(Vec::new, |stages| stages.to_vec()),
+                bytecode_gamma: challenges.bytecode_gamma_powers[1],
+                instruction_ra_gamma: challenges.instruction_ra_gamma,
+                inc_gamma: challenges.inc_gamma,
+                booleanity_gamma: challenges.booleanity_gamma,
+                eta: None,
+                stage_cycle_points,
+                register_read_write_point: register_points.register_read_write_address.to_vec(),
+                register_val_evaluation_point: register_points
+                    .register_val_evaluation_address
+                    .to_vec(),
+                stage_gammas: [
+                    challenges.stage1_gammas.clone(),
+                    challenges.stage2_gammas.clone(),
+                    challenges.stage3_gammas.clone(),
+                    challenges.stage4_gammas.clone(),
+                    challenges.stage5_gammas.clone(),
+                ],
+                booleanity_reference_address: challenges.booleanity_reference.address.clone(),
+                booleanity_reference_cycle: challenges.booleanity_reference.cycle.clone(),
+                stage1_cycle_binding: stage6_stage1_cycle_binding(self.stage1)
+                    .map_err(invalid_stage_request)?
+                    .to_vec(),
+                ram_reduced_address: ram_reduced.address.to_vec(),
+                ram_reduced_cycle: ram_reduced.cycle.to_vec(),
+                instruction_r_address: instruction_read_raf.address.to_vec(),
+                instruction_r_cycle: instruction_read_raf.cycle.to_vec(),
+                inc_cycle_points: [
+                    inc_cycles.ram_read_write_cycle.to_vec(),
+                    inc_cycles.ram_val_check_cycle.to_vec(),
+                    inc_cycles.registers_read_write_cycle.to_vec(),
+                    inc_cycles.registers_val_evaluation_cycle.to_vec(),
+                ],
+                trusted_advice_layout: config.trusted_advice_layout.as_ref(),
+                untrusted_advice_layout: config.untrusted_advice_layout.as_ref(),
+                bytecode_reduction_layout: None,
+                program_image_reduction_layout: None,
+                bytecode_reduction_weights: None,
+                program_image_r_addr_rw: Vec::new(),
+            },
+            self.stage2,
+            self.stage4,
+            self.stage5,
+        )
+        .map_err(invalid_stage_request)
     }
 
     pub(super) fn cycle_input_claims(&self) -> Stage6BatchInputClaims<F> {
@@ -382,271 +486,166 @@ where
             .map(Some)
     }
 
+    /// The per-instance expected output claims, single-sourced through the same
+    /// [`Stage6Relations`] bundle the verifier uses: each relation derives its
+    /// opening points from the 6b cycle instance point and evaluates its output
+    /// `Expr` against the produced openings — mirroring the clear verifier exactly.
     pub(super) fn expected_outputs(
         &self,
-        points: &Stage6BatchPoints<F>,
+        sumcheck_point: &[F],
         openings: &Stage6OutputClaims<F>,
     ) -> Result<Stage6BatchExpectedOutputClaims<F>, ProverError> {
-        Ok(Stage6BatchExpectedOutputClaims {
-            bytecode_read_raf: self.expected_bytecode_output(
-                &points.bytecode_read_raf_sumcheck_point,
-                &openings.bytecode_read_raf.bytecode_ra,
-            )?,
-            booleanity: self.expected_booleanity_output(
-                &points.booleanity_sumcheck_point,
-                &openings.booleanity.instruction_ra,
-                &openings.booleanity.bytecode_ra,
-                &openings.booleanity.ram_ra,
-            )?,
-            ram_hamming_booleanity: self.expected_ram_hamming_output(
-                &points.ram_hamming_booleanity_sumcheck_point,
-                openings.ram_hamming_booleanity.ram_hamming_weight,
-            )?,
-            ram_ra_virtualization: self.expected_ram_ra_virtualization_output(
-                &points.ram_ra_virtualization_sumcheck_point,
-                &openings.ram_ra_virtualization.ram_ra,
-            )?,
-            instruction_ra_virtualization: self.expected_instruction_ra_virtualization_output(
-                &points.instruction_ra_virtualization_sumcheck_point,
-                &openings
-                    .instruction_ra_virtualization
-                    .committed_instruction_ra,
-            )?,
-            inc_claim_reduction: self.expected_inc_claim_reduction_output(
-                &points.inc_claim_reduction_sumcheck_point,
-                openings.inc_claim_reduction.ram_inc,
-                openings.inc_claim_reduction.rd_inc,
-            )?,
-            trusted_advice_cycle_phase: self.expected_advice_output(
-                JoltAdviceKind::Trusted,
-                points.trusted_advice_cycle_phase.as_ref(),
-                openings.advice_cycle_phase.trusted.as_ref(),
-            )?,
-            untrusted_advice_cycle_phase: self.expected_advice_output(
-                JoltAdviceKind::Untrusted,
-                points.untrusted_advice_cycle_phase.as_ref(),
-                openings.advice_cycle_phase.untrusted.as_ref(),
-            )?,
-        })
-    }
+        let relations = self.cycle_relations()?;
+        let algebra =
+            |error: jolt_verifier::VerifierError| invalid_sumcheck_output(error.to_string());
 
-    fn expected_bytecode_output(&self, point: &[F], bytecode_ra: &[F]) -> Result<F, ProverError> {
-        let public_values = self.bytecode_public_values(point)?;
-        stage6_bytecode_read_raf_expected_output(Stage6BytecodeReadRafExpectedOutputInputs {
-            dimensions: self.config.bytecode_read_raf_dimensions,
-            public_values: &public_values,
-            bytecode_ra,
-            gamma: self.prefix.challenges.bytecode_gamma_powers[1],
-        })
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
-    fn expected_booleanity_output(
-        &self,
-        point: &[F],
-        instruction_ra: &[F],
-        bytecode_ra: &[F],
-        ram_ra: &[F],
-    ) -> Result<F, ProverError> {
-        stage6_booleanity_expected_output(Stage6BooleanityExpectedOutputInputs {
-            dimensions: self.config.booleanity_dimensions,
-            sumcheck_point: point,
-            reference: &self.prefix.challenges.booleanity_reference,
-            instruction_ra,
-            bytecode_ra,
-            ram_ra,
-            gamma: self.prefix.challenges.booleanity_gamma,
-        })
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
-    fn expected_ram_hamming_output(
-        &self,
-        point: &[F],
-        ram_hamming_weight: F,
-    ) -> Result<F, ProverError> {
-        stage6_ram_hamming_booleanity_expected_output(
-            point,
-            stage6_stage1_cycle_binding(self.stage1).map_err(invalid_stage_request)?,
-            ram_hamming_weight,
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
-    fn expected_ram_ra_virtualization_output(
-        &self,
-        point: &[F],
-        ram_ra: &[F],
-    ) -> Result<F, ProverError> {
-        let r_cycle = self
-            .config
-            .trace_dimensions()
-            .cycle_opening_point(point)
-            .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        let ram_reduced = self.ram_reduced_opening_point()?;
-        stage6_ram_ra_virtualization_expected_output(
-            Stage6RamRaVirtualizationExpectedOutputInputs {
-                dimensions: self.config.ram_ra_virtualization_dimensions,
-                r_cycle: &r_cycle,
-                ram_reduced_cycle: ram_reduced.cycle,
-                ram_ra,
-            },
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
-    fn expected_instruction_ra_virtualization_output(
-        &self,
-        point: &[F],
-        committed_instruction_ra: &[F],
-    ) -> Result<F, ProverError> {
-        let r_cycle = self
-            .config
-            .trace_dimensions()
-            .cycle_opening_point(point)
-            .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        stage6_instruction_ra_virtualization_expected_output(
-            Stage6InstructionRaVirtualizationExpectedOutputInputs {
-                dimensions: self.config.instruction_ra_virtualization_dimensions,
-                instruction_read_raf_cycle: self.instruction_read_raf_point().cycle,
-                r_cycle: &r_cycle,
-                committed_instruction_ra,
-                gamma: self.prefix.challenges.instruction_ra_gamma,
-            },
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
-    fn expected_inc_claim_reduction_output(
-        &self,
-        point: &[F],
-        ram_inc: F,
-        rd_inc: F,
-    ) -> Result<F, ProverError> {
-        let opening_point = self
-            .config
-            .trace_dimensions()
-            .cycle_opening_point(point)
-            .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        let cycles = stage6_inc_claim_reduction_cycle_points(
-            self.stage2,
-            self.stage4,
-            self.stage5,
-            self.config.log_k,
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        stage6_inc_claim_reduction_expected_output(Stage6IncClaimReductionExpectedOutputInputs {
-            opening_point: &opening_point,
-            ram_read_write_cycle: cycles.ram_read_write_cycle,
-            ram_val_check_cycle: cycles.ram_val_check_cycle,
-            registers_read_write_cycle: cycles.registers_read_write_cycle,
-            registers_val_evaluation_cycle: cycles.registers_val_evaluation_cycle,
-            ram_inc,
-            rd_inc,
-            gamma: self.prefix.challenges.inc_gamma,
-        })
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
-    fn expected_advice_output(
-        &self,
-        kind: JoltAdviceKind,
-        point: Option<&AdviceCyclePhasePublicOutput<F>>,
-        opening_claim: Option<&AdviceCyclePhaseOutputClaim<F>>,
-    ) -> Result<Option<F>, ProverError> {
-        match (point, opening_claim) {
-            (Some(point), Some(opening_claim)) => {
-                let layout = self.advice_layout(kind).ok_or_else(|| {
-                    invalid_stage_request(format!("Stage 6 {kind:?} advice layout is missing"))
-                })?;
-                let reference = self.advice_cycle_phase_reference(kind)?.opening_point;
-                let output = stage6_advice_cycle_phase_expected_output(
-                    layout,
-                    kind,
-                    reference,
-                    &point.sumcheck_point,
-                    opening_claim.opening_claim,
-                )
-                .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-                Ok(Some(output))
-            }
-            (None, None) => Ok(None),
-            _ => Err(invalid_stage_request(format!(
-                "Stage 6 {kind:?} advice point/opening presence mismatch"
-            ))),
-        }
-    }
-
-    fn bytecode_public_values(
-        &self,
-        point: &[F],
-    ) -> Result<bytecode::BytecodeReadRafPublicValues<F>, ProverError> {
-        let context = self.config.bytecode_context.as_ref().ok_or_else(|| {
-            invalid_stage_request("Stage 6 bytecode context is required for read-RAF evaluation")
-        })?;
-        let opening = self
-            .config
-            .bytecode_read_raf_dimensions
-            .opening_point(point)
-            .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-        let stage_cycles = stage6_bytecode_cycle_points(
-            self.stage1,
-            self.stage2,
-            self.stage3,
-            self.stage4,
-            self.stage5,
-        )
-        .map_err(invalid_stage_request)?;
-        let register_points = stage6_bytecode_register_points(self.stage4, self.stage5)
-            .map_err(invalid_stage_request)?;
-        let stage_cycle_points = [
-            stage_cycles[0].as_slice(),
-            stage_cycles[1].as_slice(),
-            stage_cycles[2].as_slice(),
-            stage_cycles[3].as_slice(),
-            stage_cycles[4].as_slice(),
-        ];
-        let bytecode_rows = context.rows.as_slice();
-
-        let public_values = if let Some(public_values) =
-            bytecode::read_raf_public_values_at_boolean_point::<F>(
-                bytecode::BytecodeReadRafBooleanEvaluationInputs {
-                    bytecode: bytecode_rows,
-                    r_address: &opening.r_address,
-                    r_cycle: &opening.r_cycle,
-                    stage_cycle_points,
-                    register_read_write_point: register_points.register_read_write_address,
-                    register_val_evaluation_point: register_points.register_val_evaluation_address,
-                    entry_bytecode_index: context.entry_bytecode_index,
-                    stage1_gammas: &self.prefix.challenges.stage1_gammas,
-                    stage2_gammas: &self.prefix.challenges.stage2_gammas,
-                    stage3_gammas: &self.prefix.challenges.stage3_gammas,
-                    stage4_gammas: &self.prefix.challenges.stage4_gammas,
-                    stage5_gammas: &self.prefix.challenges.stage5_gammas,
-                },
+        let bytecode_point =
+            self.instance_point(sumcheck_point, Stage6InstanceKind::BytecodeReadRaf)?;
+        let bytecode_derived = relations
+            .bytecode_read_raf
+            .derive_opening_points(&bytecode_point, &relations.bytecode_read_raf_inputs)
+            .map_err(algebra)?;
+        let bytecode_read_raf = relations
+            .bytecode_read_raf
+            .expected_output(
+                &relations.bytecode_read_raf_inputs,
+                &zip_openings(&openings.bytecode_read_raf, &bytecode_derived),
             )
-            .map_err(|error| invalid_sumcheck_output(error.to_string()))?
-        {
-            public_values
-        } else {
-            bytecode::read_raf_public_values::<F>(bytecode::BytecodeReadRafEvaluationInputs {
-                bytecode: bytecode_rows,
-                r_address: &opening.r_address,
-                r_cycle: &opening.r_cycle,
-                stage_cycle_points,
-                register_read_write_point: register_points.register_read_write_address,
-                register_val_evaluation_point: register_points.register_val_evaluation_address,
-                entry_bytecode_index: context.entry_bytecode_index,
-                stage1_gammas: &self.prefix.challenges.stage1_gammas,
-                stage2_gammas: &self.prefix.challenges.stage2_gammas,
-                stage3_gammas: &self.prefix.challenges.stage3_gammas,
-                stage4_gammas: &self.prefix.challenges.stage4_gammas,
-                stage5_gammas: &self.prefix.challenges.stage5_gammas,
-            })
-            .map_err(|error| invalid_sumcheck_output(error.to_string()))?
+            .map_err(algebra)?;
+
+        let booleanity_point =
+            self.instance_point(sumcheck_point, Stage6InstanceKind::Booleanity)?;
+        let booleanity_derived = relations
+            .booleanity
+            .derive_opening_points(&booleanity_point, &relations.booleanity_inputs)
+            .map_err(algebra)?;
+        let booleanity = relations
+            .booleanity
+            .expected_output(
+                &relations.booleanity_inputs,
+                &zip_openings(&openings.booleanity, &booleanity_derived),
+            )
+            .map_err(algebra)?;
+
+        let ram_hamming_point =
+            self.instance_point(sumcheck_point, Stage6InstanceKind::RamHammingBooleanity)?;
+        let ram_hamming_derived = relations
+            .ram_hamming
+            .derive_opening_points(&ram_hamming_point, &relations.ram_hamming_inputs)
+            .map_err(algebra)?;
+        let ram_hamming_booleanity = relations
+            .ram_hamming
+            .expected_output(
+                &relations.ram_hamming_inputs,
+                &zip_openings(&openings.ram_hamming_booleanity, &ram_hamming_derived),
+            )
+            .map_err(algebra)?;
+
+        let ram_ra_point =
+            self.instance_point(sumcheck_point, Stage6InstanceKind::RamRaVirtualization)?;
+        let ram_ra_derived = relations
+            .ram_ra
+            .derive_opening_points(&ram_ra_point, &relations.ram_ra_inputs)
+            .map_err(algebra)?;
+        let ram_ra_virtualization = relations
+            .ram_ra
+            .expected_output(
+                &relations.ram_ra_inputs,
+                &zip_openings(&openings.ram_ra_virtualization, &ram_ra_derived),
+            )
+            .map_err(algebra)?;
+
+        let instruction_ra_point = self.instance_point(
+            sumcheck_point,
+            Stage6InstanceKind::InstructionRaVirtualization,
+        )?;
+        let instruction_ra_derived = relations
+            .instruction_ra
+            .derive_opening_points(&instruction_ra_point, &relations.instruction_ra_inputs)
+            .map_err(algebra)?;
+        let instruction_ra_virtualization = relations
+            .instruction_ra
+            .expected_output(
+                &relations.instruction_ra_inputs,
+                &zip_openings(
+                    &openings.instruction_ra_virtualization,
+                    &instruction_ra_derived,
+                ),
+            )
+            .map_err(algebra)?;
+
+        let inc_point =
+            self.instance_point(sumcheck_point, Stage6InstanceKind::IncClaimReduction)?;
+        let inc_derived = relations
+            .inc
+            .derive_opening_points(&inc_point, &relations.inc_inputs)
+            .map_err(algebra)?;
+        let inc_claim_reduction = relations
+            .inc
+            .expected_output(
+                &relations.inc_inputs,
+                &zip_openings(&openings.inc_claim_reduction, &inc_derived),
+            )
+            .map_err(algebra)?;
+
+        let advice = |kind: JoltAdviceKind,
+                      relation: Option<&jolt_verifier::stages::stage6::AdviceCyclePhase<F>>|
+         -> Result<Option<F>, ProverError> {
+            let claim = match kind {
+                JoltAdviceKind::Trusted => openings.advice_cycle_phase.trusted.as_ref(),
+                JoltAdviceKind::Untrusted => openings.advice_cycle_phase.untrusted.as_ref(),
+            };
+            match (relation, claim) {
+                (Some(relation), Some(claim)) => {
+                    let point = self.instance_point(
+                        sumcheck_point,
+                        Stage6InstanceKind::AdviceCyclePhase(kind),
+                    )?;
+                    let derived = relation
+                        .derive_opening_points(&point, &relations.advice_inputs)
+                        .map_err(algebra)?;
+                    let values = match kind {
+                        JoltAdviceKind::Trusted => AdviceCyclePhaseOutputClaims {
+                            trusted: Some(claim.opening_claim),
+                            untrusted: None,
+                        },
+                        JoltAdviceKind::Untrusted => AdviceCyclePhaseOutputClaims {
+                            trusted: None,
+                            untrusted: Some(claim.opening_claim),
+                        },
+                    };
+                    Ok(Some(
+                        relation
+                            .expected_output(
+                                &relations.advice_inputs,
+                                &zip_openings(&values, &derived),
+                            )
+                            .map_err(algebra)?,
+                    ))
+                }
+                (None, None) => Ok(None),
+                _ => Err(invalid_stage_request(format!(
+                    "Stage 6 {kind:?} advice relation/opening presence mismatch"
+                ))),
+            }
         };
 
-        Ok(public_values)
+        Ok(Stage6BatchExpectedOutputClaims {
+            bytecode_read_raf,
+            booleanity,
+            ram_hamming_booleanity,
+            ram_ra_virtualization,
+            instruction_ra_virtualization,
+            inc_claim_reduction,
+            trusted_advice_cycle_phase: advice(
+                JoltAdviceKind::Trusted,
+                relations.trusted_advice.as_ref(),
+            )?,
+            untrusted_advice_cycle_phase: advice(
+                JoltAdviceKind::Untrusted,
+                relations.untrusted_advice.as_ref(),
+            )?,
+        })
     }
 
     pub(super) fn instance(

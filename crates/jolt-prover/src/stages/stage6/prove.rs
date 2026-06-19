@@ -581,6 +581,8 @@ where
         stage5,
         prefix,
         address_phase,
+        bytecode_address_challenges,
+        booleanity_address_challenges,
     )?;
 
     let mut trusted_advice_relation = if let Ok(instance) = context.instance(
@@ -806,7 +808,7 @@ where
     );
     output_openings.address_phase = address_phase.clone();
 
-    let expected_outputs = context.expected_outputs(&points, &output_openings)?;
+    let expected_outputs = context.expected_outputs(&sumcheck_point, &output_openings)?;
     let expected_outputs_in_order = stage6_expected_output_claim_values(&expected_outputs);
     if individual_claims.len() != expected_outputs_in_order.len() {
         return Err(invalid_sumcheck_output(format!(
