@@ -3,10 +3,11 @@ use crate::{
     stages::PrecommittedSchedule,
     VerifierError,
 };
+#[cfg(feature = "field-inline")]
+use jolt_akita::AKITA_FIELD_MODULUS;
 use jolt_akita::{
     AkitaField, PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId,
     PackedFamilySpec, PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
-    AKITA_FIELD_MODULUS,
 };
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
@@ -14,19 +15,17 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineOpeningId,
 };
 use jolt_claims::protocols::jolt::{
-    advice_bytes_validity_requirement, byte_decode_terms, bytecode_imm_canonical_bytes_requirement,
-    bytecode_validity_requirements,
+    advice_bytes_validity_requirement, byte_decode_terms,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
     fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
     fused_increment_inactive_source_opening, fused_increment_magnitude_lattice_view_formula,
     fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
-    fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
-    fused_increment_source_opening, fused_increment_validity_requirements,
-    lattice_packed_validity_digest, weighted_symbol_terms, AdviceClaimReductionLayout,
-    JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-    LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityKind,
-    LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
+    fused_increment_sign_opening, fused_increment_source_opening,
+    fused_increment_validity_requirements, lattice_packed_validity_digest, weighted_symbol_terms,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
+    LatticePackedValidityKind, LatticePackedValidityRequirement, LatticePackedViewFormula,
     FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{Field, FixedByteSize};
@@ -137,14 +136,11 @@ pub fn derive_akita_packed_witness_layout(
         )?);
     }
 
-    let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+    let _ = precommitted.bytecode.as_ref().ok_or_else(|| {
         invalid_precommitted_schedule(
             "lattice committed-program mode requires a bytecode claim-reduction layout",
         )
     })?;
-    for index in 0..bytecode_layout.chunk_count() {
-        extend_bytecode_families(&mut specs, index, bytecode_layout.log_bytecode_chunk_size())?;
-    }
 
     let _ = precommitted.program_image.as_ref().ok_or_else(|| {
         invalid_precommitted_schedule(
@@ -174,19 +170,11 @@ pub fn derive_akita_packed_validity_requirements(
         requirements.push(advice_bytes_validity_requirement(JoltAdviceKind::Untrusted));
     }
 
-    let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+    let _ = precommitted.bytecode.as_ref().ok_or_else(|| {
         invalid_precommitted_schedule(
             "lattice committed-program mode requires a bytecode claim-reduction layout",
         )
     })?;
-    for index in 0..bytecode_layout.chunk_count() {
-        requirements.extend(bytecode_validity_requirements(index, AkitaField::NUM_BYTES));
-        requirements.push(bytecode_imm_canonical_bytes_requirement(
-            index,
-            AkitaField::NUM_BYTES,
-            AKITA_FIELD_MODULUS,
-        ));
-    }
 
     let _ = precommitted.program_image.as_ref().ok_or_else(|| {
         invalid_precommitted_schedule(
@@ -1391,6 +1379,13 @@ fn packed_family_is_precommitted(family: &PackedFamilyId) -> bool {
             kind: PackedAdviceKind::Trusted,
             ..
         } | PackedFamilyId::BytecodeChunk { .. }
+            | PackedFamilyId::BytecodeRegisterSelector { .. }
+            | PackedFamilyId::BytecodeCircuitFlag { .. }
+            | PackedFamilyId::BytecodeInstructionFlag { .. }
+            | PackedFamilyId::BytecodeLookupSelector { .. }
+            | PackedFamilyId::BytecodeRafFlag { .. }
+            | PackedFamilyId::BytecodeUnexpandedPcBytes { .. }
+            | PackedFamilyId::BytecodeImmBytes { .. }
             | PackedFamilyId::ProgramImageInit
     )
 }
@@ -1672,7 +1667,7 @@ fn jolt_lattice_row_point<F>(
     id: JoltOpeningId,
     point: &[F],
     log_k_chunk: usize,
-    precommitted: &PrecommittedSchedule,
+    _precommitted: &PrecommittedSchedule,
 ) -> Result<Vec<F>, VerifierError>
 where
     F: Field,
@@ -1708,7 +1703,9 @@ where
                     LatticeFusedIncrementTarget::Rd,
                 ) =>
         {
-            bytecode_address_row_point(point, precommitted)
+            Err(unsupported_lattice_view(
+                "fused increment bytecode source openings require bound precommitted bytecode views",
+            ))
         }
         id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
             || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd)
@@ -1785,24 +1782,6 @@ where
     Ok(point[log_k_chunk..].to_vec())
 }
 
-fn bytecode_address_row_point<F>(
-    point: &[F],
-    precommitted: &PrecommittedSchedule,
-) -> Result<Vec<F>, VerifierError>
-where
-    F: Field,
-{
-    let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
-        unsupported_lattice_view(
-            "bytecode-derived packed row point requires committed-bytecode layout",
-        )
-    })?;
-    layout
-        .split_address_point(point)
-        .map(|address| address.r_bc)
-        .map_err(|error| unsupported_lattice_view(error.to_string()))
-}
-
 #[cfg(feature = "field-inline")]
 fn field_inline_lattice_row_point<F>(
     id: FieldInlineOpeningId,
@@ -1840,7 +1819,7 @@ pub fn jolt_lattice_view_formula<F>(
     id: JoltOpeningId,
     point: &[F],
     log_k_chunk: usize,
-    precommitted: &PrecommittedSchedule,
+    _precommitted: &PrecommittedSchedule,
 ) -> Result<LatticePackedViewFormula<F>, VerifierError>
 where
     F: Field,
@@ -1871,40 +1850,32 @@ where
             Ok(fused_increment_sign_lattice_view_formula())
         }
         id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram) => {
-            fused_increment_bytecode_source_lattice_view_formula(
-                LatticeFusedIncrementTarget::Ram,
-                point,
-                precommitted,
-            )
+            Err(unsupported_lattice_view(
+                "fused increment bytecode source openings require bound precommitted bytecode views",
+            ))
         }
         id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) => {
-            fused_increment_bytecode_source_lattice_view_formula(
-                LatticeFusedIncrementTarget::Rd,
-                point,
-                precommitted,
-            )
+            Err(unsupported_lattice_view(
+                "fused increment bytecode source openings require bound precommitted bytecode views",
+            ))
         }
         id if id
             == fused_increment_inactive_bytecode_source_opening(
                 LatticeFusedIncrementTarget::Ram,
             ) =>
         {
-            fused_increment_bytecode_source_lattice_view_formula(
-                LatticeFusedIncrementTarget::Ram,
-                point,
-                precommitted,
-            )
+            Err(unsupported_lattice_view(
+                "fused increment bytecode source openings require bound precommitted bytecode views",
+            ))
         }
         id if id
             == fused_increment_inactive_bytecode_source_opening(
                 LatticeFusedIncrementTarget::Rd,
             ) =>
         {
-            fused_increment_bytecode_source_lattice_view_formula(
-                LatticeFusedIncrementTarget::Rd,
-                point,
-                precommitted,
-            )
+            Err(unsupported_lattice_view(
+                "fused increment bytecode source openings require bound precommitted bytecode views",
+            ))
         }
         id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
             || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd)
@@ -2083,66 +2054,6 @@ where
     ))
 }
 
-fn fused_increment_bytecode_source_lattice_view_formula<F>(
-    target: LatticeFusedIncrementTarget,
-    point: &[F],
-    precommitted: &PrecommittedSchedule,
-) -> Result<LatticePackedViewFormula<F>, VerifierError>
-where
-    F: Field,
-{
-    let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
-        unsupported_lattice_view(
-            "fused increment bytecode source view requires committed-bytecode layout",
-        )
-    })?;
-    let address = layout
-        .split_address_point(point)
-        .map_err(|error| unsupported_lattice_view(error.to_string()))?;
-    let mut terms = Vec::new();
-    for (chunk, weight) in address.chunk_rbc_weights.into_iter().enumerate() {
-        let formula = fused_increment_source_lattice_view_formula(target, chunk);
-        extend_scaled_lattice_terms(&mut terms, formula, weight)?;
-    }
-    Ok(LatticePackedViewFormula::linear_decoded(terms))
-}
-
-fn extend_scaled_lattice_terms<F>(
-    terms: &mut Vec<LatticePackedViewTerm<F>>,
-    formula: LatticePackedViewFormula<F>,
-    scale: F,
-) -> Result<(), VerifierError>
-where
-    F: Field,
-{
-    match formula {
-        LatticePackedViewFormula::Direct {
-            family,
-            limb,
-            symbol,
-        } => terms.push(LatticePackedViewTerm::new(scale, family, limb, symbol)),
-        LatticePackedViewFormula::LinearDecoded {
-            terms: formula_terms,
-        } => {
-            terms.extend(formula_terms.into_iter().map(|term| {
-                LatticePackedViewTerm::new(
-                    scale * term.coefficient,
-                    term.family,
-                    term.limb,
-                    term.symbol,
-                )
-            }));
-        }
-        LatticePackedViewFormula::ReducedMasked { .. }
-        | LatticePackedViewFormula::MaskedDecoded { .. } => {
-            return Err(unsupported_lattice_view(
-                "fused increment bytecode source view must lower to direct or linear decoded terms",
-            ));
-        }
-    }
-    Ok(())
-}
-
 pub fn akita_packed_view_formula<F>(
     formula: &LatticePackedViewFormula<F>,
 ) -> Result<PackedViewFormula<F>, PackedViewError>
@@ -2280,19 +2191,6 @@ fn extend_field_rd_inc_families(
     extend_validity_requirement_families(specs, &field_rd_inc_validity_requirements(), domain)
 }
 
-fn extend_bytecode_families(
-    specs: &mut Vec<PackedFamilySpec>,
-    chunk: usize,
-    log_bytecode: usize,
-) -> Result<(), VerifierError> {
-    let domain = PackedFactDomain::BytecodeRows { log_bytecode };
-    extend_validity_requirement_families(
-        specs,
-        &bytecode_validity_requirements(chunk, AkitaField::NUM_BYTES),
-        domain,
-    )
-}
-
 fn require_advice_layout(
     precommitted: &PrecommittedSchedule,
     kind: JoltAdviceKind,
@@ -2375,15 +2273,16 @@ mod tests {
         config::{IncrementCommitmentMode, PackedWitnessConfig, ProgramMode},
         stages::CommittedProgramSchedule,
     };
+    use jolt_akita::AKITA_FIELD_MODULUS;
     use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode;
     use jolt_claims::protocols::jolt::{
-        byte_decode_terms, formulas::dimensions::REGISTER_ADDRESS_BITS,
-        program_image_validity_requirement, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
-        LatticePackedFamilyId, LatticePackedViewFormula, LatticePackedViewTerm,
-        TracePolynomialOrder,
+        byte_decode_terms, bytecode_imm_canonical_bytes_requirement,
+        bytecode_validity_requirements, formulas::dimensions::REGISTER_ADDRESS_BITS,
+        fused_increment_source_lattice_view_formula, program_image_validity_requirement,
+        JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticePackedFamilyId,
+        LatticePackedViewFormula, LatticePackedViewTerm, TracePolynomialOrder,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_openings::{PackedLinearTerm, PhysicalView};
     use jolt_poly::{EqPolynomial, Point};
     use jolt_riscv::CircuitFlags;
@@ -2576,22 +2475,19 @@ mod tests {
                 chunk: 0,
                 selector: 0,
             })
-            .is_some());
+            .is_none());
         assert!(layout
             .family(&PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
-            .is_some());
-        let lookup_selector = layout
+            .is_none());
+        assert!(layout
             .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
-            .unwrap_or_else(|| panic!("bytecode lookup selector family should be present"));
-        assert_eq!(
-            lookup_selector.alphabet,
-            PackedAlphabet::Fixed {
-                size: LookupTableKind::<RISCV_XLEN>::COUNT.next_power_of_two(),
-            }
-        );
+            .is_none());
         assert!(layout
             .family(&PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 })
-            .is_some());
+            .is_none());
+        assert!(layout
+            .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
+            .is_none());
         assert!(layout
             .family(&PackedFamilyId::BytecodeChunk { index: 0 })
             .is_none());
@@ -3455,39 +3351,27 @@ mod tests {
     }
 
     #[test]
-    fn derive_layout_uses_bytecode_source_validity_requirements() {
+    fn derive_layout_excludes_committed_bytecode_source_requirements() {
         let config = lattice_config();
         let precommitted = precommitted_schedule(Some(8));
         let layout = derive_akita_packed_witness_layout(&config, 2, 8, ra_layout(), &precommitted)
             .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
-        let bytecode_domain = PackedFactDomain::BytecodeRows {
-            log_bytecode: precommitted
-                .bytecode
-                .as_ref()
-                .unwrap_or_else(|| panic!("bytecode layout should exist"))
-                .log_bytecode_chunk_size(),
-        };
         let validity_requirements =
             derive_akita_packed_validity_requirements(&config, &precommitted)
                 .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+
+        for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
+            let family_id = akita_packed_family_id(&requirement.family);
+            assert!(layout.family(&family_id).is_none());
+            assert!(!validity_requirements.contains(&requirement));
+        }
         assert!(
-            validity_requirements.contains(&bytecode_imm_canonical_bytes_requirement(
+            !validity_requirements.contains(&bytecode_imm_canonical_bytes_requirement(
                 0,
                 AkitaField::NUM_BYTES,
                 AKITA_FIELD_MODULUS,
             ))
         );
-
-        for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
-            let family_id = akita_packed_family_id(&requirement.family);
-            let family = layout
-                .family(&family_id)
-                .unwrap_or_else(|| panic!("bytecode validity family {family_id:?} should exist"));
-
-            assert_eq!(family.domain, bytecode_domain);
-            assert_eq!(family.limbs, requirement.limbs);
-            assert_eq!(family.alphabet.size(), requirement.alphabet_size);
-        }
     }
 
     #[test]
@@ -3770,7 +3654,7 @@ mod tests {
     }
 
     #[test]
-    fn jolt_lattice_resolver_lowers_fused_increment_bytecode_sources() {
+    fn jolt_lattice_resolver_rejects_fused_increment_bytecode_sources_without_binding() {
         let schedule = precommitted_schedule(None);
         let point = [
             Fr::from_u64(3),
@@ -3778,65 +3662,19 @@ mod tests {
             Fr::from_u64(7),
             Fr::from_u64(11),
         ];
-        let chunk_weights = EqPolynomial::<Fr>::evals(&point[..1], None);
-        let store_formula = jolt_lattice_view_formula(
-            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-            &point,
-            8,
-            &schedule,
-        )
-        .unwrap_or_else(|error| panic!("store source view should resolve: {error}"));
-        let store_terms = linear_decoded_terms(&store_formula);
-        assert_eq!(store_terms.len(), 2);
-        assert_eq!(
-            find_lattice_term(
-                store_terms,
-                LatticePackedFamilyId::BytecodeCircuitFlag {
-                    chunk: 0,
-                    flag: CircuitFlags::Store as usize,
-                },
-                0,
-                1,
-            )
-            .coefficient,
-            chunk_weights[0]
-        );
-        assert_eq!(
-            find_lattice_term(
-                store_terms,
-                LatticePackedFamilyId::BytecodeCircuitFlag {
-                    chunk: 1,
-                    flag: CircuitFlags::Store as usize,
-                },
-                0,
-                1,
-            )
-            .coefficient,
-            chunk_weights[1]
-        );
 
-        let rd_formula = jolt_lattice_view_formula(
+        for id in [
+            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
             fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
-            &point,
-            8,
-            &schedule,
-        )
-        .unwrap_or_else(|error| panic!("rd-present source view should resolve: {error}"));
-        let rd_terms = linear_decoded_terms(&rd_formula);
-        assert_eq!(rd_terms.len(), 2 * (1 << REGISTER_ADDRESS_BITS));
-        assert_eq!(
-            find_lattice_term(
-                rd_terms,
-                LatticePackedFamilyId::BytecodeRegisterSelector {
-                    chunk: 1,
-                    selector: 2,
-                },
-                0,
-                31,
-            )
-            .coefficient,
-            chunk_weights[1]
-        );
+            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
+            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
+        ] {
+            assert!(matches!(
+                jolt_lattice_view_formula::<Fr>(id, &point, 8, &schedule),
+                Err(VerifierError::FinalOpeningBatchFailed { reason })
+                    if reason.contains("bound precommitted bytecode views")
+            ));
+        }
     }
 
     #[test]
@@ -4028,6 +3866,26 @@ mod tests {
                 PackedAlphabet::Byte,
             ),
             PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeCircuitFlag {
+                    chunk: 0,
+                    flag: CircuitFlags::Store as usize,
+                },
+                PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+                1,
+                PackedAlphabet::Bit,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeRegisterSelector {
+                    chunk: 0,
+                    selector: 2,
+                },
+                PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+                1,
+                PackedAlphabet::Fixed {
+                    size: 1 << REGISTER_ADDRESS_BITS,
+                },
+            ),
+            PackedFamilySpec::direct(
                 PackedFamilyId::ProgramImageInit,
                 PackedFactDomain::ProgramImageWords { log_words: 1 },
                 8,
@@ -4112,7 +3970,7 @@ mod tests {
     }
 
     #[test]
-    fn untrusted_advice_and_bytecode_sources_use_non_trace_domains() {
+    fn untrusted_advice_uses_non_trace_domain() {
         let mut config = lattice_config();
         config.lattice.advice.untrusted = true;
         config.lattice.packed_witness.untrusted_advice_family = true;
@@ -4147,44 +4005,18 @@ mod tests {
             }
         ));
 
-        let bytecode = layout
+        assert!(layout
             .family(&PackedFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 0,
             })
-            .unwrap_or_else(|| panic!("bytecode register selector family should be present"));
-        assert_eq!(
-            bytecode.domain,
-            PackedFactDomain::BytecodeRows { log_bytecode: 3 }
-        );
-        assert_eq!(
-            bytecode.alphabet,
-            PackedAlphabet::Fixed {
-                size: 1usize << REGISTER_ADDRESS_BITS,
-            }
-        );
-        let lookup_selector = layout
+            .is_none());
+        assert!(layout
             .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
-            .unwrap_or_else(|| panic!("bytecode lookup selector family should be present"));
-        assert_eq!(
-            lookup_selector.alphabet,
-            PackedAlphabet::Fixed {
-                size: LookupTableKind::<RISCV_XLEN>::COUNT.next_power_of_two(),
-            }
-        );
-        assert!(lookup_selector.alphabet.size().is_power_of_two());
-        assert!(lookup_selector.alphabet.size() >= LookupTableKind::<RISCV_XLEN>::COUNT);
-
-        let imm = layout
+            .is_none());
+        assert!(layout
             .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
-            .unwrap_or_else(|| panic!("bytecode immediate byte family should be present"));
-        assert_eq!(
-            imm.domain,
-            PackedFactDomain::BytecodeRows { log_bytecode: 3 }
-        );
-        assert_eq!(imm.limbs, AkitaField::NUM_BYTES);
-        assert_eq!(imm.alphabet, PackedAlphabet::Byte);
-
+            .is_none());
         assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
     }
 
@@ -4210,7 +4042,7 @@ mod tests {
 
         assert_eq!(audit.d_pack, layout.dimension);
         assert!(audit.cells_by_domain.trace_rows > 0);
-        assert!(audit.cells_by_domain.bytecode_rows > 0);
+        assert_eq!(audit.cells_by_domain.bytecode_rows, 0);
         assert_eq!(audit.cells_by_domain.program_image_words, 0);
         assert!(audit.cells_by_domain.advice_bytes > 0);
         assert!(layout.family(&PackedFamilyId::IncSign).is_some());
@@ -4242,16 +4074,16 @@ mod tests {
                 chunk: 0,
                 selector: 2,
             })
-            .is_some());
+            .is_none());
         assert!(layout
             .family(&PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
-            .is_some());
+            .is_none());
         assert!(layout
             .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
-            .is_some());
+            .is_none());
         assert!(layout
             .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
-            .is_some());
+            .is_none());
         assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
     }
 }
