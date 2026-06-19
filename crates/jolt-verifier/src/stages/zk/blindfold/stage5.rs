@@ -93,7 +93,7 @@ where
         .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?;
     let ram_raf_cycle = &input.stage2.output_points.ram_raf_evaluation_point()[log_k..];
     let ram_read_write_cycle = &input.stage2.output_points.ram_read_write_point()[log_k..];
-    let ram_val_cycle = &input.stage4.ram_val_check_opening_point[log_k..];
+    let ram_val_cycle = &input.stage4.output_points.ram_val_check_point()[log_k..];
     values.public(
         JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
         try_eq_mle(&ram_cycle, ram_raf_cycle)
@@ -119,7 +119,7 @@ where
         .cycle_opening_point(&registers_point)
         .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_read_write_cycle =
-        &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..];
+        &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
     values.public(
         JoltPublicId::from(RegistersValEvaluationPublic::LtCycle),
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),

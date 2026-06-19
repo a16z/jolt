@@ -758,9 +758,9 @@ where
         )
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let stage3_cycle = stage3_shift_point.iter().rev().copied().collect::<Vec<_>>();
-    let stage4_cycle = &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..];
+    let stage4_cycle = &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
     let stage5_cycle =
-        &input.stage5.registers_opening_point[REGISTER_ADDRESS_BITS..];
+        &input.stage5.output_points.registers_opening_point()[REGISTER_ADDRESS_BITS..];
     let entry_bytecode_index = input
         .preprocessing
         .program
@@ -821,9 +821,9 @@ where
                     stage4_cycle,
                     stage5_cycle,
                 ],
-                register_read_write_point: &input.stage4.registers_read_write_opening_point
+                register_read_write_point: &input.stage4.output_points.registers_read_write_point()
                     [..REGISTER_ADDRESS_BITS],
-                register_val_evaluation_point: &input.stage5.registers_opening_point
+                register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
                     [..REGISTER_ADDRESS_BITS],
                 entry_bytecode_index,
                 stage1_gammas: &input.stage6.public.stage1_gammas,
@@ -903,7 +903,7 @@ where
     let ram_ra_cycle = trace_dimensions
         .cycle_opening_point(&ram_ra_point)
         .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?;
-    let ram_reduced_cycle = &input.stage5.ram_reduced_opening_point[log_k..];
+    let ram_reduced_cycle = &input.stage5.output_points.ram_reduced_opening_point()[log_k..];
     values.public(
         JoltPublicId::from(RamRaVirtualizationPublic::EqCycle),
         try_eq_mle(ram_reduced_cycle, &ram_ra_cycle)
@@ -922,7 +922,10 @@ where
         .map_err(|error| public_error(JoltRelationId::InstructionRaVirtualization, error))?;
     values.public(
         JoltPublicId::from(InstructionRaVirtualizationPublic::EqCycle),
-        try_eq_mle(&input.stage5.instruction_r_cycle, &instruction_ra_cycle)
+        try_eq_mle(
+            input.stage5.output_points.instruction_r_cycle(),
+            &instruction_ra_cycle,
+        )
         .map_err(|error| public_error(JoltRelationId::InstructionRaVirtualization, error))?,
     )?;
 
@@ -946,7 +949,7 @@ where
         JoltPublicId::from(IncClaimReductionPublic::EqRamValCheck),
         try_eq_mle(
             &inc_opening_point,
-            &input.stage4.ram_val_check_opening_point[log_k..],
+            &input.stage4.output_points.ram_val_check_point()[log_k..],
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
@@ -954,7 +957,7 @@ where
         JoltPublicId::from(IncClaimReductionPublic::EqRegistersReadWrite),
         try_eq_mle(
             &inc_opening_point,
-            &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..],
+            &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..],
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
@@ -962,7 +965,7 @@ where
         JoltPublicId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
         try_eq_mle(
             &inc_opening_point,
-            &input.stage5.registers_opening_point[REGISTER_ADDRESS_BITS..],
+            &input.stage5.output_points.registers_opening_point()[REGISTER_ADDRESS_BITS..],
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
@@ -992,9 +995,9 @@ where
             stage3_gammas: &input.stage6.public.stage3_gammas,
             stage4_gammas: &input.stage6.public.stage4_gammas,
             stage5_gammas: &input.stage6.public.stage5_gammas,
-            register_read_write_point: &input.stage4.registers_read_write_opening_point
+            register_read_write_point: &input.stage4.output_points.registers_read_write_point()
                 [..REGISTER_ADDRESS_BITS],
-            register_val_evaluation_point: &input.stage5.registers_opening_point
+            register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
                 [..REGISTER_ADDRESS_BITS],
             bytecode_r_address: &input.stage6.bytecode_read_raf_address.opening_point,
         },

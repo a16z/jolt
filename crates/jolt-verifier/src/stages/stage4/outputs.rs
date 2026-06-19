@@ -40,8 +40,11 @@ pub struct Stage4ZkOutput<F: Field, C> {
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub ram_val_check_public_eval: F,
-    pub registers_read_write_opening_point: Vec<F>,
-    pub ram_val_check_opening_point: Vec<F>,
+    /// The produced opening points (point-only cell), the ZK counterpart of the
+    /// clear path's `output_claims`. Read through the same `*_point()` accessors.
+    /// The advice / program-image leaves are absent in ZK (BlindFold carries those
+    /// openings), so only the register and RAM value-check points are populated.
+    pub output_points: Stage4OutputClaims<Vec<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -558,7 +558,7 @@ where
         )));
     }
 
-    let instruction_r_address = output_claims.instruction_read_raf.r_address();
+    let instruction_r_address = output_claims.instruction_r_address();
     let verifier_output = Stage5ClearOutput {
         challenges: Stage5Challenges {
             instruction_gamma: prefix.instruction_gamma,

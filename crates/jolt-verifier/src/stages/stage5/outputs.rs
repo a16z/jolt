@@ -3,7 +3,7 @@
 use jolt_field::Field;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
-use crate::stages::relations::{GetPoint, OpeningClaim};
+use crate::stages::relations::OpeningClaim;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 use super::inputs::Stage5OutputClaims;
@@ -37,18 +37,18 @@ impl<F: Field> Stage5ClearOutput<F> {
     /// The instruction read-RAF cycle point, shared by the lookup-table-flag and
     /// RAF-flag openings.
     pub fn instruction_r_cycle(&self) -> &[F] {
-        self.output_claims.instruction_read_raf.r_cycle()
+        self.output_claims.instruction_r_cycle()
     }
 
     /// The reduced RAM-RA opening point (`address ++ cycle`, `log_k + log_t` vars).
     pub fn ram_reduced_opening_point(&self) -> &[F] {
-        self.output_claims.ram_ra_claim_reduction.ram_ra.point()
+        self.output_claims.ram_reduced_opening_point()
     }
 
     /// The register value-evaluation opening point (`REGISTER_ADDRESS_BITS + log_t`
     /// vars), shared by the `rd_inc` and `rd_wa` openings.
     pub fn registers_opening_point(&self) -> &[F] {
-        self.output_claims.registers_val_evaluation.rd_inc.point()
+        self.output_claims.registers_opening_point()
     }
 }
 
@@ -57,10 +57,13 @@ pub struct Stage5ZkOutput<F: Field, C> {
     pub challenges: Stage5Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    /// The produced opening points (point-only cell), the ZK counterpart of the
+    /// clear path's `output_claims`. Read through the same `*_point()` accessors.
+    pub output_points: Stage5OutputClaims<Vec<F>>,
+    /// The contiguous instruction address point, stored (rather than reconstructed
+    /// from `output_points` on demand) so stage 6 can borrow it — the per-chunk
+    /// virtual-RA cells don't hold it contiguously. Mirrors `Stage5ClearOutput`.
     pub instruction_r_address: Vec<F>,
-    pub instruction_r_cycle: Vec<F>,
-    pub ram_reduced_opening_point: Vec<F>,
-    pub registers_opening_point: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

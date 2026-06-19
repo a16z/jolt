@@ -174,9 +174,8 @@ where
                 reason: error.to_string(),
             })?;
 
-        let registers_opening_point = registers_relation
-            .derive_opening_points(&registers_point, &registers_zk_inputs())?
-            .registers_val;
+        let registers_points =
+            registers_relation.derive_opening_points(&registers_point, &registers_zk_inputs())?;
         // The init decomposition is value-data unused by `derive_opening_points`
         // (which is value-independent), so the ZK relation carries only the public
         // initial-RAM evaluation; the committed decomposition lives in BlindFold.
@@ -186,17 +185,27 @@ where
             ram_val_check_gamma,
             RamValCheckInit::full(ram_val_check_public_eval),
         );
-        let ram_val_check_opening_point = ram_relation
-            .derive_opening_points(&ram_val_point, &ram_zk_inputs(ram_read_write_opening_point))?
-            .ram_ra;
+        let ram_points = ram_relation
+            .derive_opening_points(&ram_val_point, &ram_zk_inputs(ram_read_write_opening_point))?;
+        // The point-only counterpart of the clear `output_claims`. Advice and
+        // program-image openings live in BlindFold for ZK proofs, so those leaves
+        // are absent here.
+        let output_points = Stage4OutputClaims {
+            advice: RamValCheckAdviceClaims {
+                untrusted: None,
+                trusted: None,
+            },
+            program_image_contribution: None,
+            registers_read_write: registers_points,
+            ram_val_check: ram_points,
+        };
 
         return Ok(Stage4Output::Zk(Stage4ZkOutput {
             challenges,
             batch_consistency: consistency,
             batch_output_claims,
             ram_val_check_public_eval,
-            registers_read_write_opening_point: registers_opening_point,
-            ram_val_check_opening_point,
+            output_points,
         }));
     }
 

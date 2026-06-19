@@ -4,7 +4,7 @@ use jolt_field::Field;
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::OutputClaims;
+use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims};
 use crate::stages::{
     stage2::{Stage2ClearOutput, Stage2Output, Stage2ZkOutput},
     stage3::{Stage3ClearOutput, Stage3Output, Stage3ZkOutput},
@@ -87,3 +87,27 @@ impl<F: Field> Stage4OutputClaims<F> {
         }
     }
 }
+
+/// The shared opening-point accessors, generated for each concrete cell
+/// (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form) so
+/// both expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>`
+/// can't express this — `F` would be unconstrained by the self type.
+macro_rules! stage4_point_accessors {
+    ($cell:ident) => {
+        impl<F: Field> Stage4OutputClaims<$cell<F>> {
+            /// The register read-write opening point (shared by all five register
+            /// openings).
+            pub fn registers_read_write_point(&self) -> &[F] {
+                self.registers_read_write.registers_val.point()
+            }
+
+            /// The RAM value-check opening point (shared by `ram_ra`/`ram_inc`).
+            pub fn ram_val_check_point(&self) -> &[F] {
+                self.ram_val_check.ram_ra.point()
+            }
+        }
+    };
+}
+
+stage4_point_accessors!(OpeningClaim);
+stage4_point_accessors!(Vec);

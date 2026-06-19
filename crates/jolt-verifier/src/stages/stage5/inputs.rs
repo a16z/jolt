@@ -4,13 +4,13 @@ use jolt_field::Field;
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::OutputClaims;
+use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims};
 use crate::stages::{
     stage2::{Stage2Output, Stage2ZkOutput},
     stage4::{Stage4Output, Stage4ZkOutput},
 };
 
-use super::instruction_read_raf::InstructionReadRafOutputClaims;
+use super::instruction_read_raf::{reconstruct_r_address, InstructionReadRafOutputClaims};
 use super::ram_ra_claim_reduction::RamRaClaimReductionOutputClaims;
 use super::registers_val_evaluation::RegistersValEvaluationOutputClaims;
 
@@ -82,3 +82,41 @@ impl<F: Field> Stage5OutputClaims<F> {
         }
     }
 }
+
+/// The shared opening-point accessors, generated for each concrete cell
+/// (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form) so
+/// both expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>`
+/// can't express this — `F` would be unconstrained by the self type.
+macro_rules! stage5_point_accessors {
+    ($cell:ident) => {
+        impl<F: Field> Stage5OutputClaims<$cell<F>> {
+            /// The instruction read-RAF cycle point (shared by the lookup-table-flag
+            /// and RAF-flag openings).
+            pub fn instruction_r_cycle(&self) -> &[F] {
+                self.instruction_read_raf.instruction_raf_flag.point()
+            }
+
+            /// The contiguous instruction address point, reconstructed from the
+            /// virtual-RA opening cells (each is `chunk ++ r_cycle`).
+            pub fn instruction_r_address(&self) -> Vec<F> {
+                reconstruct_r_address(
+                    &self.instruction_read_raf,
+                    self.instruction_r_cycle().len(),
+                )
+            }
+
+            /// The reduced RAM-RA opening point (`address ++ cycle`).
+            pub fn ram_reduced_opening_point(&self) -> &[F] {
+                self.ram_ra_claim_reduction.ram_ra.point()
+            }
+
+            /// The register value-evaluation opening point (shared by `rd_inc`/`rd_wa`).
+            pub fn registers_opening_point(&self) -> &[F] {
+                self.registers_val_evaluation.rd_inc.point()
+            }
+        }
+    };
+}
+
+stage5_point_accessors!(OpeningClaim);
+stage5_point_accessors!(Vec);

@@ -228,7 +228,7 @@ where
         ),
         Deps::Zk { stage5 } => (
             stage5.instruction_r_address.as_slice(),
-            stage5.instruction_r_cycle.as_slice(),
+            stage5.output_points.instruction_r_cycle(),
         ),
     };
     let mut booleanity_reference_address = stage5_instruction_address.to_vec();
@@ -407,7 +407,7 @@ where
                 stage: JoltRelationId::RamRaVirtualization,
                 reason: error.to_string(),
             })?;
-        let ram_reduced_opening_point = &stage5.ram_reduced_opening_point;
+        let ram_reduced_opening_point = stage5.output_points.ram_reduced_opening_point();
         if ram_reduced_opening_point.len() != log_k + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamRaVirtualization,
@@ -1775,7 +1775,7 @@ pub fn stage6_zk_stage5_ram_reduced_opening_point<F: Field, C>(
     log_k: usize,
     log_t: usize,
 ) -> Result<Stage6RamReducedOpeningPoint<'_, F>, VerifierError> {
-    stage6_ram_reduced_opening_point(&stage5.ram_reduced_opening_point, log_k, log_t)
+    stage6_ram_reduced_opening_point(stage5.output_points.ram_reduced_opening_point(), log_k, log_t)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1815,7 +1815,7 @@ pub fn stage6_zk_instruction_read_raf_point<F: Field, C>(
 ) -> Stage6InstructionReadRafPoint<'_, F> {
     Stage6InstructionReadRafPoint {
         address: &stage5.instruction_r_address,
-        cycle: &stage5.instruction_r_cycle,
+        cycle: stage5.output_points.instruction_r_cycle(),
     }
 }
 

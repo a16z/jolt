@@ -187,50 +187,52 @@ where
                 stage: JoltRelationId::InstructionReadRaf,
                 reason: error.to_string(),
             })?;
-        let instruction_opening_point = formula_dimensions
-            .instruction_read_raf
-            .opening_point(&instruction_point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::InstructionReadRaf,
-                reason: error.to_string(),
-            })?;
-
         let ram_point = consistency
             .try_instance_point(ram_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
-        let ram_inputs = RamRaClaimReductionInputClaims {
-            raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
-            read_write: stage2.output_points.ram_read_write_point().to_vec(),
-            val_check: stage4.ram_val_check_opening_point.clone(),
-        };
-        let ram_reduced_opening_point = ram_relation
-            .derive_opening_points(&ram_point, &ram_inputs)?
-            .ram_ra;
-
         let registers_point = consistency
             .try_instance_point(registers_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RegistersValEvaluation,
                 reason: error.to_string(),
             })?;
-        let registers_inputs = RegistersValEvaluationInputClaims {
-            registers_val: stage4.registers_read_write_opening_point.clone(),
+
+        // Map each relation's committed sumcheck point to its produced opening
+        // points, the point-only counterpart of the clear `output_claims`. The
+        // instruction relation ignores its inputs (empty point cells suffice); RAM
+        // and registers splice the fixed address/cycle prefixes from upstream points.
+        let empty = Vec::<PCS::Field>::new;
+        let instruction_inputs = InstructionReadRafInputClaims {
+            lookup_output: empty(),
+            left_lookup_operand: empty(),
+            right_lookup_operand: empty(),
         };
-        let registers_opening_point = registers_relation
-            .derive_opening_points(&registers_point, &registers_inputs)?
-            .rd_inc;
+        let ram_inputs = RamRaClaimReductionInputClaims {
+            raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
+            read_write: stage2.output_points.ram_read_write_point().to_vec(),
+            val_check: stage4.output_points.ram_val_check_point().to_vec(),
+        };
+        let registers_inputs = RegistersValEvaluationInputClaims {
+            registers_val: stage4.output_points.registers_read_write_point().to_vec(),
+        };
+        let output_points = Stage5OutputClaims {
+            instruction_read_raf: instruction_relation
+                .derive_opening_points(&instruction_point, &instruction_inputs)?,
+            ram_ra_claim_reduction: ram_relation.derive_opening_points(&ram_point, &ram_inputs)?,
+            registers_val_evaluation: registers_relation
+                .derive_opening_points(&registers_point, &registers_inputs)?,
+        };
+        let instruction_r_address = output_points.instruction_r_address();
 
         return Ok(Stage5Output::Zk(Stage5ZkOutput {
             challenges,
             batch_consistency: consistency,
             batch_output_claims,
-            instruction_r_address: instruction_opening_point.r_address,
-            instruction_r_cycle: instruction_opening_point.r_cycle,
-            ram_reduced_opening_point,
-            registers_opening_point,
+            output_points,
+            instruction_r_address,
         }));
     }
 
@@ -372,7 +374,7 @@ where
 
     claims.append_to_transcript(transcript);
 
-    let instruction_r_address = output_claims.instruction_read_raf.r_address();
+    let instruction_r_address = output_claims.instruction_r_address();
     Ok(Stage5Output::Clear(Stage5ClearOutput {
         challenges,
         output_claims,

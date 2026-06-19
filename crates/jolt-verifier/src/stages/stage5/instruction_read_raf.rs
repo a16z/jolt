@@ -39,20 +39,6 @@ pub struct InstructionReadRafOutputClaims<C> {
     pub instruction_raf_flag: C,
 }
 
-impl<F: Field> InstructionReadRafOutputClaims<OpeningClaim<F>> {
-    /// The instruction read-RAF cycle point, carried by the RAF-flag opening (every
-    /// per-cycle opening shares it).
-    pub fn r_cycle(&self) -> &[F] {
-        self.instruction_raf_flag.point()
-    }
-
-    /// The contiguous instruction address point, reconstructed from the virtual-RA
-    /// opening cells (each is `chunk ++ r_cycle`).
-    pub fn r_address(&self) -> Vec<F> {
-        reconstruct_r_address(self, self.r_cycle().len())
-    }
-}
-
 /// Consumed instruction-lookup openings (the reduced lookup output + left/right
 /// operands), wired from the upstream instruction claim-reduction.
 #[derive(Clone, Debug, InputClaims)]
@@ -122,8 +108,8 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 /// Reconstruct the instruction address point from the virtual-RA opening cells:
 /// each RA opening point is `chunk ++ r_cycle`, and the chunks tile the address
 /// in order, so stripping the trailing cycle and concatenating recovers it.
-fn reconstruct_r_address<F: Field>(
-    outputs: &InstructionReadRafOutputClaims<OpeningClaim<F>>,
+pub(crate) fn reconstruct_r_address<F: Field, C: GetPoint<F>>(
+    outputs: &InstructionReadRafOutputClaims<C>,
     cycle_len: usize,
 ) -> Vec<F> {
     outputs
