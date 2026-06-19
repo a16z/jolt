@@ -7,7 +7,7 @@
 | Unlocks | jolt-akita, verifier config |
 | Author(s) | Markos Georghiades, Codex |
 | Created | 2026-06-08 |
-| Status | draft |
+| Status | implemented (transparent verifier/protocol target) |
 
 ## Scope
 

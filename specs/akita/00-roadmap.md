@@ -7,7 +7,7 @@
 | Unlocks | opening traits, jolt-akita, packing, verifier config |
 | Author(s) | Markos Georghiades, Codex |
 | Created | 2026-06-08 |
-| Status | draft |
+| Status | implemented (transparent verifier/protocol target) |
 
 ## Scope
 
@@ -380,6 +380,49 @@ Milestone details:
   combinations, binds the PackedWitness layout, and dispatches Stage 8 by
   selected PCS.
 ```
+
+## Implementation Evidence
+
+The current implementation covers the transparent verifier/protocol target:
+
+```text
+jolt-openings:
+  generic BatchOpeningScheme and ZkBatchOpeningScheme interfaces.
+  additive-homomorphic batching for the Dory-style path.
+  PackedCombine-style packed-view batching without requiring additive
+  homomorphism.
+
+jolt-akita:
+  real LayerZero Akita backend adapter.
+  exact-D setup binding.
+  PackedWitness layout, sparse source, and packed-view reduction path.
+  separate direct/native openings for precommitted objects.
+
+jolt-claims:
+  lattice formulas, packed fact IDs, validity requirements, and fused-increment
+  translation/source-link formulas.
+
+jolt-verifier:
+  PCS-family config and payload dispatch.
+  PackedWitness layout derivation and validation.
+  Stage 6 fused-increment claim plumbing.
+  Stage 8 logical-to-physical partitioning into one W_pack packed-view batch
+  plus separate precommitted direct-opening statements.
+```
+
+Verified gates for this branch:
+
+```text
+cargo nextest run -p jolt-akita --cargo-quiet
+cargo nextest run -p jolt-verifier --cargo-quiet --features akita,field-inline
+cargo nextest run -p jolt-openings -p jolt-claims --cargo-quiet
+cargo clippy -p jolt-akita -q --all-targets -- -D warnings
+cargo clippy -p jolt-verifier -q --all-targets --features akita,field-inline -- -D warnings
+cargo clippy -p jolt-openings -p jolt-claims -q --all-targets --features field-inline -- -D warnings
+```
+
+This status does not claim a `jolt-core` Akita prover end-to-end path or Akita
+ZK hiding. Those remain separate integration work.
 
 ## Invariants
 
