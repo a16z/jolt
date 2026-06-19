@@ -390,6 +390,8 @@ fn build_batch_statement<F, C>(
   precommitted claims are present.
 - Separate precommitted opening proofs are direct native openings against their
   own commitments; they do not carry a PackedWitness reduction proof.
+- Separate direct native openings bind the opened commitment's layout digest,
+  not the PackedWitness layout digest from the surrounding Stage 8 wrapper.
 - Prover helper rejects a precommitted statement unless the supplied hint
   matches that statement's commitment and the statement uses direct physical
   views.
@@ -460,6 +462,10 @@ akita_committed_program_precommitted_opening_missing_rejects:
 akita_precommitted_proof_shape_rejects_packed_reduction:
   auxiliary precommitted opening proof with PackedWitness commitment or packed
   reduction payload rejects.
+
+akita_precommitted_direct_opening_uses_commitment_digest:
+  auxiliary direct opening verifies when the Stage 8 wrapper digest differs
+  from the opened precommitted commitment digest.
 
 akita_fused_source_precommitted_opening_missing_rejects:
   fused-increment StoreFlag/RdPresent source claims that only open W_pack

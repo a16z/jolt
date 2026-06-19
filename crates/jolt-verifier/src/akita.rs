@@ -3331,7 +3331,7 @@ mod tests {
         let precommitted_statement = BatchOpeningStatement {
             logical_point: precommitted_point.clone(),
             pcs_point: precommitted_point,
-            layout_digest: precommitted_digest,
+            layout_digest: layout.digest,
             claims: vec![BatchOpeningClaim {
                 id: precommitted_id,
                 relation: precommitted_id,
@@ -3341,6 +3341,10 @@ mod tests {
                 scale: AkitaField::from_u64(2),
             }],
         };
+        assert_ne!(
+            precommitted_statement.layout_digest,
+            precommitted_commitment.layout_digest
+        );
         let stage8_statement = Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
             logical_manifest: Stage8LogicalManifest {
                 openings: Vec::new(),

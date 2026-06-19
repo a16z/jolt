@@ -198,12 +198,16 @@ Precommitted opening input:
 ```text
 Given:
   original precommitted commitment
-  statement-bound layout/point for that object
+  point for that object
+  commitment-bound layout digest for that original object
   direct physical view or deterministic linear component expansion
   claimed value
 
 Prove/verify:
   a separate opening proof against the original commitment.
+  the direct native opening transcript binds the opened commitment's layout
+  digest as authoritative, even if a higher-level Stage 8 wrapper statement
+  carries the PackedWitness layout digest.
 
 Rejected:
   using the PackedWitness layout digest or W_pack commitment as evidence for

@@ -512,11 +512,6 @@ fn normalize_clear_batch<OpeningId, RelationId>(
         ));
     }
     let commitment = statement.claims[0].commitment.clone();
-    if statement.layout_digest != commitment.layout_digest {
-        return Err(invalid_batch(
-            "statement layout digest does not match Akita commitment",
-        ));
-    }
     if statement.pcs_point.len() != commitment.num_vars {
         return Err(invalid_batch(format!(
             "Akita opening point has {} variables but commitment has {}",
@@ -689,7 +684,7 @@ fn bind_batch_statement<OpeningId, RelationId, T>(
 {
     transcript.append(&Label(b"akita_batch_statement"));
     normalized.commitment.append_to_transcript(transcript);
-    transcript.append_bytes(&statement.layout_digest);
+    transcript.append_bytes(&normalized.commitment.layout_digest);
     append_field_slice(transcript, b"akita_logical_point", &statement.logical_point);
     append_field_slice(transcript, b"akita_pcs_point", &statement.pcs_point);
     transcript.append(&LabelWithCount(

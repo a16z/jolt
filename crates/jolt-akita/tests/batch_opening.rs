@@ -887,6 +887,59 @@ fn akita_direct_commit_group_accepts_statement_layout_and_rejects_dimension_mism
 }
 
 #[test]
+fn akita_direct_opening_uses_commitment_layout_digest() {
+    run_on_large_stack(|| {
+        let (prover_setup, verifier_setup) = setup();
+        let poly = polynomial(1);
+        let point = vec![f(2), f(3), f(5), f(7)];
+        let eval = poly.evaluate(&point);
+        let commitment_layout = layout(11);
+        let unrelated_statement_layout = layout(7);
+        let (commitment, hint) = AkitaScheme::commit_group(
+            &prover_setup,
+            commitment_layout,
+            std::slice::from_ref(&poly),
+        )
+        .expect("direct commitment should commit with its own layout digest");
+        assert_eq!(commitment.layout_digest, commitment_layout);
+        let statement = BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest: unrelated_statement_layout,
+            claims: vec![BatchOpeningClaim {
+                id: OpeningId::A,
+                relation: RelationId::Packed,
+                commitment: commitment.clone(),
+                claim: eval,
+                view: PhysicalView::Direct,
+                scale: f(1),
+            }],
+        };
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-direct-commitment-layout");
+        let proof = <AkitaScheme as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            std::slice::from_ref(&poly),
+            vec![hint],
+        )
+        .expect("direct proof should use commitment layout digest");
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-direct-commitment-layout");
+        let result = <AkitaScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("direct proof should verify with commitment layout digest");
+        assert_eq!(result.joint_commitment, commitment);
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
 fn akita_setup_key_is_bound_to_batch_proof() {
     run_on_large_stack(|| {
         let (prover_setup, verifier_setup) = setup();
