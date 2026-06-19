@@ -230,16 +230,6 @@ struct Stage2BatchSumcheckPoints<F: Field> {
     terminal: Vec<F>,
 }
 
-/// The per-relation opening points produced by mapping each instance's sumcheck
-/// point through its `derive_opening_points`.
-struct Stage2BatchOpeningPoints<F: Field> {
-    ram_read_write: RamReadWriteOutputClaims<Vec<F>>,
-    product_remainder: ProductRemainderOutputClaims<Vec<F>>,
-    instruction_reduction: InstructionClaimReductionOutputClaims<Vec<F>>,
-    ram_raf: RamRafEvaluationOutputClaims<Vec<F>>,
-    ram_output: RamOutputCheckOutputClaims<Vec<F>>,
-}
-
 fn to_prover_error(error: VerifierError) -> ProverError {
     invalid_sumcheck_output(error.to_string())
 }
@@ -270,12 +260,14 @@ impl<F: Field> Stage2BatchRelations<F> {
         })
     }
 
-    /// Map each instance's sumcheck point to its produced opening points.
+    /// Map each instance's sumcheck point to its produced opening points, in the
+    /// same `Stage2BatchOutputClaims<Vec<F>>` aggregate the verifier feeds to
+    /// `stage2_batch_output_claims_with_points`.
     fn derive_opening_points(
         &self,
         points: &Stage2BatchSumcheckPoints<F>,
-    ) -> Result<Stage2BatchOpeningPoints<F>, ProverError> {
-        Ok(Stage2BatchOpeningPoints {
+    ) -> Result<Stage2BatchOutputClaims<Vec<F>>, ProverError> {
+        Ok(Stage2BatchOutputClaims {
             ram_read_write: self
                 .ram_read_write
                 .derive_opening_points(&points.ram_read_write, &self.ram_read_write_inputs)
@@ -284,15 +276,15 @@ impl<F: Field> Stage2BatchRelations<F> {
                 .product_remainder
                 .derive_opening_points(&points.product, &self.product_remainder_inputs)
                 .map_err(to_prover_error)?,
-            instruction_reduction: self
+            instruction_claim_reduction: self
                 .instruction_reduction
                 .derive_opening_points(&points.instruction, &self.instruction_reduction_inputs)
                 .map_err(to_prover_error)?,
-            ram_raf: self
+            ram_raf_evaluation: self
                 .ram_raf
                 .derive_opening_points(&points.terminal, &self.ram_raf_inputs)
                 .map_err(to_prover_error)?,
-            ram_output: self
+            ram_output_check: self
                 .ram_output
                 .derive_opening_points(&points.terminal, &self.ram_output_inputs)
                 .map_err(to_prover_error)?,
@@ -497,7 +489,7 @@ where
         input.config,
         input.stage2_rows,
         &opening_points.product_remainder.left_instruction_input,
-        &opening_points.instruction_reduction.left_lookup_operand,
+        &opening_points.instruction_claim_reduction.left_lookup_operand,
     )?;
     let terminal = Stage2RamTerminalOutputOpeningClaims {
         ram_raf_evaluation: input.batch.ram_raf_evaluation,
@@ -507,14 +499,7 @@ where
         stage2_batch_output_claims(input.batch.ram_read_write.clone(), tail_openings, terminal);
     let batch_output_claim_values = wire_claims.opening_values();
 
-    let output_claims = stage2_batch_output_claims_with_points(
-        &wire_claims,
-        &opening_points.ram_read_write,
-        &opening_points.product_remainder,
-        &opening_points.instruction_reduction,
-        &opening_points.ram_raf,
-        &opening_points.ram_output,
-    );
+    let output_claims = stage2_batch_output_claims_with_points(&wire_claims, &opening_points);
 
     let expected_final_claim = stage2_expected_final_claim(
         &input.batch.batching_coefficients,

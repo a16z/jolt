@@ -455,21 +455,18 @@ where
     let registers_inputs = RegistersClaimReductionInputClaims::from_upstream(input.stage1);
 
     let to_prover_error = |error: VerifierError| invalid_sumcheck_output(error.to_string());
-    let shift_points = shift_relation
-        .derive_opening_points(&challenges, &shift_inputs)
-        .map_err(to_prover_error)?;
-    let instruction_points = instruction_relation
-        .derive_opening_points(&challenges, &instruction_inputs)
-        .map_err(to_prover_error)?;
-    let registers_points = registers_relation
-        .derive_opening_points(&challenges, &registers_inputs)
-        .map_err(to_prover_error)?;
-    let output_claims = stage3_output_claims_with_points(
-        &output_openings,
-        &shift_points,
-        &instruction_points,
-        &registers_points,
-    );
+    let points = Stage3OutputClaims {
+        shift: shift_relation
+            .derive_opening_points(&challenges, &shift_inputs)
+            .map_err(to_prover_error)?,
+        instruction_input: instruction_relation
+            .derive_opening_points(&challenges, &instruction_inputs)
+            .map_err(to_prover_error)?,
+        registers_claim_reduction: registers_relation
+            .derive_opening_points(&challenges, &registers_inputs)
+            .map_err(to_prover_error)?,
+    };
+    let output_claims = stage3_output_claims_with_points(&output_openings, &points);
 
     let shift_output = shift_relation
         .expected_output(&shift_inputs, &output_claims.shift)

@@ -95,6 +95,28 @@ impl<F: Field> GetValue<F> for OpeningClaim<F> {
     }
 }
 
+/// A produced-claim struct in its clear `OpeningClaim<F>` (point + value) cell
+/// form, reconstructible by pairing the value-only (`F`) and point-only (`Vec<F>`)
+/// cell forms of the same struct field-by-field. `#[derive(OutputClaims)]` emits
+/// the implementation (one `OpeningClaim` per leaf, element-wise for `Vec`
+/// families, value-driven for `Option` leaves), so callers reach it through the
+/// free [`zip_openings`] function instead of hand-writing the pairing.
+pub trait ZipOpenings<F: Field>: Sized {
+    /// The value-only (`F`-cell) form — the serialized wire claims.
+    type Values;
+    /// The point-only (`Vec<F>`-cell) form — the derived opening points.
+    type Points;
+    /// Pair each opening's value with its derived point.
+    fn zip_openings(values: &Self::Values, points: &Self::Points) -> Self;
+}
+
+/// Pair a relation's value-only claims with its point-only claims into the clear
+/// `OpeningClaim<F>` form, single-sourcing the per-field `(point, value)` pairing
+/// that each stage's `*_output_claims_with_points` helper used to hand-write.
+pub fn zip_openings<F: Field, T: ZipOpenings<F>>(values: &T::Values, points: &T::Points) -> T {
+    T::zip_openings(values, points)
+}
+
 /// A single sumcheck instance, driven identically by the prover (while producing
 /// its proof) and the verifier (after checking it).
 ///
@@ -433,6 +455,90 @@ mod tests {
             None,
         );
         assert_append_matches_values(&absent);
+    }
+
+    #[test]
+    fn zip_openings_pairs_values_with_points() {
+        // `Vec` families zip element-wise; scalar leaves take their single point.
+        let values = InstructionLeaf {
+            lookup_table_flags: vec![fr(1), fr(2)],
+            instruction_ra: vec![fr(3)],
+            instruction_raf_flag: fr(4),
+        };
+        let points = InstructionLeaf {
+            lookup_table_flags: vec![vec![fr(10)], vec![fr(11)]],
+            instruction_ra: vec![vec![fr(12), fr(13)]],
+            instruction_raf_flag: vec![fr(14)],
+        };
+        let zipped: InstructionLeaf<OpeningClaim<Fr>> = zip_openings(&values, &points);
+        assert_eq!(
+            zipped.lookup_table_flags,
+            vec![
+                OpeningClaim {
+                    point: vec![fr(10)],
+                    value: fr(1),
+                },
+                OpeningClaim {
+                    point: vec![fr(11)],
+                    value: fr(2),
+                },
+            ],
+        );
+        assert_eq!(
+            zipped.instruction_ra,
+            vec![OpeningClaim {
+                point: vec![fr(12), fr(13)],
+                value: fr(3),
+            }],
+        );
+        assert_eq!(
+            zipped.instruction_raf_flag,
+            OpeningClaim {
+                point: vec![fr(14)],
+                value: fr(4),
+            },
+        );
+    }
+
+    #[test]
+    fn zip_openings_follows_option_presence() {
+        // A `Some` value pairs with its point; a `None` value stays `None`.
+        let present: OptionalOutput<OpeningClaim<Fr>> = zip_openings(
+            &OptionalOutput {
+                untrusted: Some(fr(5)),
+                ram_inc: fr(6),
+            },
+            &OptionalOutput {
+                untrusted: Some(vec![fr(7)]),
+                ram_inc: vec![fr(8)],
+            },
+        );
+        assert_eq!(
+            present.untrusted,
+            Some(OpeningClaim {
+                point: vec![fr(7)],
+                value: fr(5),
+            })
+        );
+        assert_eq!(
+            present.ram_inc,
+            OpeningClaim {
+                point: vec![fr(8)],
+                value: fr(6),
+            }
+        );
+
+        let absent: OptionalOutput<OpeningClaim<Fr>> = zip_openings(
+            &OptionalOutput {
+                untrusted: None,
+                ram_inc: fr(6),
+            },
+            &OptionalOutput {
+                untrusted: None,
+                ram_inc: vec![fr(8)],
+            },
+        );
+        assert_eq!(absent.untrusted, None);
     }
 
     #[derive(InputClaims)]

@@ -33,22 +33,16 @@ use super::{
         Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2RamRaClaimReductionInputs,
         Stage2RamValCheckInputs, Stage2ZkOutput, VerifiedProductUniSkip,
     },
-    product_remainder::{
-        ProductRemainder, ProductRemainderInputClaims, ProductRemainderOutputClaims,
-    },
-    ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims, RamOutputCheckOutputClaims},
-    ram_raf_evaluation::{
-        RamRafEvaluation, RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
-    },
-    ram_read_write_checking::{
-        RamReadWriteChecking, RamReadWriteInputClaims, RamReadWriteOutputClaims,
-    },
+    product_remainder::{ProductRemainder, ProductRemainderInputClaims},
+    ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims},
+    ram_raf_evaluation::{RamRafEvaluation, RamRafEvaluationInputClaims},
+    ram_read_write_checking::{RamReadWriteChecking, RamReadWriteInputClaims},
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{OpeningClaim, SumcheckInstance},
+        relations::{zip_openings, OpeningClaim, SumcheckInstance},
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -114,63 +108,32 @@ fn selected_product_uniskip_sumcheck() -> jolt_claims::protocols::jolt::JoltSumc
 /// Shared by the verifier and the prover so the opening-claim form is built once.
 pub fn stage2_batch_output_claims_with_points<F: Field>(
     claims: &Stage2BatchOutputClaims<F>,
-    ram_read_write_points: &RamReadWriteOutputClaims<Vec<F>>,
-    product_remainder_points: &ProductRemainderOutputClaims<Vec<F>>,
-    instruction_reduction_points: &InstructionClaimReductionOutputClaims<Vec<F>>,
-    ram_raf_points: &RamRafEvaluationOutputClaims<Vec<F>>,
-    ram_output_points: &RamOutputCheckOutputClaims<Vec<F>>,
+    points: &Stage2BatchOutputClaims<Vec<F>>,
 ) -> Stage2BatchOutputClaims<OpeningClaim<F>> {
-    let opening = |point: &[F], value: F| OpeningClaim {
-        point: point.to_vec(),
+    // The reduced instruction openings share one point; the three aliased openings,
+    // absent on the wire, reuse the product-remainder values (or zero when the
+    // product/instruction points disagree). This cross-relation fill cannot go
+    // through the field-wise `zip_openings`, so it stays explicit.
+    let reduction = &claims.instruction_claim_reduction;
+    let product = &claims.product_remainder;
+    let reduction_point = points.instruction_claim_reduction.left_lookup_operand.as_slice();
+    let points_match =
+        points.product_remainder.left_instruction_input.as_slice() == reduction_point;
+    let opening = |value: F| OpeningClaim {
+        point: reduction_point.to_vec(),
         value,
     };
-    let product = &claims.product_remainder;
-    let ram_read_write = RamReadWriteOutputClaims {
-        val: opening(&ram_read_write_points.val, claims.ram_read_write.val),
-        ra: opening(&ram_read_write_points.ra, claims.ram_read_write.ra),
-        inc: opening(&ram_read_write_points.inc, claims.ram_read_write.inc),
-    };
-    let product_remainder = ProductRemainderOutputClaims {
-        left_instruction_input: opening(
-            &product_remainder_points.left_instruction_input,
-            product.left_instruction_input,
-        ),
-        right_instruction_input: opening(
-            &product_remainder_points.right_instruction_input,
-            product.right_instruction_input,
-        ),
-        jump_flag: opening(&product_remainder_points.jump_flag, product.jump_flag),
-        write_lookup_output_to_rd: opening(
-            &product_remainder_points.write_lookup_output_to_rd,
-            product.write_lookup_output_to_rd,
-        ),
-        lookup_output: opening(
-            &product_remainder_points.lookup_output,
-            product.lookup_output,
-        ),
-        branch_flag: opening(&product_remainder_points.branch_flag, product.branch_flag),
-        next_is_noop: opening(&product_remainder_points.next_is_noop, product.next_is_noop),
-        virtual_instruction: opening(
-            &product_remainder_points.virtual_instruction,
-            product.virtual_instruction,
-        ),
-    };
-    let reduction = &claims.instruction_claim_reduction;
-    let reduction_point = instruction_reduction_points.left_lookup_operand.as_slice();
-    let points_match =
-        product_remainder_points.left_instruction_input.as_slice() == reduction_point;
     let aliased = |value: Option<F>, product_value: F| {
-        let resolved = value.unwrap_or(if points_match {
+        Some(opening(value.unwrap_or(if points_match {
             product_value
         } else {
             F::from_u64(0)
-        });
-        Some(opening(reduction_point, resolved))
+        })))
     };
     let instruction_claim_reduction = InstructionClaimReductionOutputClaims {
         lookup_output: aliased(reduction.lookup_output, product.lookup_output),
-        left_lookup_operand: opening(reduction_point, reduction.left_lookup_operand),
-        right_lookup_operand: opening(reduction_point, reduction.right_lookup_operand),
+        left_lookup_operand: opening(reduction.left_lookup_operand),
+        right_lookup_operand: opening(reduction.right_lookup_operand),
         left_instruction_input: aliased(
             reduction.left_instruction_input,
             product.left_instruction_input,
@@ -181,18 +144,11 @@ pub fn stage2_batch_output_claims_with_points<F: Field>(
         ),
     };
     Stage2BatchOutputClaims {
-        ram_read_write,
-        product_remainder,
+        ram_read_write: zip_openings(&claims.ram_read_write, &points.ram_read_write),
+        product_remainder: zip_openings(&claims.product_remainder, &points.product_remainder),
         instruction_claim_reduction,
-        ram_raf_evaluation: RamRafEvaluationOutputClaims {
-            ram_ra: opening(&ram_raf_points.ram_ra, claims.ram_raf_evaluation.ram_ra),
-        },
-        ram_output_check: RamOutputCheckOutputClaims {
-            val_final: opening(
-                &ram_output_points.val_final,
-                claims.ram_output_check.val_final,
-            ),
-        },
+        ram_raf_evaluation: zip_openings(&claims.ram_raf_evaluation, &points.ram_raf_evaluation),
+        ram_output_check: zip_openings(&claims.ram_output_check, &points.ram_output_check),
     }
 }
 
@@ -636,17 +592,20 @@ where
 
             // Each relation maps its sumcheck point to its produced opening points;
             // pair them with the committed values into the opening claims.
-            let output_claims = stage2_batch_output_claims_with_points(
-                &claims.batch_outputs,
-                &ram_read_write
+            let points = Stage2BatchOutputClaims {
+                ram_read_write: ram_read_write
                     .derive_opening_points(ram_read_write_point, &ram_read_write_inputs)?,
-                &product_remainder
+                product_remainder: product_remainder
                     .derive_opening_points(product_point, &product_remainder_inputs)?,
-                &instruction_reduction
+                instruction_claim_reduction: instruction_reduction
                     .derive_opening_points(instruction_point, &instruction_reduction_inputs)?,
-                &ram_raf.derive_opening_points(ram_raf_evaluation_point, &ram_raf_inputs)?,
-                &ram_output.derive_opening_points(ram_output_check_point, &ram_output_inputs)?,
-            );
+                ram_raf_evaluation: ram_raf
+                    .derive_opening_points(ram_raf_evaluation_point, &ram_raf_inputs)?,
+                ram_output_check: ram_output
+                    .derive_opening_points(ram_output_check_point, &ram_output_inputs)?,
+            };
+            let output_claims =
+                stage2_batch_output_claims_with_points(&claims.batch_outputs, &points);
 
             let expected_final_claim = stage2_expected_final_claim(
                 &batch.batching_coefficients,

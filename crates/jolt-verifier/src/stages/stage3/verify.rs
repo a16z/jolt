@@ -17,20 +17,16 @@ use super::{
     inputs::{Deps, Stage3OutputClaims},
     instruction_input::{
         check_instruction_input_consistency, InstructionInput, InstructionInputInputClaims,
-        InstructionInputOutputClaims,
     },
     outputs::{Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3ZkOutput},
-    registers_claim_reduction::{
-        RegistersClaimReduction, RegistersClaimReductionInputClaims,
-        RegistersClaimReductionOutputClaims,
-    },
-    spartan_shift::{SpartanShift, SpartanShiftInputClaims, SpartanShiftOutputClaims},
+    registers_claim_reduction::{RegistersClaimReduction, RegistersClaimReductionInputClaims},
+    spartan_shift::{SpartanShift, SpartanShiftInputClaims},
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{OpeningClaim, SumcheckInstance},
+        relations::{zip_openings, OpeningClaim, SumcheckInstance},
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -64,55 +60,15 @@ pub fn stage3_expected_final_claim<F: Field>(
 /// Shared by the verifier and the prover so this located form is built once.
 pub fn stage3_output_claims_with_points<F: Field>(
     claims: &Stage3OutputClaims<F>,
-    shift_points: &SpartanShiftOutputClaims<Vec<F>>,
-    instruction_points: &InstructionInputOutputClaims<Vec<F>>,
-    registers_points: &RegistersClaimReductionOutputClaims<Vec<F>>,
+    points: &Stage3OutputClaims<Vec<F>>,
 ) -> Stage3OutputClaims<OpeningClaim<F>> {
-    let shift = &claims.shift;
-    let instruction = &claims.instruction_input;
-    let registers = &claims.registers_claim_reduction;
-    let with_point = |point: &[F], value: F| OpeningClaim {
-        point: point.to_vec(),
-        value,
-    };
     Stage3OutputClaims {
-        shift: SpartanShiftOutputClaims {
-            unexpanded_pc: with_point(&shift_points.unexpanded_pc, shift.unexpanded_pc),
-            pc: with_point(&shift_points.pc, shift.pc),
-            is_virtual: with_point(&shift_points.is_virtual, shift.is_virtual),
-            is_first_in_sequence: with_point(
-                &shift_points.is_first_in_sequence,
-                shift.is_first_in_sequence,
-            ),
-            is_noop: with_point(&shift_points.is_noop, shift.is_noop),
-        },
-        instruction_input: InstructionInputOutputClaims {
-            left_operand_is_rs1: with_point(
-                &instruction_points.left_operand_is_rs1,
-                instruction.left_operand_is_rs1,
-            ),
-            rs1_value: with_point(&instruction_points.rs1_value, instruction.rs1_value),
-            left_operand_is_pc: with_point(
-                &instruction_points.left_operand_is_pc,
-                instruction.left_operand_is_pc,
-            ),
-            unexpanded_pc: with_point(&instruction_points.unexpanded_pc, instruction.unexpanded_pc),
-            right_operand_is_rs2: with_point(
-                &instruction_points.right_operand_is_rs2,
-                instruction.right_operand_is_rs2,
-            ),
-            rs2_value: with_point(&instruction_points.rs2_value, instruction.rs2_value),
-            right_operand_is_imm: with_point(
-                &instruction_points.right_operand_is_imm,
-                instruction.right_operand_is_imm,
-            ),
-            imm: with_point(&instruction_points.imm, instruction.imm),
-        },
-        registers_claim_reduction: RegistersClaimReductionOutputClaims {
-            rd_write_value: with_point(&registers_points.rd_write_value, registers.rd_write_value),
-            rs1_value: with_point(&registers_points.rs1_value, registers.rs1_value),
-            rs2_value: with_point(&registers_points.rs2_value, registers.rs2_value),
-        },
+        shift: zip_openings(&claims.shift, &points.shift),
+        instruction_input: zip_openings(&claims.instruction_input, &points.instruction_input),
+        registers_claim_reduction: zip_openings(
+            &claims.registers_claim_reduction,
+            &points.registers_claim_reduction,
+        ),
     }
 }
 
@@ -280,18 +236,14 @@ where
             reason: error.to_string(),
         })?;
 
-    let shift_output_points = shift_relation.derive_opening_points(shift_point, &shift_inputs)?;
-    let instruction_output_points =
-        instruction_relation.derive_opening_points(instruction_point, &instruction_inputs)?;
-    let registers_output_points =
-        registers_relation.derive_opening_points(registers_point, &registers_inputs)?;
-
-    let output_claims = stage3_output_claims_with_points(
-        claims,
-        &shift_output_points,
-        &instruction_output_points,
-        &registers_output_points,
-    );
+    let points = Stage3OutputClaims {
+        shift: shift_relation.derive_opening_points(shift_point, &shift_inputs)?,
+        instruction_input: instruction_relation
+            .derive_opening_points(instruction_point, &instruction_inputs)?,
+        registers_claim_reduction: registers_relation
+            .derive_opening_points(registers_point, &registers_inputs)?,
+    };
+    let output_claims = stage3_output_claims_with_points(claims, &points);
 
     let shift_output = shift_relation.expected_output(&shift_inputs, &output_claims.shift)?;
     let instruction_output = instruction_relation

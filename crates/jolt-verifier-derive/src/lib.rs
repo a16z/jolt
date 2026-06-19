@@ -428,6 +428,40 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote!(#(#count_terms)+*)
     };
 
+    // Field-wise zip of the value-only (`F`) and point-only (`Vec<F>`) cell forms
+    // into the clear `OpeningClaim<F>` form: one `OpeningClaim` per leaf,
+    // element-wise for `Vec` families, value-driven for `Option` leaves.
+    let opening = quote!(crate::stages::relations::OpeningClaim);
+    let zip_field = Ident::new("__JoltZipField", proc_macro2::Span::call_site());
+    let mut zip_inits = Vec::new();
+    for plan in &plans {
+        let ident = &plan.ident;
+        if plan.is_many {
+            zip_inits.push(quote! {
+                #ident: values.#ident.iter().zip(points.#ident.iter())
+                    .map(|(__value, __point)| #opening {
+                        point: ::std::clone::Clone::clone(__point),
+                        value: *__value,
+                    })
+                    .collect(),
+            });
+        } else if plan.is_option {
+            zip_inits.push(quote! {
+                #ident: values.#ident.as_ref().map(|__value| #opening {
+                    point: points.#ident.clone().unwrap_or_default(),
+                    value: *__value,
+                }),
+            });
+        } else {
+            zip_inits.push(quote! {
+                #ident: #opening {
+                    point: ::std::clone::Clone::clone(&points.#ident),
+                    value: values.#ident,
+                },
+            });
+        }
+    }
+
     Ok(quote! {
         impl #impl_generics crate::stages::relations::OutputClaims<#value>
             for #name #ty_generics #where_clause
@@ -455,6 +489,18 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             ) -> ::core::option::Option<#value> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
+            }
+        }
+
+        impl<#zip_field: ::jolt_field::Field> crate::stages::relations::ZipOpenings<#zip_field>
+            for #name<#opening<#zip_field>>
+        {
+            type Values = #name<#zip_field>;
+            type Points = #name<::std::vec::Vec<#zip_field>>;
+            fn zip_openings(values: &Self::Values, points: &Self::Points) -> Self {
+                #name {
+                    #(#zip_inits)*
+                }
             }
         }
     })
