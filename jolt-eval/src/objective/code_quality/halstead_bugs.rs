@@ -9,7 +9,7 @@ use crate::objective::{
 
 pub const HALSTEAD_BUGS: OptimizationObjective = OptimizationObjective::StaticAnalysis(
     StaticAnalysisObjective::HalsteadBugs(HalsteadBugsObjective {
-        target_dir: "jolt-prover/src",
+        target_dir: "crates/jolt-prover/src",
     }),
 );
 
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn halstead_bugs_on_jolt_prover() {
         let obj = HalsteadBugsObjective {
-            target_dir: "jolt-prover/src",
+            target_dir: "crates/jolt-prover/src",
         };
         let val = obj.collect_measurement().unwrap();
         assert!(val > 0.0, "halstead bugs should be > 0, got {val}");

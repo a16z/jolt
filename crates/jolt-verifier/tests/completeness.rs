@@ -1,6 +1,6 @@
 #![expect(
     dead_code,
-    reason = "Verifier core-fixture harness registers fixture metadata used by feature-gated cases."
+    reason = "Verifier prover-fixture harness registers fixture metadata used by feature-gated cases."
 )]
 
 #[path = "completeness/mod.rs"]

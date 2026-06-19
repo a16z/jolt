@@ -73,13 +73,13 @@ impl StaticAnalysisObjective {
     pub fn all() -> Vec<Self> {
         vec![
             Self::Lloc(code_quality::lloc::LlocObjective {
-                target_dir: "jolt-prover/src",
+                target_dir: "crates/jolt-prover/src",
             }),
             Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective {
-                target_dir: "jolt-prover/src",
+                target_dir: "crates/jolt-prover/src",
             }),
             Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective {
-                target_dir: "jolt-prover/src",
+                target_dir: "crates/jolt-prover/src",
             }),
         ]
     }
@@ -128,7 +128,7 @@ impl StaticAnalysisObjective {
     }
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
-        &["jolt-prover/"]
+        &["crates/jolt-prover/"]
     }
 }
 
@@ -195,7 +195,7 @@ impl PerformanceObjective {
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
         match self {
-            Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["jolt-prover/"],
+            Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["crates/jolt-prover/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
             Self::MulU64(_) | Self::MulI64(_) | Self::MulU128(_) | Self::MulI128(_) => {
                 &["crates/jolt-field/"]
@@ -336,7 +336,7 @@ mod tests {
         // Same variant with identical inner data looks up successfully.
         let lloc_same = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                target_dir: "jolt-prover/src",
+                target_dir: "crates/jolt-prover/src",
             },
         ));
         assert_eq!(m[&lloc_same], 100.0);

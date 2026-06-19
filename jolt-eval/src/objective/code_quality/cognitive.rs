@@ -9,7 +9,7 @@ use crate::objective::{
 
 pub const COGNITIVE_COMPLEXITY: OptimizationObjective = OptimizationObjective::StaticAnalysis(
     StaticAnalysisObjective::CognitiveComplexity(CognitiveComplexityObjective {
-        target_dir: "jolt-prover/src",
+        target_dir: "crates/jolt-prover/src",
     }),
 );
 
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn cognitive_on_jolt_prover() {
         let obj = CognitiveComplexityObjective {
-            target_dir: "jolt-prover/src",
+            target_dir: "crates/jolt-prover/src",
         };
         let val = obj.collect_measurement().unwrap();
         assert!(val > 0.0, "avg cognitive should be > 0, got {val}");

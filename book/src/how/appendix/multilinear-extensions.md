@@ -30,7 +30,7 @@ Which variable gets bound in each round is determined by the `BindingOrder`: `Hi
 
 ## Implementations in Jolt
 
-The MLE implementations live in `jolt-prover/src/poly/`. All are unified under the `MultilinearPolynomial<F>` enum (`multilinear_polynomial.rs`), which dispatches binding and evaluation to the appropriate concrete type. The two most common representations are `DensePolynomial` and `CompactPolynomial`.
+The MLE implementations live in `crates/jolt-prover/src/poly/`. All are unified under the `MultilinearPolynomial<F>` enum (`multilinear_polynomial.rs`), which dispatches binding and evaluation to the appropriate concrete type. The two most common representations are `DensePolynomial` and `CompactPolynomial`.
 
 ### DensePolynomial
 
@@ -80,7 +80,7 @@ The `MultilinearPolynomial` enum has a variant for each scalar type (`U8Scalars`
 
 ### Other specialized representations
 
-Several other MLE types in `jolt-prover/src/poly/` exploit structure specific to Jolt's witness polynomials:
+Several other MLE types in `crates/jolt-prover/src/poly/` exploit structure specific to Jolt's witness polynomials:
 
 - **`OneHotPolynomial`** (`one_hot_polynomial.rs`): Stores only the index of the single nonzero entry per cycle rather than a dense vector of 0s and 1s. Used for $\widetilde{\textsf{ra}}$ and $\widetilde{\textsf{wa}}$ polynomials in [Twist and Shout](../twist-shout.md).
 - **`RaPolynomial`** (`ra_poly.rs`): A state machine that lazily materializes the $\widetilde{\textsf{ra}}$ (or $\widetilde{\textsf{wa}}$) polynomial across sumcheck rounds (Round1 $\to$ Round2 $\to$ Round3 $\to$ RoundN), keeping memory proportional to the address-space size $K^{1/c}$ rather than $K^{1/c} \cdot T$ until the final rounds.

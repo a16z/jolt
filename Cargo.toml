@@ -40,7 +40,7 @@ members = [
   "crates/jolt-transcript",
   "crates/jolt-profiling",
   "crates/jolt-field",
-  "jolt-prover",
+  "crates/jolt-prover",
   "tracer",
   "common",
   "jolt-platform",
@@ -384,7 +384,7 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 # Internal dependencies
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
-jolt-prover = { path = "./jolt-prover", default-features = false }
+jolt-prover = { path = "./crates/jolt-prover", default-features = false }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-crypto = { path = "./crates/jolt-crypto" }

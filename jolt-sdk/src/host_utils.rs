@@ -115,5 +115,6 @@ pub use jolt_prover::poly::commitment::commitment_scheme::CommitmentScheme;
 pub use jolt_prover::poly::commitment::dory::{DoryContext, DoryGlobals, DoryLayout};
 pub use jolt_prover::poly::multilinear_polynomial::MultilinearPolynomial;
 pub use jolt_prover::zkvm::preprocessing::BlindfoldSetup;
+#[cfg(feature = "host")]
 pub use jolt_prover::zkvm::proof::ProofCommitmentScheme;
 pub use jolt_prover::zkvm::ram::populate_memory_states;

@@ -43,7 +43,7 @@ pub fn main() {
         TrustedAdvice::new(leaf3),
         &prover_preprocessing,
     );
-    let verifier_trusted_advice_commitment = trusted_advice_commitment.clone().map(
+    let verifier_trusted_advice_commitment = trusted_advice_commitment.map(
         <jolt_sdk::PCS as jolt_sdk::ProofCommitmentScheme<jolt_sdk::F>>::commitment_into_verifier,
     );
 

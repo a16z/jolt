@@ -12,9 +12,9 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-core-abi-tests = []
+prover-abi-tests = []
 field-inline = [
-  "jolt-core/field-inline",
+  "jolt-prover/field-inline",
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
@@ -34,6 +34,6 @@ rand = { workspace = true }
 tracer = { workspace = true, features = ["std", "test-utils"] }
 
 [[test]]
-name = "core_lookup_table_abi"
-path = "tests/core_lookup_table_abi.rs"
-required-features = ["core-abi-tests"]
+name = "prover_lookup_table_abi"
+path = "tests/prover_lookup_table_abi.rs"
+required-features = ["prover-abi-tests"]

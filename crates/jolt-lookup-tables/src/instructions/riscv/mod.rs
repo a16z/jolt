@@ -1,6 +1,6 @@
 //! Per-instruction impls for RV64I/M base ISA instructions that the prover sees directly.
 //!
-//! Mirrors `jolt-prover/src/zkvm/instruction/`. Decomposed instructions
+//! Mirrors `crates/jolt-prover/src/zkvm/instruction/`. Decomposed instructions
 //! (W-suffix, multi-byte loads/stores, plain shifts, MULH/MULHSU, DIV/REM, NOOP)
 //! live in tracer as virtual sequences and never reach this layer.
 

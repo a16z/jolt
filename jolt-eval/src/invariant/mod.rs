@@ -79,7 +79,7 @@ impl fmt::Display for CheckError {
 
 impl std::error::Error for CheckError {}
 
-/// Core invariant trait. Each invariant defines a setup phase (run once)
+/// Base invariant trait. Each invariant defines a setup phase (run once)
 /// and a check phase (run per input). The `Input` type must support
 /// `Arbitrary` for fuzzing, and `Serialize`/`DeserializeOwned` so an AI
 /// agent can produce counterexamples as JSON.

@@ -365,7 +365,7 @@ fn build_optimize_prompt(
 
     let paths_list = match objective.diff_scope() {
         crate::agent::DiffScope::Include(paths) => paths.join(", "),
-        _ => "jolt-prover/".to_string(),
+        _ => "crates/jolt-prover/".to_string(),
     };
     prompt.push_str("## Instructions\n\n");
     prompt.push_str(&format!(

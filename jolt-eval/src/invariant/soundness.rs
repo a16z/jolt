@@ -407,9 +407,9 @@ diff --git a/src/lib.rs b/src/lib.rs
     #[test]
     fn filter_drops_path_traversal() {
         let patch = "\
-diff --git a/../../jolt-prover/src/lib.rs b/../../jolt-prover/src/lib.rs
---- a/../../jolt-prover/src/lib.rs
-+++ b/../../jolt-prover/src/lib.rs
+diff --git a/../../crates/jolt-prover/src/lib.rs b/../../crates/jolt-prover/src/lib.rs
+--- a/../../crates/jolt-prover/src/lib.rs
++++ b/../../crates/jolt-prover/src/lib.rs
 @@ -1 +1 @@
 -safe
 +malicious

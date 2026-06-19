@@ -7,7 +7,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "muldiv small standard",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "Small arithmetic/division standard fixture and default exhaustive tamper base.",
         },
         FixtureId::FibonacciSmall => FixtureMetadata {
@@ -15,7 +15,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "fibonacci small standard",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "Small loop/register fixture with short trace length.",
         },
         FixtureId::FibonacciMedium => FixtureMetadata {
@@ -23,7 +23,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "fibonacci medium standard",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "Same guest as fibonacci small with a longer trace.",
         },
         FixtureId::MemoryOps => FixtureMetadata {
@@ -31,7 +31,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "memory ops standard",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "RAM fixture covering byte and halfword loads/stores.",
         },
         FixtureId::CollatzSmall => FixtureMetadata {
@@ -39,7 +39,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "collatz small standard",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "Branch-heavy variable-length loop fixture.",
         },
         FixtureId::Sha2Small => FixtureMetadata {
@@ -47,7 +47,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "sha2 small standard",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "Inline-heavy byte/hash fixture.",
         },
         FixtureId::CommittedMulDivSmall => FixtureMetadata {
@@ -55,7 +55,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "committed muldiv small standard",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "Committed program mode fixture with two bytecode chunks and a program image.",
         },
         FixtureId::MulDivZkSmall => FixtureMetadata {
@@ -63,7 +63,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "muldiv small ZK",
             zk: true,
             has_trusted_advice: false,
-            expected_core_accepts: true,
+            expected_prover_accepts: true,
             notes: "Live-generated small ZK muldiv proof once fixture generation is wired.",
         },
         FixtureId::ZkStage1Prefix => FixtureMetadata {
@@ -71,7 +71,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "ZK Stage 1 prefix",
             zk: true,
             has_trusted_advice: false,
-            expected_core_accepts: false,
+            expected_prover_accepts: false,
             notes: "Prefix BlindFold fixture for Stage 1-only verification; not a full verifier object.",
         },
         FixtureId::AdviceConsumer => FixtureMetadata {
@@ -79,8 +79,8 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "advice consumer standard",
             zk: false,
             has_trusted_advice: true,
-            expected_core_accepts: true,
-            notes: "Core-backed guest that consumes both trusted and untrusted advice.",
+            expected_prover_accepts: true,
+            notes: "Prover-backed guest that consumes both trusted and untrusted advice.",
         },
         FixtureId::PublicIoMismatch
         | FixtureId::TrustedAdviceMismatch
@@ -92,7 +92,7 @@ pub fn metadata(id: FixtureId) -> FixtureMetadata {
             name: "soundness-only fixture",
             zk: false,
             has_trusted_advice: false,
-            expected_core_accepts: false,
+            expected_prover_accepts: false,
             notes: "Reserved for soundness tests.",
         },
     }

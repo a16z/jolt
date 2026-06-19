@@ -103,7 +103,7 @@ To generate a trace, run e.g.
 
 ```cargo run --release -p jolt-prover profile --name sha3 --format chrome```
 
-Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`bench.rs`](./jolt-prover/src/benches/bench.rs).
+Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`e2e_profiling.rs`](./crates/jolt-prover/benches/e2e_profiling.rs).
 
 The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
 
@@ -127,7 +127,7 @@ This will produce a `.pb` profile, which you can view in [pprof](https://github.
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
 Allocative allows you to (recursively) measure the total heap space occupied by a data structure implementing the `Allocative` trait, and optionally generate a flamegraph.
-In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-5 (see [`jolt_dag.rs`](https://github.com/a16z/jolt/blob/main/jolt-prover/src/zkvm/dag/jolt_dag.rs)).
+In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-7 (see [`prover.rs`](./crates/jolt-prover/src/zkvm/prover.rs)).
 
 To generate allocative output, run:
 

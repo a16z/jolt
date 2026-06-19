@@ -47,7 +47,7 @@ pub struct FixtureMetadata {
     pub name: &'static str,
     pub zk: bool,
     pub has_trusted_advice: bool,
-    pub expected_core_accepts: bool,
+    pub expected_prover_accepts: bool,
     pub notes: &'static str,
 }
 

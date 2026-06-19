@@ -6,8 +6,8 @@ use ark_bn254::Fr;
 use jolt_prover::curve::Bn254Curve;
 use jolt_prover::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_prover::transcripts::Blake2bTranscript;
-pub use jolt_prover::zkvm::proof::VerifierError;
-use jolt_prover::zkvm::proof::{verifier_preprocessing_from_prover, verify_rv64imac};
+use jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
+pub use jolt_verifier::VerifierError;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
@@ -22,10 +22,14 @@ pub type F = Fr;
 pub type C = Bn254Curve;
 pub type PCS = DoryCommitmentScheme;
 pub type FS = Blake2bTranscript;
+pub type VerifierField = jolt_field::Fr;
+pub type VerifierPCS = jolt_dory::DoryScheme;
+pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
+pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
 
-pub type Proof = jolt_prover::zkvm::proof::RV64IMACProof;
+pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
 pub type ProverPreprocessing = jolt_prover::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
-pub type VerifierPreprocessing = jolt_prover::zkvm::proof::VerifierPreprocessing<F, C, PCS>;
+pub type VerifierPreprocessing = jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 
 pub fn prover_preprocessing(
     program: &GuestProgram,
@@ -64,7 +68,13 @@ pub fn verify(
     proof: Proof,
     io_device: &JoltDevice,
 ) -> Result<(), VerifierError> {
-    verify_rv64imac(verifier_pp, io_device, &proof, None, false)
+    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript>(
+        verifier_pp,
+        io_device,
+        &proof,
+        None,
+        false,
+    )
 }
 
 /// Verify a proof against claimed (potentially malicious) outputs and panic flag.
@@ -90,7 +100,13 @@ pub fn verify_with_claims(
     io_device.outputs = claimed_outputs.to_vec();
     io_device.panic = claimed_panic;
 
-    verify_rv64imac(verifier_pp, &io_device, &proof, None, false)
+    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript>(
+        verifier_pp,
+        &io_device,
+        &proof,
+        None,
+        false,
+    )
 }
 
 // ── GuestConfig ─────────────────────────────────────────────────────

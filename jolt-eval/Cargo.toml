@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 jolt-prover = { workspace = true, features = ["host"] }
+jolt-verifier = { workspace = true }
+jolt-dory = { workspace = true }
+jolt-crypto = { workspace = true }
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }

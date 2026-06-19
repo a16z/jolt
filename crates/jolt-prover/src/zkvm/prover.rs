@@ -2734,6 +2734,17 @@ mod tests {
             .expect("canonical verifier rejected prover-native proof");
     }
 
+    #[cfg(feature = "zk")]
+    fn with_zk_test_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .name("jolt-zk-test".to_string())
+            .stack_size(128 * 1024 * 1024)
+            .spawn(test)
+            .expect("zk test thread should spawn")
+            .join()
+            .expect("zk test thread should complete");
+    }
+
     fn test_shared_preprocessing(
         bytecode: Vec<JoltInstructionRow>,
         init_memory_state: Vec<(u64, u8)>,
@@ -3377,6 +3388,13 @@ mod tests {
     #[test]
     #[serial]
     fn muldiv_e2e_dory_committed_program_preprocessing_roundtrip() {
+        #[cfg(feature = "zk")]
+        with_zk_test_stack(muldiv_e2e_dory_committed_program_preprocessing_roundtrip_inner);
+        #[cfg(not(feature = "zk"))]
+        muldiv_e2e_dory_committed_program_preprocessing_roundtrip_inner();
+    }
+
+    fn muldiv_e2e_dory_committed_program_preprocessing_roundtrip_inner() {
         DoryGlobals::reset();
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();

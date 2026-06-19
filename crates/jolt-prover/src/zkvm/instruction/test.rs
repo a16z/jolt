@@ -204,7 +204,7 @@ mod flags {
 ///   right_input = RightOperandIsRs2Value · Rs2Value     + RightOperandIsImm · Imm
 ///
 /// Source of truth for the constraint:
-/// `jolt-prover/src/zkvm/spartan/instruction_input.rs::output_claim_constraint`.
+/// `crates/jolt-prover/src/zkvm/spartan/instruction_input.rs::output_claim_constraint`.
 ///
 /// A mismatch here means the trace witness polynomials `LeftInstructionInput` /
 /// `RightInstructionInput` disagree with what the constraint reconstructs from

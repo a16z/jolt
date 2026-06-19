@@ -22,14 +22,13 @@ zk = [
   "jolt-verifier?/zk",
 ]
 field-inline = [
-  "jolt-core?/field-inline",
+  "jolt-prover?/field-inline",
   "jolt-program?/field-inline",
   "tracer?/field-inline",
 ]
 
 host = [
   "jolt-prover/default",
-  "dep:ark-serialize",
   "dep:bincode",
   "jolt-platform/std",
   "dep:common",
@@ -105,7 +104,6 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 jolt-sdk-macros.workspace = true
 # Host-only dependencies
-ark-serialize = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
 jolt-prover = { workspace = true, default-features = false, optional = true }

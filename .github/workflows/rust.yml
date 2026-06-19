@@ -83,10 +83,10 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
-        working-directory: ./jolt-prover
+        working-directory: ./crates/jolt-prover
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
 
-  test-core:
+  test-prover:
     runs-on: ubuntu-latest
     name: Test jolt-prover
     steps:
@@ -114,7 +114,7 @@ jobs:
       - name: Run jolt-prover tests
         run: cargo nextest run --release -p jolt-prover
 
-  test-core-zk:
+  test-prover-zk:
     runs-on: ubuntu-latest
     name: Test jolt-prover (zk)
     steps:

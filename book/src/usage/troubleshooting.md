@@ -86,7 +86,7 @@ This prints every syscall the guest makes (e.g. `[syscall] SYS_clone`), which he
 If `cargo nextest run --release -p jolt-prover` fails at:
 
 ```
-'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-prover/src/zkvm/lookup_table/test.rs:108:17:
+'zkvm::lookup_table::equal::test::prefix_suffix' panicked at crates/jolt-prover/src/zkvm/lookup_table/test.rs:108:17:
 assertion `left == right` failed
 ```
 
@@ -118,7 +118,7 @@ CARGO_PROFILE_RELEASE_LTO=fat cargo nextest run --release -p jolt-prover -E 'tes
 
 You will see an error similar to:
 ```text
-thread 'zkvm::lookup_table::equal::test::prefix_suffix' panicked at jolt-prover/src/zkvm/lookup_table/test.rs:108:17:
+thread 'zkvm::lookup_table::equal::test::prefix_suffix' panicked at crates/jolt-prover/src/zkvm/lookup_table/test.rs:108:17:
 assertion `left == right` failed
   left: 3421757210433941145757981284077922153733430471292915370254709621273756639318
  right: 15993602859885613318374216934674599210221976492830069114166327961258944178919
@@ -145,7 +145,7 @@ CARGO_PROFILE_RELEASE_LTO=fat RUSTFLAGS="-C no-prepopulate-passes" cargo nextest
 
 You will see a trace length error:
 ```text
-    thread 'zkvm::prover::tests::advice_e2e_dory' panicked at jolt-prover/src/zkvm/prover.rs:336:13:
+    thread 'zkvm::prover::tests::advice_e2e_dory' panicked at crates/jolt-prover/src/zkvm/prover.rs:336:13:
     Execution trace length (105501 cycles, padded to 131072) exceeds max_trace_length (65536) configured in MemoryConfig. Increase max_trace_length to at least 131072.
 ```
 
