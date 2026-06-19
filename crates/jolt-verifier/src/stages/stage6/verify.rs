@@ -684,30 +684,16 @@ where
     // weights) are derived here from the prior-stage clear outputs and the
     // stage-6a results; the post-sumcheck section recomputes the sumcheck-point
     // dependent openings against these same values.
-    let stage1_point = stage1.remainder.sumcheck_point.as_slice();
-    let (_, stage1_cycle_binding) =
-        stage1_point
-            .split_first()
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "Stage 1 remainder point is empty".to_string(),
-            })?;
-    let stage1_cycle = stage1_cycle_binding
-        .iter()
-        .rev()
-        .copied()
-        .collect::<Vec<_>>();
-    let stage2_cycle = stage2.output_claims.product_remainder_point().to_vec();
-    let stage3_cycle = stage3.output_claims.shift_opening_point().to_vec();
-    let (stage4_register_address, stage4_cycle) = stage4
-        .output_claims
-        .registers_read_write
-        .registers_val
-        .point
-        .split_at(REGISTER_ADDRESS_BITS);
-    let (stage5_register_address, stage5_cycle) = stage5
-        .registers_opening_point()
-        .split_at(REGISTER_ADDRESS_BITS);
+    // Per-stage cycle bindings, the reduced RAM point, the instruction RA point,
+    // and the per-source increment cycle suffixes, single-sourced through the same
+    // prover-facing helpers the prover builds its backend state requests from, so
+    // the bundle algebra cannot drift between the two sides.
+    let stage1_cycle_binding = stage6_stage1_cycle_binding(stage1)?;
+    let stage_cycle_points = stage6_bytecode_cycle_points(stage1, stage2, stage3, stage4, stage5)?;
+    let register_points = stage6_bytecode_register_points(stage4, stage5)?;
+    let ram_reduced = stage6_stage5_ram_reduced_opening_point(stage5, log_k, log_t)?;
+    let instruction_read_raf = stage6_instruction_read_raf_point(stage5);
+    let inc_cycle_points = stage6_inc_claim_reduction_cycle_points(stage2, stage4, stage5, log_k)?;
     let entry_bytecode_index = preprocessing
         .program
         .entry_bytecode_index()
@@ -715,34 +701,6 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let ram_reduced_opening_point = stage5.ram_reduced_opening_point();
-    if ram_reduced_opening_point.len() != log_k + log_t {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaVirtualization,
-            reason: format!(
-                "RAM RA reduction opening point length mismatch: expected {}, got {}",
-                log_k + log_t,
-                ram_reduced_opening_point.len()
-            ),
-        });
-    }
-    let (ram_reduced_address, ram_reduced_cycle) = ram_reduced_opening_point.split_at(log_k);
-    let (_, ram_read_write_cycle) = stage2.output_claims.ram_read_write_point().split_at(log_k);
-    let (_, ram_val_check_cycle) = stage4
-        .output_claims
-        .ram_val_check
-        .ram_ra
-        .point
-        .split_at(log_k);
-    let (_, registers_read_write_cycle) = stage4
-        .output_claims
-        .registers_read_write
-        .registers_val
-        .point
-        .split_at(REGISTER_ADDRESS_BITS);
-    let (_, registers_val_evaluation_cycle) = stage5
-        .registers_opening_point()
-        .split_at(REGISTER_ADDRESS_BITS);
     let bytecode_table = if committed_program {
         None
     } else {
@@ -769,8 +727,8 @@ where
                 stage3_gammas: &stage3_gammas,
                 stage4_gammas: &stage4_gammas,
                 stage5_gammas: &stage5_gammas,
-                register_read_write_point: stage4_register_address,
-                register_val_evaluation_point: stage5_register_address,
+                register_read_write_point: register_points.register_read_write_address,
+                register_val_evaluation_point: register_points.register_val_evaluation_address,
                 bytecode_r_address: &bytecode_r_address,
             },
         )?),
@@ -799,15 +757,9 @@ where
             inc_gamma,
             booleanity_gamma,
             eta,
-            stage_cycle_points: [
-                stage1_cycle.clone(),
-                stage2_cycle.clone(),
-                stage3_cycle.clone(),
-                stage4_cycle.to_vec(),
-                stage5_cycle.to_vec(),
-            ],
-            register_read_write_point: stage4_register_address.to_vec(),
-            register_val_evaluation_point: stage5_register_address.to_vec(),
+            stage_cycle_points: stage_cycle_points.clone(),
+            register_read_write_point: register_points.register_read_write_address.to_vec(),
+            register_val_evaluation_point: register_points.register_val_evaluation_address.to_vec(),
             stage_gammas: [
                 stage1_gammas.clone(),
                 stage2_gammas.clone(),
@@ -818,15 +770,15 @@ where
             booleanity_reference_address: booleanity_reference_address.clone(),
             booleanity_reference_cycle: booleanity_reference_cycle.clone(),
             stage1_cycle_binding: stage1_cycle_binding.to_vec(),
-            ram_reduced_address: ram_reduced_address.to_vec(),
-            ram_reduced_cycle: ram_reduced_cycle.to_vec(),
-            instruction_r_address: stage5.instruction_r_address.clone(),
-            instruction_r_cycle: stage5.instruction_r_cycle().to_vec(),
+            ram_reduced_address: ram_reduced.address.to_vec(),
+            ram_reduced_cycle: ram_reduced.cycle.to_vec(),
+            instruction_r_address: instruction_read_raf.address.to_vec(),
+            instruction_r_cycle: instruction_read_raf.cycle.to_vec(),
             inc_cycle_points: [
-                ram_read_write_cycle.to_vec(),
-                ram_val_check_cycle.to_vec(),
-                registers_read_write_cycle.to_vec(),
-                registers_val_evaluation_cycle.to_vec(),
+                inc_cycle_points.ram_read_write_cycle.to_vec(),
+                inc_cycle_points.ram_val_check_cycle.to_vec(),
+                inc_cycle_points.registers_read_write_cycle.to_vec(),
+                inc_cycle_points.registers_val_evaluation_cycle.to_vec(),
             ],
             trusted_advice_layout,
             untrusted_advice_layout,
@@ -1044,8 +996,8 @@ where
                     stage3_gammas: &stage3_gammas,
                     stage4_gammas: &stage4_gammas,
                     stage5_gammas: &stage5_gammas,
-                    register_read_write_point: stage4_register_address,
-                    register_val_evaluation_point: stage5_register_address,
+                    register_read_write_point: register_points.register_read_write_address,
+                    register_val_evaluation_point: register_points.register_val_evaluation_address,
                     bytecode_r_address: &bytecode_r_address,
                 },
             )?;
