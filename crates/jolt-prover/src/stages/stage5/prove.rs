@@ -379,8 +379,12 @@ fn stage5_dependency_points<'a, F: Field>(
         ram_log_k: config.log_k,
         ram_raf_opening_point: &stage2.batch.ram_raf_evaluation.opening_point,
         ram_read_write_opening_point: &stage2.batch.ram_read_write.opening_point,
-        ram_val_check_opening_point: &stage4.batch.ram_val_check.opening_point,
-        registers_read_write_opening_point: &stage4.batch.registers_read_write.opening_point,
+        ram_val_check_opening_point: &stage4.output_claims.ram_val_check.ram_ra.point,
+        registers_read_write_opening_point: &stage4
+            .output_claims
+            .registers_read_write
+            .registers_val
+            .point,
     })
     .map_err(|error| ProverError::InvalidStageRequest {
         reason: error.to_string(),
@@ -600,8 +604,12 @@ where
         registers_val_evaluation_sumcheck_point: &sumcheck_point[front_padding_rounds..],
         ram_raf_opening_point: &stage2.batch.ram_raf_evaluation.opening_point,
         ram_read_write_opening_point: &stage2.batch.ram_read_write.opening_point,
-        ram_val_check_opening_point: &stage4.batch.ram_val_check.opening_point,
-        registers_read_write_opening_point: &stage4.batch.registers_read_write.opening_point,
+        ram_val_check_opening_point: &stage4.output_claims.ram_val_check.ram_ra.point,
+        registers_read_write_opening_point: &stage4
+            .output_claims
+            .registers_read_write
+            .registers_val
+            .point,
     })?;
 
     let instruction_output =

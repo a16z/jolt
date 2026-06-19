@@ -931,9 +931,10 @@ where
     let stage2_cycle = stage2.batch.product_remainder.opening_point.clone();
     let stage3_cycle = stage3.batch.shift.opening_point.clone();
     let (stage4_register_address, stage4_cycle) = stage4
-        .batch
+        .output_claims
         .registers_read_write
-        .opening_point
+        .registers_val
+        .point
         .split_at(REGISTER_ADDRESS_BITS);
     let (stage5_register_address, stage5_cycle) = stage5
         .batch
@@ -1181,11 +1182,17 @@ where
             reason: error.to_string(),
         })?;
     let (_, ram_read_write_cycle) = stage2.batch.ram_read_write.opening_point.split_at(log_k);
-    let (_, ram_val_check_cycle) = stage4.batch.ram_val_check.opening_point.split_at(log_k);
+    let (_, ram_val_check_cycle) = stage4
+        .output_claims
+        .ram_val_check
+        .ram_ra
+        .point
+        .split_at(log_k);
     let (_, registers_read_write_cycle) = stage4
-        .batch
+        .output_claims
         .registers_read_write
-        .opening_point
+        .registers_val
+        .point
         .split_at(REGISTER_ADDRESS_BITS);
     let (_, registers_val_evaluation_cycle) = stage5
         .batch
@@ -1312,7 +1319,7 @@ where
                 id: program_image::cycle_phase_output_openings(layout.dimensions())[0],
             },
         )?;
-        let r_addr_rw = &stage4.batch.ram_val_check.opening_point[..log_k];
+        let r_addr_rw = &stage4.output_claims.ram_val_check.ram_ra.point[..log_k];
         let input_claim = input_claims.program_image_claim_reduction.ok_or(
             VerifierError::MissingOpeningClaim {
                 id: program_image::ram_val_check_contribution_opening(),
@@ -1611,7 +1618,11 @@ pub fn stage6_bytecode_register_points<'a, F: Field>(
 ) -> Result<Stage6BytecodeRegisterPoints<'a, F>, VerifierError> {
     let (register_read_write_address, register_read_write_cycle) = stage6_checked_split(
         "Stage 6 stage4 register read-write opening",
-        &stage4.batch.registers_read_write.opening_point,
+        &stage4
+            .output_claims
+            .registers_read_write
+            .registers_val
+            .point,
         REGISTER_ADDRESS_BITS,
         JoltRelationId::BytecodeReadRaf,
     )?;
@@ -1883,13 +1894,17 @@ pub fn stage6_inc_claim_reduction_cycle_points<'a, F: Field>(
     )?;
     let (_, ram_val_check_cycle) = stage6_checked_split(
         "Stage 6 RAM value-check opening",
-        &stage4.batch.ram_val_check.opening_point,
+        &stage4.output_claims.ram_val_check.ram_ra.point,
         log_k,
         JoltRelationId::IncClaimReduction,
     )?;
     let (_, registers_read_write_cycle) = stage6_checked_split(
         "Stage 6 register read-write opening",
-        &stage4.batch.registers_read_write.opening_point,
+        &stage4
+            .output_claims
+            .registers_read_write
+            .registers_val
+            .point,
         REGISTER_ADDRESS_BITS,
         JoltRelationId::IncClaimReduction,
     )?;
@@ -2042,9 +2057,11 @@ pub fn stage6_batch_input_claims<F: Field>(
         inc_claim_reduction: inc_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == ram_inc_read_write => Ok(stage2.output_claims.ram_read_write.inc),
-                id if id == ram_inc_val_check => Ok(stage4.output_claims.ram_val_check.ram_inc),
+                id if id == ram_inc_val_check => {
+                    Ok(stage4.output_claims.ram_val_check.ram_inc.value)
+                }
                 id if id == rd_inc_read_write => {
-                    Ok(stage4.output_claims.registers_read_write.rd_inc)
+                    Ok(stage4.output_claims.registers_read_write.rd_inc.value)
                 }
                 id if id == rd_inc_val_evaluation => {
                     Ok(stage5.output_claims.registers_val_evaluation.rd_inc)
@@ -2171,13 +2188,13 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                     return Ok(stage3.output_claims.shift.is_first_in_sequence);
                 }
                 if *id == bytecode_input_openings.registers_read_write.rd_wa {
-                    return Ok(stage4.output_claims.registers_read_write.rd_wa);
+                    return Ok(stage4.output_claims.registers_read_write.rd_wa.value);
                 }
                 if *id == bytecode_input_openings.registers_read_write.rs1_ra {
-                    return Ok(stage4.output_claims.registers_read_write.rs1_ra);
+                    return Ok(stage4.output_claims.registers_read_write.rs1_ra.value);
                 }
                 if *id == bytecode_input_openings.registers_read_write.rs2_ra {
-                    return Ok(stage4.output_claims.registers_read_write.rs2_ra);
+                    return Ok(stage4.output_claims.registers_read_write.rs2_ra.value);
                 }
                 if *id == bytecode_input_openings.registers_val_evaluation.rd_wa {
                     return Ok(stage5.output_claims.registers_val_evaluation.rd_wa);

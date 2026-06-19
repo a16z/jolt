@@ -23,7 +23,7 @@ use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
 use crate::stages::stage3::outputs::Stage3ClearOutput;
 use crate::VerifierError;
 
-/// Produced register read-write openings, all located at the single read-write
+/// Produced register read-write openings, all sharing the single read-write
 /// opening point. Generic over the cell (`F` on the wire, `Vec<F>` for ZK points,
 /// `OpeningClaim<F>` on the clear path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
@@ -60,7 +60,7 @@ pub struct RegistersReadWriteInputClaims<C> {
 
 impl<F: Field> RegistersReadWriteInputClaims<OpeningClaim<F>> {
     /// Wire the consumed openings from stage 3's registers claim-reduction output,
-    /// all located at that relation's shared opening point.
+    /// all sharing that relation's opening point.
     pub fn from_upstream(stage3: &Stage3ClearOutput<F>) -> Self {
         let point = stage3.batch.registers_claim_reduction.opening_point.clone();
         let reduction = &stage3.output_claims.registers_claim_reduction;

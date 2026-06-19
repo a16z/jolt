@@ -42,10 +42,11 @@ impl<F: Field> RegistersValEvaluationInputClaims<OpeningClaim<F>> {
     /// read-write checking (stage 4).
     pub fn from_upstream(stage4: &Stage4ClearOutput<F>) -> Self {
         Self {
-            registers_val: OpeningClaim {
-                point: stage4.batch.registers_read_write.opening_point.clone(),
-                value: stage4.output_claims.registers_read_write.registers_val,
-            },
+            registers_val: stage4
+                .output_claims
+                .registers_read_write
+                .registers_val
+                .clone(),
         }
     }
 }

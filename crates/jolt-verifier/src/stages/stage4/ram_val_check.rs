@@ -11,7 +11,7 @@
 //! WARNING: the advice/program-image openings are dual-role — they are *consumed*
 //! by the input claim (init reconstruction) and *also* appended/serialized as
 //! stage-4 openings. They therefore appear both as [`RamValCheckInputClaims`]
-//! fields and in the serialized `Stage4Claims` aggregate. Only their values feed
+//! fields and in the serialized `Stage4OutputClaims` aggregate. Only their values feed
 //! the input claim; their staged points are carried for completeness.
 
 use jolt_claims::protocols::jolt::{
@@ -50,7 +50,7 @@ pub struct RamValCheckOutputClaims<C> {
 
 /// The staged advice openings contributing to `Val_init`: untrusted/trusted
 /// advice block evaluations, each present only when its commitment is. Appended
-/// before the register openings (see the `Stage4Claims` field order).
+/// before the register openings (see the `Stage4OutputClaims` field order).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

@@ -5,33 +5,38 @@ use jolt_claims::protocols::jolt::{
     JoltAdviceKind,
 };
 use jolt_field::Field;
-use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::OpeningClaim;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::inputs::Stage4Claims;
+use super::inputs::Stage4OutputClaims;
 
+/// The Fiat-Shamir challenges the verifier draws during stage 4: the two
+/// per-relation batching gammas. (The batch's own sumcheck point and batching
+/// coefficients are stage-local verification artifacts and are not propagated to
+/// later stages.)
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4PublicOutput<F: Field> {
-    pub challenges: Vec<F>,
-    pub batching_coefficients: Vec<F>,
+pub struct Stage4Challenges<F: Field> {
     pub registers_gamma: F,
     pub ram_val_check_gamma: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage4ClearOutput<F: Field> {
-    pub public: Stage4PublicOutput<F>,
-    pub output_claims: Stage4Claims<F>,
-    pub batch: VerifiedStage4Batch<F>,
+    pub challenges: Stage4Challenges<F>,
+    /// The produced stage-4 openings paired with their points (point + value)
+    /// via the `OpeningClaim` cell. The opening points are derived from the
+    /// batch's sumcheck point; pairing them with the values here lets later stages
+    /// consume a ready `OpeningClaim` instead of re-joining a value with a
+    /// separately-tracked point.
+    pub output_claims: Stage4OutputClaims<OpeningClaim<F>>,
     pub ram_val_check_init: RamValCheckInitialEvaluation<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage4ZkOutput<F: Field, C> {
-    pub public: Stage4PublicOutput<F>,
+    pub challenges: Stage4Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub ram_val_check_public_eval: F,
@@ -46,28 +51,10 @@ pub enum Stage4Output<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedStage4Batch<F: Field> {
-    pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
-    pub sumcheck_final_claim: F,
-    pub expected_final_claim: F,
-    pub registers_read_write: VerifiedStage4Sumcheck<F>,
-    pub ram_val_check: VerifiedStage4Sumcheck<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedStage4Sumcheck<F: Field> {
-    pub input_claim: F,
-    pub sumcheck_point: Vec<F>,
-    pub opening_point: Vec<F>,
-    pub expected_output_claim: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInitialEvaluation<F: Field> {
     pub public_eval: F,
     /// The staged program-image contribution to `Val_init(r_address)` (committed
-    /// program mode only): the opening claim located at the full RAM address point.
+    /// program mode only): the opening claim with the full RAM address point.
     pub program_image_contribution: Option<OpeningClaim<F>>,
     pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
     pub full_eval: F,

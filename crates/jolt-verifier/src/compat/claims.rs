@@ -19,7 +19,7 @@ use crate::{
         },
         stage4::{
             RamValCheckAdviceClaims, RamValCheckOutputClaims, RegistersReadWriteOutputClaims,
-            Stage4Claims,
+            Stage4OutputClaims,
         },
         stage5::{
             InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
@@ -248,12 +248,12 @@ fn stage3_claims_from_native<F: Field>(
 
 fn stage4_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage4Claims<F>, VerifierError> {
+) -> Result<Stage4OutputClaims<F>, VerifierError> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
         registers::read_write_checking_output_openings();
     let [ram_ra, ram_inc] = ram::val_check_output_openings();
 
-    Ok(Stage4Claims {
+    Ok(Stage4OutputClaims {
         advice: RamValCheckAdviceClaims {
             untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
             trusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
@@ -691,7 +691,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rs2_value: zero,
             },
         },
-        stage4: Stage4Claims {
+        stage4: Stage4OutputClaims {
             advice: RamValCheckAdviceClaims {
                 untrusted: None,
                 trusted: None,
@@ -1177,7 +1177,7 @@ fn set_optional_stage2_batch_output<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn set_optional_stage4_output<F: Field>(
-    claims: &mut Stage4Claims<F>,
+    claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1300,7 +1300,7 @@ fn claim_mut_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage4_outputs<F: Field>(
-    claims: &Stage4Claims<F>,
+    claims: &Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
@@ -1325,7 +1325,7 @@ fn claim_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage4_outputs<F: Field>(
-    claims: &mut Stage4Claims<F>,
+    claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =

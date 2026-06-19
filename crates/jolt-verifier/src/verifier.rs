@@ -1074,7 +1074,7 @@ mod tests {
                         rs2_value: zero,
                     },
             },
-            stage4: stage4::inputs::Stage4Claims {
+            stage4: stage4::inputs::Stage4OutputClaims {
                 advice: stage4::RamValCheckAdviceClaims {
                     untrusted: None,
                     trusted: None,

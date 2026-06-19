@@ -54,7 +54,7 @@ pub fn deps<'a, F: Field, C>(
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(RamValCheck)]
-pub struct Stage4Claims<C> {
+pub struct Stage4OutputClaims<C> {
     pub advice: RamValCheckAdviceClaims<C>,
     /// Staged `ProgramImageInitContributionRw` scalar; present only in committed
     /// program mode.

@@ -23,7 +23,7 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)),
-        input.stage4.public.registers_gamma,
+        input.stage4.challenges.registers_gamma,
     )?;
     let registers_point = input
         .stage4
@@ -55,7 +55,7 @@ where
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma)),
-        input.stage4.public.ram_val_check_gamma,
+        input.stage4.challenges.ram_val_check_gamma,
     )?;
     let ram_val_point = input
         .stage4
@@ -74,7 +74,8 @@ where
         })?;
     values.public(
         JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
-        LtPolynomial::evaluate(&ram_val_cycle, r_cycle) + input.stage4.public.ram_val_check_gamma,
+        LtPolynomial::evaluate(&ram_val_cycle, r_cycle)
+            + input.stage4.challenges.ram_val_check_gamma,
     )?;
 
     let mut output_ids = Vec::new();

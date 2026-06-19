@@ -64,10 +64,7 @@ impl<F: Field> RamRaClaimReductionInputClaims<OpeningClaim<F>> {
                 point: stage2.batch.ram_read_write.opening_point.clone(),
                 value: stage2.output_claims.ram_read_write.ra,
             },
-            val_check: OpeningClaim {
-                point: stage4.batch.ram_val_check.opening_point.clone(),
-                value: stage4.output_claims.ram_val_check.ram_ra,
-            },
+            val_check: stage4.output_claims.ram_val_check.ram_ra.clone(),
         }
     }
 }

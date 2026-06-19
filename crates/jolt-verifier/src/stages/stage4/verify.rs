@@ -17,13 +17,14 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::{LabelWithCount, Transcript};
 
 use super::{
-    inputs::{Deps, Stage4Claims},
+    inputs::{Deps, Stage4OutputClaims},
     outputs::{
-        RamValCheckInitialEvaluation, Stage4ClearOutput, Stage4Output, Stage4PublicOutput,
-        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution, VerifiedStage4Batch,
-        VerifiedStage4Sumcheck,
+        RamValCheckInitialEvaluation, Stage4Challenges, Stage4ClearOutput, Stage4Output,
+        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution,
     },
-    ram_val_check::{RamValCheck, RamValCheckInputClaims, RamValCheckOutputClaims},
+    ram_val_check::{
+        RamValCheck, RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
+    },
     registers_read_write_checking::{
         RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
     },
@@ -129,13 +130,10 @@ where
         &ram_val_check_spec.domain,
     )?;
 
-    let public =
-        |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| Stage4PublicOutput {
-            challenges,
-            batching_coefficients,
-            registers_gamma,
-            ram_val_check_gamma,
-        };
+    let challenges = Stage4Challenges {
+        registers_gamma,
+        ram_val_check_gamma,
+    };
 
     if checked.zk {
         let Deps::Zk { .. } = deps else {
@@ -193,10 +191,7 @@ where
             .ram_ra;
 
         return Ok(Stage4Output::Zk(Stage4ZkOutput {
-            public: public(
-                consistency.challenges(),
-                consistency.batching_coefficients.clone(),
-            ),
+            challenges,
             batch_consistency: consistency,
             batch_output_claims,
             ram_val_check_public_eval,
@@ -292,24 +287,19 @@ where
 
     let registers_output_points =
         registers_relation.derive_opening_points(registers_point, &registers_inputs)?;
-    let registers_outputs = located_registers_outputs(&registers_output_points, claims);
-    let registers_output =
-        registers_relation.expected_output(&registers_inputs, &registers_outputs)?;
-    let registers_opening_point = registers_outputs.registers_val.point;
-
     let ram_output_points = ram_relation.derive_opening_points(ram_val_point, &ram_inputs)?;
-    let ram_outputs = RamValCheckOutputClaims {
-        ram_ra: OpeningClaim {
-            point: ram_output_points.ram_ra,
-            value: claims.ram_val_check.ram_ra,
-        },
-        ram_inc: OpeningClaim {
-            point: ram_output_points.ram_inc,
-            value: claims.ram_val_check.ram_inc,
-        },
-    };
-    let ram_output = ram_relation.expected_output(&ram_inputs, &ram_outputs)?;
-    let ram_opening_point = ram_outputs.ram_ra.point;
+
+    // The produced openings paired with their points (point + value) for stage 5
+    // onward; the advice / program-image openings come from the init decomposition.
+    let output_claims = stage4_output_claims_with_points(
+        claims,
+        &registers_output_points.registers_val,
+        &ram_output_points.ram_ra,
+        &ram_val_check_init,
+    );
+    let registers_output = registers_relation
+        .expected_output(&registers_inputs, &output_claims.registers_read_write)?;
+    let ram_output = ram_relation.expected_output(&ram_inputs, &output_claims.ram_val_check)?;
 
     let expected_final_claim =
         stage4_expected_final_claim(&batch.batching_coefficients, registers_output, ram_output)?;
@@ -322,50 +312,50 @@ where
     claims.append_openings(transcript);
 
     Ok(Stage4Output::Clear(Stage4ClearOutput {
-        public: public(
-            batch.reduction.point.as_slice().to_vec(),
-            batch.batching_coefficients.clone(),
-        ),
-        output_claims: claims.clone(),
+        challenges,
+        output_claims,
         ram_val_check_init,
-        batch: VerifiedStage4Batch {
-            batching_coefficients: batch.batching_coefficients.clone(),
-            sumcheck_point: batch.reduction.point.clone(),
-            sumcheck_final_claim: batch.reduction.value,
-            expected_final_claim,
-            registers_read_write: VerifiedStage4Sumcheck {
-                input_claim: registers_input_claim,
-                sumcheck_point: registers_point.to_vec(),
-                opening_point: registers_opening_point,
-                expected_output_claim: registers_output,
-            },
-            ram_val_check: VerifiedStage4Sumcheck {
-                input_claim: ram_input_claim,
-                sumcheck_point: ram_val_point.to_vec(),
-                opening_point: ram_opening_point,
-                expected_output_claim: ram_output,
-            },
-        },
     }))
 }
 
-/// Locate every register read-write output opening at the relation's shared
-/// opening point, pairing it with the proof's claimed value.
-fn located_registers_outputs<F: Field>(
-    points: &RegistersReadWriteOutputClaims<Vec<F>>,
-    claims: &Stage4Claims<F>,
-) -> RegistersReadWriteOutputClaims<OpeningClaim<F>> {
+/// Pair the produced stage-4 openings with their derived points (point + value
+/// together) from the wire claim values, the two relations' shared opening
+/// points, and the RAM init decomposition (which already carries the advice /
+/// program-image openings). Shared by the verifier and the prover so this form is
+/// built once.
+pub fn stage4_output_claims_with_points<F: Field>(
+    claims: &Stage4OutputClaims<F>,
+    registers_opening_point: &[F],
+    ram_opening_point: &[F],
+    ram_val_check_init: &RamValCheckInitialEvaluation<F>,
+) -> Stage4OutputClaims<OpeningClaim<F>> {
     let registers = &claims.registers_read_write;
-    let locate = |point: &[F], value: F| OpeningClaim {
+    let ram = &claims.ram_val_check;
+    let with_point = |point: &[F], value: F| OpeningClaim {
         point: point.to_vec(),
         value,
     };
-    RegistersReadWriteOutputClaims {
-        registers_val: locate(&points.registers_val, registers.registers_val),
-        rs1_ra: locate(&points.rs1_ra, registers.rs1_ra),
-        rs2_ra: locate(&points.rs2_ra, registers.rs2_ra),
-        rd_wa: locate(&points.rd_wa, registers.rd_wa),
-        rd_inc: locate(&points.rd_inc, registers.rd_inc),
+    Stage4OutputClaims {
+        advice: RamValCheckAdviceClaims {
+            untrusted: ram_val_check_init
+                .advice_contribution(JoltAdviceKind::Untrusted)
+                .map(|contribution| contribution.opening.clone()),
+            trusted: ram_val_check_init
+                .advice_contribution(JoltAdviceKind::Trusted)
+                .map(|contribution| contribution.opening.clone()),
+        },
+        program_image_contribution: ram_val_check_init.program_image_contribution.clone(),
+        registers_read_write: RegistersReadWriteOutputClaims {
+            registers_val: with_point(registers_opening_point, registers.registers_val),
+            rs1_ra: with_point(registers_opening_point, registers.rs1_ra),
+            rs2_ra: with_point(registers_opening_point, registers.rs2_ra),
+            rd_wa: with_point(registers_opening_point, registers.rd_wa),
+            rd_inc: with_point(registers_opening_point, registers.rd_inc),
+        },
+        ram_val_check: RamValCheckOutputClaims {
+            ram_ra: with_point(ram_opening_point, ram.ram_ra),
+            ram_inc: with_point(ram_opening_point, ram.ram_inc),
+        },
     }
 }
 
@@ -394,7 +384,7 @@ fn ram_zk_inputs<F: Field>(ram_read_write_opening_point: &[F]) -> RamValCheckInp
 fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
-    claims: &Stage4Claims<PCS::Field>,
+    claims: &Stage4OutputClaims<PCS::Field>,
     r_address: &[PCS::Field],
     public_eval: PCS::Field,
 ) -> Result<RamValCheckInitialEvaluation<PCS::Field>, VerifierError>
@@ -709,8 +699,8 @@ mod tests {
         }
     }
 
-    fn test_claims_without_advice() -> Stage4Claims<Fr> {
-        Stage4Claims {
+    fn test_claims_without_advice() -> Stage4OutputClaims<Fr> {
+        Stage4OutputClaims {
             advice: RamValCheckAdviceClaims {
                 untrusted: None,
                 trusted: None,
@@ -721,8 +711,8 @@ mod tests {
         }
     }
 
-    fn test_claims_with_advice() -> Stage4Claims<Fr> {
-        Stage4Claims {
+    fn test_claims_with_advice() -> Stage4OutputClaims<Fr> {
+        Stage4OutputClaims {
             advice: RamValCheckAdviceClaims {
                 untrusted: Some(Fr::from_u64(1)),
                 trusted: Some(Fr::from_u64(2)),
