@@ -17,6 +17,7 @@ use crate::layout::PackedWitnessLayout;
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
 pub const AKITA_D: usize = AkitaConfig::D;
+pub(crate) const LAYERZERO_AKITA_REV: &str = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c";
 pub const AKITA_FIELD_MODULUS: u128 =
     u128::MAX - (<AkitaField as PseudoMersenneField>::MODULUS_OFFSET - 1);
 

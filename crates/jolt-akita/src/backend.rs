@@ -24,7 +24,7 @@ use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
     NativeCommitment, NativeDensePoly, NativeHint, NativeProof, NativeProofShape, NativeScheme,
-    NativeVerifier, AKITA_D,
+    NativeVerifier, AKITA_D, LAYERZERO_AKITA_REV,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -656,6 +656,11 @@ where
 {
     transcript.append(&Label(b"akita_setup_key"));
     transcript.append_bytes(b"layerzero-akita/fp128/d64full");
+    transcript.append(&LabelWithCount(
+        b"layerzero_akita_rev",
+        LAYERZERO_AKITA_REV.len() as u64,
+    ));
+    transcript.append_bytes(LAYERZERO_AKITA_REV.as_bytes());
     transcript.append(&U64Word(AKITA_D as u64));
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
@@ -843,4 +848,67 @@ fn transparent_zk_error() -> OpeningsError {
     OpeningsError::InvalidBatch(
         "Akita native adapter is transparent-only and does not support ZK openings yet".to_owned(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct RecordingTranscript {
+        bytes: Vec<u8>,
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = AkitaField;
+
+        fn new(label: &'static [u8]) -> Self {
+            let mut transcript = Self::default();
+            transcript.append_bytes(label);
+            transcript
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.bytes.extend_from_slice(bytes);
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            AkitaField::zero()
+        }
+
+        fn state(&self) -> [u8; 32] {
+            [0; 32]
+        }
+    }
+
+    #[test]
+    fn setup_key_transcript_binds_layerzero_revision() {
+        assert!(include_str!("../Cargo.toml").contains(LAYERZERO_AKITA_REV));
+        let setup = AkitaVerifierSetup {
+            max_num_vars: 4,
+            max_num_polys_per_commitment_group: 1,
+            default_layout_digest: [7; 32],
+            packed_layout: None,
+            native: vec![1, 2, 3],
+        };
+        let mut transcript = RecordingTranscript::new(b"akita-setup-key-test");
+
+        bind_verifier_setup_key(&setup, &mut transcript);
+
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"layerzero-akita/fp128/d64full"
+        ));
+        assert!(contains_subslice(&transcript.bytes, b"layerzero_akita_rev"));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            LAYERZERO_AKITA_REV.as_bytes()
+        ));
+    }
+
+    fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
 }
