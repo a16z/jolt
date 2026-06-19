@@ -1048,7 +1048,7 @@ fn add_bytecode_reduction_address_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
-    public: &crate::stages::stage7::outputs::CommittedReductionAddressPhasePublicOutput<PCS::Field>,
+    sumcheck_point: &[PCS::Field],
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1068,7 +1068,7 @@ where
                 lane_weights: &weights.lane_weights,
             },
             &cycle_phase.cycle_phase_variables,
-            &public.sumcheck_point,
+            sumcheck_point,
         )
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReduction, error))?;
     add_bytecode_chunk_weight_publics(values, chunk_weights)
@@ -1103,7 +1103,7 @@ fn add_program_image_reduction_address_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
-    public: &crate::stages::stage7::outputs::CommittedReductionAddressPhasePublicOutput<PCS::Field>,
+    sumcheck_point: &[PCS::Field],
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1121,7 +1121,7 @@ where
         .address_phase_final_output_scale(
             &r_addr_rw,
             &cycle_phase.cycle_phase_variables,
-            &public.sumcheck_point,
+            sumcheck_point,
         )
         .map_err(|error| public_error(JoltRelationId::ProgramImageClaimReduction, error))?;
     values.public(
@@ -1162,7 +1162,7 @@ fn add_advice_address_publics<PCS, VC, ZkProof>(
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
-    public: &crate::stages::stage7::outputs::AdviceAddressPhasePublicOutput<PCS::Field>,
+    sumcheck_point: &[PCS::Field],
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1180,7 +1180,7 @@ where
         .address_phase_final_output_scale(
             &source_point,
             &cycle_phase.cycle_phase_variables,
-            &public.sumcheck_point,
+            sumcheck_point,
         )
         .map_err(|error| public_error(JoltRelationId::AdviceClaimReduction, error))?;
     values.public(

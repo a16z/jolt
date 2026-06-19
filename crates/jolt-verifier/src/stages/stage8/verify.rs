@@ -90,10 +90,7 @@ where
             Some((&stage6.output_claims, &stage7.output_claims)),
         ),
         Deps::Zk { stage6, stage7 } => (
-            stage7
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
+            stage7.hamming_weight_opening_point.as_slice(),
             stage6.inc_claim_reduction.opening_point.as_slice(),
             stage7.precommitted_final_openings.as_slice(),
             None,

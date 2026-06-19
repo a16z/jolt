@@ -33,9 +33,8 @@ use super::hamming_weight_claim_reduction::{
 };
 use super::inputs::{Deps, Stage7OutputClaims};
 use super::outputs::{
-    AdviceAddressPhasePublicOutput, CommittedReductionAddressPhasePublicOutput,
-    HammingWeightClaimReductionPublicOutput, PrecommittedFinalOpening, Stage7Challenges,
-    Stage7ClearOutput, Stage7Output, Stage7PublicOutput, Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7Output, Stage7PublicOutput,
+    Stage7ZkOutput,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -210,13 +209,15 @@ where
                 stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: error.to_string(),
             })?;
-        let hamming_opening_points =
-            stage7_hamming_opening_points(hamming_dimensions, &hamming_opening_point);
-
+        // The advice / committed-program address-phase opening points. Their
+        // sumcheck points and `FinalScale`/`ChunkOutputWeight` publics are
+        // recomputed by BlindFold from `batch_consistency`, so only the opening
+        // points (needed for the precommitted finals stage 8 consumes) are
+        // recovered here.
         let trusted_advice = if let (Some(layout), Some(claim)) =
             (layouts.trusted_advice, trusted_advice_claims.as_ref())
         {
-            Some(advice_address_phase_public(
+            Some(advice_address_phase_opening_point(
                 &batch_consistency,
                 claim,
                 layout,
@@ -229,7 +230,7 @@ where
         let untrusted_advice = if let (Some(layout), Some(claim)) =
             (layouts.untrusted_advice, untrusted_advice_claims.as_ref())
         {
-            Some(advice_address_phase_public(
+            Some(advice_address_phase_opening_point(
                 &batch_consistency,
                 claim,
                 layout,
@@ -247,7 +248,7 @@ where
                         id: bytecode_reduction::cycle_phase_intermediate_opening(),
                     },
                 )?;
-                Some(committed_reduction_address_phase_public(
+                Some(committed_reduction_address_phase_opening_point(
                     &batch_consistency,
                     claim,
                     layout.precommitted(),
@@ -265,7 +266,7 @@ where
                     id: program_image::cycle_phase_program_image_opening(),
                 },
             )?;
-            Some(committed_reduction_address_phase_public(
+            Some(committed_reduction_address_phase_opening_point(
                 &batch_consistency,
                 claim,
                 layout.precommitted(),
@@ -281,9 +282,7 @@ where
             (
                 JoltAdviceKind::Trusted,
                 layouts.trusted_advice,
-                trusted_advice
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                trusted_advice.as_deref().map(PrecommittedFinalSource::zk),
                 stage6
                     .trusted_advice_cycle_phase
                     .as_ref()
@@ -292,9 +291,7 @@ where
             (
                 JoltAdviceKind::Untrusted,
                 layouts.untrusted_advice,
-                untrusted_advice
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                untrusted_advice.as_deref().map(PrecommittedFinalSource::zk),
                 stage6
                     .untrusted_advice_cycle_phase
                     .as_ref()
@@ -314,8 +311,8 @@ where
             precommitted_final_openings.extend(bytecode_final_openings(
                 layout,
                 bytecode_address_phase
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                    .as_deref()
+                    .map(PrecommittedFinalSource::zk),
                 stage6
                     .bytecode_cycle_phase
                     .as_ref()
@@ -326,8 +323,8 @@ where
             precommitted_final_openings.push(program_image_final_opening(
                 layout,
                 program_image_address_phase
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                    .as_deref()
+                    .map(PrecommittedFinalSource::zk),
                 stage6
                     .program_image_cycle_phase
                     .as_ref()
@@ -342,17 +339,7 @@ where
             ),
             batch_consistency,
             batch_output_claims,
-            hamming_weight_claim_reduction: HammingWeightClaimReductionPublicOutput {
-                sumcheck_point: hamming_point,
-                opening_point: hamming_opening_point,
-                instruction_ra_opening_points: hamming_opening_points.instruction,
-                bytecode_ra_opening_points: hamming_opening_points.bytecode,
-                ram_ra_opening_points: hamming_opening_points.ram,
-            },
-            trusted_advice_address_phase: trusted_advice,
-            untrusted_advice_address_phase: untrusted_advice,
-            bytecode_address_phase,
-            program_image_address_phase,
+            hamming_weight_opening_point: hamming_opening_point,
             precommitted_final_openings,
         }));
     }
@@ -1075,24 +1062,6 @@ fn hamming_virtualization_address_point<F: Field>(
     Ok(point[..log_k_chunk].to_vec())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7HammingOpeningPoints<F: Field> {
-    pub instruction: Vec<Vec<F>>,
-    pub bytecode: Vec<Vec<F>>,
-    pub ram: Vec<Vec<F>>,
-}
-
-pub fn stage7_hamming_opening_points<F: Field>(
-    dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
-    opening_point: &[F],
-) -> Stage7HammingOpeningPoints<F> {
-    Stage7HammingOpeningPoints {
-        instruction: vec![opening_point.to_vec(); dimensions.layout.instruction()],
-        bytecode: vec![opening_point.to_vec(); dimensions.layout.bytecode()],
-        ram: vec![opening_point.to_vec(); dimensions.layout.ram()],
-    }
-}
-
 /// Opening point and (clear-mode) claim payload recorded by the stage that
 /// completed a precommitted claim reduction. `T` is a single claim for advice and
 /// the program image, and the per-chunk claim slice for the committed bytecode.
@@ -1154,13 +1123,16 @@ fn advice_final_opening<F: Field>(
     })
 }
 
-fn advice_address_phase_public<F: Field, C>(
+/// The advice address-phase opening point (the point at which the committed
+/// advice polynomial is finally opened), recovered for the ZK precommitted finals.
+/// BlindFold recomputes the sumcheck point and `FinalScale` independently.
+fn advice_address_phase_opening_point<F: Field, C>(
     batch: &BatchedCommittedSumcheckConsistency<F, C>,
     claim: &JoltRelationClaims<F>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
     stage6: &Stage6ZkOutput<F, C>,
-) -> Result<AdviceAddressPhasePublicOutput<F>, VerifierError> {
+) -> Result<Vec<F>, VerifierError> {
     let advice_point = batch
         .try_instance_point_at(0, claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -1168,18 +1140,12 @@ fn advice_address_phase_public<F: Field, C>(
             reason: error.to_string(),
         })?;
     let cycle_phase = stage6_advice_cycle_phase_public(stage6, kind)?;
-    let opening_point = layout
+    layout
         .address_phase_opening_point(&cycle_phase.cycle_phase_variables, &advice_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
-        })?;
-
-    Ok(AdviceAddressPhasePublicOutput {
-        kind,
-        sumcheck_point: advice_point,
-        opening_point,
-    })
+        })
 }
 
 fn stage6_advice_cycle_phase_claim<F: Field>(
@@ -1223,30 +1189,27 @@ fn stage6_advice_cycle_phase_public<F: Field, C>(
     })
 }
 
-fn committed_reduction_address_phase_public<F: Field, C>(
+/// The committed bytecode / program-image address-phase opening point, recovered
+/// for the ZK precommitted finals (BlindFold recomputes the rest).
+fn committed_reduction_address_phase_opening_point<F: Field, C>(
     batch: &BatchedCommittedSumcheckConsistency<F, C>,
     claim: &JoltRelationClaims<F>,
     precommitted: &jolt_claims::protocols::jolt::PrecommittedClaimReduction,
     cycle_phase_variables: &[F],
     stage: JoltRelationId,
-) -> Result<CommittedReductionAddressPhasePublicOutput<F>, VerifierError> {
+) -> Result<Vec<F>, VerifierError> {
     let point = batch
         .try_instance_point_at(0, claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage,
             reason: error.to_string(),
         })?;
-    let opening_point = precommitted
+    precommitted
         .address_phase_opening_point(cycle_phase_variables, &point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage,
             reason: error.to_string(),
-        })?;
-
-    Ok(CommittedReductionAddressPhasePublicOutput {
-        sumcheck_point: point,
-        opening_point,
-    })
+        })
 }
 
 /// Resolves the final per-chunk openings of the committed bytecode from whichever
