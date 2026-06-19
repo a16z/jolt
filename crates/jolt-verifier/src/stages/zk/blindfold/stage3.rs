@@ -20,15 +20,17 @@ where
         >(dimensions);
 
     values.public(
-        JoltPublicId::from(SpartanShiftPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(SpartanShiftChallenge::Gamma)),
         input.stage3.public.shift_gamma,
     )?;
     values.public(
-        JoltPublicId::from(InstructionInputPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(InstructionInputChallenge::Gamma)),
         input.stage3.public.instruction_gamma,
     )?;
     values.public(
-        JoltPublicId::from(RegistersClaimReductionPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(
+            RegistersClaimReductionChallenge::Gamma,
+        )),
         input.stage3.public.registers_gamma,
     )?;
 

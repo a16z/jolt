@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
         registers,
     },
-    JoltChallengeId, JoltRelationClaims, JoltRelationId, RegistersValEvaluationChallenge,
+    JoltPublicId, JoltRelationClaims, JoltRelationId, RegistersValEvaluationPublic,
 };
 use jolt_field::Field;
 use jolt_poly::LtPolynomial;
@@ -71,23 +71,19 @@ impl<F: Field> SumcheckInstance<F> for RegistersValEvaluationRelation<F> {
         })
     }
 
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
-        Err(VerifierError::MissingStageClaimChallenge { id: *id })
-    }
-
-    fn output_challenge<C: GetPoint<F>>(
+    fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltChallengeId,
+        id: &JoltPublicId,
         inputs: &RegistersValEvaluationInputs<C>,
         outputs: &RegistersValEvaluationOutputOpeningClaims<OpeningClaim<F>>,
     ) -> Result<F, VerifierError> {
         match id {
-            JoltChallengeId::RegistersValEvaluation(RegistersValEvaluationChallenge::LtCycle) => {
+            JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                 let registers_cycle = &outputs.rd_inc.point()[REGISTER_ADDRESS_BITS..];
                 let fixed_cycle = &inputs.registers_val.point()[REGISTER_ADDRESS_BITS..];
                 Ok(LtPolynomial::evaluate(registers_cycle, fixed_cycle))
             }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
         }
     }
 }

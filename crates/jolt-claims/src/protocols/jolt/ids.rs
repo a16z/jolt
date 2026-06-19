@@ -36,12 +36,20 @@ pub enum JoltRelationId {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamReadWriteChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RamReadWritePublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamValCheckChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RamValCheckPublic {
     LtCyclePlusGamma,
 }
 
@@ -51,12 +59,12 @@ pub enum RamRaClaimReductionChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RamRaVirtualizationChallenge {
+pub enum RamRaVirtualizationPublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RamHammingBooleanityChallenge {
+pub enum RamHammingBooleanityPublic {
     EqCycle,
 }
 
@@ -190,35 +198,55 @@ pub enum SpartanOuterPublic {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RegistersReadWriteChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RegistersReadWritePublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RegistersValEvaluationChallenge {
+pub enum RegistersValEvaluationPublic {
     LtCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RegistersClaimReductionChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RegistersClaimReductionPublic {
     EqSpartan,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionClaimReductionChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum InstructionClaimReductionPublic {
     EqSpartan,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionInputChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum InstructionInputPublic {
     EqProduct,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionReadRafChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum InstructionReadRafPublic {
     EqTableValue(usize),
     EqRafConstant,
     EqRafFlag,
@@ -227,6 +255,10 @@ pub enum InstructionReadRafChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstructionRaVirtualizationChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum InstructionRaVirtualizationPublic {
     EqCycle,
 }
 
@@ -237,8 +269,6 @@ pub enum JoltChallengeId {
     RamReadWrite(RamReadWriteChallenge),
     RamValCheck(RamValCheckChallenge),
     RamRaClaimReduction(RamRaClaimReductionChallenge),
-    RamRaVirtualization(RamRaVirtualizationChallenge),
-    RamHammingBooleanity(RamHammingBooleanityChallenge),
     Booleanity(BooleanityChallenge),
     IncClaimReduction(IncClaimReductionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
@@ -246,7 +276,6 @@ pub enum JoltChallengeId {
     BytecodeClaimReduction(BytecodeClaimReductionChallenge),
     SpartanShift(SpartanShiftChallenge),
     RegistersReadWrite(RegistersReadWriteChallenge),
-    RegistersValEvaluation(RegistersValEvaluationChallenge),
     RegistersClaimReduction(RegistersClaimReductionChallenge),
     InstructionClaimReduction(InstructionClaimReductionChallenge),
     InstructionInput(InstructionInputChallenge),
@@ -370,9 +399,13 @@ pub enum JoltPublicId {
     PaddedTraceLength,
     BytecodeLength,
     MemorySize,
+    RamReadWrite(RamReadWritePublic),
+    RamValCheck(RamValCheckPublic),
     RamRafEvaluation(RamRafEvaluationPublic),
     RamOutputCheck(RamOutputCheckPublic),
     RamRaClaimReduction(RamRaClaimReductionPublic),
+    RamRaVirtualization(RamRaVirtualizationPublic),
+    RamHammingBooleanity(RamHammingBooleanityPublic),
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
@@ -383,6 +416,13 @@ pub enum JoltPublicId {
     SpartanShift(SpartanShiftPublic),
     SpartanProductVirtualization(SpartanProductVirtualizationPublic),
     SpartanOuter(SpartanOuterPublic),
+    RegistersReadWrite(RegistersReadWritePublic),
+    RegistersValEvaluation(RegistersValEvaluationPublic),
+    RegistersClaimReduction(RegistersClaimReductionPublic),
+    InstructionClaimReduction(InstructionClaimReductionPublic),
+    InstructionInput(InstructionInputPublic),
+    InstructionReadRaf(InstructionReadRafPublic),
+    InstructionRaVirtualization(InstructionRaVirtualizationPublic),
     #[from(ignore)]
     PublicInput(usize),
     #[from(ignore)]

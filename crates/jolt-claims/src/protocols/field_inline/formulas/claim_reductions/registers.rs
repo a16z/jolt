@@ -1,10 +1,11 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening};
+use crate::{challenge, opening, public};
 
 use super::super::super::{
-    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlineRelationClaims,
-    FieldInlineRelationId, FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
+    FieldInlineChallengeId, FieldInlineExpr, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineRelationClaims, FieldInlineRelationId, FieldInlineVirtualPolynomial,
+    FieldRegistersClaimReductionChallenge, FieldRegistersClaimReductionPublic,
 };
 use super::super::dimensions::FieldRegistersTraceDimensions;
 
@@ -13,7 +14,7 @@ where
     F: RingCore,
 {
     let gamma = reduction_challenge(FieldRegistersClaimReductionChallenge::Gamma);
-    let eq_spartan = reduction_challenge(FieldRegistersClaimReductionChallenge::EqSpartan);
+    let eq_spartan = reduction_public(FieldRegistersClaimReductionPublic::EqSpartan);
 
     let input = opening(field_rd_value_spartan())
         + gamma.clone() * opening(field_rs1_value_spartan())
@@ -52,6 +53,13 @@ where
     F: RingCore,
 {
     challenge(FieldInlineChallengeId::from(id))
+}
+
+fn reduction_public<F>(id: FieldRegistersClaimReductionPublic) -> FieldInlineExpr<F>
+where
+    F: RingCore,
+{
+    public(FieldInlinePublicId::from(id))
 }
 
 fn field_rd_value_spartan() -> FieldInlineOpeningId {
@@ -130,26 +138,29 @@ mod tests {
         );
         assert_eq!(
             claims.output.required_challenges,
-            vec![
-                FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::EqSpartan),
-                FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::Gamma),
-            ]
+            vec![FieldInlineChallengeId::from(
+                FieldRegistersClaimReductionChallenge::Gamma
+            )]
         );
         assert_eq!(
             claims.required_challenges(),
-            vec![
-                FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::Gamma),
-                FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::EqSpartan),
-            ]
+            vec![FieldInlineChallengeId::from(
+                FieldRegistersClaimReductionChallenge::Gamma
+            )]
         );
         assert_eq!(
-            claims.challenge_index(FieldInlineChallengeId::from(
-                FieldRegistersClaimReductionChallenge::EqSpartan
-            )),
-            Some(1)
+            claims.output.required_publics,
+            vec![FieldInlinePublicId::from(
+                FieldRegistersClaimReductionPublic::EqSpartan
+            )]
         );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(claims.num_challenges(), 2);
+        assert_eq!(
+            claims.required_publics(),
+            vec![FieldInlinePublicId::from(
+                FieldRegistersClaimReductionPublic::EqSpartan
+            )]
+        );
+        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -193,12 +204,14 @@ mod tests {
                 FieldInlineChallengeId::FieldRegistersClaimReduction(
                     FieldRegistersClaimReductionChallenge::Gamma,
                 ) => gamma,
-                FieldInlineChallengeId::FieldRegistersClaimReduction(
-                    FieldRegistersClaimReductionChallenge::EqSpartan,
+                _ => zero,
+            },
+            |id| match *id {
+                FieldInlinePublicId::FieldRegistersClaimReduction(
+                    FieldRegistersClaimReductionPublic::EqSpartan,
                 ) => eq_spartan,
                 _ => zero,
             },
-            |_| zero,
         );
 
         assert_eq!(

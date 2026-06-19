@@ -172,6 +172,7 @@ mod tests {
                 FieldInlinePublicId::FieldRegistersIncClaimReduction(
                     FieldRegistersIncClaimReductionPublic::EqValEvaluation,
                 ) => eq_val_evaluation,
+                _ => zero,
             },
         );
 

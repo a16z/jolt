@@ -2,14 +2,15 @@
 //!
 //! The most intricate stage 5 relation: its output `Expr` references indexed
 //! opening families (lookup-table flags, virtual RA chunks) and point-derived
-//! *challenges* (`EqTableValue`, `EqRafConstant`, `EqRafFlag`) computed from the
+//! *publics* (`EqTableValue`, `EqRafConstant`, `EqRafFlag`) computed from the
 //! instruction address/cycle points and the upstream claim-reduction point. The
 //! full instruction address is split across the virtual-RA opening points, so
-//! `output_challenge` reconstructs it from the located output cells.
+//! `resolve_public` reconstructs it from the located output cells.
 
 use jolt_claims::protocols::jolt::{
     formulas::instruction::{self, InstructionReadRafDimensions},
-    InstructionReadRafChallenge, JoltChallengeId, JoltRelationClaims, JoltRelationId,
+    InstructionReadRafChallenge, InstructionReadRafPublic, JoltChallengeId, JoltPublicId,
+    JoltRelationClaims, JoltRelationId,
 };
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -115,14 +116,14 @@ impl<F: Field> SumcheckInstance<F> for InstructionReadRafRelation<F> {
         }
     }
 
-    fn output_challenge<C: GetPoint<F>>(
+    fn resolve_public<C: GetPoint<F>>(
         &self,
-        id: &JoltChallengeId,
+        id: &JoltPublicId,
         inputs: &InstructionReadRafInputs<C>,
         outputs: &InstructionReadRafOutputOpeningClaims<OpeningClaim<F>>,
     ) -> Result<F, VerifierError> {
-        let JoltChallengeId::InstructionReadRaf(challenge) = id else {
-            return Err(VerifierError::MissingStageClaimChallenge { id: *id });
+        let JoltPublicId::InstructionReadRaf(public) = id else {
+            return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };
         let r_cycle = outputs.instruction_raf_flag.point();
         let r_address = reconstruct_r_address(outputs, r_cycle.len());
@@ -136,8 +137,8 @@ impl<F: Field> SumcheckInstance<F> for InstructionReadRafRelation<F> {
             || OperandPolynomial::new(address_bits, OperandSide::Right).evaluate(&r_address);
         let gamma = self.gamma;
         let gamma2 = gamma * gamma;
-        match challenge {
-            InstructionReadRafChallenge::EqTableValue(index) => {
+        match public {
+            InstructionReadRafPublic::EqTableValue(index) => {
                 let table = LookupTableKind::<RISCV_XLEN>::iter()
                     .find(|table| table.index() == *index)
                     .ok_or_else(|| {
@@ -145,15 +146,12 @@ impl<F: Field> SumcheckInstance<F> for InstructionReadRafRelation<F> {
                     })?;
                 Ok(eq_reduction * table.evaluate_mle::<F, F>(&r_address))
             }
-            InstructionReadRafChallenge::EqRafConstant => {
+            InstructionReadRafPublic::EqRafConstant => {
                 Ok(eq_reduction * (gamma * left() + gamma2 * right()))
             }
-            InstructionReadRafChallenge::EqRafFlag => {
+            InstructionReadRafPublic::EqRafFlag => {
                 let identity = IdentityPolynomial::new(address_bits).evaluate(&r_address);
                 Ok(eq_reduction * (gamma2 * identity - gamma * left() - gamma2 * right()))
-            }
-            InstructionReadRafChallenge::Gamma => {
-                Err(VerifierError::MissingStageClaimChallenge { id: *id })
             }
         }
     }

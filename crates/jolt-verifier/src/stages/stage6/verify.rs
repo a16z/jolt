@@ -21,10 +21,10 @@ use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
     BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, BytecodeClaimReductionPublic,
     BytecodeReadRafChallenge, IncClaimReductionChallenge, InstructionRaVirtualizationChallenge,
-    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    JoltSumcheckDomain, JoltVirtualPolynomial, PrecommittedClaimReduction,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-    ProgramImageClaimReductionPublic, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
+    InstructionRaVirtualizationPublic, JoltAdviceKind, JoltChallengeId, JoltPublicId,
+    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
+    PrecommittedClaimReduction, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    ProgramImageClaimReductionPublic, RamHammingBooleanityPublic, RamRaVirtualizationPublic,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -2683,13 +2683,13 @@ pub fn stage6_ram_hamming_booleanity_expected_output<F: Field>(
             id if id == ram_hamming_weight_opening => Ok(ram_hamming_weight),
             id => Err(VerifierError::MissingOpeningClaim { id }),
         },
+        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         |id| match *id {
-            JoltChallengeId::RamHammingBooleanity(RamHammingBooleanityChallenge::EqCycle) => {
+            JoltPublicId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => {
                 Ok(eq_spartan_outer_cycle)
             }
-            id => Err(VerifierError::MissingStageClaimChallenge { id }),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
         },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
     )
 }
 
@@ -2731,13 +2731,11 @@ pub fn stage6_ram_ra_virtualization_expected_output<F: Field>(
             }
             Err(VerifierError::MissingOpeningClaim { id: *id })
         },
+        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         |id| match *id {
-            JoltChallengeId::RamRaVirtualization(RamRaVirtualizationChallenge::EqCycle) => {
-                Ok(eq_cycle)
-            }
-            id => Err(VerifierError::MissingStageClaimChallenge { id }),
+            JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) => Ok(eq_cycle),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
         },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
     )
 }
 
@@ -2786,12 +2784,14 @@ pub fn stage6_instruction_ra_virtualization_expected_output<F: Field>(
             JoltChallengeId::InstructionRaVirtualization(
                 InstructionRaVirtualizationChallenge::Gamma,
             ) => Ok(inputs.gamma),
-            JoltChallengeId::InstructionRaVirtualization(
-                InstructionRaVirtualizationChallenge::EqCycle,
-            ) => Ok(eq_cycle),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        |id| match *id {
+            JoltPublicId::InstructionRaVirtualization(
+                InstructionRaVirtualizationPublic::EqCycle,
+            ) => Ok(eq_cycle),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
     )
 }
 

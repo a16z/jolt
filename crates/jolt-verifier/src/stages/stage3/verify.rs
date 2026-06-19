@@ -4,8 +4,9 @@ use jolt_claims::protocols::jolt::{
         instruction,
         spartan::{self, shift_input_openings, shift_output_openings},
     },
-    InstructionInputChallenge, JoltChallengeId, JoltPublicId, JoltRelationId, JoltSumcheckDomain,
-    RegistersClaimReductionChallenge, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
+    InstructionInputChallenge, InstructionInputPublic, JoltChallengeId, JoltPublicId,
+    JoltRelationId, JoltSumcheckDomain, RegistersClaimReductionChallenge,
+    RegistersClaimReductionPublic, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -262,12 +263,12 @@ pub fn stage3_expected_output_claims<F: Field>(
             JoltChallengeId::InstructionInput(InstructionInputChallenge::Gamma) => {
                 Ok(request.instruction_gamma)
             }
-            JoltChallengeId::InstructionInput(InstructionInputChallenge::EqProduct) => {
-                Ok(eq_product)
-            }
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        |id| match *id {
+            JoltPublicId::InstructionInput(InstructionInputPublic::EqProduct) => Ok(eq_product),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
     )?;
 
     let eq_spartan = try_eq_mle(
@@ -293,12 +294,14 @@ pub fn stage3_expected_output_claims<F: Field>(
             JoltChallengeId::RegistersClaimReduction(RegistersClaimReductionChallenge::Gamma) => {
                 Ok(request.registers_gamma)
             }
-            JoltChallengeId::RegistersClaimReduction(
-                RegistersClaimReductionChallenge::EqSpartan,
-            ) => Ok(eq_spartan),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        |id| match *id {
+            JoltPublicId::RegistersClaimReduction(RegistersClaimReductionPublic::EqSpartan) => {
+                Ok(eq_spartan)
+            }
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
     )?;
 
     Ok(Stage3ExpectedOutputClaims {

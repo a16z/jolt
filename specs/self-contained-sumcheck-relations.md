@@ -250,7 +250,10 @@ where
     fn derive_output_points<C: GetPoint<F>>(&self, sumcheck_point: &[F], inputs: &Self::Inputs<C>)
         -> Result<Self::Outputs<Vec<F>>, VerifierError>;
 
-    // value-bearing → clear path:
+    // value-bearing → clear path. The two source kinds split on origin:
+    // `Challenge` = a raw Fiat-Shamir transcript scalar (point-free, e.g. gamma/eta);
+    // `Public` = a value the verifier *computes* from the statement/points (e.g. eq
+    // evals, table MLEs, Lt) and may therefore be point-derived:
     fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError>;
     fn resolve_public<C: GetPoint<F>>(&self, id: &JoltPublicId,
         inputs: &Self::Inputs<C>, outputs: &Self::Outputs<OpeningClaim<F>>) -> Result<F, VerifierError>;

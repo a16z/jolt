@@ -22,7 +22,7 @@ where
     let ram_val_claims = ram::val_check::<PCS::Field>(trace_dimensions, ram_init);
 
     values.public(
-        JoltPublicId::from(RegistersReadWritePublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)),
         input.stage4.public.registers_gamma,
     )?;
     let registers_point = input
@@ -54,7 +54,7 @@ where
     )?;
 
     values.public(
-        JoltPublicId::from(RamValCheckPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma)),
         input.stage4.public.ram_val_check_gamma,
     )?;
     let ram_val_point = input

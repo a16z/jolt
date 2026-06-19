@@ -77,18 +77,23 @@ use jolt_claims::{
                 SpartanOuterDimensions, SpartanProductDimensions,
             },
         },
-        AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityPublic,
-        BytecodeClaimReductionLayout, BytecodeClaimReductionPublic, BytecodeReadRafPublic,
-        HammingWeightClaimReductionPublic, IncClaimReductionPublic,
-        InstructionClaimReductionPublic, InstructionInputPublic,
-        InstructionRaVirtualizationPublic, InstructionReadRafPublic, JoltAdviceKind,
-        JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltRelationClaims,
-        JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
+        AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
+        BooleanityPublic, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
+        BytecodeClaimReductionPublic, BytecodeReadRafChallenge, BytecodeReadRafPublic,
+        HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
+        IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
+        InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
+        InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
+        InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
+        JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltPublicId,
+        JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
         ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
-        RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionPublic,
-        RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWritePublic,
-        RamValCheckPublic, RegistersClaimReductionPublic, RegistersReadWritePublic,
-        RegistersValEvaluationPublic, SpartanShiftPublic,
+        RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
+        RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
+        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+        RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
+        SpartanShiftChallenge, SpartanShiftPublic,
     },
     public, Expr, Source, Term,
 };
@@ -152,6 +157,9 @@ impl From<JoltOpeningId> for VerifierOpeningId {
 enum VerifierPublicId {
     Jolt(JoltPublicId),
     SpartanOuter(JoltSpartanOuterPublic),
+    /// Gamma values that remain as `JoltChallengeId` variants (not moved to Public) but are
+    /// treated as public inputs in the BlindFold R1CS wiring.
+    Challenge(JoltChallengeId),
 }
 
 impl From<JoltPublicId> for VerifierPublicId {
@@ -177,6 +185,7 @@ where
     let mut builder = BlindFoldProtocol::<PCS::Field, VC::Output>::builder::<
         VerifierOpeningId,
         VerifierPublicId,
+        usize,
     >();
 
     builder = stage1::add_stage1(&input, builder, &mut values)?;
@@ -362,9 +371,7 @@ fn map_jolt_aliases(
         .collect()
 }
 
-fn map_jolt_expr<F: Field>(
-    expr: Expr<F, JoltOpeningId, JoltPublicId>,
-) -> VerifierExpr<F> {
+fn map_jolt_expr<F: Field>(expr: JoltExpr<F>) -> VerifierExpr<F> {
     Expr {
         terms: expr
             .terms
@@ -376,7 +383,8 @@ fn map_jolt_expr<F: Field>(
                     .into_iter()
                     .map(|source| match source {
                         Source::Opening(id) => Source::Opening(id.into()),
-                        Source::Public(id) => Source::Public(id.into()),
+                        Source::Public(id) => Source::Public(VerifierPublicId::Jolt(id)),
+                        Source::Challenge(id) => Source::Public(VerifierPublicId::Challenge(id)),
                     })
                     .collect(),
             })
@@ -659,35 +667,37 @@ where
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
 
     values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Gamma)),
         input.stage6.public.bytecode_gamma_powers[1],
     )?;
     values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::Stage1Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma)),
         input.stage6.public.stage1_gammas[1],
     )?;
     values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::Stage2Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma)),
         input.stage6.public.stage2_gammas[1],
     )?;
     values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::Stage3Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma)),
         input.stage6.public.stage3_gammas[1],
     )?;
     values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::Stage4Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma)),
         input.stage6.public.stage4_gammas[1],
     )?;
     values.public(
-        JoltPublicId::from(BytecodeReadRafPublic::Stage5Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma)),
         input.stage6.public.stage5_gammas[1],
     )?;
     values.public(
-        JoltPublicId::from(BooleanityPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(BooleanityChallenge::Gamma)),
         input.stage6.public.booleanity_gamma,
     )?;
     values.public(
-        JoltPublicId::from(InstructionRaVirtualizationPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(
+            InstructionRaVirtualizationChallenge::Gamma,
+        )),
         input
             .stage6
             .public
@@ -697,7 +707,7 @@ where
             .unwrap_or_else(PCS::Field::one),
     )?;
     values.public(
-        JoltPublicId::from(IncClaimReductionPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(IncClaimReductionChallenge::Gamma)),
         input.stage6.public.inc_gamma,
     )?;
 
@@ -975,8 +985,8 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
-        VerifierError::MissingStageClaimPublic {
-            id: JoltPublicId::from(BytecodeClaimReductionPublic::Eta),
+        VerifierError::MissingStageClaimChallenge {
+            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
         }
     })?;
     verify::bytecode_reduction_weights(

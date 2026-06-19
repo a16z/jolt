@@ -134,26 +134,18 @@ where
         inputs: &Self::Inputs<C>,
     ) -> Result<Self::Outputs<Vec<F>>, VerifierError>;
 
-    /// Resolve a held Fiat-Shamir challenge the relation's *input* `Expr`
-    /// references (e.g. `gamma`). Point-free, so it runs before the sumcheck.
-    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError>;
-
-    /// Resolve a challenge the relation's *output* `Expr` references. Unlike input
-    /// challenges these may be point-derived (e.g. `EqTableValue`, `LtCycle`), so
-    /// they take the input/output points; the default handles the point-free held
-    /// challenges. Overridden by relations with point-derived output challenges.
-    fn output_challenge<C: GetPoint<F>>(
-        &self,
-        id: &JoltChallengeId,
-        _inputs: &Self::Inputs<C>,
-        _outputs: &Self::Outputs<OpeningClaim<F>>,
-    ) -> Result<F, VerifierError> {
-        self.resolve_challenge(id)
+    /// Resolve a raw Fiat-Shamir transcript scalar the relation holds (e.g.
+    /// `gamma`, `eta`). Point-free, so it serves both the input claim and any
+    /// transcript scalar the output `Expr` references. Defaults to "none";
+    /// overridden by relations that hold such scalars.
+    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
+        Err(VerifierError::MissingStageClaimChallenge { id: *id })
     }
 
-    /// Compute a public value the relation's output `Expr` references, from the
-    /// input points and the produced openings' points. Defaults to "no publics";
-    /// overridden by relations that have them.
+    /// Compute a derived public value the relation's output `Expr` references
+    /// (e.g. `EqCycle`, `EqTableValue`, `LtCycle`), from the input points and the
+    /// produced openings' points. Defaults to "no publics"; overridden by
+    /// relations that have them.
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltPublicId,
@@ -178,10 +170,10 @@ where
     }
 
     /// The expected output claim, evaluated from the output `Expr` against the
-    /// produced opening values, point-derived output challenges, and public
-    /// values. The input points feed those derivations but the input *values* are
-    /// not needed, so the inputs are taken over any [`GetPoint`] cell. Shared by
-    /// prover and verifier; clear only.
+    /// produced opening values, the relation's transcript scalars, and its derived
+    /// public values. The input points feed those derivations but the input
+    /// *values* are not needed, so the inputs are taken over any [`GetPoint`] cell.
+    /// Shared by prover and verifier; clear only.
     fn expected_output<C: GetPoint<F>>(
         &self,
         inputs: &Self::Inputs<C>,
@@ -193,7 +185,7 @@ where
                     .resolve_output(id)
                     .ok_or(VerifierError::MissingOpeningClaim { id: *id })
             },
-            |id| self.output_challenge(id, inputs, outputs),
+            |id| self.resolve_challenge(id),
             |id| self.resolve_public(id, inputs, outputs),
         )
     }

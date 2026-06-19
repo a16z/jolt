@@ -1,10 +1,10 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening};
+use crate::{challenge, opening, public};
 
 use super::super::super::{
-    JoltChallengeId, JoltExpr, JoltOpeningId, JoltRelationClaims, JoltRelationId,
-    JoltVirtualPolynomial, RegistersClaimReductionChallenge,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltVirtualPolynomial, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
 };
 use super::super::dimensions::TraceDimensions;
 
@@ -13,7 +13,7 @@ where
     F: RingCore,
 {
     let gamma = reduction_challenge(RegistersClaimReductionChallenge::Gamma);
-    let eq_spartan = reduction_challenge(RegistersClaimReductionChallenge::EqSpartan);
+    let eq_spartan = reduction_public(RegistersClaimReductionPublic::EqSpartan);
 
     let input = opening(rd_write_value_spartan())
         + gamma.clone() * opening(rs1_value_spartan())
@@ -52,6 +52,13 @@ where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
+}
+
+fn reduction_public<F>(id: RegistersClaimReductionPublic) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    public(JoltPublicId::from(id))
 }
 
 fn rd_write_value_spartan() -> JoltOpeningId {
@@ -127,26 +134,21 @@ mod tests {
         );
         assert_eq!(
             claims.output.required_challenges,
-            vec![
-                JoltChallengeId::from(RegistersClaimReductionChallenge::EqSpartan),
-                JoltChallengeId::from(RegistersClaimReductionChallenge::Gamma),
-            ]
+            vec![JoltChallengeId::from(
+                RegistersClaimReductionChallenge::Gamma
+            )]
         );
         assert_eq!(
             claims.required_challenges(),
-            vec![
-                JoltChallengeId::from(RegistersClaimReductionChallenge::Gamma),
-                JoltChallengeId::from(RegistersClaimReductionChallenge::EqSpartan),
-            ]
+            vec![JoltChallengeId::from(
+                RegistersClaimReductionChallenge::Gamma
+            )]
         );
         assert_eq!(
-            claims.challenge_index(JoltChallengeId::from(
-                RegistersClaimReductionChallenge::EqSpartan
-            )),
-            Some(1)
+            claims.required_publics(),
+            vec![JoltPublicId::from(RegistersClaimReductionPublic::EqSpartan)]
         );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(claims.num_challenges(), 2);
+        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -174,16 +176,10 @@ mod tests {
                 JoltChallengeId::RegistersClaimReduction(
                     RegistersClaimReductionChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RegistersClaimReduction(
-                    RegistersClaimReductionChallenge::EqSpartan,
-                )
-                | JoltChallengeId::RamReadWrite(_)
+                JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RamRaVirtualization(_)
-                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
                 | JoltChallengeId::InstructionInput(_)
                 | JoltChallengeId::InstructionReadRaf(_)
@@ -209,16 +205,10 @@ mod tests {
                 JoltChallengeId::RegistersClaimReduction(
                     RegistersClaimReductionChallenge::Gamma,
                 ) => gamma,
-                JoltChallengeId::RegistersClaimReduction(
-                    RegistersClaimReductionChallenge::EqSpartan,
-                ) => eq_spartan,
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RamRaVirtualization(_)
-                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
-                | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
                 | JoltChallengeId::InstructionInput(_)
                 | JoltChallengeId::InstructionReadRaf(_)
@@ -230,7 +220,12 @@ mod tests {
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltPublicId::RegistersClaimReduction(RegistersClaimReductionPublic::EqSpartan) => {
+                    eq_spartan
+                }
+                _ => zero,
+            },
         );
 
         assert_eq!(

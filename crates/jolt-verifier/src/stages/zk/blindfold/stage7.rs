@@ -38,7 +38,9 @@ where
         });
 
     values.public(
-        JoltPublicId::from(HammingWeightClaimReductionPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(
+            HammingWeightClaimReductionChallenge::Gamma,
+        )),
         input.stage7.public.hamming_gamma,
     )?;
     let hamming_point = input

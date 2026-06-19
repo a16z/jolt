@@ -75,13 +75,10 @@ where
     )
     .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
     values.public(
-        JoltPublicId::from(RamReadWritePublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
         input.stage2.public.ram_read_write_gamma,
     )?;
-    values.public(
-        JoltPublicId::from(RamReadWritePublic::EqCycle),
-        eq_cycle,
-    )?;
+    values.public(JoltPublicId::from(RamReadWritePublic::EqCycle), eq_cycle)?;
 
     let product_point = input
         .stage2
@@ -123,7 +120,9 @@ where
     )
     .map_err(|error| public_error(JoltRelationId::InstructionClaimReduction, error))?;
     values.public(
-        JoltPublicId::from(InstructionClaimReductionPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(
+            InstructionClaimReductionChallenge::Gamma,
+        )),
         input.stage2.public.instruction_gamma,
     )?;
     values.public(

@@ -20,7 +20,7 @@ where
     let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
 
     values.public(
-        JoltPublicId::from(InstructionReadRafPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(InstructionReadRafChallenge::Gamma)),
         input.stage5.public.instruction_gamma,
     )?;
     let instruction_output_openings =
@@ -80,7 +80,7 @@ where
     )?;
 
     values.public(
-        JoltPublicId::from(RamRaClaimReductionPublic::Gamma),
+        VerifierPublicId::Challenge(JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)),
         input.stage5.public.ram_gamma,
     )?;
     let ram_point = input
