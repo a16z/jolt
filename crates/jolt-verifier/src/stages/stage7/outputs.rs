@@ -2,9 +2,9 @@
 
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::Field;
-use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
+use crate::stages::relations::OpeningClaim;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 use super::inputs::Stage7OutputClaims;
@@ -21,18 +21,26 @@ pub struct PrecommittedFinalOpening<F: Field> {
     pub opening_claim: Option<F>,
 }
 
+/// The Fiat-Shamir challenge the verifier draws during stage 7: the hamming-weight
+/// reduction's batching gamma. (The batch's own sumcheck point and batching
+/// coefficients are stage-local verification artifacts and are not propagated to
+/// later stages.)
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7PublicOutput<F: Field> {
-    pub challenges: Vec<F>,
-    pub batching_coefficients: Vec<F>,
+pub struct Stage7Challenges<F: Field> {
     pub hamming_gamma: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ClearOutput<F: Field> {
-    pub public: Stage7PublicOutput<F>,
-    pub output_claims: Stage7OutputClaims<F>,
-    pub batch: VerifiedStage7Batch<F>,
+    pub challenges: Stage7Challenges<F>,
+    /// The produced stage-7 openings paired with their points (point + value) via
+    /// the `OpeningClaim` cell.
+    pub output_claims: Stage7OutputClaims<OpeningClaim<F>>,
+    /// The hamming-weight reduction's opening point — the own point of the one-hot
+    /// `Ra` polynomials, shared by all reduced RA openings. Stored contiguously so
+    /// stage 8 can borrow it directly (the per-family RA opening cells can be empty
+    /// for a missing family, so it cannot always be read off a cell).
+    pub hamming_weight_opening_point: Vec<F>,
     pub precommitted_final_openings: Vec<PrecommittedFinalOpening<F>>,
 }
 
@@ -50,33 +58,20 @@ pub struct Stage7ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the ZK variant carries the committed sumcheck consistency and per-relation public outputs, which the clear variant does not; collapsing it to point-only cells is a later pass"
+)]
 pub enum Stage7Output<F: Field, C> {
     Clear(Stage7ClearOutput<F>),
     Zk(Stage7ZkOutput<F, C>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedStage7Batch<F: Field> {
+pub struct Stage7PublicOutput<F: Field> {
+    pub challenges: Vec<F>,
     pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
-    pub sumcheck_final_claim: F,
-    pub expected_final_claim: F,
-    pub hamming_weight_claim_reduction: VerifiedHammingWeightClaimReductionSumcheck<F>,
-    pub trusted_advice_address_phase: Option<VerifiedAdviceAddressPhaseSumcheck<F>>,
-    pub untrusted_advice_address_phase: Option<VerifiedAdviceAddressPhaseSumcheck<F>>,
-    pub bytecode_address_phase: Option<VerifiedCommittedReductionAddressPhaseSumcheck<F>>,
-    pub program_image_address_phase: Option<VerifiedCommittedReductionAddressPhaseSumcheck<F>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedHammingWeightClaimReductionSumcheck<F: Field> {
-    pub input_claim: F,
-    pub sumcheck_point: Vec<F>,
-    pub opening_point: Vec<F>,
-    pub instruction_ra_opening_points: Vec<Vec<F>>,
-    pub bytecode_ra_opening_points: Vec<Vec<F>>,
-    pub ram_ra_opening_points: Vec<Vec<F>>,
-    pub expected_output_claim: F,
+    pub hamming_gamma: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,15 +84,6 @@ pub struct HammingWeightClaimReductionPublicOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedAdviceAddressPhaseSumcheck<F: Field> {
-    pub kind: JoltAdviceKind,
-    pub input_claim: F,
-    pub sumcheck_point: Vec<F>,
-    pub opening_point: Vec<F>,
-    pub expected_output_claim: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdviceAddressPhasePublicOutput<F: Field> {
     pub kind: JoltAdviceKind,
     pub sumcheck_point: Vec<F>,
@@ -105,14 +91,6 @@ pub struct AdviceAddressPhasePublicOutput<F: Field> {
 }
 
 /// Address phase of the committed bytecode or program-image claim reduction.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedCommittedReductionAddressPhaseSumcheck<F: Field> {
-    pub input_claim: F,
-    pub sumcheck_point: Vec<F>,
-    pub opening_point: Vec<F>,
-    pub expected_output_claim: F,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommittedReductionAddressPhasePublicOutput<F: Field> {
     pub sumcheck_point: Vec<F>,

@@ -22,7 +22,9 @@ use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use super::outputs::Stage8OpeningId;
 use crate::{
-    stages::{stage6::Stage6ClearOutput, stage7::outputs::Stage7ClearOutput},
+    stages::{
+        relations::OpeningClaim, stage6::Stage6ClearOutput, stage7::outputs::Stage7ClearOutput,
+    },
     VerifierError,
 };
 
@@ -219,12 +221,7 @@ where
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    let hamming_weight_opening_point = input
-        .stage7
-        .batch
-        .hamming_weight_claim_reduction
-        .opening_point
-        .clone();
+    let hamming_weight_opening_point = input.stage7.hamming_weight_opening_point.clone();
     let inc_claim_reduction_opening_point =
         input.stage6.batch.inc_claim_reduction.opening_point.clone();
 
@@ -366,13 +363,13 @@ fn jolt_final_opening_claim_and_scale<F: Field>(
 fn hamming_weight_opening_claim<F: Field>(
     polynomial: JoltCommittedPolynomial,
     index: usize,
-    claims: &[F],
+    claims: &[OpeningClaim<F>],
     opening_point: &[F],
     hamming_weight_opening_point: &[F],
 ) -> Result<(F, F), VerifierError> {
     let claim = claims
         .get(index)
-        .copied()
+        .map(|claim| claim.value)
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: committed_openings::final_opening_id(polynomial),
         })?;

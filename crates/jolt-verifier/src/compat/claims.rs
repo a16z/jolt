@@ -33,10 +33,14 @@ use crate::{
             RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
             Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
         },
-        stage7::inputs::{
-            AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
-            HammingWeightClaimReductionOutputClaims, ProgramImageAddressPhaseOutputClaim,
-            Stage7AdviceAddressPhaseClaims, Stage7OutputClaims,
+        stage7::{
+            advice_address_phase::AdviceAddressPhaseOutputClaims,
+            committed_reduction_address_phase::{
+                BytecodeReductionAddressPhaseOutputClaims,
+                ProgramImageReductionAddressPhaseOutputClaims,
+            },
+            hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
+            inputs::Stage7OutputClaims,
         },
     },
     VerifierError,
@@ -554,7 +558,7 @@ fn stage7_claims_from_native<F: Field>(
             bytecode_ra,
             ram_ra,
         },
-        advice_address_phase: Stage7AdviceAddressPhaseClaims {
+        advice_address_phase: AdviceAddressPhaseOutputClaims {
             trusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
         },
@@ -566,28 +570,26 @@ fn stage7_claims_from_native<F: Field>(
 fn advice_address_phase_claim_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
     kind: JoltAdviceKind,
-) -> Option<AdviceAddressPhaseOutputClaim<F>> {
+) -> Option<F> {
     let _ = claims.get(advice::cycle_phase_advice_opening(kind))?;
-    claims
-        .get(advice::final_advice_opening(kind))
-        .map(|opening_claim| AdviceAddressPhaseOutputClaim { opening_claim })
+    claims.get(advice::final_advice_opening(kind))
 }
 
 fn bytecode_address_phase_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Option<BytecodeAddressPhaseOutputClaims<F>> {
+) -> Option<BytecodeReductionAddressPhaseOutputClaims<F>> {
     let _ = claims.get(bytecode_claim_reduction::cycle_phase_intermediate_opening())?;
     let chunks = final_bytecode_chunk_claims_from_native(claims);
-    (!chunks.is_empty()).then_some(BytecodeAddressPhaseOutputClaims { chunks })
+    (!chunks.is_empty()).then_some(BytecodeReductionAddressPhaseOutputClaims { chunks })
 }
 
 fn program_image_address_phase_claim_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Option<ProgramImageAddressPhaseOutputClaim<F>> {
+) -> Option<ProgramImageReductionAddressPhaseOutputClaims<F>> {
     let _ = claims.get(program_image::cycle_phase_program_image_opening())?;
     claims
         .get(program_image::final_program_image_opening())
-        .map(|opening_claim| ProgramImageAddressPhaseOutputClaim { opening_claim })
+        .map(|program_image| ProgramImageReductionAddressPhaseOutputClaims { program_image })
 }
 
 #[derive(Clone, Debug)]
@@ -763,7 +765,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            advice_address_phase: Stage7AdviceAddressPhaseClaims {
+            advice_address_phase: AdviceAddressPhaseOutputClaims {
                 trusted: None,
                 untrusted: None,
             },
@@ -1673,16 +1675,12 @@ fn claim_from_stage7_outputs<F: Field>(
     }
 
     match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
-            .advice_address_phase
-            .trusted
-            .as_ref()
-            .map(|claim| claim.opening_claim),
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
-            .advice_address_phase
-            .untrusted
-            .as_ref()
-            .map(|claim| claim.opening_claim),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => {
+            claims.advice_address_phase.trusted
+        }
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => {
+            claims.advice_address_phase.untrusted
+        }
         _ => None,
     }
 }
@@ -1739,16 +1737,12 @@ fn claim_mut_from_stage7_outputs<F: Field>(
     }
 
     match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
-            .advice_address_phase
-            .trusted
-            .as_mut()
-            .map(|claim| &mut claim.opening_claim),
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
-            .advice_address_phase
-            .untrusted
-            .as_mut()
-            .map(|claim| &mut claim.opening_claim),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => {
+            claims.advice_address_phase.trusted.as_mut()
+        }
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => {
+            claims.advice_address_phase.untrusted.as_mut()
+        }
         _ => None,
     }
 }

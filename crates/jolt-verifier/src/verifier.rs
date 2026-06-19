@@ -1144,15 +1144,16 @@ mod tests {
             },
             stage7: stage7::inputs::Stage7OutputClaims {
                 hamming_weight_claim_reduction:
-                    stage7::inputs::HammingWeightClaimReductionOutputClaims {
+                    stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
                     },
-                advice_address_phase: stage7::inputs::Stage7AdviceAddressPhaseClaims {
-                    trusted: None,
-                    untrusted: None,
-                },
+                advice_address_phase:
+                    stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
+                        trusted: None,
+                        untrusted: None,
+                    },
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
             },

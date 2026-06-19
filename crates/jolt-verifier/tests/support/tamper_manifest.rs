@@ -955,7 +955,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage7.claims.advice_address_phase.trusted.opening_claim",
-        "claims.stage7.advice_address_phase.trusted.opening_claim",
+        "claims.stage7.advice_address_phase.trusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -963,7 +963,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage7.claims.advice_address_phase.untrusted.opening_claim",
-        "claims.stage7.advice_address_phase.untrusted.opening_claim",
+        "claims.stage7.advice_address_phase.untrusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -979,7 +979,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage7.claims.program_image_address_phase",
-        "claims.stage7.program_image_address_phase.opening_claim",
+        "claims.stage7.program_image_address_phase.program_image",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
@@ -1449,25 +1449,24 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
         },
         stage7: stage7::inputs::Stage7OutputClaims {
             hamming_weight_claim_reduction:
-                stage7::inputs::HammingWeightClaimReductionOutputClaims {
+                stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                 },
-            advice_address_phase: stage7::inputs::Stage7AdviceAddressPhaseClaims {
-                trusted: Some(stage7::inputs::AdviceAddressPhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-                untrusted: Some(stage7::inputs::AdviceAddressPhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-            },
-            bytecode_address_phase: Some(stage7::inputs::BytecodeAddressPhaseOutputClaims {
-                chunks: vec![zero],
-            }),
+            advice_address_phase:
+                stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
+                    trusted: Some(zero),
+                    untrusted: Some(zero),
+                },
+            bytecode_address_phase: Some(
+                stage7::committed_reduction_address_phase::BytecodeReductionAddressPhaseOutputClaims {
+                    chunks: vec![zero],
+                },
+            ),
             program_image_address_phase: Some(
-                stage7::inputs::ProgramImageAddressPhaseOutputClaim {
-                    opening_claim: zero,
+                stage7::committed_reduction_address_phase::ProgramImageReductionAddressPhaseOutputClaims {
+                    program_image: zero,
                 },
             ),
         },

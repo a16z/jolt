@@ -25,17 +25,15 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckProof;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage7::outputs::Stage7PublicOutput;
-use jolt_verifier::stages::stage7::{
-    inputs::Stage7OutputClaims, outputs::Stage7ClearOutput,
-    stage7_advice_address_output as verifier_stage7_advice_address_output, stage7_clear_output,
-    stage7_expected_final_claim, stage7_expected_outputs, stage7_hamming_opening_point,
-    stage7_hamming_output_claim, stage7_hamming_sumcheck_point,
-    stage7_hamming_virtualization_address_points, stage7_input_claim_values, stage7_input_claims,
-    stage7_output_claim_values, stage7_output_claims, Stage7AdviceAddressOutput,
-    Stage7AdviceAddressOutputRequest, Stage7ClearOutputRequest, Stage7ExpectedOutputsRequest,
-    Stage7HammingOpeningPointRequest, Stage7HammingOutputClaimRequest,
-    Stage7HammingSumcheckPointRequest, Stage7InputClaimRequest, Stage7InputClaims,
-    Stage7OutputClaimValuesRequest, Stage7OutputClaimsRequest,
+use jolt_verifier::stages::{
+    relations::SumcheckInstance,
+    stage7::{
+        advice_address_phase::AdviceAddressPhaseOutputClaims,
+        hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
+        inputs::Stage7OutputClaims, outputs::Stage7ClearOutput,
+        stage7_hamming_virtualization_address_points, Stage7InstancePoints, Stage7Layouts,
+        Stage7Relations,
+    },
 };
 use jolt_witness::{protocols::jolt_vm::JoltVmNamespace, WitnessProvider};
 
@@ -59,6 +57,15 @@ impl Stage7ProverConfig {
             hamming_dimensions,
             trusted_advice_layout,
             untrusted_advice_layout,
+        }
+    }
+
+    fn layouts(&self) -> Stage7Layouts<'_> {
+        Stage7Layouts {
+            trusted_advice: self.trusted_advice_layout.as_ref(),
+            untrusted_advice: self.untrusted_advice_layout.as_ref(),
+            bytecode: None,
+            program_image: None,
         }
     }
 }
@@ -111,16 +118,10 @@ where
     pub(crate) committed_witness: CommittedSumcheckWitness<F>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage7RegularBatchPrefixOutput<F: Field> {
-    input_claims: Stage7InputClaims<F>,
-    hamming_gamma: F,
-}
-
-struct Stage7PreparedBatch<'a, F: Field> {
-    prefix: Stage7RegularBatchPrefixOutput<F>,
+struct Stage7PreparedBatch<F: Field> {
+    relations: Stage7Relations<F>,
     hamming_state: SumcheckStage7HammingState<F>,
-    advice_states: Vec<Stage7AdviceAddressProverState<'a, F>>,
+    advice_states: Vec<Stage7AdviceAddressProverState<F>>,
 }
 
 const STAGE7_HAMMING_CHUNK_SIZE: usize = 1024;
@@ -144,18 +145,22 @@ where
     }
     let config = input.config;
     let stage6 = input.stage6;
-    let prepared = prepare_stage7_regular_batch(input, backend, transcript)?;
+    let Stage7PreparedBatch {
+        relations,
+        hamming_state,
+        advice_states,
+    } = prepare_stage7_regular_batch(input, backend, transcript)?;
 
     let batch = prove_stage7_regular_batch_sumcheck_with_recorder::<F, T, B, _>(
-        &prepared.prefix.input_claims,
-        prepared.hamming_state,
-        prepared.advice_states,
+        &relations,
+        hamming_state,
+        advice_states,
         transcript,
         backend,
         ClearSumcheckRecorder::<F, C>::new(0),
     )?;
     let (claims, verifier_output) =
-        stage7_claims_and_verifier_output(config, stage6, &prepared.prefix, &batch)?;
+        stage7_claims_and_verifier_output(config, stage6, &relations, &batch)?;
 
     Ok(Stage7ProofComponent {
         stage7_sumcheck_proof: batch.proof,
@@ -186,22 +191,30 @@ where
     }
     let config = input.config;
     let stage6 = input.stage6;
-    let prepared = prepare_stage7_regular_batch(input, backend, transcript)?;
+    let Stage7PreparedBatch {
+        relations,
+        hamming_state,
+        advice_states,
+    } = prepare_stage7_regular_batch(input, backend, transcript)?;
 
     let batch = prove_stage7_regular_batch_sumcheck_with_recorder::<F, T, B, _>(
-        &prepared.prefix.input_claims,
-        prepared.hamming_state,
-        prepared.advice_states,
+        &relations,
+        hamming_state,
+        advice_states,
         transcript,
         backend,
         CommittedSumcheckRecorder::<F, VC>::new(vc_setup)?,
     )?;
     let (_, verifier_output) =
-        stage7_claims_and_verifier_output(config, stage6, &prepared.prefix, &batch)?;
+        stage7_claims_and_verifier_output(config, stage6, &relations, &batch)?;
 
     Ok(Stage7CommittedProofComponent {
         stage7_sumcheck_proof: batch.proof,
-        public: verifier_output.public.clone(),
+        public: Stage7PublicOutput {
+            challenges: batch.challenges.clone(),
+            batching_coefficients: batch.batching_coefficients.clone(),
+            hamming_gamma: relations.hamming_gamma(),
+        },
         output_claim_values: batch.output_claim_values.ok_or_else(|| {
             invalid_sumcheck_output("Stage 7 committed output claim values are missing".to_owned())
         })?,
@@ -215,31 +228,30 @@ where
 struct Stage7Batch<F: Field, C> {
     proof: SumcheckProof<F, C>,
     challenges: Vec<F>,
-    batching_coefficients: Vec<F>,
     max_num_rounds: usize,
-    output_claim: F,
     reduced_claims: Vec<F>,
-    trusted_advice: Option<Stage7AdviceAddressOutput<F>>,
-    untrusted_advice: Option<Stage7AdviceAddressOutput<F>>,
+    trusted_advice: Option<F>,
+    untrusted_advice: Option<F>,
+    #[cfg(feature = "zk")]
+    batching_coefficients: Vec<F>,
     #[cfg(feature = "zk")]
     committed_witness: Option<CommittedSumcheckWitness<F>>,
     #[cfg(feature = "zk")]
     output_claim_values: Option<Vec<F>>,
 }
 
-struct Stage7AdviceAddressProverState<'a, F: Field> {
+struct Stage7AdviceAddressProverState<F: Field> {
     kind: JoltAdviceKind,
     input_claim: F,
-    layout: &'a jolt_claims::protocols::jolt::AdviceClaimReductionLayout,
     request: SumcheckStage7AdviceAddressStateRequest<F, JoltVmNamespace>,
     state: SumcheckStage7AdviceAddressState<F>,
 }
 
-fn prepare_stage7_regular_batch<'a, F, W, B, T>(
-    input: Stage7ProverInput<'a, F, W>,
+fn prepare_stage7_regular_batch<F, W, B, T>(
+    input: Stage7ProverInput<'_, F, W>,
     backend: &mut B,
     transcript: &mut T,
-) -> Result<Stage7PreparedBatch<'a, F>, ProverError>
+) -> Result<Stage7PreparedBatch<F>, ProverError>
 where
     F: Field,
     W: WitnessProvider<F, JoltVmNamespace>
@@ -251,8 +263,15 @@ where
     let stage6 = input.stage6;
     let dimensions = config.hamming_dimensions;
 
-    let prefix = derive_stage7_regular_batch_prefix(config, stage6, transcript)?;
-    let hamming_gamma = prefix.hamming_gamma;
+    let hamming_gamma = transcript.challenge_scalar();
+    let relations = Stage7Relations::build(
+        dimensions,
+        hamming_gamma,
+        &config.layouts(),
+        input.stage4,
+        stage6,
+    )
+    .map_err(verifier_stage7_error)?;
 
     let virt_points = stage7_hamming_virtualization_address_points(dimensions, stage6)
         .map_err(verifier_stage7_error)?;
@@ -267,26 +286,20 @@ where
     let hamming_state =
         backend.materialize_sumcheck_stage7_hamming_state(&state_request, input.witness)?;
 
-    let advice_states = stage7_advice_address_states(
-        config,
-        input.stage4,
-        stage6,
-        input.witness,
-        backend,
-        &prefix.input_claims,
-    )?;
+    let advice_states =
+        stage7_advice_address_states(config, input.stage4, stage6, input.witness, backend, &relations)?;
 
     Ok(Stage7PreparedBatch {
-        prefix,
+        relations,
         hamming_state,
         advice_states,
     })
 }
 
 fn prove_stage7_regular_batch_sumcheck_with_recorder<F, T, B, S>(
-    input_claims: &Stage7InputClaims<F>,
+    relations: &Stage7Relations<F>,
     mut hamming_state: SumcheckStage7HammingState<F>,
-    mut advice_states: Vec<Stage7AdviceAddressProverState<'_, F>>,
+    mut advice_states: Vec<Stage7AdviceAddressProverState<F>>,
     transcript: &mut T,
     backend: &mut B,
     mut proof_recorder: S,
@@ -303,8 +316,13 @@ where
     });
     let instance_count = 1 + advice_states.len();
 
-    let hamming_input_claim = input_claims.hamming_weight_claim_reduction;
-    let input_claim_values = stage7_input_claim_values(input_claims);
+    let hamming_input_claim = relations
+        .hamming
+        .input_claim(&relations.hamming_inputs)
+        .map_err(verifier_stage7_error)?;
+    let input_claim_values = std::iter::once(hamming_input_claim)
+        .chain(advice_states.iter().map(|advice| advice.input_claim))
+        .collect::<Vec<_>>();
     proof_recorder.absorb_input_claims(&input_claim_values, transcript);
     let batching_coefficients = (0..instance_count)
         .map(|_| transcript.challenge_scalar())
@@ -317,6 +335,7 @@ where
             .input_claim
             .mul_pow_2(max_num_rounds - advice.request.address_phase_rounds())
     }));
+    #[cfg(any(test, debug_assertions))]
     let mut running_claim = individual_claims
         .iter()
         .zip(&batching_coefficients)
@@ -373,7 +392,10 @@ where
 
         let batched_poly = trim_round_polynomial(batched_poly);
         let challenge = proof_recorder.absorb_round(&batched_poly, transcript)?;
-        running_claim = batched_poly.evaluate(challenge);
+        #[cfg(any(test, debug_assertions))]
+        {
+            running_claim = batched_poly.evaluate(challenge);
+        }
         for (claim, poly) in individual_claims.iter_mut().zip(instance_polys) {
             *claim = poly.evaluate(challenge);
         }
@@ -411,38 +433,25 @@ where
             .state
             .final_advice_opening()
             .ok_or_else(|| invalid_sumcheck_output("Stage 7 advice state is not fully bound"))?;
-        let output = verifier_stage7_advice_address_output(Stage7AdviceAddressOutputRequest {
-            kind: advice.kind,
-            input_claim: advice.input_claim,
-            rounds: advice.request.address_phase_rounds(),
-            layout: advice.layout,
-            cycle_phase_variables: &advice.request.cycle_phase_variables,
-            reference_opening_point: &advice.request.reference_opening_point,
-            challenges: &challenges,
-            opening_claim,
-        })
-        .map_err(verifier_stage7_error)?;
-        match output.kind {
-            JoltAdviceKind::Trusted => trusted_advice = Some(output),
-            JoltAdviceKind::Untrusted => untrusted_advice = Some(output),
+        match advice.kind {
+            JoltAdviceKind::Trusted => trusted_advice = Some(opening_claim),
+            JoltAdviceKind::Untrusted => untrusted_advice = Some(opening_claim),
         }
     }
-    let output_claim_values = stage7_output_claim_values(Stage7OutputClaimValuesRequest {
-        reduced_claims: &reduced_claims,
-        trusted_advice: trusted_advice.as_ref(),
-        untrusted_advice: untrusted_advice.as_ref(),
-    });
+    let mut output_claim_values = reduced_claims.clone();
+    output_claim_values.extend(trusted_advice);
+    output_claim_values.extend(untrusted_advice);
     let proof_artifacts = proof_recorder.finish(&output_claim_values, transcript)?;
 
     Ok(Stage7Batch {
         proof: proof_artifacts.proof,
         challenges,
-        batching_coefficients,
         max_num_rounds,
-        output_claim: running_claim,
         reduced_claims,
         trusted_advice,
         untrusted_advice,
+        #[cfg(feature = "zk")]
+        batching_coefficients,
         #[cfg(feature = "zk")]
         committed_witness: proof_artifacts.committed_witness,
         #[cfg(feature = "zk")]
@@ -453,79 +462,79 @@ where
 fn stage7_claims_and_verifier_output<F, C>(
     config: &Stage7ProverConfig,
     stage6: &Stage6ClearOutput<F>,
-    prefix: &Stage7RegularBatchPrefixOutput<F>,
+    relations: &Stage7Relations<F>,
     batch: &Stage7Batch<F, C>,
 ) -> Result<(Stage7OutputClaims<F>, Stage7ClearOutput<F>), ProverError>
 where
     F: Field,
 {
-    let dimensions = config.hamming_dimensions;
-    let hamming_point = stage7_hamming_sumcheck_point(Stage7HammingSumcheckPointRequest {
-        hamming_dimensions: dimensions,
-        max_num_rounds: batch.max_num_rounds,
-        challenges: &batch.challenges,
-    })
-    .map_err(verifier_stage7_error)?;
-    let opening_point = stage7_hamming_opening_point(Stage7HammingOpeningPointRequest {
-        hamming_dimensions: dimensions,
-        hamming_point: &hamming_point,
-        r_cycle: &stage6.batch.booleanity.r_cycle,
-    })
-    .map_err(verifier_stage7_error)?;
+    let layout = config.hamming_dimensions.layout;
+    if batch.reduced_claims.len() != layout.total() {
+        return Err(invalid_sumcheck_output(format!(
+            "Stage 7 hamming reduction produced {} RA claims, expected {}",
+            batch.reduced_claims.len(),
+            layout.total()
+        )));
+    }
+    let instruction_end = layout.instruction();
+    let bytecode_end = instruction_end + layout.bytecode();
+    let claims = Stage7OutputClaims {
+        hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
+            instruction_ra: batch.reduced_claims[..instruction_end].to_vec(),
+            bytecode_ra: batch.reduced_claims[instruction_end..bytecode_end].to_vec(),
+            ram_ra: batch.reduced_claims[bytecode_end..].to_vec(),
+        },
+        advice_address_phase: AdviceAddressPhaseOutputClaims {
+            trusted: batch.trusted_advice,
+            untrusted: batch.untrusted_advice,
+        },
+        bytecode_address_phase: None,
+        program_image_address_phase: None,
+    };
 
-    let claims = stage7_output_claims(Stage7OutputClaimsRequest {
-        hamming_dimensions: dimensions,
-        reduced_claims: &batch.reduced_claims,
-        trusted_advice: batch.trusted_advice.as_ref(),
-        untrusted_advice: batch.untrusted_advice.as_ref(),
-    })
-    .map_err(verifier_stage7_error)?;
+    // The hamming reduction is suffix-aligned in the batch; the advice address
+    // phases are prefix-aligned (offset 0).
+    let hamming_rounds = relations.hamming.sumcheck_relation().sumcheck.rounds;
+    let hamming_point = batch
+        .challenges
+        .get(batch.max_num_rounds - hamming_rounds..)
+        .ok_or_else(|| invalid_sumcheck_output("Stage 7 hamming sumcheck point is out of range"))?;
+    let advice_point = |relation: &Option<_>| -> Result<Option<&[F]>, ProverError> {
+        match relation {
+            Some(relation) => {
+                let rounds =
+                    SumcheckInstance::sumcheck_relation(relation).sumcheck.rounds;
+                let point = batch.challenges.get(..rounds).ok_or_else(|| {
+                    invalid_sumcheck_output("Stage 7 advice sumcheck point is out of range")
+                })?;
+                Ok(Some(point))
+            }
+            None => Ok(None),
+        }
+    };
+    let points = Stage7InstancePoints {
+        hamming: hamming_point,
+        trusted_advice: advice_point(&relations.trusted_advice)?,
+        untrusted_advice: advice_point(&relations.untrusted_advice)?,
+        bytecode: None,
+        program_image: None,
+    };
 
-    let expected_output_claim = stage7_hamming_output_claim(Stage7HammingOutputClaimRequest {
-        hamming_dimensions: dimensions,
-        hamming_point: &hamming_point,
-        hamming_gamma: prefix.hamming_gamma,
-        claims: &claims,
-        stage6,
-    })
-    .map_err(verifier_stage7_error)?;
-    let expected_outputs = stage7_expected_outputs(Stage7ExpectedOutputsRequest {
-        hamming_weight_claim_reduction: expected_output_claim,
-        trusted_advice: batch.trusted_advice.as_ref(),
-        untrusted_advice: batch.untrusted_advice.as_ref(),
-    });
-    let expected_final_claim =
-        stage7_expected_final_claim(&batch.batching_coefficients, &expected_outputs)
-            .map_err(verifier_stage7_error)?;
+    let parts = relations
+        .clear_output(&points, &claims, stage6, &config.layouts())
+        .map_err(verifier_stage7_error)?;
 
-    let verifier_output = stage7_clear_output(Stage7ClearOutputRequest {
-        hamming_dimensions: dimensions,
-        hamming_gamma: prefix.hamming_gamma,
-        public_challenges: hamming_point.clone(),
-        output_claims: &claims,
-        input_claims: &prefix.input_claims,
-        batching_coefficients: &batch.batching_coefficients,
-        sumcheck_challenges: batch.challenges.clone(),
-        sumcheck_final_claim: batch.output_claim,
-        expected_final_claim,
-        hamming_sumcheck_point: hamming_point,
-        hamming_opening_point: opening_point,
-        expected_outputs: &expected_outputs,
-        trusted_advice: batch.trusted_advice.clone().map(Into::into),
-        untrusted_advice: batch.untrusted_advice.clone().map(Into::into),
-    });
-
-    Ok((claims, verifier_output))
+    Ok((claims, parts.output))
 }
 
-fn stage7_advice_address_states<'a, F, W, B>(
-    config: &'a Stage7ProverConfig,
-    stage4: &jolt_verifier::stages::stage4::Stage4ClearOutput<F>,
+fn stage7_advice_address_states<F, W, B>(
+    config: &Stage7ProverConfig,
+    stage4: &Stage4ClearOutput<F>,
     stage6: &Stage6ClearOutput<F>,
     witness: &W,
     backend: &mut B,
-    input_claims: &Stage7InputClaims<F>,
-) -> Result<Vec<Stage7AdviceAddressProverState<'a, F>>, ProverError>
+    relations: &Stage7Relations<F>,
+) -> Result<Vec<Stage7AdviceAddressProverState<F>>, ProverError>
 where
     F: Field,
     W: WitnessProvider<F, JoltVmNamespace>,
@@ -539,13 +548,16 @@ where
         if !layout.dimensions().has_address_phase() {
             continue;
         }
-        let input_claim = match kind {
-            JoltAdviceKind::Trusted => input_claims.trusted_advice_address_phase,
-            JoltAdviceKind::Untrusted => input_claims.untrusted_advice_address_phase,
+        let relation = match kind {
+            JoltAdviceKind::Trusted => relations.trusted_advice.as_ref(),
+            JoltAdviceKind::Untrusted => relations.untrusted_advice.as_ref(),
         }
         .ok_or_else(|| ProverError::InvalidStageRequest {
-            reason: format!("Stage 7 {kind:?} advice address input claim is missing"),
+            reason: format!("Stage 7 {kind:?} advice address relation is missing"),
         })?;
+        let input_claim = relation
+            .input_claim(&relations.advice_inputs)
+            .map_err(verifier_stage7_error)?;
         let cycle_phase =
             stage6
                 .advice_cycle_phase(kind)
@@ -573,7 +585,6 @@ where
         states.push(Stage7AdviceAddressProverState {
             kind,
             input_claim,
-            layout,
             request,
             state,
         });
@@ -593,33 +604,6 @@ fn verifier_stage7_error(error: jolt_verifier::VerifierError) -> ProverError {
     ProverError::InvalidStageRequest {
         reason: error.to_string(),
     }
-}
-
-fn derive_stage7_regular_batch_prefix<F, T>(
-    config: &Stage7ProverConfig,
-    stage6: &Stage6ClearOutput<F>,
-    transcript: &mut T,
-) -> Result<Stage7RegularBatchPrefixOutput<F>, ProverError>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    let hamming_gamma = transcript.challenge_scalar();
-    let input_claims = stage7_input_claims(Stage7InputClaimRequest {
-        hamming_dimensions: config.hamming_dimensions,
-        trusted_advice_layout: config.trusted_advice_layout.as_ref(),
-        untrusted_advice_layout: config.untrusted_advice_layout.as_ref(),
-        stage6,
-        hamming_gamma,
-    })
-    .map_err(|error| ProverError::InvalidStageRequest {
-        reason: error.to_string(),
-    })?;
-
-    Ok(Stage7RegularBatchPrefixOutput {
-        input_claims,
-        hamming_gamma,
-    })
 }
 
 fn advice_layout(

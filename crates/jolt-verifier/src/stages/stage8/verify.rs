@@ -6,6 +6,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
+        relations::OpeningClaim,
         stage6::inputs::Stage6OutputClaims,
         stage7::{inputs::Stage7OutputClaims, outputs::PrecommittedFinalOpening},
     },
@@ -83,11 +84,7 @@ where
 
     let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
         Deps::Clear { stage6, stage7 } => (
-            stage7
-                .batch
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
+            stage7.hamming_weight_opening_point.as_slice(),
             stage6.batch.inc_claim_reduction.opening_point.as_slice(),
             stage7.precommitted_final_openings.as_slice(),
             Some((&stage6.output_claims, &stage7.output_claims)),
@@ -253,7 +250,7 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(&Stage6OutputClaims<F>, &Stage7OutputClaims<F>)>,
+    clear_claims: Option<(&Stage6OutputClaims<F>, &Stage7OutputClaims<OpeningClaim<F>>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,
@@ -301,10 +298,11 @@ where
                     hamming_opening_point,
                     match clear_claims {
                         Some((_, stage7)) => Some(
-                            *stage7
+                            stage7
                                 .hamming_weight_claim_reduction
                                 .instruction_ra
                                 .get(index)
+                                .map(|claim| claim.value)
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
@@ -320,10 +318,11 @@ where
                     hamming_opening_point,
                     match clear_claims {
                         Some((_, stage7)) => Some(
-                            *stage7
+                            stage7
                                 .hamming_weight_claim_reduction
                                 .bytecode_ra
                                 .get(index)
+                                .map(|claim| claim.value)
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
@@ -339,10 +338,11 @@ where
                     hamming_opening_point,
                     match clear_claims {
                         Some((_, stage7)) => Some(
-                            *stage7
+                            stage7
                                 .hamming_weight_claim_reduction
                                 .ram_ra
                                 .get(index)
+                                .map(|claim| claim.value)
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
