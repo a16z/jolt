@@ -118,8 +118,11 @@ Backend program mode caveat:
   commitment handle for each TrustedAdvice, BytecodeChunk(i), and
   ProgramImageInit statement and must prove or verify it through the separate
   direct-opening path.
-  The backend program commitment cannot stand in for a missing
-  BytecodeChunk(i), ProgramImageInit, or TrustedAdvice opening proof.
+  The backend program commitment cannot stand in for a missing BytecodeChunk(i)
+  or ProgramImageInit opening proof, and it never covers TrustedAdvice.
+  If the backend stores bytecode in a different committed representation,
+  jolt-akita still treats the Jolt BytecodeChunk(i) and ProgramImageInit
+  commitments as the verifier-facing commitments to be opened.
   If a later optimization packs precommitted values into an Akita-friendly
   object, that optimization must also prove binding to the original Jolt
   precommitment before the verifier treats the value as opened.
@@ -231,6 +234,8 @@ Prove/verify:
   batching across these precommitted claims is allowed only through a direct
   native opening path that preserves the original commitment handles; it is not
   achieved by inserting the values into W_pack.
+  backend Program::Committed proof material is auxiliary only and cannot replace
+  a missing direct precommitted opening statement/proof.
 
 Rejected:
   using the PackedWitness layout digest or W_pack commitment as evidence for

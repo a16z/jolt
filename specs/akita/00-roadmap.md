@@ -78,6 +78,25 @@ PCS adapters:
 - Verifier/preprocessing commitments are not silently replaced by W_pack.
 ```
 
+Precommitted opening policy:
+
+```text
+- TrustedAdvice, BytecodeChunk(i), ProgramImageInit, and committed-bytecode
+  source facts derived from BytecodeChunk(i) are verifier-bound
+  precommitted objects.
+- They must be opened against their original precommitted commitments through
+  separate direct/native opening statements.
+- They must not be added to the proof-owned W_pack packed-view statement, even
+  if the prover also copies their values into W_pack.
+- Akita backend Program::Committed support is not this binding by itself. It
+  may commit backend bytecode material, but it does not replace the Jolt
+  precommitted TrustedAdvice, BytecodeChunk(i), or ProgramImageInit commitment
+  handles.
+- A future packed-precommitted optimization is allowed only if it proves an
+  explicit binding between the packed copy and the original precommitted
+  commitment before the verifier accepts the packed value as opened.
+```
+
 In scope:
 
 ```text

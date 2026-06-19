@@ -133,6 +133,18 @@ layout:
   PackedWitness layout digest when the PCS family is lattice
 ```
 
+Precommitted commitment class:
+
+```text
+Precommitted claims are not alternate views of the proof-owned PackedWitness.
+Their statement commitment reference is the original TrustedAdvice,
+BytecodeChunk(i), ProgramImageInit, or derived BytecodeChunk component
+commitment. The batch-opening implementation may group compatible
+precommitted claims in a direct/native opening batch, but it must preserve those
+original commitment handles and must not satisfy them with W_pack or with only
+an Akita backend Program::Committed bytecode handle.
+```
+
 Prover method inputs:
 
 ```text

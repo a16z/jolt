@@ -188,6 +188,9 @@ bound precommitted packed view is enabled.
 For lane/chunk-derived source facts, the payload contains the component opening
 proofs needed to check the claimed source value against the original
 BytecodeChunk commitments.
+Backend Program::Committed material, if present, is not sufficient for these
+precommitted claims; the payload must still carry the original precommitted
+commitment handles and their separate opening proofs.
 Protocol header:
   ProgramMode::Committed.
   IncrementCommitmentMode::FusedOneHot.
@@ -253,6 +256,9 @@ Dispatch:
    itself.
    They are direct/native opening statements. A PackedWitness reduction proof
    does not satisfy them.
+   If a prover copied the same values into W_pack, that copy is ignored for
+   these claims unless a future bound precommitted packed view explicitly proves
+   equivalence to the original precommitment.
    The verifier records these statements in a deterministic manifest and
    requires a separate proof entry for each manifest entry.
    Fused-increment StoreFlag/RdPresent source claims use the same
