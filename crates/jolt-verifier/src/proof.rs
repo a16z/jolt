@@ -177,6 +177,7 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JoltCommitments<C> {
     pub rd_inc: C,
     pub ram_inc: C,
@@ -302,6 +303,7 @@ pub fn validate_akita_commitment_payload_config<C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JoltRaCommitments<C> {
     pub instruction: Vec<C>,
     pub ram: Vec<C>,
@@ -320,6 +322,7 @@ impl<C> JoltRaCommitments<C> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FieldInlineCommitments<C> {
     pub field_registers: FieldRegistersCommitments<C>,
 }
@@ -333,6 +336,7 @@ impl<C> FieldInlineCommitments<C> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FieldRegistersCommitments<C> {
     pub rd_inc: C,
 }
@@ -506,6 +510,89 @@ mod tests {
 
         assert!(matches!(dory_roundtrip, CommitmentPayload::Dory(_)));
         assert!(matches!(akita_roundtrip, CommitmentPayload::Akita(_)));
+    }
+
+    #[test]
+    #[expect(
+        clippy::panic,
+        reason = "test serialization failures should fail loudly"
+    )]
+    fn dory_payload_rejects_extra_commitment_fields() {
+        let mut value = serde_json::to_value(dory_payload())
+            .unwrap_or_else(|error| panic!("Dory payload should serialize: {error}"));
+        let dory = value
+            .get_mut("Dory")
+            .and_then(|payload| payload.as_object_mut())
+            .unwrap_or_else(|| panic!("Dory payload should be an object"));
+        let previous = dory.insert(
+            "extra_commitment".to_string(),
+            serde_json::Value::from(10_u64),
+        );
+        assert!(previous.is_none());
+
+        assert!(
+            serde_json::from_value::<CommitmentPayload<u64>>(value).is_err(),
+            "Dory payloads must reject extra commitment fields"
+        );
+
+        let mut value = serde_json::to_value(dory_payload())
+            .unwrap_or_else(|error| panic!("Dory payload should serialize: {error}"));
+        let ra = value
+            .get_mut("Dory")
+            .and_then(|payload| payload.as_object_mut())
+            .and_then(|payload| payload.get_mut("ra"))
+            .and_then(|ra| ra.as_object_mut())
+            .unwrap_or_else(|| panic!("Dory RA payload should be an object"));
+        let previous = ra.insert("extra_ra".to_string(), serde_json::Value::from(11_u64));
+        assert!(previous.is_none());
+
+        assert!(
+            serde_json::from_value::<CommitmentPayload<u64>>(value).is_err(),
+            "Dory RA payloads must reject extra commitment fields"
+        );
+
+        #[cfg(feature = "field-inline")]
+        {
+            let mut value = serde_json::to_value(dory_payload())
+                .unwrap_or_else(|error| panic!("Dory payload should serialize: {error}"));
+            let field_inline = value
+                .get_mut("Dory")
+                .and_then(|payload| payload.as_object_mut())
+                .and_then(|payload| payload.get_mut("field_inline"))
+                .and_then(|field_inline| field_inline.as_object_mut())
+                .unwrap_or_else(|| panic!("Dory field-inline payload should be an object"));
+            let previous = field_inline.insert(
+                "extra_field_inline".to_string(),
+                serde_json::Value::from(12_u64),
+            );
+            assert!(previous.is_none());
+
+            assert!(
+                serde_json::from_value::<CommitmentPayload<u64>>(value).is_err(),
+                "Dory field-inline payloads must reject extra commitment fields"
+            );
+
+            let mut value = serde_json::to_value(dory_payload())
+                .unwrap_or_else(|error| panic!("Dory payload should serialize: {error}"));
+            let field_registers = value
+                .get_mut("Dory")
+                .and_then(|payload| payload.as_object_mut())
+                .and_then(|payload| payload.get_mut("field_inline"))
+                .and_then(|field_inline| field_inline.as_object_mut())
+                .and_then(|field_inline| field_inline.get_mut("field_registers"))
+                .and_then(|field_registers| field_registers.as_object_mut())
+                .unwrap_or_else(|| panic!("Dory field-register payload should be an object"));
+            let previous = field_registers.insert(
+                "extra_field_register".to_string(),
+                serde_json::Value::from(13_u64),
+            );
+            assert!(previous.is_none());
+
+            assert!(
+                serde_json::from_value::<CommitmentPayload<u64>>(value).is_err(),
+                "Dory field-register payloads must reject extra commitment fields"
+            );
+        }
     }
 
     #[test]
