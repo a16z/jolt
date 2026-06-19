@@ -68,7 +68,6 @@ use crate::{
         stage3::Stage3ClearOutput,
         stage4::Stage4ClearOutput,
         stage5::Stage5ClearOutput,
-        stage5::Stage5ZkOutput,
         zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
@@ -1541,7 +1540,7 @@ pub fn stage6_bytecode_cycle_points<F: Field>(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Stage6BytecodeRaPoint<'a, F: Field> {
+struct Stage6BytecodeRaPoint<'a, F: Field> {
     pub r_address: &'a [F],
     pub r_cycle: &'a [F],
 }
@@ -1559,7 +1558,7 @@ impl<F: Field> Stage6BytecodeRaPoint<'_, F> {
     }
 }
 
-pub fn stage6_bytecode_ra_point<'a, F: Field>(
+fn stage6_bytecode_ra_point<'a, F: Field>(
     r_address: &'a [F],
     r_cycle: &'a [F],
 ) -> Stage6BytecodeRaPoint<'a, F> {
@@ -1567,7 +1566,7 @@ pub fn stage6_bytecode_ra_point<'a, F: Field>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6BytecodeReadRafPoint<F: Field> {
+struct Stage6BytecodeReadRafPoint<F: Field> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
@@ -1584,7 +1583,7 @@ impl<F: Field> Stage6BytecodeReadRafPoint<F> {
     }
 }
 
-pub fn stage6_bytecode_read_raf_point<F: Field>(
+fn stage6_bytecode_read_raf_point<F: Field>(
     dimensions: BytecodeReadRafDimensions,
     sumcheck_point: &[F],
 ) -> Result<Stage6BytecodeReadRafPoint<F>, VerifierError> {
@@ -1625,7 +1624,7 @@ impl<F: Field> Stage6RamReducedOpeningPoint<'_, F> {
     }
 }
 
-pub fn stage6_ram_reduced_opening_point<F: Field>(
+fn stage6_ram_reduced_opening_point<F: Field>(
     point: &[F],
     log_k: usize,
     log_t: usize,
@@ -1650,18 +1649,6 @@ pub fn stage6_stage5_ram_reduced_opening_point<F: Field>(
     log_t: usize,
 ) -> Result<Stage6RamReducedOpeningPoint<'_, F>, VerifierError> {
     stage6_ram_reduced_opening_point(stage5.ram_reduced_opening_point(), log_k, log_t)
-}
-
-pub fn stage6_zk_stage5_ram_reduced_opening_point<F: Field, C>(
-    stage5: &Stage5ZkOutput<F, C>,
-    log_k: usize,
-    log_t: usize,
-) -> Result<Stage6RamReducedOpeningPoint<'_, F>, VerifierError> {
-    stage6_ram_reduced_opening_point(
-        stage5.output_points.ram_reduced_opening_point(),
-        log_k,
-        log_t,
-    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1693,15 +1680,6 @@ pub fn stage6_instruction_read_raf_point<F: Field>(
     Stage6InstructionReadRafPoint {
         address: &stage5.instruction_r_address,
         cycle: stage5.instruction_r_cycle(),
-    }
-}
-
-pub fn stage6_zk_instruction_read_raf_point<F: Field, C>(
-    stage5: &Stage5ZkOutput<F, C>,
-) -> Stage6InstructionReadRafPoint<'_, F> {
-    Stage6InstructionReadRafPoint {
-        address: &stage5.instruction_r_address,
-        cycle: stage5.output_points.instruction_r_cycle(),
     }
 }
 
@@ -2028,7 +2006,7 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
     }
 }
 
-pub fn stage6_booleanity_reference<F, T>(
+fn stage6_booleanity_reference<F, T>(
     instruction_address: &[F],
     instruction_cycle: &[F],
     committed_chunk_bits: usize,
@@ -2158,7 +2136,7 @@ impl<F: Field> Stage6TranscriptChallenges<F> {
     }
 }
 
-pub fn stage6_public_output<F: Field>(
+fn stage6_public_output<F: Field>(
     transcript_challenges: &Stage6TranscriptChallenges<F>,
     address_phase_challenges: Vec<F>,
     address_phase_batching_coefficients: Vec<F>,
@@ -2542,44 +2520,28 @@ pub fn stage6_expected_final_claim<F: Field>(
         .sum())
 }
 
-pub const fn stage6_bytecode_gamma_count() -> usize {
+const fn stage6_bytecode_gamma_count() -> usize {
     8
 }
 
-pub const fn stage6_stage1_gamma_count() -> usize {
+const fn stage6_stage1_gamma_count() -> usize {
     2 + NUM_CIRCUIT_FLAGS
 }
 
-pub const fn stage6_stage2_gamma_count() -> usize {
+const fn stage6_stage2_gamma_count() -> usize {
     4
 }
 
-pub const fn stage6_stage3_gamma_count() -> usize {
+const fn stage6_stage3_gamma_count() -> usize {
     9
 }
 
-pub const fn stage6_stage4_gamma_count() -> usize {
+const fn stage6_stage4_gamma_count() -> usize {
     3
 }
 
-pub const fn stage6_stage5_gamma_count(lookup_table_flag_count: usize) -> usize {
+const fn stage6_stage5_gamma_count(lookup_table_flag_count: usize) -> usize {
     2 + lookup_table_flag_count
-}
-
-pub fn append_stage6_opening_claims<F, T>(
-    transcript: &mut T,
-    claims: &Stage6OutputClaims<F>,
-    bytecode_ra_opening_points: &[Vec<F>],
-    booleanity_opening_point: &[F],
-) where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    for opening_claim in
-        stage6_output_claim_values(claims, bytecode_ra_opening_points, booleanity_opening_point)
-    {
-        transcript.append_labeled(b"opening_claim", &opening_claim);
-    }
 }
 
 pub fn stage6_output_claim_values<F: Field>(
