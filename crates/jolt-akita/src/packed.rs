@@ -1,14 +1,18 @@
 use jolt_crypto::Commitment;
 use jolt_field::{CanonicalBytes, FixedByteSize, Invertible, ReducingBytes};
 use jolt_openings::{
-    BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackedLinearTerm, PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement,
+    CommitmentScheme, OpeningsError, PackedLinearTerm, PhysicalView, ZkBatchOpeningScheme,
+    ZkOpeningScheme,
 };
 use jolt_poly::{EqPolynomial, MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{bind_verifier_setup_key, packed_source_polynomial};
+use crate::backend::{
+    bind_verifier_setup_key, packed_source_polynomial, packed_source_sparse_polynomial,
+    prove_batch_with_native_polynomials,
+};
 use crate::layout::{PackedCellAddress, PackedFamily, PackedWitnessLayout, PackedWitnessSource};
 use crate::types::{
     append_field_slice, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaHidingCommitment,
@@ -49,6 +53,56 @@ impl AkitaPackedScheme {
         T: Transcript<Challenge = AkitaField>,
         S: PackedWitnessSource<AkitaField>,
     {
+        if let Some(sparse_polynomial) = packed_source_sparse_polynomial(source)? {
+            if !has_packed_view(statement) {
+                let native = prove_batch_with_native_polynomials(
+                    setup,
+                    transcript,
+                    statement,
+                    &[&sparse_polynomial],
+                    vec![hint],
+                )?;
+                return Ok(AkitaPackedBatchProof {
+                    reduction: None,
+                    native,
+                });
+            }
+
+            let dense_polynomial = packed_source_polynomial(source)?;
+            let shape = validate_packed_prover_inputs(
+                setup,
+                statement,
+                std::slice::from_ref(&dense_polynomial),
+                std::slice::from_ref(&hint),
+            )?;
+            bind_verifier_setup_key(&setup.verifier, transcript);
+            bind_packed_statement(statement, shape.layout, transcript)?;
+
+            let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
+            let claimed_sum = reduced_claim(statement, &gamma_powers);
+            let selector = packed_selector_evals(shape.layout, statement, &gamma_powers)?;
+            let (reduction, sumcheck_point_lsb, opening_eval) = prove_product_sumcheck(
+                selector,
+                dense_polynomial.evals().to_vec(),
+                claimed_sum,
+                transcript,
+            )?;
+            let opening_point = native_opening_point(&sumcheck_point_lsb);
+            let native_statement =
+                singleton_statement(shape.commitment.clone(), &opening_point, opening_eval);
+            let native = prove_batch_with_native_polynomials(
+                setup,
+                transcript,
+                &native_statement,
+                &[&sparse_polynomial],
+                vec![hint],
+            )?;
+            return Ok(AkitaPackedBatchProof {
+                reduction: Some(reduction),
+                native,
+            });
+        }
+
         let polynomial = packed_source_polynomial(source)?;
         <Self as BatchOpeningScheme>::prove_batch(
             setup,
@@ -740,6 +794,26 @@ fn selector_eval_with_offset(
 
 fn native_opening_point(sumcheck_point_lsb: &[AkitaField]) -> Vec<AkitaField> {
     sumcheck_point_lsb.iter().rev().copied().collect()
+}
+
+fn singleton_statement(
+    commitment: AkitaCommitment,
+    point: &[AkitaField],
+    eval: AkitaField,
+) -> BatchOpeningStatement<AkitaField, AkitaCommitment> {
+    BatchOpeningStatement {
+        logical_point: point.to_vec(),
+        pcs_point: point.to_vec(),
+        layout_digest: commitment.layout_digest,
+        claims: vec![BatchOpeningClaim {
+            id: (),
+            relation: (),
+            commitment,
+            claim: eval,
+            view: PhysicalView::Direct,
+            scale: AkitaField::one(),
+        }],
+    }
 }
 
 fn selector_bit_matrix(

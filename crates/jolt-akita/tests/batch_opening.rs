@@ -59,6 +59,19 @@ fn packed_layout() -> PackedWitnessLayout {
     .expect("packed layout should be valid")
 }
 
+fn ring_sized_packed_layout() -> PackedWitnessLayout {
+    PackedWitnessLayout::new([PackedFamilySpec::direct(
+        PackedFamilyId::Custom {
+            namespace: 3,
+            index: 0,
+        },
+        PackedFactDomain::TraceRows { log_t: 4 },
+        1,
+        PackedAlphabet::Fixed { size: 4 },
+    )])
+    .expect("ring-sized packed layout should be valid")
+}
+
 fn packed_reduction_family() -> PackedFamilyId {
     PackedFamilyId::Custom {
         namespace: 2,
@@ -80,6 +93,18 @@ fn packed_address(row: usize, symbol: usize) -> PackedCellAddress {
     PackedCellAddress {
         family: PackedFamilyId::Custom {
             namespace: 1,
+            index: 0,
+        },
+        row,
+        limb: 0,
+        symbol,
+    }
+}
+
+fn ring_sized_packed_address(row: usize, symbol: usize) -> PackedCellAddress {
+    PackedCellAddress {
+        family: PackedFamilyId::Custom {
+            namespace: 3,
             index: 0,
         },
         row,
@@ -431,6 +456,68 @@ fn akita_commit_packed_source_roundtrip() {
 }
 
 #[test]
+fn akita_commit_packed_source_roundtrip_with_sparse_unit_source() {
+    run_on_large_stack(|| {
+        let layout = ring_sized_packed_layout();
+        assert_eq!(layout.dimension, 6);
+        assert_eq!(layout.dummy_cell_count(), 0);
+        let witness = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (ring_sized_packed_address(0, 1), AkitaField::one()),
+                (ring_sized_packed_address(15, 3), AkitaField::one()),
+            ],
+        )
+        .expect("sparse one-hot witness should be valid");
+        let poly = packed_polynomial(&layout, witness.entries());
+        let point = vec![f(2), f(3), f(5), f(7), f(11), f(13)];
+        let eval = poly.evaluate(&point);
+        let (prover_setup, verifier_setup) =
+            AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+
+        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            .expect("source commit should succeed");
+        assert_eq!(commitment.layout_digest, layout.digest);
+        assert_eq!(commitment.num_vars, layout.dimension);
+        assert_eq!(commitment.poly_count, 1);
+
+        let statement = BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point.clone(),
+            layout_digest: layout.digest,
+            claims: vec![BatchOpeningClaim {
+                id: (),
+                relation: (),
+                commitment: commitment.clone(),
+                claim: eval,
+                view: PhysicalView::Direct,
+                scale: AkitaField::one(),
+            }],
+        };
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-source-sparse");
+        let proof = AkitaPackedScheme::prove_packed_source_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &witness,
+            hint,
+        )
+        .expect("source proof should be produced");
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-source-sparse");
+        let _ = AkitaPackedScheme::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("source proof should verify");
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
 fn akita_commit_packed_source_rejects_malformed_emitters() {
     let layout = packed_layout();
     let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
@@ -465,6 +552,25 @@ fn akita_commit_packed_source_rejects_malformed_emitters() {
         },
     );
     assert!(matches!(zero_result, Err(OpeningsError::InvalidBatch(_))));
+}
+
+#[test]
+fn akita_commit_packed_source_rejects_non_unit_sparse_values() {
+    let layout = ring_sized_packed_layout();
+    let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+
+    let result = AkitaScheme::commit_packed_source(
+        &prover_setup,
+        &EmittingPackedSource {
+            layout,
+            entries: vec![(0, f(7))],
+        },
+    );
+
+    assert!(
+        matches!(result, Err(OpeningsError::InvalidBatch(reason)) if reason.contains("non-unit")),
+        "real-size packed W_pack sources must be unit one-hot entries"
+    );
 }
 
 #[test]

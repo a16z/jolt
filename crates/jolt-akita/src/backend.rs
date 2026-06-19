@@ -1,10 +1,11 @@
+use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use akita_pcs::{
     AkitaDeserialize, AkitaSerialize, AkitaTranscript, CommitmentProver, ComputeBackendSetup,
     CpuBackend,
 };
-use akita_prover::{CommittedPolynomials, ProverClaims};
+use akita_prover::{AkitaPolyOps, CommittedPolynomials, ProverClaims};
 use akita_transcript::Transcript as AkitaNativeTranscript;
 use akita_types::{
     BasisMode, CommitmentVerifier, CommittedOpenings, SetupContributionMode, VerifierClaims,
@@ -24,7 +25,7 @@ use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
     NativeCommitment, NativeDensePoly, NativeHint, NativeProof, NativeProofShape, NativeScheme,
-    NativeVerifier, AKITA_D, LAYERZERO_AKITA_REV,
+    NativeSparsePoly, NativeVerifier, AKITA_D, LAYERZERO_AKITA_REV,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,26 +40,41 @@ impl AkitaScheme {
         let num_vars = validate_commit_polynomials(setup, polynomials)?;
         let dense = dense_polynomials(polynomials)?;
         let dense_refs = dense.iter().collect::<Vec<_>>();
-        let (native_commitment, native_hint) = NativeScheme::commit(
-            &setup.native,
-            &CpuBackend,
-            &setup.prepared,
-            dense_refs.as_slice(),
-        )
-        .map_err(akita_error)?;
-        let commitment = AkitaCommitment {
+        commit_native_group(
+            setup,
             layout_digest,
             num_vars,
-            poly_count: polynomials.len(),
-            native: serialize_akita(&native_commitment)?,
-        };
-        Ok((
-            commitment.clone(),
-            AkitaProverHint {
-                commitment,
-                native: Some(native_hint),
+            polynomials.len(),
+            dense_refs.as_slice(),
+        )
+    }
+
+    fn commit_packed_sparse_witness(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        polynomial: &NativeSparsePoly,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        commit_native_group(
+            setup,
+            layout_digest,
+            polynomial.num_vars(),
+            1,
+            &[polynomial],
+        )
+    }
+
+    fn commit_packed_dense_source(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        polynomial: Polynomial<AkitaField>,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        Self::commit_packed_witness(
+            setup,
+            AkitaCommitInput {
+                layout_digest,
+                polynomial,
             },
-        ))
+        )
     }
 
     pub fn commit_packed_witness(
@@ -83,25 +99,63 @@ impl AkitaScheme {
                 setup_max: setup.max_num_vars,
             });
         }
+        if let Some(polynomial) = packed_source_sparse_polynomial(source)? {
+            return Self::commit_packed_sparse_witness(setup, layout.digest, &polynomial);
+        }
         let polynomial = packed_source_polynomial(source)?;
-        Self::commit_packed_witness(
-            setup,
-            AkitaCommitInput {
-                layout_digest: layout.digest,
-                polynomial,
-            },
-        )
+        Self::commit_packed_dense_source(setup, layout.digest, polynomial)
     }
 }
 
-fn validate_commit_polynomials(
+fn commit_native_group<P>(
     setup: &AkitaProverSetup,
-    polynomials: &[Polynomial<AkitaField>],
-) -> Result<usize, OpeningsError> {
-    let first = polynomials
-        .first()
-        .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
-    let num_vars = first.num_vars();
+    layout_digest: [u8; 32],
+    num_vars: usize,
+    poly_count: usize,
+    polynomials: &[P],
+) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+where
+    P: AkitaPolyOps<AkitaField, AKITA_D>,
+{
+    validate_native_commit_shape(setup, num_vars, poly_count)?;
+    if polynomials.len() != poly_count {
+        return Err(invalid_batch(format!(
+            "Akita native commit received {} polynomials for {poly_count} commitment slots",
+            polynomials.len()
+        )));
+    }
+    for polynomial in polynomials {
+        if polynomial.num_vars() != num_vars {
+            return Err(invalid_batch(format!(
+                "Akita native commit mixes {}-variable and {num_vars}-variable polynomials",
+                polynomial.num_vars()
+            )));
+        }
+    }
+
+    let (native_commitment, native_hint) =
+        NativeScheme::commit(&setup.native, &CpuBackend, &setup.prepared, polynomials)
+            .map_err(akita_error)?;
+    let commitment = AkitaCommitment {
+        layout_digest,
+        num_vars,
+        poly_count,
+        native: serialize_akita(&native_commitment)?,
+    };
+    Ok((
+        commitment.clone(),
+        AkitaProverHint {
+            commitment,
+            native: Some(native_hint),
+        },
+    ))
+}
+
+fn validate_native_commit_shape(
+    setup: &AkitaProverSetup,
+    num_vars: usize,
+    poly_count: usize,
+) -> Result<(), OpeningsError> {
     if num_vars > setup.max_num_vars {
         return Err(OpeningsError::PolynomialTooLarge {
             poly_size: num_vars,
@@ -114,13 +168,24 @@ fn validate_commit_polynomials(
             setup.max_num_vars
         )));
     }
-    if polynomials.len() > setup.max_num_polys_per_commitment_group {
+    if poly_count > setup.max_num_polys_per_commitment_group {
         return Err(invalid_batch(format!(
-            "Akita commitment group has {} polynomials but setup supports {}",
-            polynomials.len(),
+            "Akita commitment group has {poly_count} polynomials but setup supports {}",
             setup.max_num_polys_per_commitment_group
         )));
     }
+    Ok(())
+}
+
+fn validate_commit_polynomials(
+    setup: &AkitaProverSetup,
+    polynomials: &[Polynomial<AkitaField>],
+) -> Result<usize, OpeningsError> {
+    let first = polynomials
+        .first()
+        .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
+    let num_vars = first.num_vars();
+    validate_native_commit_shape(setup, num_vars, polynomials.len())?;
     for polynomial in polynomials {
         if polynomial.num_vars() != num_vars {
             return Err(invalid_batch(format!(
@@ -130,6 +195,71 @@ fn validate_commit_polynomials(
         }
     }
     Ok(num_vars)
+}
+
+pub(crate) fn packed_source_sparse_polynomial<S>(
+    source: &S,
+) -> Result<Option<NativeSparsePoly>, OpeningsError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let layout = source.layout();
+    if layout.cells == 0 {
+        return Err(invalid_batch(
+            "Akita packed witness layout must contain at least one cell",
+        ));
+    }
+    if layout.dimension >= usize::BITS as usize {
+        return Err(invalid_batch(format!(
+            "Akita packed witness dimension {} exceeds usize bit width",
+            layout.dimension
+        )));
+    }
+    let domain_size = 1usize << layout.dimension;
+    if domain_size < AKITA_D {
+        return Ok(None);
+    }
+    if layout.cells > domain_size {
+        return Err(invalid_batch(format!(
+            "Akita packed witness has {} cells but dimension {} supports {domain_size}",
+            layout.cells, layout.dimension
+        )));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut coeffs = Vec::new();
+    let mut result = Ok(());
+    source.for_each_nonzero(|rank, value| {
+        if result.is_err() {
+            return;
+        }
+        if rank >= layout.cells {
+            result = Err(invalid_batch(format!(
+                "Akita packed witness source emitted rank {rank} outside {} real cells",
+                layout.cells
+            )));
+            return;
+        }
+        if !seen.insert(rank) {
+            result = Err(invalid_batch(format!(
+                "Akita packed witness source emitted rank {rank} more than once"
+            )));
+            return;
+        }
+        if value != AkitaField::one() {
+            result = Err(invalid_batch(format!(
+                "Akita sparse packed witness source emitted non-unit value at rank {rank}"
+            )));
+            return;
+        }
+        let akita_rank = jolt_to_akita_index(layout.dimension, rank);
+        coeffs.push((akita_rank / AKITA_D, akita_rank % AKITA_D, 1));
+    });
+    result?;
+
+    NativeSparsePoly::from_signed_coeffs(layout.dimension, domain_size / AKITA_D, coeffs)
+        .map(Some)
+        .map_err(akita_error)
 }
 
 pub(crate) fn packed_source_polynomial<S>(
@@ -315,50 +445,15 @@ impl BatchOpeningScheme for AkitaScheme {
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        let normalized = normalize_clear_batch(statement)?;
-        validate_prover_inputs(setup, &normalized.commitment, polynomials, &hints)?;
-        bind_verifier_setup_key(&setup.verifier, transcript);
-        bind_batch_statement(statement, &normalized, transcript);
-        let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
-        let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
-
-        let native_commitment =
-            deserialize_akita::<NativeCommitment>(&normalized.commitment.native, &())?;
-        let native_hint = hints
-            .into_iter()
-            .next()
-            .and_then(|hint| hint.native)
-            .ok_or_else(|| invalid_batch("Akita prover hint is missing native opening data"))?;
         let dense = dense_polynomials(polynomials)?;
         let dense_refs = dense.iter().collect::<Vec<_>>();
-        let claims: ProverClaims<'_, AkitaField, &NativeDensePoly, _, NativeHint> = (
-            statement.pcs_point.as_slice(),
-            vec![CommittedPolynomials {
-                polynomials: dense_refs.as_slice(),
-                commitment: &native_commitment,
-                hint: native_hint,
-            }],
-        );
-
-        let native_proof = NativeScheme::batched_prove(
-            &setup.native,
-            &CpuBackend,
-            &setup.prepared,
-            claims,
-            &mut akita_transcript,
-            BasisMode::Lagrange,
-            SetupContributionMode::Direct,
+        prove_batch_with_native_polynomials(
+            setup,
+            transcript,
+            statement,
+            dense_refs.as_slice(),
+            hints,
         )
-        .map_err(akita_error)?;
-        let proof_shape = native_proof.shape();
-        let proof = AkitaBatchProof {
-            commitment: normalized.commitment,
-            statement_bridge,
-            proof_shape: serialize_akita(&proof_shape)?,
-            proof: serialize_akita(&native_proof)?,
-        };
-        bind_proof_bytes(&proof, transcript);
-        Ok(proof)
     }
 
     fn verify_batch<T, OpeningId, RelationId>(
@@ -417,6 +512,61 @@ impl BatchOpeningScheme for AkitaScheme {
             reduced_opening: normalized.reduced_opening,
         })
     }
+}
+
+pub(crate) fn prove_batch_with_native_polynomials<T, P, OpeningId, RelationId>(
+    setup: &AkitaProverSetup,
+    transcript: &mut T,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    polynomials: &[P],
+    hints: Vec<AkitaProverHint>,
+) -> Result<AkitaBatchProof, OpeningsError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    P: AkitaPolyOps<AkitaField, AKITA_D>,
+{
+    let normalized = normalize_clear_batch(statement)?;
+    validate_native_prover_inputs(setup, &normalized.commitment, polynomials, &hints)?;
+    bind_verifier_setup_key(&setup.verifier, transcript);
+    bind_batch_statement(statement, &normalized, transcript);
+    let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
+    let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
+
+    let native_commitment =
+        deserialize_akita::<NativeCommitment>(&normalized.commitment.native, &())?;
+    let native_hint = hints
+        .into_iter()
+        .next()
+        .and_then(|hint| hint.native)
+        .ok_or_else(|| invalid_batch("Akita prover hint is missing native opening data"))?;
+    let claims: ProverClaims<'_, AkitaField, P, _, NativeHint> = (
+        statement.pcs_point.as_slice(),
+        vec![CommittedPolynomials {
+            polynomials,
+            commitment: &native_commitment,
+            hint: native_hint,
+        }],
+    );
+
+    let native_proof = NativeScheme::batched_prove(
+        &setup.native,
+        &CpuBackend,
+        &setup.prepared,
+        claims,
+        &mut akita_transcript,
+        BasisMode::Lagrange,
+        SetupContributionMode::Direct,
+    )
+    .map_err(akita_error)?;
+    let proof_shape = native_proof.shape();
+    let proof = AkitaBatchProof {
+        commitment: normalized.commitment,
+        statement_bridge,
+        proof_shape: serialize_akita(&proof_shape)?,
+        proof: serialize_akita(&native_proof)?,
+    };
+    bind_proof_bytes(&proof, transcript);
+    Ok(proof)
 }
 
 impl ZkOpeningScheme for AkitaScheme {
@@ -554,12 +704,15 @@ fn normalize_clear_batch<OpeningId, RelationId>(
     })
 }
 
-fn validate_prover_inputs(
+fn validate_native_prover_inputs<P>(
     setup: &AkitaProverSetup,
     commitment: &AkitaCommitment,
-    polynomials: &[Polynomial<AkitaField>],
+    polynomials: &[P],
     hints: &[AkitaProverHint],
-) -> Result<(), OpeningsError> {
+) -> Result<(), OpeningsError>
+where
+    P: AkitaPolyOps<AkitaField, AKITA_D>,
+{
     validate_setup_shape(
         setup.max_num_vars,
         setup.max_num_polys_per_commitment_group,
@@ -781,13 +934,19 @@ fn jolt_to_akita_evals(
     if num_vars == 0 {
         return Ok(jolt_evals.to_vec());
     }
-    let shift = usize::BITS as usize - num_vars;
     let mut akita_evals = vec![AkitaField::zero(); jolt_evals.len()];
     for (jolt_index, &eval) in jolt_evals.iter().enumerate() {
-        let akita_index = jolt_index.reverse_bits() >> shift;
+        let akita_index = jolt_to_akita_index(num_vars, jolt_index);
         akita_evals[akita_index] = eval;
     }
     Ok(akita_evals)
+}
+
+fn jolt_to_akita_index(num_vars: usize, index: usize) -> usize {
+    if num_vars == 0 {
+        return index;
+    }
+    index.reverse_bits() >> (usize::BITS as usize - num_vars)
 }
 
 fn polynomial_evaluations<P>(polynomial: &P) -> Vec<AkitaField>

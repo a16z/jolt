@@ -1,7 +1,7 @@
 use akita_config::CommitmentConfig;
 use akita_field::PseudoMersenneField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{CpuPreparedSetup, DensePoly};
+use akita_prover::{CpuPreparedSetup, DensePoly, SparseRingPoly};
 use akita_types::{
     AkitaBatchedProof as NativeBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as NativeCommitmentHint, AkitaVerifierSetup as NativeVerifierSetup,
@@ -28,6 +28,7 @@ pub(crate) type NativeProof = NativeBatchProof<AkitaField, AkitaField>;
 pub(crate) type NativeProofShape = AkitaBatchedProofShape;
 pub(crate) type NativeVerifier = NativeVerifierSetup<AkitaField>;
 pub(crate) type NativeDensePoly = DensePoly<AkitaField, AKITA_D>;
+pub(crate) type NativeSparsePoly = SparseRingPoly<AkitaField, AKITA_D>;
 pub(crate) type NativePreparedSetup = CpuPreparedSetup<AkitaField, AKITA_D>;
 
 pub type AkitaLayoutDigest = [u8; 32];
