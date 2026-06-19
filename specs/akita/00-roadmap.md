@@ -486,15 +486,21 @@ Target performance:
   openings for any precommitted claims.
 ```
 
-## Questions
+## Resolved Decisions And Open Questions
 
 ```text
-1. Can LayerZero Akita expose packed linear-view openings over one
-   PackedWitness, or must jolt-akita add an adapter/reduction layer?
-2. Can field-inline use a smaller structured encoding than canonical field
-   bytes without changing the PackedWitness invariants?
-3. What Akita setup parameterization is exposed by the LayerZero backend versus
-   fixed by jolt-akita?
+resolved:
+  jolt-akita uses the LayerZero Akita backend directly and adds a generic
+  packed-view reduction/adapter for Jolt PackedWitness statements.
+  jolt-akita currently uses exact-D setup: D_setup must equal the derived
+  PackedWitness dimension D_pack for the accepted proof.
+  proof-owned field-inline FieldRdInc values use canonical field-byte families.
+
+open:
+  whether a future field-inline path can use a smaller structured encoding than
+  canonical field bytes without changing the PackedWitness invariants.
+  whether a future backend API can prove common byte-decode views more cheaply
+  than the current packed-linear adapter representation.
 ```
 
 ## References

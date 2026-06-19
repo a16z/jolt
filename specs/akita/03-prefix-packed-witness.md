@@ -565,16 +565,23 @@ Rejected:
 - changing fact family order based on prover witness content.
 ```
 
-## Questions
+## Resolved Decisions And Open Questions
 
 ```text
-1. What layout encoding is canonical for transcript binding?
-2. Does Akita require any alignment beyond D_pack = ceil_log2(cells)?
-3. Are prefix codes fixed globally or derived from sorted fact IDs?
-4. Should fact family offsets be public proof header fields or fully derived from
-   config?
-5. Does the Akita backend require exact D setup, power-of-two ring dimensions,
-   or another setup-size parameter?
+resolved:
+  the canonical layout encoding is the jolt-akita PackedWitnessLayout digest.
+  family order and offsets are deterministically derived from sorted family
+  specs, domains, limbs, and alphabets.
+  fact family offsets are derived from config/preprocessing, not supplied as
+  independent proof-header data.
+  D_pack = ceil_log2(cells) for the packed layout. jolt-akita accepts exact-D
+  setup for the current target; setup D must match D_pack.
+  no additional public alignment rule is exposed beyond the derived layout
+  dimension. The adapter chooses dense or sparse native Akita commitment inputs
+  internally.
+
+open:
+  whether a future universal/up-to-D Akita setup should be accepted.
 ```
 
 ## References

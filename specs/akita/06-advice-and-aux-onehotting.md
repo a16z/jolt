@@ -498,15 +498,22 @@ Rejected:
 - silently enabling ZK blinding families.
 ```
 
-## Questions
+## Resolved Decisions And Open Questions
 
 ```text
-1. Should advice use exact byte length or configured maximum length when both
-   are transcript-bound?
-2. Can field-inline FieldRdInc use a smaller structured encoding than canonical
-   field bytes?
-3. Can Akita's backend prove byte-decode linear views directly enough to avoid
-   expanding 256 terms in verifier-facing statements?
+resolved:
+  advice PackedWitness families are sized from the precommitted advice schedule
+  and protocol config. Untrusted advice is proof-owned packed data; trusted
+  advice is precommitted and uses a separate opening path.
+  field-inline FieldRdInc currently uses canonical field-byte one-hot families
+  and a canonical-byte packed-validity check against the Akita fp128 modulus.
+  byte-decode views currently lower to verifier-facing packed-linear terms.
+
+open:
+  whether field-inline FieldRdInc can use a smaller structured encoding than
+  canonical field bytes.
+  whether a future Akita backend API can prove byte-decode linear views without
+  exposing 256 weighted terms in the Jolt-facing statement.
 ```
 
 ## References

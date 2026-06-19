@@ -400,11 +400,19 @@ Rejected:
 - assuming fused mode is cheaper without accounting for translation cost.
 ```
 
-## Questions
+## Resolved Decisions And Open Questions
 
 ```text
-1. Which expanded row classes need explicit tests for Store * RdPresent = 0?
-2. Should masked translation run entirely in Stage 6 or finish in Stage 7?
+resolved:
+  committed-bytecode StoreFlag/RdPresent disjointness is a packed-validity
+  requirement for the committed-bytecode source layout.
+  Stage 6 derives fused-increment translation and source-link outputs; Stage 8
+  consumes those outputs and the separate precommitted BytecodeChunk component
+  openings.
+
+open:
+  additional expanded row classes may get fixture coverage as committed-bytecode
+  prover integration lands.
 ```
 
 ## References
