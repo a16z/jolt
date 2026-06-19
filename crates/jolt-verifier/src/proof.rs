@@ -223,6 +223,7 @@ impl<C> From<DoryCommitmentPayload<C>> for CommitmentPayload<C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaCommitmentPayload<C> {
     pub packed_witness: C,
     pub layout_digest: [u8; 32],
@@ -505,6 +506,32 @@ mod tests {
 
         assert!(matches!(dory_roundtrip, CommitmentPayload::Dory(_)));
         assert!(matches!(akita_roundtrip, CommitmentPayload::Akita(_)));
+    }
+
+    #[test]
+    #[expect(
+        clippy::panic,
+        reason = "test serialization failures should fail loudly"
+    )]
+    fn akita_payload_rejects_extra_packed_commitments() {
+        let mut value = serde_json::to_value(akita_payload())
+            .unwrap_or_else(|error| panic!("Akita payload should serialize: {error}"));
+        let akita = value
+            .get_mut("Akita")
+            .and_then(|payload| payload.as_object_mut())
+            .unwrap_or_else(|| panic!("Akita payload should be an object"));
+        let previous = akita.insert(
+            "extra_packed_witness".to_string(),
+            serde_json::Value::from(10_u64),
+        );
+        assert!(previous.is_none());
+
+        let result = serde_json::from_value::<CommitmentPayload<u64>>(value);
+
+        assert!(
+            result.is_err(),
+            "Akita payloads must reject extra packed commitments"
+        );
     }
 
     #[test]
