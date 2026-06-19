@@ -248,6 +248,8 @@ Dispatch:
    These statements target the original precommitted commitments, not the
    PackedWitness commitment and not an Akita backend bytecode-commit handle by
    itself.
+   They are direct/native opening statements. A PackedWitness reduction proof
+   does not satisfy them.
    Fused-increment StoreFlag/RdPresent source claims use the same
    precommitted BytecodeChunk opening path, including component-opening
    recombination checks when the source is a committed-bytecode linear view.
@@ -468,6 +470,11 @@ akita_committed_program_precommitted_opening_missing_rejects:
 akita_precommitted_proof_shape_rejects_packed_reduction:
   auxiliary precommitted opening proof with PackedWitness commitment or packed
   reduction payload rejects.
+
+akita_backend_program_committed_does_not_replace_precommitments:
+  Akita backend Program::Committed material without explicit Jolt
+  TrustedAdvice, BytecodeChunk(i), and ProgramImageInit opening proofs rejects
+  whenever those precommitted claims are present.
 
 akita_precommitted_direct_opening_uses_commitment_digest:
   auxiliary direct opening verifies when the Stage 8 wrapper digest differs

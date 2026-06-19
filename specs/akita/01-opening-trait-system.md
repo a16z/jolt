@@ -192,6 +192,8 @@ Akita implementation:
   physical proof backend.
   verifies precommitted objects through separate direct/native opening
   statements keyed by their original commitments.
+  treats precommitted opening proofs as direct openings, not packed-view
+  reductions over W_pack.
 ```
 
 Batching strategy taxonomy:
@@ -271,6 +273,8 @@ Akita implementation:
 4. verify the Akita physical proof for that relation.
 5. build and verify separate precommitted opening statements against the
    original TrustedAdvice, BytecodeChunk(i), and ProgramImageInit commitments.
+   These statements use direct/native physical views and carry no PackedWitness
+   reduction proof.
 6. derive logical coefficients internally for claim binding.
 ```
 

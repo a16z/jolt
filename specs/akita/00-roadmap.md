@@ -251,6 +251,19 @@ views used by fused increments cannot be satisfied by copying their values into
 W_pack. A future packed-precommitted optimization must include an explicit
 binding proof to the original commitments.
 
+This means the lattice proof has two different opening classes:
+
+```text
+proof-owned class:
+  one PackedWitness commitment W_pack.
+  one packed-view opening batch for claims whose physical facts live in W_pack.
+
+precommitted class:
+  one or more direct opening statements against the original trusted-advice,
+  bytecode-chunk, or program-image commitments.
+  these statements are not merged into the W_pack packed-view batch.
+```
+
 Do not treat an Akita backend `Program::Committed` mode as this binding by
 itself. Jolt-level precommitted objects are the original trusted-advice,
 bytecode-chunk, and program-image commitment handles exposed by preprocessing.
