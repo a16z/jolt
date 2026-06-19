@@ -9,16 +9,16 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_verifier::stages::relations::{zip_openings, SumcheckInstance};
 use jolt_verifier::stages::stage6::batch::{Stage6Relations, Stage6RelationsParams};
-use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
-use jolt_verifier::stages::stage6::inputs::{AdviceCyclePhaseOutputClaim, Stage6OutputClaims};
+use jolt_verifier::stages::stage6::inputs::{
+    AdviceCyclePhaseOutputClaim, Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims,
+    Stage6OutputClaims,
+};
 use jolt_verifier::stages::stage6::{
-    stage6_advice_cycle_phase_reference, stage6_batch_points, stage6_bytecode_cycle_points,
+    stage6_advice_cycle_phase_reference, stage6_bytecode_cycle_points,
     stage6_bytecode_register_points, stage6_inc_claim_reduction_cycle_points,
     stage6_instruction_read_raf_point, stage6_stage1_cycle_binding,
     stage6_stage5_ram_reduced_opening_point, AdviceCyclePhaseOutputClaims,
     Stage6AdviceCyclePhaseReference, Stage6BatchExpectedOutputClaims, Stage6BatchInputClaims,
-    Stage6BatchPointContext, Stage6BatchPointInputs, Stage6BatchPoints,
-    Stage6InstructionReadRafPoint, Stage6RamReducedOpeningPoint,
 };
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
@@ -397,104 +397,20 @@ where
         ))
     }
 
-    /// Builds the per-instance opening points for the stage 6b cycle batch.
-    pub(super) fn derived_points(
-        &self,
-        sumcheck_point: &[F],
-        bytecode_address_challenges: &[F],
-        booleanity_address_challenges: &[F],
-    ) -> Result<Stage6BatchPoints<F>, ProverError> {
-        if sumcheck_point.len() != self.max_num_vars {
-            return Err(invalid_sumcheck_output(format!(
-                "Stage 6 batch sumcheck point has {} variables, expected {}",
-                sumcheck_point.len(),
-                self.max_num_vars
-            )));
-        }
-
-        let bytecode_read_raf = [
-            bytecode_address_challenges,
-            self.instance_point(sumcheck_point, Stage6InstanceKind::BytecodeReadRaf)?
-                .as_slice(),
-        ]
-        .concat();
-        let booleanity = [
-            booleanity_address_challenges,
-            self.instance_point(sumcheck_point, Stage6InstanceKind::Booleanity)?
-                .as_slice(),
-        ]
-        .concat();
-        let ram_hamming_booleanity =
-            self.instance_point(sumcheck_point, Stage6InstanceKind::RamHammingBooleanity)?;
-        let ram_ra_virtualization =
-            self.instance_point(sumcheck_point, Stage6InstanceKind::RamRaVirtualization)?;
-        let instruction_ra_virtualization = self.instance_point(
-            sumcheck_point,
-            Stage6InstanceKind::InstructionRaVirtualization,
-        )?;
-        let inc_claim_reduction =
-            self.instance_point(sumcheck_point, Stage6InstanceKind::IncClaimReduction)?;
-
-        let trusted_advice_cycle_phase =
-            self.advice_cycle_phase_sumcheck_point(sumcheck_point, JoltAdviceKind::Trusted)?;
-        let untrusted_advice_cycle_phase =
-            self.advice_cycle_phase_sumcheck_point(sumcheck_point, JoltAdviceKind::Untrusted)?;
-
-        let ram_reduced = self.ram_reduced_opening_point()?;
-        let instruction_read_raf = self.instruction_read_raf_point();
-        stage6_batch_points(
-            Stage6BatchPointInputs {
-                bytecode_read_raf: &bytecode_read_raf,
-                booleanity: &booleanity,
-                ram_hamming_booleanity: &ram_hamming_booleanity,
-                ram_ra_virtualization: &ram_ra_virtualization,
-                instruction_ra_virtualization: &instruction_ra_virtualization,
-                inc_claim_reduction: &inc_claim_reduction,
-                trusted_advice_cycle_phase: trusted_advice_cycle_phase.as_deref(),
-                untrusted_advice_cycle_phase: untrusted_advice_cycle_phase.as_deref(),
-            },
-            Stage6BatchPointContext {
-                trace_dimensions: self.config.trace_dimensions(),
-                bytecode_read_raf_dimensions: self.config.bytecode_read_raf_dimensions,
-                booleanity_dimensions: self.config.booleanity_dimensions,
-                committed_chunk_bits: self.config.committed_chunk_bits,
-                ram_reduced_opening_point: ram_reduced,
-                instruction_read_raf,
-                trusted_advice_layout: self.config.trusted_advice_layout.as_ref(),
-                untrusted_advice_layout: self.config.untrusted_advice_layout.as_ref(),
-            },
-        )
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-    }
-
-    fn advice_cycle_phase_sumcheck_point(
-        &self,
-        sumcheck_point: &[F],
-        kind: JoltAdviceKind,
-    ) -> Result<Option<Vec<F>>, ProverError> {
-        if self
-            .instances
-            .iter()
-            .all(|instance| instance.kind != Stage6InstanceKind::AdviceCyclePhase(kind))
-        {
-            return Ok(None);
-        }
-        let _layout = self.advice_layout(kind).ok_or_else(|| {
-            invalid_stage_request(format!("Stage 6 {kind:?} advice layout is missing"))
-        })?;
-        self.instance_point(sumcheck_point, Stage6InstanceKind::AdviceCyclePhase(kind))
-            .map(Some)
-    }
-
     /// The per-instance expected output claims, single-sourced through the same
     /// [`Stage6Relations`] bundle the verifier uses: each relation derives its
     /// opening points from the 6b cycle instance point and evaluates its output
     /// `Expr` against the produced openings — mirroring the clear verifier exactly.
-    pub(super) fn expected_outputs(
+    /// The stage-6b cycle batch's expected output claims AND the produced opening
+    /// *points*, both single-sourced through the [`Stage6Relations`] bundle the
+    /// verifier uses: each relation derives its opening points once, which feed
+    /// both the output-claim check and the `Stage6ClearOutput::output_points` the
+    /// prover hands to stages 7/8. Mirrors the clear verifier exactly.
+    pub(super) fn cycle_outputs(
         &self,
         sumcheck_point: &[F],
         openings: &Stage6OutputClaims<F>,
-    ) -> Result<Stage6BatchExpectedOutputClaims<F>, ProverError> {
+    ) -> Result<(Stage6BatchExpectedOutputClaims<F>, Stage6OutputClaims<Vec<F>>), ProverError> {
         let relations = self.cycle_relations()?;
         let algebra =
             |error: jolt_verifier::VerifierError| invalid_sumcheck_output(error.to_string());
@@ -588,9 +504,11 @@ where
             )
             .map_err(algebra)?;
 
+        // Each advice kind yields both its expected output claim and its produced
+        // opening point (for `output_points`).
         let advice = |kind: JoltAdviceKind,
                       relation: Option<&jolt_verifier::stages::stage6::AdviceCyclePhase<F>>|
-         -> Result<Option<F>, ProverError> {
+         -> Result<Option<(F, Vec<F>)>, ProverError> {
             let claim = match kind {
                 JoltAdviceKind::Trusted => openings.advice_cycle_phase.trusted.as_ref(),
                 JoltAdviceKind::Untrusted => openings.advice_cycle_phase.untrusted.as_ref(),
@@ -604,6 +522,13 @@ where
                     let derived = relation
                         .derive_opening_points(&point, &relations.advice_inputs)
                         .map_err(algebra)?;
+                    let opening_point = match kind {
+                        JoltAdviceKind::Trusted => derived.trusted.clone(),
+                        JoltAdviceKind::Untrusted => derived.untrusted.clone(),
+                    }
+                    .ok_or_else(|| {
+                        invalid_sumcheck_output("Stage 6 advice cycle phase produced no opening")
+                    })?;
                     let values = match kind {
                         JoltAdviceKind::Trusted => AdviceCyclePhaseOutputClaims {
                             trusted: Some(claim.opening_claim),
@@ -614,14 +539,10 @@ where
                             untrusted: Some(claim.opening_claim),
                         },
                     };
-                    Ok(Some(
-                        relation
-                            .expected_output(
-                                &relations.advice_inputs,
-                                &zip_openings(&values, &derived),
-                            )
-                            .map_err(algebra)?,
-                    ))
+                    let expected = relation
+                        .expected_output(&relations.advice_inputs, &zip_openings(&values, &derived))
+                        .map_err(algebra)?;
+                    Ok(Some((expected, opening_point)))
                 }
                 (None, None) => Ok(None),
                 _ => Err(invalid_stage_request(format!(
@@ -629,23 +550,78 @@ where
                 ))),
             }
         };
+        let trusted_advice = advice(JoltAdviceKind::Trusted, relations.trusted_advice.as_ref())?;
+        let untrusted_advice =
+            advice(JoltAdviceKind::Untrusted, relations.untrusted_advice.as_ref())?;
 
-        Ok(Stage6BatchExpectedOutputClaims {
+        let reversed = |challenges: &[F]| challenges.iter().rev().copied().collect::<Vec<_>>();
+        let output_points = Stage6OutputClaims {
+            address_phase: Stage6AddressPhaseClaims {
+                bytecode_read_raf: reversed(&self.bytecode_address_challenges),
+                booleanity: reversed(&self.booleanity_address_challenges),
+                // The modular prover only supports full programs (no staged Val columns).
+                bytecode_val_stages: None,
+            },
+            bytecode_read_raf: bytecode_derived,
+            booleanity: booleanity_derived,
+            ram_hamming_booleanity: ram_hamming_derived,
+            ram_ra_virtualization: ram_ra_derived,
+            instruction_ra_virtualization: instruction_ra_derived,
+            inc_claim_reduction: inc_derived,
+            advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+                trusted: trusted_advice
+                    .as_ref()
+                    .map(|(_, point)| AdviceCyclePhaseOutputClaim {
+                        opening_claim: point.clone(),
+                    }),
+                untrusted: untrusted_advice
+                    .as_ref()
+                    .map(|(_, point)| AdviceCyclePhaseOutputClaim {
+                        opening_claim: point.clone(),
+                    }),
+            },
+            // Committed-program reductions; the modular prover is full-only.
+            bytecode_claim_reduction: None,
+            program_image_claim_reduction: None,
+        };
+        let expected = Stage6BatchExpectedOutputClaims {
             bytecode_read_raf,
             booleanity,
             ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
             inc_claim_reduction,
-            trusted_advice_cycle_phase: advice(
-                JoltAdviceKind::Trusted,
-                relations.trusted_advice.as_ref(),
-            )?,
-            untrusted_advice_cycle_phase: advice(
-                JoltAdviceKind::Untrusted,
-                relations.untrusted_advice.as_ref(),
-            )?,
-        })
+            trusted_advice_cycle_phase: trusted_advice.map(|(expected, _)| expected),
+            untrusted_advice_cycle_phase: untrusted_advice.map(|(expected, _)| expected),
+        };
+        Ok((expected, output_points))
+    }
+
+    /// The advice cycle-phase produced opening point for `kind` (the reversed
+    /// active-cycle challenges), used to evaluate the advice witness opening
+    /// before the output claims are assembled. Matches the `output_points` cell
+    /// `cycle_outputs` later produces.
+    pub(super) fn advice_cycle_phase_opening_point(
+        &self,
+        sumcheck_point: &[F],
+        kind: JoltAdviceKind,
+    ) -> Result<Option<Vec<F>>, ProverError> {
+        let Some(layout) = self.advice_layout(kind) else {
+            return Ok(None);
+        };
+        if self
+            .instances
+            .iter()
+            .all(|instance| instance.kind != Stage6InstanceKind::AdviceCyclePhase(kind))
+        {
+            return Ok(None);
+        }
+        let point = self.instance_point(sumcheck_point, Stage6InstanceKind::AdviceCyclePhase(kind))?;
+        Ok(Some(
+            layout
+                .cycle_phase_opening_point(&point)
+                .map_err(|error| invalid_sumcheck_output(error.to_string()))?,
+        ))
     }
 
     pub(super) fn instance(
@@ -676,17 +652,6 @@ where
                     sumcheck_point.len()
                 ))
             })
-    }
-
-    pub(super) fn ram_reduced_opening_point(
-        &self,
-    ) -> Result<Stage6RamReducedOpeningPoint<'_, F>, ProverError> {
-        stage6_stage5_ram_reduced_opening_point(self.stage5, self.config.log_k, self.config.log_t)
-            .map_err(invalid_stage_request)
-    }
-
-    fn instruction_read_raf_point(&self) -> Stage6InstructionReadRafPoint<'_, F> {
-        stage6_instruction_read_raf_point(self.stage5)
     }
 
     fn advice_cycle_phase_reference(

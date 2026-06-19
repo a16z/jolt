@@ -10,8 +10,8 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
 use jolt_verifier::stages::stage6::{
-    stage6_clear_output, stage6_expected_final_claim, stage6_expected_output_claim_values,
-    stage6_input_claim_values, stage6_output_claim_values, Stage6ClearOutputRequest,
+    stage6_expected_final_claim, stage6_expected_output_claim_values, stage6_input_claim_values,
+    stage6_output_claim_values, stage6_public_output, Stage6ClearOutput,
 };
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
@@ -767,28 +767,23 @@ where
         }
     }
 
-    let points = context.derived_points(
-        &sumcheck_point,
-        bytecode_address_challenges,
-        booleanity_address_challenges,
-    )?;
+    let trusted_advice_point =
+        context.advice_cycle_phase_opening_point(&sumcheck_point, JoltAdviceKind::Trusted)?;
+    let untrusted_advice_point =
+        context.advice_cycle_phase_opening_point(&sumcheck_point, JoltAdviceKind::Untrusted)?;
     let trusted_advice_claim = evaluate_advice_cycle_phase_opening(
         context.config.trusted_advice_layout.as_ref(),
         witness,
         JoltAdviceKind::Trusted,
         context.advice_cycle_phase_reference_opening_point(JoltAdviceKind::Trusted)?,
-        points
-            .trusted_advice_cycle_phase
-            .as_deref(),
+        trusted_advice_point.as_deref(),
     )?;
     let untrusted_advice_claim = evaluate_advice_cycle_phase_opening(
         context.config.untrusted_advice_layout.as_ref(),
         witness,
         JoltAdviceKind::Untrusted,
         context.advice_cycle_phase_reference_opening_point(JoltAdviceKind::Untrusted)?,
-        points
-            .untrusted_advice_cycle_phase
-            .as_deref(),
+        untrusted_advice_point.as_deref(),
     )?;
     let mut output_openings = super::verifier_output::output_claims_from_backend(
         backend.output_sumcheck_bytecode_read_raf_state(&backend_states.bytecode_read_raf)?,
@@ -806,7 +801,8 @@ where
     );
     output_openings.address_phase = address_phase.clone();
 
-    let expected_outputs = context.expected_outputs(&sumcheck_point, &output_openings)?;
+    let (expected_outputs, output_points) =
+        context.cycle_outputs(&sumcheck_point, &output_openings)?;
     let expected_outputs_in_order = stage6_expected_output_claim_values(&expected_outputs);
     if individual_claims.len() != expected_outputs_in_order.len() {
         return Err(invalid_sumcheck_output(format!(
@@ -834,25 +830,35 @@ where
         )));
     }
 
+    let booleanity_opening_point = output_points
+        .booleanity_opening_point()
+        .ok_or_else(|| invalid_sumcheck_output("Stage 6 booleanity produced no opening point"))?
+        .to_vec();
     let proof_artifacts = proof_recorder.finish(
         &stage6_output_claim_values(
             &output_openings,
-            &points.bytecode_ra_opening_points,
-            &points.booleanity_opening_point,
+            &output_points.bytecode_read_raf.bytecode_ra,
+            &booleanity_opening_point,
         ),
         transcript,
     )?;
-    let verifier_output = stage6_clear_output(Stage6ClearOutputRequest {
-        transcript_challenges: &prefix.challenges,
+    // The batch final-claim equality was already checked above; assemble the
+    // clear output directly from the bundle-derived points (mirroring the
+    // verifier's `verify()`), rather than re-deriving them through a helper.
+    let verifier_output = Stage6ClearOutput {
+        public: stage6_public_output(
+            &prefix.challenges,
+            Vec::new(),
+            Vec::new(),
+            sumcheck_point.clone(),
+            batching_coefficients.clone(),
+            None,
+        ),
         output_claims: output_openings,
-        input_claims: &context.cycle_input_claims(),
-        expected_outputs: &expected_outputs,
-        batching_coefficients: &batching_coefficients,
-        sumcheck_point: &sumcheck_point,
-        sumcheck_final_claim: running_claim,
-        points: &points,
-    })
-    .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
+        output_points,
+        // The modular prover is full-only, so no committed bytecode reduction.
+        bytecode_reduction_weights: None,
+    };
 
     Ok(Stage6CycleRunOutput {
         proof_output: Stage6RegularBatchProofOutput {
