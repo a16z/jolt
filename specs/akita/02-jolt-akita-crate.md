@@ -224,9 +224,10 @@ Given:
 
 Prove/verify:
   a separate opening proof against the original commitment.
-  the direct native opening transcript binds the opened commitment's layout
-  digest as authoritative, even if a higher-level Stage 8 wrapper statement
-  carries the PackedWitness layout digest.
+  Stage 8 emits a separate direct opening statement whose layout digest equals
+  the opened commitment's layout digest.
+  the direct native opening transcript binds that statement digest before
+  native proof challenges.
   batching across these precommitted claims is allowed only through a direct
   native opening path that preserves the original commitment handles; it is not
   achieved by inserting the values into W_pack.
