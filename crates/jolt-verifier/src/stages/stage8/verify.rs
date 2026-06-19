@@ -584,13 +584,13 @@ where
 
 fn precommitted_clear_statements<F, C>(
     entries: &[Stage8BatchEntry<'_, F, C>],
-    layout_digest: [u8; 32],
+    default_layout_digest: [u8; 32],
     point: &[F],
     pcs_opening_point: &Point<HIGH_TO_LOW, F>,
 ) -> Result<Stage8PrecommittedStatementBuild<F, C>, VerifierError>
 where
     F: Field,
-    C: Clone,
+    C: Clone + 'static,
 {
     let mut opening_claims = Vec::with_capacity(entries.len());
     let mut statements = Vec::with_capacity(entries.len());
@@ -609,12 +609,27 @@ where
         statements.push(BatchOpeningStatement {
             logical_point: point.to_vec(),
             pcs_point: point.to_vec(),
-            layout_digest,
+            layout_digest: direct_statement_layout_digest(entry.commitment, default_layout_digest),
             claims,
         });
     }
 
     Ok((opening_claims, statements))
+}
+
+fn direct_statement_layout_digest<C: 'static>(
+    commitment: &C,
+    default_layout_digest: [u8; 32],
+) -> [u8; 32] {
+    #[cfg(feature = "akita")]
+    if let Some(commitment) =
+        (commitment as &dyn std::any::Any).downcast_ref::<jolt_akita::AkitaCommitment>()
+    {
+        return commitment.layout_digest;
+    }
+    #[cfg(not(feature = "akita"))]
+    let _ = commitment;
+    default_layout_digest
 }
 
 /// Builds the final PCS batch in the canonical order from
@@ -1576,6 +1591,39 @@ mod tests {
             ),
             Err(VerifierError::FinalOpeningVerificationFailed { .. })
         ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn precommitted_statements_use_akita_commitment_layout_digest() {
+        let digest = [23; 32];
+        let default_digest = [17; 32];
+        let commitment = jolt_akita::AkitaCommitment {
+            layout_digest: digest,
+            num_vars: 1,
+            poly_count: 1,
+            native: vec![1],
+        };
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::TrustedAdvice,
+            JoltRelationId::AdviceClaimReduction,
+        ));
+        let entry = Stage8BatchEntry {
+            id,
+            commitment: &commitment,
+            opening_claim: Some(Fr::from_u64(7)),
+            own_point: vec![Fr::from_u64(0)],
+            scale: Fr::from_u64(1),
+        };
+        let point = vec![Fr::from_u64(0)];
+        let pcs_opening_point = Point::high_to_low(point.clone());
+        let (_, statements) =
+            precommitted_clear_statements(&[entry], default_digest, &point, &pcs_opening_point)
+                .expect("precommitted statement should build");
+
+        assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0].layout_digest, digest);
+        assert_ne!(statements[0].layout_digest, default_digest);
     }
 
     #[test]
