@@ -74,44 +74,6 @@ use crate::{
     VerifierError,
 };
 
-// WARNING: this is the verifier-internal batch claim record used by the
-// canonical `verify()` implementation. It intentionally tracks the
-// bytecode/program-image claim reductions that new 09 added to the Stage 6
-// batch but that the public, prover-facing `Stage6BatchInputClaims` (defined
-// below) does not surface. Keep it private so it cannot be confused with the
-// exported type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct VerifyStage6BatchInputClaims<F: Field> {
-    bytecode_read_raf_address: F,
-    booleanity_address: F,
-    bytecode_read_raf: F,
-    booleanity: F,
-    ram_hamming_booleanity: F,
-    ram_ra_virtualization: F,
-    instruction_ra_virtualization: F,
-    inc_claim_reduction: F,
-    trusted_advice_cycle_phase: Option<F>,
-    untrusted_advice_cycle_phase: Option<F>,
-    bytecode_claim_reduction: Option<F>,
-    program_image_claim_reduction: Option<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct VerifyStage6BatchExpectedOutputClaims<F: Field> {
-    bytecode_read_raf_address: F,
-    booleanity_address: F,
-    bytecode_read_raf: F,
-    booleanity: F,
-    ram_hamming_booleanity: F,
-    ram_ra_virtualization: F,
-    instruction_ra_virtualization: F,
-    inc_claim_reduction: F,
-    trusted_advice_cycle_phase: Option<F>,
-    untrusted_advice_cycle_phase: Option<F>,
-    bytecode_claim_reduction: Option<F>,
-    program_image_claim_reduction: Option<F>,
-}
-
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -878,121 +840,9 @@ where
         stage4,
         stage5,
     )?;
-    let input_claims = VerifyStage6BatchInputClaims {
-        bytecode_read_raf_address: stage6a.bytecode_read_raf_input,
-        booleanity_address: stage6a.booleanity_input,
-        bytecode_read_raf: relations
-            .bytecode_read_raf
-            .input_claim(&relations.bytecode_read_raf_inputs)?,
-        booleanity: relations
-            .booleanity
-            .input_claim(&relations.booleanity_inputs)?,
-        ram_hamming_booleanity: relations
-            .ram_hamming
-            .input_claim(&relations.ram_hamming_inputs)?,
-        ram_ra_virtualization: relations.ram_ra.input_claim(&relations.ram_ra_inputs)?,
-        instruction_ra_virtualization: relations
-            .instruction_ra
-            .input_claim(&relations.instruction_ra_inputs)?,
-        inc_claim_reduction: relations.inc.input_claim(&relations.inc_inputs)?,
-        trusted_advice_cycle_phase: relations
-            .trusted_advice
-            .as_ref()
-            .map(|relation| relation.input_claim(&relations.advice_inputs))
-            .transpose()?,
-        untrusted_advice_cycle_phase: relations
-            .untrusted_advice
-            .as_ref()
-            .map(|relation| relation.input_claim(&relations.advice_inputs))
-            .transpose()?,
-        bytecode_claim_reduction: match (
-            &relations.bytecode_reduction,
-            &relations.bytecode_reduction_inputs,
-        ) {
-            (Some(relation), Some(inputs)) => Some(relation.input_claim(inputs)?),
-            _ => None,
-        },
-        program_image_claim_reduction: match (
-            &relations.program_image_reduction,
-            &relations.program_image_reduction_inputs,
-        ) {
-            (Some(relation), Some(inputs)) => Some(relation.input_claim(inputs)?),
-            _ => None,
-        },
-    };
-
-    let mut sumcheck_claims = vec![
-        SumcheckClaim::new(
-            bytecode_claims.sumcheck.rounds,
-            bytecode_claims.sumcheck.degree,
-            input_claims.bytecode_read_raf,
-        ),
-        SumcheckClaim::new(
-            booleanity_claims.sumcheck.rounds,
-            booleanity_claims.sumcheck.degree,
-            input_claims.booleanity,
-        ),
-        SumcheckClaim::new(
-            ram_hamming_claims.sumcheck.rounds,
-            ram_hamming_claims.sumcheck.degree,
-            input_claims.ram_hamming_booleanity,
-        ),
-        SumcheckClaim::new(
-            ram_ra_claims.sumcheck.rounds,
-            ram_ra_claims.sumcheck.degree,
-            input_claims.ram_ra_virtualization,
-        ),
-        SumcheckClaim::new(
-            instruction_ra_claims.sumcheck.rounds,
-            instruction_ra_claims.sumcheck.degree,
-            input_claims.instruction_ra_virtualization,
-        ),
-        SumcheckClaim::new(
-            inc_claims.sumcheck.rounds,
-            inc_claims.sumcheck.degree,
-            input_claims.inc_claim_reduction,
-        ),
-    ];
-    if let (Some(claim), Some(input_claim)) = (
-        &trusted_advice_claims,
-        input_claims.trusted_advice_cycle_phase,
-    ) {
-        sumcheck_claims.push(SumcheckClaim::new(
-            claim.sumcheck.rounds,
-            claim.sumcheck.degree,
-            input_claim,
-        ));
-    }
-    if let (Some(claim), Some(input_claim)) = (
-        &untrusted_advice_claims,
-        input_claims.untrusted_advice_cycle_phase,
-    ) {
-        sumcheck_claims.push(SumcheckClaim::new(
-            claim.sumcheck.rounds,
-            claim.sumcheck.degree,
-            input_claim,
-        ));
-    }
-    if let (Some(claim), Some(input_claim)) = (
-        &bytecode_reduction_claims,
-        input_claims.bytecode_claim_reduction,
-    ) {
-        sumcheck_claims.push(SumcheckClaim::new(
-            claim.sumcheck.rounds,
-            claim.sumcheck.degree,
-            input_claim,
-        ));
-    }
-    if let (Some(claim), Some(input_claim)) = (
-        &program_image_reduction_claims,
-        input_claims.program_image_claim_reduction,
-    ) {
-        sumcheck_claims.push(SumcheckClaim::new(
-            claim.sumcheck.rounds,
-            claim.sumcheck.degree,
-            input_claim,
-        ));
-    }
+    // The per-instance batched-sumcheck claims (claimed sums), single-sourced
+    // through the same bundle method the prover uses, in canonical batch order.
+    let sumcheck_claims = relations.sumcheck_claims()?;
 
     let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
         &sumcheck_claims,
@@ -1220,11 +1070,17 @@ where
             },
         )?;
         let r_addr_rw = &stage4.output_claims.ram_val_check.ram_ra.point[..log_k];
-        let input_claim = input_claims.program_image_claim_reduction.ok_or(
-            VerifierError::MissingOpeningClaim {
-                id: program_image::ram_val_check_contribution_opening(),
-            },
-        )?;
+        let input_claim = match (
+            &relations.program_image_reduction,
+            &relations.program_image_reduction_inputs,
+        ) {
+            (Some(relation), Some(inputs)) => relation.input_claim(inputs)?,
+            _ => {
+                return Err(VerifierError::MissingOpeningClaim {
+                    id: program_image::ram_val_check_contribution_opening(),
+                })
+            }
+        };
         Some(verify_program_image_cycle_phase(
             &batch,
             claim,
@@ -1237,46 +1093,34 @@ where
         None
     };
 
-    let expected_outputs = VerifyStage6BatchExpectedOutputClaims {
-        bytecode_read_raf_address: claims.address_phase.bytecode_read_raf,
-        booleanity_address: claims.address_phase.booleanity,
-        bytecode_read_raf: bytecode_output,
-        booleanity: booleanity_output,
-        ram_hamming_booleanity: ram_hamming_output,
-        ram_ra_virtualization: ram_ra_output,
-        instruction_ra_virtualization: instruction_ra_output,
-        inc_claim_reduction: inc_output,
-        trusted_advice_cycle_phase: trusted_advice
-            .as_ref()
-            .map(|verified| verified.expected_output_claim),
-        untrusted_advice_cycle_phase: untrusted_advice
-            .as_ref()
-            .map(|verified| verified.expected_output_claim),
-        bytecode_claim_reduction: bytecode_cycle_phase
-            .as_ref()
-            .map(|verified| verified.expected_output_claim),
-        program_image_claim_reduction: program_image_cycle_phase
-            .as_ref()
-            .map(|verified| verified.expected_output_claim),
-    };
+    // The per-instance expected output claims in canonical batch order: the six
+    // base relations, then each present committed-mode reduction. The optional
+    // tail mirrors `sumcheck_claims` and the batching-coefficient order.
     let mut expected_outputs_in_order = vec![
-        expected_outputs.bytecode_read_raf,
-        expected_outputs.booleanity,
-        expected_outputs.ram_hamming_booleanity,
-        expected_outputs.ram_ra_virtualization,
-        expected_outputs.instruction_ra_virtualization,
-        expected_outputs.inc_claim_reduction,
+        bytecode_output,
+        booleanity_output,
+        ram_hamming_output,
+        ram_ra_output,
+        instruction_ra_output,
+        inc_output,
     ];
-    if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.untrusted_advice_cycle_phase {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.bytecode_claim_reduction {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.program_image_claim_reduction {
+    for output_claim in [
+        trusted_advice
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        untrusted_advice
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        bytecode_cycle_phase
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        program_image_cycle_phase
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+    ]
+    .into_iter()
+    .flatten()
+    {
         expected_outputs_in_order.push(output_claim);
     }
     if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
@@ -1394,8 +1238,9 @@ fn validate_compressed_stage_claim<F: Field>(
 // drift from the verifier.
 //
 // NOTE on claim reductions: new 09 added bytecode and program-image claim
-// reductions to the verifier's Stage 6 batch (handled inline by `verify()`
-// using `VerifyStage6BatchInputClaims`/`VerifyStage6BatchExpectedOutputClaims`).
+// reductions to the verifier's Stage 6 batch (the input claims come from
+// `Stage6Relations::sumcheck_claims`, the expected outputs from each relation's
+// `expected_output`, both shared with the prover via the bundle).
 // The public structs below do NOT carry those reduction fields; the prover-side
 // Stage 6 batch does not (yet) materialize them. The `stage6_input_claim_values`
 // / `stage6_expected_output_claim_values` ordering therefore covers only the
@@ -2293,8 +2138,6 @@ pub(super) struct Stage6AClearOutput<F: Field> {
     pub address_batch: BatchedEvaluationClaim<F>,
     pub bytecode_r_address: Vec<F>,
     pub booleanity_r_address: Vec<F>,
-    pub bytecode_read_raf_input: F,
-    pub booleanity_input: F,
 }
 
 pub(super) fn verify_zk<PCS, VC, T, ZkProof>(
@@ -2489,8 +2332,6 @@ where
         address_batch,
         bytecode_r_address,
         booleanity_r_address,
-        bytecode_read_raf_input,
-        booleanity_input,
     })
 }
 
