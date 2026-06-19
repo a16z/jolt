@@ -1,12 +1,5 @@
-use std::collections::BTreeMap;
-
 use jolt_field::{CanonicalBytes, FromPrimitiveInt};
-use jolt_lookup_tables::{InstructionLookupTable, XLEN};
-use jolt_riscv::{
-    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
-    InterleavedBitsMarker, JoltInstruction, JoltInstructionKind, JoltInstructionRow, JoltTraceRow,
-    NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
-};
+use jolt_riscv::JoltTraceRow;
 use thiserror::Error;
 
 use jolt_akita::{
@@ -89,85 +82,12 @@ impl JoltPackedWitnessBuilder {
         Ok(self)
     }
 
-    pub fn pack_bytecode_rows(
+    pub fn pack_untrusted_advice_bytes(
         &mut self,
-        bytecode: &[JoltInstructionRow],
-    ) -> Result<&mut Self, JoltPackedWitnessError> {
-        let chunks = self.bytecode_chunk_rows()?;
-        if chunks.is_empty() {
-            return Err(JoltPackedWitnessError::MissingDomain {
-                domain: "bytecode rows",
-            });
-        }
-        let chunk_count = chunks
-            .keys()
-            .next_back()
-            .map_or(0, |chunk| chunk.saturating_add(1));
-        for chunk in 0..chunk_count {
-            if !chunks.contains_key(&chunk) {
-                return Err(JoltPackedWitnessError::MissingChunk {
-                    domain: "bytecode rows",
-                    chunk,
-                });
-            }
-        }
-        let chunk_rows = *chunks
-            .values()
-            .next()
-            .ok_or(JoltPackedWitnessError::MissingDomain {
-                domain: "bytecode rows",
-            })?;
-        let expected = chunk_count
-            .checked_mul(chunk_rows)
-            .ok_or(JoltPackedWitnessError::DimensionOverflow)?;
-        if bytecode.len() != expected {
-            return Err(JoltPackedWitnessError::LengthMismatch {
-                domain: "bytecode rows",
-                expected,
-                got: bytecode.len(),
-            });
-        }
-
-        for (global_row, instruction) in bytecode.iter().enumerate() {
-            let chunk = global_row / chunk_rows;
-            let row = global_row % chunk_rows;
-            self.pack_bytecode_row(chunk, row, instruction)?;
-        }
-        Ok(self)
-    }
-
-    pub fn pack_program_image_words(
-        &mut self,
-        words: &[u64],
-    ) -> Result<&mut Self, JoltPackedWitnessError> {
-        let expected =
-            self.program_image_word_count()?
-                .ok_or(JoltPackedWitnessError::MissingDomain {
-                    domain: "program image words",
-                })?;
-        if words.len() != expected {
-            return Err(JoltPackedWitnessError::LengthMismatch {
-                domain: "program image words",
-                expected,
-                got: words.len(),
-            });
-        }
-        for (row, word) in words.iter().copied().enumerate() {
-            self.emit_little_endian_bytes(
-                PackedFamilyId::ProgramImageInit,
-                row,
-                &word.to_le_bytes(),
-            )?;
-        }
-        Ok(self)
-    }
-
-    pub fn pack_advice_bytes(
-        &mut self,
-        kind: PackedAdviceKind,
         bytes: &[u8],
     ) -> Result<&mut Self, JoltPackedWitnessError> {
-        let domain = advice_domain_name(kind);
+        let kind = PackedAdviceKind::Untrusted;
+        let domain = "untrusted advice bytes";
         let expected = self
             .advice_byte_count(kind)?
             .ok_or(JoltPackedWitnessError::MissingDomain { domain })?;
@@ -259,124 +179,6 @@ impl JoltPackedWitnessBuilder {
         Ok(())
     }
 
-    fn pack_bytecode_row(
-        &mut self,
-        chunk: usize,
-        row: usize,
-        instruction: &JoltInstructionRow,
-    ) -> Result<(), JoltPackedWitnessError> {
-        let instruction = JoltInstruction::try_from(*instruction)
-            .map_err(|kind| JoltPackedWitnessError::InvalidInstructionKind { kind })?;
-        let circuit_flags = instruction.circuit_flags();
-        let instruction_flags = instruction.instruction_flags();
-        let source_row = JoltInstructionRow::from(instruction);
-        if circuit_flags.get(CircuitFlags::Store) && source_row.operands.rd.is_some() {
-            return Err(JoltPackedWitnessError::BytecodeSourceConflict { chunk, row });
-        }
-
-        if let Some(register) = source_row.operands.rs1 {
-            self.emit_one(
-                PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 0 },
-                row,
-                0,
-                register as usize,
-            )?;
-        }
-        if let Some(register) = source_row.operands.rs2 {
-            self.emit_one(
-                PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 1 },
-                row,
-                0,
-                register as usize,
-            )?;
-        }
-        if let Some(register) = source_row.operands.rd {
-            self.emit_one(
-                PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
-                row,
-                0,
-                register as usize,
-            )?;
-        }
-
-        self.emit_circuit_flags(chunk, row, circuit_flags)?;
-        self.emit_instruction_flags(chunk, row, instruction_flags)?;
-        if let Some(table) = InstructionLookupTable::<XLEN>::lookup_table(&instruction) {
-            self.emit_one(
-                PackedFamilyId::BytecodeLookupSelector { chunk },
-                row,
-                0,
-                table.index(),
-            )?;
-        }
-        if !circuit_flags.is_interleaved_operands() {
-            self.emit_one(PackedFamilyId::BytecodeRafFlag { chunk }, row, 0, 1)?;
-        }
-
-        self.emit_little_endian_bytes(
-            PackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
-            row,
-            &(source_row.address as u64).to_le_bytes(),
-        )?;
-        let imm = AkitaField::from_i128(source_row.operands.imm);
-        self.emit_little_endian_bytes(
-            PackedFamilyId::BytecodeImmBytes { chunk },
-            row,
-            &imm.to_bytes_le_vec(),
-        )?;
-        Ok(())
-    }
-
-    fn emit_circuit_flags(
-        &mut self,
-        chunk: usize,
-        row: usize,
-        flags: CircuitFlagSet,
-    ) -> Result<(), JoltPackedWitnessError> {
-        for flag in 0..NUM_CIRCUIT_FLAGS {
-            if flags.get(circuit_flag(flag)?) {
-                self.emit_one(
-                    PackedFamilyId::BytecodeCircuitFlag { chunk, flag },
-                    row,
-                    0,
-                    1,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn emit_instruction_flags(
-        &mut self,
-        chunk: usize,
-        row: usize,
-        flags: InstructionFlagSet,
-    ) -> Result<(), JoltPackedWitnessError> {
-        for flag in 0..NUM_INSTRUCTION_FLAGS {
-            if flags.get(instruction_flag(flag)?) {
-                self.emit_one(
-                    PackedFamilyId::BytecodeInstructionFlag { chunk, flag },
-                    row,
-                    0,
-                    1,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn emit_little_endian_bytes(
-        &mut self,
-        family: PackedFamilyId,
-        row: usize,
-        bytes: &[u8],
-    ) -> Result<(), JoltPackedWitnessError> {
-        for (limb, byte) in bytes.iter().copied().enumerate() {
-            self.emit_byte(family.clone(), row, limb, byte)?;
-        }
-        Ok(())
-    }
-
     fn emit_byte(
         &mut self,
         family: PackedFamilyId,
@@ -417,48 +219,6 @@ impl JoltPackedWitnessBuilder {
         Ok(rows)
     }
 
-    fn bytecode_chunk_rows(&self) -> Result<BTreeMap<usize, usize>, JoltPackedWitnessError> {
-        let mut chunks = BTreeMap::new();
-        for family in &self.layout.families {
-            let chunk = match family.id {
-                PackedFamilyId::BytecodeChunk { index }
-                | PackedFamilyId::BytecodeRegisterSelector { chunk: index, .. }
-                | PackedFamilyId::BytecodeCircuitFlag { chunk: index, .. }
-                | PackedFamilyId::BytecodeInstructionFlag { chunk: index, .. }
-                | PackedFamilyId::BytecodeLookupSelector { chunk: index }
-                | PackedFamilyId::BytecodeRafFlag { chunk: index }
-                | PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: index }
-                | PackedFamilyId::BytecodeImmBytes { chunk: index } => index,
-                _ => continue,
-            };
-            let rows = domain_rows(family.domain)?;
-            match chunks.get(&chunk) {
-                Some(existing) if *existing != rows => {
-                    return Err(JoltPackedWitnessError::InconsistentDomain {
-                        domain: "bytecode rows",
-                        expected: *existing,
-                        got: rows,
-                    });
-                }
-                Some(_) => {}
-                None => {
-                    let _ = chunks.insert(chunk, rows);
-                }
-            }
-        }
-        Ok(chunks)
-    }
-
-    fn program_image_word_count(&self) -> Result<Option<usize>, JoltPackedWitnessError> {
-        let mut rows = None;
-        for family in &self.layout.families {
-            if family.id == PackedFamilyId::ProgramImageInit {
-                merge_domain_rows(&mut rows, family.domain, "program image words")?;
-            }
-        }
-        Ok(rows)
-    }
-
     fn advice_byte_count(
         &self,
         kind: PackedAdviceKind,
@@ -466,7 +226,7 @@ impl JoltPackedWitnessBuilder {
         let mut rows = None;
         for family in &self.layout.families {
             if family.id == (PackedFamilyId::AdviceBytes { kind, index: 0 }) {
-                merge_domain_rows(&mut rows, family.domain, advice_domain_name(kind))?;
+                merge_domain_rows(&mut rows, family.domain, "untrusted advice bytes")?;
             }
         }
         Ok(rows)
@@ -489,13 +249,6 @@ impl JoltPackedWitnessBuilder {
     }
 }
 
-fn advice_domain_name(kind: PackedAdviceKind) -> &'static str {
-    match kind {
-        PackedAdviceKind::Trusted => "trusted advice bytes",
-        PackedAdviceKind::Untrusted => "untrusted advice bytes",
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum JoltPackedWitnessError {
     #[error("packed witness is missing {domain} layout families")]
@@ -506,8 +259,6 @@ pub enum JoltPackedWitnessError {
         expected: usize,
         got: usize,
     },
-    #[error("{domain} chunk {chunk} is missing from the packed witness layout")]
-    MissingChunk { domain: &'static str, chunk: usize },
     #[error("{domain} layout rows are inconsistent: expected {expected}, got {got}")]
     InconsistentDomain {
         domain: &'static str,
@@ -522,16 +273,8 @@ pub enum JoltPackedWitnessError {
         index: usize,
         log_k_chunk: usize,
     },
-    #[error("invalid Jolt instruction kind {kind:?}")]
-    InvalidInstructionKind { kind: JoltInstructionKind },
     #[error("fused increment row {row} exposes both store and rd-present sources")]
     FusedIncrementSourceConflict { row: usize },
-    #[error("bytecode row {chunk}:{row} exposes both store and rd-present sources")]
-    BytecodeSourceConflict { chunk: usize, row: usize },
-    #[error("unknown circuit flag index {index}")]
-    UnknownCircuitFlag { index: usize },
-    #[error("unknown instruction flag index {index}")]
-    UnknownInstructionFlag { index: usize },
     #[error(transparent)]
     Layout(#[from] PackedLayoutError),
 }
@@ -588,38 +331,6 @@ fn chunk(
     Ok(((value >> shift) & mask) as usize)
 }
 
-fn circuit_flag(index: usize) -> Result<CircuitFlags, JoltPackedWitnessError> {
-    match index {
-        0 => Ok(CircuitFlags::AddOperands),
-        1 => Ok(CircuitFlags::SubtractOperands),
-        2 => Ok(CircuitFlags::MultiplyOperands),
-        3 => Ok(CircuitFlags::Load),
-        4 => Ok(CircuitFlags::Store),
-        5 => Ok(CircuitFlags::Jump),
-        6 => Ok(CircuitFlags::WriteLookupOutputToRD),
-        7 => Ok(CircuitFlags::VirtualInstruction),
-        8 => Ok(CircuitFlags::Assert),
-        9 => Ok(CircuitFlags::DoNotUpdateUnexpandedPC),
-        10 => Ok(CircuitFlags::Advice),
-        11 => Ok(CircuitFlags::IsCompressed),
-        12 => Ok(CircuitFlags::IsFirstInSequence),
-        13 => Ok(CircuitFlags::IsLastInSequence),
-        _ => Err(JoltPackedWitnessError::UnknownCircuitFlag { index }),
-    }
-}
-
-fn instruction_flag(index: usize) -> Result<InstructionFlags, JoltPackedWitnessError> {
-    match index {
-        0 => Ok(InstructionFlags::LeftOperandIsPC),
-        1 => Ok(InstructionFlags::RightOperandIsImm),
-        2 => Ok(InstructionFlags::LeftOperandIsRs1Value),
-        3 => Ok(InstructionFlags::RightOperandIsRs2Value),
-        4 => Ok(InstructionFlags::Branch),
-        5 => Ok(InstructionFlags::IsNoop),
-        _ => Err(JoltPackedWitnessError::UnknownInstructionFlag { index }),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -630,14 +341,12 @@ mod tests {
     use super::*;
     use jolt_akita::{PackedAlphabet, PackedFamilySpec, PackedWitnessSource};
     use jolt_field::FixedByteSize;
-    use jolt_riscv::{CapturedState, NormalizedOperands, StoreState};
+    use jolt_riscv::{
+        CapturedState, JoltInstructionKind, JoltInstructionRow, NormalizedOperands, StoreState,
+    };
 
     fn trace_domain() -> PackedFactDomain {
         PackedFactDomain::TraceRows { log_t: 1 }
-    }
-
-    fn bytecode_domain() -> PackedFactDomain {
-        PackedFactDomain::BytecodeRows { log_bytecode: 1 }
     }
 
     fn trace_row(
@@ -656,21 +365,6 @@ mod tests {
         };
         JoltTraceRow::from_components(state, &instruction, bytecode_pc)
             .expect("trace row should build")
-    }
-
-    fn instruction(
-        kind: JoltInstructionKind,
-        address: usize,
-        operands: NormalizedOperands,
-    ) -> JoltInstructionRow {
-        JoltInstructionRow {
-            instruction_kind: kind,
-            address,
-            operands,
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
-            is_compressed: false,
-        }
     }
 
     fn get(
@@ -1091,248 +785,13 @@ mod tests {
     }
 
     #[test]
-    fn packs_committed_bytecode_facts() {
-        let layout = PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRegisterSelector {
-                    chunk: 0,
-                    selector: 2,
-                },
-                bytecode_domain(),
-                1,
-                PackedAlphabet::Fixed { size: 32 },
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeCircuitFlag {
-                    chunk: 0,
-                    flag: CircuitFlags::Store as usize,
-                },
-                bytecode_domain(),
-                1,
-                PackedAlphabet::Bit,
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeLookupSelector { chunk: 0 },
-                bytecode_domain(),
-                1,
-                PackedAlphabet::Fixed {
-                    size: jolt_lookup_tables::LookupTableKind::<XLEN>::COUNT,
-                },
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRafFlag { chunk: 0 },
-                bytecode_domain(),
-                1,
-                PackedAlphabet::Bit,
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 },
-                bytecode_domain(),
-                8,
-                PackedAlphabet::Byte,
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeImmBytes { chunk: 0 },
-                bytecode_domain(),
-                AkitaField::NUM_BYTES,
-                PackedAlphabet::Byte,
-            ),
-        ])
-        .expect("layout should build");
-        let bytecode = [
-            instruction(
-                JoltInstructionKind::SD,
-                0x8000_0000,
-                NormalizedOperands {
-                    rs1: Some(1),
-                    rs2: Some(2),
-                    rd: None,
-                    imm: 8,
-                },
-            ),
-            instruction(
-                JoltInstructionKind::ADDI,
-                0x8000_0004,
-                NormalizedOperands {
-                    rs1: Some(1),
-                    rs2: None,
-                    rd: Some(5),
-                    imm: 7,
-                },
-            ),
-        ];
-
-        let mut builder = JoltPackedWitnessBuilder::new(layout);
-        let _ = builder
-            .pack_bytecode_rows(&bytecode)
-            .expect("bytecode packing should succeed");
-        let witness = builder.finish().expect("source should build");
-
-        assert_eq!(
-            get(
-                &witness,
-                PackedFamilyId::BytecodeCircuitFlag {
-                    chunk: 0,
-                    flag: CircuitFlags::Store as usize,
-                },
-                0,
-                0,
-                1,
-            ),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(
-                &witness,
-                PackedFamilyId::BytecodeRegisterSelector {
-                    chunk: 0,
-                    selector: 2,
-                },
-                1,
-                0,
-                5,
-            ),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(
-                &witness,
-                PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 },
-                1,
-                0,
-                4,
-            ),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(
-                &witness,
-                PackedFamilyId::BytecodeImmBytes { chunk: 0 },
-                1,
-                0,
-                7,
-            ),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(
-                &witness,
-                PackedFamilyId::BytecodeRafFlag { chunk: 0 },
-                1,
-                0,
-                1,
-            ),
-            AkitaField::one()
-        );
-    }
-
-    #[test]
-    fn bytecode_packing_rejects_store_with_rd_destination() {
-        let layout = PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRegisterSelector {
-                    chunk: 0,
-                    selector: 2,
-                },
-                bytecode_domain(),
-                1,
-                PackedAlphabet::Fixed { size: 32 },
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeCircuitFlag {
-                    chunk: 0,
-                    flag: CircuitFlags::Store as usize,
-                },
-                bytecode_domain(),
-                1,
-                PackedAlphabet::Bit,
-            ),
-        ])
-        .expect("layout should build");
-        let bytecode = [
-            instruction(
-                JoltInstructionKind::SD,
-                0x8000_0000,
-                NormalizedOperands {
-                    rs1: Some(1),
-                    rs2: Some(2),
-                    rd: Some(3),
-                    imm: 8,
-                },
-            ),
-            instruction(
-                JoltInstructionKind::ADDI,
-                0x8000_0004,
-                NormalizedOperands {
-                    rs1: Some(1),
-                    rs2: None,
-                    rd: Some(5),
-                    imm: 7,
-                },
-            ),
-        ];
-
-        let mut builder = JoltPackedWitnessBuilder::new(layout);
-        let error = builder
-            .pack_bytecode_rows(&bytecode)
-            .expect_err("ambiguous bytecode source row should reject");
-
-        assert!(matches!(
-            error,
-            JoltPackedWitnessError::BytecodeSourceConflict { chunk: 0, row: 0 }
-        ));
-    }
-
-    #[test]
-    fn packs_program_image_words_as_little_endian_bytes() {
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::ProgramImageInit,
-            PackedFactDomain::ProgramImageWords { log_words: 1 },
-            8,
-            PackedAlphabet::Byte,
-        )])
-        .expect("layout should build");
-
-        let mut builder = JoltPackedWitnessBuilder::new(layout);
-        let _ = builder
-            .pack_program_image_words(&[0x0201, 0x0403])
-            .expect("program image packing should succeed");
-        let witness = builder.finish().expect("source should build");
-
-        assert_eq!(
-            get(&witness, PackedFamilyId::ProgramImageInit, 0, 0, 1),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(&witness, PackedFamilyId::ProgramImageInit, 0, 1, 2),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(&witness, PackedFamilyId::ProgramImageInit, 1, 0, 3),
-            AkitaField::one()
-        );
-        assert_eq!(
-            get(&witness, PackedFamilyId::ProgramImageInit, 1, 1, 4),
-            AkitaField::one()
-        );
-    }
-
-    #[test]
-    fn trusted_advice_encoding_roundtrip() {
-        assert_advice_encoding(PackedAdviceKind::Trusted, [0, 1, 2, 255]);
-    }
-
-    #[test]
     fn untrusted_advice_encoding_roundtrip() {
-        assert_advice_encoding(PackedAdviceKind::Untrusted, [255, 0, 7, 8]);
-    }
-
-    fn assert_advice_encoding(kind: PackedAdviceKind, bytes: [u8; 4]) {
-        let layout = advice_layout(kind);
+        let bytes = [255, 0, 7, 8];
+        let layout = advice_layout(PackedAdviceKind::Untrusted);
 
         let mut builder = JoltPackedWitnessBuilder::new(layout);
         let _ = builder
-            .pack_advice_bytes(kind, &bytes)
+            .pack_untrusted_advice_bytes(&bytes)
             .expect("advice packing should succeed");
         let witness = builder.finish().expect("source should build");
 
@@ -1340,7 +799,10 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::AdviceBytes { kind, index: 0 },
+                    PackedFamilyId::AdviceBytes {
+                        kind: PackedAdviceKind::Untrusted,
+                        index: 0,
+                    },
                     row,
                     0,
                     byte as usize

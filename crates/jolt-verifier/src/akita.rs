@@ -1,7 +1,5 @@
 //! Prover-facing helpers for assembling Akita verifier artifacts.
 
-use std::collections::BTreeMap;
-
 use crate::{
     akita_witness::JoltPackedWitnessBuilder,
     config::{
@@ -49,7 +47,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
 use jolt_openings::{BatchOpeningScheme, BatchOpeningStatement, PhysicalView};
 use jolt_poly::{try_eq_mle, EqPolynomial, Polynomial, UnivariatePoly};
-use jolt_riscv::{CircuitFlags, JoltInstructionRow, JoltTraceRow};
+use jolt_riscv::{CircuitFlags, JoltTraceRow};
 use jolt_sumcheck::{
     append_sumcheck_claim, BatchedEvaluationClaim, ClearProof, CompressedLabeledRoundPoly,
     CompressedSumcheckProof, EvaluationClaim, RoundMessage, SumcheckProof,
@@ -76,9 +74,6 @@ pub struct AkitaPackedJoltWitnessInput<'a> {
     pub trace_rows: &'a [JoltTraceRow],
     pub log_k_chunk: usize,
     pub instruction_lookup_indices: &'a [u128],
-    pub bytecode_rows: &'a [JoltInstructionRow],
-    pub program_image_words: &'a [u64],
-    pub trusted_advice: Option<&'a [u8]>,
     pub untrusted_advice: Option<&'a [u8]>,
 }
 
@@ -171,18 +166,7 @@ pub fn build_akita_packed_jolt_witness(
         .map(|_| ())
         .map_err(akita_witness_error)?;
 
-    pack_bytecode_rows(&mut builder, input.bytecode_rows)?;
-    pack_program_image_words(&mut builder, input.program_image_words)?;
-    pack_advice_bytes(
-        &mut builder,
-        PackedAdviceKind::Trusted,
-        input.trusted_advice,
-    )?;
-    pack_advice_bytes(
-        &mut builder,
-        PackedAdviceKind::Untrusted,
-        input.untrusted_advice,
-    )?;
+    pack_untrusted_advice_bytes(&mut builder, input.untrusted_advice)?;
 
     builder.finish().map_err(akita_witness_error)
 }
@@ -1509,59 +1493,22 @@ fn validate_akita_verifier_setup_shape(
     Ok(())
 }
 
-fn pack_bytecode_rows(
+fn pack_untrusted_advice_bytes(
     builder: &mut JoltPackedWitnessBuilder,
-    rows: &[JoltInstructionRow],
-) -> Result<(), VerifierError> {
-    let expected = expected_bytecode_rows(builder.layout())?;
-    let Some(expected) = expected else {
-        if rows.is_empty() {
-            return Ok(());
-        }
-        return Err(akita_witness_error(
-            "bytecode rows were supplied but the packed layout has no bytecode families",
-        ));
-    };
-    let padded = padded_slice(rows, expected, "bytecode rows")?;
-    builder
-        .pack_bytecode_rows(&padded)
-        .map(|_| ())
-        .map_err(akita_witness_error)
-}
-
-fn pack_program_image_words(
-    builder: &mut JoltPackedWitnessBuilder,
-    words: &[u64],
-) -> Result<(), VerifierError> {
-    let expected = expected_rows_for_family(
-        builder.layout(),
-        |id| matches!(id, PackedFamilyId::ProgramImageInit),
-        "program image words",
-    )?;
-    let Some(expected) = expected else {
-        if words.is_empty() {
-            return Ok(());
-        }
-        return Err(akita_witness_error(
-            "program image words were supplied but the packed layout has no program image family",
-        ));
-    };
-    let padded = padded_slice(words, expected, "program image words")?;
-    builder
-        .pack_program_image_words(&padded)
-        .map(|_| ())
-        .map_err(akita_witness_error)
-}
-
-fn pack_advice_bytes(
-    builder: &mut JoltPackedWitnessBuilder,
-    kind: PackedAdviceKind,
     bytes: Option<&[u8]>,
 ) -> Result<(), VerifierError> {
     let expected = expected_rows_for_family(
         builder.layout(),
-        |id| matches!(id, PackedFamilyId::AdviceBytes { kind: family_kind, index: 0 } if *family_kind == kind),
-        advice_domain_name(kind),
+        |id| {
+            matches!(
+                id,
+                PackedFamilyId::AdviceBytes {
+                    kind: PackedAdviceKind::Untrusted,
+                    index: 0,
+                }
+            )
+        },
+        "untrusted advice bytes",
     )?;
     let Some(expected) = expected else {
         if bytes.is_none_or(<[u8]>::is_empty) {
@@ -1569,59 +1516,18 @@ fn pack_advice_bytes(
         }
         return Err(akita_witness_error(format!(
             "{} were supplied but the packed layout has no matching advice family",
-            advice_domain_name(kind)
+            "untrusted advice bytes"
         )));
     };
     let padded = padded_slice(
         bytes.unwrap_or_default(),
         expected,
-        advice_domain_name(kind),
+        "untrusted advice bytes",
     )?;
     builder
-        .pack_advice_bytes(kind, &padded)
+        .pack_untrusted_advice_bytes(&padded)
         .map(|_| ())
         .map_err(akita_witness_error)
-}
-
-fn expected_bytecode_rows(layout: &PackedWitnessLayout) -> Result<Option<usize>, VerifierError> {
-    let mut chunks = BTreeMap::<usize, usize>::new();
-    for family in &layout.families {
-        let chunk = match family.id {
-            PackedFamilyId::BytecodeChunk { index }
-            | PackedFamilyId::BytecodeRegisterSelector { chunk: index, .. }
-            | PackedFamilyId::BytecodeCircuitFlag { chunk: index, .. }
-            | PackedFamilyId::BytecodeInstructionFlag { chunk: index, .. }
-            | PackedFamilyId::BytecodeLookupSelector { chunk: index }
-            | PackedFamilyId::BytecodeRafFlag { chunk: index }
-            | PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: index }
-            | PackedFamilyId::BytecodeImmBytes { chunk: index } => index,
-            _ => continue,
-        };
-        let rows = packed_domain_rows(family.domain)?;
-        match chunks.insert(chunk, rows) {
-            Some(existing) if existing != rows => {
-                return Err(akita_witness_error(format!(
-                    "bytecode rows layout chunk {chunk} has inconsistent row counts {existing} and {rows}"
-                )));
-            }
-            _ => {}
-        }
-    }
-    let Some((&max_chunk, &chunk_rows)) = chunks.last_key_value() else {
-        return Ok(None);
-    };
-    for chunk in 0..=max_chunk {
-        if !chunks.contains_key(&chunk) {
-            return Err(akita_witness_error(format!(
-                "bytecode rows layout is missing chunk {chunk}",
-            )));
-        }
-    }
-    max_chunk
-        .checked_add(1)
-        .and_then(|chunk_count| chunk_count.checked_mul(chunk_rows))
-        .ok_or_else(|| akita_witness_error("bytecode rows layout size overflow"))
-        .map(Some)
 }
 
 fn expected_rows_for_family(
@@ -1674,13 +1580,6 @@ fn padded_slice<T: Clone + Default>(
     let mut padded = values.to_vec();
     padded.resize_with(expected, T::default);
     Ok(padded)
-}
-
-fn advice_domain_name(kind: PackedAdviceKind) -> &'static str {
-    match kind {
-        PackedAdviceKind::Trusted => "trusted advice bytes",
-        PackedAdviceKind::Untrusted => "untrusted advice bytes",
-    }
 }
 
 fn eval_akita_jolt_lattice_opening<S>(
@@ -2807,9 +2706,6 @@ mod tests {
                 trace_rows: &rows,
                 log_k_chunk: 8,
                 instruction_lookup_indices: &[0xaa, 0xbb],
-                bytecode_rows: &[],
-                program_image_words: &[],
-                trusted_advice: None,
                 untrusted_advice: Some(&[7, 8]),
             },
         )
@@ -2932,9 +2828,6 @@ mod tests {
                 trace_rows: &[],
                 log_k_chunk: 8,
                 instruction_lookup_indices: &[],
-                bytecode_rows: &[],
-                program_image_words: &[],
-                trusted_advice: None,
                 untrusted_advice: None,
             })
             .expect_err("precommitted packed-witness layout should reject");
