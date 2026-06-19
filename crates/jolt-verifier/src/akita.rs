@@ -3151,9 +3151,9 @@ mod tests {
             [
                 (
                     packed_cell(instruction_family.clone(), 7),
-                    AkitaField::from_u64(11),
+                    AkitaField::one(),
                 ),
-                (packed_cell(sign_family.clone(), 1), AkitaField::from_u64(5)),
+                (packed_cell(sign_family.clone(), 1), AkitaField::one()),
             ],
         )
         .expect("source should build");
@@ -3164,8 +3164,8 @@ mod tests {
             .expect("artifact should carry Akita payload")
             .packed_witness
             .clone();
-        let instruction_claim = AkitaField::from_u64(22);
-        let sign_claim = AkitaField::from_u64(15);
+        let instruction_claim = AkitaField::from_u64(2);
+        let sign_claim = AkitaField::from_u64(3);
         let instruction_id = Stage8OpeningId::from(JoltOpeningId::committed(
             JoltCommittedPolynomial::InstructionRa(0),
             JoltRelationId::HammingWeightClaimReduction,
