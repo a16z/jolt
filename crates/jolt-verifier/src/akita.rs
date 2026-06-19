@@ -676,11 +676,22 @@ where
             reason: "Akita packed opening proving requires a clear Stage 8 statement".to_string(),
         });
     };
+    let payload = artifacts
+        .payload()
+        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita packed opening artifacts do not carry an Akita payload".to_string(),
+        })?;
+    validate_akita_precommitted_opening_inputs(
+        &payload.packed_witness,
+        &statement.precommitted_statements,
+        precommitted_inputs,
+    )?;
     let packed =
         prove_akita_packed_openings(setup, transcript, artifacts, source, &statement.statement)?;
     let precommitted = prove_akita_precommitted_opening_batches(
         setup,
         transcript,
+        &payload.packed_witness,
         &statement.precommitted_statements,
         precommitted_inputs,
     )?;
@@ -693,6 +704,7 @@ where
 fn prove_akita_precommitted_opening_batches<T>(
     setup: &AkitaProverSetup,
     transcript: &mut T,
+    packed_witness: &AkitaCommitment,
     statements: &[BatchOpeningStatement<
         AkitaField,
         AkitaCommitment,
@@ -704,22 +716,12 @@ fn prove_akita_precommitted_opening_batches<T>(
 where
     T: Transcript<Challenge = AkitaField>,
 {
-    if statements.len() != inputs.len() {
-        return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: format!(
-                "expected {} Akita precommitted opening inputs, got {}",
-                statements.len(),
-                inputs.len()
-            ),
-        });
-    }
+    validate_akita_precommitted_opening_inputs(packed_witness, statements, inputs)?;
 
     statements
         .iter()
         .zip(inputs)
-        .enumerate()
-        .map(|(index, (statement, input))| {
-            validate_akita_precommitted_opening_input(index, statement, input)?;
+        .map(|(statement, input)| {
             AkitaPackedScheme::prove_batch(
                 setup,
                 transcript,
@@ -734,8 +736,35 @@ where
         .collect()
 }
 
+fn validate_akita_precommitted_opening_inputs(
+    packed_witness: &AkitaCommitment,
+    statements: &[BatchOpeningStatement<
+        AkitaField,
+        AkitaCommitment,
+        Stage8OpeningId,
+        Stage8OpeningId,
+    >],
+    inputs: &[AkitaPrecommittedOpeningInput<'_>],
+) -> Result<(), VerifierError> {
+    if statements.len() != inputs.len() {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "expected {} Akita precommitted opening inputs, got {}",
+                statements.len(),
+                inputs.len()
+            ),
+        });
+    }
+
+    for (index, (statement, input)) in statements.iter().zip(inputs).enumerate() {
+        validate_akita_precommitted_opening_input(index, packed_witness, statement, input)?;
+    }
+    Ok(())
+}
+
 fn validate_akita_precommitted_opening_input(
     index: usize,
+    packed_witness: &AkitaCommitment,
     statement: &BatchOpeningStatement<
         AkitaField,
         AkitaCommitment,
@@ -749,11 +778,25 @@ fn validate_akita_precommitted_opening_input(
             reason: format!("Akita precommitted opening statement {index} has no claims"),
         });
     }
+    if input.hint.matches_commitment(packed_witness) {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "Akita precommitted opening input {index} must not use the packed witness hint"
+            ),
+        });
+    }
     for claim in &statement.claims {
         if !matches!(claim.view, PhysicalView::Direct) {
             return Err(VerifierError::FinalOpeningBatchFailed {
                 reason: format!(
                     "Akita precommitted opening statement {index} must use direct physical views"
+                ),
+            });
+        }
+        if claim.commitment == *packed_witness {
+            return Err(VerifierError::FinalOpeningBatchFailed {
+                reason: format!(
+                    "Akita precommitted opening statement {index} must target a separate precommitted commitment"
                 ),
             });
         }
@@ -3404,6 +3447,47 @@ mod tests {
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("packed reduction")
+        ));
+
+        let mut packed_target_statement = stage8_statement.clone();
+        let Stage8BatchStatement::Clear(clear_statement) = &mut packed_target_statement else {
+            unreachable!("test statement is clear");
+        };
+        clear_statement.precommitted_statements[0].claims[0].commitment = packed_commitment.clone();
+        let mut packed_target_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
+        let error = prove_akita_stage8_clear_openings_with_precommitted(
+            &prover_setup,
+            &mut packed_target_transcript,
+            &artifact,
+            &source,
+            &packed_target_statement,
+            &precommitted_inputs,
+        )
+        .expect_err("precommitted statement targeting W_pack should fail");
+        assert!(matches!(
+            error,
+            VerifierError::FinalOpeningBatchFailed { reason }
+                if reason.contains("separate precommitted commitment")
+        ));
+
+        let packed_hint_inputs = [AkitaPrecommittedOpeningInput {
+            polynomial: &precommitted_poly,
+            hint: &artifact.hint,
+        }];
+        let mut packed_hint_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
+        let error = prove_akita_stage8_clear_openings_with_precommitted(
+            &prover_setup,
+            &mut packed_hint_transcript,
+            &artifact,
+            &source,
+            &stage8_statement,
+            &packed_hint_inputs,
+        )
+        .expect_err("precommitted input using W_pack hint should fail");
+        assert!(matches!(
+            error,
+            VerifierError::FinalOpeningBatchFailed { reason }
+                if reason.contains("packed witness hint")
         ));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
