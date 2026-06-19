@@ -300,12 +300,25 @@ dimension mismatch:
 Transcript:
 
 ```text
-1. Akita setup/config identifier.
-2. PackedWitness layout digest.
-3. PackedWitness commitment.
-4. logical opening point.
-5. logical claims or ZK claim commitments.
-6. Akita batch challenges.
+packed-view batch:
+  1. Akita setup/config identifier.
+  2. PackedWitness layout digest.
+  3. PackedWitness commitment.
+  4. logical opening point.
+  5. logical claims or ZK claim commitments.
+  6. Akita batch challenges.
+
+precommitted direct/native opening:
+  1. Akita setup/config identifier.
+  2. original precommitted commitment handle and commitment digest.
+  3. direct opening statement layout digest.
+  4. object-local opening point or component expansion.
+  5. claimed value or ZK claim commitment.
+  6. direct/native proof challenges.
+
+Rejected:
+  using the PackedWitness layout digest or commitment in place of the original
+  precommitted commitment handle.
 ```
 
 Implementation plan:
@@ -490,6 +503,18 @@ akita_setup_key_is_bound:
 akita_statement_has_single_packed_witness_commitment:
   adding a second Akita commitment handle is rejected.
 
+akita_precommitted_direct_opening_uses_original_commitment:
+  TrustedAdvice, BytecodeChunk(i), and ProgramImageInit direct openings verify
+  against their original commitment handles.
+
+akita_precommitted_direct_opening_rejects_w_pack_commitment:
+  replacing the original commitment handle with the PackedWitness commitment
+  rejects, even if the copied value in W_pack matches the claim.
+
+akita_program_committed_does_not_replace_precommitted_opening:
+  backend Program::Committed material without the Jolt precommitted commitment
+  handle and direct opening proof rejects.
+
 akita_hint_layout_mismatch_rejects:
   prover hint generated for one PackedWitness layout cannot prove another.
 
@@ -531,15 +556,32 @@ Rejected:
   OneHotPoly API requires it.
 ```
 
-## Questions
+## Resolved Decisions And Open Questions
 
 ```text
-1. What is the first supported Akita field mode?
-2. Does Akita setup live in jolt-verifier preprocessing or a PCS-specific
-   verifier setup payload?
-3. Is setup exact-D or universal/up-to-D?
-4. Can the LayerZero backend verify packed linear views directly, or should
-   jolt-akita reduce them to backend-supported statements?
+resolved:
+  first supported Akita field mode is LayerZero proof_optimized fp128
+  (`D64Full`) through akita-field with jolt-compat.
+
+  verifier setup payload binds the backend identifier, LayerZero revision,
+  AKITA_D, exact setup dimension, maximum polynomials per commitment group,
+  default layout digest, optional PackedWitness layout digest/dimension/cells,
+  and serialized native verifier setup material.
+
+  current setup verification is exact-D: setup D must equal D_pack.
+
+  jolt-akita reduces packed-linear view statements to backend-supported native
+  openings through its packed-view reduction adapter.
+
+  precommitted objects do not enter the W_pack packed-view statement. They are
+  verified through separate direct/native opening statements against their
+  original Jolt commitment handles.
+
+open:
+  whether a future universal/up-to-D Akita setup should be accepted.
+
+  whether future Akita APIs can natively prove packed-linear or bound
+  precommitted packed views more cheaply than the current adapter.
 ```
 
 ## References
