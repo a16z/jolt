@@ -1510,15 +1510,24 @@ fn validate_lattice_term_validity_coverage(
     if core_jolt_ra_family(family) {
         return Ok(());
     }
-    if requirements
+    let has_value_validity = requirements
         .iter()
-        .any(|requirement| requirement_covers_term(requirement, family, limb, symbol))
-    {
-        return Ok(());
+        .any(|requirement| requirement_covers_term(requirement, family, limb, symbol));
+    if !has_value_validity {
+        return Err(unsupported_lattice_view(format!(
+            "opening {id:?} uses packed family {family:?} limb {limb} symbol {symbol} without a bound validity requirement"
+        )));
     }
-    Err(unsupported_lattice_view(format!(
-        "opening {id:?} uses packed family {family:?} limb {limb} symbol {symbol} without a bound validity requirement"
-    )))
+    if term_requires_canonical_bytes(family)
+        && !requirements
+            .iter()
+            .any(|requirement| canonical_requirement_covers_term(requirement, family, limb))
+    {
+        return Err(unsupported_lattice_view(format!(
+            "opening {id:?} uses field-byte packed family {family:?} limb {limb} without a bound canonical-byte validity requirement"
+        )));
+    }
+    Ok(())
 }
 
 fn core_jolt_ra_family(family: &LatticePackedFamilyId) -> bool {
@@ -1549,6 +1558,35 @@ fn requirement_covers_term(
         LatticePackedValidityKind::FusedIncrementCanonicalZero
         | LatticePackedValidityKind::BytecodeStoreRdDisjoint
         | LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => false,
+    }
+}
+
+fn term_requires_canonical_bytes(family: &LatticePackedFamilyId) -> bool {
+    matches!(
+        family,
+        LatticePackedFamilyId::FieldRdIncByte { .. }
+            | LatticePackedFamilyId::BytecodeImmBytes { .. }
+    )
+}
+
+fn canonical_requirement_covers_term(
+    requirement: &LatticePackedValidityRequirement,
+    family: &LatticePackedFamilyId,
+    limb: usize,
+) -> bool {
+    let Ok(byte_width) = canonical_field_byte_width(requirement) else {
+        return false;
+    };
+    match (&requirement.family, family) {
+        (
+            LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+            LatticePackedFamilyId::FieldRdIncByte { index },
+        ) => *index < byte_width && limb == 0,
+        (
+            LatticePackedFamilyId::BytecodeImmBytes { chunk: expected },
+            LatticePackedFamilyId::BytecodeImmBytes { chunk },
+        ) => expected == chunk && limb < byte_width,
+        _ => false,
     }
 }
 
@@ -3208,6 +3246,40 @@ mod tests {
             Err(VerifierError::FinalOpeningBatchFailed { reason })
                 if reason.contains("without a bound validity requirement")
         ));
+    }
+
+    #[test]
+    fn validity_coverage_requires_canonical_byte_requirements_for_field_bytes() {
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltRelationId::BytecodeClaimReduction,
+        ));
+        let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
+            LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 },
+            0,
+        ));
+        let one_hot = LatticePackedValidityRequirement::exact_one_hot(
+            LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 },
+            AkitaField::NUM_BYTES,
+            256,
+        );
+        let canonical =
+            bytecode_imm_canonical_bytes_requirement(0, AkitaField::NUM_BYTES, AKITA_FIELD_MODULUS);
+
+        assert!(matches!(
+            validate_lattice_view_validity_coverage(
+                &[(id, formula.clone(), Vec::new())],
+                std::slice::from_ref(&one_hot),
+            ),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("without a bound canonical-byte validity requirement")
+        ));
+
+        validate_lattice_view_validity_coverage(
+            &[(id, formula, Vec::new())],
+            &[one_hot, canonical],
+        )
+        .unwrap_or_else(|error| panic!("canonical byte family should validate: {error}"));
     }
 
     #[test]
