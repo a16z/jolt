@@ -1529,6 +1529,51 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "test fixture mutation should fail loudly if the serialized shape changes"
+    )]
+    fn proof_model_rejects_unknown_serialized_fields() {
+        fn with_extra_field(
+            mut value: serde_json::Value,
+            path: &[&str],
+            field: &str,
+        ) -> serde_json::Value {
+            let mut cursor = &mut value;
+            for segment in path {
+                cursor = cursor
+                    .as_object_mut()
+                    .expect("proof segment should be an object")
+                    .get_mut(*segment)
+                    .expect("proof segment should exist");
+            }
+            let previous = cursor
+                .as_object_mut()
+                .expect("target proof segment should be an object")
+                .insert(field.to_string(), serde_json::Value::Bool(true));
+            assert!(previous.is_none());
+            value
+        }
+
+        let clear = serde_json::to_value(proof_with_zk(false, clear_claims()))
+            .expect("clear proof should serialize");
+        let zk = serde_json::to_value(proof_with_zk(true, zk_claims()))
+            .expect("ZK proof should serialize");
+
+        for (value, path, field) in [
+            (clear.clone(), &[][..], "extra_proof"),
+            (clear.clone(), &["stages"][..], "extra_stage_proof"),
+            (clear, &["claims", "Clear"][..], "extra_clear_claims"),
+            (zk, &["claims", "Zk"][..], "extra_zk_claims"),
+        ] {
+            assert!(
+                serde_json::from_value::<TestProof>(with_extra_field(value, path, field)).is_err(),
+                "unknown proof field {field} at path {path:?} must reject"
+            );
+        }
+    }
+
+    #[test]
     fn validate_proof_config_checks_akita_payload_layout() {
         let mut config =
             JoltProtocolConfig::for_zk(false).with_pcs_family(crate::config::PcsFamily::Lattice);
