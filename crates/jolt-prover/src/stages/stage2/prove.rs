@@ -40,11 +40,10 @@ use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage2::outputs::Stage2PublicOutput;
 use jolt_verifier::stages::stage2::{
-    stage2_batch_input_claims, stage2_batch_opening_points, stage2_clear_output,
-    stage2_expected_final_claim, stage2_expected_outputs, Stage2BatchExpectedOutputClaims,
-    Stage2BatchInputClaimRequest, Stage2BatchInputClaims, Stage2BatchOpeningPoints,
-    Stage2BatchPointRequest, Stage2ClearOutputRequest, Stage2ExpectedOutputRequest,
-    Stage2ProductUniSkipClearRequest, Stage2ProductUniSkipOutputClaimData,
+    stage2_batch_opening_points, stage2_clear_output, stage2_expected_final_claim,
+    Stage2BatchExpectedOutputClaims, Stage2BatchInputClaims, Stage2BatchOpeningPointRefs,
+    Stage2BatchOpeningPoints, Stage2BatchPointRequest, Stage2BatchRelations,
+    Stage2BatchRelationsRequest, Stage2ClearOutputRequest, Stage2ProductUniSkipClearRequest,
     Stage2RegularBatchClearRequest,
 };
 use jolt_verifier::CheckedInputs;
@@ -301,6 +300,7 @@ where
 {
     let prefix = derive_stage2_regular_batch_prefix(
         input.config,
+        input.checked,
         input.stage1,
         input.product_uniskip,
         transcript,
@@ -403,11 +403,17 @@ where
     };
 
     let output_claims = stage2_batch_output_claims(ram_read_write, tail_openings, terminal);
-    let (expected_outputs, expected_final_claim) = expected_regular_batch_outputs(
+    let relations = stage2_batch_relations(
         input.config,
         input.checked,
+        input.stage1,
         &product_uniskip,
-        &prepared.prefix,
+        prepared.prefix.ram_read_write_gamma,
+        prepared.prefix.instruction_gamma,
+        prepared.prefix.output_address_challenges.clone(),
+    )?;
+    let (expected_outputs, expected_final_claim) = expected_regular_batch_outputs(
+        &relations,
         &batch.batching_coefficients,
         &opening_points,
         &output_claims,
@@ -517,11 +523,17 @@ where
     };
 
     let output_claims = stage2_batch_output_claims(ram_read_write, tail_openings, terminal);
-    let (expected_outputs, expected_final_claim) = expected_regular_batch_outputs(
+    let relations = stage2_batch_relations(
         input.config,
         input.checked,
+        input.stage1,
         &product_uniskip.output,
-        &prepared.prefix,
+        prepared.prefix.ram_read_write_gamma,
+        prepared.prefix.instruction_gamma,
+        prepared.prefix.output_address_challenges.clone(),
+    )?;
+    let (expected_outputs, expected_final_claim) = expected_regular_batch_outputs(
+        &relations,
         &batch.batching_coefficients,
         &opening_points,
         &output_claims,
@@ -716,6 +728,7 @@ where
 
 pub fn derive_stage2_regular_batch_prefix<F, T, C>(
     config: Stage2BatchProverConfig,
+    checked: &CheckedInputs,
     stage1: &Stage1ClearOutput<F>,
     product_uniskip: &Stage2ProductUniSkipOutput<F, C>,
     transcript: &mut T,
@@ -730,15 +743,17 @@ where
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
 
-    let input_claims = stage2_batch_input_claims(Stage2BatchInputClaimRequest {
-        log_t: config.log_t,
-        log_k: config.log_k,
-        rw_config: config.rw_config,
+    let input_claims = stage2_batch_relations(
+        config,
+        checked,
         stage1,
-        product_uniskip_output_claim: product_uniskip.output_claim,
+        product_uniskip,
         ram_read_write_gamma,
         instruction_gamma,
-    })?;
+        output_address_challenges.clone(),
+    )?
+    .input_claims()
+    .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
 
     Ok(Stage2RegularBatchPrefixOutput {
         input_claims,
@@ -746,6 +761,39 @@ where
         instruction_gamma,
         output_address_challenges,
     })
+}
+
+/// Build the five stage 2 batch relation objects shared by the prover and verifier.
+/// The prover constructs them twice — once for the input claims (before the batched
+/// sumcheck) and once for the expected outputs (after) — since the relations carry
+/// no proof state.
+fn stage2_batch_relations<F, C>(
+    config: Stage2BatchProverConfig,
+    checked: &CheckedInputs,
+    stage1: &Stage1ClearOutput<F>,
+    product_uniskip: &Stage2ProductUniSkipOutput<F, C>,
+    ram_read_write_gamma: F,
+    instruction_gamma: F,
+    output_address_challenges: Vec<F>,
+) -> Result<Stage2BatchRelations<F>, ProverError>
+where
+    F: Field,
+{
+    Stage2BatchRelations::new(Stage2BatchRelationsRequest {
+        log_t: config.log_t,
+        log_k: config.log_k,
+        rw_config: config.rw_config,
+        checked,
+        stage1,
+        product_uniskip_output_claim: product_uniskip.output_claim,
+        product_tau_low: product_uniskip.tau_low.clone(),
+        product_tau_high: product_uniskip.tau_high,
+        product_uniskip_challenge: product_uniskip.challenge,
+        ram_read_write_gamma,
+        instruction_gamma,
+        output_address_challenges,
+    })
+    .map_err(|error| invalid_sumcheck_output(error.to_string()))
 }
 
 fn evaluate_stage2_tail_openings_from_rows<F>(
@@ -1111,29 +1159,23 @@ fn build_ram_state_requests<F: Field>(
 }
 
 fn expected_regular_batch_outputs<F: Field>(
-    config: Stage2BatchProverConfig,
-    checked: &jolt_verifier::CheckedInputs,
-    product_uniskip: &Stage2ProductUniSkipOutput<F, impl Sized>,
-    prefix: &Stage2RegularBatchPrefixOutput<F>,
+    relations: &Stage2BatchRelations<F>,
     batching_coefficients: &[F],
     opening_points: &Stage2BatchOpeningPoints<F>,
     claims: &Stage2BatchOutputClaims<F>,
 ) -> Result<(Stage2BatchExpectedOutputClaims<F>, F), ProverError> {
-    let expected_outputs = stage2_expected_outputs(Stage2ExpectedOutputRequest {
-        log_k: config.log_k,
-        checked,
-        product_uniskip: Stage2ProductUniSkipOutputClaimData {
-            tau_low: &product_uniskip.tau_low,
-            tau_high: product_uniskip.tau_high,
-            challenge: product_uniskip.challenge,
-        },
-        ram_read_write_gamma: prefix.ram_read_write_gamma,
-        instruction_gamma: prefix.instruction_gamma,
-        output_address_challenges: &prefix.output_address_challenges,
-        opening_points,
-        claims,
-    })
-    .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
+    let expected_outputs = relations
+        .expected_outputs(
+            Stage2BatchOpeningPointRefs {
+                ram_read_write: &opening_points.ram_read_write_opening,
+                product_remainder: &opening_points.product_opening,
+                instruction_reduction: &opening_points.instruction_opening,
+                ram_raf: &opening_points.ram_raf_opening,
+                ram_output: &opening_points.ram_output_check_opening,
+            },
+            claims,
+        )
+        .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
     let final_claim = stage2_expected_final_claim(batching_coefficients, &expected_outputs)
         .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
 
