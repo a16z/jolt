@@ -351,48 +351,6 @@ mod tests {
     }
 
     #[derive(OutputClaims)]
-    struct OutputAggregate<C> {
-        instruction: InstructionLeaf<C>,
-        committed: CommittedLeaf<C>,
-    }
-
-    #[test]
-    fn output_aggregate_recurses_into_sub_structs() {
-        let claims = OutputAggregate {
-            instruction: InstructionLeaf {
-                lookup_table_flags: vec![fr(1)],
-                instruction_ra: vec![fr(2)],
-                instruction_raf_flag: fr(3),
-            },
-            committed: CommittedLeaf {
-                ram_inc: fr(4),
-                bytecode_chunks: vec![fr(5)],
-            },
-        };
-
-        assert_eq!(claims.opening_count(), 5);
-        assert_eq!(
-            claims.opening_values(),
-            vec![fr(1), fr(2), fr(3), fr(4), fr(5)]
-        );
-        assert_eq!(
-            claims.resolve_output(&virt(
-                JoltVirtualPolynomial::InstructionRafFlag,
-                JoltRelationId::InstructionReadRaf,
-            )),
-            Some(fr(3)),
-        );
-        assert_eq!(
-            claims.resolve_output(&committed(
-                JoltCommittedPolynomial::RamInc,
-                JoltRelationId::RamReadWriteChecking,
-            )),
-            Some(fr(4)),
-        );
-        assert_append_matches_values(&claims);
-    }
-
-    #[derive(OutputClaims)]
     #[relation(RamValCheck)]
     struct OptionalOutput<C> {
         #[opening(untrusted_advice)]

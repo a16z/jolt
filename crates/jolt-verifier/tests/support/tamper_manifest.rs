@@ -1390,7 +1390,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 ram_inc: zero,
             },
         },
-        stage5: stage5::inputs::Stage5Claims {
+        stage5: stage5::inputs::Stage5OutputClaims {
             instruction_read_raf: stage5::InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![zero],
                 instruction_ra: vec![zero],

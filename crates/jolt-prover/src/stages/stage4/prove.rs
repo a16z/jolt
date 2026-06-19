@@ -12,7 +12,7 @@ use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
-use jolt_verifier::stages::relations::{OpeningClaim, OutputClaims, SumcheckInstance};
+use jolt_verifier::stages::relations::{OpeningClaim, SumcheckInstance};
 use jolt_verifier::stages::stage4::outputs::{
     RamValCheckInitialEvaluation, Stage4Challenges, Stage4ClearOutput,
     VerifiedRamValCheckAdviceContribution,

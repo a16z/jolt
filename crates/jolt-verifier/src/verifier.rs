@@ -1092,7 +1092,7 @@ mod tests {
                     ram_inc: zero,
                 },
             },
-            stage5: stage5::inputs::Stage5Claims {
+            stage5: stage5::inputs::Stage5OutputClaims {
                 instruction_read_raf: stage5::InstructionReadRafOutputClaims {
                     lookup_table_flags: Vec::new(),
                     instruction_ra: Vec::new(),

@@ -33,7 +33,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{OpeningClaim, OutputClaims, SumcheckInstance},
+        relations::{OpeningClaim, SumcheckInstance},
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -309,7 +309,7 @@ where
         });
     }
 
-    claims.append_openings(transcript);
+    claims.append_to_transcript(transcript);
 
     Ok(Stage4Output::Clear(Stage4ClearOutput {
         challenges,
@@ -588,7 +588,6 @@ pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &m
 mod tests {
     use super::*;
 
-    use crate::stages::relations::OutputClaims;
     use crate::stages::stage4::ram_val_check::{RamValCheckAdviceClaims, RamValCheckOutputClaims};
     use crate::stages::stage4::registers_read_write_checking::RegistersReadWriteOutputClaims;
     use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
@@ -624,7 +623,7 @@ mod tests {
         let claims = test_claims_without_advice();
         let mut transcript = RecordingTranscript::new(b"stage4-openings");
 
-        claims.append_openings(&mut transcript);
+        claims.append_to_transcript(&mut transcript);
 
         let expected = vec![
             claims.registers_read_write.registers_val,
@@ -644,7 +643,7 @@ mod tests {
         let claims = test_claims_with_advice();
         let mut transcript = RecordingTranscript::new(b"stage4-openings");
 
-        claims.append_openings(&mut transcript);
+        claims.append_to_transcript(&mut transcript);
 
         // Canonical order: advice openings precede the register openings, then the
         // RAM value-check openings come last.
@@ -665,7 +664,7 @@ mod tests {
             claims.ram_val_check.ram_inc,
         ]);
 
-        assert_eq!(claims.opening_count(), expected.len());
+        assert_eq!(claims.opening_values().len(), expected.len());
         assert_opening_claim_payloads(&transcript, &expected);
     }
 

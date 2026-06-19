@@ -155,7 +155,7 @@ pub struct ClearProofClaims<F: Field> {
     pub stage2: stage2::inputs::Stage2Claims<F>,
     pub stage3: stage3::inputs::Stage3Claims<F>,
     pub stage4: stage4::inputs::Stage4OutputClaims<F>,
-    pub stage5: stage5::inputs::Stage5Claims<F>,
+    pub stage5: stage5::inputs::Stage5OutputClaims<F>,
     pub stage6: stage6::inputs::Stage6Claims<F>,
     pub stage7: stage7::inputs::Stage7Claims<F>,
 }

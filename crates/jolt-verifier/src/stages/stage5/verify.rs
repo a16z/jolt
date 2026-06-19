@@ -13,7 +13,7 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::{Deps, Stage5Claims},
+    inputs::{Deps, Stage5OutputClaims},
     instruction_read_raf::{
         InstructionReadRaf, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
     },
@@ -34,7 +34,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{OpeningClaim, OutputClaims, SumcheckInstance},
+        relations::{OpeningClaim, SumcheckInstance},
         stage2::Stage2ClearOutput,
         stage4::Stage4ClearOutput,
         zk::committed,
@@ -475,7 +475,7 @@ where
         });
     }
 
-    append_stage5_opening_claims(transcript, claims);
+    claims.append_to_transcript(transcript);
 
     Ok(Stage5Output::Clear(Stage5ClearOutput {
         public: public(
@@ -513,26 +513,6 @@ where
             },
         },
     }))
-}
-
-pub fn append_stage5_opening_claims<F, T>(transcript: &mut T, claims: &Stage5Claims<F>)
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    for opening_claim in &claims.instruction_read_raf.lookup_table_flags {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for opening_claim in &claims.instruction_read_raf.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.instruction_read_raf.instruction_raf_flag,
-    );
-    claims.ram_ra_claim_reduction.append_openings(transcript);
-    transcript.append_labeled(b"opening_claim", &claims.registers_val_evaluation.rd_inc);
-    transcript.append_labeled(b"opening_claim", &claims.registers_val_evaluation.rd_wa);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -578,7 +558,7 @@ pub struct Stage5ExpectedOutputRequest<'a, F: Field> {
     pub ram_ra_claim_reduction_opening_point: &'a [F],
     pub registers_fixed_cycle_point: &'a [F],
     pub registers_val_evaluation_opening_point: &'a [F],
-    pub claims: &'a Stage5Claims<F>,
+    pub claims: &'a Stage5OutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1065,27 +1045,4 @@ fn expected_registers_val_evaluation_output<F: Field>(
         },
     };
     relation.expected_output(&inputs, &outputs)
-}
-
-pub fn stage5_output_claim_values<F: Field>(claims: &Stage5Claims<F>) -> Vec<F> {
-    let mut values = Vec::with_capacity(
-        claims.instruction_read_raf.lookup_table_flags.len()
-            + claims.instruction_read_raf.instruction_ra.len()
-            + 1
-            + claims.ram_ra_claim_reduction.opening_count()
-            + 2,
-    );
-    values.extend(
-        claims
-            .instruction_read_raf
-            .lookup_table_flags
-            .iter()
-            .copied(),
-    );
-    values.extend(claims.instruction_read_raf.instruction_ra.iter().copied());
-    values.push(claims.instruction_read_raf.instruction_raf_flag);
-    values.extend(claims.ram_ra_claim_reduction.opening_values());
-    values.push(claims.registers_val_evaluation.rd_inc);
-    values.push(claims.registers_val_evaluation.rd_wa);
-    values
 }

@@ -81,18 +81,15 @@ struct OpeningSpec {
     from: Option<Ident>,
 }
 
-/// A struct field, classified as either a leaf opening or a nested aggregate.
-enum FieldPlan {
-    Leaf {
-        ident: Ident,
-        is_option: bool,
-        is_many: bool,
-        kind: LeafKind,
-        relation: Ident,
-    },
-    Nested {
-        ident: Ident,
-    },
+/// A leaf opening field: its identifier, arity, kind, and owning relation. Every
+/// field of a claim struct must be a leaf `#[opening(..)]` — nested aggregates are
+/// not supported (aggregate structs hand-write their encoders).
+struct FieldPlan {
+    ident: Ident,
+    is_option: bool,
+    is_many: bool,
+    kind: LeafKind,
+    relation: Ident,
 }
 
 fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Field>> {
@@ -248,9 +245,12 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
         .ident
         .clone()
         .ok_or_else(|| syn::Error::new_spanned(field, "fields must be named"))?;
-    let Some(attr) = opening_attr(field) else {
-        return Ok(FieldPlan::Nested { ident });
-    };
+    let attr = opening_attr(field).ok_or_else(|| {
+        syn::Error::new_spanned(
+            field,
+            "every field needs an #[opening(..)] annotation (nested aggregates are not supported)",
+        )
+    })?;
     let spec = parse_opening(attr)?;
     let relation = match (struct_relation, spec.from) {
         // OutputClaims: relation is struct-level; `from` is not allowed.
@@ -282,7 +282,7 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
             "advice openings are scalar; a `Vec` advice field has no indexed id",
         ));
     }
-    Ok(FieldPlan::Leaf {
+    Ok(FieldPlan {
         ident,
         is_option: is_option_type(&field.ty),
         is_many,
@@ -335,80 +335,57 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     let mut resolve_arms = Vec::new();
 
     for plan in &plans {
-        match plan {
-            FieldPlan::Leaf {
-                ident,
-                is_option,
-                is_many,
-                kind,
-                relation,
-            } => {
-                if *is_many {
-                    let id = id_expr(kind, relation, Some(quote!(index)));
-                    value_chains
-                        .push(quote!(.chain(self.#ident.iter().map(|__cell| #get(__cell)))));
-                    count_terms.push(quote!(self.#ident.len()));
-                    append_stmts.push(quote! {
-                        for __cell in &self.#ident {
-                            transcript.append_labeled(b"opening_claim", &#get(__cell));
-                        }
-                    });
-                    resolve_arms.push(quote! {
-                        for (index, __cell) in self.#ident.iter().enumerate() {
-                            if *id == #id {
-                                return ::core::option::Option::Some(#get(__cell));
-                            }
-                        }
-                    });
-                } else if *is_option {
-                    let id = id_expr(kind, relation, None);
-                    value_chains
-                        .push(quote!(.chain(self.#ident.as_ref().map(|__cell| #get(__cell)))));
-                    count_terms.push(quote!(::core::primitive::usize::from(self.#ident.is_some())));
-                    append_stmts.push(quote! {
-                        if let ::core::option::Option::Some(__cell) = &self.#ident {
-                            transcript.append_labeled(b"opening_claim", &#get(__cell));
-                        }
-                    });
-                    resolve_arms.push(quote! {
-                        if let ::core::option::Option::Some(__cell) = &self.#ident {
-                            if *id == #id {
-                                return ::core::option::Option::Some(#get(__cell));
-                            }
-                        }
-                    });
-                } else {
-                    let id = id_expr(kind, relation, None);
-                    value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
-                    count_terms.push(quote!(1usize));
-                    append_stmts.push(quote! {
-                        transcript.append_labeled(b"opening_claim", &#get(&self.#ident));
-                    });
-                    resolve_arms.push(quote! {
-                        if *id == #id {
-                            return ::core::option::Option::Some(#get(&self.#ident));
-                        }
-                    });
+        let FieldPlan {
+            ident,
+            is_option,
+            is_many,
+            kind,
+            relation,
+        } = plan;
+        if *is_many {
+            let id = id_expr(kind, relation, Some(quote!(index)));
+            value_chains.push(quote!(.chain(self.#ident.iter().map(|__cell| #get(__cell)))));
+            count_terms.push(quote!(self.#ident.len()));
+            append_stmts.push(quote! {
+                for __cell in &self.#ident {
+                    transcript.append_labeled(b"opening_claim", &#get(__cell));
                 }
-            }
-            FieldPlan::Nested { ident } => {
-                value_chains.push(quote! {
-                    .chain(crate::stages::relations::OutputClaims::opening_values(&self.#ident).into_iter())
-                });
-                count_terms.push(quote! {
-                    crate::stages::relations::OutputClaims::opening_count(&self.#ident)
-                });
-                append_stmts.push(quote! {
-                    crate::stages::relations::OutputClaims::append_openings(&self.#ident, transcript);
-                });
-                resolve_arms.push(quote! {
-                    if let ::core::option::Option::Some(__value) =
-                        crate::stages::relations::OutputClaims::resolve_output(&self.#ident, id)
-                    {
-                        return ::core::option::Option::Some(__value);
+            });
+            resolve_arms.push(quote! {
+                for (index, __cell) in self.#ident.iter().enumerate() {
+                    if *id == #id {
+                        return ::core::option::Option::Some(#get(__cell));
                     }
-                });
-            }
+                }
+            });
+        } else if *is_option {
+            let id = id_expr(kind, relation, None);
+            value_chains.push(quote!(.chain(self.#ident.as_ref().map(|__cell| #get(__cell)))));
+            count_terms.push(quote!(::core::primitive::usize::from(self.#ident.is_some())));
+            append_stmts.push(quote! {
+                if let ::core::option::Option::Some(__cell) = &self.#ident {
+                    transcript.append_labeled(b"opening_claim", &#get(__cell));
+                }
+            });
+            resolve_arms.push(quote! {
+                if let ::core::option::Option::Some(__cell) = &self.#ident {
+                    if *id == #id {
+                        return ::core::option::Option::Some(#get(__cell));
+                    }
+                }
+            });
+        } else {
+            let id = id_expr(kind, relation, None);
+            value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
+            count_terms.push(quote!(1usize));
+            append_stmts.push(quote! {
+                transcript.append_labeled(b"opening_claim", &#get(&self.#ident));
+            });
+            resolve_arms.push(quote! {
+                if *id == #id {
+                    return ::core::option::Option::Some(#get(&self.#ident));
+                }
+            });
         }
     }
 
@@ -462,47 +439,35 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     let get = quote!(crate::stages::relations::GetValue::value);
     let mut resolve_arms = Vec::new();
     for plan in &plans {
-        match plan {
-            FieldPlan::Leaf {
-                ident,
-                is_option,
-                is_many,
-                kind,
-                relation,
-            } => {
-                if *is_many {
-                    let id = id_expr(kind, relation, Some(quote!(index)));
-                    resolve_arms.push(quote! {
-                        for (index, __cell) in self.#ident.iter().enumerate() {
-                            if *id == #id {
-                                return ::core::option::Option::Some(#get(__cell));
-                            }
-                        }
-                    });
-                } else {
-                    let id = id_expr(kind, relation, None);
-                    let hit = if *is_option {
-                        // The field is `Option<C>`; surface the located value if present.
-                        quote!(return self.#ident.as_ref().map(|__cell| #get(__cell));)
-                    } else {
-                        quote!(return ::core::option::Option::Some(#get(&self.#ident));)
-                    };
-                    resolve_arms.push(quote! {
-                        if *id == #id {
-                            #hit
-                        }
-                    });
-                }
-            }
-            FieldPlan::Nested { ident } => {
-                resolve_arms.push(quote! {
-                    if let ::core::option::Option::Some(__value) =
-                        crate::stages::relations::InputClaims::resolve_input(&self.#ident, id)
-                    {
-                        return ::core::option::Option::Some(__value);
+        let FieldPlan {
+            ident,
+            is_option,
+            is_many,
+            kind,
+            relation,
+        } = plan;
+        if *is_many {
+            let id = id_expr(kind, relation, Some(quote!(index)));
+            resolve_arms.push(quote! {
+                for (index, __cell) in self.#ident.iter().enumerate() {
+                    if *id == #id {
+                        return ::core::option::Option::Some(#get(__cell));
                     }
-                });
-            }
+                }
+            });
+        } else {
+            let id = id_expr(kind, relation, None);
+            let hit = if *is_option {
+                // The field is `Option<C>`; surface the value if present.
+                quote!(return self.#ident.as_ref().map(|__cell| #get(__cell));)
+            } else {
+                quote!(return ::core::option::Option::Some(#get(&self.#ident));)
+            };
+            resolve_arms.push(quote! {
+                if *id == #id {
+                    #hit
+                }
+            });
         }
     }
 

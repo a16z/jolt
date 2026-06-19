@@ -23,7 +23,7 @@ use crate::{
         },
         stage5::{
             InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
-            RegistersValEvaluationOutputClaims, Stage5Claims,
+            RegistersValEvaluationOutputClaims, Stage5OutputClaims,
         },
         stage6::inputs::{
             AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims,
@@ -275,7 +275,7 @@ fn stage4_claims_from_native<F: Field>(
 
 fn stage5_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage5Claims<F>, VerifierError> {
+) -> Result<Stage5OutputClaims<F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
         .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
         .collect::<Result<Vec<_>, _>>()?;
@@ -295,7 +295,7 @@ fn stage5_claims_from_native<F: Field>(
     let [ram_ra] = ram::ra_claim_reduction_output_openings();
     let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
 
-    Ok(Stage5Claims {
+    Ok(Stage5OutputClaims {
         instruction_read_raf: InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra,
@@ -709,7 +709,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 ram_inc: zero,
             },
         },
-        stage5: Stage5Claims {
+        stage5: Stage5OutputClaims {
             instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![zero; LookupTableKind::<RISCV_XLEN>::COUNT],
                 instruction_ra: vec![zero],
@@ -1352,7 +1352,7 @@ fn claim_mut_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage5_outputs<F: Field>(
-    claims: &Stage5Claims<F>,
+    claims: &Stage5OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
@@ -1390,7 +1390,7 @@ fn claim_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage5_outputs<F: Field>(
-    claims: &mut Stage5Claims<F>,
+    claims: &mut Stage5OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {

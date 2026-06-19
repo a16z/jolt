@@ -18,7 +18,6 @@ use jolt_verifier::stages::stage5::outputs::{
     Stage5ClearOutput, Stage5PublicOutput, VerifiedInstructionReadRafSumcheck, VerifiedStage5Batch,
     VerifiedStage5Sumcheck,
 };
-use jolt_verifier::stages::stage5::stage5_output_claim_values;
 use jolt_verifier::stages::stage5::{
     stage5_dependency_opening_points, stage5_expected_final_claim, stage5_expected_output_claims,
     stage5_input_claims, stage5_instruction_opening_points,
@@ -30,7 +29,7 @@ use jolt_verifier::stages::stage5::{
 };
 use jolt_verifier::stages::stage5::{
     InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
-    RegistersValEvaluationOutputClaims, Stage5Claims,
+    RegistersValEvaluationOutputClaims, Stage5OutputClaims,
 };
 use jolt_verifier::stages::{stage2::Stage2ClearOutput, stage4::Stage4ClearOutput};
 use jolt_verifier::CheckedInputs;
@@ -105,7 +104,7 @@ struct Stage5RegularBatchPrefixOutput<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5ProofComponent<F: Field, Proof> {
     pub stage5_sumcheck_proof: Proof,
-    pub claims: Stage5Claims<F>,
+    pub claims: Stage5OutputClaims<F>,
     pub verifier_output: Stage5ClearOutput<F>,
 }
 
@@ -131,7 +130,7 @@ struct Stage5RegularBatchProofOutput<F: Field, C> {
     committed_witness: Option<CommittedSumcheckWitness<F>>,
     #[cfg(feature = "zk")]
     output_claim_values: Option<Vec<F>>,
-    output_openings: Stage5Claims<F>,
+    output_openings: Stage5OutputClaims<F>,
     expected_outputs: Stage5ExpectedOutputClaims<F>,
     batching_coefficients: Vec<F>,
     sumcheck_point: Vec<F>,
@@ -328,7 +327,7 @@ struct Stage5ExpectedOutputInputs<'a, F: Field> {
     ram_ra_claim_reduction_opening_point: &'a [F],
     registers_fixed_cycle_point: &'a [F],
     registers_val_evaluation_opening_point: &'a [F],
-    output_openings: &'a Stage5Claims<F>,
+    output_openings: &'a Stage5OutputClaims<F>,
 }
 
 fn stage5_expected_outputs<F: Field>(
@@ -618,7 +617,7 @@ where
     let ram_output = backend.output_sumcheck_ram_ra_claim_reduction_state(&ram_state)?;
     let registers_output =
         backend.output_sumcheck_registers_val_evaluation_state(&registers_state)?;
-    let output_openings = Stage5Claims {
+    let output_openings = Stage5OutputClaims {
         instruction_read_raf: InstructionReadRafOutputClaims {
             lookup_table_flags: instruction_output.lookup_table_flags,
             instruction_ra: instruction_output.instruction_ra,
@@ -663,7 +662,7 @@ where
         )));
     }
 
-    let output_claim_values = stage5_output_claim_values(&output_openings);
+    let output_claim_values = output_openings.opening_values();
     let recorded = proof_recorder.finish(&output_claim_values, transcript)?;
     Ok(Stage5RegularBatchProofOutput {
         prefix: prefix.clone(),
