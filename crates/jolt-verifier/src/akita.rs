@@ -3320,7 +3320,7 @@ mod tests {
         let sign_family = PackedFamilyId::IncSign;
         let source = SparsePackedWitness::try_from_cells(
             layout.clone(),
-            [(packed_cell(sign_family.clone(), 1), AkitaField::from_u64(5))],
+            [(packed_cell(sign_family.clone(), 1), AkitaField::one())],
         )
         .expect("source should build");
         let artifact = commit_akita_packed_witness(&prover_setup, &source)
@@ -3339,7 +3339,7 @@ mod tests {
                 id: sign_id,
                 relation: sign_id,
                 commitment: packed_commitment.clone(),
-                claim: AkitaField::from_u64(15),
+                claim: AkitaField::from_u64(3),
                 view: PhysicalView::PackedLinear {
                     layout_digest: layout.digest,
                     terms: vec![PackedLinearTerm::new(
