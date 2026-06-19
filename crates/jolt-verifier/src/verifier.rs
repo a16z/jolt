@@ -1093,19 +1093,18 @@ mod tests {
                 },
             },
             stage5: stage5::inputs::Stage5Claims {
-                instruction_read_raf: stage5::inputs::InstructionReadRafOutputOpeningClaims {
+                instruction_read_raf: stage5::InstructionReadRafOutputClaims {
                     lookup_table_flags: Vec::new(),
                     instruction_ra: Vec::new(),
                     instruction_raf_flag: zero,
                 },
-                ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
+                ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims {
                     ram_ra: zero,
                 },
-                registers_val_evaluation:
-                    stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
-                        rd_inc: zero,
-                        rd_wa: zero,
-                    },
+                registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
+                    rd_inc: zero,
+                    rd_wa: zero,
+                },
             },
             stage6: stage6::inputs::Stage6Claims {
                 address_phase: stage6::inputs::Stage6AddressPhaseClaims {

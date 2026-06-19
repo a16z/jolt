@@ -21,9 +21,9 @@ use crate::{
             RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
             RegistersReadWriteOutputOpeningClaims, Stage4Claims,
         },
-        stage5::inputs::{
-            InstructionReadRafOutputOpeningClaims, RamRaClaimReductionOutputOpeningClaims,
-            RegistersValEvaluationOutputOpeningClaims, Stage5Claims,
+        stage5::{
+            InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
+            RegistersValEvaluationOutputClaims, Stage5Claims,
         },
         stage6::inputs::{
             AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims,
@@ -296,16 +296,16 @@ fn stage5_claims_from_native<F: Field>(
     let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
 
     Ok(Stage5Claims {
-        instruction_read_raf: InstructionReadRafOutputOpeningClaims {
+        instruction_read_raf: InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra,
             instruction_raf_flag: claims
                 .require(instruction::read_raf_instruction_raf_flag_opening())?,
         },
-        ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims {
+        ram_ra_claim_reduction: RamRaClaimReductionOutputClaims {
             ram_ra: claims.require(ram_ra)?,
         },
-        registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
+        registers_val_evaluation: RegistersValEvaluationOutputClaims {
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
         },
@@ -710,13 +710,13 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             },
         },
         stage5: Stage5Claims {
-            instruction_read_raf: InstructionReadRafOutputOpeningClaims {
+            instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![zero; LookupTableKind::<RISCV_XLEN>::COUNT],
                 instruction_ra: vec![zero],
                 instruction_raf_flag: zero,
             },
-            ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims { ram_ra: zero },
-            registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
+            ram_ra_claim_reduction: RamRaClaimReductionOutputClaims { ram_ra: zero },
+            registers_val_evaluation: RegistersValEvaluationOutputClaims {
                 rd_inc: zero,
                 rd_wa: zero,
             },

@@ -6,10 +6,16 @@ pub mod registers_val_evaluation;
 mod verify;
 
 pub use inputs::{deps, Deps, Stage5Claims};
-pub use instruction_read_raf::InstructionReadRafRelation;
+pub use instruction_read_raf::{
+    InstructionReadRaf, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
+};
 pub use outputs::{Stage5ClearOutput, Stage5Output, Stage5ZkOutput};
-pub use ram_ra_claim_reduction::RamRaClaimReductionRelation;
-pub use registers_val_evaluation::RegistersValEvaluationRelation;
+pub use ram_ra_claim_reduction::{
+    RamRaClaimReduction, RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,
+};
+pub use registers_val_evaluation::{
+    RegistersValEvaluation, RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
+};
 pub use verify::{
     append_stage5_opening_claims, stage5_dependency_opening_points, stage5_expected_final_claim,
     stage5_expected_output_claims, stage5_input_claims, stage5_instruction_opening_points,

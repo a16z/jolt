@@ -101,7 +101,7 @@ impl<F: Field> GetValue<F> for OpeningClaim<F> {
 /// Each relation's consumed/produced claim structs are generic over a *cell*:
 /// `OpeningClaim<F>` (point + value) on the clear path, `Vec<F>` (point only) on
 /// the ZK path, and `F` (value only) for the serialized wire form. Methods that
-/// need only points ([`derive_output_points`](Self::derive_output_points)) are
+/// need only points ([`derive_opening_points`](Self::derive_opening_points)) are
 /// generic over any [`GetPoint`] cell and run in both modes; methods that read
 /// values pin the `OpeningClaim<F>` cell and run only on the clear path. This
 /// makes "a ZK opening carries no value" a compile-time fact.
@@ -128,7 +128,7 @@ where
     /// produced openings' points. Value-independent, so it runs in both the clear
     /// and ZK paths; any cross-input consistency required for a well-defined point
     /// (e.g. address agreement) is checked here.
-    fn derive_output_points<C: GetPoint<F>>(
+    fn derive_opening_points<C: GetPoint<F>>(
         &self,
         sumcheck_point: &[F],
         inputs: &Self::Inputs<C>,

@@ -17,20 +17,78 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
     try_eq_mle, IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide,
 };
+use jolt_verifier_derive::{InputClaims, OutputClaims};
+use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
-use crate::stages::stage5::inputs::{
-    InstructionReadRafInputs, InstructionReadRafOutputOpeningClaims,
-};
+use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
-pub struct InstructionReadRafRelation<F: Field> {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(InstructionReadRaf)]
+pub struct InstructionReadRafOutputClaims<C> {
+    #[opening(LookupTableFlag)]
+    pub lookup_table_flags: Vec<C>,
+    #[opening(InstructionRa)]
+    pub instruction_ra: Vec<C>,
+    #[opening(InstructionRafFlag)]
+    pub instruction_raf_flag: C,
+}
+
+/// Consumed instruction-lookup openings (the reduced lookup output + left/right
+/// operands), wired from the upstream instruction claim-reduction.
+#[derive(Clone, Debug, InputClaims)]
+pub struct InstructionReadRafInputClaims<C> {
+    #[opening(LookupOutput, from = InstructionClaimReduction)]
+    pub lookup_output: C,
+    #[opening(LeftLookupOperand, from = InstructionClaimReduction)]
+    pub left_lookup_operand: C,
+    #[opening(RightLookupOperand, from = InstructionClaimReduction)]
+    pub right_lookup_operand: C,
+}
+
+impl<F: Field> InstructionReadRafInputClaims<OpeningClaim<F>> {
+    /// Wire the consumed openings from the upstream instruction claim-reduction
+    /// (stage 2), applying the lookup-output fallback to the product remainder.
+    /// All three share the claim-reduction opening point.
+    pub fn from_upstream(stage2: &Stage2ClearOutput<F>) -> Self {
+        let reduction = &stage2.output_claims.instruction_claim_reduction;
+        let lookup_output = reduction
+            .lookup_output
+            .unwrap_or(stage2.output_claims.product_remainder.lookup_output);
+        let point = stage2
+            .batch
+            .instruction_claim_reduction
+            .opening_point
+            .clone();
+        Self {
+            lookup_output: OpeningClaim {
+                point: point.clone(),
+                value: lookup_output,
+            },
+            left_lookup_operand: OpeningClaim {
+                point: point.clone(),
+                value: reduction.left_lookup_operand,
+            },
+            right_lookup_operand: OpeningClaim {
+                point,
+                value: reduction.right_lookup_operand,
+            },
+        }
+    }
+}
+
+pub struct InstructionReadRaf<F: Field> {
     claims: JoltRelationClaims<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
 }
 
-impl<F: Field> InstructionReadRafRelation<F> {
+impl<F: Field> InstructionReadRaf<F> {
     pub fn new(dimensions: InstructionReadRafDimensions, gamma: F) -> Self {
         Self {
             claims: instruction::read_raf(dimensions),
@@ -51,7 +109,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 /// each RA opening point is `chunk ++ r_cycle`, and the chunks tile the address
 /// in order, so stripping the trailing cycle and concatenating recovers it.
 fn reconstruct_r_address<F: Field>(
-    outputs: &InstructionReadRafOutputOpeningClaims<OpeningClaim<F>>,
+    outputs: &InstructionReadRafOutputClaims<OpeningClaim<F>>,
     cycle_len: usize,
 ) -> Vec<F> {
     outputs
@@ -64,19 +122,19 @@ fn reconstruct_r_address<F: Field>(
         .collect()
 }
 
-impl<F: Field> SumcheckInstance<F> for InstructionReadRafRelation<F> {
-    type Inputs<C> = InstructionReadRafInputs<C>;
-    type Outputs<C> = InstructionReadRafOutputOpeningClaims<C>;
+impl<F: Field> SumcheckInstance<F> for InstructionReadRaf<F> {
+    type Inputs<C> = InstructionReadRafInputClaims<C>;
+    type Outputs<C> = InstructionReadRafOutputClaims<C>;
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims
     }
 
-    fn derive_output_points<C: GetPoint<F>>(
+    fn derive_opening_points<C: GetPoint<F>>(
         &self,
         sumcheck_point: &[F],
-        _inputs: &InstructionReadRafInputs<C>,
-    ) -> Result<InstructionReadRafOutputOpeningClaims<Vec<F>>, VerifierError> {
+        _inputs: &InstructionReadRafInputClaims<C>,
+    ) -> Result<InstructionReadRafOutputClaims<Vec<F>>, VerifierError> {
         let opening_point = self
             .dimensions
             .opening_point(sumcheck_point)
@@ -100,7 +158,7 @@ impl<F: Field> SumcheckInstance<F> for InstructionReadRafRelation<F> {
             .collect::<Vec<_>>();
         let lookup_table_flags =
             vec![opening_point.r_cycle.clone(); LookupTableKind::<RISCV_XLEN>::COUNT];
-        Ok(InstructionReadRafOutputOpeningClaims {
+        Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra,
             instruction_raf_flag: opening_point.r_cycle,
@@ -119,8 +177,8 @@ impl<F: Field> SumcheckInstance<F> for InstructionReadRafRelation<F> {
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltPublicId,
-        inputs: &InstructionReadRafInputs<C>,
-        outputs: &InstructionReadRafOutputOpeningClaims<OpeningClaim<F>>,
+        inputs: &InstructionReadRafInputClaims<C>,
+        outputs: &InstructionReadRafOutputClaims<OpeningClaim<F>>,
     ) -> Result<F, VerifierError> {
         let JoltPublicId::InstructionReadRaf(public) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });

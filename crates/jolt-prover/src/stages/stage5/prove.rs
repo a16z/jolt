@@ -14,10 +14,6 @@ use jolt_field::Field;
 use jolt_poly::{Point, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
-use jolt_verifier::stages::stage5::inputs::{
-    InstructionReadRafOutputOpeningClaims, RamRaClaimReductionOutputOpeningClaims,
-    RegistersValEvaluationOutputOpeningClaims, Stage5Claims,
-};
 use jolt_verifier::stages::stage5::outputs::{
     Stage5ClearOutput, Stage5PublicOutput, VerifiedInstructionReadRafSumcheck, VerifiedStage5Batch,
     VerifiedStage5Sumcheck,
@@ -31,6 +27,10 @@ use jolt_verifier::stages::stage5::{
     Stage5ExpectedOutputRequest, Stage5InputClaimRequest, Stage5InputClaims,
     Stage5InstructionReadRafDependencyRequest, Stage5ValueOpeningPointRequest,
     Stage5ValueOpeningPoints,
+};
+use jolt_verifier::stages::stage5::{
+    InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
+    RegistersValEvaluationOutputClaims, Stage5Claims,
 };
 use jolt_verifier::stages::{stage2::Stage2ClearOutput, stage4::Stage4ClearOutput};
 use jolt_verifier::CheckedInputs;
@@ -611,15 +611,15 @@ where
     let registers_output =
         backend.output_sumcheck_registers_val_evaluation_state(&registers_state)?;
     let output_openings = Stage5Claims {
-        instruction_read_raf: InstructionReadRafOutputOpeningClaims {
+        instruction_read_raf: InstructionReadRafOutputClaims {
             lookup_table_flags: instruction_output.lookup_table_flags,
             instruction_ra: instruction_output.instruction_ra,
             instruction_raf_flag: instruction_output.instruction_raf_flag,
         },
-        ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims {
+        ram_ra_claim_reduction: RamRaClaimReductionOutputClaims {
             ram_ra: ram_output.ram_ra,
         },
-        registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
+        registers_val_evaluation: RegistersValEvaluationOutputClaims {
             rd_inc: registers_output.rd_inc,
             rd_wa: registers_output.rd_wa,
         },

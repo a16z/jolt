@@ -1391,15 +1391,13 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             },
         },
         stage5: stage5::inputs::Stage5Claims {
-            instruction_read_raf: stage5::inputs::InstructionReadRafOutputOpeningClaims {
+            instruction_read_raf: stage5::InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![zero],
                 instruction_ra: vec![zero],
                 instruction_raf_flag: zero,
             },
-            ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
-                ram_ra: zero,
-            },
-            registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
+            ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims { ram_ra: zero },
+            registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
                 rd_inc: zero,
                 rd_wa: zero,
             },

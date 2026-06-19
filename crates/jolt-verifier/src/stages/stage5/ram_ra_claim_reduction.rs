@@ -15,21 +15,71 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
+use jolt_verifier_derive::{InputClaims, OutputClaims};
+use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
-use crate::stages::stage5::inputs::{
-    RamRaClaimReductionInputs, RamRaClaimReductionOutputOpeningClaims,
-};
+use crate::stages::stage2::Stage2ClearOutput;
+use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
-pub struct RamRaClaimReductionRelation<F: Field> {
+/// Produced RAM-RA reduced opening, generic over the cell (`F` on the wire,
+/// `Vec<F>` for ZK points, `OpeningClaim<F>` once located on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamRaClaimReduction)]
+pub struct RamRaClaimReductionOutputClaims<C> {
+    #[opening(RamRa)]
+    pub ram_ra: C,
+}
+
+/// Consumed RAM-RA openings reduced by the `RamRaClaimReduction` sumcheck, wired
+/// from the upstream RAF-evaluation, read-write-checking, and val-check
+/// relations. Generic over the cell (`OpeningClaim<F>` on the clear path,
+/// `Vec<F>` for ZK points).
+#[derive(Clone, Debug, InputClaims)]
+pub struct RamRaClaimReductionInputClaims<C> {
+    #[opening(RamRa, from = RamRafEvaluation)]
+    pub raf: C,
+    #[opening(RamRa, from = RamReadWriteChecking)]
+    pub read_write: C,
+    #[opening(RamRa, from = RamValCheck)]
+    pub val_check: C,
+}
+
+impl<F: Field> RamRaClaimReductionInputClaims<OpeningClaim<F>> {
+    /// Wire this relation's consumed openings from the upstream clear outputs:
+    /// the RAF-evaluation and read-write openings (stage 2) and the val-check
+    /// opening (stage 4), each as a located `(point, value)`.
+    pub fn from_upstream(stage2: &Stage2ClearOutput<F>, stage4: &Stage4ClearOutput<F>) -> Self {
+        Self {
+            raf: OpeningClaim {
+                point: stage2.batch.ram_raf_evaluation.opening_point.clone(),
+                value: stage2.output_claims.ram_raf_evaluation,
+            },
+            read_write: OpeningClaim {
+                point: stage2.batch.ram_read_write.opening_point.clone(),
+                value: stage2.output_claims.ram_read_write.ra,
+            },
+            val_check: OpeningClaim {
+                point: stage4.batch.ram_val_check.opening_point.clone(),
+                value: stage4.output_claims.ram_val_check.ram_ra,
+            },
+        }
+    }
+}
+
+pub struct RamRaClaimReduction<F: Field> {
     claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
     gamma: F,
 }
 
-impl<F: Field> RamRaClaimReductionRelation<F> {
+impl<F: Field> RamRaClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, ram_log_k: usize, gamma: F) -> Self {
         Self {
             claims: ram::ra_claim_reduction(trace_dimensions),
@@ -47,19 +97,19 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamRaClaimReductionRelation<F> {
-    type Inputs<C> = RamRaClaimReductionInputs<C>;
-    type Outputs<C> = RamRaClaimReductionOutputOpeningClaims<C>;
+impl<F: Field> SumcheckInstance<F> for RamRaClaimReduction<F> {
+    type Inputs<C> = RamRaClaimReductionInputClaims<C>;
+    type Outputs<C> = RamRaClaimReductionOutputClaims<C>;
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims
     }
 
-    fn derive_output_points<C: GetPoint<F>>(
+    fn derive_opening_points<C: GetPoint<F>>(
         &self,
         sumcheck_point: &[F],
-        inputs: &RamRaClaimReductionInputs<C>,
-    ) -> Result<RamRaClaimReductionOutputOpeningClaims<Vec<F>>, VerifierError> {
+        inputs: &RamRaClaimReductionInputClaims<C>,
+    ) -> Result<RamRaClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let log_t = self.trace_dimensions.log_t();
         let expected_len = self.ram_log_k + log_t;
         for (label, point) in [
@@ -87,7 +137,7 @@ impl<F: Field> SumcheckInstance<F> for RamRaClaimReductionRelation<F> {
             .cycle_opening_point(sumcheck_point)
             .map_err(public_input_failed)?;
         let opening_point = [address, cycle.as_slice()].concat();
-        Ok(RamRaClaimReductionOutputOpeningClaims {
+        Ok(RamRaClaimReductionOutputClaims {
             ram_ra: opening_point,
         })
     }
@@ -104,8 +154,8 @@ impl<F: Field> SumcheckInstance<F> for RamRaClaimReductionRelation<F> {
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltPublicId,
-        inputs: &RamRaClaimReductionInputs<C>,
-        outputs: &RamRaClaimReductionOutputOpeningClaims<OpeningClaim<F>>,
+        inputs: &RamRaClaimReductionInputClaims<C>,
+        outputs: &RamRaClaimReductionOutputClaims<OpeningClaim<F>>,
     ) -> Result<F, VerifierError> {
         let JoltPublicId::RamRaClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });

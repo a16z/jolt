@@ -51,7 +51,7 @@ Key abstractions introduced or modified:
   relation id. This spec does **not** introduce a new type that re-bundles that.
 - **`SumcheckInstance` (new trait, in `jolt-verifier`).** Adds *only* the
   operational behavior currently duplicated between `verify()` and the prover
-  helpers — `derive_output_points` and `resolve_public` — on top of a
+  helpers — `derive_opening_points` and `resolve_public` — on top of a
   `JoltRelationClaims`. Its consumed/produced claim structs are generic over an
   opening *cell* (`OpeningClaim<F>`, `Vec<F>`, or `F`): point-only methods run in
   both clear and ZK, value-reading methods only on the clear path. It lives in
@@ -89,7 +89,7 @@ modular crates (see Non-Goals / Alternatives).
 - **No soundness check is weakened.** Every consistency assertion currently inline
   in `verify()` is preserved: cross-input agreement needed for a well-defined
   opening point (e.g. the RAM address prefix) is checked in
-  `SumcheckInstance::derive_output_points` so it runs in both modes, while
+  `SumcheckInstance::derive_opening_points` so it runs in both modes, while
   value-equality consistency (e.g. `shift.unexpanded_pc == instruction_input
   .unexpanded_pc`) stays a clear-path check. Both still run before claims are
   consumed.
@@ -131,7 +131,7 @@ relation.
 - [ ] A `SumcheckInstance` trait exists in `jolt-verifier`, composing
       `JoltRelationClaims`, and at least one relation (pilot: stage 5
       `ram_ra_claim_reduction`) is fully migrated to it.
-- [ ] For every migrated relation, `derive_output_points` and `resolve_public`
+- [ ] For every migrated relation, `derive_opening_points` and `resolve_public`
       are invoked by **both** a `jolt-prover` step and `jolt-verifier::verify`,
       with no remaining parallel copy of that logic.
 - [ ] `#[derive(OutputClaims)]` generates `opening_values` / `opening_count` /
@@ -170,7 +170,7 @@ Must continue passing (per migrated relation, before moving to the next):
 
 New tests:
 
-- Per-relation unit tests for `derive_output_points` and `resolve_public`.
+- Per-relation unit tests for `derive_opening_points` and `resolve_public`.
 - A `derive` expansion/trybuild test covering scalar, `Vec`, `Option`, and
   nested-struct fields for both `InputClaims` and `OutputClaims`.
 - `jolt-eval` invariants (append-order-matches-prover; count agreement) via
@@ -181,7 +181,7 @@ New tests:
 The verifier is not on a hot path (O(log) work per stage, once per proof), so the
 generated encoders/resolvers are performance-neutral there. The
 `SumcheckInstance` methods are **shared with the prover**, which *is*
-performance-sensitive: `derive_output_points` / `resolve_public` may run in
+performance-sensitive: `derive_opening_points` / `resolve_public` may run in
 hotter prover contexts, so they must avoid per-call heap churn. No regression on
 `crates/jolt-prover/benches/e2e_micro`; verify before/after.
 
@@ -247,7 +247,7 @@ where
 
     // value-independent → runs in both clear and ZK; also checks any cross-input
     // consistency a well-defined output point needs (e.g. address agreement):
-    fn derive_output_points<C: GetPoint<F>>(&self, sumcheck_point: &[F], inputs: &Self::Inputs<C>)
+    fn derive_opening_points<C: GetPoint<F>>(&self, sumcheck_point: &[F], inputs: &Self::Inputs<C>)
         -> Result<Self::Outputs<Vec<F>>, VerifierError>;
 
     // value-bearing → clear path. The two source kinds split on origin:
@@ -316,17 +316,17 @@ pub struct RamRaClaimReductionInputs<C> {
 // generated:  resolve_input(id) -> Option<F>
 // hand-written cross-stage wiring (shared by verify() and the prover):
 impl<F: Field> RamRaClaimReductionInputs<OpeningClaim<F>> {
-    fn from_clear(stage2: &Stage2ClearOutput<F>, stage4: &Stage4ClearOutput<F>) -> Self { /* point + value per opening */ }
+    fn from_upstream(stage2: &Stage2ClearOutput<F>, stage4: &Stage4ClearOutput<F>) -> Self { /* point + value per opening */ }
 }
 ```
 
 `verify()` (clear path) composes the explicit wiring with the shared relation:
 
 ```rust
-let inputs = RamRaClaimReductionInputs::from_clear(stage2, stage4);     // explicit wiring
+let inputs = RamRaClaimReductionInputs::from_upstream(stage2, stage4);     // explicit wiring
 let input_claim = relation.input_claim(&inputs)?;                       // input Expr
 // ... run the batched sumcheck, obtaining `ram_point` ...
-let points  = relation.derive_output_points(ram_point, &inputs)?;       // Outputs<Vec<F>>
+let points  = relation.derive_opening_points(ram_point, &inputs)?;       // Outputs<Vec<F>>
 let outputs = RamRaClaimReductionOutputOpeningClaims {                  // wire value + derived point
     ram_ra: OpeningClaim { point: points.ram_ra, value: claims.ram_ra_claim_reduction.ram_ra },
 };
@@ -336,7 +336,7 @@ outputs.append_openings(transcript);
 ```
 
 The ZK path builds `Inputs<Vec<F>>` from the committed-path points and calls only
-`derive_output_points` (no values, no `expected_output`).
+`derive_opening_points` (no values, no `expected_output`).
 
 **Generated vs hand-written:**
 
@@ -346,7 +346,7 @@ The ZK path builds `Inputs<Vec<F>>` from the committed-path points and calls onl
 | `opening_values` / `append_openings` / `opening_count` / `resolve_output` | **generated**, cell-aware (`OutputClaims`) |
 | `resolve_input` | **generated**, cell-aware (`InputClaims`) |
 | Cross-stage wiring (`from_*` constructors) | **hand-written**, **shared** prover/verifier (no runtime map) |
-| Point derivation + cross-input agreement (`derive_output_points`) | hand-written, **shared** prover/verifier |
+| Point derivation + cross-input agreement (`derive_opening_points`) | hand-written, **shared** prover/verifier |
 | Public values (`resolve_public`) | hand-written, **shared** prover/verifier |
 | Algebra + sumcheck spec (`JoltRelationClaims`) | **already shared** (jolt-claims) |
 
@@ -436,7 +436,7 @@ stays stable during migration (bodies delegate to the relation objects) so
   `resolve_output`), plus an `InputClaims` derive (`resolve_input`) with
   `#[opening(..)]` id annotations.
 - **Phase 1 — pilot.** Migrate stage 5 `ram_ra_claim_reduction` (small, but it
-  exercises input-point splicing in `derive_output_points`). Define its
+  exercises input-point splicing in `derive_opening_points`). Define its
   `SumcheckInstance` impl; derive its claim structs; route both `verify()` and the
   prover step through it; keep the wiring explicit. Measure LoC; gate fully.
 - **Phase 2 — roll out by stage**, in protocol order. Per relation: declare claim

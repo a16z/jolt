@@ -13,19 +13,22 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::{
-        Deps, InstructionReadRafInputs, InstructionReadRafOutputOpeningClaims,
-        RamRaClaimReductionInputs, RamRaClaimReductionOutputOpeningClaims,
-        RegistersValEvaluationInputs, RegistersValEvaluationOutputOpeningClaims, Stage5Claims,
+    inputs::{Deps, Stage5Claims},
+    instruction_read_raf::{
+        InstructionReadRaf, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
     },
-    instruction_read_raf::InstructionReadRafRelation,
     outputs::{
         InstructionReadRafPublicOutput, Stage5ClearOutput, Stage5Output, Stage5PublicOutput,
         Stage5SumcheckPublicOutput, Stage5ZkOutput, VerifiedInstructionReadRafSumcheck,
         VerifiedStage5Batch, VerifiedStage5Sumcheck,
     },
-    ram_ra_claim_reduction::RamRaClaimReductionRelation,
-    registers_val_evaluation::RegistersValEvaluationRelation,
+    ram_ra_claim_reduction::{
+        RamRaClaimReduction, RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,
+    },
+    registers_val_evaluation::{
+        RegistersValEvaluation, RegistersValEvaluationInputClaims,
+        RegistersValEvaluationOutputClaims,
+    },
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -99,9 +102,9 @@ where
     let ram_gamma = transcript.challenge_scalar();
 
     let instruction_relation =
-        InstructionReadRafRelation::new(formula_dimensions.instruction_read_raf, instruction_gamma);
-    let ram_relation = RamRaClaimReductionRelation::new(trace_dimensions, log_k, ram_gamma);
-    let registers_relation = RegistersValEvaluationRelation::new(trace_dimensions);
+        InstructionReadRaf::new(formula_dimensions.instruction_read_raf, instruction_gamma);
+    let ram_relation = RamRaClaimReduction::new(trace_dimensions, log_k, ram_gamma);
+    let registers_relation = RegistersValEvaluation::new(trace_dimensions);
 
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
@@ -204,7 +207,7 @@ where
                 stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
-        let ram_inputs = RamRaClaimReductionInputs {
+        let ram_inputs = RamRaClaimReductionInputClaims {
             raf: stage2
                 .ram_ra_claim_reduction_inputs
                 .ram_raf_evaluation_opening_point
@@ -216,7 +219,7 @@ where
             val_check: stage4.ram_val_check_opening_point.clone(),
         };
         let ram_opening_point = ram_relation
-            .derive_output_points(&ram_point, &ram_inputs)?
+            .derive_opening_points(&ram_point, &ram_inputs)?
             .ram_ra;
 
         let registers_point = consistency
@@ -225,11 +228,11 @@ where
                 stage: JoltRelationId::RegistersValEvaluation,
                 reason: error.to_string(),
             })?;
-        let registers_inputs = RegistersValEvaluationInputs {
+        let registers_inputs = RegistersValEvaluationInputClaims {
             registers_val: stage4.registers_read_write_opening_point.clone(),
         };
         let registers_opening_point = registers_relation
-            .derive_output_points(&registers_point, &registers_inputs)?
+            .derive_opening_points(&registers_point, &registers_inputs)?
             .rd_inc;
 
         return Ok(Stage5Output::Zk(Stage5ZkOutput {
@@ -313,9 +316,9 @@ where
         });
     }
 
-    let instruction_inputs = InstructionReadRafInputs::from_clear(stage2);
-    let ram_inputs = RamRaClaimReductionInputs::from_clear(stage2, stage4);
-    let registers_inputs = RegistersValEvaluationInputs::from_clear(stage4);
+    let instruction_inputs = InstructionReadRafInputClaims::from_upstream(stage2);
+    let ram_inputs = RamRaClaimReductionInputClaims::from_upstream(stage2, stage4);
+    let registers_inputs = RegistersValEvaluationInputClaims::from_upstream(stage4);
     let input_claims = Stage5InputClaims {
         instruction_read_raf: instruction_relation.input_claim(&instruction_inputs)?,
         ram_ra_claim_reduction: ram_relation.input_claim(&ram_inputs)?,
@@ -393,7 +396,7 @@ where
             .concat()
         })
         .collect::<Vec<_>>();
-    let instruction_outputs = InstructionReadRafOutputOpeningClaims {
+    let instruction_outputs = InstructionReadRafOutputClaims {
         lookup_table_flags: claims
             .instruction_read_raf
             .lookup_table_flags
@@ -427,8 +430,8 @@ where
             stage: JoltRelationId::RamRaClaimReduction,
             reason: error.to_string(),
         })?;
-    let ram_output_points = ram_relation.derive_output_points(ram_point, &ram_inputs)?;
-    let ram_outputs = RamRaClaimReductionOutputOpeningClaims {
+    let ram_output_points = ram_relation.derive_opening_points(ram_point, &ram_inputs)?;
+    let ram_outputs = RamRaClaimReductionOutputClaims {
         ram_ra: OpeningClaim {
             point: ram_output_points.ram_ra,
             value: claims.ram_ra_claim_reduction.ram_ra,
@@ -444,8 +447,8 @@ where
             reason: error.to_string(),
         })?;
     let registers_output_points =
-        registers_relation.derive_output_points(registers_point, &registers_inputs)?;
-    let registers_outputs = RegistersValEvaluationOutputOpeningClaims {
+        registers_relation.derive_opening_points(registers_point, &registers_inputs)?;
+    let registers_outputs = RegistersValEvaluationOutputClaims {
         rd_inc: OpeningClaim {
             point: registers_output_points.rd_inc,
             value: claims.registers_val_evaluation.rd_inc,
@@ -632,25 +635,27 @@ pub struct Stage5DependencyOpeningPoints<'a, F: Field> {
 pub fn stage5_input_claims<F: Field>(
     request: Stage5InputClaimRequest<'_, F>,
 ) -> Result<Stage5InputClaims<F>, VerifierError> {
-    let instruction_relation = InstructionReadRafRelation::new(
+    let instruction_relation = InstructionReadRaf::new(
         request.instruction_read_raf_dimensions,
         request.instruction_gamma,
     );
-    let ram_relation = RamRaClaimReductionRelation::new(
+    let ram_relation = RamRaClaimReduction::new(
         request.trace_dimensions,
         request.ram_log_k,
         request.ram_gamma,
     );
-    let registers_relation = RegistersValEvaluationRelation::new(request.trace_dimensions);
+    let registers_relation = RegistersValEvaluation::new(request.trace_dimensions);
 
     Ok(Stage5InputClaims {
-        instruction_read_raf: instruction_relation
-            .input_claim(&InstructionReadRafInputs::from_clear(request.stage2))?,
-        ram_ra_claim_reduction: ram_relation.input_claim(
-            &RamRaClaimReductionInputs::from_clear(request.stage2, request.stage4),
+        instruction_read_raf: instruction_relation.input_claim(
+            &InstructionReadRafInputClaims::from_upstream(request.stage2),
         )?,
-        registers_val_evaluation: registers_relation
-            .input_claim(&RegistersValEvaluationInputs::from_clear(request.stage4))?,
+        ram_ra_claim_reduction: ram_relation.input_claim(
+            &RamRaClaimReductionInputClaims::from_upstream(request.stage2, request.stage4),
+        )?,
+        registers_val_evaluation: registers_relation.input_claim(
+            &RegistersValEvaluationInputClaims::from_upstream(request.stage4),
+        )?,
     })
 }
 
@@ -955,18 +960,18 @@ fn expected_instruction_read_raf_output<F: Field>(
     }
 
     let chunk_size = instruction_address_bits / instruction_claims.instruction_ra.len();
-    let relation = InstructionReadRafRelation::new(
+    let relation = InstructionReadRaf::new(
         request.instruction_read_raf_dimensions,
         request.instruction_gamma,
     );
     // Only `lookup_output`'s point is read (it carries the shared claim-reduction
     // opening point that `output_challenge` reduces against).
-    let inputs = InstructionReadRafInputs {
+    let inputs = InstructionReadRafInputClaims {
         lookup_output: request.instruction_fixed_cycle_point.to_vec(),
         left_lookup_operand: request.instruction_fixed_cycle_point.to_vec(),
         right_lookup_operand: request.instruction_fixed_cycle_point.to_vec(),
     };
-    let outputs = InstructionReadRafOutputOpeningClaims {
+    let outputs = InstructionReadRafOutputClaims {
         lookup_table_flags: instruction_claims
             .lookup_table_flags
             .iter()
@@ -1009,18 +1014,18 @@ fn expected_ram_ra_claim_reduction_output<F: Field>(
     }
     let (ram_address_point, _r_cycle) = opening_point.split_at(request.ram_log_k);
     let input_point = |fixed_cycle: &[F]| [ram_address_point, fixed_cycle].concat();
-    let inputs = RamRaClaimReductionInputs {
+    let inputs = RamRaClaimReductionInputClaims {
         raf: input_point(request.ram_raf_fixed_cycle_point),
         read_write: input_point(request.ram_read_write_fixed_cycle_point),
         val_check: input_point(request.ram_val_check_fixed_cycle_point),
     };
-    let outputs = RamRaClaimReductionOutputOpeningClaims {
+    let outputs = RamRaClaimReductionOutputClaims {
         ram_ra: OpeningClaim {
             point: opening_point.to_vec(),
             value: request.claims.ram_ra_claim_reduction.ram_ra,
         },
     };
-    let relation = RamRaClaimReductionRelation::new(
+    let relation = RamRaClaimReduction::new(
         TraceDimensions::new(log_t),
         request.ram_log_k,
         request.ram_gamma,
@@ -1044,12 +1049,12 @@ fn expected_registers_val_evaluation_output<F: Field>(
     }
     let opening_point = request.registers_val_evaluation_opening_point;
     let (register_address, _r_cycle) = opening_point.split_at(REGISTER_ADDRESS_BITS);
-    let relation = RegistersValEvaluationRelation::new(TraceDimensions::new(log_t));
-    let inputs = RegistersValEvaluationInputs {
+    let relation = RegistersValEvaluation::new(TraceDimensions::new(log_t));
+    let inputs = RegistersValEvaluationInputClaims {
         registers_val: [register_address, request.registers_fixed_cycle_point].concat(),
     };
     let registers_claims = &request.claims.registers_val_evaluation;
-    let outputs = RegistersValEvaluationOutputOpeningClaims {
+    let outputs = RegistersValEvaluationOutputClaims {
         rd_inc: OpeningClaim {
             point: opening_point.to_vec(),
             value: registers_claims.rd_inc,
