@@ -287,7 +287,9 @@ where
             .input_claim(&InstructionReadRafInputClaims::from_upstream(stage2))
             .map_err(to_prover_error)?,
         ram_ra_claim_reduction: ram_relation
-            .input_claim(&RamRaClaimReductionInputClaims::from_upstream(stage2, stage4))
+            .input_claim(&RamRaClaimReductionInputClaims::from_upstream(
+                stage2, stage4,
+            ))
             .map_err(to_prover_error)?,
         registers_val_evaluation: registers_relation
             .input_claim(&RegistersValEvaluationInputClaims::from_upstream(stage4))
@@ -628,8 +630,9 @@ fn validate_stage5_dependencies<F: Field>(
         .map_or(product_lookup_output, |claim| claim.value);
     if reduced_lookup_output != product_lookup_output {
         return Err(ProverError::InvalidStageRequest {
-            reason: "Stage 5 instruction read-RAF dependencies disagree on the reduced lookup output"
-                .to_owned(),
+            reason:
+                "Stage 5 instruction read-RAF dependencies disagree on the reduced lookup output"
+                    .to_owned(),
         });
     }
     Ok(())

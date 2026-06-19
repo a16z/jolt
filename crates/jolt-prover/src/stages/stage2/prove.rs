@@ -489,7 +489,9 @@ where
         input.config,
         input.stage2_rows,
         &opening_points.product_remainder.left_instruction_input,
-        &opening_points.instruction_claim_reduction.left_lookup_operand,
+        &opening_points
+            .instruction_claim_reduction
+            .left_lookup_operand,
     )?;
     let terminal = Stage2RamTerminalOutputOpeningClaims {
         ram_raf_evaluation: input.batch.ram_raf_evaluation,
@@ -505,7 +507,10 @@ where
         &input.batch.batching_coefficients,
         relations
             .ram_read_write
-            .expected_output(&relations.ram_read_write_inputs, &output_claims.ram_read_write)
+            .expected_output(
+                &relations.ram_read_write_inputs,
+                &output_claims.ram_read_write,
+            )
             .map_err(to_prover_error)?,
         relations
             .product_remainder
@@ -527,7 +532,10 @@ where
             .map_err(to_prover_error)?,
         relations
             .ram_output
-            .expected_output(&relations.ram_output_inputs, &output_claims.ram_output_check)
+            .expected_output(
+                &relations.ram_output_inputs,
+                &output_claims.ram_output_check,
+            )
             .map_err(to_prover_error)?,
     )
     .map_err(to_prover_error)?;

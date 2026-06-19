@@ -61,4 +61,3 @@ pub struct VerifiedProductUniSkip<F: Field> {
     pub sumcheck_final_claim: F,
     pub expected_output_claim: F,
 }
-

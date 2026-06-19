@@ -119,10 +119,11 @@ fn collect_advice_contribution<F: Field>(
 
     // The selector and opening point are the shared advice-block geometry the
     // verifier checks against; compute the opening value here from the witness bytes.
-    let block = ram_val_check_advice_block(kind, checked, r_address)
-        .map_err(|error| ProverError::InvalidStageRequest {
+    let block = ram_val_check_advice_block(kind, checked, r_address).map_err(|error| {
+        ProverError::InvalidStageRequest {
             reason: error.to_string(),
-        })?;
+        }
+    })?;
     let words = advice_words_le(bytes);
     let opening_claim = sparse_segments_mle_msb([(0, words.as_slice())], &block.opening_point);
     *full_eval += block.selector * opening_claim;

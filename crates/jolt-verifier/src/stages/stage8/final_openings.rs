@@ -367,12 +367,11 @@ fn hamming_weight_opening_claim<F: Field>(
     opening_point: &[F],
     hamming_weight_opening_point: &[F],
 ) -> Result<(F, F), VerifierError> {
-    let claim = claims
-        .get(index)
-        .map(|claim| claim.value)
-        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+    let claim = claims.get(index).map(|claim| claim.value).ok_or_else(|| {
+        VerifierError::MissingOpeningClaim {
             id: committed_openings::final_opening_id(polynomial),
-        })?;
+        }
+    })?;
     Ok((
         claim,
         commitment_embedding_scale(opening_point, hamming_weight_opening_point),

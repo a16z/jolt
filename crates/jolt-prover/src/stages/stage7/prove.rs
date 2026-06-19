@@ -286,8 +286,14 @@ where
     let hamming_state =
         backend.materialize_sumcheck_stage7_hamming_state(&state_request, input.witness)?;
 
-    let advice_states =
-        stage7_advice_address_states(config, input.stage4, stage6, input.witness, backend, &relations)?;
+    let advice_states = stage7_advice_address_states(
+        config,
+        input.stage4,
+        stage6,
+        input.witness,
+        backend,
+        &relations,
+    )?;
 
     Ok(Stage7PreparedBatch {
         relations,
@@ -502,8 +508,9 @@ where
     let advice_point = |relation: &Option<_>| -> Result<Option<&[F]>, ProverError> {
         match relation {
             Some(relation) => {
-                let rounds =
-                    SumcheckInstance::sumcheck_relation(relation).sumcheck.rounds;
+                let rounds = SumcheckInstance::sumcheck_relation(relation)
+                    .sumcheck
+                    .rounds;
                 let point = batch.challenges.get(..rounds).ok_or_else(|| {
                     invalid_sumcheck_output("Stage 7 advice sumcheck point is out of range")
                 })?;

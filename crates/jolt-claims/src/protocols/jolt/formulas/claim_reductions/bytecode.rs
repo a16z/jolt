@@ -266,8 +266,8 @@ impl BytecodeClaimReductionLayout {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
-        let scale = self.eq_combined(&inputs, &permuted)?
-            * self.precommitted.cycle_phase_skip_scale::<F>();
+        let scale =
+            self.eq_combined(&inputs, &permuted)? * self.precommitted.cycle_phase_skip_scale::<F>();
         self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
     }
 

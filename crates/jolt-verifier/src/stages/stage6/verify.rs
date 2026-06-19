@@ -42,7 +42,8 @@ use super::{
     bytecode_read_raf::{
         BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
         BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCommitted,
-        BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
+        BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs,
+        BytecodeReadRafInputClaims,
     },
     committed_reduction_cycle_phase::{
         AdviceCyclePhase, AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
@@ -51,14 +52,12 @@ use super::{
         ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
     },
     inc_claim_reduction::{IncClaimReduction, IncClaimReductionInputClaims},
-    instruction_ra_virtualization::{
-        InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
-    },
-    ram_hamming_booleanity::{RamHammingBooleanity, RamHammingBooleanityInputClaims},
-    ram_ra_virtualization::{RamRaVirtualization, RamRaVirtualizationInputClaims},
     inputs::{
         AdviceCyclePhaseOutputClaim, BytecodeCyclePhaseOutputClaims, Deps,
         ProgramImageCyclePhaseOutputClaim, Stage6OutputClaims,
+    },
+    instruction_ra_virtualization::{
+        InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
     },
     outputs::{
         AdviceCyclePhasePublicOutput, BooleanityPublicOutput, BytecodeReadRafPublicOutput,
@@ -71,6 +70,8 @@ use super::{
         VerifiedProgramImageCyclePhaseSumcheck, VerifiedRamRaVirtualizationSumcheck,
         VerifiedStage6AddressPhaseSumcheck, VerifiedStage6Batch, VerifiedStage6Sumcheck,
     },
+    ram_hamming_booleanity::{RamHammingBooleanity, RamHammingBooleanityInputClaims},
+    ram_ra_virtualization::{RamRaVirtualization, RamRaVirtualizationInputClaims},
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -960,8 +961,9 @@ where
         .registers_val
         .point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (stage5_register_address, stage5_cycle) =
-        stage5.registers_opening_point().split_at(REGISTER_ADDRESS_BITS);
+    let (stage5_register_address, stage5_cycle) = stage5
+        .registers_opening_point()
+        .split_at(REGISTER_ADDRESS_BITS);
     let entry_bytecode_index = preprocessing
         .program
         .entry_bytecode_index()
@@ -1159,8 +1161,10 @@ where
     let instruction_ra_inputs = InstructionRaVirtualizationInputClaims::from_upstream(stage5);
     let instruction_ra_points = instruction_ra_relation
         .derive_opening_points(instruction_ra_point, &instruction_ra_inputs)?;
-    let instruction_ra_outputs =
-        zip_openings(&claims.instruction_ra_virtualization, &instruction_ra_points);
+    let instruction_ra_outputs = zip_openings(
+        &claims.instruction_ra_virtualization,
+        &instruction_ra_points,
+    );
     let instruction_ra_output =
         instruction_ra_relation.expected_output(&instruction_ra_inputs, &instruction_ra_outputs)?;
     let instruction_ra_opening_points = proof
@@ -1189,8 +1193,7 @@ where
             stage: JoltRelationId::IncClaimReduction,
             reason: error.to_string(),
         })?;
-    let (_, ram_read_write_cycle) =
-        stage2.output_claims.ram_read_write_point().split_at(log_k);
+    let (_, ram_read_write_cycle) = stage2.output_claims.ram_read_write_point().split_at(log_k);
     let (_, ram_val_check_cycle) = stage4
         .output_claims
         .ram_val_check
@@ -1203,8 +1206,9 @@ where
         .registers_val
         .point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (_, registers_val_evaluation_cycle) =
-        stage5.registers_opening_point().split_at(REGISTER_ADDRESS_BITS);
+    let (_, registers_val_evaluation_cycle) = stage5
+        .registers_opening_point()
+        .split_at(REGISTER_ADDRESS_BITS);
     let inc_relation = IncClaimReduction::new(
         trace_dimensions,
         inc_gamma,
@@ -1789,7 +1793,11 @@ pub fn stage6_zk_stage5_ram_reduced_opening_point<F: Field, C>(
     log_k: usize,
     log_t: usize,
 ) -> Result<Stage6RamReducedOpeningPoint<'_, F>, VerifierError> {
-    stage6_ram_reduced_opening_point(stage5.output_points.ram_reduced_opening_point(), log_k, log_t)
+    stage6_ram_reduced_opening_point(
+        stage5.output_points.ram_reduced_opening_point(),
+        log_k,
+        log_t,
+    )
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2041,9 +2049,7 @@ pub fn stage6_batch_input_claims<F: Field>(
         )?,
         inc_claim_reduction: inc_claims.input.expression().try_evaluate(
             |id| match *id {
-                id if id == ram_inc_read_write => {
-                    Ok(stage2.output_claims.ram_read_write.inc.value)
-                }
+                id if id == ram_inc_read_write => Ok(stage2.output_claims.ram_read_write.inc.value),
                 id if id == ram_inc_val_check => {
                     Ok(stage4.output_claims.ram_val_check.ram_inc.value)
                 }
@@ -3364,8 +3370,16 @@ where
     let bytecode_spec = &bytecode_relation.sumcheck_relation().sumcheck;
     let booleanity_spec = &booleanity_relation.sumcheck_relation().sumcheck;
     let address_sumcheck_claims = vec![
-        SumcheckClaim::new(bytecode_spec.rounds, bytecode_spec.degree, bytecode_read_raf_input),
-        SumcheckClaim::new(booleanity_spec.rounds, booleanity_spec.degree, booleanity_input),
+        SumcheckClaim::new(
+            bytecode_spec.rounds,
+            bytecode_spec.degree,
+            bytecode_read_raf_input,
+        ),
+        SumcheckClaim::new(
+            booleanity_spec.rounds,
+            booleanity_spec.degree,
+            booleanity_input,
+        ),
     ];
     let address_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
         &address_sumcheck_claims,

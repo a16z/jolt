@@ -99,10 +99,7 @@ macro_rules! stage5_point_accessors {
             /// The contiguous instruction address point, reconstructed from the
             /// virtual-RA opening cells (each is `chunk ++ r_cycle`).
             pub fn instruction_r_address(&self) -> Vec<F> {
-                reconstruct_r_address(
-                    &self.instruction_read_raf,
-                    self.instruction_r_cycle().len(),
-                )
+                reconstruct_r_address(&self.instruction_read_raf, self.instruction_r_cycle().len())
             }
 
             /// The reduced RAM-RA opening point (`address ++ cycle`).

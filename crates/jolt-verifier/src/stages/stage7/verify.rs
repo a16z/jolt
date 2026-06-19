@@ -33,8 +33,8 @@ use super::hamming_weight_claim_reduction::{
 };
 use super::inputs::{Deps, Stage7OutputClaims};
 use super::outputs::{
-    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7Output, Stage7PublicOutput,
-    Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7Output,
+    Stage7PublicOutput, Stage7ZkOutput,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -142,12 +142,13 @@ where
         let Deps::Zk { stage6 } = deps else {
             return Err(VerifierError::ExpectedCommittedProof { field: "stage6" });
         };
-        let public =
-            |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| Stage7PublicOutput {
+        let public = |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| {
+            Stage7PublicOutput {
                 challenges,
                 batching_coefficients,
                 hamming_gamma,
-            };
+            }
+        };
         let mut statements = vec![SumcheckStatement::new(
             hamming_claims.sumcheck.rounds,
             hamming_claims.sumcheck.degree,
@@ -241,7 +242,8 @@ where
             None
         };
         let bytecode_address_phase =
-            if let (Some(layout), Some(claim)) = (layouts.bytecode, bytecode_reduction_claims.as_ref())
+            if let (Some(layout), Some(claim)) =
+                (layouts.bytecode, bytecode_reduction_claims.as_ref())
             {
                 let cycle_phase = stage6.bytecode_cycle_phase.as_ref().ok_or(
                     VerifierError::MissingOpeningClaim {
@@ -258,9 +260,10 @@ where
             } else {
                 None
             };
-        let program_image_address_phase = if let (Some(layout), Some(claim)) =
-            (layouts.program_image, program_image_reduction_claims.as_ref())
-        {
+        let program_image_address_phase = if let (Some(layout), Some(claim)) = (
+            layouts.program_image,
+            program_image_reduction_claims.as_ref(),
+        ) {
             let cycle_phase = stage6.program_image_cycle_phase.as_ref().ok_or(
                 VerifierError::MissingOpeningClaim {
                     id: program_image::cycle_phase_program_image_opening(),
@@ -566,28 +569,40 @@ impl<F: Field> Stage7Relations<F> {
             relation
                 .as_ref()
                 .map(|relation| {
-                    address_phase_point(batch, relation.sumcheck_relation().sumcheck.rounds, relation.id())
+                    address_phase_point(
+                        batch,
+                        relation.sumcheck_relation().sumcheck.rounds,
+                        relation.id(),
+                    )
                 })
                 .transpose()
         };
         Ok(Stage7InstancePoints {
-            hamming: batch
-                .try_instance_point(hamming_rounds)
-                .map_err(|error| sumcheck_failed(JoltRelationId::HammingWeightClaimReduction, error))?,
+            hamming: batch.try_instance_point(hamming_rounds).map_err(|error| {
+                sumcheck_failed(JoltRelationId::HammingWeightClaimReduction, error)
+            })?,
             trusted_advice: address(&self.trusted_advice)?,
             untrusted_advice: address(&self.untrusted_advice)?,
             bytecode: self
                 .bytecode
                 .as_ref()
                 .map(|relation| {
-                    address_phase_point(batch, relation.sumcheck_relation().sumcheck.rounds, relation.id())
+                    address_phase_point(
+                        batch,
+                        relation.sumcheck_relation().sumcheck.rounds,
+                        relation.id(),
+                    )
                 })
                 .transpose()?,
             program_image: self
                 .program_image
                 .as_ref()
                 .map(|relation| {
-                    address_phase_point(batch, relation.sumcheck_relation().sumcheck.rounds, relation.id())
+                    address_phase_point(
+                        batch,
+                        relation.sumcheck_relation().sumcheck.rounds,
+                        relation.id(),
+                    )
                 })
                 .transpose()?,
         })
@@ -617,12 +632,22 @@ impl<F: Field> Stage7Relations<F> {
                 stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: "stage 7 produced no hamming-weight openings".to_string(),
             })?;
-        let hamming_output =
-            zip_openings(&claims.hamming_weight_claim_reduction, &hamming_output_points);
+        let hamming_output = zip_openings(
+            &claims.hamming_weight_claim_reduction,
+            &hamming_output_points,
+        );
 
         let advice_points = AdviceAddressPhaseOutputClaims {
-            trusted: advice_kind_point(self.trusted_advice.as_ref(), points.trusted_advice, &self.advice_inputs)?,
-            untrusted: advice_kind_point(self.untrusted_advice.as_ref(), points.untrusted_advice, &self.advice_inputs)?,
+            trusted: advice_kind_point(
+                self.trusted_advice.as_ref(),
+                points.trusted_advice,
+                &self.advice_inputs,
+            )?,
+            untrusted: advice_kind_point(
+                self.untrusted_advice.as_ref(),
+                points.untrusted_advice,
+                &self.advice_inputs,
+            )?,
         };
         let advice_output = zip_openings(&claims.advice_address_phase, &advice_points);
 
@@ -638,19 +663,22 @@ impl<F: Field> Stage7Relations<F> {
             }
             _ => None,
         };
-        let program_image_output =
-            match (&self.program_image, &self.program_image_inputs, points.program_image) {
-                (Some(relation), Some(inputs), Some(point)) => {
-                    let derived = relation.derive_opening_points(point, inputs)?;
-                    let wire = claims.program_image_address_phase.as_ref().ok_or(
-                        VerifierError::MissingOpeningClaim {
-                            id: program_image::final_program_image_opening(),
-                        },
-                    )?;
-                    Some(zip_openings(wire, &derived))
-                }
-                _ => None,
-            };
+        let program_image_output = match (
+            &self.program_image,
+            &self.program_image_inputs,
+            points.program_image,
+        ) {
+            (Some(relation), Some(inputs), Some(point)) => {
+                let derived = relation.derive_opening_points(point, inputs)?;
+                let wire = claims.program_image_address_phase.as_ref().ok_or(
+                    VerifierError::MissingOpeningClaim {
+                        id: program_image::final_program_image_opening(),
+                    },
+                )?;
+                Some(zip_openings(wire, &derived))
+            }
+            _ => None,
+        };
 
         let output_claims = Stage7OutputClaims {
             hamming_weight_claim_reduction: hamming_output,
@@ -659,15 +687,18 @@ impl<F: Field> Stage7Relations<F> {
             program_image_address_phase: program_image_output,
         };
 
-        let mut expected_outputs = vec![self
-            .hamming
-            .expected_output(&self.hamming_inputs, &output_claims.hamming_weight_claim_reduction)?];
+        let mut expected_outputs = vec![self.hamming.expected_output(
+            &self.hamming_inputs,
+            &output_claims.hamming_weight_claim_reduction,
+        )?];
         for relation in [&self.trusted_advice, &self.untrusted_advice]
             .into_iter()
             .flatten()
         {
-            expected_outputs
-                .push(relation.expected_output(&self.advice_inputs, &output_claims.advice_address_phase)?);
+            expected_outputs.push(
+                relation
+                    .expected_output(&self.advice_inputs, &output_claims.advice_address_phase)?,
+            );
         }
         if let (Some(relation), Some(inputs), Some(output)) = (
             &self.bytecode,
@@ -756,7 +787,10 @@ fn hamming_input_claims<F: Field>(
     let openings = |values: &[F]| values.iter().copied().map(input_opening).collect();
     HammingWeightClaimReductionInputClaims {
         ram_hamming_weight: input_opening(
-            stage6.output_claims.ram_hamming_booleanity.ram_hamming_weight,
+            stage6
+                .output_claims
+                .ram_hamming_booleanity
+                .ram_hamming_weight,
         ),
         instruction_booleanity: openings(&stage6.output_claims.booleanity.instruction_ra),
         bytecode_booleanity: openings(&stage6.output_claims.booleanity.bytecode_ra),
@@ -818,11 +852,14 @@ fn clear_bytecode_relation<F: Field>(
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let cycle_phase = stage6.batch.bytecode_cycle_phase.as_ref().ok_or(
-        VerifierError::MissingOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        },
-    )?;
+    let cycle_phase =
+        stage6
+            .batch
+            .bytecode_cycle_phase
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            })?;
     Ok(Some(BytecodeReductionAddressPhase::new(
         layout,
         BytecodeOutputWeightInputs {
@@ -931,7 +968,12 @@ fn clear_precommitted_final_openings<F: Field>(
             let cycle_phase = cycle.map(|(verified, claim)| {
                 PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
             });
-            openings.push(advice_final_opening(kind, layout, address_phase, cycle_phase)?);
+            openings.push(advice_final_opening(
+                kind,
+                layout,
+                address_phase,
+                cycle_phase,
+            )?);
         }
     }
     if let Some(layout) = layouts.bytecode {
@@ -961,7 +1003,10 @@ fn clear_precommitted_final_openings<F: Field>(
             .program_image_address_phase
             .as_ref()
             .map(|output| {
-                PrecommittedFinalSource::clear(&output.program_image.point, output.program_image.value)
+                PrecommittedFinalSource::clear(
+                    &output.program_image.point,
+                    output.program_image.value,
+                )
             });
         let cycle_phase = stage6
             .batch
@@ -971,7 +1016,11 @@ fn clear_precommitted_final_openings<F: Field>(
             .map(|(verified, claim)| {
                 PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
             });
-        openings.push(program_image_final_opening(layout, address_phase, cycle_phase)?);
+        openings.push(program_image_final_opening(
+            layout,
+            address_phase,
+            cycle_phase,
+        )?);
     }
     Ok(openings)
 }

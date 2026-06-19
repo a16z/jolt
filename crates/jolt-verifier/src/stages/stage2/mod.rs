@@ -23,15 +23,11 @@ pub use outputs::{
 pub use product_remainder::{
     ProductRemainder, ProductRemainderInputClaims, ProductRemainderOutputClaims,
 };
-pub use ram_output_check::{
-    RamOutputCheck, RamOutputCheckInputClaims, RamOutputCheckOutputClaims,
-};
+pub use ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims, RamOutputCheckOutputClaims};
 pub use ram_raf_evaluation::{
     RamRafEvaluation, RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
 };
 pub use ram_read_write_checking::{
     RamReadWriteChecking, RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
-pub use verify::{
-    stage2_batch_output_claims_with_points, stage2_expected_final_claim, verify,
-};
+pub use verify::{stage2_batch_output_claims_with_points, stage2_expected_final_claim, verify};

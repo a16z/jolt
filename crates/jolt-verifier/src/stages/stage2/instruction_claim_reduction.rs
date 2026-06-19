@@ -16,7 +16,9 @@
 //! when the points disagree) before this relation's output `Expr` is evaluated.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{claim_reductions::instruction as instruction_claim_reduction, dimensions::TraceDimensions},
+    formulas::{
+        claim_reductions::instruction as instruction_claim_reduction, dimensions::TraceDimensions,
+    },
     InstructionClaimReductionChallenge, InstructionClaimReductionPublic, JoltChallengeId,
     JoltPublicId, JoltRelationClaims, JoltRelationId,
 };
@@ -136,9 +138,9 @@ impl<F: Field> SumcheckInstance<F> for InstructionClaimReduction<F> {
 
     fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
         match id {
-            JoltChallengeId::InstructionClaimReduction(InstructionClaimReductionChallenge::Gamma) => {
-                Ok(self.gamma)
-            }
+            JoltChallengeId::InstructionClaimReduction(
+                InstructionClaimReductionChallenge::Gamma,
+            ) => Ok(self.gamma),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         }
     }

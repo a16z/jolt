@@ -8,9 +8,7 @@
 //! the reduced cycle.
 
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::committed_address_chunks, ram, ram::RamRaVirtualizationDimensions,
-    },
+    formulas::{dimensions::committed_address_chunks, ram, ram::RamRaVirtualizationDimensions},
     JoltPublicId, JoltRelationClaims, JoltRelationId, RamRaVirtualizationPublic,
 };
 use jolt_field::Field;

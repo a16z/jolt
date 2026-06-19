@@ -18,7 +18,7 @@
 
 use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::{
-        advice, bytecode::BytecodeOutputWeightInputs, bytecode as bytecode_reduction, program_image,
+        advice, bytecode as bytecode_reduction, bytecode::BytecodeOutputWeightInputs, program_image,
     },
     AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
     JoltAdviceKind, JoltChallengeId, JoltRelationClaims, JoltRelationId,
@@ -398,10 +398,9 @@ impl<F: Field> SumcheckInstance<F> for BytecodeReductionCyclePhase<F> {
         outputs: &BytecodeReductionCyclePhaseOutputClaims<OpeningClaim<F>>,
     ) -> Result<F, VerifierError> {
         if self.layout.dimensions().has_address_phase() {
-            let intermediate = outputs
-                .intermediate
-                .as_ref()
-                .ok_or_else(|| bytecode_public_failed("bytecode reduction produced no intermediate"))?;
+            let intermediate = outputs.intermediate.as_ref().ok_or_else(|| {
+                bytecode_public_failed("bytecode reduction produced no intermediate")
+            })?;
             return Ok(intermediate.value);
         }
         if outputs.chunks.len() != self.chunk_count {
@@ -415,7 +414,9 @@ impl<F: Field> SumcheckInstance<F> for BytecodeReductionCyclePhase<F> {
             .chunks
             .first()
             .map(|chunk| chunk.point.as_slice())
-            .ok_or_else(|| bytecode_public_failed("bytecode reduction produced no chunk openings"))?;
+            .ok_or_else(|| {
+                bytecode_public_failed("bytecode reduction produced no chunk openings")
+            })?;
         let weights = self
             .layout
             .cycle_phase_final_output_weights_at_opening_point(

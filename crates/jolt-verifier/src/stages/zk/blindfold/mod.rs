@@ -758,7 +758,8 @@ where
         )
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let stage3_cycle = stage3_shift_point.iter().rev().copied().collect::<Vec<_>>();
-    let stage4_cycle = &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
+    let stage4_cycle =
+        &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
     let stage5_cycle =
         &input.stage5.output_points.registers_opening_point()[REGISTER_ADDRESS_BITS..];
     let entry_bytecode_index = input
@@ -823,8 +824,10 @@ where
                 ],
                 register_read_write_point: &input.stage4.output_points.registers_read_write_point()
                     [..REGISTER_ADDRESS_BITS],
-                register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
-                    [..REGISTER_ADDRESS_BITS],
+                register_val_evaluation_point: &input
+                    .stage5
+                    .output_points
+                    .registers_opening_point()[..REGISTER_ADDRESS_BITS],
                 entry_bytecode_index,
                 stage1_gammas: &input.stage6.public.stage1_gammas,
                 stage2_gammas: &input.stage6.public.stage2_gammas,

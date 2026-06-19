@@ -109,7 +109,8 @@ impl ProgramImageClaimReductionLayout {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
-        let eq_eval = eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &permuted)?;
+        let eq_eval =
+            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &permuted)?;
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
     }
 

@@ -96,7 +96,11 @@ pub struct BytecodeReadRafAddressPhase<F: Field> {
 }
 
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
-    pub fn new(dimensions: BytecodeReadRafDimensions, input_claim: F, num_val_stages: usize) -> Self {
+    pub fn new(
+        dimensions: BytecodeReadRafDimensions,
+        input_claim: F,
+        num_val_stages: usize,
+    ) -> Self {
         Self {
             claims: bytecode::read_raf_address_phase(dimensions),
             input_claim,

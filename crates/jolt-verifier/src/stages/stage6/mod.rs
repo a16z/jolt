@@ -30,18 +30,18 @@ pub use committed_reduction_cycle_phase::{
 pub use inc_claim_reduction::{
     IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
 };
+pub use inputs::{deps, Deps};
 pub use instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
     InstructionRaVirtualizationOutputClaims,
 };
+pub use outputs::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput};
 pub use ram_hamming_booleanity::{
     RamHammingBooleanity, RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
 };
 pub use ram_ra_virtualization::{
     RamRaVirtualization, RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
 };
-pub use inputs::{deps, Deps};
-pub use outputs::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput};
 pub use verify::{
     append_stage6_opening_claims, stage6_advice_cycle_phase_expected_output,
     stage6_advice_cycle_phase_reference, stage6_advice_cycle_phase_verified,

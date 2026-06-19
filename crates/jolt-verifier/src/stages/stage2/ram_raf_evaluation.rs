@@ -147,8 +147,10 @@ impl<F: Field> SumcheckInstance<F> for RamRafEvaluation<F> {
                     )));
                 }
                 let address = &point[..self.ram_log_k];
-                Ok(IdentityPolynomial::new(self.ram_log_k).evaluate(address) * F::from_u64(8)
-                    + F::from_u64(self.lowest_address))
+                Ok(
+                    IdentityPolynomial::new(self.ram_log_k).evaluate(address) * F::from_u64(8)
+                        + F::from_u64(self.lowest_address),
+                )
             }
         }
     }

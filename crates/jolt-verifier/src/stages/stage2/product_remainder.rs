@@ -152,9 +152,11 @@ impl<F: Field> SumcheckInstance<F> for ProductRemainder<F> {
             // `LagrangeWeight(0..2)` exactly as the formula's `product_weight(i)`.
             SpartanProductVirtualizationPublic::LagrangeWeight(index)
             | SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index) => {
-                let weights =
-                    centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, self.uniskip_challenge)
-                        .map_err(public_input_failed)?;
+                let weights = centered_lagrange_evals(
+                    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+                    self.uniskip_challenge,
+                )
+                .map_err(public_input_failed)?;
                 weights
                     .get(*index)
                     .copied()

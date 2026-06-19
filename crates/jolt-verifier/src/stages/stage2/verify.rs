@@ -109,7 +109,10 @@ pub fn stage2_batch_output_claims_with_points<F: Field>(
     // through the field-wise `zip_openings`, so it stays explicit.
     let reduction = &claims.instruction_claim_reduction;
     let product = &claims.product_remainder;
-    let reduction_point = points.instruction_claim_reduction.left_lookup_operand.as_slice();
+    let reduction_point = points
+        .instruction_claim_reduction
+        .left_lookup_operand
+        .as_slice();
     let points_match =
         points.product_remainder.left_instruction_input.as_slice() == reduction_point;
     let opening = |value: F| OpeningClaim {

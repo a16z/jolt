@@ -47,9 +47,7 @@ pub struct RamOutputCheckInputClaims<C> {
 
 impl<C> Default for RamOutputCheckInputClaims<C> {
     fn default() -> Self {
-        Self {
-            _cell: PhantomData,
-        }
+        Self { _cell: PhantomData }
     }
 }
 

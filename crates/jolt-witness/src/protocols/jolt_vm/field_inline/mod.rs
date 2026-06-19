@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::field_inline::{
-    FieldInlineCommittedPolynomial, FieldInlineOpFlag,
-    FieldInlineOpeningId, FieldInlinePublicId, FieldInlineVirtualPolynomial, FIELD_REGISTERS_LOG_K,
+    FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineVirtualPolynomial, FIELD_REGISTERS_LOG_K,
 };
 use jolt_field::{Field, ReducingBytes};
 use jolt_program::{
