@@ -280,6 +280,7 @@ where
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             lattice_packed_validity_opening_proof: None,
+            lattice_precommitted_opening_proofs: Vec::new(),
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),
@@ -334,6 +335,7 @@ where
             stages,
             joint_opening_proof: PCS::proof_into_verifier(proof.joint_opening_proof),
             lattice_packed_validity_opening_proof: None,
+            lattice_precommitted_opening_proofs: Vec::new(),
             untrusted_advice_commitment: proof
                 .untrusted_advice_commitment
                 .map(PCS::commitment_into_verifier),

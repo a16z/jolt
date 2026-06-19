@@ -9,10 +9,11 @@ fn tampered_commitment_order_reject() {
         tamper_manifest::required_target("proof.commitments.order"),
         &base,
         |case| {
-            std::mem::swap(
-                &mut case.proof.commitments.rd_inc,
-                &mut case.proof.commitments.ram_inc,
-            );
+            let jolt_verifier::CommitmentPayload::Dory(commitments) = &mut case.proof.commitments
+            else {
+                panic!("core fixture should carry Dory commitments");
+            };
+            std::mem::swap(&mut commitments.rd_inc, &mut commitments.ram_inc);
         },
     );
 }
@@ -25,7 +26,11 @@ fn tampered_commitment_value_reject() {
         tamper_manifest::required_target("proof.commitments.value"),
         &base,
         |case| {
-            case.proof.commitments.rd_inc = case.proof.commitments.ram_inc.clone();
+            let jolt_verifier::CommitmentPayload::Dory(commitments) = &mut case.proof.commitments
+            else {
+                panic!("core fixture should carry Dory commitments");
+            };
+            commitments.rd_inc = commitments.ram_inc.clone();
         },
     );
 }
@@ -38,18 +43,22 @@ fn tampered_commitment_count_reject() {
         tamper_manifest::required_target("proof.commitments.missing"),
         &base,
         |case| {
-            let _ = case.proof.commitments.ra.bytecode.pop();
+            let jolt_verifier::CommitmentPayload::Dory(commitments) = &mut case.proof.commitments
+            else {
+                panic!("core fixture should carry Dory commitments");
+            };
+            let _ = commitments.ra.bytecode.pop();
         },
     );
     tamper_manifest::assert_core_tamper_rejects(
         tamper_manifest::required_target("proof.commitments.extra"),
         &base,
         |case| {
-            case.proof
-                .commitments
-                .ra
-                .bytecode
-                .push(case.proof.commitments.ram_inc.clone());
+            let jolt_verifier::CommitmentPayload::Dory(commitments) = &mut case.proof.commitments
+            else {
+                panic!("core fixture should carry Dory commitments");
+            };
+            commitments.ra.bytecode.push(commitments.ram_inc.clone());
         },
     );
 }

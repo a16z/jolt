@@ -1005,6 +1005,9 @@ fn core_opening_id(id: JoltOpeningId) -> CoreOpeningId {
         JoltOpeningId::TrustedAdvice { relation } => {
             CoreOpeningId::TrustedAdvice(core_sumcheck_id(relation))
         }
+        JoltOpeningId::Lattice { .. } => {
+            panic!("legacy core fixtures cannot contain lattice opening IDs")
+        }
     }
 }
 
@@ -1161,6 +1164,12 @@ fn core_sumcheck_id(id: JoltRelationId) -> CoreSumcheckId {
         JoltRelationId::ProgramImageClaimReduction => CoreSumcheckId::ProgramImageClaimReduction,
         JoltRelationId::IncClaimReduction => CoreSumcheckId::IncClaimReduction,
         JoltRelationId::HammingWeightClaimReduction => CoreSumcheckId::HammingWeightClaimReduction,
+        JoltRelationId::FusedIncrementTranslation
+        | JoltRelationId::FusedIncrementSourceLink
+        | JoltRelationId::FusedIncrementInactiveZero
+        | JoltRelationId::FusedIncrementInactiveSourceLink => {
+            panic!("legacy core fixtures cannot contain lattice relation IDs")
+        }
     }
 }
 
