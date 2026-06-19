@@ -8,6 +8,7 @@ use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
+use crate::stages::relations::OpeningClaim;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
 use super::inputs::Stage4Claims;
@@ -65,7 +66,9 @@ pub struct VerifiedStage4Sumcheck<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInitialEvaluation<F: Field> {
     pub public_eval: F,
-    pub program_image_contribution: Option<VerifiedRamValCheckProgramImageContribution<F>>,
+    /// The staged program-image contribution to `Val_init(r_address)` (committed
+    /// program mode only): the opening claim located at the full RAM address point.
+    pub program_image_contribution: Option<OpeningClaim<F>>,
     pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
     pub full_eval: F,
 }
@@ -82,12 +85,12 @@ impl<F: Field> RamValCheckInitialEvaluation<F> {
 
     pub fn advice_opening_claim(&self, kind: JoltAdviceKind) -> Option<F> {
         self.advice_contribution(kind)
-            .map(|contribution| contribution.opening_claim)
+            .map(|contribution| contribution.opening.value)
     }
 
     pub fn advice_opening_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
         self.advice_contribution(kind)
-            .map(|contribution| contribution.opening_point.as_slice())
+            .map(|contribution| contribution.opening.point.as_slice())
     }
 
     /// The formula-side init decomposition: the public initial-RAM evaluation plus
@@ -116,15 +119,7 @@ impl<F: Field> RamValCheckInitialEvaluation<F> {
 pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
     pub kind: JoltAdviceKind,
     pub selector: F,
-    pub opening_claim: F,
-    pub opening_point: Vec<F>,
-}
-
-/// Staged program-image contribution to `Val_init(r_address)` in committed
-/// program mode: the scalar opening claim and the full RAM address point it
-/// was staged at.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedRamValCheckProgramImageContribution<F: Field> {
-    pub opening_claim: F,
-    pub opening_point: Vec<F>,
+    /// The advice block opening (claim value + the address sub-point it was
+    /// evaluated at) that this contribution weights by `selector`.
+    pub opening: OpeningClaim<F>,
 }

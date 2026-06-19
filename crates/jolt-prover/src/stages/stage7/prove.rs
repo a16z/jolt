@@ -565,7 +565,7 @@ where
         let request = SumcheckStage7AdviceAddressStateRequest::jolt_advice_address_phase(
             kind,
             layout,
-            contribution.opening_point.clone(),
+            contribution.opening.point.clone(),
             cycle_phase.cycle_phase_variables.clone(),
             1024,
         );

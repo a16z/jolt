@@ -1658,7 +1658,7 @@ fn verify_advice_address_phase<F: Field>(
                 public_kind,
             )) if *public_kind == kind => layout
                 .address_phase_final_output_scale(
-                    &contribution.opening_point,
+                    &contribution.opening.point,
                     &cycle_phase.cycle_phase_variables,
                     advice_point,
                 )
@@ -1896,7 +1896,7 @@ fn verify_program_image_address_phase<F: Field>(
         })?;
     let final_scale = layout
         .address_phase_final_output_scale(
-            &contribution.opening_point,
+            &contribution.point,
             &cycle_phase.cycle_phase_variables,
             point,
         )

@@ -92,13 +92,8 @@ impl<F: Field> RamValCheckInputClaims<OpeningClaim<F>> {
         stage2: &Stage2ClearOutput<F>,
         init: &RamValCheckInitialEvaluation<F>,
     ) -> Self {
-        let advice = |kind: JoltAdviceKind| {
-            init.advice_contribution(kind)
-                .map(|contribution| OpeningClaim {
-                    point: contribution.opening_point.clone(),
-                    value: contribution.opening_claim,
-                })
-        };
+        let advice =
+            |kind: JoltAdviceKind| init.advice_contribution(kind).map(|c| c.opening.clone());
         Self {
             ram_val: OpeningClaim {
                 point: stage2.batch.ram_read_write.opening_point.clone(),
@@ -110,13 +105,7 @@ impl<F: Field> RamValCheckInputClaims<OpeningClaim<F>> {
             },
             untrusted_advice: advice(JoltAdviceKind::Untrusted),
             trusted_advice: advice(JoltAdviceKind::Trusted),
-            program_image: init
-                .program_image_contribution
-                .as_ref()
-                .map(|contribution| OpeningClaim {
-                    point: contribution.opening_point.clone(),
-                    value: contribution.opening_claim,
-                }),
+            program_image: init.program_image_contribution.clone(),
         }
     }
 }

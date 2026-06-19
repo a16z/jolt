@@ -798,7 +798,7 @@ where
                 claim.input.expression().try_evaluate(
                     |id| {
                         if *id == program_image::ram_val_check_contribution_opening() {
-                            Ok(contribution.opening_claim)
+                            Ok(contribution.value)
                         } else {
                             Err(VerifierError::MissingOpeningClaim { id: *id })
                         }
@@ -1837,8 +1837,8 @@ pub fn stage6_advice_cycle_phase_reference<F: Field>(
             id: advice::ram_val_check_advice_opening(kind),
         })?;
     Ok(Stage6AdviceCyclePhaseReference {
-        opening_claim: contribution.opening_claim,
-        opening_point: &contribution.opening_point,
+        opening_claim: contribution.opening.value,
+        opening_point: &contribution.opening.point,
     })
 }
 
@@ -3458,7 +3458,7 @@ pub(super) fn advice_cycle_phase_input<F: Field>(
                 .advice_contributions
                 .iter()
                 .find(|contribution| contribution.kind == kind)
-                .map(|contribution| contribution.opening_claim)
+                .map(|contribution| contribution.opening.value)
                 .ok_or(VerifierError::MissingOpeningClaim { id }),
             id => Err(VerifierError::MissingOpeningClaim { id }),
         },
@@ -3515,7 +3515,7 @@ pub(super) fn verify_advice_cycle_phase<F: Field>(
             JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
                 public_kind,
             )) if *public_kind == kind => layout
-                .cycle_phase_final_output_scale(&contribution.opening_point, advice_point)
+                .cycle_phase_final_output_scale(&contribution.opening.point, advice_point)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
                     stage: JoltRelationId::AdviceClaimReductionCyclePhase,
                     reason: error.to_string(),
@@ -3526,7 +3526,7 @@ pub(super) fn verify_advice_cycle_phase<F: Field>(
 
     Ok(VerifiedAdviceCyclePhaseSumcheck {
         kind,
-        input_claim: contribution.opening_claim,
+        input_claim: contribution.opening.value,
         sumcheck_point: advice_point.to_vec(),
         opening_point,
         cycle_phase_variables,

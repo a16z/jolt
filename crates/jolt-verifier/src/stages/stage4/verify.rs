@@ -20,8 +20,8 @@ use super::{
     inputs::{Deps, Stage4Claims},
     outputs::{
         RamValCheckInitialEvaluation, Stage4ClearOutput, Stage4Output, Stage4PublicOutput,
-        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution,
-        VerifiedRamValCheckProgramImageContribution, VerifiedStage4Batch, VerifiedStage4Sumcheck,
+        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution, VerifiedStage4Batch,
+        VerifiedStage4Sumcheck,
     },
     ram_val_check::{RamValCheck, RamValCheckInputClaims, RamValCheckOutputClaims},
     registers_read_write_checking::{
@@ -443,7 +443,7 @@ fn collect_program_image_contribution<F: Field>(
     opening_claim: Option<F>,
     r_address: &[F],
     full_eval: &mut F,
-) -> Result<Option<VerifiedRamValCheckProgramImageContribution<F>>, VerifierError> {
+) -> Result<Option<OpeningClaim<F>>, VerifierError> {
     let opening = program_image::ram_val_check_contribution_opening();
     if !committed_program {
         if opening_claim.is_some() {
@@ -454,9 +454,9 @@ fn collect_program_image_contribution<F: Field>(
 
     let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
     *full_eval += opening_claim;
-    Ok(Some(VerifiedRamValCheckProgramImageContribution {
-        opening_claim,
-        opening_point: r_address.to_vec(),
+    Ok(Some(OpeningClaim {
+        point: r_address.to_vec(),
+        value: opening_claim,
     }))
 }
 
@@ -567,8 +567,10 @@ fn collect_advice_contribution<F: Field>(
     contributions.push(VerifiedRamValCheckAdviceContribution {
         kind,
         selector,
-        opening_claim,
-        opening_point,
+        opening: OpeningClaim {
+            point: opening_point,
+            value: opening_claim,
+        },
     });
     Ok(())
 }

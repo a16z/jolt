@@ -336,8 +336,10 @@ fn stage4_ram_val_check_init_to_verifier<F: Field>(
             .map(|contribution| VerifiedRamValCheckAdviceContribution {
                 kind: contribution.kind,
                 selector: contribution.selector,
-                opening_claim: contribution.opening_claim,
-                opening_point: contribution.opening_point.clone(),
+                opening: OpeningClaim {
+                    point: contribution.opening_point.clone(),
+                    value: contribution.opening_claim,
+                },
             })
             .collect(),
         full_eval: init.full_eval,
