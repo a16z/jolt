@@ -2205,6 +2205,68 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "akita")]
+    #[test]
+    fn akita_stage8_verify_rejects_missing_committed_program_precommitted_proofs() {
+        let (preprocessing, checked, mut proof, stage6, stage7) =
+            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+        let statement = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        )
+        .unwrap_or_else(|error| panic!("Stage 8 statement should build: {error}"));
+        let stage8::Stage8BatchStatement::Clear(batch) = statement else {
+            panic!("fixture is clear mode");
+        };
+        let bytecode_chunk_count = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+            .chunk_count();
+        let source_component_count =
+            2 * bytecode_chunk_count * (1 + (1usize << REGISTER_ADDRESS_BITS));
+        assert_eq!(
+            batch.precommitted_statements.len(),
+            source_component_count + bytecode_chunk_count + 1
+        );
+        proof.lattice_precommitted_opening_proofs = vec![(); source_component_count];
+        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"akita-stage8-test");
+
+        let result = stage8::verify_clear::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            &mut transcript,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::FinalOpeningVerificationFailed { reason })
+                if reason.contains(&format!(
+                    "expected {} precommitted opening proofs, got {source_component_count}",
+                    source_component_count + bytecode_chunk_count + 1
+                ))
+        ));
+    }
+
     #[cfg(not(feature = "akita"))]
     #[test]
     fn lattice_layout_binding_requires_akita_feature() {
