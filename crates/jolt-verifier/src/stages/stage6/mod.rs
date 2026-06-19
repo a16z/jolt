@@ -2,6 +2,7 @@
 
 pub mod booleanity;
 pub mod bytecode_read_raf;
+pub mod committed_reduction_cycle_phase;
 pub mod inc_claim_reduction;
 pub mod inputs;
 pub mod instruction_ra_virtualization;
@@ -18,6 +19,12 @@ pub use bytecode_read_raf::{
     BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
     BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCycleInputs,
     BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
+};
+pub use committed_reduction_cycle_phase::{
+    AdviceCyclePhase, AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
+    BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseInputClaims,
+    BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhase,
+    ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
 };
 pub use inc_claim_reduction::{
     IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,

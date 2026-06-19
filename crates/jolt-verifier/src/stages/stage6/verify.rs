@@ -6,9 +6,7 @@ use jolt_claims::protocols::jolt::{
         },
         claim_reductions::{
             advice,
-            bytecode::{
-                self as bytecode_reduction, BytecodeLaneWeightInputs, BytecodeOutputWeightInputs,
-            },
+            bytecode::{self as bytecode_reduction, BytecodeLaneWeightInputs},
             increments, program_image,
         },
         dimensions::{
@@ -18,12 +16,12 @@ use jolt_claims::protocols::jolt::{
         ram::{self, RamRaVirtualizationDimensions},
     },
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
-    BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, BytecodeClaimReductionPublic,
-    BytecodeReadRafChallenge, IncClaimReductionChallenge, InstructionRaVirtualizationChallenge,
+    BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, BytecodeReadRafChallenge,
+    IncClaimReductionChallenge, InstructionRaVirtualizationChallenge,
     InstructionRaVirtualizationPublic, JoltAdviceKind, JoltChallengeId, JoltPublicId,
     JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
     PrecommittedClaimReduction, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-    ProgramImageClaimReductionPublic, RamHammingBooleanityPublic, RamRaVirtualizationPublic,
+    RamHammingBooleanityPublic, RamRaVirtualizationPublic,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -47,6 +45,12 @@ use super::{
         BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
         BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCycleInputs,
         BytecodeReadRafInputClaims,
+    },
+    committed_reduction_cycle_phase::{
+        AdviceCyclePhase, AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
+        BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseInputClaims,
+        BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhase,
+        ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
     },
     inc_claim_reduction::{IncClaimReduction, IncClaimReductionInputClaims},
     instruction_ra_virtualization::{
@@ -1330,6 +1334,7 @@ where
                 layout,
                 output_claims,
                 weights,
+                eta,
                 input_claim,
             )?)
         } else {
@@ -3559,28 +3564,24 @@ pub(super) fn verify_advice_cycle_phase<F: Field>(
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: advice::ram_val_check_advice_opening(kind),
         })?;
-    let output_openings = advice::cycle_phase_output_openings(kind, layout.dimensions());
-    let expected_output_claim = claim.output.expression().try_evaluate(
-        |id| {
-            if output_openings.contains(id) {
-                Ok(opening_claim.opening_claim)
-            } else {
-                Err(VerifierError::MissingOpeningClaim { id: *id })
-            }
-        },
-        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        |id| match id {
-            JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
-                public_kind,
-            )) if *public_kind == kind => layout
-                .cycle_phase_final_output_scale(&contribution.opening.point, advice_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::AdviceClaimReductionCyclePhase,
-                    reason: error.to_string(),
-                }),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )?;
+    let relation = AdviceCyclePhase::new(kind, layout, contribution.opening.point.clone());
+    let inputs = AdviceCyclePhaseInputClaims {
+        trusted: (kind == JoltAdviceKind::Trusted).then(|| OpeningClaim {
+            point: Vec::new(),
+            value: contribution.opening.value,
+        }),
+        untrusted: (kind == JoltAdviceKind::Untrusted).then(|| OpeningClaim {
+            point: Vec::new(),
+            value: contribution.opening.value,
+        }),
+    };
+    let derived = relation.derive_opening_points(advice_point, &inputs)?;
+    let values = AdviceCyclePhaseOutputClaims {
+        trusted: (kind == JoltAdviceKind::Trusted).then_some(opening_claim.opening_claim),
+        untrusted: (kind == JoltAdviceKind::Untrusted).then_some(opening_claim.opening_claim),
+    };
+    let outputs = zip_openings(&values, &derived);
+    let expected_output_claim = relation.expected_output(&inputs, &outputs)?;
 
     Ok(VerifiedAdviceCyclePhaseSumcheck {
         kind,
@@ -3675,6 +3676,7 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
     layout: &BytecodeClaimReductionLayout,
     output_claims: &BytecodeCyclePhaseOutputClaims<F>,
     weights: BytecodeReductionWeights<F>,
+    eta: F,
     input_claim: F,
 ) -> Result<VerifiedBytecodeCyclePhaseSumcheck<F>, VerifierError> {
     let stage = JoltRelationId::BytecodeClaimReductionCyclePhase;
@@ -3697,71 +3699,35 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
             reason: error.to_string(),
         })?;
     let has_address_phase = layout.dimensions().has_address_phase();
-    if let BytecodeCyclePhaseOutputClaims::Chunks(chunks) = output_claims {
-        if has_address_phase || chunks.len() != layout.chunk_count() {
+    let values = match (output_claims, has_address_phase) {
+        (BytecodeCyclePhaseOutputClaims::Intermediate(value), true) => {
+            BytecodeReductionCyclePhaseOutputClaims {
+                intermediate: Some(*value),
+                chunks: Vec::new(),
+            }
+        }
+        (BytecodeCyclePhaseOutputClaims::Chunks(chunks), false)
+            if chunks.len() == layout.chunk_count() =>
+        {
+            BytecodeReductionCyclePhaseOutputClaims {
+                intermediate: None,
+                chunks: chunks.clone(),
+            }
+        }
+        _ => {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage,
                 reason: format!(
-                    "bytecode chunk claim count mismatch: expected {}, got {} (address phase: {})",
-                    layout.chunk_count(),
-                    chunks.len(),
-                    has_address_phase
+                    "bytecode reduction cycle output shape mismatch (address phase: {has_address_phase})"
                 ),
-            });
+            })
         }
-    }
-    let chunk_weights = (!has_address_phase)
-        .then(|| {
-            layout.cycle_phase_final_output_weights(
-                BytecodeOutputWeightInputs {
-                    r_bc: &weights.r_bc,
-                    chunk_rbc_weights: &weights.chunk_rbc_weights,
-                    lane_weights: &weights.lane_weights,
-                },
-                point,
-            )
-        })
-        .transpose()
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: error.to_string(),
-        })?;
-    let expected_output_claim = claim.output.expression().try_evaluate(
-        |id| {
-            if *id == bytecode_reduction::cycle_phase_intermediate_opening() {
-                return match output_claims {
-                    BytecodeCyclePhaseOutputClaims::Intermediate(value) => Ok(*value),
-                    BytecodeCyclePhaseOutputClaims::Chunks(_) => {
-                        Err(VerifierError::MissingOpeningClaim { id: *id })
-                    }
-                };
-            }
-            for chunk_idx in 0..layout.chunk_count() {
-                if *id == bytecode_reduction::final_bytecode_chunk_opening(chunk_idx) {
-                    return match output_claims {
-                        BytecodeCyclePhaseOutputClaims::Chunks(chunks) => chunks
-                            .get(chunk_idx)
-                            .copied()
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id }),
-                        BytecodeCyclePhaseOutputClaims::Intermediate(_) => {
-                            Err(VerifierError::MissingOpeningClaim { id: *id })
-                        }
-                    };
-                }
-            }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
-        },
-        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        |id| match id {
-            JoltPublicId::BytecodeClaimReduction(
-                BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx),
-            ) => chunk_weights
-                .as_ref()
-                .and_then(|chunk_weights| chunk_weights.get(*chunk_idx).copied())
-                .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )?;
+    };
+    let relation = BytecodeReductionCyclePhase::new(layout, eta, weights.clone());
+    let inputs = BytecodeReductionCyclePhaseInputClaims::from_values(Vec::new());
+    let derived = relation.derive_opening_points(point, &inputs)?;
+    let outputs = zip_openings(&values, &derived);
+    let expected_output_claim = relation.expected_output(&inputs, &outputs)?;
 
     Ok(VerifiedBytecodeCyclePhaseSumcheck {
         input_claim,
@@ -3832,32 +3798,21 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
             stage,
             reason: error.to_string(),
         })?;
-    let has_address_phase = layout.dimensions().has_address_phase();
-    let final_scale = (!has_address_phase)
-        .then(|| layout.cycle_phase_final_output_scale(r_addr_rw, point))
-        .transpose()
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: error.to_string(),
-        })?;
-    let expected_output_claim = claim.output.expression().try_evaluate(
-        |id| {
-            if *id == program_image::cycle_phase_program_image_opening()
-                || *id == program_image::final_program_image_opening()
-            {
-                Ok(output_claim.opening_claim)
-            } else {
-                Err(VerifierError::MissingOpeningClaim { id: *id })
-            }
+    let relation = ProgramImageReductionCyclePhase::new(layout, r_addr_rw.to_vec());
+    let inputs = ProgramImageReductionCyclePhaseInputClaims {
+        contribution: OpeningClaim {
+            point: Vec::new(),
+            value: input_claim,
         },
-        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        |id| match id {
-            JoltPublicId::ProgramImageClaimReduction(
-                ProgramImageClaimReductionPublic::FinalScale,
-            ) => final_scale.ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+    };
+    let derived = relation.derive_opening_points(point, &inputs)?;
+    let outputs = zip_openings(
+        &ProgramImageReductionCyclePhaseOutputClaims {
+            program_image: output_claim.opening_claim,
         },
-    )?;
+        &derived,
+    );
+    let expected_output_claim = relation.expected_output(&inputs, &outputs)?;
 
     Ok(VerifiedProgramImageCyclePhaseSumcheck {
         input_claim,
