@@ -47,7 +47,7 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityKind,
     LatticePackedValidityRequirement, FUSED_INCREMENT_BYTE_LIMBS,
 };
-use jolt_field::{RingAccumulator, WithAccumulator};
+use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
 use jolt_openings::BatchOpeningStatement;
 use jolt_poly::{try_eq_mle, EqPolynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, JoltInstructionRow, JoltTraceRow};
@@ -845,6 +845,10 @@ where
 {
     validate_akita_verifier_setup_config(&preprocessing.pcs_setup, config)?;
     validate_akita_proof_payload_shape(&preprocessing.pcs_setup, &proof.commitments)?;
+    validate_akita_opening_proof_payload_shape(&proof.commitments, &proof.joint_opening_proof)?;
+    if let Some(opening_proof) = &proof.lattice_packed_validity_opening_proof {
+        validate_akita_opening_proof_payload_shape(&proof.commitments, opening_proof)?;
+    }
     validate_akita_advice_commitment_aliases(
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
@@ -976,6 +980,76 @@ fn validate_akita_proof_payload_shape(
                 .to_string(),
         });
     }
+    validate_akita_commitment_bytes(&payload.packed_witness)?;
+    Ok(())
+}
+
+fn validate_akita_opening_proof_payload_shape(
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+    opening_proof: &AkitaPackedBatchProof,
+) -> Result<(), VerifierError> {
+    let payload =
+        proof_commitments
+            .as_akita()
+            .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Lattice,
+                got: proof_commitments.family(),
+            })?;
+    if opening_proof.native.commitment != payload.packed_witness {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita opening proof commitment does not match packed witness payload"
+                .to_string(),
+        });
+    }
+    validate_akita_commitment_bytes(&opening_proof.native.commitment)?;
+    if opening_proof.native.statement_bridge.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita opening proof is missing statement bridge bytes".to_string(),
+        });
+    }
+    if opening_proof.native.proof_shape.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita opening proof is missing native proof shape bytes".to_string(),
+        });
+    }
+    if opening_proof.native.proof.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita opening proof is missing native proof bytes".to_string(),
+        });
+    }
+    if let Some(reduction) = &opening_proof.reduction {
+        validate_akita_field_bytes(
+            "Akita packed reduction opening eval",
+            &reduction.opening_eval,
+        )?;
+        for round in &reduction.rounds {
+            for eval in round {
+                validate_akita_field_bytes("Akita packed reduction round eval", eval)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_akita_commitment_bytes(commitment: &AkitaCommitment) -> Result<(), VerifierError> {
+    if commitment.native.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita commitment is missing native commitment bytes".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_akita_field_bytes(label: &'static str, bytes: &[u8]) -> Result<(), VerifierError> {
+    if bytes.len() != AkitaField::NUM_BYTES {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: format!(
+                "{label} has {} bytes but expected {}",
+                bytes.len(),
+                AkitaField::NUM_BYTES
+            ),
+        });
+    }
     Ok(())
 }
 
@@ -1050,6 +1124,11 @@ fn validate_akita_verifier_setup_shape(
             reason:
                 "Akita verifier setup must support at least one polynomial per commitment group"
                     .to_string(),
+        });
+    }
+    if setup.native.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita verifier setup is missing native setup bytes".to_string(),
         });
     }
 
@@ -3002,6 +3081,8 @@ mod tests {
             &stage8_statement,
         )
         .expect("packed batch proof should be produced");
+        validate_akita_opening_proof_payload_shape(&artifact.commitments, &proof)
+            .expect("fresh packed batch proof shape should pass preflight");
 
         let mut wrong_stage8_statement = stage8_statement.clone();
         let Stage8BatchStatement::Clear(wrong_statement) = &mut wrong_stage8_statement else {
@@ -3020,6 +3101,41 @@ mod tests {
         assert!(matches!(
             error,
             VerifierError::FinalOpeningBatchFailed { .. }
+        ));
+
+        let mut wrong_commitment_proof = proof.clone();
+        wrong_commitment_proof.native.commitment.layout_digest = [9; 32];
+        assert!(matches!(
+            validate_akita_opening_proof_payload_shape(
+                &artifact.commitments,
+                &wrong_commitment_proof,
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("opening proof commitment")
+        ));
+
+        let mut missing_native_proof = proof.clone();
+        missing_native_proof.native.proof.clear();
+        assert!(matches!(
+            validate_akita_opening_proof_payload_shape(&artifact.commitments, &missing_native_proof),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("native proof bytes")
+        ));
+
+        let mut missing_reduction_eval = proof.clone();
+        missing_reduction_eval
+            .reduction
+            .as_mut()
+            .expect("packed proof should contain a reduction")
+            .opening_eval
+            .clear();
+        assert!(matches!(
+            validate_akita_opening_proof_payload_shape(
+                &artifact.commitments,
+                &missing_reduction_eval,
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("packed reduction opening eval")
         ));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
@@ -3604,6 +3720,14 @@ mod tests {
             validate_akita_verifier_setup_config(&missing_layout, &config),
             Err(VerifierError::InvalidProtocolConfig { .. })
         ));
+
+        let mut missing_native = verifier_setup;
+        missing_native.native.clear();
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&missing_native, &config),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("native setup bytes")
+        ));
     }
 
     #[test]
@@ -3682,6 +3806,17 @@ mod tests {
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("exactly one polynomial")
+        ));
+
+        let mut missing_native_commitment = payload.clone();
+        missing_native_commitment.packed_witness.native.clear();
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Akita(missing_native_commitment),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("native commitment bytes")
         ));
     }
 
