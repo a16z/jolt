@@ -1423,6 +1423,16 @@ fn validate_akita_field_bytes(label: &'static str, bytes: &[u8]) -> Result<(), V
             ),
         });
     }
+    let value = u128::from_le_bytes(bytes.try_into().map_err(|_| {
+        VerifierError::InvalidProtocolConfig {
+            reason: format!("{label} must be exactly {} bytes", AkitaField::NUM_BYTES),
+        }
+    })?);
+    if value >= jolt_akita::AKITA_FIELD_MODULUS {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: format!("{label} is not a canonical Akita field encoding"),
+        });
+    }
     Ok(())
 }
 
@@ -3326,6 +3336,22 @@ mod tests {
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("packed reduction opening eval")
+        ));
+
+        let mut noncanonical_reduction_eval = proof.clone();
+        noncanonical_reduction_eval
+            .reduction
+            .as_mut()
+            .expect("packed proof should contain a reduction")
+            .opening_eval = AKITA_FIELD_MODULUS.to_le_bytes().to_vec();
+        assert!(matches!(
+            validate_akita_packed_opening_proof_payload_shape(
+                &artifact.commitments,
+                &noncanonical_reduction_eval,
+                "Akita joint opening proof",
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("canonical Akita field encoding")
         ));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
