@@ -9,6 +9,8 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use crate::stages::stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput};
 use crate::VerifierError;
 
+pub use super::instruction_claim_reduction::InstructionClaimReductionOutputClaims;
+pub use super::product_remainder::ProductRemainderOutputClaims;
 pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
 
 #[derive(Clone, Copy)]
@@ -91,29 +93,6 @@ pub struct Stage2BatchOutputClaims<F: Field> {
     pub instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
     pub ram_raf_evaluation: F,
     pub ram_output_check: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct ProductRemainderOutputClaims<F: Field> {
-    pub left_instruction_input: F,
-    pub right_instruction_input: F,
-    pub jump_flag: F,
-    pub write_lookup_output_to_rd: F,
-    pub lookup_output: F,
-    pub branch_flag: F,
-    pub next_is_noop: F,
-    pub virtual_instruction: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct InstructionClaimReductionOutputClaims<F: Field> {
-    pub lookup_output: Option<F>,
-    pub left_lookup_operand: F,
-    pub right_lookup_operand: F,
-    pub left_instruction_input: Option<F>,
-    pub right_instruction_input: Option<F>,
 }
 
 impl<F: Field> Stage2BatchOutputClaims<F> {
