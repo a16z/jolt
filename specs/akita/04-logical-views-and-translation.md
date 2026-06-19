@@ -207,12 +207,16 @@ Prove:
   RamInc(r) = sum_x eq(r, x) * StoreFlag(x) * DecodeInc(x)
 
 Output claims:
-  openings of StoreFlag and Inc byte/sign facts at the translation
-  sumcheck point rho
+  proof-owned W_pack openings of Inc byte/sign facts at the translation
+  sumcheck point rho.
+  separate precommitted BytecodeChunk openings for StoreFlag/RdPresent at the
+  translation sumcheck point rho.
 ```
 
 This is not Stage 8-only. It is a PIOP relation because the row variable is
-summed out.
+summed out. StoreFlag/RdPresent are not proof-owned W_pack facts unless a
+future bound precommitted packed view proves equivalence to the original
+BytecodeChunk commitment.
 
 Validity relation classes:
 
@@ -248,6 +252,12 @@ New increment/advice one-hot facts:
 Committed bytecode views:
   use committed-program reductions plus separate openings of BytecodeChunk(i) or
   ProgramImageInit against their original commitments.
+
+Fused increment source views:
+  StoreFlag and RdPresent are committed-bytecode views. They are consumed by the
+  masked translation relation through separate BytecodeChunk(i) openings, or by
+  a future bound precommitted packed view. They are not proof-owned W_pack
+  families.
 ```
 
 Stage placement:
@@ -432,6 +442,8 @@ unsupported views:
 - Base increment source views use committed bytecode lanes:
     Ram source = Store flag.
     Rd source = sum of rd one-hot lanes.
+  These source views resolve through precommitted BytecodeChunk openings unless
+  a future bound precommitted packed view is specified.
 ```
 
 ## Tests
@@ -463,6 +475,10 @@ same_polynomial_different_relation_ids_distinct:
 precommitted_program_view_uses_original_commitment:
   BytecodeChunk and ProgramImageInit resolve to precommitted opening targets,
   not PackedWitness families.
+
+fused_increment_sources_use_precommitted_bytecode_openings:
+  StoreFlag and RdPresent source claims resolve through BytecodeChunk openings,
+  not W_pack families.
 ```
 
 ## Performance
@@ -490,6 +506,8 @@ Rejected:
   coefficients needed by Jolt/BlindFold.
 - treating byte-limb decode as a point opening unless Akita proves the packed
   linear view relation.
+- satisfying StoreFlag or RdPresent source claims from proof-owned W_pack
+  bytecode lanes without a binding to the BytecodeChunk commitment.
 ```
 
 ## Questions

@@ -300,6 +300,9 @@ Stage 8:
 Proof-owned final logical claims are packed-view claims over one W_pack.
 TrustedAdvice, BytecodeChunk(i), and ProgramImageInit receive separate openings
 against their original commitments.
+Committed-bytecode source facts used by fused increments, such as StoreFlag and
+RdPresent, also resolve through separate BytecodeChunk(i) openings unless a
+future bound precommitted packed view is specified.
 ```
 
 ## Implementation
@@ -337,6 +340,8 @@ When PCS family is lattice:
   opening path are available.
   require separate precommitted openings for BytecodeChunk(i) and
   ProgramImageInit.
+  require fused-increment source claims to use BytecodeChunk(i) openings or an
+  explicit bound precommitted packed view.
   reject ZK.
   derive all proof-owned families into one PackedWitnessLayout.
 ```
@@ -372,6 +377,8 @@ Do not emit global dummy cells.
 - Program image words match current little-endian RAM preprocessing.
 - Increment source selection is derived from committed bytecode Store and rd
   presence lanes.
+- Increment source openings are precommitted BytecodeChunk openings, not W_pack
+  bytecode-family openings.
 - BytecodeChunk(i) and ProgramImageInit do not inherit trace-domain row count.
 - ZK with lattice is rejected until a hiding protocol is specified.
 - No dense proof-owned path bypasses PackedWitness silently.
@@ -408,6 +415,11 @@ precommitted_program_openings_use_original_commitments:
 precommitted_program_not_in_w_pack:
   enabling ProgramMode::Committed does not add BytecodeChunk(i) or
   ProgramImageInit families to the proof-owned PackedWitness layout.
+
+fused_source_facts_not_in_w_pack:
+  StoreFlag and RdPresent source claims are checked through BytecodeChunk(i)
+  openings or a bound precommitted packed view, not proof-owned bytecode
+  families in W_pack.
 
 zk_lattice_rejects:
   lattice family with zk feature fails before proof verification.

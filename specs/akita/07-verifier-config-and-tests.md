@@ -181,6 +181,9 @@ Akita setup key.
 Akita packed-view proof.
 Precommitted opening proof material for TrustedAdvice, BytecodeChunk(i), and
 ProgramImageInit when those claims are present.
+Precommitted opening proof material for BytecodeChunk(i) source facts used by
+fused increment translation, such as StoreFlag and RdPresent, unless a future
+bound precommitted packed view is enabled.
 Protocol header:
   ProgramMode::Committed.
   IncrementCommitmentMode::FusedOneHot.
@@ -239,6 +242,8 @@ Dispatch:
 5. build a packed BatchOpeningStatement for W_pack claims.
 6. build separate precommitted opening statements for TrustedAdvice,
    BytecodeChunk(i), and ProgramImageInit.
+   Fused-increment StoreFlag/RdPresent source claims use the same
+   precommitted BytecodeChunk opening path.
 7. call selected opening implementations.
 8. bind returned opening data to transcript.
 9. return logical coefficients for clear-mode checks.
@@ -365,6 +370,9 @@ fn build_batch_statement<F, C>(
 - Field-inline cannot bypass PackedWitnessLayout.
 - Untrusted advice cannot bypass PackedWitnessLayout.
 - Trusted advice cannot bypass its precommitted opening path.
+- Fused-increment StoreFlag/RdPresent source claims cannot bypass the
+  precommitted BytecodeChunk opening path unless a bound precommitted packed
+  view is specified.
 - Akita payload contains exactly one PackedWitness commitment.
 - Akita payload carries separate precommitted opening proof material when
   precommitted claims are present.
@@ -427,6 +435,10 @@ akita_committed_program_openings_missing_rejects:
 akita_committed_program_precommitted_opening_missing_rejects:
   ProgramMode::Committed proof that only opens W_pack for BytecodeChunk or
   ProgramImageInit fails.
+
+akita_fused_source_precommitted_opening_missing_rejects:
+  fused-increment StoreFlag/RdPresent source claims that only open W_pack
+  bytecode lanes fail.
 
 akita_single_packed_witness_payload:
   Akita payload with extra packed commitments rejects.

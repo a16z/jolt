@@ -174,14 +174,20 @@ RdInc(r) from existing IncClaimReduction.
 Translation relation outputs:
 
 ```text
-StoreFlag(rho)
-RdPresent(rho)
-IncByte(j, rho, b) views or decoded byte views
-IncSign(rho)
+proof-owned W_pack openings:
+  IncByte(j, rho, b) views or decoded byte views.
+  IncSign(rho).
+
+precommitted bytecode openings:
+  StoreFlag(rho) against the original BytecodeChunk(i) commitment.
+  RdPresent(rho) against the original BytecodeChunk(i) commitment.
 ```
 
 The exact output shape depends on whether `jolt-akita` proves byte-decode
 linear views directly or whether jolt-claims exposes decoded byte openings.
+The bytecode source openings stay outside W_pack unless a future bound
+precommitted packed view proves equivalence to the original BytecodeChunk(i)
+commitment.
 
 ## Committed Bytecode Link
 
@@ -220,7 +226,9 @@ Stage 6 is the target location:
 Stage 6:
   bytecode read-RAF has produced committed bytecode row semantics.
   current IncClaimReduction closes RamInc/RdInc logical claims.
-  fused increment translation can consume both.
+  fused increment translation can consume both, but bytecode source facts must
+  be opened against their BytecodeChunk commitments or a future bound
+  precommitted packed view.
 ```
 
 ## Implementation
@@ -243,8 +251,10 @@ Add formulas:
 Reuse existing bytecode read-RAF staged row semantics for Store/RdPresent.
 Do not add a new committed selector family unless those staged claims cannot
 expose the required Store and rd-present evaluations.
-Do not add BytecodeChunk lanes to W_pack unless a future protocol also proves
-binding to the original BytecodeChunk commitments.
+Do not add BytecodeChunk lanes to W_pack for Store/RdPresent. They require
+separate openings against the original BytecodeChunk commitments unless a future
+protocol also proves binding between a packed precommitted view and those
+commitments.
 ```
 
 `jolt-verifier`:
@@ -301,6 +311,8 @@ for each trace row x:
 - StoreFlag and RdPresent are derived from committed expanded bytecode rows.
 - BytecodeChunk commitments are opened or otherwise bound separately from the
   fused-increment W_pack facts.
+- StoreFlag and RdPresent source claims are precommitted bytecode openings, not
+  proof-owned W_pack openings.
 - StoreFlag * RdPresent = 0.
 - RamInc/RdInc logical claims are reconstructed by masked translation.
 - The signed decode is sign-magnitude, not two's complement.
@@ -332,6 +344,10 @@ read_modify_write_expansion_is_disjoint:
 
 fused_source_link_tamper_rejects:
   tampered Store or rd source claim breaks RamInc/RdInc translation.
+
+fused_source_link_requires_precommitted_openings:
+  Store/RdPresent source claims cannot be satisfied by W_pack bytecode lanes
+  without a binding to the original BytecodeChunk commitment.
 
 separate_increment_mode_rejects_lattice:
   verifier rejects separate base increments under lattice family.

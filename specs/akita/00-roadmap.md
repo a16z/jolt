@@ -179,6 +179,8 @@ Interface requirements for Akita:
     Ram source = Store circuit flag.
     Rd source = sum of rd one-hot lanes.
   No extra committed-bytecode selector family is required for base RAM/RD.
+  These source facts are not proof-owned W_pack families; they require
+  BytecodeChunk(i) openings or a future bound precommitted packed view.
 ```
 
 ## Architecture
@@ -339,6 +341,9 @@ Milestone details:
 - TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted
   objects; lattice verification must open them against their original
   commitments, not only through W_pack.
+- StoreFlag/RdPresent source facts used by fused increments are
+  precommitted-bytecode facts, so they follow the BytecodeChunk opening path
+  unless an explicit bound precommitted packed view is added.
 - Any one-hot committed logical value has an explicit decode relation and an
   explicit validity relation.
 - Base increment source is canonical:
