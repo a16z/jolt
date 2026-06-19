@@ -303,6 +303,7 @@ where
             stage2,
             stage4,
             trace_dimensions: TraceDimensions::new(config.log_t),
+            instruction_read_raf_dimensions: config.instruction_read_raf_dimensions,
             ram_log_k: config.log_k,
             instruction_gamma,
             ram_gamma,

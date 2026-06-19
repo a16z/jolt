@@ -9,10 +9,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{
-    try_eq_mle, IdentityPolynomial, LtPolynomial, MultilinearEvaluation, OperandPolynomial,
-    OperandSide,
-};
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
@@ -547,6 +543,7 @@ pub struct Stage5InputClaimRequest<'a, F: Field> {
     pub stage2: &'a Stage2ClearOutput<F>,
     pub stage4: &'a Stage4ClearOutput<F>,
     pub trace_dimensions: TraceDimensions,
+    pub instruction_read_raf_dimensions: instruction::InstructionReadRafDimensions,
     pub ram_log_k: usize,
     pub instruction_gamma: F,
     pub ram_gamma: F,
@@ -635,43 +632,25 @@ pub struct Stage5DependencyOpeningPoints<'a, F: Field> {
 pub fn stage5_input_claims<F: Field>(
     request: Stage5InputClaimRequest<'_, F>,
 ) -> Result<Stage5InputClaims<F>, VerifierError> {
-    let instruction_gamma2 = request.instruction_gamma * request.instruction_gamma;
-    let product_lookup_output = request.stage2.output_claims.product_remainder.lookup_output;
-    let reduced_lookup_output = request
-        .stage2
-        .output_claims
-        .instruction_claim_reduction
-        .lookup_output
-        .unwrap_or(product_lookup_output);
-
+    let instruction_relation = InstructionReadRafRelation::new(
+        request.instruction_read_raf_dimensions,
+        request.instruction_gamma,
+    );
     let ram_relation = RamRaClaimReductionRelation::new(
         request.trace_dimensions,
         request.ram_log_k,
         request.ram_gamma,
     );
-    let ram_inputs = RamRaClaimReductionInputs::from_clear(request.stage2, request.stage4);
-    let ram_ra_claim_reduction = ram_relation.input_claim(&ram_inputs)?;
+    let registers_relation = RegistersValEvaluationRelation::new(request.trace_dimensions);
 
     Ok(Stage5InputClaims {
-        instruction_read_raf: reduced_lookup_output
-            + request.instruction_gamma
-                * request
-                    .stage2
-                    .output_claims
-                    .instruction_claim_reduction
-                    .left_lookup_operand
-            + instruction_gamma2
-                * request
-                    .stage2
-                    .output_claims
-                    .instruction_claim_reduction
-                    .right_lookup_operand,
-        ram_ra_claim_reduction,
-        registers_val_evaluation: request
-            .stage4
-            .output_claims
-            .registers_read_write
-            .registers_val,
+        instruction_read_raf: instruction_relation
+            .input_claim(&InstructionReadRafInputs::from_clear(request.stage2))?,
+        ram_ra_claim_reduction: ram_relation.input_claim(
+            &RamRaClaimReductionInputs::from_clear(request.stage2, request.stage4),
+        )?,
+        registers_val_evaluation: registers_relation
+            .input_claim(&RegistersValEvaluationInputs::from_clear(request.stage4))?,
     })
 }
 
@@ -975,36 +954,42 @@ fn expected_instruction_read_raf_output<F: Field>(
         });
     }
 
-    let eq_cycle = try_eq_mle(
-        request.instruction_fixed_cycle_point,
-        request.instruction_r_cycle,
-    )
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::InstructionReadRaf,
-        reason: error.to_string(),
-    })?;
-    let table_value = LookupTableKind::<RISCV_XLEN>::iter()
-        .zip(instruction_claims.lookup_table_flags.iter())
-        .map(|(table, &claim)| table.evaluate_mle::<F, F>(request.instruction_r_address) * claim)
-        .sum::<F>();
-    let ra_product = instruction_claims
-        .instruction_ra
-        .iter()
-        .copied()
-        .product::<F>();
-    let left_operand = OperandPolynomial::new(instruction_address_bits, OperandSide::Left)
-        .evaluate(request.instruction_r_address);
-    let right_operand = OperandPolynomial::new(instruction_address_bits, OperandSide::Right)
-        .evaluate(request.instruction_r_address);
-    let identity =
-        IdentityPolynomial::new(instruction_address_bits).evaluate(request.instruction_r_address);
-    let gamma2 = request.instruction_gamma * request.instruction_gamma;
-    let constant = request.instruction_gamma * left_operand + gamma2 * right_operand;
-    let raf_coeff = gamma2 * identity - constant;
-
-    Ok(eq_cycle
-        * ra_product
-        * (table_value + constant + raf_coeff * instruction_claims.instruction_raf_flag))
+    let chunk_size = instruction_address_bits / instruction_claims.instruction_ra.len();
+    let relation = InstructionReadRafRelation::new(
+        request.instruction_read_raf_dimensions,
+        request.instruction_gamma,
+    );
+    // Only `lookup_output`'s point is read (it carries the shared claim-reduction
+    // opening point that `output_challenge` reduces against).
+    let inputs = InstructionReadRafInputs {
+        lookup_output: request.instruction_fixed_cycle_point.to_vec(),
+        left_lookup_operand: request.instruction_fixed_cycle_point.to_vec(),
+        right_lookup_operand: request.instruction_fixed_cycle_point.to_vec(),
+    };
+    let outputs = InstructionReadRafOutputOpeningClaims {
+        lookup_table_flags: instruction_claims
+            .lookup_table_flags
+            .iter()
+            .map(|&value| OpeningClaim {
+                point: request.instruction_r_cycle.to_vec(),
+                value,
+            })
+            .collect(),
+        instruction_ra: instruction_claims
+            .instruction_ra
+            .iter()
+            .zip(request.instruction_r_address.chunks(chunk_size))
+            .map(|(&value, chunk)| OpeningClaim {
+                point: [chunk, request.instruction_r_cycle].concat(),
+                value,
+            })
+            .collect(),
+        instruction_raf_flag: OpeningClaim {
+            point: request.instruction_r_cycle.to_vec(),
+            value: instruction_claims.instruction_raf_flag,
+        },
+    };
+    relation.expected_output(&inputs, &outputs)
 }
 
 fn expected_ram_ra_claim_reduction_output<F: Field>(
@@ -1057,15 +1042,24 @@ fn expected_registers_val_evaluation_output<F: Field>(
             ),
         });
     }
-    let (_, r_cycle) = request
-        .registers_val_evaluation_opening_point
-        .split_at(REGISTER_ADDRESS_BITS);
+    let opening_point = request.registers_val_evaluation_opening_point;
+    let (register_address, _r_cycle) = opening_point.split_at(REGISTER_ADDRESS_BITS);
+    let relation = RegistersValEvaluationRelation::new(TraceDimensions::new(log_t));
+    let inputs = RegistersValEvaluationInputs {
+        registers_val: [register_address, request.registers_fixed_cycle_point].concat(),
+    };
     let registers_claims = &request.claims.registers_val_evaluation;
-    Ok(
-        LtPolynomial::evaluate(r_cycle, request.registers_fixed_cycle_point)
-            * registers_claims.rd_inc
-            * registers_claims.rd_wa,
-    )
+    let outputs = RegistersValEvaluationOutputOpeningClaims {
+        rd_inc: OpeningClaim {
+            point: opening_point.to_vec(),
+            value: registers_claims.rd_inc,
+        },
+        rd_wa: OpeningClaim {
+            point: opening_point.to_vec(),
+            value: registers_claims.rd_wa,
+        },
+    };
+    relation.expected_output(&inputs, &outputs)
 }
 
 pub fn stage5_output_claim_values<F: Field>(claims: &Stage5Claims<F>) -> Vec<F> {
