@@ -1067,9 +1067,18 @@ where
     if let Some(opening_proof) = &proof.lattice_packed_validity_opening_proof {
         validate_akita_opening_proof_payload_shape(&proof.commitments, opening_proof)?;
     }
+    validate_akita_precommitted_opening_proof_payload_shapes(
+        &proof.commitments,
+        &proof.lattice_precommitted_opening_proofs,
+    )?;
     validate_akita_advice_commitment_aliases(
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+    )?;
+    validate_akita_precommitted_commitment_aliases(
+        preprocessing,
+        &proof.commitments,
         trusted_advice_commitment,
     )?;
     crate::verifier::verify_clear_with_config::<
@@ -1249,6 +1258,65 @@ fn validate_akita_opening_proof_payload_shape(
     Ok(())
 }
 
+fn validate_akita_precommitted_opening_proof_payload_shapes(
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+    opening_proofs: &[AkitaPackedBatchProof],
+) -> Result<(), VerifierError> {
+    for opening_proof in opening_proofs {
+        validate_akita_precommitted_opening_proof_payload_shape(proof_commitments, opening_proof)?;
+    }
+    Ok(())
+}
+
+fn validate_akita_precommitted_opening_proof_payload_shape(
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+    opening_proof: &AkitaPackedBatchProof,
+) -> Result<(), VerifierError> {
+    let payload =
+        proof_commitments
+            .as_akita()
+            .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Lattice,
+                got: proof_commitments.family(),
+            })?;
+    if opening_proof.native.commitment == payload.packed_witness {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason:
+                "Akita precommitted opening proof must target a separate precommitted commitment"
+                    .to_string(),
+        });
+    }
+    if opening_proof.reduction.is_some() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita precommitted opening proof must not include a packed reduction"
+                .to_string(),
+        });
+    }
+    validate_akita_native_opening_proof_payload_shape(&opening_proof.native)
+}
+
+fn validate_akita_native_opening_proof_payload_shape(
+    opening_proof: &jolt_akita::AkitaBatchProof,
+) -> Result<(), VerifierError> {
+    validate_akita_commitment_bytes(&opening_proof.commitment)?;
+    if opening_proof.statement_bridge.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita opening proof is missing statement bridge bytes".to_string(),
+        });
+    }
+    if opening_proof.proof_shape.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita opening proof is missing native proof shape bytes".to_string(),
+        });
+    }
+    if opening_proof.proof.is_empty() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "Akita opening proof is missing native proof bytes".to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn validate_akita_commitment_bytes(commitment: &AkitaCommitment) -> Result<(), VerifierError> {
     if commitment.native.is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
@@ -1274,7 +1342,7 @@ fn validate_akita_field_bytes(label: &'static str, bytes: &[u8]) -> Result<(), V
 fn validate_akita_advice_commitment_aliases(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
     untrusted_advice_commitment: Option<&AkitaCommitment>,
-    _trusted_advice_commitment: Option<&AkitaCommitment>,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
@@ -1289,7 +1357,63 @@ fn validate_akita_advice_commitment_aliases(
                 .to_string(),
         });
     }
+    if let Some(commitment) = trusted_advice_commitment {
+        validate_akita_precommitted_commitment_is_separate(
+            &payload.packed_witness,
+            commitment,
+            "trusted advice",
+        )?;
+    }
     Ok(())
+}
+
+fn validate_akita_precommitted_commitment_aliases(
+    preprocessing: &AkitaVerifierPreprocessing,
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+) -> Result<(), VerifierError> {
+    let payload =
+        proof_commitments
+            .as_akita()
+            .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
+                expected: PcsFamily::Lattice,
+                got: proof_commitments.family(),
+            })?;
+    if let Some(commitment) = trusted_advice_commitment {
+        validate_akita_precommitted_commitment_is_separate(
+            &payload.packed_witness,
+            commitment,
+            "trusted advice",
+        )?;
+    }
+    if let Some(committed) = preprocessing.program.committed() {
+        for commitment in &committed.bytecode_chunk_commitments {
+            validate_akita_precommitted_commitment_is_separate(
+                &payload.packed_witness,
+                commitment,
+                "bytecode chunk",
+            )?;
+        }
+        validate_akita_precommitted_commitment_is_separate(
+            &payload.packed_witness,
+            &committed.program_image_commitment,
+            "program image",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_akita_precommitted_commitment_is_separate(
+    packed_witness: &AkitaCommitment,
+    precommitted: &AkitaCommitment,
+    label: &'static str,
+) -> Result<(), VerifierError> {
+    if precommitted == packed_witness {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: format!("Akita {label} commitment must be separate from packed witness"),
+        });
+    }
+    validate_akita_commitment_bytes(precommitted)
 }
 
 fn validate_akita_verifier_setup_layout(
@@ -3248,6 +3372,37 @@ mod tests {
         )
         .expect("stage8 proofs should be produced");
         assert_eq!(proofs.precommitted.len(), 1);
+        validate_akita_precommitted_opening_proof_payload_shapes(
+            &artifact.commitments,
+            &proofs.precommitted,
+        )
+        .expect("fresh precommitted proof payload should pass preflight");
+
+        let mut packed_target_precommitted_proof = proofs.precommitted[0].clone();
+        packed_target_precommitted_proof.native.commitment = packed_commitment.clone();
+        assert!(matches!(
+            validate_akita_precommitted_opening_proof_payload_shapes(
+                &artifact.commitments,
+                std::slice::from_ref(&packed_target_precommitted_proof),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("precommitted commitment")
+        ));
+
+        let mut packed_reduction_precommitted_proof = proofs.precommitted[0].clone();
+        packed_reduction_precommitted_proof.reduction =
+            Some(jolt_akita::AkitaPackedReductionProof {
+                rounds: Vec::new(),
+                opening_eval: vec![0; AkitaField::NUM_BYTES],
+            });
+        assert!(matches!(
+            validate_akita_precommitted_opening_proof_payload_shapes(
+                &artifact.commitments,
+                std::slice::from_ref(&packed_reduction_precommitted_proof),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("packed reduction")
+        ));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
         let _ = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
@@ -4062,7 +4217,7 @@ mod tests {
     }
 
     #[test]
-    fn akita_untrusted_advice_aliases_packed_witness_but_trusted_may_be_separate() {
+    fn akita_untrusted_advice_aliases_packed_witness_but_trusted_must_be_separate() {
         let layout = tiny_layout();
         let params = AkitaSetupParams::from_packed_layout(&layout, 1);
         let (prover_setup, _) = AkitaPackedScheme::setup(params);
@@ -4080,9 +4235,18 @@ mod tests {
         validate_akita_advice_commitment_aliases(
             &artifacts.commitments,
             Some(packed_witness),
-            Some(packed_witness),
+            None,
         )
         .expect("packed-witness untrusted advice alias should pass");
+        assert!(matches!(
+            validate_akita_advice_commitment_aliases(
+                &artifacts.commitments,
+                None,
+                Some(packed_witness),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("trusted advice commitment must be separate")
+        ));
 
         let mut other_commitment = packed_witness.clone();
         other_commitment.layout_digest[0] ^= 1;
@@ -4101,6 +4265,41 @@ mod tests {
             Some(&other_commitment),
         )
         .expect("trusted advice may use a separate precommitted commitment");
+    }
+
+    #[test]
+    fn akita_precommitted_commitments_must_not_alias_packed_witness() {
+        let layout = tiny_layout();
+        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let source = SparsePackedWitness::try_new(layout, Vec::new())
+            .expect("empty sparse source should build");
+        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        let packed_witness = &artifacts
+            .commitments
+            .as_akita()
+            .expect("artifact should carry Akita payload")
+            .packed_witness;
+
+        assert!(matches!(
+            validate_akita_precommitted_commitment_is_separate(
+                packed_witness,
+                packed_witness,
+                "bytecode chunk",
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("bytecode chunk commitment must be separate")
+        ));
+
+        let mut separate_commitment = packed_witness.clone();
+        separate_commitment.layout_digest[0] ^= 1;
+        validate_akita_precommitted_commitment_is_separate(
+            packed_witness,
+            &separate_commitment,
+            "program image",
+        )
+        .expect("separate precommitted commitment should pass");
     }
 
     #[test]

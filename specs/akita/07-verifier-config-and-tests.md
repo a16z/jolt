@@ -378,6 +378,8 @@ fn build_batch_statement<F, C>(
 - Field-inline cannot bypass PackedWitnessLayout.
 - Untrusted advice cannot bypass PackedWitnessLayout.
 - Trusted advice cannot bypass its precommitted opening path.
+- Trusted advice, BytecodeChunk(i), and ProgramImageInit commitments cannot
+  alias the PackedWitness commitment in Akita mode.
 - Fused-increment StoreFlag/RdPresent source claims cannot bypass the
   precommitted BytecodeChunk opening path unless a bound precommitted packed
   view is specified.
@@ -386,6 +388,8 @@ fn build_batch_statement<F, C>(
 - Akita payload contains exactly one PackedWitness commitment.
 - Akita payload carries separate precommitted opening proof material when
   precommitted claims are present.
+- Separate precommitted opening proofs are direct native openings against their
+  own commitments; they do not carry a PackedWitness reduction proof.
 - Prover helper rejects a precommitted statement unless the supplied hint
   matches that statement's commitment and the statement uses direct physical
   views.
@@ -432,6 +436,10 @@ akita_advice_requires_layout_families:
 akita_trusted_advice_requires_precommitted_opening:
   trusted advice enabled without a separate trusted-advice opening path rejects.
 
+akita_precommitted_commitment_alias_rejects:
+  trusted advice, BytecodeChunk(i), or ProgramImageInit commitment equal to the
+  PackedWitness commitment fails preflight.
+
 akita_payload_mode_mismatch_rejects:
   Dory payload under Akita config and Akita payload under Dory config fail.
 
@@ -448,6 +456,10 @@ akita_committed_program_openings_missing_rejects:
 akita_committed_program_precommitted_opening_missing_rejects:
   ProgramMode::Committed proof that only opens W_pack for BytecodeChunk or
   ProgramImageInit fails.
+
+akita_precommitted_proof_shape_rejects_packed_reduction:
+  auxiliary precommitted opening proof with PackedWitness commitment or packed
+  reduction payload rejects.
 
 akita_fused_source_precommitted_opening_missing_rejects:
   fused-increment StoreFlag/RdPresent source claims that only open W_pack

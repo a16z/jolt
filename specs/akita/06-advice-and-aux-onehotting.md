@@ -392,6 +392,8 @@ Do not emit global dummy cells.
 - Lattice mode uses one PackedWitness commitment for supported proof-owned
   packed facts.
 - Precommitted facts keep separate openings against their original commitments.
+- Precommitted commitments and opening proofs must not alias the PackedWitness
+  commitment.
 - Advice domains are advice domains, not trace domains.
 - Field-inline FieldRdInc is separate from base fused increments.
 - Field elements use canonical representatives in [0, p).
@@ -420,6 +422,9 @@ trusted_advice_uses_precommitted_opening:
   trusted advice final openings are checked against the trusted-advice
   precommitment, not W_pack.
 
+trusted_advice_must_not_alias_w_pack:
+  trusted advice precommitment equal to the PackedWitness commitment rejects.
+
 untrusted_advice_encoding_roundtrip:
   untrusted advice bytes decode to the original byte stream.
 
@@ -435,6 +440,10 @@ field_rd_inc_uses_field_family:
 precommitted_program_openings_use_original_commitments:
   BytecodeChunk(i) and ProgramImageInit openings are checked against their
   preprocessing commitments.
+
+precommitted_program_commitments_must_not_alias_w_pack:
+  BytecodeChunk(i) or ProgramImageInit commitment equal to the PackedWitness
+  commitment rejects.
 
 precommitted_program_not_in_w_pack:
   enabling ProgramMode::Committed does not add BytecodeChunk(i) or
