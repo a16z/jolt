@@ -41,13 +41,19 @@ use num_traits::{One, Zero};
 
 use super::{
     booleanity::{
-        BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
-        BooleanityAddressPhaseOutputClaims,
+        Booleanity, BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
+        BooleanityAddressPhaseOutputClaims, BooleanityInputClaims,
     },
     bytecode_read_raf::{
         BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
         BytecodeReadRafAddressPhaseOutputClaims,
     },
+    inc_claim_reduction::{IncClaimReduction, IncClaimReductionInputClaims},
+    instruction_ra_virtualization::{
+        InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
+    },
+    ram_hamming_booleanity::{RamHammingBooleanity, RamHammingBooleanityInputClaims},
+    ram_ra_virtualization::{RamRaVirtualization, RamRaVirtualizationInputClaims},
     inputs::{
         AdviceCyclePhaseOutputClaim, BytecodeCyclePhaseOutputClaims, Deps,
         ProgramImageCyclePhaseOutputClaim, Stage6OutputClaims,
@@ -68,7 +74,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{zip_openings, SumcheckInstance},
+        relations::{zip_openings, OpeningClaim, SumcheckInstance},
         stage1::Stage1ClearOutput,
         stage2::Stage2ClearOutput,
         stage3::Stage3ClearOutput,
@@ -1072,21 +1078,22 @@ where
         booleanity_r_cycle.as_slice(),
     ]
     .concat();
-    let booleanity_full_point = [booleanity_address_point.as_slice(), booleanity_point].concat();
-    let booleanity_reference = Stage6BooleanityReference {
-        address: booleanity_reference_address.clone(),
-        cycle: booleanity_reference_cycle.clone(),
-    };
+    let booleanity_relation = Booleanity::new(
+        booleanity_dimensions,
+        booleanity_gamma,
+        booleanity_r_address.clone(),
+        booleanity_reference_address.clone(),
+        booleanity_reference_cycle.clone(),
+    );
+    let booleanity_inputs = BooleanityInputClaims::from_upstream(OpeningClaim {
+        point: Vec::new(),
+        value: claims.address_phase.booleanity,
+    });
+    let booleanity_points =
+        booleanity_relation.derive_opening_points(booleanity_point, &booleanity_inputs)?;
+    let booleanity_outputs = zip_openings(&claims.booleanity, &booleanity_points);
     let booleanity_output =
-        stage6_booleanity_expected_output(Stage6BooleanityExpectedOutputInputs {
-            dimensions: booleanity_dimensions,
-            sumcheck_point: &booleanity_full_point,
-            reference: &booleanity_reference,
-            instruction_ra: &claims.booleanity.instruction_ra,
-            bytecode_ra: &claims.booleanity.bytecode_ra,
-            ram_ra: &claims.booleanity.ram_ra,
-            gamma: booleanity_gamma,
-        })?;
+        booleanity_relation.expected_output(&booleanity_inputs, &booleanity_outputs)?;
     let ram_hamming_point = batch
         .try_instance_point(ram_hamming_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -1099,11 +1106,14 @@ where
             stage: JoltRelationId::RamHammingBooleanity,
             reason: error.to_string(),
         })?;
-    let ram_hamming_output = stage6_ram_hamming_booleanity_expected_output(
-        ram_hamming_point,
-        stage1_cycle_binding,
-        claims.ram_hamming_booleanity.ram_hamming_weight,
-    )?;
+    let ram_hamming_relation =
+        RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding.to_vec());
+    let ram_hamming_inputs = RamHammingBooleanityInputClaims::from_upstream();
+    let ram_hamming_points =
+        ram_hamming_relation.derive_opening_points(ram_hamming_point, &ram_hamming_inputs)?;
+    let ram_hamming_outputs = zip_openings(&claims.ram_hamming_booleanity, &ram_hamming_points);
+    let ram_hamming_output =
+        ram_hamming_relation.expected_output(&ram_hamming_inputs, &ram_hamming_outputs)?;
 
     let ram_ra_point = batch
         .try_instance_point(ram_ra_claims.sumcheck.rounds)
@@ -1129,14 +1139,16 @@ where
         });
     }
     let (ram_reduced_address, ram_reduced_cycle) = ram_reduced_opening_point.split_at(log_k);
-    let ram_ra_output = stage6_ram_ra_virtualization_expected_output(
-        Stage6RamRaVirtualizationExpectedOutputInputs {
-            dimensions: formula_dimensions.ram_ra_virtualization,
-            r_cycle: &ram_ra_cycle,
-            ram_reduced_cycle,
-            ram_ra: &claims.ram_ra_virtualization.ram_ra,
-        },
-    )?;
+    let ram_ra_relation = RamRaVirtualization::new(
+        formula_dimensions.ram_ra_virtualization,
+        ram_reduced_address.to_vec(),
+        ram_reduced_cycle.to_vec(),
+        proof.one_hot_config.committed_chunk_bits(),
+    );
+    let ram_ra_inputs = RamRaVirtualizationInputClaims::from_upstream(stage5);
+    let ram_ra_points = ram_ra_relation.derive_opening_points(ram_ra_point, &ram_ra_inputs)?;
+    let ram_ra_outputs = zip_openings(&claims.ram_ra_virtualization, &ram_ra_points);
+    let ram_ra_output = ram_ra_relation.expected_output(&ram_ra_inputs, &ram_ra_outputs)?;
     let ram_ra_opening_point = [ram_reduced_address, ram_ra_cycle.as_slice()].concat();
     let ram_ra_opening_points = proof
         .one_hot_config
@@ -1157,17 +1169,20 @@ where
             stage: JoltRelationId::InstructionRaVirtualization,
             reason: error.to_string(),
         })?;
-    let instruction_ra_output = stage6_instruction_ra_virtualization_expected_output(
-        Stage6InstructionRaVirtualizationExpectedOutputInputs {
-            dimensions: formula_dimensions.instruction_ra_virtualization,
-            instruction_read_raf_cycle: stage5.instruction_r_cycle(),
-            r_cycle: &instruction_ra_cycle,
-            committed_instruction_ra: &claims
-                .instruction_ra_virtualization
-                .committed_instruction_ra,
-            gamma: instruction_ra_gamma,
-        },
-    )?;
+    let instruction_ra_relation = InstructionRaVirtualization::new(
+        formula_dimensions.instruction_ra_virtualization,
+        instruction_ra_gamma,
+        stage5.instruction_r_address.clone(),
+        stage5.instruction_r_cycle().to_vec(),
+        proof.one_hot_config.committed_chunk_bits(),
+    );
+    let instruction_ra_inputs = InstructionRaVirtualizationInputClaims::from_upstream(stage5);
+    let instruction_ra_points = instruction_ra_relation
+        .derive_opening_points(instruction_ra_point, &instruction_ra_inputs)?;
+    let instruction_ra_outputs =
+        zip_openings(&claims.instruction_ra_virtualization, &instruction_ra_points);
+    let instruction_ra_output =
+        instruction_ra_relation.expected_output(&instruction_ra_inputs, &instruction_ra_outputs)?;
     let instruction_ra_opening_points = proof
         .one_hot_config
         .committed_address_chunks(&stage5.instruction_r_address)
@@ -1210,17 +1225,18 @@ where
         .split_at(REGISTER_ADDRESS_BITS);
     let (_, registers_val_evaluation_cycle) =
         stage5.registers_opening_point().split_at(REGISTER_ADDRESS_BITS);
-    let inc_output =
-        stage6_inc_claim_reduction_expected_output(Stage6IncClaimReductionExpectedOutputInputs {
-            opening_point: &inc_opening_point,
-            ram_read_write_cycle,
-            ram_val_check_cycle,
-            registers_read_write_cycle,
-            registers_val_evaluation_cycle,
-            ram_inc: claims.inc_claim_reduction.ram_inc,
-            rd_inc: claims.inc_claim_reduction.rd_inc,
-            gamma: inc_gamma,
-        })?;
+    let inc_relation = IncClaimReduction::new(
+        trace_dimensions,
+        inc_gamma,
+        ram_read_write_cycle.to_vec(),
+        ram_val_check_cycle.to_vec(),
+        registers_read_write_cycle.to_vec(),
+        registers_val_evaluation_cycle.to_vec(),
+    );
+    let inc_inputs = IncClaimReductionInputClaims::from_upstream(stage2, stage4, stage5);
+    let inc_points = inc_relation.derive_opening_points(inc_point, &inc_inputs)?;
+    let inc_outputs = zip_openings(&claims.inc_claim_reduction, &inc_points);
+    let inc_output = inc_relation.expected_output(&inc_inputs, &inc_outputs)?;
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
