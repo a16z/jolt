@@ -18,8 +18,8 @@ use jolt_verifier::stages::stage6::{
     stage6_instruction_ra_virtualization_expected_output, stage6_instruction_read_raf_point,
     stage6_ram_hamming_booleanity_expected_output, stage6_ram_ra_virtualization_expected_output,
     stage6_stage1_cycle_binding, stage6_stage5_ram_reduced_opening_point,
-    stage6_validate_dependencies, Stage6AdviceCyclePhaseReference, Stage6BatchExpectedOutputClaims,
-    Stage6BatchInputClaims, Stage6BatchPointContext, Stage6BatchPointInputs, Stage6BatchPoints,
+    Stage6AdviceCyclePhaseReference, Stage6BatchExpectedOutputClaims, Stage6BatchInputClaims,
+    Stage6BatchPointContext, Stage6BatchPointInputs, Stage6BatchPoints,
     Stage6BooleanityExpectedOutputInputs, Stage6BytecodeReadRafExpectedOutputInputs,
     Stage6IncClaimReductionExpectedOutputInputs,
     Stage6InstructionRaVirtualizationExpectedOutputInputs, Stage6InstructionReadRafPoint,
@@ -107,8 +107,6 @@ where
         prefix: &'a Stage6RegularBatchPrefixOutput<F>,
         address_phase: &Stage6AddressPhaseClaims<F>,
     ) -> Result<Self, ProverError> {
-        stage6_validate_dependencies(stage3).map_err(invalid_stage_request)?;
-
         let bytecode_claims =
             bytecode::read_raf_cycle_phase::<F>(config.bytecode_read_raf_dimensions);
         let booleanity_claims =

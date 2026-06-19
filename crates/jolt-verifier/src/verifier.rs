@@ -1049,15 +1049,15 @@ mod tests {
                     ram_output_check: zero,
                 },
             },
-            stage3: stage3::inputs::Stage3Claims {
-                shift: stage3::inputs::SpartanShiftOutputOpeningClaims {
+            stage3: stage3::inputs::Stage3OutputClaims {
+                shift: stage3::inputs::SpartanShiftOutputClaims {
                     unexpanded_pc: zero,
                     pc: zero,
                     is_virtual: zero,
                     is_first_in_sequence: zero,
                     is_noop: zero,
                 },
-                instruction_input: stage3::inputs::InstructionInputOutputOpeningClaims {
+                instruction_input: stage3::inputs::InstructionInputOutputClaims {
                     left_operand_is_rs1: zero,
                     rs1_value: zero,
                     left_operand_is_pc: zero,
@@ -1067,12 +1067,11 @@ mod tests {
                     right_operand_is_imm: zero,
                     imm: zero,
                 },
-                registers_claim_reduction:
-                    stage3::inputs::RegistersClaimReductionOutputOpeningClaims {
-                        rd_write_value: zero,
-                        rs1_value: zero,
-                        rs2_value: zero,
-                    },
+                registers_claim_reduction: stage3::inputs::RegistersClaimReductionOutputClaims {
+                    rd_write_value: zero,
+                    rs1_value: zero,
+                    rs2_value: zero,
+                },
             },
             stage4: stage4::inputs::Stage4OutputClaims {
                 advice: stage4::RamValCheckAdviceClaims {

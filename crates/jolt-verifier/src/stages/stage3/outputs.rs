@@ -1,17 +1,19 @@
 //! Typed outputs produced by stage 3 verification.
 
 use jolt_field::Field;
-use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
+use crate::stages::relations::OpeningClaim;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::inputs::Stage3Claims;
+use super::inputs::Stage3OutputClaims;
 
+/// The Fiat-Shamir challenges the verifier draws during stage 3: the three
+/// per-relation batching gammas. (The batch's own sumcheck point and batching
+/// coefficients are stage-local verification artifacts and are not propagated to
+/// later stages.)
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage3PublicOutput<F: Field> {
-    pub challenges: Vec<F>,
-    pub batching_coefficients: Vec<F>,
+pub struct Stage3Challenges<F: Field> {
     pub shift_gamma: F,
     pub instruction_gamma: F,
     pub registers_gamma: F,
@@ -19,39 +21,32 @@ pub struct Stage3PublicOutput<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3ClearOutput<F: Field> {
-    pub public: Stage3PublicOutput<F>,
-    pub output_claims: Stage3Claims<F>,
-    pub batch: VerifiedStage3Batch<F>,
+    pub challenges: Stage3Challenges<F>,
+    /// The produced stage-3 openings paired with their points (point + value) via
+    /// the `OpeningClaim` cell. The opening points are derived from each relation's
+    /// sumcheck point; pairing them with the values here lets later stages consume a
+    /// ready `OpeningClaim` instead of re-joining a value with a separately-tracked
+    /// point.
+    pub output_claims: Stage3OutputClaims<OpeningClaim<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3ZkOutput<F: Field, C> {
-    pub public: Stage3PublicOutput<F>,
+    pub challenges: Stage3Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
 }
 
+// The clear variant carries the located opening claims (point + value) that
+// stages 4 and 6 read on the hot path; the ZK variant carries only committed
+// consistency. Boxing the common clear variant to shrink the rarer ZK one would
+// add indirection to every clear-path access.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "clear variant holds the located opening claims read on the hot path; boxing it would penalize the common case"
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage3Output<F: Field, C> {
     Clear(Stage3ClearOutput<F>),
     Zk(Stage3ZkOutput<F, C>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedStage3Batch<F: Field> {
-    pub batching_coefficients: Vec<F>,
-    pub sumcheck_point: Point<HIGH_TO_LOW, F>,
-    pub sumcheck_final_claim: F,
-    pub expected_final_claim: F,
-    pub shift: VerifiedStage3Sumcheck<F>,
-    pub instruction_input: VerifiedStage3Sumcheck<F>,
-    pub registers_claim_reduction: VerifiedStage3Sumcheck<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VerifiedStage3Sumcheck<F: Field> {
-    pub input_claim: F,
-    pub sumcheck_point: Vec<F>,
-    pub opening_point: Vec<F>,
-    pub expected_output_claim: F,
 }

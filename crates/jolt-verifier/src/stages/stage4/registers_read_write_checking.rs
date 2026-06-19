@@ -62,21 +62,13 @@ impl<F: Field> RegistersReadWriteInputClaims<OpeningClaim<F>> {
     /// Wire the consumed openings from stage 3's registers claim-reduction output,
     /// all sharing that relation's opening point.
     pub fn from_upstream(stage3: &Stage3ClearOutput<F>) -> Self {
-        let point = stage3.batch.registers_claim_reduction.opening_point.clone();
+        // The stage-3 register-reduction openings already carry their shared
+        // opening point (point + value), so the consumed claims are just clones.
         let reduction = &stage3.output_claims.registers_claim_reduction;
         Self {
-            rd_write_value: OpeningClaim {
-                point: point.clone(),
-                value: reduction.rd_write_value,
-            },
-            rs1_value: OpeningClaim {
-                point: point.clone(),
-                value: reduction.rs1_value,
-            },
-            rs2_value: OpeningClaim {
-                point,
-                value: reduction.rs2_value,
-            },
+            rd_write_value: reduction.rd_write_value.clone(),
+            rs1_value: reduction.rs1_value.clone(),
+            rs2_value: reduction.rs2_value.clone(),
         }
     }
 }

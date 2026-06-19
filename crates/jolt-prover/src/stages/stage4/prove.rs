@@ -455,7 +455,7 @@ where
     let register_dimensions = config
         .rw_config
         .register_dimensions(config.log_t, REGISTER_ADDRESS_BITS);
-    let fixed_register_cycle_point = stage3.batch.registers_claim_reduction.opening_point.clone();
+    let fixed_register_cycle_point = stage3.output_claims.registers_opening_point().to_vec();
     if fixed_register_cycle_point.len() != config.log_t {
         return Err(invalid_sumcheck_output(format!(
             "Stage 4 fixed register cycle point has {} variables, expected {}",
@@ -732,15 +732,23 @@ fn validate_stage4_dependencies<F: Field>(
                 .to_owned(),
         });
     }
-    if stage3.output_claims.registers_claim_reduction.rs1_value
-        != stage3.output_claims.instruction_input.rs1_value
+    if stage3
+        .output_claims
+        .registers_claim_reduction
+        .rs1_value
+        .value
+        != stage3.output_claims.instruction_input.rs1_value.value
     {
         return Err(ProverError::InvalidStageRequest {
             reason: "Stage 4 register dependencies disagree on rs1 value".to_owned(),
         });
     }
-    if stage3.output_claims.registers_claim_reduction.rs2_value
-        != stage3.output_claims.instruction_input.rs2_value
+    if stage3
+        .output_claims
+        .registers_claim_reduction
+        .rs2_value
+        .value
+        != stage3.output_claims.instruction_input.rs2_value.value
     {
         return Err(ProverError::InvalidStageRequest {
             reason: "Stage 4 register dependencies disagree on rs2 value".to_owned(),

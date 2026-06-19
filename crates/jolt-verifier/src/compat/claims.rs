@@ -14,8 +14,8 @@ use crate::{
             RamReadWriteOutputOpeningClaims, Stage2BatchOutputOpeningClaims, Stage2Claims,
         },
         stage3::inputs::{
-            InstructionInputOutputOpeningClaims, RegistersClaimReductionOutputOpeningClaims,
-            SpartanShiftOutputOpeningClaims, Stage3Claims,
+            InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
+            SpartanShiftOutputClaims, Stage3OutputClaims,
         },
         stage4::{
             RamValCheckAdviceClaims, RamValCheckOutputClaims, RegistersReadWriteOutputClaims,
@@ -202,7 +202,7 @@ fn stage2_claims_from_native<F: Field>(
 
 fn stage3_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage3Claims<F>, VerifierError> {
+) -> Result<Stage3OutputClaims<F>, VerifierError> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
         shift_output_openings();
     let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
@@ -210,14 +210,14 @@ fn stage3_claims_from_native<F: Field>(
     let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
         registers_claim_reduction::claim_reduction_output_openings();
 
-    let shift = SpartanShiftOutputOpeningClaims {
+    let shift = SpartanShiftOutputClaims {
         unexpanded_pc: claims.require(unexpanded_pc_shift)?,
         pc: claims.require(pc_shift)?,
         is_virtual: claims.require(is_virtual_shift)?,
         is_first_in_sequence: claims.require(is_first_in_sequence_shift)?,
         is_noop: claims.require(is_noop_shift)?,
     };
-    let instruction_input = InstructionInputOutputOpeningClaims {
+    let instruction_input = InstructionInputOutputClaims {
         left_operand_is_rs1: claims.require(left_operand_is_rs1)?,
         rs1_value: claims.require(rs1_value_input)?,
         left_operand_is_pc: claims.require(left_operand_is_pc)?,
@@ -229,7 +229,7 @@ fn stage3_claims_from_native<F: Field>(
         right_operand_is_imm: claims.require(right_operand_is_imm)?,
         imm: claims.require(imm_input)?,
     };
-    let registers_claim_reduction = RegistersClaimReductionOutputOpeningClaims {
+    let registers_claim_reduction = RegistersClaimReductionOutputClaims {
         rd_write_value: claims.require(rd_write_value_reduced)?,
         rs1_value: claims
             .get(rs1_value_reduced)
@@ -239,7 +239,7 @@ fn stage3_claims_from_native<F: Field>(
             .unwrap_or(instruction_input.rs2_value),
     };
 
-    Ok(Stage3Claims {
+    Ok(Stage3OutputClaims {
         shift,
         instruction_input,
         registers_claim_reduction,
@@ -667,15 +667,15 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 ram_output_check: zero,
             },
         },
-        stage3: Stage3Claims {
-            shift: SpartanShiftOutputOpeningClaims {
+        stage3: Stage3OutputClaims {
+            shift: SpartanShiftOutputClaims {
                 unexpanded_pc: zero,
                 pc: zero,
                 is_virtual: zero,
                 is_first_in_sequence: zero,
                 is_noop: zero,
             },
-            instruction_input: InstructionInputOutputOpeningClaims {
+            instruction_input: InstructionInputOutputClaims {
                 left_operand_is_rs1: zero,
                 rs1_value: zero,
                 left_operand_is_pc: zero,
@@ -685,7 +685,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 right_operand_is_imm: zero,
                 imm: zero,
             },
-            registers_claim_reduction: RegistersClaimReductionOutputOpeningClaims {
+            registers_claim_reduction: RegistersClaimReductionOutputClaims {
                 rd_write_value: zero,
                 rs1_value: zero,
                 rs2_value: zero,
@@ -1228,7 +1228,7 @@ fn set_optional_stage6_output<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage3_outputs<F: Field>(
-    claims: &Stage3Claims<F>,
+    claims: &Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
@@ -1261,7 +1261,7 @@ fn claim_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage3_outputs<F: Field>(
-    claims: &mut Stage3Claims<F>,
+    claims: &mut Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =

@@ -16,32 +16,30 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_poly::{
-    thread::unsafe_allocate_zero_vec, EqPlusOnePolynomial, EqPolynomial, Point, Polynomial,
-    UnivariatePoly,
+    thread::unsafe_allocate_zero_vec, EqPlusOnePolynomial, EqPolynomial, Polynomial, UnivariatePoly,
 };
 use jolt_sumcheck::{
     append_sumcheck_claim, ClearProof, CompressedLabeledRoundPoly, CompressedSumcheckProof,
     RoundMessage, SumcheckProof,
 };
 use jolt_transcript::Transcript;
-use jolt_verifier::stages::stage3::stage3_output_claim_values;
+use jolt_verifier::stages::relations::SumcheckInstance;
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput,
     stage2::Stage2ClearOutput,
     stage3::inputs::{
-        InstructionInputOutputOpeningClaims, RegistersClaimReductionOutputOpeningClaims,
-        SpartanShiftOutputOpeningClaims, Stage3Claims,
+        InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
+        SpartanShiftOutputClaims, Stage3OutputClaims,
     },
-    stage3::outputs::{
-        Stage3ClearOutput, Stage3PublicOutput, VerifiedStage3Batch, VerifiedStage3Sumcheck,
+    stage3::instruction_input::{InstructionInput, InstructionInputInputClaims},
+    stage3::outputs::{Stage3Challenges, Stage3ClearOutput},
+    stage3::registers_claim_reduction::{
+        RegistersClaimReduction, RegistersClaimReductionInputClaims,
     },
-    stage3::{
-        stage3_expected_final_claim, stage3_expected_output_claims, stage3_input_claims,
-        Stage3ExpectedOutputClaims, Stage3ExpectedOutputRequest, Stage3InputClaimRequest,
-        Stage3InputClaims,
-    },
+    stage3::spartan_shift::{SpartanShift, SpartanShiftInputClaims},
+    stage3::{stage3_expected_final_claim, stage3_output_claims_with_points},
 };
-use jolt_verifier::CheckedInputs;
+use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::{
     protocols::jolt_vm::{
         JoltVmNamespace, JoltVmStage3InstructionRegisterRows, JoltVmStage3ShiftRows,
@@ -101,6 +99,16 @@ impl<'a, F: Field, W> Stage3ProverInput<'a, F, W> {
     }
 }
 
+/// The three Stage 3 sumcheck input claims (claimed sums), one per batched
+/// relation. Computed via the relation objects' `input_claim` so prover and
+/// verifier derive them identically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stage3InputClaims<F: Field> {
+    shift: F,
+    instruction_input: F,
+    registers_claim_reduction: F,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stage3RegularBatchPrefixOutput<F: Field> {
     input_claims: Stage3InputClaims<F>,
@@ -147,7 +155,7 @@ struct Stage3RegularBatchMaterializedOpenings<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage3ProofComponent<F: Field, Proof> {
     pub stage3_sumcheck_proof: Proof,
-    pub claims: Stage3Claims<F>,
+    pub claims: Stage3OutputClaims<F>,
     pub verifier_output: Stage3ClearOutput<F>,
 }
 
@@ -159,7 +167,6 @@ where
     VC: VectorCommitment<Field = F>,
 {
     pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub public: Stage3PublicOutput<F>,
     pub verifier_output: Stage3ClearOutput<F>,
     pub output_claim_values: Vec<F>,
     pub(crate) committed_witness: CommittedSumcheckWitness<F>,
@@ -278,7 +285,7 @@ fn take_registers_claim_reduction_materialization<F: Field>(
 /// derive the shift/instruction/registers gammas, prove the regular batched
 /// Boolean sumcheck over the three Stage 3 statements, evaluate the output
 /// openings, then assemble the verifier-owned `stage3_sumcheck_proof`,
-/// [`Stage3Claims`], and [`Stage3ClearOutput`] for Stage 4 and later stages.
+/// [`Stage3OutputClaims`], and [`Stage3ClearOutput`] for Stage 4 and later stages.
 ///
 /// This single entrypoint is shared across feature modes. ZK committed proof
 /// component assembly is layered on top of the same gamma derivation and
@@ -289,6 +296,7 @@ struct Stage3RegularBatchProofOutput<F: Field, C> {
     committed_witness: Option<CommittedSumcheckWitness<F>>,
     #[cfg(feature = "zk")]
     output_claim_values: Option<Vec<F>>,
+    claims: Stage3OutputClaims<F>,
     verifier_output: Stage3ClearOutput<F>,
 }
 
@@ -414,58 +422,80 @@ where
         )?;
     }
 
-    let opening_point = challenges.iter().rev().copied().collect::<Vec<_>>();
     let output_openings =
         stage3_output_openings_from_bound_states(backend, &shift_state, &regular_state)?;
-    let expected = stage3_expected_outputs(input.stage2, prefix, &opening_point, &output_openings)?;
-    let expected_final_claim =
-        stage3_expected_batch_final_claim(&batching_coefficients, &expected)?;
+
+    let dimensions = TraceDimensions::new(input.config.log_t);
+    let shift_relation = SpartanShift::new(
+        dimensions,
+        prefix.shift_gamma,
+        input.stage2.product_uniskip.tau_low.clone(),
+        input.stage2.batch.product_remainder.opening_point.clone(),
+    );
+    let instruction_relation = InstructionInput::new(
+        dimensions,
+        prefix.instruction_gamma,
+        input.stage2.batch.product_remainder.opening_point.clone(),
+    );
+    let registers_relation = RegistersClaimReduction::new(
+        dimensions,
+        prefix.registers_gamma,
+        input.stage2.product_uniskip.tau_low.clone(),
+    );
+    let shift_inputs = SpartanShiftInputClaims::from_upstream(input.stage1, input.stage2);
+    let instruction_inputs = InstructionInputInputClaims::from_upstream(input.stage2);
+    let registers_inputs = RegistersClaimReductionInputClaims::from_upstream(input.stage1);
+
+    let to_prover_error = |error: VerifierError| invalid_sumcheck_output(error.to_string());
+    let shift_points = shift_relation
+        .derive_opening_points(&challenges, &shift_inputs)
+        .map_err(to_prover_error)?;
+    let instruction_points = instruction_relation
+        .derive_opening_points(&challenges, &instruction_inputs)
+        .map_err(to_prover_error)?;
+    let registers_points = registers_relation
+        .derive_opening_points(&challenges, &registers_inputs)
+        .map_err(to_prover_error)?;
+    let output_claims = stage3_output_claims_with_points(
+        &output_openings,
+        &shift_points,
+        &instruction_points,
+        &registers_points,
+    );
+
+    let shift_output = shift_relation
+        .expected_output(&shift_inputs, &output_claims.shift)
+        .map_err(to_prover_error)?;
+    let instruction_output = instruction_relation
+        .expected_output(&instruction_inputs, &output_claims.instruction_input)
+        .map_err(to_prover_error)?;
+    let registers_output = registers_relation
+        .expected_output(&registers_inputs, &output_claims.registers_claim_reduction)
+        .map_err(to_prover_error)?;
+    let expected_final_claim = stage3_expected_final_claim(
+        &batching_coefficients,
+        shift_output,
+        instruction_output,
+        registers_output,
+    )
+    .map_err(to_prover_error)?;
     if running_claim != expected_final_claim {
         return Err(invalid_sumcheck_output(
             "Stage 3 batch final claim did not match output openings",
         ));
     }
 
-    let output_claim_values = stage3_output_claim_values(&output_openings);
-    let claims = Stage3Claims {
-        shift: output_openings.shift.clone(),
-        instruction_input: output_openings.instruction_input.clone(),
-        registers_claim_reduction: output_openings.registers_claim_reduction.clone(),
-    };
-    let public = Stage3PublicOutput {
-        challenges: challenges.clone(),
-        batching_coefficients: batching_coefficients.clone(),
-        shift_gamma: prefix.shift_gamma,
-        instruction_gamma: prefix.instruction_gamma,
-        registers_gamma: prefix.registers_gamma,
-    };
+    // Enforce the cross-relation opening aliases (mirrors the verifier's validate).
+    output_openings.validate().map_err(to_prover_error)?;
+
+    let output_claim_values = output_openings.opening_values();
     let verifier_output = Stage3ClearOutput {
-        public,
-        output_claims: claims,
-        batch: VerifiedStage3Batch {
-            batching_coefficients: batching_coefficients.clone(),
-            sumcheck_point: Point::high_to_low(challenges.clone()),
-            sumcheck_final_claim: running_claim,
-            expected_final_claim,
-            shift: VerifiedStage3Sumcheck {
-                input_claim: prefix.input_claims.shift,
-                sumcheck_point: challenges.clone(),
-                opening_point: opening_point.clone(),
-                expected_output_claim: expected.shift,
-            },
-            instruction_input: VerifiedStage3Sumcheck {
-                input_claim: prefix.input_claims.instruction_input,
-                sumcheck_point: challenges.clone(),
-                opening_point: opening_point.clone(),
-                expected_output_claim: expected.instruction_input,
-            },
-            registers_claim_reduction: VerifiedStage3Sumcheck {
-                input_claim: prefix.input_claims.registers_claim_reduction,
-                sumcheck_point: challenges.clone(),
-                opening_point,
-                expected_output_claim: expected.registers_claim_reduction,
-            },
+        challenges: Stage3Challenges {
+            shift_gamma: prefix.shift_gamma,
+            instruction_gamma: prefix.instruction_gamma,
+            registers_gamma: prefix.registers_gamma,
         },
+        output_claims,
     };
     let recorded = proof_recorder.finish(&output_claim_values, transcript)?;
 
@@ -475,6 +505,7 @@ where
         committed_witness: recorded.committed_witness,
         #[cfg(feature = "zk")]
         output_claim_values: recorded.output_claim_values,
+        claims: output_openings,
         verifier_output,
     })
 }
@@ -518,7 +549,7 @@ where
 
     Ok(Stage3ProofComponent {
         stage3_sumcheck_proof: output.proof,
-        claims: output.verifier_output.output_claims.clone(),
+        claims: output.claims,
         verifier_output: output.verifier_output,
     })
 }
@@ -566,7 +597,6 @@ where
 
     Ok(Stage3CommittedProofComponent {
         stage3_sumcheck_proof: output.proof,
-        public: output.verifier_output.public.clone(),
         output_claim_values: output.output_claim_values.ok_or_else(|| {
             invalid_sumcheck_output("Stage 3 committed output claim values are missing")
         })?,
@@ -586,7 +616,7 @@ struct Stage3RegularBatch<F: Field, C> {
     challenges: Vec<F>,
     batching_coefficients: Vec<F>,
     output_claim: F,
-    output_openings: Option<Stage3Claims<F>>,
+    output_openings: Option<Stage3OutputClaims<F>>,
 }
 
 fn build_stage3_output_opening_materialization_request<F, W>(
@@ -1124,7 +1154,7 @@ fn stage3_output_openings_from_bound_states<F, B>(
     backend: &mut B,
     shift_state: &B::Stage3ShiftState,
     regular_state: &SumcheckRegularBatchState<F>,
-) -> Result<Stage3Claims<F>, ProverError>
+) -> Result<Stage3OutputClaims<F>, ProverError>
 where
     F: Field,
     B: Stage3SpartanSumcheckBackend<F>,
@@ -1138,15 +1168,15 @@ where
         invalid_sumcheck_output("Stage 3 regular state is missing registers instance")
     })?;
 
-    Ok(Stage3Claims {
-        shift: SpartanShiftOutputOpeningClaims {
+    Ok(Stage3OutputClaims {
+        shift: SpartanShiftOutputClaims {
             unexpanded_pc,
             pc,
             is_virtual,
             is_first_in_sequence,
             is_noop,
         },
-        instruction_input: InstructionInputOutputOpeningClaims {
+        instruction_input: InstructionInputOutputClaims {
             right_operand_is_rs2: final_regular_polynomial_value(
                 instruction_instance,
                 1,
@@ -1184,7 +1214,7 @@ where
                 "instruction unexpanded PC",
             )?,
         },
-        registers_claim_reduction: RegistersClaimReductionOutputOpeningClaims {
+        registers_claim_reduction: RegistersClaimReductionOutputClaims {
             rd_write_value: final_regular_polynomial_value(
                 registers_instance,
                 1,
@@ -1328,34 +1358,6 @@ where
     })
 }
 
-fn stage3_expected_outputs<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-    prefix: &Stage3RegularBatchPrefixOutput<F>,
-    opening_point: &[F],
-    openings: &Stage3Claims<F>,
-) -> Result<Stage3ExpectedOutputClaims<F>, ProverError> {
-    stage3_expected_output_claims(Stage3ExpectedOutputRequest {
-        dimensions: TraceDimensions::new(opening_point.len()),
-        stage2,
-        shift_gamma: prefix.shift_gamma,
-        instruction_gamma: prefix.instruction_gamma,
-        registers_gamma: prefix.registers_gamma,
-        shift_opening_point: opening_point,
-        instruction_opening_point: opening_point,
-        registers_opening_point: opening_point,
-        claims: openings,
-    })
-    .map_err(|error| invalid_sumcheck_output(error.to_string()))
-}
-
-fn stage3_expected_batch_final_claim<F: Field>(
-    coefficients: &[F],
-    expected_outputs: &Stage3ExpectedOutputClaims<F>,
-) -> Result<F, ProverError> {
-    stage3_expected_final_claim(coefficients, expected_outputs)
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-}
-
 fn batch_term<F: Field>(polynomial: usize, coefficient: F) -> SumcheckRegularBatchLinearTerm<F> {
     SumcheckRegularBatchLinearTerm::new(polynomial, coefficient)
 }
@@ -1479,15 +1481,35 @@ where
     let instruction_gamma = transcript.challenge_scalar();
     let registers_gamma = transcript.challenge_scalar();
 
-    let input_claims = stage3_input_claims(Stage3InputClaimRequest {
-        dimensions: TraceDimensions::new(expected_rounds),
-        stage1,
-        stage2,
+    let dimensions = TraceDimensions::new(expected_rounds);
+    let shift_relation = SpartanShift::new(
+        dimensions,
         shift_gamma,
+        stage2.product_uniskip.tau_low.clone(),
+        stage2.batch.product_remainder.opening_point.clone(),
+    );
+    let instruction_relation = InstructionInput::new(
+        dimensions,
         instruction_gamma,
+        stage2.batch.product_remainder.opening_point.clone(),
+    );
+    let registers_relation = RegistersClaimReduction::new(
+        dimensions,
         registers_gamma,
-    })
-    .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
+        stage2.product_uniskip.tau_low.clone(),
+    );
+    let to_prover_error = |error: VerifierError| invalid_sumcheck_output(error.to_string());
+    let input_claims = Stage3InputClaims {
+        shift: shift_relation
+            .input_claim(&SpartanShiftInputClaims::from_upstream(stage1, stage2))
+            .map_err(to_prover_error)?,
+        instruction_input: instruction_relation
+            .input_claim(&InstructionInputInputClaims::from_upstream(stage2))
+            .map_err(to_prover_error)?,
+        registers_claim_reduction: registers_relation
+            .input_claim(&RegistersClaimReductionInputClaims::from_upstream(stage1))
+            .map_err(to_prover_error)?,
+    };
 
     Ok(Stage3RegularBatchPrefixOutput {
         input_claims,

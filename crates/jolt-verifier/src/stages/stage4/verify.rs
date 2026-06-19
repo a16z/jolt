@@ -1,8 +1,8 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::{program_image, registers as registers_claim_reduction},
+        claim_reductions::program_image,
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
-        instruction, ram,
+        ram,
         ram::RamValCheckInit,
         registers,
     },
@@ -221,29 +221,6 @@ where
         ram_val_check_gamma,
         ram_val_check_init.decomposition(),
     );
-
-    let [_right_operand_is_rs2, rs2_value_instruction, _right_operand_is_imm, _imm, _left_operand_is_rs1, rs1_value_instruction, _left_operand_is_pc, _unexpanded_pc] =
-        instruction::input_virtualization_output_openings();
-    let [_rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
-        registers_claim_reduction::claim_reduction_output_openings();
-    if stage3.output_claims.registers_claim_reduction.rs1_value
-        != stage3.output_claims.instruction_input.rs1_value
-    {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::RegistersReadWriteChecking,
-            left: rs1_value_reduced,
-            right: rs1_value_instruction,
-        });
-    }
-    if stage3.output_claims.registers_claim_reduction.rs2_value
-        != stage3.output_claims.instruction_input.rs2_value
-    {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::RegistersReadWriteChecking,
-            left: rs2_value_reduced,
-            right: rs2_value_instruction,
-        });
-    }
 
     let registers_inputs = RegistersReadWriteInputClaims::from_upstream(stage3);
     let ram_inputs = RamValCheckInputClaims::from_upstream(stage2, &ram_val_check_init);

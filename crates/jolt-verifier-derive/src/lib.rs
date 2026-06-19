@@ -35,6 +35,9 @@
 //! ## `#[opening(..)]` field grammar (both derives)
 //!
 //! - `#[opening(VirtualVariant)]` — a virtual-polynomial opening.
+//! - `#[opening(VirtualVariant(Payload::PATH))]` — a payload-carrying virtual
+//!   variant, e.g. `#[opening(OpFlags(CircuitFlags::VirtualInstruction))]`. The
+//!   payload tokens are emitted verbatim, so they must resolve at the derive site.
 //! - `#[opening(committed = CommittedVariant)]` — a committed opening.
 //! - `#[opening(trusted_advice)]` / `#[opening(untrusted_advice)]` — an advice
 //!   opening.
@@ -42,7 +45,8 @@
 //! Arity is read from the field type, not the annotation: a `Vec<C>` field is an
 //! indexed family (element `i` maps to `Variant(i)`, so `Variant` must be a
 //! tuple variant taking the index), while a `C` or `Option<C>` field is a
-//! single opening (`Variant` must be a unit variant).
+//! single opening (`Variant` must be a unit variant, or a payload-carrying
+//! variant — but a payload variant cannot also be indexed).
 //!
 //! `InputClaims` leaves additionally take `, from = ProducingRelation`.
 
@@ -70,7 +74,13 @@ pub fn derive_input_claims(input: TokenStream) -> TokenStream {
 }
 
 enum LeafKind {
-    Virtual(Ident),
+    /// A virtual-polynomial variant: its variant path plus an optional payload
+    /// (`OpFlags(CircuitFlags::VirtualInstruction)` carries the `CircuitFlags::..`
+    /// path as `payload`). A payload variant is always scalar — never indexed.
+    Virtual {
+        variant: syn::Path,
+        payload: Option<TokenStream2>,
+    },
     Committed(Ident),
     TrustedAdvice,
     UntrustedAdvice,
@@ -171,7 +181,7 @@ fn opening_attr(field: &syn::Field) -> Option<&Attribute> {
 }
 
 fn parse_opening(attr: &Attribute) -> syn::Result<OpeningSpec> {
-    let mut variant: Option<Ident> = None;
+    let mut virtual_variant: Option<(syn::Path, Option<TokenStream2>)> = None;
     let mut committed: Option<Ident> = None;
     let mut trusted_advice = false;
     let mut untrusted_advice = false;
@@ -187,18 +197,25 @@ fn parse_opening(attr: &Attribute) -> syn::Result<OpeningSpec> {
         } else if meta.path.is_ident("untrusted_advice") {
             untrusted_advice = true;
         } else {
-            let ident = meta
-                .path
-                .get_ident()
-                .cloned()
-                .ok_or_else(|| meta.error("expected a polynomial variant identifier"))?;
-            variant = Some(ident);
+            // A virtual-polynomial variant: a bare `Variant`, or a payload-carrying
+            // `Variant(payload::PATH)` such as
+            // `OpFlags(CircuitFlags::VirtualInstruction)`. Consume the optional
+            // payload group here so `parse_nested_meta` does not choke on it.
+            let variant = meta.path.clone();
+            let payload = if meta.input.peek(syn::token::Paren) {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                Some(content.parse::<TokenStream2>()?)
+            } else {
+                None
+            };
+            virtual_variant = Some((variant, payload));
         }
         Ok(())
     })?;
 
     let kinds = [
-        variant.map(LeafKind::Virtual),
+        virtual_variant.map(|(variant, payload)| LeafKind::Virtual { variant, payload }),
         committed.map(LeafKind::Committed),
         trusted_advice.then_some(LeafKind::TrustedAdvice),
         untrusted_advice.then_some(LeafKind::UntrustedAdvice),
@@ -282,6 +299,20 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
             "advice openings are scalar; a `Vec` advice field has no indexed id",
         ));
     }
+    if is_many
+        && matches!(
+            spec.kind,
+            LeafKind::Virtual {
+                payload: Some(_),
+                ..
+            }
+        )
+    {
+        return Err(syn::Error::new_spanned(
+            &field.ty,
+            "an indexed (`Vec`) opening uses the index as its variant payload, so it cannot also carry an explicit payload",
+        ));
+    }
     Ok(FieldPlan {
         ident,
         is_option: is_option_type(&field.ty),
@@ -297,9 +328,11 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
     let jolt = quote!(::jolt_claims::protocols::jolt);
     let rel = quote!(#jolt::JoltRelationId::#relation);
     match kind {
-        LeafKind::Virtual(variant) => {
+        LeafKind::Virtual { variant, payload } => {
             let polynomial = if let Some(index) = index {
                 quote!(#jolt::JoltVirtualPolynomial::#variant(#index))
+            } else if let Some(payload) = payload {
+                quote!(#jolt::JoltVirtualPolynomial::#variant(#payload))
             } else {
                 quote!(#jolt::JoltVirtualPolynomial::#variant)
             };

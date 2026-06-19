@@ -651,8 +651,7 @@ where
 
     // The bytecode address-phase input claim binds every prior clear stage but
     // not the post-address-phase challenges (`instruction_ra_gamma`/`inc_gamma`),
-    // so the placeholder zeros below are never read. This also runs the
-    // shift/instruction-input consistency check via `stage6_validate_dependencies`.
+    // so the placeholder zeros below are never read.
     let bytecode_read_raf_address_input = stage6_bytecode_read_raf_address_input(
         formula_dimensions.bytecode_read_raf,
         stage1,
@@ -929,7 +928,7 @@ where
         .copied()
         .collect::<Vec<_>>();
     let stage2_cycle = stage2.batch.product_remainder.opening_point.clone();
-    let stage3_cycle = stage3.batch.shift.opening_point.clone();
+    let stage3_cycle = stage3.output_claims.shift_opening_point().to_vec();
     let (stage4_register_address, stage4_cycle) = stage4
         .output_claims
         .registers_read_write
@@ -1653,7 +1652,7 @@ pub fn stage6_bytecode_cycle_points<F: Field>(
         .copied()
         .collect::<Vec<_>>();
     let stage2_cycle = stage2.batch.product_remainder.opening_point.clone();
-    let stage3_cycle = stage3.batch.shift.opening_point.clone();
+    let stage3_cycle = stage3.output_claims.shift_opening_point().to_vec();
     let register_points = stage6_bytecode_register_points(stage4, stage5)?;
     Ok([
         stage1_cycle,
@@ -1922,23 +1921,6 @@ pub fn stage6_inc_claim_reduction_cycle_points<'a, F: Field>(
     })
 }
 
-pub fn stage6_validate_dependencies<F: Field>(
-    stage3: &Stage3ClearOutput<F>,
-) -> Result<(), VerifierError> {
-    let [(spartan_shift_unexpanded_pc, instruction_input_unexpanded_pc)] =
-        bytecode::read_raf_consistency_openings();
-    if stage3.output_claims.shift.unexpanded_pc
-        != stage3.output_claims.instruction_input.unexpanded_pc
-    {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::BytecodeReadRaf,
-            left: spartan_shift_unexpanded_pc,
-            right: instruction_input_unexpanded_pc,
-        });
-    }
-    Ok(())
-}
-
 fn stage6_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],
@@ -2001,8 +1983,6 @@ pub fn stage6_batch_input_claims<F: Field>(
         .map(|layout| advice::cycle_phase::<F>(JoltAdviceKind::Trusted, layout.dimensions()));
     let untrusted_advice_claims = untrusted_advice_layout
         .map(|layout| advice::cycle_phase::<F>(JoltAdviceKind::Untrusted, layout.dimensions()));
-
-    stage6_validate_dependencies(stage3)?;
 
     let [ram_ra_reduced] = ram::ra_virtualization_input_openings();
     let instruction_ra_input_openings =
@@ -2099,7 +2079,6 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
     let bytecode_claims = bytecode::read_raf_address_phase::<F>(bytecode_dimensions);
     let bytecode_gamma = challenges.bytecode_gamma_powers[1];
     let bytecode_input_openings = bytecode::read_raf_input_openings();
-    stage6_validate_dependencies(stage3)?;
     {
         let input_claim = bytecode_claims.input.expression().try_evaluate(
             |id| {
@@ -2137,55 +2116,71 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                     return Ok(stage2.output_claims.product_remainder.virtual_instruction);
                 }
                 if *id == bytecode_input_openings.instruction_input.imm {
-                    return Ok(stage3.output_claims.instruction_input.imm);
+                    return Ok(stage3.output_claims.instruction_input.imm.value);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .unexpanded_pc_from_shift
                 {
-                    return Ok(stage3.output_claims.shift.unexpanded_pc);
+                    return Ok(stage3.output_claims.shift.unexpanded_pc.value);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .left_operand_is_rs1_value
                 {
-                    return Ok(stage3.output_claims.instruction_input.left_operand_is_rs1);
+                    return Ok(stage3
+                        .output_claims
+                        .instruction_input
+                        .left_operand_is_rs1
+                        .value);
                 }
                 if *id == bytecode_input_openings.instruction_input.left_operand_is_pc {
-                    return Ok(stage3.output_claims.instruction_input.left_operand_is_pc);
+                    return Ok(stage3
+                        .output_claims
+                        .instruction_input
+                        .left_operand_is_pc
+                        .value);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .right_operand_is_rs2_value
                 {
-                    return Ok(stage3.output_claims.instruction_input.right_operand_is_rs2);
+                    return Ok(stage3
+                        .output_claims
+                        .instruction_input
+                        .right_operand_is_rs2
+                        .value);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .right_operand_is_imm
                 {
-                    return Ok(stage3.output_claims.instruction_input.right_operand_is_imm);
+                    return Ok(stage3
+                        .output_claims
+                        .instruction_input
+                        .right_operand_is_imm
+                        .value);
                 }
                 if *id == bytecode_input_openings.instruction_input.is_noop_from_shift {
-                    return Ok(stage3.output_claims.shift.is_noop);
+                    return Ok(stage3.output_claims.shift.is_noop.value);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .virtual_instruction_from_shift
                 {
-                    return Ok(stage3.output_claims.shift.is_virtual);
+                    return Ok(stage3.output_claims.shift.is_virtual.value);
                 }
                 if *id
                     == bytecode_input_openings
                         .instruction_input
                         .is_first_in_sequence_from_shift
                 {
-                    return Ok(stage3.output_claims.shift.is_first_in_sequence);
+                    return Ok(stage3.output_claims.shift.is_first_in_sequence.value);
                 }
                 if *id == bytecode_input_openings.registers_read_write.rd_wa {
                     return Ok(stage4.output_claims.registers_read_write.rd_wa.value);
@@ -2227,7 +2222,7 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                     return Ok(stage1.outer.pc);
                 }
                 if *id == bytecode_input_openings.spartan_shift_pc {
-                    return Ok(stage3.output_claims.shift.pc);
+                    return Ok(stage3.output_claims.shift.pc.value);
                 }
                 Err(VerifierError::MissingOpeningClaim { id: *id })
             },
