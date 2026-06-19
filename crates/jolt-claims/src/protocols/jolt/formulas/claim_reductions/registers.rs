@@ -61,42 +61,42 @@ where
     public(JoltPublicId::from(id))
 }
 
-fn rd_write_value_spartan() -> JoltOpeningId {
+pub fn rd_write_value_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn rs1_value_spartan() -> JoltOpeningId {
+pub fn rs1_value_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn rs2_value_spartan() -> JoltOpeningId {
+pub fn rs2_value_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn rd_write_value_reduced() -> JoltOpeningId {
+pub fn rd_write_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
         JoltRelationId::RegistersClaimReduction,
     )
 }
 
-fn rs1_value_reduced() -> JoltOpeningId {
+pub fn rs1_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::RegistersClaimReduction,
     )
 }
 
-fn rs2_value_reduced() -> JoltOpeningId {
+pub fn rs2_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::RegistersClaimReduction,

@@ -226,35 +226,75 @@ where
 }
 
 pub fn read_write_checking_output_openings() -> [JoltOpeningId; 3] {
-    [ram_val(), ram_ra(), ram_inc()]
+    [ram_val_opening(), ram_ra_opening(), ram_inc_opening()]
 }
 
 pub fn read_write_checking_input_openings() -> [JoltOpeningId; 2] {
-    [ram_read_value(), ram_write_value()]
+    [ram_read_value_opening(), ram_write_value_opening()]
 }
 
 pub fn raf_evaluation_output_openings() -> [JoltOpeningId; 1] {
-    [ram_ra_raf_evaluation()]
+    [ram_ra_raf_evaluation_opening()]
 }
 
 pub fn raf_evaluation_input_openings() -> [JoltOpeningId; 1] {
-    [ram_address_spartan()]
+    [ram_address_spartan_opening()]
 }
 
 pub fn output_check_output_openings() -> [JoltOpeningId; 1] {
-    [ram_val_final()]
+    [ram_val_final_opening()]
 }
 
 pub fn stage2_terminal_output_openings() -> [JoltOpeningId; 2] {
-    [ram_ra_raf_evaluation(), ram_val_final()]
+    [ram_ra_raf_evaluation_opening(), ram_val_final_opening()]
 }
 
 pub fn val_check_input_openings() -> [JoltOpeningId; 2] {
-    [ram_val(), ram_val_final()]
+    [ram_val_opening(), ram_val_final_opening()]
 }
 
 pub fn val_check_output_openings() -> [JoltOpeningId; 2] {
-    [ram_ra_val_check(), ram_inc_val_check()]
+    [ram_ra_val_check_opening(), ram_inc_val_check_opening()]
+}
+
+pub fn ram_val_opening() -> JoltOpeningId {
+    ram_val()
+}
+
+pub fn ram_ra_opening() -> JoltOpeningId {
+    ram_ra()
+}
+
+pub fn ram_inc_opening() -> JoltOpeningId {
+    ram_inc()
+}
+
+pub fn ram_read_value_opening() -> JoltOpeningId {
+    ram_read_value()
+}
+
+pub fn ram_write_value_opening() -> JoltOpeningId {
+    ram_write_value()
+}
+
+pub fn ram_address_spartan_opening() -> JoltOpeningId {
+    ram_address_spartan()
+}
+
+pub fn ram_ra_raf_evaluation_opening() -> JoltOpeningId {
+    ram_ra_raf_evaluation()
+}
+
+pub fn ram_val_final_opening() -> JoltOpeningId {
+    ram_val_final()
+}
+
+pub fn ram_ra_val_check_opening() -> JoltOpeningId {
+    ram_ra_val_check()
+}
+
+pub fn ram_inc_val_check_opening() -> JoltOpeningId {
+    ram_inc_val_check()
 }
 
 pub fn val_check_advice_opening(kind: JoltAdviceKind) -> JoltOpeningId {
@@ -315,11 +355,19 @@ where
 }
 
 pub fn ra_claim_reduction_input_openings() -> [JoltOpeningId; 3] {
-    [ram_ra_raf_evaluation(), ram_ra(), ram_ra_val_check()]
+    [
+        ram_ra_raf_evaluation_opening(),
+        ram_ra_opening(),
+        ram_ra_val_check_opening(),
+    ]
 }
 
 pub fn ra_claim_reduction_output_openings() -> [JoltOpeningId; 1] {
-    [ram_ra_claim_reduction()]
+    [ram_ra_claim_reduction_opening()]
+}
+
+pub fn ram_ra_claim_reduction_opening() -> JoltOpeningId {
+    ram_ra_claim_reduction()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -387,7 +435,11 @@ where
 }
 
 pub fn ra_virtualization_input_openings() -> [JoltOpeningId; 1] {
-    [ram_ra_claim_reduction()]
+    [ra_virtualization_reduced_opening()]
+}
+
+pub fn ra_virtualization_reduced_opening() -> JoltOpeningId {
+    ram_ra_claim_reduction()
 }
 
 pub fn ra_virtualization_output_openings(
@@ -416,7 +468,11 @@ impl<F: Field> RamRaVirtualizationPublicValues<F> {
 }
 
 pub fn hamming_booleanity_output_openings() -> [JoltOpeningId; 1] {
-    [ram_hamming_weight()]
+    [ram_hamming_weight_opening()]
+}
+
+pub fn ram_hamming_weight_opening() -> JoltOpeningId {
+    ram_hamming_weight()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

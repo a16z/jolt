@@ -410,15 +410,47 @@ where
 
 pub fn product_remainder_output_openings() -> [JoltOpeningId; 8] {
     [
-        left_instruction_input_product(),
-        right_instruction_input_product(),
-        jump_flag_product(),
-        write_lookup_output_to_rd_product(),
-        lookup_output_product(),
-        branch_flag_product(),
-        next_is_noop_product(),
-        virtual_instruction_product(),
+        product_left_instruction_input_opening(),
+        product_right_instruction_input_opening(),
+        product_jump_flag_opening(),
+        product_write_lookup_output_to_rd_opening(),
+        product_lookup_output_opening(),
+        product_branch_flag_opening(),
+        product_next_is_noop_opening(),
+        product_virtual_instruction_opening(),
     ]
+}
+
+pub fn product_left_instruction_input_opening() -> JoltOpeningId {
+    left_instruction_input_product()
+}
+
+pub fn product_right_instruction_input_opening() -> JoltOpeningId {
+    right_instruction_input_product()
+}
+
+pub fn product_jump_flag_opening() -> JoltOpeningId {
+    jump_flag_product()
+}
+
+pub fn product_write_lookup_output_to_rd_opening() -> JoltOpeningId {
+    write_lookup_output_to_rd_product()
+}
+
+pub fn product_lookup_output_opening() -> JoltOpeningId {
+    lookup_output_product()
+}
+
+pub fn product_branch_flag_opening() -> JoltOpeningId {
+    branch_flag_product()
+}
+
+pub fn product_next_is_noop_opening() -> JoltOpeningId {
+    next_is_noop_product()
+}
+
+pub fn product_virtual_instruction_opening() -> JoltOpeningId {
+    virtual_instruction_product()
 }
 
 pub fn shift_input_openings() -> [JoltOpeningId; 5] {
@@ -564,104 +596,104 @@ pub fn product_should_jump_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
-fn left_instruction_input_product() -> JoltOpeningId {
+pub fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn right_instruction_input_product() -> JoltOpeningId {
+pub fn right_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn lookup_output_product() -> JoltOpeningId {
+pub fn lookup_output_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn jump_flag_product() -> JoltOpeningId {
+pub fn jump_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn write_lookup_output_to_rd_product() -> JoltOpeningId {
+pub fn write_lookup_output_to_rd_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn branch_flag_product() -> JoltOpeningId {
+pub fn branch_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn next_is_noop_product() -> JoltOpeningId {
+pub fn next_is_noop_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::NextIsNoop,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn virtual_instruction_product() -> JoltOpeningId {
+pub fn virtual_instruction_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn next_unexpanded_pc_outer() -> JoltOpeningId {
+pub fn next_unexpanded_pc_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextUnexpandedPC)
 }
 
-fn next_pc_outer() -> JoltOpeningId {
+pub fn next_pc_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextPC)
 }
 
-fn next_is_virtual_outer() -> JoltOpeningId {
+pub fn next_is_virtual_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextIsVirtual)
 }
 
-fn next_is_first_in_sequence_outer() -> JoltOpeningId {
+pub fn next_is_first_in_sequence_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextIsFirstInSequence)
 }
 
-fn unexpanded_pc_shift() -> JoltOpeningId {
+pub fn unexpanded_pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::SpartanShift,
     )
 }
 
-fn pc_shift() -> JoltOpeningId {
+pub fn pc_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
-fn is_virtual_shift() -> JoltOpeningId {
+pub fn is_virtual_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
         JoltRelationId::SpartanShift,
     )
 }
 
-fn is_first_in_sequence_shift() -> JoltOpeningId {
+pub fn is_first_in_sequence_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
         JoltRelationId::SpartanShift,
     )
 }
 
-fn is_noop_shift() -> JoltOpeningId {
+pub fn is_noop_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
         JoltRelationId::SpartanShift,

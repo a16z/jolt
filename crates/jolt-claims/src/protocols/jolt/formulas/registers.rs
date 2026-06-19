@@ -124,7 +124,7 @@ fn rs2_value_claim() -> JoltOpeningId {
     )
 }
 
-fn registers_val_read_write() -> JoltOpeningId {
+pub fn registers_val_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RegistersVal,
         JoltRelationId::RegistersReadWriteChecking,
@@ -159,14 +159,14 @@ fn rd_inc_read_write() -> JoltOpeningId {
     )
 }
 
-fn rd_inc_val_evaluation() -> JoltOpeningId {
+pub fn rd_inc_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::RegistersValEvaluation,
     )
 }
 
-fn rd_wa_val_evaluation() -> JoltOpeningId {
+pub fn rd_wa_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
         JoltRelationId::RegistersValEvaluation,

@@ -97,70 +97,70 @@ where
     public(JoltPublicId::from(id))
 }
 
-fn lookup_output_spartan() -> JoltOpeningId {
+pub fn lookup_output_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn left_lookup_operand_spartan() -> JoltOpeningId {
+pub fn left_lookup_operand_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftLookupOperand,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn right_lookup_operand_spartan() -> JoltOpeningId {
+pub fn right_lookup_operand_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightLookupOperand,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn left_instruction_input_spartan() -> JoltOpeningId {
+pub fn left_instruction_input_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn right_instruction_input_spartan() -> JoltOpeningId {
+pub fn right_instruction_input_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn lookup_output_reduced() -> JoltOpeningId {
+pub fn lookup_output_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn left_lookup_operand_reduced() -> JoltOpeningId {
+pub fn left_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftLookupOperand,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn right_lookup_operand_reduced() -> JoltOpeningId {
+pub fn right_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightLookupOperand,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn left_instruction_input_reduced() -> JoltOpeningId {
+pub fn left_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn right_instruction_input_reduced() -> JoltOpeningId {
+pub fn right_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::InstructionClaimReduction,

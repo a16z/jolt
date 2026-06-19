@@ -358,10 +358,22 @@ impl InstructionReadRafOutputOpenings {
 
 pub fn read_raf_input_openings() -> [JoltOpeningId; 3] {
     [
-        lookup_output_reduced(),
-        left_lookup_operand_reduced(),
-        right_lookup_operand_reduced(),
+        read_raf_lookup_output_opening(),
+        read_raf_left_lookup_operand_opening(),
+        read_raf_right_lookup_operand_opening(),
     ]
+}
+
+pub fn read_raf_lookup_output_opening() -> JoltOpeningId {
+    lookup_output_reduced()
+}
+
+pub fn read_raf_left_lookup_operand_opening() -> JoltOpeningId {
+    left_lookup_operand_reduced()
+}
+
+pub fn read_raf_right_lookup_operand_opening() -> JoltOpeningId {
+    right_lookup_operand_reduced()
 }
 
 pub fn read_raf_output_openings(
@@ -569,28 +581,28 @@ where
     product
 }
 
-fn left_instruction_input_product() -> JoltOpeningId {
+pub fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn right_instruction_input_product() -> JoltOpeningId {
+pub fn right_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn left_instruction_input_reduced() -> JoltOpeningId {
+pub fn left_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn right_instruction_input_reduced() -> JoltOpeningId {
+pub fn right_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::InstructionClaimReduction,
@@ -653,56 +665,56 @@ fn instruction_raf_flag() -> JoltOpeningId {
     )
 }
 
-fn left_operand_is_rs1() -> JoltOpeningId {
+pub fn left_operand_is_rs1() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsRs1Value),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn rs1_value() -> JoltOpeningId {
+pub fn rs1_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn left_operand_is_pc() -> JoltOpeningId {
+pub fn left_operand_is_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::LeftOperandIsPC),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn unexpanded_pc() -> JoltOpeningId {
+pub fn unexpanded_pc() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn right_operand_is_rs2() -> JoltOpeningId {
+pub fn right_operand_is_rs2() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRs2Value),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn rs2_value() -> JoltOpeningId {
+pub fn rs2_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn right_operand_is_imm() -> JoltOpeningId {
+pub fn right_operand_is_imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsImm),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn imm() -> JoltOpeningId {
+pub fn imm() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Imm,
         JoltRelationId::InstructionInputVirtualization,
