@@ -1015,7 +1015,7 @@ mod tests {
         let zero = Fr::zero();
 
         JoltProofClaims::Clear(ClearProofClaims {
-            stage1: stage1::inputs::Stage1Claims {
+            stage1: stage1::inputs::Stage1OutputClaims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
             },

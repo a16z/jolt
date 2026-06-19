@@ -1276,7 +1276,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
     let zero = Fr::from_u64(0);
 
     ClearProofClaims {
-        stage1: stage1::inputs::Stage1Claims {
+        stage1: stage1::inputs::Stage1OutputClaims {
             uniskip_output_claim: zero,
             outer: stage1::inputs::SpartanOuterClaims {
                 left_instruction_input: zero,

@@ -8,7 +8,7 @@ use crate::compat::ids as legacy;
 use crate::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
     stages::{
-        stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1Claims},
+        stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1OutputClaims},
         stage2::inputs::{
             InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
             RamReadWriteOutputClaims, Stage2BatchOutputClaims, Stage2OutputClaims,
@@ -97,7 +97,7 @@ pub(crate) fn clear_claims_from_native<F: Field>(
         claims: claims.into_iter().collect(),
     };
     Ok(ClearProofClaims {
-        stage1: Stage1Claims {
+        stage1: Stage1OutputClaims {
             uniskip_output_claim: claims.require(outer_uniskip_opening())?,
             outer: spartan_outer_claims_from_native(&claims)?,
         },
@@ -633,7 +633,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
     let zero = F::zero();
 
     ClearProofClaims {
-        stage1: Stage1Claims {
+        stage1: Stage1OutputClaims {
             uniskip_output_claim: zero,
             outer: empty_spartan_outer_claims(),
         },

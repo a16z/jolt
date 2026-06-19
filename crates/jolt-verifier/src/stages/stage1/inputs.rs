@@ -14,7 +14,7 @@ use crate::VerifierError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct Stage1Claims<F: Field> {
+pub struct Stage1OutputClaims<F: Field> {
     pub uniskip_output_claim: F,
     pub outer: SpartanOuterClaims<F>,
 }
@@ -22,14 +22,14 @@ pub struct Stage1Claims<F: Field> {
 pub fn stage1_claims_from_r1cs_inputs<F: Field>(
     uniskip_output_claim: F,
     claims: impl IntoIterator<Item = (JoltVirtualPolynomial, F)>,
-) -> Result<Stage1Claims<F>, VerifierError> {
-    Ok(Stage1Claims {
+) -> Result<Stage1OutputClaims<F>, VerifierError> {
+    Ok(Stage1OutputClaims {
         uniskip_output_claim,
         outer: spartan_outer_claims_from_r1cs_inputs(claims)?,
     })
 }
 
-impl<F: Field> Stage1Claims<F> {
+impl<F: Field> Stage1OutputClaims<F> {
     pub fn spartan_outer_claims(
         &self,
         dimensions: &SpartanOuterDimensions,
