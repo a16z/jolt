@@ -19,7 +19,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualRotriw<C> {
         let (rs1, imm) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         let half = XLEN / 2;
         let mask = (1u128 << half).wrapping_sub(1) as u64;
-        // Cap the rotation amount at `half` (matches `.min(half)` in jolt-prover).
+        // Cap the rotation amount at `half` (matches `.min(half)` in jolt-prover-legacy).
         // Using `% half` would map shifts of [half, 2*half) onto [0, half),
         // which produces a different rotation than the table expects.
         let r = ((imm as u64).trailing_zeros() as usize).min(half);

@@ -3,7 +3,7 @@
 //!
 //! Wraps a duplex sponge over each of the three backends and re-exposes
 //! the legacy `Transcript` / `AppendToTranscript` API. Removed once
-//! jolt-prover migrates to the split-trait surface.
+//! jolt-prover-legacy migrates to the split-trait surface.
 
 use std::marker::PhantomData;
 
@@ -112,13 +112,13 @@ pub trait AppendToTranscript {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
 
     /// Byte length of the payload absorbed by [`append_to_transcript`], when
-    /// the type participates in jolt-prover's variable-length labeled appends.
+    /// the type participates in jolt-prover-legacy's variable-length labeled appends.
     fn transcript_payload_len(&self) -> Option<u64> {
         None
     }
 }
 
-/// Big-endian field element absorption (matches jolt-prover's EVM-compatible
+/// Big-endian field element absorption (matches jolt-prover-legacy's EVM-compatible
 /// byte order).
 impl<F: CanonicalBytes> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
@@ -129,7 +129,7 @@ impl<F: CanonicalBytes> AppendToTranscript for F {
     }
 }
 
-/// 32-byte zero-padded label word (matches jolt-prover's `raw_append_label`).
+/// 32-byte zero-padded label word (matches jolt-prover-legacy's `raw_append_label`).
 pub struct Label(pub &'static [u8]);
 
 impl AppendToTranscript for Label {
@@ -146,7 +146,7 @@ impl AppendToTranscript for Label {
 }
 
 /// Packed label (24 bytes) + count (8-byte big-endian) in one 32-byte word
-/// (matches jolt-prover's `raw_append_label_with_len`).
+/// (matches jolt-prover-legacy's `raw_append_label_with_len`).
 pub struct LabelWithCount(pub &'static [u8], pub u64);
 
 impl AppendToTranscript for LabelWithCount {
@@ -164,7 +164,7 @@ impl AppendToTranscript for LabelWithCount {
 }
 
 /// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value (matches
-/// jolt-prover's `raw_append_u64`).
+/// jolt-prover-legacy's `raw_append_u64`).
 pub struct U64Word(pub u64);
 
 impl AppendToTranscript for U64Word {
@@ -265,7 +265,7 @@ where
         // see `prover.rs:53-55`) deliberately makes 128-bit challenges a
         // compile error on Poseidon-backed states. The two surfaces
         // disagree on purpose: the legacy facade preserves the legacy
-        // jolt-prover challenge width for in-flight consumers (jolt-sumcheck,
+        // jolt-prover-legacy challenge width for in-flight consumers (jolt-sumcheck,
         // jolt-openings, jolt-crypto). Once those migrate to the split-trait
         // surface this facade goes away and the inconsistency with it.
         let mut buf = [0u8; 16];

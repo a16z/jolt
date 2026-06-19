@@ -27,8 +27,8 @@ cargo nextest run --cargo-quiet
 cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
 # CRITICAL: Primary correctness check — run muldiv e2e test in BOTH modes
-cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 
 ```
 
@@ -36,7 +36,7 @@ cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
 
 ```bash
 # Prefer clippy over build for validation. Only build when preparing to execute a binary.
-cargo build -p jolt-prover -q
+cargo build -p jolt-prover-legacy -q
 
 # After pulling changes, reinstall the jolt CLI or guest builds may fail.
 cargo install --path . --locked
@@ -46,14 +46,14 @@ cargo install --path . --locked
 
 ```bash
 # Execution trace (viewable in Perfetto)
-cargo run --release -p jolt-prover profile --name sha3 --format chrome
+cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome
 # --name options: sha2, sha3, sha2-chain, fibonacci, btreemap
 
 # With CPU/memory monitoring (adds counter tracks to Perfetto trace)
-cargo run --release --features monitor -p jolt-prover profile --name sha3 --format chrome
+cargo run --release --features monitor -p jolt-prover-legacy profile --name sha3 --format chrome
 
 # Memory profiling (outputs SVG flamegraphs)
-RUST_LOG=debug cargo run --release --features allocative -p jolt-prover profile --name sha3 --format chrome
+RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome
 ```
 
 ## Architecture
@@ -62,7 +62,7 @@ RUST_LOG=debug cargo run --release --features allocative -p jolt-prover profile 
 
 Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shout` (patched via `[patch.crates-io]` in root `Cargo.toml`).
 
-**jolt-prover** — Core proving system
+**jolt-prover-legacy** — Core proving system
 
 - `host/`: Guest ELF compilation and program analysis (feature-gated behind `host`)
 - `zkvm/`: Jolt PIOP — prover, verifier, R1CS/Spartan, memory checking, instruction lookups

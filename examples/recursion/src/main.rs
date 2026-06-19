@@ -354,7 +354,7 @@ fn collect_guest_proofs(
         preprocess_guest_prover(&mut guest_prog, max_trace_length, bytecode_chunk_count);
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
-        jolt_sdk::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover::<
+        jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
             jolt_sdk::F,
             jolt_sdk::Curve,
             jolt_sdk::PCS,
@@ -558,7 +558,7 @@ fn run_recursion_proof(
     let recursion_prover_preprocessing =
         jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
     let recursion_verifier_preprocessing =
-        jolt_sdk::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover::<
+        jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
             jolt_sdk::F,
             jolt_sdk::Curve,
             jolt_sdk::PCS,

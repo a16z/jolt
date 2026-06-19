@@ -83,12 +83,12 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Build Wasm
-        working-directory: ./crates/jolt-prover
+        working-directory: ./crates/jolt-prover-legacy
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --target wasm32-unknown-unknown
 
   test-prover:
     runs-on: ubuntu-latest
-    name: Test jolt-prover
+    name: Test jolt-prover-legacy
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -111,12 +111,12 @@ jobs:
         run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run jolt-prover tests
-        run: cargo nextest run --release -p jolt-prover
+      - name: Run jolt-prover-legacy tests
+        run: cargo nextest run --release -p jolt-prover-legacy
 
   test-prover-zk:
     runs-on: ubuntu-latest
-    name: Test jolt-prover (zk)
+    name: Test jolt-prover-legacy (zk)
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -139,8 +139,8 @@ jobs:
         run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - name: Run jolt-prover tests with zk feature
-        run: cargo nextest run --release -p jolt-prover --features zk
+      - name: Run jolt-prover-legacy tests with zk feature
+        run: cargo nextest run --release -p jolt-prover-legacy --features zk
 
   typos:
     runs-on: ubuntu-latest
@@ -242,7 +242,7 @@ jobs:
         run: |
           set -euo pipefail
           pkgs=$(cargo metadata --format-version=1 --no-deps \
-                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and .name != "jolt-prover") | .name' \
+                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and .name != "jolt-prover-legacy") | .name' \
                    | tr '\n' ' ')
           echo "Found crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"

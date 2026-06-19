@@ -76,8 +76,8 @@ Spec analysis can also be triggered externally by adding the `claude-spec-review
 
 ```bash
 # Lint (must pass in both modes)
-cargo clippy -p jolt-prover --features host --message-format=short -q --all-targets -- -D warnings
-cargo clippy -p jolt-prover --features host,zk --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-prover-legacy --features host --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-prover-legacy --features host,zk --message-format=short -q --all-targets -- -D warnings
 
 # Format
 cargo fmt -q
@@ -86,8 +86,8 @@ cargo fmt -q
 cargo nextest run --cargo-quiet
 
 # Primary correctness check
-cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
 ```
 
 ## Code Style

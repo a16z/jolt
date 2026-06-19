@@ -716,7 +716,7 @@ impl MacroBuilder {
                 blindfold_setup: Option<jolt::BlindfoldSetup<jolt::Curve>>,
             ) -> jolt::JoltVerifierPreprocessing
             {
-                jolt::jolt_prover::zkvm::proof::verifier_preprocessing_from_shared::<
+                jolt::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_shared::<
                     jolt::F,
                     jolt::Curve,
                     jolt::PCS,
@@ -743,7 +743,7 @@ impl MacroBuilder {
                 -> jolt::JoltVerifierPreprocessing
             {
                 #imports
-                jolt::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover::<
+                jolt::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
                     jolt::F,
                     jolt::Curve,
                     jolt::PCS,
@@ -1093,7 +1093,7 @@ impl MacroBuilder {
     }
 
     /// Generate `jolt_panic()` function that writes to the panic address.
-    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-prover.
+    /// This is called by the runtime's `#[panic_handler]` to signal panics to jolt-prover-legacy.
     fn make_panic(&self, panic_address: u64) -> TokenStream2 {
         quote! {
             #[cfg(feature = "guest")]

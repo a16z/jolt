@@ -3,11 +3,11 @@
 use arbitrary::{Arbitrary, Unstructured};
 
 use ark_bn254::Fr;
-use jolt_prover::field::JoltField;
-use jolt_prover::poly::dense_mlpoly::DensePolynomial;
-use jolt_prover::poly::eq_poly::EqPolynomial;
-use jolt_prover::poly::multilinear_polynomial::BindingOrder;
-use jolt_prover::poly::split_eq_poly::GruenSplitEqPolynomial;
+use jolt_prover_legacy::field::JoltField;
+use jolt_prover_legacy::poly::dense_mlpoly::DensePolynomial;
+use jolt_prover_legacy::poly::eq_poly::EqPolynomial;
+use jolt_prover_legacy::poly::multilinear_polynomial::BindingOrder;
+use jolt_prover_legacy::poly::split_eq_poly::GruenSplitEqPolynomial;
 
 use super::{CheckError, Invariant, InvariantViolation};
 

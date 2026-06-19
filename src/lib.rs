@@ -1,2 +1,2 @@
-pub use jolt_prover;
+pub use jolt_prover_legacy;
 pub use jolt_sdk::*;

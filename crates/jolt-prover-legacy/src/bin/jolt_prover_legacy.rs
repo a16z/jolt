@@ -119,7 +119,7 @@ fn setup_tracing(formats: Option<Vec<Format>>, trace_name: &str) -> Vec<Box<dyn 
 
     #[cfg(feature = "monitor")]
     guards.push(Box::new({
-        use jolt_prover::utils::monitor::MetricsMonitor;
+        use jolt_prover_legacy::utils::monitor::MetricsMonitor;
         tracing::info!("Starting MetricsMonitor - remember to run python3 scripts/postprocess_trace.py trace-*.json");
         MetricsMonitor::start(
             std::env::var("MONITOR_INTERVAL")

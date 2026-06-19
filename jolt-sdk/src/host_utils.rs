@@ -1,13 +1,13 @@
 #[cfg(feature = "host")]
-pub use jolt_prover::host;
+pub use jolt_prover_legacy::host;
 #[cfg(feature = "host")]
-pub use jolt_prover::zkvm::{prover::JoltProverPreprocessing, RV64IMACProver};
+pub use jolt_prover_legacy::zkvm::{prover::JoltProverPreprocessing, RV64IMACProver};
 #[cfg(all(feature = "host", feature = "transcript-poseidon"))]
-pub type ProofTranscript = jolt_prover::transcripts::PoseidonTranscript;
+pub type ProofTranscript = jolt_prover_legacy::transcripts::PoseidonTranscript;
 #[cfg(all(feature = "host", feature = "transcript-keccak"))]
-pub type ProofTranscript = jolt_prover::transcripts::KeccakTranscript;
+pub type ProofTranscript = jolt_prover_legacy::transcripts::KeccakTranscript;
 #[cfg(all(feature = "host", feature = "transcript-blake2b"))]
-pub type ProofTranscript = jolt_prover::transcripts::Blake2bTranscript;
+pub type ProofTranscript = jolt_prover_legacy::transcripts::Blake2bTranscript;
 #[cfg(all(
     feature = "host",
     not(any(
@@ -16,7 +16,7 @@ pub type ProofTranscript = jolt_prover::transcripts::Blake2bTranscript;
         feature = "transcript-blake2b"
     ))
 ))]
-pub type ProofTranscript = jolt_prover::transcripts::Blake2bTranscript;
+pub type ProofTranscript = jolt_prover_legacy::transcripts::Blake2bTranscript;
 #[cfg(feature = "host")]
 pub use jolt_program::execution::{
     ExecutionBackend, OwnedTrace, TraceError, TraceInputs, TraceOutput, TraceSource,
@@ -25,19 +25,19 @@ pub use jolt_program::execution::{
 pub use tracer::TracerBackend;
 
 pub use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-pub use jolt_prover::ark_bn254::Fr as F;
-pub use jolt_prover::curve::Bn254Curve as Curve;
-pub use jolt_prover::curve::JoltCurve;
-pub use jolt_prover::field::JoltField;
-pub use jolt_prover::guest;
-pub use jolt_prover::poly::commitment::dory::DoryCommitmentScheme as PCS;
-pub use jolt_prover::zkvm::{
+pub use jolt_prover_legacy::ark_bn254::Fr as F;
+pub use jolt_prover_legacy::curve::Bn254Curve as Curve;
+pub use jolt_prover_legacy::curve::JoltCurve;
+pub use jolt_prover_legacy::field::JoltField;
+pub use jolt_prover_legacy::guest;
+pub use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme as PCS;
+pub use jolt_prover_legacy::zkvm::{
     bytecode::PreprocessingError,
     preprocessing::JoltSharedPreprocessing,
     program::{CommittedProgramProverData, ProgramPreprocessing},
     Serializable,
 };
-pub use jolt_prover::AdviceTape;
+pub use jolt_prover_legacy::AdviceTape;
 
 #[cfg(feature = "host")]
 pub type VerifierPCS = jolt_dory::DoryScheme;
@@ -111,10 +111,10 @@ pub fn serialize_and_print_size(
 }
 
 // Re-exports needed by the provable macro
-pub use jolt_prover::poly::commitment::commitment_scheme::CommitmentScheme;
-pub use jolt_prover::poly::commitment::dory::{DoryContext, DoryGlobals, DoryLayout};
-pub use jolt_prover::poly::multilinear_polynomial::MultilinearPolynomial;
-pub use jolt_prover::zkvm::preprocessing::BlindfoldSetup;
+pub use jolt_prover_legacy::poly::commitment::commitment_scheme::CommitmentScheme;
+pub use jolt_prover_legacy::poly::commitment::dory::{DoryContext, DoryGlobals, DoryLayout};
+pub use jolt_prover_legacy::poly::multilinear_polynomial::MultilinearPolynomial;
+pub use jolt_prover_legacy::zkvm::preprocessing::BlindfoldSetup;
 #[cfg(feature = "host")]
-pub use jolt_prover::zkvm::proof::ProofCommitmentScheme;
-pub use jolt_prover::zkvm::ram::populate_memory_states;
+pub use jolt_prover_legacy::zkvm::proof::ProofCommitmentScheme;
+pub use jolt_prover_legacy::zkvm::ram::populate_memory_states;

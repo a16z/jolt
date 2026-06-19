@@ -2581,7 +2581,7 @@ where
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
-        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let filename = Path::new(target_dir).join("jolt_prover_legacy_preprocessing.dat");
         let mut file = File::create(filename.as_path())?;
         let mut data = Vec::new();
         self.serialize_compressed(&mut data).unwrap();
@@ -2590,7 +2590,7 @@ where
     }
 
     pub fn read_from_target_dir(target_dir: &str) -> std::io::Result<Self> {
-        let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
+        let filename = Path::new(target_dir).join("jolt_prover_legacy_preprocessing.dat");
         let mut file = File::open(filename.as_path())?;
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;

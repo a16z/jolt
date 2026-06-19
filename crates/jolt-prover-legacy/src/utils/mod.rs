@@ -21,7 +21,7 @@ pub mod thread;
 /// - [0, 0, 1]
 /// - [0, 0, 0, 0, 0, 0, 0, 1]
 /// ```ignore
-/// use jolt_prover::utils::index_to_field_bitvector;
+/// use jolt_prover_legacy::utils::index_to_field_bitvector;
 /// # use ark_bn254::Fr;
 /// # use ark_std::{One, Zero};
 /// let zero = Fr::zero();
@@ -139,7 +139,7 @@ pub fn uninterleave_bits(val: u128) -> (u64, u64) {
 /// # Examples
 ///
 /// ```
-/// # use jolt_prover::utils::interleave_bits;
+/// # use jolt_prover_legacy::utils::interleave_bits;
 /// assert_eq!(interleave_bits(0b01, 0b10), 0b110);
 /// ```
 pub fn interleave_bits(even_bits: u64, odd_bits: u64) -> u128 {

@@ -144,7 +144,7 @@ macro_rules! field_assert_eq {
 pub mod host_utils;
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
-pub use jolt_prover;
+pub use jolt_prover_legacy;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use jolt_verifier;
 

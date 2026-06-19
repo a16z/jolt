@@ -2,10 +2,10 @@ use ark_bn254::Fr;
 use ark_ff::UniformRand;
 use ark_std::{rand::Rng, test_rng};
 use criterion::Criterion;
-use jolt_prover::field::JoltField;
-use jolt_prover::poly::compact_polynomial::CompactPolynomial;
-use jolt_prover::poly::dense_mlpoly::DensePolynomial;
-use jolt_prover::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
+use jolt_prover_legacy::field::JoltField;
+use jolt_prover_legacy::poly::compact_polynomial::CompactPolynomial;
+use jolt_prover_legacy::poly::dense_mlpoly::DensePolynomial;
+use jolt_prover_legacy::poly::multilinear_polynomial::{BindingOrder, PolynomialBinding};
 use rayon::prelude::*;
 
 fn random_dense_coeffs<F: JoltField>(rng: &mut impl Rng, num_vars: usize) -> Vec<F> {

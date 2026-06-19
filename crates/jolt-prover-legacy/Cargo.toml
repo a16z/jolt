@@ -1,5 +1,5 @@
 [package]
-name = "jolt-prover"
+name = "jolt-prover-legacy"
 version = "0.1.0"
 authors = [
   # author of original Spartan paper and code base
@@ -45,8 +45,8 @@ prover = [
   "dep:jolt-transcript",
   "dep:jolt-verifier",
 ]
-# This is for building jolt-prover without prover capabilities, e.g. for recursion
-# jolt-prover needs std and rayon to compile, so these are the minimal set of features.
+# This is for building jolt-prover-legacy without prover capabilities, e.g. for recursion
+# jolt-prover-legacy needs std and rayon to compile, so these are the minimal set of features.
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
 monitor = ["dep:sysinfo"]
@@ -169,12 +169,12 @@ name = "challenge_mult_performance"
 harness = false
 
 [lib]
-name = "jolt_prover"
+name = "jolt_prover_legacy"
 path = "src/lib.rs"
 
 [[bin]]
-name = "jolt-prover"
-path = "src/bin/jolt_prover.rs"
+name = "jolt-prover-legacy"
+path = "src/bin/jolt_prover_legacy.rs"
 required-features = ["host"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

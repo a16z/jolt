@@ -13,7 +13,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError
 use ark_std::{One, Zero};
 use serde::{Deserialize, Serialize};
 
-use jolt_prover::field::{FieldOps, JoltField};
+use jolt_prover_legacy::field::{FieldOps, JoltField};
 
 #[cfg(test)]
 use crate::util::Environment;
@@ -127,7 +127,7 @@ fn edge_for_root(root: NodeId) -> Edge {
 // Thread-local storage for Transcript trait integration
 // =============================================================================
 //
-// These thread-locals enable MleAst to work with jolt-prover's generic Transcript trait.
+// These thread-locals enable MleAst to work with jolt-prover-legacy's generic Transcript trait.
 // The Transcript trait uses `F: JoltField` with methods like:
 //   - `append_scalar<F>(&mut self, scalar: &F)` - calls F::serialize
 //   - `challenge_scalar<F>(&mut self) -> F` - calls F::from_bytes
@@ -1296,7 +1296,7 @@ impl<const N: usize> From<[u64; N]> for MleAst {
     }
 }
 
-impl jolt_prover::field::UnreducedInteger for MleAst {}
+impl jolt_prover_legacy::field::UnreducedInteger for MleAst {}
 
 impl JoltField for MleAst {
     const NUM_BYTES: usize = 0;

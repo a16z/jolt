@@ -1,9 +1,9 @@
-use jolt_prover::host;
-use jolt_prover::zkvm::preprocessing::JoltSharedPreprocessing;
-use jolt_prover::zkvm::program::ProgramPreprocessing;
-use jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
-use jolt_prover::zkvm::prover::JoltProverPreprocessing;
-use jolt_prover::zkvm::RV64IMACProver;
+use jolt_prover_legacy::host;
+use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+use jolt_prover_legacy::zkvm::program::ProgramPreprocessing;
+use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing;
+use jolt_prover_legacy::zkvm::RV64IMACProver;
 use std::fs;
 use std::io::Write;
 use std::time::Instant;

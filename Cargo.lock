@@ -2803,7 +2803,7 @@ dependencies = [
  "common",
  "env_logger",
  "eyre",
- "jolt-prover",
+ "jolt-prover-legacy",
  "jolt-sdk",
  "log",
  "rand 0.8.5",
@@ -2906,7 +2906,7 @@ dependencies = [
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-program",
- "jolt-prover",
+ "jolt-prover-legacy",
  "jolt-riscv",
  "jolt-transcript",
  "jolt-verifier",
@@ -3104,7 +3104,7 @@ name = "jolt-lookup-tables"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
- "jolt-prover",
+ "jolt-prover-legacy",
  "jolt-riscv",
  "rand 0.8.5",
  "serde",
@@ -3204,7 +3204,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-prover"
+name = "jolt-prover-legacy"
 version = "0.1.0"
 dependencies = [
  "allocative",
@@ -3307,7 +3307,7 @@ dependencies = [
  "jolt-field",
  "jolt-platform",
  "jolt-program",
- "jolt-prover",
+ "jolt-prover-legacy",
  "jolt-sdk-macros",
  "jolt-transcript",
  "jolt-verifier",
@@ -3377,7 +3377,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-program",
- "jolt-prover",
+ "jolt-prover-legacy",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
@@ -7098,7 +7098,7 @@ name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
  "common",
- "jolt-prover",
+ "jolt-prover-legacy",
  "paste",
  "tracer",
  "z3",
@@ -7316,7 +7316,7 @@ dependencies = [
  "build-fs-tree",
  "clap",
  "common",
- "jolt-prover",
+ "jolt-prover-legacy",
  "num-bigint",
  "proptest",
  "rand_core 0.6.4",

@@ -3,17 +3,17 @@ pub mod secp256k1_ecdsa;
 pub mod sha2_chain;
 
 use ark_bn254::Fr;
-use jolt_prover::curve::Bn254Curve;
-use jolt_prover::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_prover::transcripts::Blake2bTranscript;
-use jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_prover_legacy::curve::Bn254Curve;
+use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
+use jolt_prover_legacy::transcripts::Blake2bTranscript;
+use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 pub use jolt_verifier::VerifierError;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
 
 pub use fibonacci::Fibonacci;
-pub use jolt_prover::guest::program::Program as GuestProgram;
+pub use jolt_prover_legacy::guest::program::Program as GuestProgram;
 pub use secp256k1_ecdsa::Secp256k1EcdsaVerify;
 pub use sha2_chain::Sha2Chain;
 pub use tracer::JoltDevice;
@@ -28,14 +28,14 @@ pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
 
 pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
-pub type ProverPreprocessing = jolt_prover::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
+pub type ProverPreprocessing = jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
 pub type VerifierPreprocessing = jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 
 pub fn prover_preprocessing(
     program: &GuestProgram,
     max_trace_length: usize,
 ) -> ProverPreprocessing {
-    jolt_prover::guest::prover::preprocess(program, max_trace_length)
+    jolt_prover_legacy::guest::prover::preprocess(program, max_trace_length)
         .expect("prover preprocessing failed")
 }
 
@@ -49,7 +49,7 @@ pub fn prove(
     inputs: &[u8],
 ) -> (Proof, JoltDevice) {
     let mut output_bytes = vec![0u8; program.memory_config.max_output_size as usize];
-    let (proof, io_device, _debug) = jolt_prover::guest::prover::prove::<F, C, PCS, FS>(
+    let (proof, io_device, _debug) = jolt_prover_legacy::guest::prover::prove::<F, C, PCS, FS>(
         program,
         inputs,
         &[],

@@ -204,7 +204,7 @@ mod flags {
 ///   right_input = RightOperandIsRs2Value · Rs2Value     + RightOperandIsImm · Imm
 ///
 /// Source of truth for the constraint:
-/// `crates/jolt-prover/src/zkvm/spartan/instruction_input.rs::output_claim_constraint`.
+/// `crates/jolt-prover-legacy/src/zkvm/spartan/instruction_input.rs::output_claim_constraint`.
 ///
 /// A mismatch here means the trace witness polynomials `LeftInstructionInput` /
 /// `RightInstructionInput` disagree with what the constraint reconstructs from
@@ -226,7 +226,7 @@ mod r1cs_consistency {
         let mut failures: Vec<String> = Vec::new();
 
         for default_cycle in Cycle::iter() {
-            // Skip enum variants without LookupQuery/Flags impls in jolt-prover.
+            // Skip enum variants without LookupQuery/Flags impls in jolt-prover-legacy.
             // These are either the structural variants (NoOp, INLINE) or
             // architectural instructions that are always lowered to a virtual
             // sequence before appearing in a trace (DIV, LW, AMOSWAP.W, ...).

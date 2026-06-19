@@ -1,10 +1,10 @@
 use ark_bn254::Fr;
 use ark_ff::Zero;
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use jolt_prover::field::challenge::{Mont254BitChallenge, MontU128Challenge};
-use jolt_prover::field::JoltField;
-use jolt_prover::poly::dense_mlpoly::DensePolynomial;
-use jolt_prover::poly::multilinear_polynomial::BindingOrder;
+use jolt_prover_legacy::field::challenge::{Mont254BitChallenge, MontU128Challenge};
+use jolt_prover_legacy::field::JoltField;
+use jolt_prover_legacy::poly::dense_mlpoly::DensePolynomial;
+use jolt_prover_legacy::poly::multilinear_polynomial::BindingOrder;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

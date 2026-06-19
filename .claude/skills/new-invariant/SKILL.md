@@ -34,7 +34,7 @@ This skill handles all the boilerplate: creating the invariant struct + input ty
 2. Read an existing invariant for reference:
    - Simple: `jolt-eval/src/invariant/split_eq_bind.rs`
    - Complex (with setup, enrich_input): `jolt-eval/src/invariant/soundness.rs`
-3. If the invariant tests jolt-prover functionality, explore the relevant jolt-prover modules to understand the types and APIs involved.
+3. If the invariant tests jolt-prover-legacy functionality, explore the relevant jolt-prover-legacy modules to understand the types and APIs involved.
 
 ## Phase 3: Implement
 

@@ -9,7 +9,7 @@
 //! - **Source-compatible facade** ([`Transcript`], [`AppendToTranscript`],
 //!   [`Blake2bTranscript`], [`KeccakTranscript`], [`PoseidonTranscript`]) —
 //!   preserved for `jolt-sumcheck`, `jolt-openings`, and `jolt-crypto`. Will
-//!   be retired once `jolt-prover` migrates to the split-trait surface.
+//!   be retired once `jolt-prover-legacy` migrates to the split-trait surface.
 //!
 //! Three sponges feature-gated: `transcript-blake2b` (spongefish
 //! `Blake2b512`), `transcript-keccak` (spongefish `Keccak`),
@@ -50,8 +50,8 @@ pub use verifier::VerifierTranscript;
 pub type Blake2bTranscript<F = jolt_field::Fr> =
     SpongeTranscript<spongefish::instantiations::Blake2b512, F>;
 
-/// Blake2b-256 chained-digest transcript, byte-compatible with `jolt-prover`'s
-/// `Blake2bTranscript`. Required to verify proofs produced by `jolt-prover`
+/// Blake2b-256 chained-digest transcript, byte-compatible with `jolt-prover-legacy`'s
+/// `Blake2bTranscript`. Required to verify proofs produced by `jolt-prover-legacy`
 /// provers; new modular protocols should use [`Blake2bTranscript`] instead.
 #[cfg(feature = "transcript-blake2b")]
 pub type LegacyBlake2bTranscript<F = jolt_field::Fr> =

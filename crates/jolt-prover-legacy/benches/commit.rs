@@ -1,8 +1,8 @@
 use criterion::Criterion;
-use jolt_prover::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_prover::poly::commitment::dory::{DoryCommitmentScheme, DoryContext, DoryGlobals};
-use jolt_prover::poly::multilinear_polynomial::MultilinearPolynomial;
-use jolt_prover::utils::math::Math;
+use jolt_prover_legacy::poly::commitment::commitment_scheme::CommitmentScheme;
+use jolt_prover_legacy::poly::commitment::dory::{DoryCommitmentScheme, DoryContext, DoryGlobals};
+use jolt_prover_legacy::poly::multilinear_polynomial::MultilinearPolynomial;
+use jolt_prover_legacy::utils::math::Math;
 use rand::Rng;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};

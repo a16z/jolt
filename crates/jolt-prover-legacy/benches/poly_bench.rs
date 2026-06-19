@@ -1,7 +1,7 @@
 #![allow(clippy::uninlined_format_args)]
 use ark_bn254::Fr;
 use criterion::{criterion_group, criterion_main, Criterion};
-use jolt_prover::{
+use jolt_prover_legacy::{
     field::JoltField,
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation},
     utils::math::Math,

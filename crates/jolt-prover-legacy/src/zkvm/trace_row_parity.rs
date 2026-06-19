@@ -5,7 +5,7 @@
 //! derivation used by `R1CSCycleInputs::from_trace`. This exercises final
 //! `LD`/`SD` rows, expanded narrow loads/stores, and no-op padding on real data.
 //!
-//! Lives in `jolt-prover` only because the reference (`R1CSCycleInputs`) and the
+//! Lives in `jolt-prover-legacy` only because the reference (`R1CSCycleInputs`) and the
 //! host program loader still do; the row type and its conversion are in
 //! `jolt-riscv` / `tracer`.
 

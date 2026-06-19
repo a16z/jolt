@@ -1073,7 +1073,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-prover"
+name = "jolt-prover-legacy"
 version = "0.1.0"
 dependencies = [
  "allocative",
@@ -1125,7 +1125,7 @@ dependencies = [
  "common",
  "enumset",
  "eyre",
- "jolt-prover",
+ "jolt-prover-legacy",
  "jolt-eval-macros",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",

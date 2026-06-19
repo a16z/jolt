@@ -149,7 +149,7 @@ where
 
 #[expect(
     non_snake_case,
-    reason = "Matches current jolt-prover proof field name."
+    reason = "Matches current jolt-prover-legacy proof field name."
 )]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedInputs {

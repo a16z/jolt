@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use jolt_prover::{
+use jolt_prover_legacy::{
     field::JoltField,
     poly::opening_proof::{PolynomialId, SumcheckId},
     subprotocols::sumcheck_claim::{

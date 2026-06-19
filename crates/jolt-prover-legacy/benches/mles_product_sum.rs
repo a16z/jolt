@@ -1,7 +1,7 @@
 use ark_bn254::Fr;
 use ark_std::test_rng;
 use criterion::{criterion_group, criterion_main, Criterion};
-use jolt_prover::{
+use jolt_prover_legacy::{
     field::JoltField,
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial},

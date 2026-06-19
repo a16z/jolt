@@ -13,9 +13,9 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b"]
-prover-fixtures = ["jolt-prover/host"]
+prover-fixtures = ["jolt-prover-legacy/host"]
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
-zk = ["jolt-prover/zk"]
+zk = ["jolt-prover-legacy/zk"]
 transcript-blake2b = []
 transcript-keccak = []
 transcript-poseidon = []
@@ -41,7 +41,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
-jolt-prover = { workspace = true, features = ["minimal"] }
+jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }

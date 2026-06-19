@@ -1,4 +1,4 @@
-use jolt_sdk::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 use jolt_sdk::serialize_verifier_object;
 use tracing::info;
 

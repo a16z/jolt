@@ -17,15 +17,15 @@ edition = "2021"
 [features]
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
-zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
+zk = ["jolt-prover-legacy?/zk", "jolt-verifier?/zk"]
 field-inline = [
-  "jolt-prover?/field-inline",
+  "jolt-prover-legacy?/field-inline",
   "jolt-program?/field-inline",
   "tracer?/field-inline",
 ]
 
 host = [
-  "jolt-prover/default",
+  "jolt-prover-legacy/default",
   "dep:bincode",
   "jolt-platform/std",
   "dep:common",
@@ -60,13 +60,13 @@ guest-verifier = [
   "dep:jolt-field",
   "dep:jolt-transcript",
   "dep:jolt-verifier",
-  "jolt-prover/minimal",
+  "jolt-prover-legacy/minimal",
 ]
 
 malloc-shim = ["jolt-platform/malloc-shim"]
-transcript-poseidon = ["jolt-prover/transcript-poseidon"]
-transcript-keccak = ["jolt-prover/transcript-keccak"]
-transcript-blake2b = ["jolt-prover/transcript-blake2b"]
+transcript-poseidon = ["jolt-prover-legacy/transcript-poseidon"]
+transcript-keccak = ["jolt-prover-legacy/transcript-keccak"]
+transcript-blake2b = ["jolt-prover-legacy/transcript-blake2b"]
 
 # Jolt-SDK native features (optional capabilities)
 #
@@ -103,7 +103,7 @@ jolt-sdk-macros.workspace = true
 # Host-only dependencies
 bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
-jolt-prover = { workspace = true, default-features = false, optional = true }
+jolt-prover-legacy = { workspace = true, default-features = false, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
 jolt-field = { workspace = true, optional = true }

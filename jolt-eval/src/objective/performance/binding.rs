@@ -1,7 +1,7 @@
 use ark_bn254::Fr;
-use jolt_prover::field::JoltField;
-use jolt_prover::poly::dense_mlpoly::DensePolynomial;
-use jolt_prover::poly::multilinear_polynomial::BindingOrder;
+use jolt_prover_legacy::field::JoltField;
+use jolt_prover_legacy::poly::dense_mlpoly::DensePolynomial;
+use jolt_prover_legacy::poly::multilinear_polynomial::BindingOrder;
 
 use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
 

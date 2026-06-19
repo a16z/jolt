@@ -69,11 +69,11 @@ Cycle until all checks pass (up to 5 cycles):
 
 1. **Format**: `cargo fmt -q`
 2. **Lint** (both modes):
-   - `cargo clippy -p jolt-prover --features host --message-format=short -q --all-targets -- -D warnings`
-   - `cargo clippy -p jolt-prover --features host,zk --message-format=short -q --all-targets -- -D warnings`
+   - `cargo clippy -p jolt-prover-legacy --features host --message-format=short -q --all-targets -- -D warnings`
+   - `cargo clippy -p jolt-prover-legacy --features host,zk --message-format=short -q --all-targets -- -D warnings`
 3. **Test**: Run evaluation criteria from the spec, plus:
-   - `cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host`
-   - `cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk`
+   - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host`
+   - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk`
    - `cargo nextest run -p jolt-eval --cargo-quiet` — runs every invariant's seed-corpus + random-inputs tests; any named in the spec must pass.
 4. **Fix** any failures and repeat.
 

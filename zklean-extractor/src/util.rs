@@ -1,4 +1,4 @@
-use jolt_prover::field::JoltField;
+use jolt_prover_legacy::field::JoltField;
 #[cfg(test)]
 use std::collections::HashMap;
 

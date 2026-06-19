@@ -117,7 +117,7 @@ Z3_VERIFIER_BV_BITS=8 cargo test -p z3-verifier virtual_sequences -- --nocapture
 ### 1. Correctness Failures (Logic Bugs)
 **Symptom:** `test_..._correctness` fails.
 **Meaning:** The verifier found a concrete set of inputs where Jolt's output disagrees with the Spec.
-**Fix:** Analyze the provided counter-example. If the logic in `symbolic_exec` is correct, the virtual sequence in `jolt-prover` is likely buggy.
+**Fix:** Analyze the provided counter-example. If the logic in `symbolic_exec` is correct, the virtual sequence in `jolt-prover-legacy` is likely buggy.
 
 ### 2. Consistency Failures (Under-Constrained Advice)
 **Symptom:** `test_..._consistency` fails.
@@ -127,4 +127,4 @@ Z3_VERIFIER_BV_BITS=8 cargo test -p z3-verifier virtual_sequences -- --nocapture
 ### 3. R1CS Consistency Failures 
 **Symptom:** `test_...` in `cpu_constraints` fails.
 **Meaning:** The R1CS constraints allow multiple next states for the same input.
-**Fix:** Identify the unconstrained variable (e.g., `rd_write_value`). Add a constraint in `crates/jolt-prover/src/zkvm/r1cs/constraints.rs` to force this value to a deterministic state.
+**Fix:** Identify the unconstrained variable (e.g., `rd_write_value`). Add a constraint in `crates/jolt-prover-legacy/src/zkvm/r1cs/constraints.rs` to force this value to a deterministic state.

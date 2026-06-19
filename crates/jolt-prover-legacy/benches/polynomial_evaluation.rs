@@ -8,9 +8,11 @@
 use ark_ff::Zero;
 use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_prover::{field::tracked_ark::TrackedFr as Fr, poly::dense_mlpoly::DensePolynomial};
-use jolt_prover::{field::JoltField, poly::multilinear_polynomial::PolynomialEvaluation};
-use jolt_prover::{poly::eq_poly::EqPolynomial, utils::math::Math};
+use jolt_prover_legacy::{
+    field::tracked_ark::TrackedFr as Fr, poly::dense_mlpoly::DensePolynomial,
+};
+use jolt_prover_legacy::{field::JoltField, poly::multilinear_polynomial::PolynomialEvaluation};
+use jolt_prover_legacy::{poly::eq_poly::EqPolynomial, utils::math::Math};
 use rayon::prelude::*;
 use std::hint::black_box;
 

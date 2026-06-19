@@ -29,7 +29,7 @@ rules:
         - crates/jolt-verifier/src/**/*.rs
       exclude:
         - crates/jolt-verifier/src/compat/**
-    pattern-regex: '\b(jolt-prover-compat|Legacy[A-Za-z0-9_]*|legacy::|jolt_prover::)\b'
+    pattern-regex: '\b(jolt-prover-compat|Legacy[A-Za-z0-9_]*|legacy::|jolt_prover_legacy::)\b'
 
   - id: jolt-verifier-stage-inputs-no-opening-id-routers
     languages: [rust]

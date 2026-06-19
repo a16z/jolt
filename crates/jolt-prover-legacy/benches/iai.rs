@@ -2,7 +2,7 @@ use ark_bn254::Fr;
 use ark_std::test_rng;
 use ark_std::UniformRand;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
-use jolt_prover::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
+use jolt_prover_legacy::{field::JoltField, poly::dense_mlpoly::DensePolynomial};
 use std::hint::black_box;
 
 fn bound_poly_setup<F: JoltField>(size: usize) -> (DensePolynomial<F>, F::Challenge) {
@@ -37,8 +37,8 @@ fn bench_polynomial_evaluate<F: JoltField>(input: (DensePolynomial<F>, Vec<F::Ch
 }
 
 library_benchmark_group!(
-    name = jolt_prover_ops;
+    name = jolt_prover_legacy_ops;
     benchmarks = bench_polynomial_binding, bench_polynomial_evaluate
 );
 
-main!(library_benchmark_groups = jolt_prover_ops);
+main!(library_benchmark_groups = jolt_prover_legacy_ops);

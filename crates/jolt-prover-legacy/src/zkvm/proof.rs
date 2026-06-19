@@ -617,7 +617,7 @@ where
 }
 
 fn prover_dory_commitment_into_verifier(commitment: &ProverDoryCommitment) -> Bn254GT {
-    // SAFETY: `jolt-prover` Dory and modular `jolt-dory` use thin wrappers
+    // SAFETY: `jolt-prover-legacy` Dory and modular `jolt-dory` use thin wrappers
     // over the same arkworks `Fq12` target-group element.
     unsafe { std::mem::transmute_copy(commitment) }
 }

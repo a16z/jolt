@@ -8,7 +8,7 @@ use crate::objective::{
 
 pub const LLOC: OptimizationObjective =
     OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(LlocObjective {
-        target_dir: "crates/jolt-prover/src",
+        target_dir: "crates/jolt-prover-legacy/src",
     }));
 
 /// Total logical lines of code (LLOC) across all Rust files under
@@ -87,9 +87,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lloc_on_jolt_prover() {
+    fn lloc_on_jolt_prover_legacy() {
         let obj = LlocObjective {
-            target_dir: "crates/jolt-prover/src",
+            target_dir: "crates/jolt-prover-legacy/src",
         };
         let val = obj.collect_measurement().unwrap();
         assert!(val > 1000.0, "LLOC should be > 1000, got {val}");

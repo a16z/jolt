@@ -9,8 +9,8 @@ use std::{
 
 use ark_bn254::Fr;
 use eyre::Result;
-use jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
-use jolt_prover::{
+use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_prover_legacy::{
     curve::Bn254Curve,
     host::Program,
     poly::commitment::dory::DoryCommitmentScheme,

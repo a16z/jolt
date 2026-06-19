@@ -66,13 +66,13 @@ fi
 
 # Build once
 if [ "$MONITOR" = true ]; then
-    echo "Building jolt-prover (release with monitor feature)..."
-    cargo build --release -p jolt-prover --features monitor
+    echo "Building jolt-prover-legacy (release with monitor feature)..."
+    cargo build --release -p jolt-prover-legacy --features monitor
 else
-    echo "Building jolt-prover (release)..."
-    cargo build --release -p jolt-prover
+    echo "Building jolt-prover-legacy (release)..."
+    cargo build --release -p jolt-prover-legacy
 fi
-JOLT_BIN="./target/release/jolt-prover"
+JOLT_BIN="./target/release/jolt-prover-legacy"
 
 # Track failures
 declare -a FAILED_COMMANDS=()

@@ -1,7 +1,7 @@
 #![cfg(not(feature = "field-inline"))]
 
 use jolt_lookup_tables::tables::LookupTableKind;
-use jolt_prover::zkvm::lookup_table::LookupTables as ProverLookupTables;
+use jolt_prover_legacy::zkvm::lookup_table::LookupTables as ProverLookupTables;
 use strum::EnumCount;
 
 const XLEN: usize = 64;

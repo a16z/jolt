@@ -14,7 +14,7 @@ workspace = true
 [features]
 prover-abi-tests = []
 field-inline = [
-  "jolt-prover/field-inline",
+  "jolt-prover-legacy/field-inline",
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
@@ -26,7 +26,7 @@ serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
-jolt-prover = { workspace = true, default-features = false, features = [
+jolt-prover-legacy = { workspace = true, default-features = false, features = [
   "minimal",
 ] }
 jolt-riscv = { workspace = true, features = ["serialization"] }

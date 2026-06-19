@@ -22,7 +22,7 @@ use jolt_field::Fr;
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
-use jolt_prover::{
+use jolt_prover_legacy::{
     curve::Bn254Curve,
     host,
     poly::commitment::{
@@ -38,7 +38,7 @@ use jolt_prover::{
 };
 
 #[cfg(not(feature = "zk"))]
-use jolt_prover::{
+use jolt_prover_legacy::{
     poly::{
         commitment::dory::{DoryContext, DoryGlobals},
         multilinear_polynomial::MultilinearPolynomial,
@@ -130,7 +130,7 @@ fn lock_exclusive(file: &fs::File) {
     }
 }
 
-type ProverField = jolt_prover::ark_bn254::Fr;
+type ProverField = jolt_prover_legacy::ark_bn254::Fr;
 type ProverCommitment = <DoryCommitmentScheme as ProverCommitmentScheme>::Commitment;
 type ProverOpeningHint = <DoryCommitmentScheme as ProverCommitmentScheme>::OpeningProofHint;
 type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>;

@@ -24,12 +24,12 @@ Introduce a committed program mode that commits bytecode chunks and the initial 
 
 The new proving-system surface is:
 
-- `ProgramMode::{Full, Committed}` in `jolt-prover/src/zkvm/config.rs`.
-- `ProgramPreprocessing::{Full, Committed}` in `jolt-prover/src/zkvm/program.rs`.
-- `CommittedPolynomial::BytecodeChunk(i)` and `CommittedPolynomial::ProgramImageInit` in `jolt-prover/src/zkvm/witness.rs`.
+- `ProgramMode::{Full, Committed}` in `jolt-prover-legacy/src/zkvm/config.rs`.
+- `ProgramPreprocessing::{Full, Committed}` in `jolt-prover-legacy/src/zkvm/program.rs`.
+- `CommittedPolynomial::BytecodeChunk(i)` and `CommittedPolynomial::ProgramImageInit` in `jolt-prover-legacy/src/zkvm/witness.rs`.
 - `VirtualPolynomial::BytecodeValStage(i)`, `VirtualPolynomial::BytecodeClaimReductionIntermediate`, and `VirtualPolynomial::ProgramImageInitContributionRw`.
 - `SumcheckId::{BytecodeReadRafAddressPhase, BooleanityAddressPhase, BytecodeClaimReductionCyclePhase, BytecodeClaimReduction, ProgramImageClaimReductionCyclePhase, ProgramImageClaimReduction}`.
-- Shared precommitted scheduling through `PrecommittedClaimReduction` in `jolt-prover/src/zkvm/claim_reductions/precommitted.rs`.
+- Shared precommitted scheduling through `PrecommittedClaimReduction` in `jolt-prover-legacy/src/zkvm/claim_reductions/precommitted.rs`.
 
 ### Invariants
 
@@ -89,18 +89,18 @@ New `jolt-eval` invariants for committed-program equivalence and Stage 8 opening
 Run standard and ZK e2e coverage:
 
 ```bash
-cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-prover muldiv --cargo-quiet --features host,zk
-cargo nextest run -p jolt-prover muldiv_e2e_dory_committed_program_commitments --cargo-quiet --features host
-cargo nextest run -p jolt-prover muldiv_e2e_dory_committed_program_commitments --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
+cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover-legacy muldiv_e2e_dory_committed_program_commitments --cargo-quiet --features host
+cargo nextest run -p jolt-prover-legacy muldiv_e2e_dory_committed_program_commitments --cargo-quiet --features host,zk
 ```
 
 Run advice/precommitted regression coverage because advice shares the same precommitted scheduling path:
 
 ```bash
-cargo nextest run -p jolt-prover advice_e2e_dory --cargo-quiet --features host
-RUST_MIN_STACK=33554432 cargo nextest run -p jolt-prover advice_e2e_dory --cargo-quiet --features host,zk
-cargo nextest run -p jolt-prover final_advice_output_scale --cargo-quiet --features host
+cargo nextest run -p jolt-prover-legacy advice_e2e_dory --cargo-quiet --features host
+RUST_MIN_STACK=33554432 cargo nextest run -p jolt-prover-legacy advice_e2e_dory --cargo-quiet --features host,zk
+cargo nextest run -p jolt-prover-legacy final_advice_output_scale --cargo-quiet --features host
 ```
 
 Run strict linting:
@@ -383,17 +383,17 @@ The Jolt book should document:
 This PR already expands `book/src/how/architecture/opening-proof.md` with a precommitted geometry section.
 Follow-up documentation should add a user-facing example for `--committed-bytecode <chunk_count>` and guidance for choosing the chunk count.
 
-The module comments in `jolt-prover/src/zkvm/transpilable_verifier.rs` should also be updated to describe Stage 6a and Stage 6b instead of the old monolithic Stage 6.
+The module comments in `jolt-prover-legacy/src/zkvm/transpilable_verifier.rs` should also be updated to describe Stage 6a and Stage 6b instead of the old monolithic Stage 6.
 
 ## Execution
 
 Implementation is organized as:
 
-1. Add committed program metadata and preprocessing in `jolt-prover/src/zkvm/program.rs`.
-2. Add committed bytecode lane layout and chunk coefficient construction in `jolt-prover/src/zkvm/bytecode/chunks.rs`.
+1. Add committed program metadata and preprocessing in `jolt-prover-legacy/src/zkvm/program.rs`.
+2. Add committed bytecode lane layout and chunk coefficient construction in `jolt-prover-legacy/src/zkvm/bytecode/chunks.rs`.
 3. Add `BytecodeChunk(i)` and `ProgramImageInit` committed polynomial variants.
 4. Add bytecode and program-image virtual polynomial IDs for staged claims.
-5. Add shared precommitted scheduling in `jolt-prover/src/zkvm/claim_reductions/precommitted.rs`.
+5. Add shared precommitted scheduling in `jolt-prover-legacy/src/zkvm/claim_reductions/precommitted.rs`.
 6. Add `BytecodeClaimReduction` over staged bytecode val claims and committed bytecode chunks.
 7. Add `ProgramImageClaimReduction` over staged program-image RAM contribution and committed program-image opening.
 8. Wire committed-mode reductions into Stage 6b and Stage 7.
@@ -407,8 +407,8 @@ Implementation is organized as:
 - Related program preprocessing spec: `specs/bytecode-expansion-crate.md`
 - Spec template: `specs/TEMPLATE.md`
 - Opening proof documentation: `book/src/how/architecture/opening-proof.md`
-- Core committed program code: `jolt-prover/src/zkvm/program.rs`
-- Committed bytecode code: `jolt-prover/src/zkvm/bytecode/chunks.rs`
-- Precommitted scheduling: `jolt-prover/src/zkvm/claim_reductions/precommitted.rs`
-- Bytecode claim reduction: `jolt-prover/src/zkvm/claim_reductions/bytecode.rs`
-- Program-image claim reduction: `jolt-prover/src/zkvm/claim_reductions/program_image.rs`
+- Core committed program code: `jolt-prover-legacy/src/zkvm/program.rs`
+- Committed bytecode code: `jolt-prover-legacy/src/zkvm/bytecode/chunks.rs`
+- Precommitted scheduling: `jolt-prover-legacy/src/zkvm/claim_reductions/precommitted.rs`
+- Bytecode claim reduction: `jolt-prover-legacy/src/zkvm/claim_reductions/bytecode.rs`
+- Program-image claim reduction: `jolt-prover-legacy/src/zkvm/claim_reductions/program_image.rs`
