@@ -1402,31 +1402,31 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 rd_wa: zero,
             },
         },
-        stage6: stage6::inputs::Stage6Claims {
+        stage6: stage6::inputs::Stage6OutputClaims {
             address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
                 bytecode_val_stages: Some([zero; 5]),
             },
-            bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
+            bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![zero],
             },
-            booleanity: stage6::inputs::BooleanityOutputOpeningClaims {
+            booleanity: stage6::inputs::BooleanityOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
+            ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
-            ram_ra_virtualization: stage6::inputs::RamRaVirtualizationOutputOpeningClaims {
+            ram_ra_virtualization: stage6::inputs::RamRaVirtualizationOutputClaims {
                 ram_ra: vec![zero],
             },
             instruction_ra_virtualization:
-                stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
+                stage6::inputs::InstructionRaVirtualizationOutputClaims {
                     committed_instruction_ra: vec![zero],
                 },
-            inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: stage6::inputs::IncClaimReductionOutputClaims {
                 ram_inc: zero,
                 rd_inc: zero,
             },

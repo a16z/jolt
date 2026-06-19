@@ -8,7 +8,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
-use jolt_verifier::stages::stage6::inputs::{AdviceCyclePhaseOutputClaim, Stage6Claims};
+use jolt_verifier::stages::stage6::inputs::{AdviceCyclePhaseOutputClaim, Stage6OutputClaims};
 use jolt_verifier::stages::stage6::outputs::AdviceCyclePhasePublicOutput;
 use jolt_verifier::stages::stage6::{
     stage6_advice_cycle_phase_expected_output, stage6_advice_cycle_phase_reference,
@@ -385,7 +385,7 @@ where
     pub(super) fn expected_outputs(
         &self,
         points: &Stage6BatchPoints<F>,
-        openings: &Stage6Claims<F>,
+        openings: &Stage6OutputClaims<F>,
     ) -> Result<Stage6BatchExpectedOutputClaims<F>, ProverError> {
         Ok(Stage6BatchExpectedOutputClaims {
             bytecode_read_raf: self.expected_bytecode_output(

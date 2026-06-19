@@ -5,10 +5,10 @@ use jolt_backends::{
 };
 use jolt_field::Field;
 use jolt_verifier::stages::stage6::inputs::{
-    AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims, BytecodeReadRafOutputOpeningClaims,
-    IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
-    RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
-    Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6Claims,
+    AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeReadRafOutputClaims,
+    IncClaimReductionOutputClaims, InstructionRaVirtualizationOutputClaims,
+    RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims, Stage6AddressPhaseClaims,
+    Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
 };
 
 #[expect(
@@ -24,26 +24,26 @@ pub(super) fn output_claims_from_backend<F: Field>(
     inc_claim_reduction: SumcheckIncClaimReductionOutput<F>,
     trusted_advice: Option<AdviceCyclePhaseOutputClaim<F>>,
     untrusted_advice: Option<AdviceCyclePhaseOutputClaim<F>>,
-) -> Stage6Claims<F> {
-    Stage6Claims {
-        bytecode_read_raf: BytecodeReadRafOutputOpeningClaims {
+) -> Stage6OutputClaims<F> {
+    Stage6OutputClaims {
+        bytecode_read_raf: BytecodeReadRafOutputClaims {
             bytecode_ra: bytecode_read_raf.bytecode_ra,
         },
-        booleanity: BooleanityOutputOpeningClaims {
+        booleanity: BooleanityOutputClaims {
             instruction_ra: booleanity.instruction_ra,
             bytecode_ra: booleanity.bytecode_ra,
             ram_ra: booleanity.ram_ra,
         },
-        ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
             ram_hamming_weight: ram_hamming_booleanity.ram_hamming_weight,
         },
-        ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims {
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims {
             ram_ra: ram_ra_virtualization.ram_ra,
         },
-        instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
             committed_instruction_ra: instruction_ra_virtualization.instruction_ra,
         },
-        inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+        inc_claim_reduction: IncClaimReductionOutputClaims {
             ram_inc: inc_claim_reduction.ram_inc,
             rd_inc: inc_claim_reduction.rd_inc,
         },

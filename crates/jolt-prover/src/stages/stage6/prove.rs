@@ -53,7 +53,7 @@ use jolt_witness::{protocols::jolt_vm::JoltVmNamespace, WitnessProvider};
 /// The two phases share the bytecode/booleanity backend states, which transition
 /// from their address phase to their cycle phase internally as challenges are
 /// bound. This produces `stage6a_sumcheck_proof` + `stage6b_sumcheck_proof`,
-/// `Stage6Claims`, and `Stage6ClearOutput` for Stage 7.
+/// `Stage6OutputClaims`, and `Stage6ClearOutput` for Stage 7.
 pub fn prove<F, W, B, T, C>(
     input: Stage6ProverInput<'_, F, W>,
     backend: &mut B,

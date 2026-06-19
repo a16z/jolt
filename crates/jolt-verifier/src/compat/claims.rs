@@ -26,12 +26,11 @@ use crate::{
             RegistersValEvaluationOutputClaims, Stage5OutputClaims,
         },
         stage6::inputs::{
-            AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims,
-            BytecodeCyclePhaseOutputClaims, BytecodeReadRafOutputOpeningClaims,
-            IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
-            ProgramImageCyclePhaseOutputClaim, RamHammingBooleanityOutputOpeningClaims,
-            RamRaVirtualizationOutputOpeningClaims, Stage6AddressPhaseClaims,
-            Stage6AdviceCyclePhaseClaims, Stage6Claims,
+            AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeCyclePhaseOutputClaims,
+            BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
+            InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
+            RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
+            Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
         },
         stage7::inputs::{
             AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
@@ -314,7 +313,7 @@ fn stage5_claims_from_native<F: Field>(
 
 fn stage6_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage6Claims<F>, VerifierError> {
+) -> Result<Stage6OutputClaims<F>, VerifierError> {
     let mut bytecode_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -412,26 +411,26 @@ fn stage6_claims_from_native<F: Field>(
     let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
     let booleanity_address = booleanity::booleanity_address_phase_opening();
 
-    Ok(Stage6Claims {
+    Ok(Stage6OutputClaims {
         address_phase: Stage6AddressPhaseClaims {
             bytecode_read_raf: claims.require(bytecode_read_raf_address)?,
             booleanity: claims.require(booleanity_address)?,
             bytecode_val_stages: bytecode_val_stage_claims_from_native(claims)?,
         },
-        bytecode_read_raf: BytecodeReadRafOutputOpeningClaims { bytecode_ra },
-        booleanity: BooleanityOutputOpeningClaims {
+        bytecode_read_raf: BytecodeReadRafOutputClaims { bytecode_ra },
+        booleanity: BooleanityOutputClaims {
             instruction_ra: booleanity_instruction_ra,
             bytecode_ra: booleanity_bytecode_ra,
             ram_ra: booleanity_ram_ra,
         },
-        ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
             ram_hamming_weight: claims.require(ram_hamming_weight)?,
         },
-        ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims { ram_ra },
-        instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
             committed_instruction_ra,
         },
-        inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+        inc_claim_reduction: IncClaimReductionOutputClaims {
             ram_inc: claims.require(ram_inc)?,
             rd_inc: claims.require(rd_inc)?,
         },
@@ -721,28 +720,28 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_wa: zero,
             },
         },
-        stage6: Stage6Claims {
+        stage6: Stage6OutputClaims {
             address_phase: Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
                 bytecode_val_stages: None,
             },
-            bytecode_read_raf: BytecodeReadRafOutputOpeningClaims {
+            bytecode_read_raf: BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![zero],
             },
-            booleanity: BooleanityOutputOpeningClaims {
+            booleanity: BooleanityOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
-            ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims { ram_ra: vec![zero] },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
+            ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra: vec![zero] },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
                 committed_instruction_ra: vec![zero],
             },
-            inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: IncClaimReductionOutputClaims {
                 ram_inc: zero,
                 rd_inc: zero,
             },
@@ -1196,7 +1195,7 @@ fn set_optional_stage4_output<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn set_optional_stage6_output<F: Field>(
-    claims: &mut Stage6Claims<F>,
+    claims: &mut Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1427,7 +1426,7 @@ fn claim_mut_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage6_outputs<F: Field>(
-    claims: &Stage6Claims<F>,
+    claims: &Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening_claim) in claims.bytecode_read_raf.bytecode_ra.iter().enumerate() {
@@ -1523,7 +1522,7 @@ fn claim_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage6_outputs<F: Field>(
-    claims: &mut Stage6Claims<F>,
+    claims: &mut Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening_claim) in claims.bytecode_read_raf.bytecode_ra.iter_mut().enumerate() {

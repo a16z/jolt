@@ -14,7 +14,7 @@ use jolt_sumcheck::SumcheckProof;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage6::outputs::Stage6PublicOutput;
 use jolt_verifier::stages::stage6::{
-    inputs::Stage6Claims, outputs::Stage6ClearOutput, Stage6BatchInputClaims,
+    inputs::Stage6OutputClaims, outputs::Stage6ClearOutput, Stage6BatchInputClaims,
     Stage6TranscriptChallenges,
 };
 use jolt_verifier::stages::{
@@ -155,7 +155,7 @@ impl<F: Field> Stage6RegularBatchPrefixOutput<F> {
 pub struct Stage6ProofComponent<F: Field, Proof> {
     pub stage6a_sumcheck_proof: Proof,
     pub stage6b_sumcheck_proof: Proof,
-    pub claims: Stage6Claims<F>,
+    pub claims: Stage6OutputClaims<F>,
     pub verifier_output: Stage6ClearOutput<F>,
 }
 

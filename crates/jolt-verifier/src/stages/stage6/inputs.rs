@@ -65,14 +65,14 @@ pub fn deps<'a, F: Field, C>(
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct Stage6Claims<F: Field> {
+pub struct Stage6OutputClaims<F: Field> {
     pub address_phase: Stage6AddressPhaseClaims<F>,
-    pub bytecode_read_raf: BytecodeReadRafOutputOpeningClaims<F>,
-    pub booleanity: BooleanityOutputOpeningClaims<F>,
-    pub ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims<F>,
-    pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
-    pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
-    pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
+    pub bytecode_read_raf: BytecodeReadRafOutputClaims<F>,
+    pub booleanity: BooleanityOutputClaims<F>,
+    pub ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
+    pub ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
+    pub instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
+    pub inc_claim_reduction: IncClaimReductionOutputClaims<F>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
     /// Committed program mode only.
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
@@ -92,13 +92,13 @@ pub struct Stage6AddressPhaseClaims<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct BytecodeReadRafOutputOpeningClaims<F: Field> {
+pub struct BytecodeReadRafOutputClaims<F: Field> {
     pub bytecode_ra: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct BooleanityOutputOpeningClaims<F: Field> {
+pub struct BooleanityOutputClaims<F: Field> {
     pub instruction_ra: Vec<F>,
     pub bytecode_ra: Vec<F>,
     pub ram_ra: Vec<F>,
@@ -106,25 +106,25 @@ pub struct BooleanityOutputOpeningClaims<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct RamHammingBooleanityOutputOpeningClaims<F: Field> {
+pub struct RamHammingBooleanityOutputClaims<F: Field> {
     pub ram_hamming_weight: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct RamRaVirtualizationOutputOpeningClaims<F: Field> {
+pub struct RamRaVirtualizationOutputClaims<F: Field> {
     pub ram_ra: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct InstructionRaVirtualizationOutputOpeningClaims<F: Field> {
+pub struct InstructionRaVirtualizationOutputClaims<F: Field> {
     pub committed_instruction_ra: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct IncClaimReductionOutputOpeningClaims<F: Field> {
+pub struct IncClaimReductionOutputClaims<F: Field> {
     pub ram_inc: F,
     pub rd_inc: F,
 }

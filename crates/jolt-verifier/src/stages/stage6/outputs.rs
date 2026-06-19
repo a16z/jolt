@@ -7,7 +7,7 @@ use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::inputs::Stage6Claims;
+use super::inputs::Stage6OutputClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6PublicOutput<F: Field> {
@@ -34,7 +34,7 @@ pub struct Stage6PublicOutput<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6ClearOutput<F: Field> {
     pub public: Stage6PublicOutput<F>,
-    pub output_claims: Stage6Claims<F>,
+    pub output_claims: Stage6OutputClaims<F>,
     pub batch: VerifiedStage6Batch<F>,
 }
 

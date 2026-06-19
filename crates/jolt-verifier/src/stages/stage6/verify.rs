@@ -42,7 +42,7 @@ use num_traits::{One, Zero};
 use super::{
     inputs::{
         AdviceCyclePhaseOutputClaim, BytecodeCyclePhaseOutputClaims, Deps,
-        ProgramImageCyclePhaseOutputClaim, Stage6Claims,
+        ProgramImageCyclePhaseOutputClaim, Stage6OutputClaims,
     },
     outputs::{
         AdviceCyclePhasePublicOutput, BooleanityPublicOutput, BytecodeReadRafPublicOutput,
@@ -2414,7 +2414,7 @@ pub fn stage6_public_output<F: Field>(
 
 pub struct Stage6ClearOutputRequest<'a, F: Field> {
     pub transcript_challenges: &'a Stage6TranscriptChallenges<F>,
-    pub output_claims: Stage6Claims<F>,
+    pub output_claims: Stage6OutputClaims<F>,
     pub input_claims: &'a Stage6BatchInputClaims<F>,
     pub expected_outputs: &'a Stage6BatchExpectedOutputClaims<F>,
     pub batching_coefficients: &'a [F],
@@ -3165,7 +3165,7 @@ pub fn stage6_advice_cycle_phase_verified<F: Field>(
 
 pub fn append_stage6_opening_claims<F, T>(
     transcript: &mut T,
-    claims: &Stage6Claims<F>,
+    claims: &Stage6OutputClaims<F>,
     bytecode_ra_opening_points: &[Vec<F>],
     booleanity_opening_point: &[F],
 ) where
@@ -3180,7 +3180,7 @@ pub fn append_stage6_opening_claims<F, T>(
 }
 
 pub fn stage6_output_claim_values<F: Field>(
-    claims: &Stage6Claims<F>,
+    claims: &Stage6OutputClaims<F>,
     bytecode_ra_opening_points: &[Vec<F>],
     booleanity_opening_point: &[F],
 ) -> Vec<F> {
@@ -3335,7 +3335,7 @@ where
 pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    claims: &Stage6Claims<PCS::Field>,
+    claims: &Stage6OutputClaims<PCS::Field>,
     bytecode_address_claims: &JoltRelationClaims<PCS::Field>,
     booleanity_address_claims: &JoltRelationClaims<PCS::Field>,
     bytecode_read_raf_input: PCS::Field,
@@ -3434,7 +3434,7 @@ where
 
 pub(super) fn append_address_phase_opening_claims<F, T>(
     transcript: &mut T,
-    claims: &Stage6Claims<F>,
+    claims: &Stage6OutputClaims<F>,
 ) where
     F: Field,
     T: Transcript<Challenge = F>,
@@ -3824,7 +3824,7 @@ pub(super) fn verify_program_image_cycle_phase<F: Field>(
 
 pub(super) fn append_opening_claims<F, T>(
     transcript: &mut T,
-    claims: &Stage6Claims<F>,
+    claims: &Stage6OutputClaims<F>,
     bytecode_read_raf_points: &[Vec<F>],
     booleanity_point: &[F],
 ) where
