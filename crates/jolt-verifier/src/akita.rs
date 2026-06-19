@@ -148,6 +148,10 @@ impl AkitaPackedWitnessArtifacts {
 pub fn build_akita_packed_jolt_witness(
     input: AkitaPackedJoltWitnessInput<'_>,
 ) -> Result<SparsePackedWitness<AkitaField>, VerifierError> {
+    validate_akita_jolt_packed_witness_layout(&input.layout)?;
+    let protocol = akita_lattice_protocol_config_for_layout(&input.layout);
+    validate_akita_packed_witness_layout_config(&protocol, &input.layout)?;
+
     if input.instruction_lookup_indices.len() != input.trace_rows.len() {
         return Err(akita_witness_error(format!(
             "instruction lookup index count {} does not match trace row count {}",
@@ -190,6 +194,40 @@ pub fn commit_akita_packed_jolt_witness(
     let witness = build_akita_packed_jolt_witness(input)?;
     let artifacts = commit_akita_packed_witness(setup, &witness)?;
     Ok(AkitaCommittedPackedJoltWitness { artifacts, witness })
+}
+
+fn validate_akita_jolt_packed_witness_layout(
+    layout: &PackedWitnessLayout,
+) -> Result<(), VerifierError> {
+    for family in &layout.families {
+        if jolt_packed_witness_family_is_precommitted(&family.id) {
+            return Err(VerifierError::InvalidProtocolConfig {
+                reason: format!(
+                    "precommitted family {:?} cannot be included in the Akita packed witness layout",
+                    family.id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn jolt_packed_witness_family_is_precommitted(family: &PackedFamilyId) -> bool {
+    matches!(
+        family,
+        PackedFamilyId::AdviceBytes {
+            kind: PackedAdviceKind::Trusted,
+            ..
+        } | PackedFamilyId::BytecodeChunk { .. }
+            | PackedFamilyId::BytecodeRegisterSelector { .. }
+            | PackedFamilyId::BytecodeCircuitFlag { .. }
+            | PackedFamilyId::BytecodeInstructionFlag { .. }
+            | PackedFamilyId::BytecodeLookupSelector { .. }
+            | PackedFamilyId::BytecodeRafFlag { .. }
+            | PackedFamilyId::BytecodeUnexpandedPcBytes { .. }
+            | PackedFamilyId::BytecodeImmBytes { .. }
+            | PackedFamilyId::ProgramImageInit
+    )
 }
 
 pub fn derive_akita_fused_increment_stage6_claims<S>(
@@ -2843,6 +2881,73 @@ mod tests {
                 .expect("padded untrusted advice byte should exist"),
             AkitaField::one()
         );
+    }
+
+    #[test]
+    fn build_jolt_packed_witness_rejects_precommitted_layout_families() {
+        let forbidden_specs = [
+            PackedFamilySpec::direct(
+                PackedFamilyId::AdviceBytes {
+                    kind: PackedAdviceKind::Trusted,
+                    index: 0,
+                },
+                PackedFactDomain::AdviceBytes {
+                    kind: PackedAdviceKind::Trusted,
+                    log_bytes: 0,
+                },
+                1,
+                PackedAlphabet::Byte,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeChunk { index: 0 },
+                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+                1,
+                PackedAlphabet::Byte,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeRegisterSelector {
+                    chunk: 0,
+                    selector: 2,
+                },
+                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+                1,
+                PackedAlphabet::Fixed {
+                    size: 1 << REGISTER_ADDRESS_BITS,
+                },
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::ProgramImageInit,
+                PackedFactDomain::ProgramImageWords { log_words: 0 },
+                8,
+                PackedAlphabet::Byte,
+            ),
+        ];
+
+        for spec in forbidden_specs {
+            let layout =
+                PackedWitnessLayout::new([spec]).expect("forbidden layout should still parse");
+
+            let error = build_akita_packed_jolt_witness(AkitaPackedJoltWitnessInput {
+                layout,
+                trace_rows: &[],
+                log_k_chunk: 8,
+                instruction_lookup_indices: &[],
+                bytecode_rows: &[],
+                program_image_words: &[],
+                trusted_advice: None,
+                untrusted_advice: None,
+            })
+            .expect_err("precommitted packed-witness layout should reject");
+
+            assert!(
+                matches!(
+                    error,
+                    VerifierError::InvalidProtocolConfig { ref reason }
+                        if reason.contains("precommitted family")
+                ),
+                "unexpected error: {error:?}"
+            );
+        }
     }
 
     #[test]
