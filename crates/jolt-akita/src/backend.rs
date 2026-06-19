@@ -904,25 +904,26 @@ mod tests {
     }
 
     #[test]
-    fn direct_commit_group_uses_statement_bound_layout_digest() {
+    fn direct_opening_binds_commitment_layout_digest_not_wrapper_digest() {
         let setup_params = AkitaSetupParams::new(1, 1, [7; 32]);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params);
         let polynomial = Polynomial::new(vec![AkitaField::from_u64(2), AkitaField::from_u64(5)]);
-        let layout_digest = [9; 32];
+        let commitment_digest = [9; 32];
+        let wrapper_digest = [11; 32];
         let (commitment, hint) = AkitaScheme::commit_group(
             &prover_setup,
-            layout_digest,
+            commitment_digest,
             std::slice::from_ref(&polynomial),
         )
         .expect("direct commitment may use its own layout digest");
-        assert_eq!(commitment.layout_digest, layout_digest);
+        assert_eq!(commitment.layout_digest, commitment_digest);
 
         let point = vec![AkitaField::from_u64(3)];
         let claim = polynomial.evaluate(&point);
         let statement = BatchOpeningStatement {
             logical_point: point.clone(),
             pcs_point: point,
-            layout_digest,
+            layout_digest: wrapper_digest,
             claims: vec![BatchOpeningClaim {
                 id: (),
                 relation: (),
@@ -932,6 +933,8 @@ mod tests {
                 scale: AkitaField::one(),
             }],
         };
+        assert_ne!(statement.layout_digest, commitment.layout_digest);
+
         let mut prover_transcript = RecordingTranscript::new(b"akita-direct-layout");
         let proof = AkitaScheme::prove_batch(
             &prover_setup,
@@ -941,15 +944,35 @@ mod tests {
             vec![hint],
         )
         .expect("direct proof should prove");
+        assert!(contains_subslice(
+            &prover_transcript.bytes,
+            &commitment_digest
+        ));
 
+        let mut changed_wrapper_statement = statement.clone();
+        changed_wrapper_statement.layout_digest = [13; 32];
         let mut verifier_transcript = RecordingTranscript::new(b"akita-direct-layout");
         let _ = AkitaScheme::verify_batch(
             &verifier_setup,
             &mut verifier_transcript,
-            &statement,
+            &changed_wrapper_statement,
             &proof,
         )
         .expect("direct proof should verify");
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+        let mut changed_commitment_statement = statement;
+        changed_commitment_statement.claims[0]
+            .commitment
+            .layout_digest = [15; 32];
+        let mut verifier_transcript = RecordingTranscript::new(b"akita-direct-layout");
+        let _error = AkitaScheme::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &changed_commitment_statement,
+            &proof,
+        )
+        .expect_err("changed direct commitment digest should reject");
     }
 
     fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
