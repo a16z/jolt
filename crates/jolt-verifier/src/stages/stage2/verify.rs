@@ -9,7 +9,7 @@ use jolt_claims::protocols::jolt::{
     JoltSumcheckDomain, RamReadWriteChallenge,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::{Field, FromPrimitiveInt};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
@@ -35,11 +35,21 @@ use super::{
         Stage2RamValCheckInputs, Stage2ZkOutput, VerifiedProductUniSkip, VerifiedStage2Batch,
         VerifiedStage2Sumcheck,
     },
+    InstructionClaimReduction, InstructionClaimReductionInputClaims,
+    InstructionClaimReductionOutputClaims, ProductRemainder, ProductRemainderInputClaims,
+    ProductRemainderOutputClaims, RamOutputCheck, RamOutputCheckInputClaims,
+    RamOutputCheckOutputClaims, RamRafEvaluation, RamRafEvaluationInputClaims,
+    RamRafEvaluationOutputClaims, RamReadWriteChecking, RamReadWriteInputClaims,
+    RamReadWriteOutputClaims,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
-    stages::{stage1::Stage1ClearOutput, zk::committed},
+    stages::{
+        relations::{OpeningClaim, SumcheckInstance},
+        stage1::Stage1ClearOutput,
+        zk::committed,
+    },
     verifier::CheckedInputs,
     VerifierError,
 };
@@ -974,15 +984,55 @@ where
             };
             let product_uniskip_challenge = *product_uniskip_challenge;
 
-            let input_claims = stage2_batch_input_claims(Stage2BatchInputClaimRequest {
-                log_t,
-                log_k,
-                rw_config: proof.rw_config,
-                stage1,
-                product_uniskip_output_claim: claims.product_uniskip_output_claim,
-                ram_read_write_gamma,
-                instruction_gamma,
+            // Build the five batch relations. Each owns its input/output claim
+            // algebra (single-sourced with its jolt-claims formula and the
+            // BlindFold constraint); the product uni-skip stays hand-coded above.
+            let lowest_address = checked.public_io.memory_layout.get_lowest_address();
+            let public_memory = PublicIoMemory::new(&checked.public_io).map_err(|error| {
+                stage2_public_input_failed(JoltRelationId::RamOutputCheck, error)
             })?;
+            let ram_read_write = RamReadWriteChecking::new(
+                read_write_dimensions,
+                log_k,
+                ram_read_write_gamma,
+                product_uniskip.tau_low.clone(),
+            );
+            let product_remainder = ProductRemainder::new(
+                product_dimensions,
+                product_uniskip_challenge,
+                product_uniskip.tau_high,
+                product_uniskip.tau_low.clone(),
+            );
+            let instruction_reduction = InstructionClaimReduction::new(
+                trace_dimensions,
+                instruction_gamma,
+                product_uniskip.tau_low.clone(),
+            );
+            let ram_raf = RamRafEvaluation::new(
+                read_write_dimensions,
+                raf_dimensions,
+                log_k,
+                lowest_address,
+                product_uniskip.tau_low.clone(),
+            );
+            let ram_output =
+                RamOutputCheck::new(read_write_dimensions, output_address_challenges.clone(), public_memory);
+
+            let ram_read_write_inputs = RamReadWriteInputClaims::from_upstream(stage1);
+            let product_remainder_inputs =
+                ProductRemainderInputClaims::from_uniskip_output(claims.product_uniskip_output_claim);
+            let instruction_reduction_inputs =
+                InstructionClaimReductionInputClaims::from_upstream(stage1);
+            let ram_raf_inputs = RamRafEvaluationInputClaims::from_upstream(stage1);
+            let ram_output_inputs = RamOutputCheckInputClaims::from_upstream();
+
+            let ram_read_write_input_claim = ram_read_write.input_claim(&ram_read_write_inputs)?;
+            let product_remainder_input_claim =
+                product_remainder.input_claim(&product_remainder_inputs)?;
+            let instruction_reduction_input_claim =
+                instruction_reduction.input_claim(&instruction_reduction_inputs)?;
+            let ram_raf_input_claim = ram_raf.input_claim(&ram_raf_inputs)?;
+            let ram_output_input_claim = ram_output.input_claim(&ram_output_inputs)?;
 
             // The claim order here must match the output-claim reconstruction below and
             // the transcript appends at the end of the stage.
@@ -990,29 +1040,29 @@ where
                 SumcheckClaim::new(
                     ram_read_write_claims.sumcheck.rounds,
                     ram_read_write_claims.sumcheck.degree,
-                    input_claims.ram_read_write,
+                    ram_read_write_input_claim,
                 ),
                 SumcheckClaim::new(
                     product_remainder_claims.sumcheck.rounds,
                     product_remainder_claims.sumcheck.degree,
-                    input_claims.product_remainder,
+                    product_remainder_input_claim,
                 ),
                 SumcheckClaim::new(
                     instruction_claim_reduction_claims.sumcheck.rounds,
                     instruction_claim_reduction_claims.sumcheck.degree,
-                    input_claims.instruction_claim_reduction,
+                    instruction_reduction_input_claim,
                 ),
             ];
             sumcheck_claims.extend([
                 SumcheckClaim::new(
                     ram_raf_evaluation_claims.sumcheck.rounds,
                     ram_raf_evaluation_claims.sumcheck.degree,
-                    input_claims.ram_raf_evaluation,
+                    ram_raf_input_claim,
                 ),
                 SumcheckClaim::new(
                     ram_output_check_claims.sumcheck.rounds,
                     ram_output_check_claims.sumcheck.degree,
-                    input_claims.ram_output_check,
+                    ram_output_input_claim,
                 ),
             ]);
             let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
@@ -1031,30 +1081,18 @@ where
                     stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
-            let ram_read_write_opening_point = read_write_dimensions
-                .read_write_opening_point(ram_read_write_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamReadWriteChecking,
-                    reason: error.to_string(),
-                })?;
-
             let product_point = batch
                 .try_instance_point(product_remainder_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::SpartanProductVirtualization,
                     reason: error.to_string(),
                 })?;
-            let product_opening_point = product_point.iter().rev().copied().collect::<Vec<_>>();
-
             let instruction_point = batch
                 .try_instance_point(instruction_claim_reduction_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
                 })?;
-            let instruction_opening_point =
-                instruction_point.iter().rev().copied().collect::<Vec<_>>();
-
             let active_stage2_rounds = log_t + log_k;
             let phase1_offset = batch
                 .try_round_offset(active_stage2_rounds)
@@ -1069,67 +1107,121 @@ where
                     stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
-            let ram_raf_address_point = read_write_dimensions
-                .address_opening_point(ram_raf_evaluation_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamRafEvaluation,
-                    reason: error.to_string(),
-                })?;
-            let ram_raf_opening_point = [
-                ram_raf_address_point.as_slice(),
-                product_uniskip.tau_low.as_slice(),
-            ]
-            .concat();
-            if ram_raf_address_point.len() != log_k {
-                return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamRafEvaluation,
-                    reason: format!(
-                        "RAM RAF address point length mismatch: expected {log_k}, got {}",
-                        ram_raf_address_point.len()
-                    ),
-                });
-            }
-
             let ram_output_check_point = batch
                 .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
-            let ram_output_address_point = read_write_dimensions
-                .address_opening_point(ram_output_check_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamOutputCheck,
-                    reason: error.to_string(),
-                })?;
 
-            let opening_points = Stage2BatchOpeningPoints {
-                ram_read_write_sumcheck: ram_read_write_point.to_vec(),
-                ram_read_write_opening: ram_read_write_opening_point.opening_point.clone(),
-                ram_read_write_cycle: ram_read_write_opening_point.r_cycle.clone(),
-                product_sumcheck: product_point.to_vec(),
-                product_opening: product_opening_point.clone(),
-                instruction_sumcheck: instruction_point.to_vec(),
-                instruction_opening: instruction_opening_point.clone(),
-                ram_raf_sumcheck: ram_raf_evaluation_point.to_vec(),
-                ram_raf_opening: ram_raf_opening_point.clone(),
-                ram_output_check_sumcheck: ram_output_check_point.to_vec(),
-                ram_output_check_opening: ram_output_address_point.clone(),
+            // Each relation maps its sumcheck point to its produced opening points.
+            let ram_read_write_points =
+                ram_read_write.derive_opening_points(ram_read_write_point, &ram_read_write_inputs)?;
+            let product_remainder_points =
+                product_remainder.derive_opening_points(product_point, &product_remainder_inputs)?;
+            let instruction_reduction_points = instruction_reduction
+                .derive_opening_points(instruction_point, &instruction_reduction_inputs)?;
+            let ram_raf_points =
+                ram_raf.derive_opening_points(ram_raf_evaluation_point, &ram_raf_inputs)?;
+            let ram_output_points =
+                ram_output.derive_opening_points(ram_output_check_point, &ram_output_inputs)?;
+
+            // Pair each produced opening point with its committed value to form the
+            // located claims the output `Expr`s consume.
+            let batch_outputs = &claims.batch_outputs;
+            let located = |point: &[PCS::Field], value: PCS::Field| OpeningClaim {
+                point: point.to_vec(),
+                value,
             };
-            let expected_outputs = stage2_expected_outputs(Stage2ExpectedOutputRequest {
-                log_k,
-                checked,
-                product_uniskip: Stage2ProductUniSkipOutputClaimData {
-                    tau_low: &product_uniskip.tau_low,
-                    tau_high: product_uniskip.tau_high,
-                    challenge: product_uniskip_challenge,
-                },
-                ram_read_write_gamma,
-                instruction_gamma,
-                output_address_challenges: &output_address_challenges,
-                opening_points: &opening_points,
-                claims: &claims.batch_outputs,
-            })?;
+            let ram_read_write_located = RamReadWriteOutputClaims {
+                val: located(&ram_read_write_points.val, batch_outputs.ram_read_write.val),
+                ra: located(&ram_read_write_points.ra, batch_outputs.ram_read_write.ra),
+                inc: located(&ram_read_write_points.inc, batch_outputs.ram_read_write.inc),
+            };
+            let product_remainder_located = ProductRemainderOutputClaims {
+                left_instruction_input: located(
+                    &product_remainder_points.left_instruction_input,
+                    batch_outputs.product_remainder.left_instruction_input,
+                ),
+                right_instruction_input: located(
+                    &product_remainder_points.right_instruction_input,
+                    batch_outputs.product_remainder.right_instruction_input,
+                ),
+                jump_flag: located(
+                    &product_remainder_points.jump_flag,
+                    batch_outputs.product_remainder.jump_flag,
+                ),
+                write_lookup_output_to_rd: located(
+                    &product_remainder_points.write_lookup_output_to_rd,
+                    batch_outputs.product_remainder.write_lookup_output_to_rd,
+                ),
+                lookup_output: located(
+                    &product_remainder_points.lookup_output,
+                    batch_outputs.product_remainder.lookup_output,
+                ),
+                branch_flag: located(
+                    &product_remainder_points.branch_flag,
+                    batch_outputs.product_remainder.branch_flag,
+                ),
+                next_is_noop: located(
+                    &product_remainder_points.next_is_noop,
+                    batch_outputs.product_remainder.next_is_noop,
+                ),
+                virtual_instruction: located(
+                    &product_remainder_points.virtual_instruction,
+                    batch_outputs.product_remainder.virtual_instruction,
+                ),
+            };
+            // The reduced instruction openings share the product remainder's point;
+            // the three aliased openings, absent on the wire, reuse the
+            // product-remainder values (or zero if the points disagree — a defensive
+            // fallback that mirrors the legacy reconstruction).
+            let reduction = &batch_outputs.instruction_claim_reduction;
+            let product_values = &batch_outputs.product_remainder;
+            let instruction_opening = instruction_reduction_points.left_lookup_operand.as_slice();
+            let points_match =
+                product_remainder_points.left_instruction_input.as_slice() == instruction_opening;
+            let aliased = |value: Option<PCS::Field>, product: PCS::Field| {
+                let resolved = value.unwrap_or(if points_match {
+                    product
+                } else {
+                    PCS::Field::from_u64(0)
+                });
+                Some(OpeningClaim {
+                    point: instruction_opening.to_vec(),
+                    value: resolved,
+                })
+            };
+            let instruction_reduction_located = InstructionClaimReductionOutputClaims {
+                lookup_output: aliased(reduction.lookup_output, product_values.lookup_output),
+                left_lookup_operand: located(instruction_opening, reduction.left_lookup_operand),
+                right_lookup_operand: located(instruction_opening, reduction.right_lookup_operand),
+                left_instruction_input: aliased(
+                    reduction.left_instruction_input,
+                    product_values.left_instruction_input,
+                ),
+                right_instruction_input: aliased(
+                    reduction.right_instruction_input,
+                    product_values.right_instruction_input,
+                ),
+            };
+            let ram_raf_located = RamRafEvaluationOutputClaims {
+                ram_ra: located(&ram_raf_points.ram_ra, batch_outputs.ram_raf_evaluation),
+            };
+            let ram_output_located = RamOutputCheckOutputClaims {
+                val_final: located(&ram_output_points.val_final, batch_outputs.ram_output_check),
+            };
+
+            let expected_outputs = Stage2BatchExpectedOutputClaims {
+                ram_read_write: ram_read_write
+                    .expected_output(&ram_read_write_inputs, &ram_read_write_located)?,
+                product_remainder: product_remainder
+                    .expected_output(&product_remainder_inputs, &product_remainder_located)?,
+                instruction_claim_reduction: instruction_reduction
+                    .expected_output(&instruction_reduction_inputs, &instruction_reduction_located)?,
+                ram_raf_evaluation: ram_raf.expected_output(&ram_raf_inputs, &ram_raf_located)?,
+                ram_output_check: ram_output.expected_output(&ram_output_inputs, &ram_output_located)?,
+            };
 
             let expected_final_claim =
                 stage2_expected_final_claim(&batch.batching_coefficients, &expected_outputs)?;
@@ -1151,33 +1243,39 @@ where
                     instruction_gamma,
                     output_address_challenges,
                     ram_read_write: VerifiedStage2Sumcheck {
-                        input_claim: input_claims.ram_read_write,
+                        input_claim: ram_read_write_input_claim,
                         sumcheck_point: ram_read_write_point.to_vec(),
-                        opening_point: ram_read_write_opening_point.opening_point,
+                        opening_point: ram_read_write_located.val.point.clone(),
                         expected_output_claim: expected_outputs.ram_read_write,
                     },
                     product_remainder: VerifiedStage2Sumcheck {
-                        input_claim: input_claims.product_remainder,
+                        input_claim: product_remainder_input_claim,
                         sumcheck_point: product_point.to_vec(),
-                        opening_point: product_opening_point,
+                        opening_point: product_remainder_located
+                            .left_instruction_input
+                            .point
+                            .clone(),
                         expected_output_claim: expected_outputs.product_remainder,
                     },
                     instruction_claim_reduction: VerifiedStage2Sumcheck {
-                        input_claim: input_claims.instruction_claim_reduction,
+                        input_claim: instruction_reduction_input_claim,
                         sumcheck_point: instruction_point.to_vec(),
-                        opening_point: instruction_opening_point,
+                        opening_point: instruction_reduction_located
+                            .left_lookup_operand
+                            .point
+                            .clone(),
                         expected_output_claim: expected_outputs.instruction_claim_reduction,
                     },
                     ram_raf_evaluation: VerifiedStage2Sumcheck {
-                        input_claim: input_claims.ram_raf_evaluation,
+                        input_claim: ram_raf_input_claim,
                         sumcheck_point: ram_raf_evaluation_point.to_vec(),
-                        opening_point: ram_raf_opening_point,
+                        opening_point: ram_raf_located.ram_ra.point.clone(),
                         expected_output_claim: expected_outputs.ram_raf_evaluation,
                     },
                     ram_output_check: VerifiedStage2Sumcheck {
-                        input_claim: input_claims.ram_output_check,
+                        input_claim: ram_output_input_claim,
                         sumcheck_point: ram_output_check_point.to_vec(),
-                        opening_point: ram_output_address_point,
+                        opening_point: ram_output_located.val_final.point.clone(),
                         expected_output_claim: expected_outputs.ram_output_check,
                     },
                 },
