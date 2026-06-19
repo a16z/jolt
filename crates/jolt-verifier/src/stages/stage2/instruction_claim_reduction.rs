@@ -12,7 +12,7 @@
 //! re-committed when the reduction shares the product-remainder opening point; they
 //! alias the corresponding `SpartanProductVirtualization` product-remainder
 //! openings. They are therefore [`Option`] on the wire (absent ⇒ aliased), and the
-//! located-claims helper fills them from the product-remainder openings (or zero
+//! opening-claims helper fills them from the product-remainder openings (or zero
 //! when the points disagree) before this relation's output `Expr` is evaluated.
 
 use jolt_claims::protocols::jolt::{
@@ -31,7 +31,7 @@ use crate::VerifierError;
 
 /// Produced reduced instruction-lookup openings, all sharing the single reduced
 /// opening point. The three aliased openings are [`Option`] (absent on the wire ⇒
-/// they alias the product-remainder openings; the located-claims helper fills
+/// they alias the product-remainder openings; the opening-claims helper fills
 /// them). Generic over the cell. Field order is the canonical Fiat-Shamir order
 /// and must match [`instruction_claim_reduction::claim_reduction_output_openings`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]

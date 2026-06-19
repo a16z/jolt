@@ -230,8 +230,8 @@ struct Stage2BatchSumcheckPoints<F: Field> {
     terminal: Vec<F>,
 }
 
-/// The per-relation located opening claims produced by mapping each instance's
-/// sumcheck point through its `derive_opening_points`.
+/// The per-relation opening points produced by mapping each instance's sumcheck
+/// point through its `derive_opening_points`.
 struct Stage2BatchOpeningPoints<F: Field> {
     ram_read_write: RamReadWriteOutputClaims<Vec<F>>,
     product_remainder: ProductRemainderOutputClaims<Vec<F>>,
@@ -470,7 +470,7 @@ struct Stage2BatchAssemblyInput<'a, F: Field, C, P> {
 
 /// Mirror the verifier's `verify_regular_batch` clear arm: split the batch
 /// sumcheck point, build the five relations inline, derive each relation's
-/// located openings, check the combined final claim against the prover's batch
+/// opening claims, check the combined final claim against the prover's batch
 /// `output_claim`, and assemble the `Stage2ClearOutput` for later stages.
 ///
 /// Shared by the clear `prove` and the committed `prove_committed_proof_component`
@@ -507,7 +507,7 @@ where
         stage2_batch_output_claims(input.batch.ram_read_write.clone(), tail_openings, terminal);
     let batch_output_claim_values = wire_claims.opening_values();
 
-    let located = stage2_batch_output_claims_with_points(
+    let output_claims = stage2_batch_output_claims_with_points(
         &wire_claims,
         &opening_points.ram_read_write,
         &opening_points.product_remainder,
@@ -520,29 +520,29 @@ where
         &input.batch.batching_coefficients,
         relations
             .ram_read_write
-            .expected_output(&relations.ram_read_write_inputs, &located.ram_read_write)
+            .expected_output(&relations.ram_read_write_inputs, &output_claims.ram_read_write)
             .map_err(to_prover_error)?,
         relations
             .product_remainder
             .expected_output(
                 &relations.product_remainder_inputs,
-                &located.product_remainder,
+                &output_claims.product_remainder,
             )
             .map_err(to_prover_error)?,
         relations
             .instruction_reduction
             .expected_output(
                 &relations.instruction_reduction_inputs,
-                &located.instruction_claim_reduction,
+                &output_claims.instruction_claim_reduction,
             )
             .map_err(to_prover_error)?,
         relations
             .ram_raf
-            .expected_output(&relations.ram_raf_inputs, &located.ram_raf_evaluation)
+            .expected_output(&relations.ram_raf_inputs, &output_claims.ram_raf_evaluation)
             .map_err(to_prover_error)?,
         relations
             .ram_output
-            .expected_output(&relations.ram_output_inputs, &located.ram_output_check)
+            .expected_output(&relations.ram_output_inputs, &output_claims.ram_output_check)
             .map_err(to_prover_error)?,
     )
     .map_err(to_prover_error)?;
@@ -569,7 +569,7 @@ where
     };
     let verifier_output = Stage2ClearOutput {
         public,
-        output_claims: located,
+        output_claims,
         product_uniskip: VerifiedProductUniSkip {
             tau_low: input.product_uniskip.tau_low.clone(),
             tau_high: input.product_uniskip.tau_high,

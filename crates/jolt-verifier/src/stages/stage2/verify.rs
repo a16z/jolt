@@ -80,12 +80,12 @@ struct Stage2ZkBatch<F: Field, C> {
     ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
 }
 
-// The clear variant carries the located opening claims (point + value); the ZK
-// variant carries committed consistency. Boxing the common clear variant to shrink
-// the rarer ZK one would add indirection to the hot clear path.
+// The clear variant carries the opening claims (point + value); the ZK variant
+// carries committed consistency. Boxing the common clear variant to shrink the
+// rarer ZK one would add indirection to the hot clear path.
 #[expect(
     clippy::large_enum_variant,
-    reason = "clear variant holds the located opening claims on the hot path; boxing it would penalize the common case"
+    reason = "clear variant holds the opening claims on the hot path; boxing it would penalize the common case"
 )]
 enum Stage2Batch<F: Field, C> {
     Clear {
@@ -107,11 +107,11 @@ fn selected_product_uniskip_sumcheck() -> jolt_claims::protocols::jolt::JoltSumc
 }
 
 /// Pair every produced batch opening point with its committed value into the
-/// located `OpeningClaim` form the output `Expr`s and later stages consume. The
-/// three aliased instruction-claim-reduction openings, absent on the wire, reuse
-/// the product-remainder openings at the shared point (or zero when the points
-/// disagree — a defensive fallback that mirrors the legacy reconstruction). Shared
-/// by the verifier and the prover so the located form is built once.
+/// `OpeningClaim` (point + value) form the output `Expr`s and later stages consume.
+/// The three aliased instruction-claim-reduction openings, absent on the wire,
+/// reuse the product-remainder openings at the shared point (or zero when the
+/// points disagree — a defensive fallback that mirrors the legacy reconstruction).
+/// Shared by the verifier and the prover so the opening-claim form is built once.
 pub fn stage2_batch_output_claims_with_points<F: Field>(
     claims: &Stage2BatchOutputClaims<F>,
     ram_read_write_points: &RamReadWriteOutputClaims<Vec<F>>,
@@ -635,7 +635,7 @@ where
                 })?;
 
             // Each relation maps its sumcheck point to its produced opening points;
-            // pair them with the committed values into the located openings.
+            // pair them with the committed values into the opening claims.
             let output_claims = stage2_batch_output_claims_with_points(
                 &claims.batch_outputs,
                 &ram_read_write

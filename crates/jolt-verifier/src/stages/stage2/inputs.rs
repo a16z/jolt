@@ -90,7 +90,7 @@ pub struct Stage2OutputClaims<F: Field> {
 
 /// The produced stage 2 batch openings, one per-relation `OutputClaims` struct.
 /// Generic over the cell: `F` is the serialized wire form (value only), and
-/// `OpeningClaim<F>` is the clear "located" form (point + value) propagated to
+/// `OpeningClaim<F>` is the clear opening-claim form (point + value) propagated to
 /// later stages — mirroring stage 3/4's `StageNOutputClaims<OpeningClaim<F>>`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
