@@ -302,9 +302,14 @@ where
         input_claims: stage5_input_claims(Stage5InputClaimRequest {
             stage2,
             stage4,
+            trace_dimensions: TraceDimensions::new(config.log_t),
+            ram_log_k: config.log_k,
             instruction_gamma,
             ram_gamma,
-        }),
+        })
+        .map_err(|error| ProverError::InvalidStageRequest {
+            reason: error.to_string(),
+        })?,
         instruction_gamma,
         ram_gamma,
     })

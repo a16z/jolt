@@ -3,8 +3,8 @@ use jolt_claims::protocols::jolt::{
         dimensions::{JoltFormulaDimensions, TraceDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram, registers,
     },
-    InstructionReadRafChallenge, JoltChallengeId, JoltPublicId, JoltRelationId, JoltSumcheckDomain,
-    RamRaClaimReductionChallenge, RegistersValEvaluationChallenge,
+    InstructionReadRafChallenge, JoltChallengeId, JoltRelationId, JoltSumcheckDomain,
+    RegistersValEvaluationChallenge,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -19,17 +19,25 @@ use jolt_transcript::Transcript;
 use num_traits::Zero;
 
 use super::{
-    inputs::{Deps, Stage5Claims},
+    inputs::{
+        Deps, RamRaClaimReductionInputs, RamRaClaimReductionOutputOpeningClaims, Stage5Claims,
+    },
     outputs::{
         InstructionReadRafPublicOutput, Stage5ClearOutput, Stage5Output, Stage5PublicOutput,
         Stage5SumcheckPublicOutput, Stage5ZkOutput, VerifiedInstructionReadRafSumcheck,
         VerifiedStage5Batch, VerifiedStage5Sumcheck,
     },
+    ram_ra_claim_reduction::RamRaClaimReductionRelation,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
-    stages::{stage2::Stage2ClearOutput, stage4::Stage4ClearOutput, zk::committed},
+    stages::{
+        relations::{OpeningClaim, OutputClaims, SumcheckInstance},
+        stage2::Stage2ClearOutput,
+        stage4::Stage4ClearOutput,
+        zk::committed,
+    },
     verifier::CheckedInputs,
     VerifierError,
 };
@@ -93,12 +101,14 @@ where
     let instruction_gamma_squared = instruction_gamma * instruction_gamma;
     let ram_gamma = transcript.challenge_scalar();
 
+    let ram_relation = RamRaClaimReductionRelation::new(trace_dimensions, log_k, ram_gamma);
+
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
     let committed_output_claims = instruction_output_openings.lookup_table_flags.len()
         + instruction_output_openings.instruction_ra.len()
         + 1
-        + 1
+        + ram::ra_claim_reduction_output_openings().len()
         + 2;
 
     let public =
@@ -194,12 +204,6 @@ where
                 stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
-        let ram_cycle = trace_dimensions
-            .cycle_opening_point(&ram_point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: error.to_string(),
-            })?;
         let dependency_points =
             stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
                 trace_dimensions,
@@ -213,8 +217,20 @@ where
                 ram_val_check_opening_point: &stage4.ram_val_check_opening_point,
                 registers_read_write_opening_point: &stage4.registers_read_write_opening_point,
             })?;
-        let ram_opening_point =
-            [dependency_points.ram_address_point, ram_cycle.as_slice()].concat();
+        let ram_inputs = RamRaClaimReductionInputs {
+            raf: stage2
+                .ram_ra_claim_reduction_inputs
+                .ram_raf_evaluation_opening_point
+                .clone(),
+            read_write: stage2
+                .ram_ra_claim_reduction_inputs
+                .ram_read_write_opening_point
+                .clone(),
+            val_check: stage4.ram_val_check_opening_point.clone(),
+        };
+        let ram_opening_point = ram_relation
+            .derive_output_points(&ram_point, &ram_inputs)?
+            .ram_ra;
 
         let registers_point = consistency
             .try_instance_point(registers_claims.sumcheck.rounds)
@@ -317,9 +333,8 @@ where
 
     let [lookup_output, left_lookup_operand, right_lookup_operand] =
         instruction::read_raf_input_openings();
-    let [ram_ra_raf, ram_ra_read_write, ram_ra_val_check] =
-        ram::ra_claim_reduction_input_openings();
     let [registers_val] = registers::val_evaluation_input_openings();
+    let ram_inputs = RamRaClaimReductionInputs::from_clear(stage2, stage4);
     let input_claims = Stage5InputClaims {
         instruction_read_raf: instruction_claims.input.expression().try_evaluate(
             |id| match *id {
@@ -342,21 +357,7 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        ram_ra_claim_reduction: ram_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == ram_ra_raf => Ok(stage2.output_claims.ram_raf_evaluation),
-                id if id == ram_ra_read_write => Ok(stage2.output_claims.ram_read_write.ra),
-                id if id == ram_ra_val_check => Ok(stage4.output_claims.ram_val_check.ram_ra),
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => {
-                    Ok(ram_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
+        ram_ra_claim_reduction: ram_relation.input_claim(&ram_inputs)?,
         registers_val_evaluation: registers_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == registers_val => {
@@ -510,12 +511,6 @@ where
             stage: JoltRelationId::RamRaClaimReduction,
             reason: error.to_string(),
         })?;
-    let ram_cycle = trace_dimensions
-        .cycle_opening_point(ram_point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaClaimReduction,
-            reason: error.to_string(),
-        })?;
     let dependency_points =
         stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
             trace_dimensions,
@@ -525,48 +520,15 @@ where
             ram_val_check_opening_point: &stage4.batch.ram_val_check.opening_point,
             registers_read_write_opening_point: &stage4.batch.registers_read_write.opening_point,
         })?;
-    let ram_public_values = ram::RamRaClaimReductionPublicValues {
-        eq_cycle_raf: try_eq_mle(dependency_points.ram_raf_fixed_cycle_point, &ram_cycle).map_err(
-            |error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: error.to_string(),
-            },
-        )?,
-        eq_cycle_read_write: try_eq_mle(
-            dependency_points.ram_read_write_fixed_cycle_point,
-            &ram_cycle,
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaClaimReduction,
-            reason: error.to_string(),
-        })?,
-        eq_cycle_val_check: try_eq_mle(
-            dependency_points.ram_val_check_fixed_cycle_point,
-            &ram_cycle,
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaClaimReduction,
-            reason: error.to_string(),
-        })?,
+    let ram_output_points = ram_relation.derive_output_points(ram_point, &ram_inputs)?;
+    let ram_outputs = RamRaClaimReductionOutputOpeningClaims {
+        ram_ra: OpeningClaim {
+            point: ram_output_points.ram_ra,
+            value: claims.ram_ra_claim_reduction.ram_ra,
+        },
     };
-    let [ram_ra_reduced] = ram::ra_claim_reduction_output_openings();
-    let ram_output = ram_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == ram_ra_reduced => Ok(claims.ram_ra_claim_reduction.ram_ra),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| match id {
-            JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => {
-                Ok(ram_gamma)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| match id {
-            JoltPublicId::RamRaClaimReduction(public_id) => Ok(ram_public_values.value(*public_id)),
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )?;
-    let ram_opening_point = [dependency_points.ram_address_point, ram_cycle.as_slice()].concat();
+    let ram_output = ram_relation.expected_output(&ram_inputs, &ram_outputs)?;
+    let ram_opening_point = ram_outputs.ram_ra.point;
 
     let registers_point = batch
         .try_instance_point(registers_claims.sumcheck.rounds)
@@ -673,7 +635,7 @@ where
         b"opening_claim",
         &claims.instruction_read_raf.instruction_raf_flag,
     );
-    transcript.append_labeled(b"opening_claim", &claims.ram_ra_claim_reduction.ram_ra);
+    claims.ram_ra_claim_reduction.append_openings(transcript);
     transcript.append_labeled(b"opening_claim", &claims.registers_val_evaluation.rd_inc);
     transcript.append_labeled(b"opening_claim", &claims.registers_val_evaluation.rd_wa);
 }
@@ -688,6 +650,8 @@ pub struct Stage5InputClaims<F: Field> {
 pub struct Stage5InputClaimRequest<'a, F: Field> {
     pub stage2: &'a Stage2ClearOutput<F>,
     pub stage4: &'a Stage4ClearOutput<F>,
+    pub trace_dimensions: TraceDimensions,
+    pub ram_log_k: usize,
     pub instruction_gamma: F,
     pub ram_gamma: F,
 }
@@ -774,9 +738,8 @@ pub struct Stage5DependencyOpeningPoints<'a, F: Field> {
 
 pub fn stage5_input_claims<F: Field>(
     request: Stage5InputClaimRequest<'_, F>,
-) -> Stage5InputClaims<F> {
+) -> Result<Stage5InputClaims<F>, VerifierError> {
     let instruction_gamma2 = request.instruction_gamma * request.instruction_gamma;
-    let ram_gamma2 = request.ram_gamma * request.ram_gamma;
     let product_lookup_output = request.stage2.output_claims.product_remainder.lookup_output;
     let reduced_lookup_output = request
         .stage2
@@ -785,7 +748,15 @@ pub fn stage5_input_claims<F: Field>(
         .lookup_output
         .unwrap_or(product_lookup_output);
 
-    Stage5InputClaims {
+    let ram_relation = RamRaClaimReductionRelation::new(
+        request.trace_dimensions,
+        request.ram_log_k,
+        request.ram_gamma,
+    );
+    let ram_inputs = RamRaClaimReductionInputs::from_clear(request.stage2, request.stage4);
+    let ram_ra_claim_reduction = ram_relation.input_claim(&ram_inputs)?;
+
+    Ok(Stage5InputClaims {
         instruction_read_raf: reduced_lookup_output
             + request.instruction_gamma
                 * request
@@ -799,15 +770,13 @@ pub fn stage5_input_claims<F: Field>(
                     .output_claims
                     .instruction_claim_reduction
                     .right_lookup_operand,
-        ram_ra_claim_reduction: request.stage2.output_claims.ram_raf_evaluation
-            + request.ram_gamma * request.stage2.output_claims.ram_read_write.ra
-            + ram_gamma2 * request.stage4.output_claims.ram_val_check.ram_ra,
+        ram_ra_claim_reduction,
         registers_val_evaluation: request
             .stage4
             .output_claims
             .registers_read_write
             .registers_val,
-    }
+    })
 }
 
 pub fn stage5_expected_output_claims<F: Field>(
@@ -1146,42 +1115,36 @@ fn expected_ram_ra_claim_reduction_output<F: Field>(
     request: &Stage5ExpectedOutputRequest<'_, F>,
     log_t: usize,
 ) -> Result<F, VerifierError> {
+    let opening_point = request.ram_ra_claim_reduction_opening_point;
     let expected_len = request.ram_log_k + log_t;
-    if request.ram_ra_claim_reduction_opening_point.len() != expected_len {
+    if opening_point.len() != expected_len {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamRaClaimReduction,
             reason: format!(
                 "Stage 5 RAM RA claim-reduction opening point has {} variables, expected {expected_len}",
-                request.ram_ra_claim_reduction_opening_point.len()
+                opening_point.len()
             ),
         });
     }
-    let (_, r_cycle) = request
-        .ram_ra_claim_reduction_opening_point
-        .split_at(request.ram_log_k);
-    let eq_cycle_raf = try_eq_mle(request.ram_raf_fixed_cycle_point, r_cycle).map_err(|error| {
-        VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaClaimReduction,
-            reason: error.to_string(),
-        }
-    })?;
-    let eq_cycle_read_write = try_eq_mle(request.ram_read_write_fixed_cycle_point, r_cycle)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamRaClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let eq_cycle_val_check =
-        try_eq_mle(request.ram_val_check_fixed_cycle_point, r_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamRaClaimReduction,
-                reason: error.to_string(),
-            }
-        })?;
-    let ram_gamma2 = request.ram_gamma * request.ram_gamma;
-    Ok(
-        (eq_cycle_raf + request.ram_gamma * eq_cycle_read_write + ram_gamma2 * eq_cycle_val_check)
-            * request.claims.ram_ra_claim_reduction.ram_ra,
-    )
+    let (ram_address_point, _r_cycle) = opening_point.split_at(request.ram_log_k);
+    let input_point = |fixed_cycle: &[F]| [ram_address_point, fixed_cycle].concat();
+    let inputs = RamRaClaimReductionInputs {
+        raf: input_point(request.ram_raf_fixed_cycle_point),
+        read_write: input_point(request.ram_read_write_fixed_cycle_point),
+        val_check: input_point(request.ram_val_check_fixed_cycle_point),
+    };
+    let outputs = RamRaClaimReductionOutputOpeningClaims {
+        ram_ra: OpeningClaim {
+            point: opening_point.to_vec(),
+            value: request.claims.ram_ra_claim_reduction.ram_ra,
+        },
+    };
+    let relation = RamRaClaimReductionRelation::new(
+        TraceDimensions::new(log_t),
+        request.ram_log_k,
+        request.ram_gamma,
+    );
+    relation.expected_output(&inputs, &outputs)
 }
 
 fn expected_registers_val_evaluation_output<F: Field>(
@@ -1214,7 +1177,7 @@ pub fn stage5_output_claim_values<F: Field>(claims: &Stage5Claims<F>) -> Vec<F> 
         claims.instruction_read_raf.lookup_table_flags.len()
             + claims.instruction_read_raf.instruction_ra.len()
             + 1
-            + 1
+            + claims.ram_ra_claim_reduction.opening_count()
             + 2,
     );
     values.extend(
@@ -1226,7 +1189,7 @@ pub fn stage5_output_claim_values<F: Field>(claims: &Stage5Claims<F>) -> Vec<F> 
     );
     values.extend(claims.instruction_read_raf.instruction_ra.iter().copied());
     values.push(claims.instruction_read_raf.instruction_raf_flag);
-    values.push(claims.ram_ra_claim_reduction.ram_ra);
+    values.extend(claims.ram_ra_claim_reduction.opening_values());
     values.push(claims.registers_val_evaluation.rd_inc);
     values.push(claims.registers_val_evaluation.rd_wa);
     values

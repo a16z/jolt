@@ -9,6 +9,11 @@
 //! through `crate::stages::relations::*`, so the derives are for use *within*
 //! `jolt-verifier`.
 //!
+//! The claim struct is generic over an opening *cell* (`OpeningClaim<F>` on the
+//! clear path, `Vec<F>` for ZK points, `F` for the serialized wire form). The
+//! generated impls read each field's value through the `GetValue` cell trait, so
+//! one struct definition serves all three forms.
+//!
 //! ## `#[derive(OutputClaims)]`
 //!
 //! For a relation's *produced*-claim struct. Requires a struct-level
@@ -21,8 +26,8 @@
 //!
 //! For a relation's *consumed*-claim struct. Each leaf field carries its own
 //! `from = ProducingRelation`, because consumed openings originate in several
-//! upstream relations. `Option<F>` leaf fields resolve to the stored option;
-//! plain `F` fields resolve to `Some(value)`.
+//! upstream relations. `Option<C>` leaf fields resolve to the located value if
+//! present; plain `C` fields resolve to `Some(value)`.
 //!
 //! ## `#[opening(..)]` field grammar (both derives)
 //!
@@ -31,9 +36,9 @@
 //! - `#[opening(trusted_advice)]` / `#[opening(untrusted_advice)]` — an advice
 //!   opening.
 //!
-//! Arity is read from the field type, not the annotation: a `Vec<F>` field is an
+//! Arity is read from the field type, not the annotation: a `Vec<C>` field is an
 //! indexed family (element `i` maps to `Variant(i)`, so `Variant` must be a
-//! tuple variant taking the index), while an `F` or `Option<F>` field is a
+//! tuple variant taking the index), while a `C` or `Option<C>` field is a
 //! single opening (`Variant` must be a unit variant).
 //!
 //! `InputClaims` leaves additionally take `, from = ProducingRelation`.
@@ -103,8 +108,8 @@ fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Fi
     }
 }
 
-/// The first type generic parameter (the field type, conventionally `F`).
-fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
+/// The first type generic parameter (the opening *cell*, conventionally `C`).
+fn cell_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
     generics
         .params
         .iter()
@@ -115,9 +120,31 @@ fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
         .ok_or_else(|| {
             syn::Error::new_spanned(
                 generics,
-                "expected a field type generic parameter (e.g. `<F: Field>`)",
+                "expected an opening-cell generic parameter (e.g. `<C>`)",
             )
         })
+}
+
+/// Build the impl header for a cell-generic claim struct: introduce a fresh
+/// field-value type parameter, require the struct's cell parameter to expose it
+/// via `GetValue`, and return `(value_param, impl_generics, ty_generics,
+/// where_clause)`.
+fn cell_impl_pieces(
+    generics: &syn::Generics,
+) -> syn::Result<(Ident, TokenStream2, TokenStream2, TokenStream2)> {
+    let cell = cell_type_param(generics)?;
+    let value = Ident::new("__JoltCellValue", proc_macro2::Span::call_site());
+    let params = &generics.params;
+    let (_, ty_generics, _) = generics.split_for_impl();
+    let impl_generics = quote!(<#value: ::jolt_field::Field, #params>);
+    let orig_predicates = generics
+        .where_clause
+        .as_ref()
+        .map(|where_clause| &where_clause.predicates);
+    let where_clause = quote! {
+        where #cell: crate::stages::relations::GetValue<#value>, #orig_predicates
+    };
+    Ok((value, impl_generics, quote!(#ty_generics), where_clause))
 }
 
 fn parse_struct_relation(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
@@ -137,7 +164,10 @@ fn parse_struct_relation(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
 }
 
 fn opening_attr(field: &syn::Field) -> Option<&Attribute> {
-    field.attrs.iter().find(|attr| attr.path().is_ident("opening"))
+    field
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("opening"))
 }
 
 fn parse_opening(attr: &Attribute) -> syn::Result<OpeningSpec> {
@@ -238,7 +268,12 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
         }
     };
     let is_many = is_vec_type(&field.ty);
-    if is_many && matches!(spec.kind, LeafKind::TrustedAdvice | LeafKind::UntrustedAdvice) {
+    if is_many
+        && matches!(
+            spec.kind,
+            LeafKind::TrustedAdvice | LeafKind::UntrustedAdvice
+        )
+    {
         return Err(syn::Error::new_spanned(
             &field.ty,
             "advice openings are scalar; a `Vec` advice field has no indexed id",
@@ -282,7 +317,7 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
 
 fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let field_param = field_type_param(&input.generics)?;
+    let (value, impl_generics, ty_generics, where_clause) = cell_impl_pieces(&input.generics)?;
     let struct_relation = parse_struct_relation(&input.attrs)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
@@ -290,6 +325,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         .map(|field| plan_field(field, struct_relation.as_ref()))
         .collect::<syn::Result<Vec<_>>>()?;
 
+    let get = quote!(crate::stages::relations::GetValue::value);
     let mut value_chains = Vec::new();
     let mut count_terms = Vec::new();
     let mut append_stmts = Vec::new();
@@ -312,30 +348,31 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                 }
                 if *is_many {
                     let id = id_expr(kind, relation, Some(quote!(index)));
-                    value_chains.push(quote!(.chain(self.#ident.iter().copied())));
+                    value_chains
+                        .push(quote!(.chain(self.#ident.iter().map(|__cell| #get(__cell)))));
                     count_terms.push(quote!(self.#ident.len()));
                     append_stmts.push(quote! {
-                        for value in &self.#ident {
-                            transcript.append_labeled(b"opening_claim", value);
+                        for __cell in &self.#ident {
+                            transcript.append_labeled(b"opening_claim", &#get(__cell));
                         }
                     });
                     resolve_arms.push(quote! {
-                        for (index, value) in self.#ident.iter().enumerate() {
+                        for (index, __cell) in self.#ident.iter().enumerate() {
                             if *id == #id {
-                                return ::core::option::Option::Some(*value);
+                                return ::core::option::Option::Some(#get(__cell));
                             }
                         }
                     });
                 } else {
                     let id = id_expr(kind, relation, None);
-                    value_chains.push(quote!(.chain(::core::iter::once(self.#ident))));
+                    value_chains.push(quote!(.chain(::core::iter::once(#get(&self.#ident)))));
                     count_terms.push(quote!(1usize));
                     append_stmts.push(quote! {
-                        transcript.append_labeled(b"opening_claim", &self.#ident);
+                        transcript.append_labeled(b"opening_claim", &#get(&self.#ident));
                     });
                     resolve_arms.push(quote! {
                         if *id == #id {
-                            return ::core::option::Option::Some(self.#ident);
+                            return ::core::option::Option::Some(#get(&self.#ident));
                         }
                     });
                 }
@@ -351,10 +388,10 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                     crate::stages::relations::OutputClaims::append_openings(&self.#ident, transcript);
                 });
                 resolve_arms.push(quote! {
-                    if let ::core::option::Option::Some(value) =
+                    if let ::core::option::Option::Some(__value) =
                         crate::stages::relations::OutputClaims::resolve_output(&self.#ident, id)
                     {
-                        return ::core::option::Option::Some(value);
+                        return ::core::option::Option::Some(__value);
                     }
                 });
             }
@@ -366,14 +403,13 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     } else {
         quote!(#(#count_terms)+*)
     };
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     Ok(quote! {
-        impl #impl_generics crate::stages::relations::OutputClaims<#field_param>
+        impl #impl_generics crate::stages::relations::OutputClaims<#value>
             for #name #ty_generics #where_clause
         {
-            fn opening_values(&self) -> ::std::vec::Vec<#field_param> {
-                ::core::iter::empty::<#field_param>()
+            fn opening_values(&self) -> ::std::vec::Vec<#value> {
+                ::core::iter::empty::<#value>()
                     #(#value_chains)*
                     .collect()
             }
@@ -382,7 +418,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #count_body
             }
 
-            fn append_openings<T: ::jolt_transcript::Transcript<Challenge = #field_param>>(
+            fn append_openings<T: ::jolt_transcript::Transcript<Challenge = #value>>(
                 &self,
                 transcript: &mut T,
             ) {
@@ -392,7 +428,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             fn resolve_output(
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltOpeningId,
-            ) -> ::core::option::Option<#field_param> {
+            ) -> ::core::option::Option<#value> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
             }
@@ -402,13 +438,14 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
 
 fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let field_param = field_type_param(&input.generics)?;
+    let (value, impl_generics, ty_generics, where_clause) = cell_impl_pieces(&input.generics)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
         .iter()
         .map(|field| plan_field(field, None))
         .collect::<syn::Result<Vec<_>>>()?;
 
+    let get = quote!(crate::stages::relations::GetValue::value);
     let mut resolve_arms = Vec::new();
     for plan in &plans {
         match plan {
@@ -422,19 +459,19 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
                 if *is_many {
                     let id = id_expr(kind, relation, Some(quote!(index)));
                     resolve_arms.push(quote! {
-                        for (index, value) in self.#ident.iter().enumerate() {
+                        for (index, __cell) in self.#ident.iter().enumerate() {
                             if *id == #id {
-                                return ::core::option::Option::Some(*value);
+                                return ::core::option::Option::Some(#get(__cell));
                             }
                         }
                     });
                 } else {
                     let id = id_expr(kind, relation, None);
                     let hit = if *is_option {
-                        // The field is already `Option<F>`; surface it directly.
-                        quote!(return self.#ident;)
+                        // The field is `Option<C>`; surface the located value if present.
+                        quote!(return self.#ident.as_ref().map(|__cell| #get(__cell));)
                     } else {
-                        quote!(return ::core::option::Option::Some(self.#ident);)
+                        quote!(return ::core::option::Option::Some(#get(&self.#ident));)
                     };
                     resolve_arms.push(quote! {
                         if *id == #id {
@@ -445,25 +482,24 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
             FieldPlan::Nested { ident } => {
                 resolve_arms.push(quote! {
-                    if let ::core::option::Option::Some(value) =
+                    if let ::core::option::Option::Some(__value) =
                         crate::stages::relations::InputClaims::resolve_input(&self.#ident, id)
                     {
-                        return ::core::option::Option::Some(value);
+                        return ::core::option::Option::Some(__value);
                     }
                 });
             }
         }
     }
 
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
-        impl #impl_generics crate::stages::relations::InputClaims<#field_param>
+        impl #impl_generics crate::stages::relations::InputClaims<#value>
             for #name #ty_generics #where_clause
         {
             fn resolve_input(
                 &self,
                 id: &::jolt_claims::protocols::jolt::JoltOpeningId,
-            ) -> ::core::option::Option<#field_param> {
+            ) -> ::core::option::Option<#value> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
             }
