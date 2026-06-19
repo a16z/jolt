@@ -442,6 +442,9 @@ step G:
 - Direct/native Akita commitments may carry the layout digest of their own
   opening statement. Only the packed witness commitment is required to match the
   packed setup layout digest.
+- For direct/native openings, the BatchOpeningStatement layout digest must match
+  the opened commitment's layout digest and is transcript-bound before native
+  proof challenges.
 - AkitaProverHint is bound to the same layout digest and commitment digest used
   by the batch proof.
 - The adapter result cannot introduce new logical opening IDs.

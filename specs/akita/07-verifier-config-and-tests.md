@@ -410,6 +410,8 @@ fn build_batch_statement<F, C>(
   ProgramImageInit.
 - Separate direct native openings bind the opened commitment's layout digest,
   not the PackedWitness layout digest from the surrounding Stage 8 wrapper.
+- The separate direct statement layout digest must equal the opened commitment's
+  layout digest; mismatches reject before native proof verification.
 - Prover helper rejects a precommitted statement unless the supplied hint
   matches that statement's commitment and the statement uses direct physical
   views.
@@ -495,8 +497,9 @@ akita_backend_program_committed_does_not_replace_precommitments:
   whenever those precommitted claims are present.
 
 akita_precommitted_direct_opening_uses_commitment_digest:
-  auxiliary direct opening verifies when the Stage 8 wrapper digest differs
-  from the opened precommitted commitment digest.
+  auxiliary direct opening verifies under its own commitment layout digest and
+  rejects when the direct statement digest differs from the opened commitment
+  digest.
 
 akita_fused_source_precommitted_opening_missing_rejects:
   fused-increment StoreFlag/RdPresent source claims that only open W_pack
