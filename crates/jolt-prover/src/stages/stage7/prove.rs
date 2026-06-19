@@ -26,7 +26,7 @@ use jolt_sumcheck::SumcheckProof;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage7::outputs::Stage7PublicOutput;
 use jolt_verifier::stages::stage7::{
-    inputs::Stage7Claims, outputs::Stage7ClearOutput,
+    inputs::Stage7OutputClaims, outputs::Stage7ClearOutput,
     stage7_advice_address_output as verifier_stage7_advice_address_output, stage7_clear_output,
     stage7_expected_final_claim, stage7_expected_outputs, stage7_hamming_opening_point,
     stage7_hamming_output_claim, stage7_hamming_sumcheck_point,
@@ -93,7 +93,7 @@ impl<'a, F: Field, W> Stage7ProverInput<'a, F, W> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ProofComponent<F: Field, Proof> {
     pub stage7_sumcheck_proof: Proof,
-    pub claims: Stage7Claims<F>,
+    pub claims: Stage7OutputClaims<F>,
     pub verifier_output: Stage7ClearOutput<F>,
 }
 
@@ -455,7 +455,7 @@ fn stage7_claims_and_verifier_output<F, C>(
     stage6: &Stage6ClearOutput<F>,
     prefix: &Stage7RegularBatchPrefixOutput<F>,
     batch: &Stage7Batch<F, C>,
-) -> Result<(Stage7Claims<F>, Stage7ClearOutput<F>), ProverError>
+) -> Result<(Stage7OutputClaims<F>, Stage7ClearOutput<F>), ProverError>
 where
     F: Field,
 {

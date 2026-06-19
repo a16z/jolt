@@ -1447,9 +1447,9 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 },
             ),
         },
-        stage7: stage7::inputs::Stage7Claims {
+        stage7: stage7::inputs::Stage7OutputClaims {
             hamming_weight_claim_reduction:
-                stage7::inputs::HammingWeightClaimReductionOutputOpeningClaims {
+                stage7::inputs::HammingWeightClaimReductionOutputClaims {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],

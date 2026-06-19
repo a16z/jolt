@@ -157,7 +157,7 @@ pub struct ClearProofClaims<F: Field> {
     pub stage4: stage4::inputs::Stage4OutputClaims<F>,
     pub stage5: stage5::inputs::Stage5OutputClaims<F>,
     pub stage6: stage6::inputs::Stage6Claims<F>,
-    pub stage7: stage7::inputs::Stage7Claims<F>,
+    pub stage7: stage7::inputs::Stage7OutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

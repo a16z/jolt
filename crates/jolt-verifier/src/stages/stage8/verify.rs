@@ -7,7 +7,7 @@ use crate::{
     proof::{JoltCommitments, JoltProof},
     stages::{
         stage6::inputs::Stage6Claims,
-        stage7::{inputs::Stage7Claims, outputs::PrecommittedFinalOpening},
+        stage7::{inputs::Stage7OutputClaims, outputs::PrecommittedFinalOpening},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -253,7 +253,7 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(&Stage6Claims<F>, &Stage7Claims<F>)>,
+    clear_claims: Option<(&Stage6Claims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,

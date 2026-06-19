@@ -1138,9 +1138,9 @@ mod tests {
                 bytecode_claim_reduction: None,
                 program_image_claim_reduction: None,
             },
-            stage7: stage7::inputs::Stage7Claims {
+            stage7: stage7::inputs::Stage7OutputClaims {
                 hamming_weight_claim_reduction:
-                    stage7::inputs::HammingWeightClaimReductionOutputOpeningClaims {
+                    stage7::inputs::HammingWeightClaimReductionOutputClaims {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),

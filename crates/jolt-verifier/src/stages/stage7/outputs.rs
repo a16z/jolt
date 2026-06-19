@@ -7,7 +7,7 @@ use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::inputs::Stage7Claims;
+use super::inputs::Stage7OutputClaims;
 
 /// Final opening of a precommitted polynomial, resolved from whichever stage
 /// completed its claim reduction (stage 6b cycle phase or stage 7 address
@@ -31,7 +31,7 @@ pub struct Stage7PublicOutput<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ClearOutput<F: Field> {
     pub public: Stage7PublicOutput<F>,
-    pub output_claims: Stage7Claims<F>,
+    pub output_claims: Stage7OutputClaims<F>,
     pub batch: VerifiedStage7Batch<F>,
     pub precommitted_final_openings: Vec<PrecommittedFinalOpening<F>>,
 }

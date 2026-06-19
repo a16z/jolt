@@ -26,8 +26,8 @@ use jolt_transcript::Transcript;
 
 use super::{
     inputs::{
-        AdviceAddressPhaseOutputClaim, Deps, HammingWeightClaimReductionOutputOpeningClaims,
-        Stage7AdviceAddressPhaseClaims, Stage7Claims,
+        AdviceAddressPhaseOutputClaim, Deps, HammingWeightClaimReductionOutputClaims,
+        Stage7AdviceAddressPhaseClaims, Stage7OutputClaims,
     },
     outputs::{
         AdviceAddressPhasePublicOutput, CommittedReductionAddressPhasePublicOutput,
@@ -81,7 +81,7 @@ pub struct Stage7HammingOutputClaimRequest<'a, F: Field> {
     pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     pub hamming_point: &'a [F],
     pub hamming_gamma: F,
-    pub claims: &'a Stage7Claims<F>,
+    pub claims: &'a Stage7OutputClaims<F>,
     pub stage6: &'a Stage6ClearOutput<F>,
 }
 
@@ -136,7 +136,7 @@ pub struct Stage7ClearOutputRequest<'a, F: Field> {
     pub hamming_dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     pub hamming_gamma: F,
     pub public_challenges: Vec<F>,
-    pub output_claims: &'a Stage7Claims<F>,
+    pub output_claims: &'a Stage7OutputClaims<F>,
     pub input_claims: &'a Stage7InputClaims<F>,
     pub batching_coefficients: &'a [F],
     pub sumcheck_challenges: Vec<F>,
@@ -246,7 +246,7 @@ pub fn stage7_hamming_output_claim<F: Field>(
 
 pub fn stage7_hamming_output_opening_claims<F: Field>(
     request: Stage7HammingOutputOpeningClaimsRequest<'_, F>,
-) -> Result<HammingWeightClaimReductionOutputOpeningClaims<F>, VerifierError> {
+) -> Result<HammingWeightClaimReductionOutputClaims<F>, VerifierError> {
     let layout = request.hamming_dimensions.layout;
     let expected = layout.total();
     if request.reduced_claims.len() != expected {
@@ -261,7 +261,7 @@ pub fn stage7_hamming_output_opening_claims<F: Field>(
 
     let instruction_end = layout.instruction();
     let bytecode_end = instruction_end + layout.bytecode();
-    Ok(HammingWeightClaimReductionOutputOpeningClaims {
+    Ok(HammingWeightClaimReductionOutputClaims {
         instruction_ra: request.reduced_claims[..instruction_end].to_vec(),
         bytecode_ra: request.reduced_claims[instruction_end..bytecode_end].to_vec(),
         ram_ra: request.reduced_claims[bytecode_end..].to_vec(),
@@ -270,8 +270,8 @@ pub fn stage7_hamming_output_opening_claims<F: Field>(
 
 pub fn stage7_output_claims<F: Field>(
     request: Stage7OutputClaimsRequest<'_, F>,
-) -> Result<Stage7Claims<F>, VerifierError> {
-    Ok(Stage7Claims {
+) -> Result<Stage7OutputClaims<F>, VerifierError> {
+    Ok(Stage7OutputClaims {
         hamming_weight_claim_reduction: stage7_hamming_output_opening_claims(
             Stage7HammingOutputOpeningClaimsRequest {
                 hamming_dimensions: request.hamming_dimensions,
@@ -1113,7 +1113,7 @@ where
         });
     }
 
-    append_stage7_opening_claims(transcript, claims);
+    claims.append_to_transcript(transcript);
 
     let mut precommitted_final_openings = Vec::new();
     for (kind, layout, address_phase, cycle_phase) in [
@@ -1289,7 +1289,7 @@ fn hamming_output_claim<F: Field>(
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     hamming_point: &[F],
     hamming_gamma: F,
-    claims: &Stage7Claims<F>,
+    claims: &Stage7OutputClaims<F>,
     stage6: &Stage6ClearOutput<F>,
 ) -> Result<F, VerifierError> {
     let output_openings = hamming_weight::claim_reduction_output_openings(dimensions);
@@ -1362,7 +1362,7 @@ fn hamming_output_claim<F: Field>(
 
 fn ensure_hamming_output_claim_counts<F: Field>(
     output_openings: &hamming_weight::HammingWeightClaimReductionOutputOpenings,
-    claims: &Stage7Claims<F>,
+    claims: &Stage7OutputClaims<F>,
 ) -> Result<(), VerifierError> {
     if claims.hamming_weight_claim_reduction.instruction_ra.len()
         != output_openings.instruction_ra.len()
@@ -1746,36 +1746,6 @@ fn stage6_advice_cycle_phase_public<F: Field, C>(
     verified.ok_or_else(|| VerifierError::MissingOpeningClaim {
         id: advice::cycle_phase_advice_opening(kind),
     })
-}
-
-fn append_stage7_opening_claims<F, T>(transcript: &mut T, claims: &Stage7Claims<F>)
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    for opening_claim in &claims.hamming_weight_claim_reduction.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for opening_claim in &claims.hamming_weight_claim_reduction.bytecode_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for opening_claim in &claims.hamming_weight_claim_reduction.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    if let Some(opening_claim) = &claims.advice_address_phase.trusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
-    }
-    if let Some(opening_claim) = &claims.advice_address_phase.untrusted {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
-    }
-    if let Some(output_claims) = &claims.bytecode_address_phase {
-        for opening_claim in &output_claims.chunks {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
-    }
-    if let Some(opening_claim) = &claims.program_image_address_phase {
-        transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
-    }
 }
 
 fn verify_bytecode_address_phase<F: Field>(

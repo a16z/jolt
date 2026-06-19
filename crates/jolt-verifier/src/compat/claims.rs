@@ -35,8 +35,8 @@ use crate::{
         },
         stage7::inputs::{
             AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
-            HammingWeightClaimReductionOutputOpeningClaims, ProgramImageAddressPhaseOutputClaim,
-            Stage7AdviceAddressPhaseClaims, Stage7Claims,
+            HammingWeightClaimReductionOutputClaims, ProgramImageAddressPhaseOutputClaim,
+            Stage7AdviceAddressPhaseClaims, Stage7OutputClaims,
         },
     },
     VerifierError,
@@ -501,7 +501,7 @@ fn final_bytecode_chunk_claims_from_native<F: Field>(claims: &NativeOpeningClaim
 
 fn stage7_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage7Claims<F>, VerifierError> {
+) -> Result<Stage7OutputClaims<F>, VerifierError> {
     let mut instruction_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -544,8 +544,8 @@ fn stage7_claims_from_native<F: Field>(
         });
     }
 
-    Ok(Stage7Claims {
-        hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims {
+    Ok(Stage7OutputClaims {
+        hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
             instruction_ra,
             bytecode_ra,
             ram_ra,
@@ -753,8 +753,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             bytecode_claim_reduction: None,
             program_image_claim_reduction: None,
         },
-        stage7: Stage7Claims {
-            hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims {
+        stage7: Stage7OutputClaims {
+            hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
@@ -1619,7 +1619,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage7_outputs<F: Field>(
-    claims: &Stage7Claims<F>,
+    claims: &Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening) in claims
@@ -1685,7 +1685,7 @@ fn claim_from_stage7_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage7_outputs<F: Field>(
-    claims: &mut Stage7Claims<F>,
+    claims: &mut Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening) in claims
