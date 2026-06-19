@@ -9,7 +9,7 @@ use jolt_akita::{
 use jolt_field::{Field, FixedByteSize};
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackedCombine, PackedLinearTerm, PhysicalView, ZkBatchOpeningScheme,
+    PackedCombine, PackedLinearTerm, PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -508,6 +508,51 @@ fn akita_single_opening_roundtrip() {
 }
 
 #[test]
+fn akita_packed_scheme_rejects_generic_dense_single_opening_path() {
+    run_on_large_stack(|| {
+        let (prover_setup, _) = setup();
+        let poly = polynomial(1);
+        let point = vec![f(2), f(3), f(5), f(7)];
+        let eval = poly.evaluate(&point);
+
+        let commit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            <AkitaPackedScheme as CommitmentScheme>::commit(&poly, &prover_setup)
+        }));
+        assert!(
+            commit_result.is_err(),
+            "AkitaPackedScheme generic commit must not bypass PackedWitnessSource"
+        );
+
+        let (_, hint) =
+            AkitaScheme::commit_group(&prover_setup, layout(7), std::slice::from_ref(&poly))
+                .expect("direct commitment should commit");
+        let open_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut transcript = Blake2bTranscript::new(b"akita-packed-dense-open");
+            <AkitaPackedScheme as CommitmentScheme>::open(
+                &poly,
+                &point,
+                eval,
+                &prover_setup,
+                Some(hint),
+                &mut transcript,
+            )
+        }));
+        assert!(
+            open_result.is_err(),
+            "AkitaPackedScheme generic open must not bypass PackedWitnessSource"
+        );
+
+        let zk_commit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            <AkitaPackedScheme as ZkOpeningScheme>::commit_zk(&poly, &prover_setup)
+        }));
+        assert!(
+            zk_commit_result.is_err(),
+            "AkitaPackedScheme generic ZK commit must not bypass PackedWitnessSource"
+        );
+    });
+}
+
+#[test]
 fn akita_batch_opening_roundtrip_direct_grouped_commitment() {
     run_on_large_stack(|| {
         let (prover_setup, verifier_setup) = setup();
@@ -539,6 +584,51 @@ fn akita_batch_opening_roundtrip_direct_grouped_commitment() {
             &proof,
         )
         .expect("batch proof should verify");
+
+        assert_eq!(result.joint_commitment, commitment);
+        assert_eq!(result.coefficients, vec![f(2), f(5)]);
+        assert_eq!(result.reduced_opening, f(2) * eval_a + f(5) * eval_b);
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
+fn akita_packed_scheme_keeps_direct_batch_opening_path() {
+    run_on_large_stack(|| {
+        let (prover_setup, verifier_setup) =
+            AkitaPackedScheme::setup(AkitaSetupParams::new(4, 2, layout(7)));
+        let poly_a = polynomial(1);
+        let poly_b = polynomial(20);
+        let point = vec![f(2), f(3), f(5), f(7)];
+        let eval_a = poly_a.evaluate(&point);
+        let eval_b = poly_b.evaluate(&point);
+        let (commitment, hint) =
+            AkitaScheme::commit_group(&prover_setup, layout(7), &[poly_a.clone(), poly_b.clone()])
+                .expect("grouped commit should succeed");
+        let statement = direct_statement(commitment.clone(), &point, eval_a, eval_b);
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-direct");
+        let proof = <AkitaPackedScheme as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &[poly_a, poly_b],
+            vec![hint],
+        )
+        .expect("direct batch proof should be produced");
+        assert!(
+            proof.reduction.is_none(),
+            "direct precommitted-style openings must not use a PackedWitness reduction"
+        );
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-direct");
+        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("direct batch proof should verify");
 
         assert_eq!(result.joint_commitment, commitment);
         assert_eq!(result.coefficients, vec![f(2), f(5)]);

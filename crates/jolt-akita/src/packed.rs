@@ -65,6 +65,16 @@ struct PackedBatchShape<'a> {
     commitment: AkitaCommitment,
 }
 
+#[expect(
+    clippy::panic,
+    reason = "single-opening trait methods cannot return unsupported packed dense-path errors"
+)]
+fn unsupported_dense_packed_path(operation: &str) -> ! {
+    panic!(
+        "AkitaPackedScheme::{operation} cannot be used for dense proof-owned polynomials; use commit_packed_source/prove_packed_source_batch for W_pack or AkitaScheme direct openings for precommitted objects"
+    )
+}
+
 impl Commitment for AkitaPackedScheme {
     type Output = AkitaCommitment;
 }
@@ -87,25 +97,21 @@ impl CommitmentScheme for AkitaPackedScheme {
     }
 
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        setup: &Self::ProverSetup,
+        _poly: &P,
+        _setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        AkitaScheme::commit(poly, setup)
+        unsupported_dense_packed_path("commit")
     }
 
     fn open(
-        poly: &Self::Polynomial,
-        point: &[Self::Field],
-        eval: Self::Field,
-        setup: &Self::ProverSetup,
-        hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _poly: &Self::Polynomial,
+        _point: &[Self::Field],
+        _eval: Self::Field,
+        _setup: &Self::ProverSetup,
+        _hint: Option<Self::OpeningHint>,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        let native = AkitaScheme::open(poly, point, eval, setup, hint, transcript);
-        AkitaPackedBatchProof {
-            reduction: None,
-            native,
-        }
+        unsupported_dense_packed_path("open")
     }
 
     fn verify(
@@ -241,27 +247,21 @@ impl ZkOpeningScheme for AkitaPackedScheme {
     type Blind = ();
 
     fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
-        poly: &P,
-        setup: &Self::ProverSetup,
+        _poly: &P,
+        _setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        AkitaScheme::commit_zk(poly, setup)
+        unsupported_dense_packed_path("commit_zk")
     }
 
     fn open_zk(
-        poly: &Self::Polynomial,
-        point: &[Self::Field],
-        eval: Self::Field,
-        setup: &Self::ProverSetup,
-        hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _poly: &Self::Polynomial,
+        _point: &[Self::Field],
+        _eval: Self::Field,
+        _setup: &Self::ProverSetup,
+        _hint: Self::OpeningHint,
+        _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        (
-            Self::open(poly, point, eval, setup, Some(hint), transcript),
-            AkitaHidingCommitment {
-                eval: field_bytes(eval),
-            },
-            (),
-        )
+        unsupported_dense_packed_path("open_zk")
     }
 
     fn verify_zk(
