@@ -97,6 +97,22 @@ Precommitted opening policy:
   commitment before the verifier accepts the packed value as opened.
 ```
 
+Precommitted opening contract:
+
+```text
+- Stage 8 partitions openings by commitment class before calling the Akita
+  packed-view path.
+- Proof-owned openings enter the single W_pack packed-view statement.
+- Precommitted openings enter a separate direct/native opening manifest keyed by
+  the original Jolt commitment handles.
+- Each precommitted manifest entry has its own proof material after deterministic
+  component expansion. Compatible entries may be grouped only by a native
+  direct-opening API that preserves every original commitment handle.
+- A proof for W_pack, or a backend Program::Committed bytecode handle, is never
+  accepted as the proof for TrustedAdvice, BytecodeChunk(i), ProgramImageInit,
+  StoreFlag, or RdPresent source openings.
+```
+
 In scope:
 
 ```text

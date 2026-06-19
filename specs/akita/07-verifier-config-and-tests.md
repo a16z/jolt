@@ -191,6 +191,9 @@ BytecodeChunk commitments.
 Backend Program::Committed material, if present, is not sufficient for these
 precommitted claims; the payload must still carry the original precommitted
 commitment handles and their separate opening proofs.
+The verifier treats packed-view proof material and precommitted direct-opening
+proof material as disjoint payload sections. A precommitted claim is satisfied
+only by the direct-opening section entry for its original commitment.
 Protocol header:
   ProgramMode::Committed.
   IncrementCommitmentMode::FusedOneHot.

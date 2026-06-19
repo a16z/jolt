@@ -234,6 +234,8 @@ Prove/verify:
   batching across these precommitted claims is allowed only through a direct
   native opening path that preserves the original commitment handles; it is not
   achieved by inserting the values into W_pack.
+  a W_pack packed-view proof and a direct/native precommitted proof are
+  different proof entries in the Akita payload.
   backend Program::Committed proof material is auxiliary only and cannot replace
   a missing direct precommitted opening statement/proof.
 
@@ -242,6 +244,8 @@ Rejected:
   this original commitment.
   accepting a copied precommitted value in W_pack without an explicit binding
   protocol.
+  using backend Program::Committed as a substitute for the Jolt BytecodeChunk(i)
+  or ProgramImageInit commitment handle.
 ```
 
 Commit/prove contract:
