@@ -9,6 +9,8 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use crate::stages::stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput};
 use crate::VerifierError;
 
+pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
+
 #[derive(Clone, Copy)]
 pub enum Deps<'a, F: Field, C> {
     Clear { stage1: &'a Stage1ClearOutput<F> },
@@ -89,14 +91,6 @@ pub struct Stage2BatchOutputClaims<F: Field> {
     pub instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
     pub ram_raf_evaluation: F,
     pub ram_output_check: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct RamReadWriteOutputClaims<F: Field> {
-    pub val: F,
-    pub ra: F,
-    pub inc: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
