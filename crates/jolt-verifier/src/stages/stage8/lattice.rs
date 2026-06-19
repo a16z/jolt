@@ -14,8 +14,8 @@ use jolt_claims::protocols::field_inline::{
     FieldInlineOpeningId,
 };
 use jolt_claims::protocols::jolt::{
-    advice_bytes_validity_requirement, byte_decode_terms, bytecode_chunk_lattice_view_formula,
-    bytecode_imm_canonical_bytes_requirement, bytecode_validity_requirements,
+    advice_bytes_validity_requirement, byte_decode_terms, bytecode_imm_canonical_bytes_requirement,
+    bytecode_validity_requirements,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
     fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
     fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
@@ -23,12 +23,11 @@ use jolt_claims::protocols::jolt::{
     fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
     fused_increment_sign_opening, fused_increment_source_lattice_view_formula,
     fused_increment_source_opening, fused_increment_validity_requirements,
-    lattice_packed_validity_digest, little_endian_byte_decode_terms,
-    program_image_validity_requirement, weighted_symbol_terms, AdviceClaimReductionLayout,
+    lattice_packed_validity_digest, weighted_symbol_terms, AdviceClaimReductionLayout,
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
     LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityKind,
     LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
-    ProgramImageClaimReductionLayout, TracePolynomialOrder, FUSED_INCREMENT_BYTE_LIMBS,
+    FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_openings::{
@@ -131,12 +130,6 @@ pub fn derive_akita_packed_witness_layout(
         extend_field_rd_inc_families(&mut specs, trace)?;
     }
 
-    if config.lattice.advice.trusted {
-        specs.push(advice_family(
-            JoltAdviceKind::Trusted,
-            require_advice_layout(precommitted, JoltAdviceKind::Trusted)?,
-        )?);
-    }
     if config.lattice.advice.untrusted {
         specs.push(advice_family(
             JoltAdviceKind::Untrusted,
@@ -153,12 +146,11 @@ pub fn derive_akita_packed_witness_layout(
         extend_bytecode_families(&mut specs, index, bytecode_layout.log_bytecode_chunk_size())?;
     }
 
-    let program_image_layout = precommitted.program_image.as_ref().ok_or_else(|| {
+    let _ = precommitted.program_image.as_ref().ok_or_else(|| {
         invalid_precommitted_schedule(
             "lattice committed-program mode requires a program-image claim-reduction layout",
         )
     })?;
-    specs.push(program_image_family(program_image_layout)?);
 
     PackedWitnessLayout::new(specs).map_err(|error| invalid_lattice_config(error.to_string()))
 }
@@ -176,10 +168,6 @@ pub fn derive_akita_packed_validity_requirements(
     let mut requirements = fused_increment_validity_requirements();
     if config.lattice.field_inline.enabled {
         requirements.extend(field_rd_inc_validity_requirements());
-    }
-    if config.lattice.advice.trusted {
-        let _ = require_advice_layout(precommitted, JoltAdviceKind::Trusted)?;
-        requirements.push(advice_bytes_validity_requirement(JoltAdviceKind::Trusted));
     }
     if config.lattice.advice.untrusted {
         let _ = require_advice_layout(precommitted, JoltAdviceKind::Untrusted)?;
@@ -205,7 +193,6 @@ pub fn derive_akita_packed_validity_requirements(
             "lattice committed-program mode requires a program-image claim-reduction layout",
         )
     })?;
-    requirements.push(program_image_validity_requirement());
 
     Ok(requirements)
 }
@@ -1386,7 +1373,26 @@ pub fn validate_akita_packed_witness_layout_config(
             "configured Akita packed witness D_pack does not match derived layout",
         ));
     }
+    for family in &layout.families {
+        if packed_family_is_precommitted(&family.id) {
+            return Err(invalid_lattice_config(format!(
+                "precommitted family {:?} cannot be included in the Akita packed witness layout",
+                family.id
+            )));
+        }
+    }
     Ok(())
+}
+
+fn packed_family_is_precommitted(family: &PackedFamilyId) -> bool {
+    matches!(
+        family,
+        PackedFamilyId::AdviceBytes {
+            kind: PackedAdviceKind::Trusted,
+            ..
+        } | PackedFamilyId::BytecodeChunk { .. }
+            | PackedFamilyId::ProgramImageInit
+    )
 }
 
 pub fn jolt_lattice_view_formulas<F>(
@@ -1675,11 +1681,13 @@ where
         JoltOpeningId::Polynomial {
             polynomial: JoltPolynomialId::Committed(polynomial),
             relation,
-        } => committed_lattice_row_point(polynomial, relation, point, log_k_chunk, precommitted),
+        } => committed_lattice_row_point(polynomial, relation, point, log_k_chunk),
         JoltOpeningId::TrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
-        }
-        | JoltOpeningId::UntrustedAdvice {
+        } => Err(unsupported_lattice_view(
+            "trusted advice uses a separate precommitted opening, not a packed witness row point",
+        )),
+        JoltOpeningId::UntrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
         } => Ok(point.to_vec()),
         id if id == fused_increment_magnitude_opening()
@@ -1720,7 +1728,6 @@ fn committed_lattice_row_point<F>(
     relation: JoltRelationId,
     point: &[F],
     log_k_chunk: usize,
-    precommitted: &PrecommittedSchedule,
 ) -> Result<Vec<F>, VerifierError>
 where
     F: Field,
@@ -1741,27 +1748,23 @@ where
             JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc,
             JoltRelationId::IncClaimReduction,
         ) => Ok(point.to_vec()),
-        (
-            JoltCommittedPolynomial::ProgramImageInit,
-            JoltRelationId::ProgramImageClaimReduction,
-        )
-        | (
-            JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice,
-            JoltRelationId::AdviceClaimReduction,
-        ) => Ok(point.to_vec()),
+        (JoltCommittedPolynomial::ProgramImageInit, JoltRelationId::ProgramImageClaimReduction) => {
+            Err(unsupported_lattice_view(
+                "ProgramImageInit uses a separate precommitted opening, not a packed witness row point",
+            ))
+        }
+        (JoltCommittedPolynomial::TrustedAdvice, JoltRelationId::AdviceClaimReduction) => {
+            Err(unsupported_lattice_view(
+                "TrustedAdvice uses a separate precommitted opening, not a packed witness row point",
+            ))
+        }
+        (JoltCommittedPolynomial::UntrustedAdvice, JoltRelationId::AdviceClaimReduction) => {
+            Ok(point.to_vec())
+        }
         (JoltCommittedPolynomial::BytecodeChunk(index), JoltRelationId::BytecodeClaimReduction) => {
-            let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
-                unsupported_lattice_view(format!(
-                    "BytecodeChunk({index}) row point requires committed-bytecode layout"
-                ))
-            })?;
-            if index >= layout.chunk_count() {
-                return Err(unsupported_lattice_view(format!(
-                    "BytecodeChunk({index}) is outside committed-bytecode chunk count {}",
-                    layout.chunk_count()
-                )));
-            }
-            bytecode_chunk_row_point(point, layout.trace_order(), layout.log_bytecode_chunk_size())
+            Err(unsupported_lattice_view(format!(
+                "BytecodeChunk({index}) uses a separate precommitted opening, not a packed witness row point"
+            )))
         }
         _ => Err(unsupported_lattice_view(format!(
             "committed polynomial {polynomial:?} under relation {relation:?} has no supported lattice packed row point"
@@ -1798,27 +1801,6 @@ where
         .split_address_point(point)
         .map(|address| address.r_bc)
         .map_err(|error| unsupported_lattice_view(error.to_string()))
-}
-
-fn bytecode_chunk_row_point<F>(
-    point: &[F],
-    trace_order: TracePolynomialOrder,
-    log_bytecode: usize,
-) -> Result<Vec<F>, VerifierError>
-where
-    F: Field,
-{
-    if point.len() < log_bytecode {
-        return Err(unsupported_lattice_view(format!(
-            "bytecode chunk opening point has {} variables but needs at least {log_bytecode}",
-            point.len()
-        )));
-    }
-    let lane_vars = point.len() - log_bytecode;
-    match trace_order {
-        TracePolynomialOrder::CycleMajor => Ok(point[lane_vars..].to_vec()),
-        TracePolynomialOrder::AddressMajor => Ok(point[..log_bytecode].to_vec()),
-    }
 }
 
 #[cfg(feature = "field-inline")]
@@ -1867,10 +1849,12 @@ where
         JoltOpeningId::Polynomial {
             polynomial: JoltPolynomialId::Committed(polynomial),
             relation,
-        } => committed_lattice_view_formula(polynomial, relation, point, log_k_chunk, precommitted),
+        } => committed_lattice_view_formula(polynomial, relation, point, log_k_chunk),
         JoltOpeningId::TrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
-        } => Ok(advice_lattice_view_formula(JoltAdviceKind::Trusted)),
+        } => Err(unsupported_lattice_view(
+            "trusted advice uses a separate precommitted opening, not a packed witness view",
+        )),
         JoltOpeningId::UntrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
         } => Ok(advice_lattice_view_formula(JoltAdviceKind::Untrusted)),
@@ -2000,7 +1984,6 @@ fn committed_lattice_view_formula<F>(
     relation: JoltRelationId,
     point: &[F],
     log_k_chunk: usize,
-    precommitted: &PrecommittedSchedule,
 ) -> Result<LatticePackedViewFormula<F>, VerifierError>
 where
     F: Field,
@@ -2039,40 +2022,22 @@ where
             ))
         }
         (JoltCommittedPolynomial::ProgramImageInit, JoltRelationId::ProgramImageClaimReduction) => {
-            Ok(LatticePackedViewFormula::linear_decoded(
-                little_endian_byte_decode_terms(LatticePackedFamilyId::ProgramImageInit, 8),
+            Err(unsupported_lattice_view(
+                "ProgramImageInit uses a separate precommitted opening, not a packed witness view",
             ))
         }
         (JoltCommittedPolynomial::TrustedAdvice, JoltRelationId::AdviceClaimReduction) => {
-            Ok(advice_lattice_view_formula(JoltAdviceKind::Trusted))
+            Err(unsupported_lattice_view(
+                "TrustedAdvice uses a separate precommitted opening, not a packed witness view",
+            ))
         }
         (JoltCommittedPolynomial::UntrustedAdvice, JoltRelationId::AdviceClaimReduction) => {
             Ok(advice_lattice_view_formula(JoltAdviceKind::Untrusted))
         }
         (JoltCommittedPolynomial::BytecodeChunk(index), JoltRelationId::BytecodeClaimReduction) => {
-            let layout = precommitted.bytecode.as_ref().ok_or_else(|| {
-                unsupported_lattice_view(format!(
-                    "BytecodeChunk({index}) lattice view requires committed-bytecode layout"
-                ))
-            })?;
-            if index >= layout.chunk_count() {
-                return Err(unsupported_lattice_view(format!(
-                    "BytecodeChunk({index}) is outside committed-bytecode chunk count {}",
-                    layout.chunk_count()
-                )));
-            }
-            bytecode_chunk_lattice_view_formula(
-                index,
-                point,
-                layout.trace_order(),
-                layout.log_bytecode_chunk_size(),
-                AkitaField::NUM_BYTES,
-            )
-            .map_err(|error| {
-                unsupported_lattice_view(format!(
-                    "BytecodeChunk({index}) lattice view formula failed: {error}"
-                ))
-            })
+            Err(unsupported_lattice_view(format!(
+                "BytecodeChunk({index}) uses a separate precommitted opening, not a packed witness view"
+            )))
         }
         _ => Err(unsupported_lattice_view(format!(
             "committed polynomial {polynomial:?} under relation {relation:?} has no supported lattice packed view"
@@ -2328,20 +2293,6 @@ fn extend_bytecode_families(
     )
 }
 
-fn program_image_family(
-    layout: &ProgramImageClaimReductionLayout,
-) -> Result<PackedFamilySpec, VerifierError> {
-    let requirement = program_image_validity_requirement();
-    Ok(PackedFamilySpec::direct(
-        akita_packed_family_id(&requirement.family),
-        PackedFactDomain::ProgramImageWords {
-            log_words: power_of_two_log(layout.padded_len_words(), "program image length")?,
-        },
-        requirement.limbs,
-        packed_alphabet_with_size(requirement.alphabet_size)?,
-    ))
-}
-
 fn require_advice_layout(
     precommitted: &PrecommittedSchedule,
     kind: JoltAdviceKind,
@@ -2426,9 +2377,10 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode;
     use jolt_claims::protocols::jolt::{
-        byte_decode_terms, formulas::dimensions::REGISTER_ADDRESS_BITS, JoltCommittedPolynomial,
-        JoltOpeningId, JoltRelationId, LatticePackedFamilyId, LatticePackedViewFormula,
-        LatticePackedViewTerm, TracePolynomialOrder,
+        byte_decode_terms, formulas::dimensions::REGISTER_ADDRESS_BITS,
+        program_image_validity_requirement, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+        LatticePackedFamilyId, LatticePackedViewFormula, LatticePackedViewTerm,
+        TracePolynomialOrder,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -2643,7 +2595,7 @@ mod tests {
         assert!(layout
             .family(&PackedFamilyId::BytecodeChunk { index: 0 })
             .is_none());
-        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_some());
+        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
         assert_eq!(layout.audit().d_pack, layout.dimension);
 
         let mut matching_config = lattice_config();
@@ -3503,10 +3455,8 @@ mod tests {
     }
 
     #[test]
-    fn derive_layout_uses_committed_program_validity_requirements() {
-        let mut config = lattice_config();
-        config.lattice.advice.trusted = true;
-        config.lattice.packed_witness.trusted_advice_family = true;
+    fn derive_layout_uses_bytecode_source_validity_requirements() {
+        let config = lattice_config();
         let precommitted = precommitted_schedule(Some(8));
         let layout = derive_akita_packed_witness_layout(&config, 2, 8, ra_layout(), &precommitted)
             .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
@@ -3538,26 +3488,6 @@ mod tests {
             assert_eq!(family.limbs, requirement.limbs);
             assert_eq!(family.alphabet.size(), requirement.alphabet_size);
         }
-
-        let advice_requirement = advice_bytes_validity_requirement(JoltAdviceKind::Trusted);
-        let advice_family = layout
-            .family(&akita_packed_family_id(&advice_requirement.family))
-            .unwrap_or_else(|| panic!("trusted advice family should exist"));
-        assert_eq!(advice_family.limbs, advice_requirement.limbs);
-        assert_eq!(
-            advice_family.alphabet.size(),
-            advice_requirement.alphabet_size
-        );
-
-        let program_image_requirement = program_image_validity_requirement();
-        let program_image_family = layout
-            .family(&akita_packed_family_id(&program_image_requirement.family))
-            .unwrap_or_else(|| panic!("program image family should exist"));
-        assert_eq!(program_image_family.limbs, program_image_requirement.limbs);
-        assert_eq!(
-            program_image_family.alphabet.size(),
-            program_image_requirement.alphabet_size
-        );
     }
 
     #[test]
@@ -3716,40 +3646,40 @@ mod tests {
     }
 
     #[test]
-    fn jolt_lattice_resolver_decodes_advice_and_program_image_bytes() {
+    fn jolt_lattice_resolver_keeps_precommitted_finals_out_of_w_pack() {
         let trusted = JoltOpeningId::trusted_advice(JoltRelationId::AdviceClaimReduction);
+        let untrusted = JoltOpeningId::untrusted_advice(JoltRelationId::AdviceClaimReduction);
         let program_image = JoltOpeningId::committed(
             JoltCommittedPolynomial::ProgramImageInit,
             JoltRelationId::ProgramImageClaimReduction,
         );
 
         let schedule = precommitted_schedule(None);
-        let trusted_formula = jolt_lattice_view_formula(trusted, &[Fr::from_u64(1)], 8, &schedule)
-            .unwrap_or_else(|error| panic!("trusted advice view should resolve: {error}"));
         assert!(matches!(
-            trusted_formula,
+            jolt_lattice_view_formula::<Fr>(trusted, &[Fr::from_u64(1)], 8, &schedule),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("trusted advice uses a separate precommitted opening")
+        ));
+        assert!(matches!(
+            jolt_lattice_view_formula::<Fr>(program_image, &[Fr::from_u64(1)], 8, &schedule),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("ProgramImageInit uses a separate precommitted opening")
+        ));
+
+        let untrusted_formula =
+            jolt_lattice_view_formula(untrusted, &[Fr::from_u64(1)], 8, &schedule)
+                .unwrap_or_else(|error| panic!("untrusted advice view should resolve: {error}"));
+        assert!(matches!(
+            untrusted_formula,
             LatticePackedViewFormula::LinearDecoded { terms }
                 if terms.len() == 256
                     && terms[7].coefficient == Fr::from_u64(7)
                     && terms[7].family == (LatticePackedFamilyId::AdviceBytes {
-                        kind: JoltAdviceKind::Trusted,
+                        kind: JoltAdviceKind::Untrusted,
                         index: 0,
                     })
                     && terms[7].limb == 0
                     && terms[7].symbol == 7
-        ));
-
-        let program_image_formula =
-            jolt_lattice_view_formula(program_image, &[Fr::from_u64(1)], 8, &schedule)
-                .unwrap_or_else(|error| panic!("program image view should resolve: {error}"));
-        assert!(matches!(
-            program_image_formula,
-            LatticePackedViewFormula::LinearDecoded { terms }
-                if terms.len() == 8 * 256
-                    && terms[256 + 7].coefficient == Fr::from_u64(256 * 7)
-                    && terms[256 + 7].family == LatticePackedFamilyId::ProgramImageInit
-                    && terms[256 + 7].limb == 1
-                    && terms[256 + 7].symbol == 7
         ));
     }
 
@@ -3910,41 +3840,19 @@ mod tests {
     }
 
     #[test]
-    fn jolt_lattice_resolver_decodes_bytecode_chunk_lanes() {
+    fn jolt_lattice_resolver_rejects_bytecode_chunks_as_packed_views() {
         let schedule = precommitted_schedule(None);
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::BytecodeChunk(0),
             JoltRelationId::BytecodeClaimReduction,
         );
-        let (point, lane_weights) = bytecode_chunk_opening_point();
-        let formula = jolt_lattice_view_formula(id, &point, 8, &schedule)
-            .unwrap_or_else(|error| panic!("bytecode view should resolve: {error}"));
-        let terms = linear_decoded_terms(&formula);
-        let lane_layout = bytecode::BYTECODE_LANE_LAYOUT;
+        let (point, _) = bytecode_chunk_opening_point();
 
-        assert_eq!(
-            find_lattice_term(
-                terms,
-                LatticePackedFamilyId::BytecodeRegisterSelector {
-                    chunk: 0,
-                    selector: 1,
-                },
-                0,
-                5,
-            )
-            .coefficient,
-            lane_weights[lane_layout.rs2_start + 5]
-        );
-        assert_eq!(
-            find_lattice_term(
-                terms,
-                LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 },
-                1,
-                7,
-            )
-            .coefficient,
-            lane_weights[lane_layout.imm_idx] * Fr::from_u64(256 * 7)
-        );
+        assert!(matches!(
+            jolt_lattice_view_formula(id, &point, 8, &schedule),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("BytecodeChunk(0) uses a separate precommitted opening")
+        ));
     }
 
     #[test]
@@ -3961,7 +3869,7 @@ mod tests {
                 &precommitted_schedule_without_committed_program(),
             ),
             Err(VerifierError::FinalOpeningBatchFailed { reason })
-                if reason.contains("BytecodeChunk")
+                if reason.contains("BytecodeChunk(0) uses a separate precommitted opening")
         ));
     }
 
@@ -4003,7 +3911,7 @@ mod tests {
     }
 
     #[test]
-    fn jolt_lattice_physical_manifest_lowers_bytecode_chunk_view() {
+    fn jolt_lattice_physical_manifest_rejects_bytecode_chunk_packed_view() {
         let schedule = precommitted_schedule(None);
         let layout =
             derive_akita_packed_witness_layout(&lattice_config(), 2, 8, ra_layout(), &schedule)
@@ -4012,30 +3920,14 @@ mod tests {
             JoltCommittedPolynomial::BytecodeChunk(0),
             JoltRelationId::BytecodeClaimReduction,
         );
-        let (point, lane_weights) = bytecode_chunk_opening_point();
+        let (point, _) = bytecode_chunk_opening_point();
         let logical = logical_manifest(id, point);
-        let physical = jolt_lattice_physical_manifest(&logical, &layout, 8, &schedule)
-            .unwrap_or_else(|error| panic!("physical manifest should resolve: {error}"));
 
-        assert_eq!(physical.layout_digest, layout.digest);
-        assert_eq!(physical.openings[0].id, Stage8OpeningId::from(id));
-        match &physical.openings[0].view {
-            PhysicalView::PackedLinear {
-                layout_digest,
-                terms,
-            } => {
-                assert_eq!(*layout_digest, layout.digest);
-                assert_eq!(
-                    find_physical_term(terms, PackedFamilyId::BytecodeImmBytes { chunk: 0 }, 1, 7,)
-                        .coefficient,
-                    lane_weights[bytecode::BYTECODE_LANE_LAYOUT.imm_idx] * Fr::from_u64(256 * 7)
-                );
-                assert!(layout
-                    .family(&PackedFamilyId::BytecodeChunk { index: 0 })
-                    .is_none());
-            }
-            PhysicalView::Direct => panic!("expected packed linear view"),
-        }
+        assert!(matches!(
+            jolt_lattice_physical_manifest(&logical, &layout, 8, &schedule),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("BytecodeChunk(0) uses a separate precommitted opening")
+        ));
     }
 
     #[test]
@@ -4115,10 +4007,54 @@ mod tests {
     }
 
     #[test]
-    fn advice_layout_requires_precommitted_schedule() {
+    fn layout_config_rejects_precommitted_packed_families() {
+        let precommitted_specs = [
+            PackedFamilySpec::direct(
+                PackedFamilyId::AdviceBytes {
+                    kind: PackedAdviceKind::Trusted,
+                    index: 0,
+                },
+                PackedFactDomain::AdviceBytes {
+                    kind: PackedAdviceKind::Trusted,
+                    log_bytes: 1,
+                },
+                1,
+                PackedAlphabet::Byte,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeChunk { index: 0 },
+                PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+                1,
+                PackedAlphabet::Byte,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::ProgramImageInit,
+                PackedFactDomain::ProgramImageWords { log_words: 1 },
+                8,
+                PackedAlphabet::Byte,
+            ),
+        ];
+
+        for spec in precommitted_specs {
+            let layout = PackedWitnessLayout::new([spec])
+                .unwrap_or_else(|error| panic!("layout should build: {error}"));
+            let mut config = lattice_config();
+            config.lattice.packed_witness.layout_digest = Some(layout.digest);
+            config.lattice.packed_witness.d_pack = Some(layout.dimension);
+
+            assert!(matches!(
+                validate_akita_packed_witness_layout_config(&config, &layout),
+                Err(VerifierError::InvalidProtocolConfig { reason })
+                    if reason.contains("cannot be included in the Akita packed witness layout")
+            ));
+        }
+    }
+
+    #[test]
+    fn untrusted_advice_layout_requires_precommitted_schedule() {
         let mut config = lattice_config();
-        config.lattice.advice.trusted = true;
-        config.lattice.packed_witness.trusted_advice_family = true;
+        config.lattice.advice.untrusted = true;
+        config.lattice.packed_witness.untrusted_advice_family = true;
 
         assert!(matches!(
             derive_akita_packed_witness_layout(
@@ -4136,12 +4072,12 @@ mod tests {
             2,
             8,
             ra_layout(),
-            &precommitted_schedule(Some(64)),
+            &precommitted_schedule_with_advice(None, Some(64)),
         )
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
         assert!(layout
             .family(&PackedFamilyId::AdviceBytes {
-                kind: PackedAdviceKind::Trusted,
+                kind: PackedAdviceKind::Untrusted,
                 index: 0,
             })
             .is_some());
@@ -4176,11 +4112,9 @@ mod tests {
     }
 
     #[test]
-    fn advice_and_committed_program_use_non_trace_domains() {
+    fn untrusted_advice_and_bytecode_sources_use_non_trace_domains() {
         let mut config = lattice_config();
-        config.lattice.advice.trusted = true;
         config.lattice.advice.untrusted = true;
-        config.lattice.packed_witness.trusted_advice_family = true;
         config.lattice.packed_witness.untrusted_advice_family = true;
 
         let layout = derive_akita_packed_witness_layout(
@@ -4188,23 +4122,16 @@ mod tests {
             2,
             8,
             ra_layout(),
-            &precommitted_schedule_with_advice(Some(64), Some(128)),
+            &precommitted_schedule_with_advice(None, Some(128)),
         )
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
-        let trusted = layout
+        assert!(layout
             .family(&PackedFamilyId::AdviceBytes {
                 kind: PackedAdviceKind::Trusted,
                 index: 0,
             })
-            .unwrap_or_else(|| panic!("trusted advice family should be present"));
-        assert!(matches!(
-            trusted.domain,
-            PackedFactDomain::AdviceBytes {
-                kind: PackedAdviceKind::Trusted,
-                ..
-            }
-        ));
+            .is_none());
 
         let untrusted = layout
             .family(&PackedFamilyId::AdviceBytes {
@@ -4258,14 +4185,7 @@ mod tests {
         assert_eq!(imm.limbs, AkitaField::NUM_BYTES);
         assert_eq!(imm.alphabet, PackedAlphabet::Byte);
 
-        let program_image = layout
-            .family(&PackedFamilyId::ProgramImageInit)
-            .unwrap_or_else(|| panic!("program-image family should be present"));
-        assert_eq!(
-            program_image.domain,
-            PackedFactDomain::ProgramImageWords { log_words: 2 }
-        );
-        assert_eq!(program_image.limbs, 8);
+        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
     }
 
     #[cfg(feature = "field-inline")]
@@ -4276,7 +4196,6 @@ mod tests {
         config.lattice.advice.trusted = true;
         config.lattice.advice.untrusted = true;
         config.lattice.packed_witness.field_rd_inc_family = true;
-        config.lattice.packed_witness.trusted_advice_family = true;
         config.lattice.packed_witness.untrusted_advice_family = true;
 
         let layout = derive_akita_packed_witness_layout(
@@ -4292,7 +4211,7 @@ mod tests {
         assert_eq!(audit.d_pack, layout.dimension);
         assert!(audit.cells_by_domain.trace_rows > 0);
         assert!(audit.cells_by_domain.bytecode_rows > 0);
-        assert!(audit.cells_by_domain.program_image_words > 0);
+        assert_eq!(audit.cells_by_domain.program_image_words, 0);
         assert!(audit.cells_by_domain.advice_bytes > 0);
         assert!(layout.family(&PackedFamilyId::IncSign).is_some());
         assert!(layout
@@ -4311,7 +4230,7 @@ mod tests {
                 kind: PackedAdviceKind::Trusted,
                 index: 0,
             })
-            .is_some());
+            .is_none());
         assert!(layout
             .family(&PackedFamilyId::AdviceBytes {
                 kind: PackedAdviceKind::Untrusted,
@@ -4333,6 +4252,6 @@ mod tests {
         assert!(layout
             .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
             .is_some());
-        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_some());
+        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
     }
 }

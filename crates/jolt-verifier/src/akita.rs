@@ -355,14 +355,14 @@ pub fn akita_lattice_protocol_config_for_layout(
             d_pack: Some(layout.dimension),
             validity_digest: Some(lattice_packed_validity_digest(&validity_requirements)),
             field_rd_inc_family: layout_has_field_rd_inc(layout),
-            trusted_advice_family: layout_has_advice(layout, PackedAdviceKind::Trusted),
+            trusted_advice_family: false,
             untrusted_advice_family: layout_has_advice(layout, PackedAdviceKind::Untrusted),
         },
         field_inline: FieldInlineLatticeConfig {
             enabled: layout_has_field_rd_inc(layout),
         },
         advice: AdviceLatticeConfig {
-            trusted: layout_has_advice(layout, PackedAdviceKind::Trusted),
+            trusted: false,
             untrusted: layout_has_advice(layout, PackedAdviceKind::Untrusted),
         },
         zk: false,
@@ -2376,18 +2376,12 @@ mod tests {
                 PackedAlphabet::Byte,
             ),
             PackedFamilySpec::direct(
-                PackedFamilyId::ProgramImageInit,
-                PackedFactDomain::ProgramImageWords { log_words: 1 },
-                8,
-                PackedAlphabet::Byte,
-            ),
-            PackedFamilySpec::direct(
                 PackedFamilyId::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+                    kind: PackedAdviceKind::Untrusted,
                     index: 0,
                 },
                 PackedFactDomain::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+                    kind: PackedAdviceKind::Untrusted,
                     log_bytes: 2,
                 },
                 1,
@@ -2463,9 +2457,9 @@ mod tests {
                 log_k_chunk: 8,
                 instruction_lookup_indices: &[0xaa, 0xbb],
                 bytecode_rows: &bytecode,
-                program_image_words: &[0x0201],
-                trusted_advice: Some(&[7, 8]),
-                untrusted_advice: None,
+                program_image_words: &[],
+                trusted_advice: None,
+                untrusted_advice: Some(&[7, 8]),
             },
         )
         .expect("Jolt packed witness should build and commit");
@@ -2546,22 +2540,16 @@ mod tests {
         );
         assert_eq!(
             witness
-                .eval_direct_fact(&packed_cell_at(PackedFamilyId::ProgramImageInit, 1, 0, 0))
-                .expect("padded program image word should exist"),
-            AkitaField::one()
-        );
-        assert_eq!(
-            witness
                 .eval_direct_fact(&packed_cell_at(
                     PackedFamilyId::AdviceBytes {
-                        kind: PackedAdviceKind::Trusted,
+                        kind: PackedAdviceKind::Untrusted,
                         index: 0,
                     },
                     2,
                     0,
                     0,
                 ))
-                .expect("padded trusted advice byte should exist"),
+                .expect("padded untrusted advice byte should exist"),
             AkitaField::one()
         );
     }
@@ -3464,7 +3452,7 @@ mod tests {
     fn packed_validity_value_detects_malformed_advice_byte_onehot() {
         let (layout, statements) = small_validity_context();
         let family = PackedFamilyId::AdviceBytes {
-            kind: PackedAdviceKind::Trusted,
+            kind: PackedAdviceKind::Untrusted,
             index: 0,
         };
         let source = SparsePackedWitness::try_from_cells(
@@ -3478,7 +3466,7 @@ mod tests {
         let statement = validity_statement(
             &statements,
             LatticePackedFamilyId::AdviceBytes {
-                kind: JoltAdviceKind::Trusted,
+                kind: JoltAdviceKind::Untrusted,
                 index: 0,
             },
             LatticePackedValidityStatementKind::ExactOneHotRowSum,
@@ -3639,8 +3627,8 @@ mod tests {
             TracePolynomialOrder::CycleMajor,
             log_t,
             log_k_chunk,
-            Some(1),
             None,
+            Some(1),
             Some(CommittedProgramSchedule {
                 bytecode_len: 1,
                 bytecode_chunk_count: 1,
@@ -3652,8 +3640,8 @@ mod tests {
         let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
         config.lattice.program_mode = ProgramMode::Committed;
         config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
-        config.lattice.advice.trusted = true;
-        config.lattice.packed_witness.trusted_advice_family = true;
+        config.lattice.advice.untrusted = true;
+        config.lattice.packed_witness.untrusted_advice_family = true;
         config.lattice.packed_witness.layout_digest = Some([0; 32]);
         config.lattice.packed_witness.d_pack = Some(0);
         config.lattice.packed_witness.validity_digest = Some([0; 32]);

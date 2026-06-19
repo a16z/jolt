@@ -1958,7 +1958,6 @@ mod tests {
             true,
             |config| {
                 config.lattice.advice.trusted = true;
-                config.lattice.packed_witness.trusted_advice_family = true;
             },
         );
 

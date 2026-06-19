@@ -258,14 +258,9 @@ fn validate_lattice_config(config: &JoltProtocolConfig) -> Result<(), VerifierEr
             "FieldRdInc packed witness families require field-inline lattice mode",
         ));
     }
-    if config.lattice.advice.trusted && !config.lattice.packed_witness.trusted_advice_family {
+    if config.lattice.packed_witness.trusted_advice_family {
         return Err(invalid_config(
-            "trusted advice lattice mode requires trusted advice packed witness families",
-        ));
-    }
-    if !config.lattice.advice.trusted && config.lattice.packed_witness.trusted_advice_family {
-        return Err(invalid_config(
-            "trusted advice packed witness families require trusted advice lattice mode",
+            "trusted advice uses separate precommitted openings and cannot be a packed witness family",
         ));
     }
     if config.lattice.advice.untrusted && !config.lattice.packed_witness.untrusted_advice_family {
@@ -435,16 +430,16 @@ mod tests {
     }
 
     #[test]
-    fn akita_advice_requires_layout_families() {
+    fn akita_advice_config_splits_trusted_precommitted_from_untrusted_packed() {
         let mut trusted = valid_lattice_config();
         trusted.lattice.advice.trusted = true;
-        assert!(invalid(&trusted));
-
-        trusted.lattice.packed_witness.trusted_advice_family = true;
         assert_eq!(
             validate_protocol_config(&trusted).ok(),
             Some(PcsFamily::Lattice)
         );
+
+        trusted.lattice.packed_witness.trusted_advice_family = true;
+        assert!(invalid(&trusted));
 
         let mut untrusted = valid_lattice_config();
         untrusted.lattice.advice.untrusted = true;
