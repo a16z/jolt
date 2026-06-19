@@ -470,11 +470,20 @@ impl<F: Field> Stage7Relations<F> {
         stage4: &Stage4ClearOutput<F>,
         stage6: &Stage6ClearOutput<F>,
     ) -> Result<Self, VerifierError> {
+        let booleanity_opening = stage6
+            .output_points
+            .booleanity_opening_point()
+            .ok_or(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::HammingWeightClaimReduction,
+                reason: "Stage 6 booleanity produced no opening point".to_string(),
+            })?;
+        let (booleanity_r_address, booleanity_r_cycle) =
+            booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
         let hamming = HammingWeightClaimReduction::new(
             hamming_dimensions,
             hamming_gamma,
-            stage6.batch.booleanity.r_cycle.clone(),
-            stage6.batch.booleanity.r_address.clone(),
+            booleanity_r_cycle.to_vec(),
+            booleanity_r_address.to_vec(),
             stage7_hamming_virtualization_address_points(hamming_dimensions, stage6)?,
         );
         let bytecode = clear_bytecode_relation(layouts.bytecode, stage6)?;
@@ -1044,24 +1053,15 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
     stage6: &Stage6ClearOutput<F>,
 ) -> Result<Vec<Vec<F>>, VerifierError> {
-    if stage6
-        .batch
+    let instruction_ra_points = &stage6
+        .output_points
         .instruction_ra_virtualization
-        .instruction_ra_opening_points
-        .len()
-        != dimensions.layout.instruction()
-        || stage6
-            .batch
-            .bytecode_read_raf
-            .bytecode_ra_opening_points
-            .len()
-            != dimensions.layout.bytecode()
-        || stage6
-            .batch
-            .ram_ra_virtualization
-            .ram_ra_opening_points
-            .len()
-            != dimensions.layout.ram()
+        .committed_instruction_ra;
+    let bytecode_ra_points = &stage6.output_points.bytecode_read_raf.bytecode_ra;
+    let ram_ra_points = &stage6.output_points.ram_ra_virtualization.ram_ra;
+    if instruction_ra_points.len() != dimensions.layout.instruction()
+        || bytecode_ra_points.len() != dimensions.layout.bytecode()
+        || ram_ra_points.len() != dimensions.layout.ram()
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::HammingWeightClaimReduction,
@@ -1070,23 +1070,19 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
     }
 
     let mut points = Vec::with_capacity(dimensions.layout.total());
-    for point in &stage6
-        .batch
-        .instruction_ra_virtualization
-        .instruction_ra_opening_points
-    {
+    for point in instruction_ra_points {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,
         )?);
     }
-    for point in &stage6.batch.bytecode_read_raf.bytecode_ra_opening_points {
+    for point in bytecode_ra_points {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,
         )?);
     }
-    for point in &stage6.batch.ram_ra_virtualization.ram_ra_opening_points {
+    for point in ram_ra_points {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,

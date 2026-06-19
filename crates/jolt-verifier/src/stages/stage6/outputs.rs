@@ -34,7 +34,14 @@ pub struct Stage6PublicOutput<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6ClearOutput<F: Field> {
     pub public: Stage6PublicOutput<F>,
+    /// The produced opening *values* (wire form); read by later stages and the
+    /// Fiat-Shamir opening-claim encoder.
     pub output_claims: Stage6OutputClaims<F>,
+    /// The produced opening *points* (point-only cell), paired field-for-field with
+    /// `output_claims`. Stages 7 and 8 read each relation's opening point off these
+    /// cells (via the `Stage6OutputClaims<Vec<F>>` accessors), replacing the
+    /// per-relation points the retired `VerifiedStage6Batch` carried.
+    pub output_points: Stage6OutputClaims<Vec<F>>,
     pub batch: VerifiedStage6Batch<F>,
 }
 
@@ -72,6 +79,10 @@ pub struct Stage6ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+// Transitional: `Stage6ClearOutput` carries both the retiring `batch` and the new
+// `output_points` while consumers migrate; the follow-up commit removes `batch`,
+// shrinking the `Clear` variant back under the threshold.
+#[expect(clippy::large_enum_variant)]
 pub enum Stage6Output<F: Field, C> {
     Clear(Stage6ClearOutput<F>),
     Zk(Stage6ZkOutput<F, C>),

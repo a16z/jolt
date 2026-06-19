@@ -85,7 +85,7 @@ where
     let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
         Deps::Clear { stage6, stage7 } => (
             stage7.hamming_weight_opening_point.as_slice(),
-            stage6.batch.inc_claim_reduction.opening_point.as_slice(),
+            stage6.output_points.inc_opening_point(),
             stage7.precommitted_final_openings.as_slice(),
             Some((&stage6.output_claims, &stage7.output_claims)),
         ),

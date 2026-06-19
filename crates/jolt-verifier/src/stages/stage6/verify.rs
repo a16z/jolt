@@ -48,8 +48,11 @@ use super::{
         ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
     },
     inputs::{
-        AdviceCyclePhaseOutputClaim, BytecodeCyclePhaseOutputClaims, Deps,
-        ProgramImageCyclePhaseOutputClaim, Stage6OutputClaims,
+        AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeCyclePhaseOutputClaims,
+        BytecodeReadRafOutputClaims, Deps, IncClaimReductionOutputClaims,
+        InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
+        RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
+        Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
     },
     outputs::{
         AdviceCyclePhasePublicOutput, BooleanityPublicOutput, BytecodeReadRafPublicOutput,
@@ -1379,6 +1382,50 @@ where
         &booleanity_opening_point,
     );
 
+    let output_points = Stage6OutputClaims {
+        address_phase: Stage6AddressPhaseClaims {
+            bytecode_read_raf: bytecode_r_address.clone(),
+            booleanity: booleanity_r_address.clone(),
+            bytecode_val_stages: claims
+                .address_phase
+                .bytecode_val_stages
+                .as_ref()
+                .map(|_| core::array::from_fn(|_| bytecode_r_address.clone())),
+        },
+        bytecode_read_raf: bytecode_points,
+        booleanity: booleanity_points,
+        ram_hamming_booleanity: ram_hamming_points,
+        ram_ra_virtualization: ram_ra_points,
+        instruction_ra_virtualization: instruction_ra_points,
+        inc_claim_reduction: inc_points,
+        advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+            trusted: trusted_advice.as_ref().map(|verified| AdviceCyclePhaseOutputClaim {
+                opening_claim: verified.opening_point.clone(),
+            }),
+            untrusted: untrusted_advice
+                .as_ref()
+                .map(|verified| AdviceCyclePhaseOutputClaim {
+                    opening_claim: verified.opening_point.clone(),
+                }),
+        },
+        bytecode_claim_reduction: bytecode_cycle_phase.as_ref().map(|verified| {
+            match claims.bytecode_claim_reduction.as_ref() {
+                Some(BytecodeCyclePhaseOutputClaims::Chunks(chunks)) => {
+                    BytecodeCyclePhaseOutputClaims::Chunks(vec![
+                        verified.opening_point.clone();
+                        chunks.len()
+                    ])
+                }
+                _ => BytecodeCyclePhaseOutputClaims::Intermediate(verified.opening_point.clone()),
+            }
+        }),
+        program_image_claim_reduction: program_image_cycle_phase.as_ref().map(|verified| {
+            ProgramImageCyclePhaseOutputClaim {
+                opening_claim: verified.opening_point.clone(),
+            }
+        }),
+    };
+
     Ok(Stage6Output::Clear(Stage6ClearOutput {
         public: public(
             instruction_ra_gamma_powers,
@@ -1390,6 +1437,7 @@ where
             batch.batching_coefficients.clone(),
         ),
         output_claims: claims.clone(),
+        output_points,
         batch: VerifiedStage6Batch {
             address_phase_batching_coefficients: address_batch.batching_coefficients.clone(),
             address_phase_sumcheck_point: address_batch.reduction.point.clone(),
@@ -2322,6 +2370,54 @@ pub fn stage6_clear_output<F: Field>(
         expected_output_claim: F::zero(),
     };
 
+    let points = request.points;
+    let booleanity_point = |count: usize| vec![points.booleanity_opening_point.clone(); count];
+    let output_points = Stage6OutputClaims {
+        address_phase: Stage6AddressPhaseClaims {
+            bytecode_read_raf: points.bytecode_read_raf_r_address.clone(),
+            booleanity: points.booleanity_r_address.clone(),
+            // The modular prover only supports full programs (no staged Val columns).
+            bytecode_val_stages: None,
+        },
+        bytecode_read_raf: BytecodeReadRafOutputClaims {
+            bytecode_ra: points.bytecode_ra_opening_points.clone(),
+        },
+        booleanity: BooleanityOutputClaims {
+            instruction_ra: booleanity_point(request.output_claims.booleanity.instruction_ra.len()),
+            bytecode_ra: booleanity_point(request.output_claims.booleanity.bytecode_ra.len()),
+            ram_ra: booleanity_point(request.output_claims.booleanity.ram_ra.len()),
+        },
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+            ram_hamming_weight: points.ram_hamming_booleanity_opening_point.clone(),
+        },
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims {
+            ram_ra: points.ram_ra_opening_points.clone(),
+        },
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+            committed_instruction_ra: points.instruction_ra_opening_points.clone(),
+        },
+        inc_claim_reduction: IncClaimReductionOutputClaims {
+            ram_inc: points.inc_claim_reduction_opening_point.clone(),
+            rd_inc: points.inc_claim_reduction_opening_point.clone(),
+        },
+        advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+            trusted: points
+                .trusted_advice_cycle_phase
+                .as_ref()
+                .map(|advice| AdviceCyclePhaseOutputClaim {
+                    opening_claim: advice.opening_point.clone(),
+                }),
+            untrusted: points.untrusted_advice_cycle_phase.as_ref().map(|advice| {
+                AdviceCyclePhaseOutputClaim {
+                    opening_claim: advice.opening_point.clone(),
+                }
+            }),
+        },
+        // Committed-program reductions; the modular prover is full-only.
+        bytecode_claim_reduction: None,
+        program_image_claim_reduction: None,
+    };
+
     Ok(Stage6ClearOutput {
         public: stage6_public_output(
             request.transcript_challenges,
@@ -2332,6 +2428,7 @@ pub fn stage6_clear_output<F: Field>(
             None,
         ),
         output_claims: request.output_claims,
+        output_points,
         batch: VerifiedStage6Batch {
             address_phase_batching_coefficients: Vec::new(),
             address_phase_sumcheck_point: Point::high_to_low(Vec::new()),

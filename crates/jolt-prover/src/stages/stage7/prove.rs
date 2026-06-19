@@ -275,10 +275,18 @@ where
 
     let virt_points = stage7_hamming_virtualization_address_points(dimensions, stage6)
         .map_err(verifier_stage7_error)?;
+    let booleanity_opening = stage6
+        .output_points
+        .booleanity_opening_point()
+        .ok_or_else(|| ProverError::InvalidStageRequest {
+            reason: "Stage 6 booleanity produced no opening point".to_owned(),
+        })?;
+    let (booleanity_r_address, booleanity_r_cycle) =
+        booleanity_opening.split_at(dimensions.log_k_chunk);
     let state_request = SumcheckStage7HammingStateRequest::jolt_hamming_weight_claim_reduction(
         dimensions,
-        stage6.batch.booleanity.r_cycle.clone(),
-        stage6.batch.booleanity.r_address.clone(),
+        booleanity_r_cycle.to_vec(),
+        booleanity_r_address.to_vec(),
         virt_points,
         hamming_gamma,
         STAGE7_HAMMING_CHUNK_SIZE,
