@@ -41,10 +41,10 @@ use jolt_akita::{
     PackedViewFormula, PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
 };
 use jolt_claims::protocols::jolt::{
-    fused_increment_magnitude_lattice_view_formula, fused_increment_sign_lattice_view_formula,
-    lattice_packed_validity_digest, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltRelationId, LatticePackedFamilyId, LatticePackedValidityKind,
-    LatticePackedValidityRequirement, FUSED_INCREMENT_BYTE_LIMBS,
+    formulas::dimensions::REGISTER_ADDRESS_BITS, fused_increment_magnitude_lattice_view_formula,
+    fused_increment_sign_lattice_view_formula, lattice_packed_validity_digest, JoltAdviceKind,
+    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticePackedFamilyId,
+    LatticePackedValidityKind, LatticePackedValidityRequirement, FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
 use jolt_openings::{BatchOpeningScheme, BatchOpeningStatement, PhysicalView};
@@ -122,12 +122,20 @@ pub struct AkitaFusedIncrementStage6Claims {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct AkitaFusedIncrementBytecodeSourceComponents<'a> {
+    pub store_flag_chunks: &'a [AkitaField],
+    pub rd_present_chunks: &'a [AkitaField],
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct AkitaFusedIncrementStage6Derivation<'a> {
     pub translation_opening_point: &'a [AkitaField],
     pub source_link: &'a VerifiedBytecodeReadRafSumcheck<AkitaField>,
+    pub source_link_components: AkitaFusedIncrementBytecodeSourceComponents<'a>,
     pub translation_sources: AkitaFusedIncrementTranslationSources,
     pub inactive_zero_opening_point: &'a [AkitaField],
     pub inactive_source_link: &'a VerifiedBytecodeReadRafSumcheck<AkitaField>,
+    pub inactive_source_link_components: AkitaFusedIncrementBytecodeSourceComponents<'a>,
     pub inactive_sources: AkitaFusedIncrementTranslationSources,
 }
 
@@ -204,6 +212,7 @@ where
         precommitted,
         log_k_chunk,
         input.source_link,
+        input.source_link_components,
         JoltRelationId::FusedIncrementSourceLink,
     )?;
     let inactive_zero = derive_akita_fused_increment_translation_claim(
@@ -217,6 +226,7 @@ where
         precommitted,
         log_k_chunk,
         input.inactive_source_link,
+        input.inactive_source_link_components,
         JoltRelationId::FusedIncrementInactiveSourceLink,
     )?;
 
@@ -263,6 +273,7 @@ fn derive_akita_fused_increment_source_link_claim<S>(
     precommitted: &PrecommittedSchedule,
     log_k_chunk: usize,
     source_link: &VerifiedBytecodeReadRafSumcheck<AkitaField>,
+    components: AkitaFusedIncrementBytecodeSourceComponents<'_>,
     relation: JoltRelationId,
 ) -> Result<FusedIncrementSourceLinkOutputClaims<AkitaField>, VerifierError>
 where
@@ -294,11 +305,66 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let _ = bytecode_ra;
-    Err(akita_fused_claim_error(
-        relation,
-        "source-link derivation requires supplied precommitted bytecode component claims",
-    ))
+    let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
+        akita_fused_claim_error(
+            relation,
+            "source-link derivation requires committed-bytecode layout",
+        )
+    })?;
+    let address = bytecode_layout
+        .split_address_point(&source_link.r_address)
+        .map_err(|error| akita_fused_claim_error(relation, error))?;
+    let chunk_count = bytecode_layout.chunk_count();
+    let register_count = 1usize << REGISTER_ADDRESS_BITS;
+    if components.store_flag_chunks.len() != chunk_count {
+        return Err(akita_fused_claim_error(
+            relation,
+            format!(
+                "StoreFlag component count mismatch: expected {}, got {}",
+                chunk_count,
+                components.store_flag_chunks.len()
+            ),
+        ));
+    }
+    let expected_rd_components = chunk_count * register_count;
+    if components.rd_present_chunks.len() != expected_rd_components {
+        return Err(akita_fused_claim_error(
+            relation,
+            format!(
+                "RdPresent component count mismatch: expected {}, got {}",
+                expected_rd_components,
+                components.rd_present_chunks.len()
+            ),
+        ));
+    }
+
+    let store_flag = address
+        .chunk_rbc_weights
+        .iter()
+        .zip(components.store_flag_chunks)
+        .map(|(weight, claim)| *weight * *claim)
+        .sum::<AkitaField>();
+    let rd_present = address
+        .chunk_rbc_weights
+        .iter()
+        .enumerate()
+        .map(|(chunk, weight)| {
+            let start = chunk * register_count;
+            let chunk_sum = components.rd_present_chunks[start..start + register_count]
+                .iter()
+                .copied()
+                .sum::<AkitaField>();
+            *weight * chunk_sum
+        })
+        .sum::<AkitaField>();
+
+    Ok(FusedIncrementSourceLinkOutputClaims {
+        bytecode_ra,
+        store_flag,
+        rd_present,
+        store_flag_chunks: components.store_flag_chunks.to_vec(),
+        rd_present_chunks: components.rd_present_chunks.to_vec(),
+    })
 }
 
 pub fn akita_lattice_protocol_config_for_layout(
@@ -2656,7 +2722,7 @@ mod tests {
     }
 
     #[test]
-    fn derives_fused_increment_stage6_claims_rejects_unbound_bytecode_sources() {
+    fn derives_fused_increment_stage6_claims_from_supplied_bytecode_components() {
         let log_t = 1;
         let log_k_chunk = 2;
         let mut specs = (0..8)
@@ -2736,32 +2802,173 @@ mod tests {
             bytecode_ra_opening_points: vec![vec![af(2), af(5), af(7)]],
             expected_output_claim: AkitaField::zero(),
         };
+        let register_count = 1usize << REGISTER_ADDRESS_BITS;
+        let store_components = [af(2), af(3)];
+        let mut rd_components = vec![AkitaField::zero(); 2 * register_count];
+        rd_components[0] = af(5);
+        rd_components[register_count] = af(7);
+        let inactive_store_components = [AkitaField::zero(), AkitaField::one()];
+        let mut inactive_rd_components = vec![AkitaField::zero(); 2 * register_count];
+        inactive_rd_components[0] = af(2);
+        inactive_rd_components[register_count] = af(4);
+        let chunk_0_weight = AkitaField::one() - af(11);
+        let chunk_1_weight = af(11);
 
-        let error = derive_akita_fused_increment_stage6_claims(
+        let claims = derive_akita_fused_increment_stage6_claims(
             &source,
             &precommitted,
             log_k_chunk,
             AkitaFusedIncrementStage6Derivation {
                 translation_opening_point: &translation_point,
                 source_link: &source_link,
+                source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
+                    store_flag_chunks: &store_components,
+                    rd_present_chunks: &rd_components,
+                },
                 translation_sources: AkitaFusedIncrementTranslationSources {
                     ram_source: af(17),
                     rd_source: af(19),
                 },
                 inactive_zero_opening_point: &translation_point,
                 inactive_source_link: &source_link,
+                inactive_source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
+                    store_flag_chunks: &inactive_store_components,
+                    rd_present_chunks: &inactive_rd_components,
+                },
                 inactive_sources: AkitaFusedIncrementTranslationSources {
                     ram_source: af(23),
                     rd_source: af(29),
                 },
             },
         )
-        .expect_err("unbound bytecode source claims should reject");
+        .expect("fused increment claims should derive from supplied precommitted components");
+
+        assert_eq!(
+            claims.source_link.store_flag,
+            chunk_0_weight * af(2) + chunk_1_weight * af(3)
+        );
+        assert_eq!(
+            claims.source_link.rd_present,
+            chunk_0_weight * af(5) + chunk_1_weight * af(7)
+        );
+        assert_eq!(
+            claims.source_link.store_flag_chunks,
+            store_components.to_vec()
+        );
+        assert_eq!(claims.source_link.rd_present_chunks, rd_components);
+        assert_eq!(
+            claims.inactive_source_link.store_flag,
+            chunk_1_weight * AkitaField::one()
+        );
+        assert_eq!(
+            claims.inactive_source_link.rd_present,
+            chunk_0_weight * af(2) + chunk_1_weight * af(4)
+        );
+    }
+
+    #[test]
+    fn fused_increment_stage6_derivation_rejects_bad_source_component_count() {
+        let log_t = 1;
+        let log_k_chunk = 2;
+        let mut specs = (0..8)
+            .map(|index| {
+                PackedFamilySpec::direct(
+                    PackedFamilyId::IncByte { index },
+                    PackedFactDomain::TraceRows { log_t },
+                    1,
+                    PackedAlphabet::Byte,
+                )
+            })
+            .collect::<Vec<_>>();
+        specs.extend([
+            PackedFamilySpec::direct(
+                PackedFamilyId::IncSign,
+                PackedFactDomain::TraceRows { log_t },
+                1,
+                PackedAlphabet::Bit,
+            ),
+            PackedFamilySpec::direct(
+                PackedFamilyId::BytecodeRa { index: 0 },
+                PackedFactDomain::TraceRows { log_t },
+                1,
+                PackedAlphabet::Fixed {
+                    size: 1 << log_k_chunk,
+                },
+            ),
+        ]);
+        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
+        let source = SparsePackedWitness::try_from_cells(
+            layout,
+            [
+                (
+                    packed_cell_at(PackedFamilyId::IncByte { index: 0 }, 0, 0, 5),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell_at(PackedFamilyId::BytecodeRa { index: 0 }, 0, 0, 1),
+                    AkitaField::one(),
+                ),
+            ],
+        )
+        .expect("source should build");
+        let precommitted = PrecommittedSchedule::new(
+            TracePolynomialOrder::CycleMajor,
+            log_t,
+            log_k_chunk,
+            None,
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 4,
+                bytecode_chunk_count: 2,
+                program_image_len_words: 1,
+                program_image_start_index: 0,
+            }),
+        )
+        .expect("precommitted schedule should build");
+        let source_link = VerifiedBytecodeReadRafSumcheck {
+            input_claim: AkitaField::zero(),
+            sumcheck_point: Vec::new(),
+            r_address: vec![af(11), af(13)],
+            r_cycle: vec![af(7)],
+            full_opening_point: vec![af(11), af(13), af(7)],
+            bytecode_ra_opening_points: vec![vec![af(2), af(5), af(7)]],
+            expected_output_claim: AkitaField::zero(),
+        };
+        let store_components = [af(2)];
+        let rd_components = vec![AkitaField::zero(); 2 * (1usize << REGISTER_ADDRESS_BITS)];
+        let error = derive_akita_fused_increment_stage6_claims(
+            &source,
+            &precommitted,
+            log_k_chunk,
+            AkitaFusedIncrementStage6Derivation {
+                translation_opening_point: &[af(3)],
+                source_link: &source_link,
+                source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
+                    store_flag_chunks: &store_components,
+                    rd_present_chunks: &rd_components,
+                },
+                translation_sources: AkitaFusedIncrementTranslationSources {
+                    ram_source: af(17),
+                    rd_source: af(19),
+                },
+                inactive_zero_opening_point: &[af(3)],
+                inactive_source_link: &source_link,
+                inactive_source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
+                    store_flag_chunks: &[af(2), af(3)],
+                    rd_present_chunks: &rd_components,
+                },
+                inactive_sources: AkitaFusedIncrementTranslationSources {
+                    ram_source: af(23),
+                    rd_source: af(29),
+                },
+            },
+        )
+        .expect_err("bad source component count should reject");
         assert!(
             matches!(
                 error,
                 VerifierError::StageClaimPublicInputFailed { ref reason, .. }
-                    if reason.contains("supplied precommitted bytecode component claims")
+                    if reason.contains("StoreFlag component count mismatch")
             ),
             "unexpected error: {error:?}"
         );

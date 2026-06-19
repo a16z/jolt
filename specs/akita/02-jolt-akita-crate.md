@@ -379,6 +379,13 @@ step F:
   direct/native precommitted opening proofs accept the layout digest of their
   own opening statement and reject commitment, hint, dimension, or claim
   mismatches.
+
+step G:
+  fused-increment Stage 6 helper derives packed Inc byte/sign and BytecodeRa
+  claims from PackedWitness, but receives StoreFlag/RdPresent bytecode
+  component claims from the committed-bytecode source path. It recombines those
+  components into the aggregate StoreFlag/RdPresent source claims used by the
+  masked translation.
 ```
 
 ## Invariants

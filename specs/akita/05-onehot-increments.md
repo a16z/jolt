@@ -197,6 +197,12 @@ StoreFlag/RdPresent source claims before those claims are used in the masked
 translation. This check is part of the precommitted opening path, not the
 W_pack packed-view proof.
 
+The prover-facing Akita helper follows the same split: it can evaluate
+IncByte/IncSign and BytecodeRa claims from the proof-owned PackedWitness, but
+StoreFlag/RdPresent source components must be supplied from the committed
+bytecode path. The helper recombines those supplied components into the
+aggregate Stage 6 source-link claims.
+
 ## Committed Bytecode Link
 
 Current committed bytecode lanes encode:
