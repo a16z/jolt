@@ -16,7 +16,7 @@ use jolt_openings::{
     PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
 use crate::layout::PackedWitnessSource;
@@ -24,7 +24,7 @@ use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
     NativeCommitment, NativeDensePoly, NativeHint, NativeProof, NativeProofShape, NativeScheme,
-    NativeVerifier,
+    NativeVerifier, AKITA_D,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,6 +317,7 @@ impl BatchOpeningScheme for AkitaScheme {
     {
         let normalized = normalize_clear_batch(statement)?;
         validate_prover_inputs(setup, &normalized.commitment, polynomials, &hints)?;
+        bind_verifier_setup_key(&setup.verifier, transcript);
         bind_batch_statement(statement, &normalized, transcript);
         let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
         let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
@@ -374,6 +375,7 @@ impl BatchOpeningScheme for AkitaScheme {
             return Err(OpeningsError::VerificationFailed);
         }
         validate_verifier_setup(setup, &normalized.commitment)?;
+        bind_verifier_setup_key(setup, transcript);
         bind_batch_statement(statement, &normalized, transcript);
         let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
         let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
@@ -646,6 +648,32 @@ fn validate_setup_layout_digest(expected: [u8; 32], actual: [u8; 32]) -> Result<
         ));
     }
     Ok(())
+}
+
+pub(crate) fn bind_verifier_setup_key<T>(setup: &AkitaVerifierSetup, transcript: &mut T)
+where
+    T: Transcript<Challenge = AkitaField>,
+{
+    transcript.append(&Label(b"akita_setup_key"));
+    transcript.append_bytes(b"layerzero-akita/fp128/d64full");
+    transcript.append(&U64Word(AKITA_D as u64));
+    transcript.append(&U64Word(setup.max_num_vars as u64));
+    transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
+    transcript.append_bytes(&setup.default_layout_digest);
+    match &setup.packed_layout {
+        Some(layout) => {
+            transcript.append_bytes(&[1]);
+            transcript.append_bytes(&layout.digest);
+            transcript.append(&U64Word(layout.dimension as u64));
+            transcript.append(&U64Word(layout.cells as u64));
+        }
+        None => transcript.append_bytes(&[0]),
+    }
+    transcript.append(&LabelWithCount(
+        b"akita_verifier_setup",
+        setup.native.len() as u64,
+    ));
+    transcript.append_bytes(&setup.native);
 }
 
 fn bind_batch_statement<OpeningId, RelationId, T>(

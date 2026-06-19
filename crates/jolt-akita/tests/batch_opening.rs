@@ -817,6 +817,7 @@ fn akita_setup_key_is_bound_to_batch_proof() {
         let (prover_setup, verifier_setup) = setup();
         let (_, wrong_layout_setup) = AkitaScheme::setup(AkitaSetupParams::new(4, 2, layout(8)));
         let (_, wrong_dimension_setup) = AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7)));
+        let (_, wrong_group_setup) = AkitaScheme::setup(AkitaSetupParams::new(4, 3, layout(7)));
         let poly = polynomial(1);
         let point = vec![f(2), f(3), f(5), f(7)];
         let eval = poly.evaluate(&point);
@@ -847,7 +848,11 @@ fn akita_setup_key_is_bound_to_batch_proof() {
         )
         .expect("proof should be produced");
 
-        for setup in [&wrong_layout_setup, &wrong_dimension_setup] {
+        for setup in [
+            &wrong_layout_setup,
+            &wrong_dimension_setup,
+            &wrong_group_setup,
+        ] {
             let mut verifier_transcript = Blake2bTranscript::new(b"akita-setup-key");
             let result = <AkitaScheme as BatchOpeningScheme>::verify_batch(
                 setup,
@@ -866,6 +871,7 @@ fn akita_setup_key_is_bound_to_batch_proof() {
             &proof,
         )
         .expect("matching setup key should verify");
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
     });
 }
 

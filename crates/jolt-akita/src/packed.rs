@@ -8,7 +8,7 @@ use jolt_poly::{EqPolynomial, MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
-use crate::backend::packed_source_polynomial;
+use crate::backend::{bind_verifier_setup_key, packed_source_polynomial};
 use crate::layout::{PackedCellAddress, PackedFamily, PackedWitnessLayout, PackedWitnessSource};
 use crate::types::{
     append_field_slice, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaHidingCommitment,
@@ -156,6 +156,7 @@ impl BatchOpeningScheme for AkitaPackedScheme {
             .into_iter()
             .next()
             .ok_or_else(|| invalid_batch("Akita packed proof requires one opening hint"))?;
+        bind_verifier_setup_key(&setup.verifier, transcript);
         bind_packed_statement(statement, shape.layout, transcript)?;
 
         let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
@@ -203,6 +204,7 @@ impl BatchOpeningScheme for AkitaPackedScheme {
             .as_ref()
             .ok_or(OpeningsError::VerificationFailed)?;
         let shape = validate_packed_verifier_inputs(setup, statement)?;
+        bind_verifier_setup_key(setup, transcript);
         bind_packed_statement(statement, shape.layout, transcript)?;
 
         let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
