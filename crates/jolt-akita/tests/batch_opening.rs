@@ -838,6 +838,88 @@ fn akita_packed_scheme_requires_one_packed_witness_commitment() {
 }
 
 #[test]
+fn akita_packed_source_hint_layout_mismatch_rejects() {
+    run_on_large_stack(|| {
+        let layout_a = packed_reduction_layout();
+        let family_b = PackedFamilyId::Custom {
+            namespace: 3,
+            index: 0,
+        };
+        let layout_b = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            family_b.clone(),
+            PackedFactDomain::TraceRows { log_t: 2 },
+            2,
+            PackedAlphabet::Bit,
+        )])
+        .expect("alternate packed layout should be valid");
+        assert_eq!(layout_a.dimension, layout_b.dimension);
+        assert_ne!(layout_a.digest, layout_b.digest);
+
+        let witness_a = SparsePackedWitness::try_from_cells(
+            layout_a.clone(),
+            [(packed_reduction_address(0, 0, 1), f(11))],
+        )
+        .expect("packed witness A should be valid");
+        let witness_b = SparsePackedWitness::try_from_cells(
+            layout_b.clone(),
+            [(
+                PackedCellAddress {
+                    family: family_b.clone(),
+                    row: 0,
+                    limb: 0,
+                    symbol: 1,
+                },
+                f(11),
+            )],
+        )
+        .expect("packed witness B should be valid");
+        let (prover_setup_a, _) =
+            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout_a, 1));
+        let (prover_setup_b, _) =
+            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout_b, 1));
+        let (_, hint_a) = AkitaPackedScheme::commit_packed_source(&prover_setup_a, &witness_a)
+            .expect("source A commit should succeed");
+        let (commitment_b, _) =
+            AkitaPackedScheme::commit_packed_source(&prover_setup_b, &witness_b)
+                .expect("source B commit should succeed");
+
+        let row_point = vec![f(2), f(5)];
+        let terms = vec![PackedLinearTerm::new(f(1), family_b.physical_ref(), 0, 1)
+            .with_row_point(row_point.clone())];
+        let claim = packed_view_eval(&layout_b, &witness_b, &terms);
+        let statement = BatchOpeningStatement {
+            logical_point: row_point.clone(),
+            pcs_point: row_point,
+            layout_digest: layout_b.digest,
+            claims: vec![BatchOpeningClaim {
+                id: OpeningId::A,
+                relation: RelationId::Packed,
+                commitment: commitment_b,
+                claim,
+                view: PhysicalView::PackedLinear {
+                    layout_digest: layout_b.digest,
+                    terms,
+                },
+                scale: f(1),
+            }],
+        };
+
+        let mut transcript = Blake2bTranscript::new(b"akita-packed-hint-layout");
+        let result = AkitaPackedScheme::prove_packed_source_batch(
+            &prover_setup_b,
+            &mut transcript,
+            &statement,
+            &witness_b,
+            hint_a,
+        );
+        assert!(
+            matches!(result, Err(OpeningsError::InvalidBatch(message)) if message.contains("hint")),
+            "packed witness hint generated for another layout should reject"
+        );
+    });
+}
+
+#[test]
 fn akita_commit_group_rejects_invalid_shapes() {
     let (prover_setup, _) = setup();
     let poly_a = polynomial(1);
