@@ -42,11 +42,7 @@ use crate::{
     stages::{
         relations::{zip_openings, OpeningClaim, SumcheckInstance},
         stage4::Stage4ClearOutput,
-        stage6::{
-            inputs::BytecodeCyclePhaseOutputClaims,
-            outputs::AdviceCyclePhasePublicOutput,
-            Stage6ClearOutput, Stage6ZkOutput,
-        },
+        stage6::{inputs::BytecodeCyclePhaseOutputClaims, Stage6ClearOutput, Stage6ZkOutput},
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -204,8 +200,15 @@ where
                 stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: error.to_string(),
             })?;
+        let booleanity_opening = stage6.output_points.booleanity_opening_point().ok_or(
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::HammingWeightClaimReduction,
+                reason: "Stage 6 booleanity produced no opening point".to_string(),
+            },
+        )?;
+        let booleanity_r_cycle = &booleanity_opening[hamming_dimensions.log_k_chunk..];
         let hamming_opening_point = hamming_dimensions
-            .opening_point(&hamming_point, &stage6.booleanity.r_cycle)
+            .opening_point(&hamming_point, booleanity_r_cycle)
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: error.to_string(),
@@ -245,16 +248,17 @@ where
             if let (Some(layout), Some(claim)) =
                 (layouts.bytecode, bytecode_reduction_claims.as_ref())
             {
-                let cycle_phase = stage6.bytecode_cycle_phase.as_ref().ok_or(
-                    VerifierError::MissingOpeningClaim {
+                let cycle_phase_variables = stage6
+                    .output_points
+                    .bytecode_cycle_phase_variables()
+                    .ok_or(VerifierError::MissingOpeningClaim {
                         id: bytecode_reduction::cycle_phase_intermediate_opening(),
-                    },
-                )?;
+                    })?;
                 Some(committed_reduction_address_phase_opening_point(
                     &batch_consistency,
                     claim,
                     layout.precommitted(),
-                    &cycle_phase.cycle_phase_variables,
+                    &cycle_phase_variables,
                     JoltRelationId::BytecodeClaimReduction,
                 )?)
             } else {
@@ -264,16 +268,17 @@ where
             layouts.program_image,
             program_image_reduction_claims.as_ref(),
         ) {
-            let cycle_phase = stage6.program_image_cycle_phase.as_ref().ok_or(
-                VerifierError::MissingOpeningClaim {
+            let cycle_phase_variables = stage6
+                .output_points
+                .program_image_cycle_phase_variables()
+                .ok_or(VerifierError::MissingOpeningClaim {
                     id: program_image::cycle_phase_program_image_opening(),
-                },
-            )?;
+                })?;
             Some(committed_reduction_address_phase_opening_point(
                 &batch_consistency,
                 claim,
                 layout.precommitted(),
-                &cycle_phase.cycle_phase_variables,
+                &cycle_phase_variables,
                 JoltRelationId::ProgramImageClaimReduction,
             )?)
         } else {
@@ -287,18 +292,18 @@ where
                 layouts.trusted_advice,
                 trusted_advice.as_deref().map(PrecommittedFinalSource::zk),
                 stage6
-                    .trusted_advice_cycle_phase
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                    .output_points
+                    .advice_cycle_phase_opening_point(JoltAdviceKind::Trusted)
+                    .map(PrecommittedFinalSource::zk),
             ),
             (
                 JoltAdviceKind::Untrusted,
                 layouts.untrusted_advice,
                 untrusted_advice.as_deref().map(PrecommittedFinalSource::zk),
                 stage6
-                    .untrusted_advice_cycle_phase
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                    .output_points
+                    .advice_cycle_phase_opening_point(JoltAdviceKind::Untrusted)
+                    .map(PrecommittedFinalSource::zk),
             ),
         ] {
             if let Some(layout) = layout {
@@ -317,9 +322,9 @@ where
                     .as_deref()
                     .map(PrecommittedFinalSource::zk),
                 stage6
-                    .bytecode_cycle_phase
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                    .output_points
+                    .bytecode_reduction_opening_point()
+                    .map(PrecommittedFinalSource::zk),
             )?);
         }
         if let Some(layout) = layouts.program_image {
@@ -329,9 +334,9 @@ where
                     .as_deref()
                     .map(PrecommittedFinalSource::zk),
                 stage6
-                    .program_image_cycle_phase
-                    .as_ref()
-                    .map(|public| PrecommittedFinalSource::zk(&public.opening_point)),
+                    .output_points
+                    .program_image_opening_point()
+                    .map(PrecommittedFinalSource::zk),
             )?);
         }
 
@@ -1189,9 +1194,14 @@ fn advice_address_phase_opening_point<F: Field, C>(
             stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
         })?;
-    let cycle_phase = stage6_advice_cycle_phase_public(stage6, kind)?;
+    let cycle_phase_variables = stage6
+        .output_points
+        .advice_cycle_phase_variables(kind)
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+            id: advice::cycle_phase_advice_opening(kind),
+        })?;
     layout
-        .address_phase_opening_point(&cycle_phase.cycle_phase_variables, &advice_point)
+        .address_phase_opening_point(&cycle_phase_variables, &advice_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::AdviceClaimReduction,
             reason: error.to_string(),
@@ -1211,19 +1221,6 @@ fn stage6_advice_cycle_phase_claim<F: Field>(
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: advice::cycle_phase_advice_opening(kind),
         })
-}
-
-fn stage6_advice_cycle_phase_public<F: Field, C>(
-    stage6: &Stage6ZkOutput<F, C>,
-    kind: JoltAdviceKind,
-) -> Result<&AdviceCyclePhasePublicOutput<F>, VerifierError> {
-    let verified = match kind {
-        JoltAdviceKind::Trusted => stage6.trusted_advice_cycle_phase.as_ref(),
-        JoltAdviceKind::Untrusted => stage6.untrusted_advice_cycle_phase.as_ref(),
-    };
-    verified.ok_or_else(|| VerifierError::MissingOpeningClaim {
-        id: advice::cycle_phase_advice_opening(kind),
-    })
 }
 
 /// The committed bytecode / program-image address-phase opening point, recovered

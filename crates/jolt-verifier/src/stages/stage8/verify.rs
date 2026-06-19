@@ -91,7 +91,7 @@ where
         ),
         Deps::Zk { stage6, stage7 } => (
             stage7.hamming_weight_opening_point.as_slice(),
-            stage6.inc_claim_reduction.opening_point.as_slice(),
+            stage6.output_points.inc_opening_point(),
             stage7.precommitted_final_openings.as_slice(),
             None,
         ),

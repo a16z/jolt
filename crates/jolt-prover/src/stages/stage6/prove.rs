@@ -779,8 +779,7 @@ where
         context.advice_cycle_phase_reference_opening_point(JoltAdviceKind::Trusted)?,
         points
             .trusted_advice_cycle_phase
-            .as_ref()
-            .map(|point| point.opening_point.as_slice()),
+            .as_deref(),
     )?;
     let untrusted_advice_claim = evaluate_advice_cycle_phase_opening(
         context.config.untrusted_advice_layout.as_ref(),
@@ -789,8 +788,7 @@ where
         context.advice_cycle_phase_reference_opening_point(JoltAdviceKind::Untrusted)?,
         points
             .untrusted_advice_cycle_phase
-            .as_ref()
-            .map(|point| point.opening_point.as_slice()),
+            .as_deref(),
     )?;
     let mut output_openings = super::verifier_output::output_claims_from_backend(
         backend.output_sumcheck_bytecode_read_raf_state(&backend_states.bytecode_read_raf)?,

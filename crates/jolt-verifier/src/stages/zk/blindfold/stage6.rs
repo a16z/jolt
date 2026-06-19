@@ -58,19 +58,11 @@ where
         &instruction_ra_claims,
         &inc_claims,
     )?;
-    if let (Some(layout), Some(_claim), Some(public)) = (
-        trusted_layout.as_ref(),
-        trusted_claims.as_ref(),
-        input.stage6.trusted_advice_cycle_phase.as_ref(),
-    ) {
-        add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted, public)?;
+    if let (Some(layout), Some(_claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
+        add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted)?;
     }
-    if let (Some(layout), Some(_claim), Some(public)) = (
-        untrusted_layout.as_ref(),
-        untrusted_claims.as_ref(),
-        input.stage6.untrusted_advice_cycle_phase.as_ref(),
-    ) {
-        add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted, public)?;
+    if let (Some(layout), Some(_claim)) = (untrusted_layout.as_ref(), untrusted_claims.as_ref()) {
+        add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Untrusted)?;
     }
     if let Some(layout) = bytecode_reduction_layout.as_ref() {
         let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
@@ -84,22 +76,10 @@ where
             )),
             eta,
         )?;
-        let public = input.stage6.bytecode_cycle_phase.as_ref().ok_or_else(|| {
-            VerifierError::MissingOpeningClaim {
-                id: bytecode_reduction::cycle_phase_intermediate_opening(),
-            }
-        })?;
-        add_bytecode_reduction_cycle_publics(input, values, layout, public)?;
+        add_bytecode_reduction_cycle_publics(input, values, layout)?;
     }
     if let Some(layout) = program_image_reduction_layout.as_ref() {
-        let public = input
-            .stage6
-            .program_image_cycle_phase
-            .as_ref()
-            .ok_or_else(|| VerifierError::MissingOpeningClaim {
-                id: program_image::cycle_phase_program_image_opening(),
-            })?;
-        add_program_image_reduction_cycle_publics(input, values, layout, public)?;
+        add_program_image_reduction_cycle_publics(input, values, layout)?;
     }
 
     let mut address_phase_output_ids = vec![bytecode::bytecode_read_raf_address_phase_opening()];
@@ -184,10 +164,18 @@ where
         ));
     }
 
+    let booleanity_opening_point = input
+        .stage6
+        .output_points
+        .booleanity_opening_point()
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::Booleanity,
+            reason: "Stage 6 booleanity produced no opening point".to_string(),
+        })?;
     let (mut output_ids, aliases) = stage6_cycle_output_openings_and_aliases(
         formula_dimensions,
-        &input.stage6.bytecode_read_raf.bytecode_ra_opening_points,
-        &input.stage6.booleanity.opening_point,
+        &input.stage6.output_points.bytecode_read_raf.bytecode_ra,
+        booleanity_opening_point,
     );
     output_ids.extend(map_jolt_opening_ids(
         ram::hamming_booleanity_output_openings().to_vec(),

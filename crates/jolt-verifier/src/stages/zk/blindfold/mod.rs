@@ -1002,7 +1002,7 @@ where
                 [..REGISTER_ADDRESS_BITS],
             register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
                 [..REGISTER_ADDRESS_BITS],
-            bytecode_r_address: &input.stage6.bytecode_read_raf_address.opening_point,
+            bytecode_r_address: &input.stage6.output_points.address_phase.bytecode_read_raf,
         },
     )
 }
@@ -1024,7 +1024,6 @@ fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
-    public: &crate::stages::stage6::outputs::CommittedReductionCyclePhasePublicOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1033,15 +1032,25 @@ where
     if layout.dimensions().has_address_phase() {
         return Ok(());
     }
+    let opening_point = input
+        .stage6
+        .output_points
+        .bytecode_reduction_opening_point()
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+        })?;
     let weights = bytecode_reduction_weights(input, layout)?;
+    // The cycle scale recovered from the produced opening point equals the
+    // sumcheck-point form (`cycle_phase_permuted_*` agree — unit-tested in
+    // `claim_reductions::precommitted`), matching the clear relation's path.
     let chunk_weights = layout
-        .cycle_phase_final_output_weights(
+        .cycle_phase_final_output_weights_at_opening_point(
             BytecodeOutputWeightInputs {
                 r_bc: &weights.r_bc,
                 chunk_rbc_weights: &weights.chunk_rbc_weights,
                 lane_weights: &weights.lane_weights,
             },
-            &public.sumcheck_point,
+            opening_point,
         )
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
     add_bytecode_chunk_weight_publics(values, chunk_weights)
@@ -1057,11 +1066,13 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let cycle_phase = input.stage6.bytecode_cycle_phase.as_ref().ok_or_else(|| {
-        VerifierError::MissingOpeningClaim {
+    let cycle_phase_variables = input
+        .stage6
+        .output_points
+        .bytecode_cycle_phase_variables()
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        }
-    })?;
+        })?;
     let weights = bytecode_reduction_weights(input, layout)?;
     let chunk_weights = layout
         .address_phase_final_output_weights(
@@ -1070,7 +1081,7 @@ where
                 chunk_rbc_weights: &weights.chunk_rbc_weights,
                 lane_weights: &weights.lane_weights,
             },
-            &cycle_phase.cycle_phase_variables,
+            &cycle_phase_variables,
             sumcheck_point,
         )
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReduction, error))?;
@@ -1081,7 +1092,6 @@ fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
-    public: &crate::stages::stage6::outputs::CommittedReductionCyclePhasePublicOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1090,9 +1100,16 @@ where
     if layout.dimensions().has_address_phase() {
         return Ok(());
     }
+    let opening_point = input
+        .stage6
+        .output_points
+        .program_image_opening_point()
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+            id: program_image::cycle_phase_program_image_opening(),
+        })?;
     let r_addr_rw = ram_val_check_address(input)?;
     let scale = layout
-        .cycle_phase_final_output_scale(&r_addr_rw, &public.sumcheck_point)
+        .cycle_phase_scale_at_opening_point(&r_addr_rw, opening_point)
         .map_err(|error| {
             public_error(JoltRelationId::ProgramImageClaimReductionCyclePhase, error)
         })?;
@@ -1112,20 +1129,16 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let cycle_phase = input
+    let cycle_phase_variables = input
         .stage6
-        .program_image_cycle_phase
-        .as_ref()
+        .output_points
+        .program_image_cycle_phase_variables()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: program_image::cycle_phase_program_image_opening(),
         })?;
     let r_addr_rw = ram_val_check_address(input)?;
     let scale = layout
-        .address_phase_final_output_scale(
-            &r_addr_rw,
-            &cycle_phase.cycle_phase_variables,
-            sumcheck_point,
-        )
+        .address_phase_final_output_scale(&r_addr_rw, &cycle_phase_variables, sumcheck_point)
         .map_err(|error| public_error(JoltRelationId::ProgramImageClaimReduction, error))?;
     values.public(
         JoltPublicId::from(ProgramImageClaimReductionPublic::FinalScale),
@@ -1138,7 +1151,6 @@ fn add_advice_cycle_publics<PCS, VC, ZkProof>(
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
-    public: &crate::stages::stage6::outputs::AdviceCyclePhasePublicOutput<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1150,9 +1162,16 @@ where
     if layout.dimensions().has_address_phase() {
         return Ok(());
     }
+    let opening_point = input
+        .stage6
+        .output_points
+        .advice_cycle_phase_opening_point(kind)
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+            id: advice::cycle_phase_advice_opening(kind),
+        })?;
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
-        .cycle_phase_final_output_scale(&source_point, &public.sumcheck_point)
+        .cycle_phase_scale_at_opening_point(&source_point, opening_point)
         .map_err(|error| public_error(JoltRelationId::AdviceClaimReductionCyclePhase, error))?;
     values.public(
         JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(kind)),
@@ -1172,19 +1191,15 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let source_point = advice_source_point(input, kind)?;
-    let cycle_phase = match kind {
-        JoltAdviceKind::Trusted => input.stage6.trusted_advice_cycle_phase.as_ref(),
-        JoltAdviceKind::Untrusted => input.stage6.untrusted_advice_cycle_phase.as_ref(),
-    }
-    .ok_or_else(|| VerifierError::MissingOpeningClaim {
-        id: advice::cycle_phase_advice_opening(kind),
-    })?;
+    let cycle_phase_variables = input
+        .stage6
+        .output_points
+        .advice_cycle_phase_variables(kind)
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+            id: advice::cycle_phase_advice_opening(kind),
+        })?;
     let scale = layout
-        .address_phase_final_output_scale(
-            &source_point,
-            &cycle_phase.cycle_phase_variables,
-            sumcheck_point,
-        )
+        .address_phase_final_output_scale(&source_point, &cycle_phase_variables, sumcheck_point)
         .map_err(|error| public_error(JoltRelationId::AdviceClaimReduction, error))?;
     values.public(
         JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(kind)),
@@ -1200,24 +1215,24 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    let output_points = &input.stage6.output_points;
     let mut points = Vec::with_capacity(dimensions.layout.total());
-    for point in &input
-        .stage6
+    for point in &output_points
         .instruction_ra_virtualization
-        .instruction_ra_opening_points
+        .committed_instruction_ra
     {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,
         )?);
     }
-    for point in &input.stage6.bytecode_read_raf.bytecode_ra_opening_points {
+    for point in &output_points.bytecode_read_raf.bytecode_ra {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,
         )?);
     }
-    for point in &input.stage6.ram_ra_virtualization.ram_ra_opening_points {
+    for point in &output_points.ram_ra_virtualization.ram_ra {
         points.push(hamming_virtualization_address_point(
             dimensions.log_k_chunk,
             point,

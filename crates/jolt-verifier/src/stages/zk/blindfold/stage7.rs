@@ -51,9 +51,18 @@ where
             stage_sumcheck_error(JoltRelationId::HammingWeightClaimReduction, error)
         })?;
     let rho_rev = hamming_point.iter().rev().copied().collect::<Vec<_>>();
+    let booleanity_opening = input
+        .stage6
+        .output_points
+        .booleanity_opening_point()
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: "Stage 6 booleanity produced no opening point".to_string(),
+        })?;
+    let booleanity_r_address = &booleanity_opening[..hamming_dimensions.log_k_chunk];
     values.public(
         JoltPublicId::from(HammingWeightClaimReductionPublic::EqBooleanity),
-        try_eq_mle(&rho_rev, &input.stage6.booleanity.r_address)
+        try_eq_mle(&rho_rev, booleanity_r_address)
             .map_err(|error| public_error(JoltRelationId::HammingWeightClaimReduction, error))?,
     )?;
     let virtualization_points = stage6_virtualization_points(input, hamming_dimensions)?;

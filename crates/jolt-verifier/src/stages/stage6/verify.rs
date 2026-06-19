@@ -54,11 +54,8 @@ use super::{
         Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
     },
     outputs::{
-        AdviceCyclePhasePublicOutput, BooleanityPublicOutput, BytecodeReadRafPublicOutput,
-        BytecodeReductionWeights, CommittedReductionCyclePhasePublicOutput,
-        InstructionRaVirtualizationPublicOutput, RamRaVirtualizationPublicOutput,
-        Stage6AddressPhasePublicOutput, Stage6ClearOutput, Stage6Output, Stage6PublicOutput,
-        Stage6SumcheckPublicOutput, Stage6ZkOutput,
+        BytecodeReductionWeights, Stage6ClearOutput, Stage6Output, Stage6PublicOutput,
+        Stage6ZkOutput,
     },
 };
 use crate::{
@@ -361,11 +358,6 @@ where
                 reason: error.to_string(),
             })?;
         let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
-        let bytecode_opening_point = [
-            stage6a.bytecode_r_address.as_slice(),
-            bytecode_r_cycle.as_slice(),
-        ]
-        .concat();
         let bytecode_ra_opening_points = proof
             .one_hot_config
             .committed_address_chunks(&stage6a.bytecode_r_address)
@@ -425,7 +417,6 @@ where
             });
         }
         let (ram_reduced_address, _) = ram_reduced_opening_point.split_at(log_k);
-        let ram_ra_opening_point = [ram_reduced_address, ram_ra_cycle.as_slice()].concat();
         let ram_ra_opening_points = proof
             .one_hot_config
             .committed_address_chunks(ram_reduced_address)
@@ -453,11 +444,6 @@ where
                 [r_address_chunk.as_slice(), instruction_ra_cycle.as_slice()].concat()
             })
             .collect::<Vec<_>>();
-        let instruction_ra_opening_point = [
-            stage5.instruction_r_address.as_slice(),
-            instruction_ra_cycle.as_slice(),
-        ]
-        .concat();
 
         let inc_point = consistency
             .try_instance_point(inc_claims.sumcheck.rounds)
@@ -476,24 +462,14 @@ where
         let trusted_advice = if let (Some(layout), Some(claim)) =
             (trusted_advice_layout, trusted_advice_claims.as_ref())
         {
-            Some(advice_cycle_phase_public(
-                &consistency,
-                claim,
-                layout,
-                JoltAdviceKind::Trusted,
-            )?)
+            Some(advice_cycle_phase_opening_point(&consistency, claim, layout)?)
         } else {
             None
         };
         let untrusted_advice = if let (Some(layout), Some(claim)) =
             (untrusted_advice_layout, untrusted_advice_claims.as_ref())
         {
-            Some(advice_cycle_phase_public(
-                &consistency,
-                claim,
-                layout,
-                JoltAdviceKind::Untrusted,
-            )?)
+            Some(advice_cycle_phase_opening_point(&consistency, claim, layout)?)
         } else {
             None
         };
@@ -501,7 +477,7 @@ where
             bytecode_reduction_layout,
             bytecode_reduction_claims.as_ref(),
         ) {
-            Some(committed_reduction_cycle_phase_public(
+            Some(committed_reduction_cycle_phase_opening_point(
                 &consistency,
                 claim,
                 layout.precommitted(),
@@ -514,7 +490,7 @@ where
             program_image_reduction_layout,
             program_image_reduction_claims.as_ref(),
         ) {
-            Some(committed_reduction_cycle_phase_public(
+            Some(committed_reduction_cycle_phase_opening_point(
                 &consistency,
                 claim,
                 layout.precommitted(),
@@ -569,6 +545,60 @@ where
                 stage: JoltRelationId::BytecodeReadRaf,
             })?;
 
+        let booleanity_layout = booleanity_dimensions.layout;
+        let booleanity_points =
+            |count: usize| vec![booleanity_opening_point.clone(); count];
+        let output_points = Stage6OutputClaims {
+            address_phase: Stage6AddressPhaseClaims {
+                bytecode_read_raf: stage6a.bytecode_r_address.clone(),
+                booleanity: stage6a.booleanity_r_address.clone(),
+                bytecode_val_stages: committed_program
+                    .then(|| core::array::from_fn(|_| stage6a.bytecode_r_address.clone())),
+            },
+            bytecode_read_raf: BytecodeReadRafOutputClaims {
+                bytecode_ra: bytecode_ra_opening_points,
+            },
+            booleanity: BooleanityOutputClaims {
+                instruction_ra: booleanity_points(booleanity_layout.instruction()),
+                bytecode_ra: booleanity_points(booleanity_layout.bytecode()),
+                ram_ra: booleanity_points(booleanity_layout.ram()),
+            },
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                ram_hamming_weight: ram_hamming_opening_point,
+            },
+            ram_ra_virtualization: RamRaVirtualizationOutputClaims {
+                ram_ra: ram_ra_opening_points,
+            },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                committed_instruction_ra: instruction_ra_opening_points,
+            },
+            inc_claim_reduction: IncClaimReductionOutputClaims {
+                ram_inc: inc_opening_point.clone(),
+                rd_inc: inc_opening_point,
+            },
+            advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+                trusted: trusted_advice
+                    .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim }),
+                untrusted: untrusted_advice
+                    .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim }),
+            },
+            bytecode_claim_reduction: match (bytecode_reduction_layout, bytecode_cycle_phase) {
+                (Some(layout), Some(opening_point)) => {
+                    Some(if layout.dimensions().has_address_phase() {
+                        BytecodeCyclePhaseOutputClaims::Intermediate(opening_point)
+                    } else {
+                        BytecodeCyclePhaseOutputClaims::Chunks(vec![
+                            opening_point;
+                            layout.chunk_count()
+                        ])
+                    })
+                }
+                _ => None,
+            },
+            program_image_claim_reduction: program_image_cycle_phase
+                .map(|opening_claim| ProgramImageCyclePhaseOutputClaim { opening_claim }),
+        };
+
         return Ok(Stage6Output::Zk(Stage6ZkOutput {
             public: public(
                 instruction_ra_gamma_powers,
@@ -586,51 +616,7 @@ where
             batch_output_claims,
             address_phase_consistency: stage6a.address_phase_consistency,
             address_phase_output_claims: stage6a.address_phase_output_claims,
-            bytecode_read_raf_address: Stage6AddressPhasePublicOutput {
-                sumcheck_point: stage6a.bytecode_address_point,
-                opening_point: stage6a.bytecode_r_address.clone(),
-            },
-            booleanity_address: Stage6AddressPhasePublicOutput {
-                sumcheck_point: stage6a.booleanity_address_point,
-                opening_point: stage6a.booleanity_r_address.clone(),
-            },
-            bytecode_read_raf: BytecodeReadRafPublicOutput {
-                sumcheck_point: bytecode_point,
-                r_address: stage6a.bytecode_r_address,
-                r_cycle: bytecode_r_cycle,
-                full_opening_point: bytecode_opening_point,
-                bytecode_ra_opening_points,
-            },
-            booleanity: BooleanityPublicOutput {
-                sumcheck_point: booleanity_point,
-                r_address: stage6a.booleanity_r_address,
-                r_cycle: booleanity_r_cycle,
-                opening_point: booleanity_opening_point,
-                reference_address: booleanity_reference_address,
-                reference_cycle: booleanity_reference_cycle,
-            },
-            ram_hamming_booleanity: Stage6SumcheckPublicOutput {
-                sumcheck_point: ram_hamming_point,
-                opening_point: ram_hamming_opening_point,
-            },
-            ram_ra_virtualization: RamRaVirtualizationPublicOutput {
-                sumcheck_point: ram_ra_point,
-                opening_point: ram_ra_opening_point,
-                ram_ra_opening_points,
-            },
-            instruction_ra_virtualization: InstructionRaVirtualizationPublicOutput {
-                sumcheck_point: instruction_ra_point,
-                opening_point: instruction_ra_opening_point,
-                instruction_ra_opening_points,
-            },
-            inc_claim_reduction: Stage6SumcheckPublicOutput {
-                sumcheck_point: inc_point,
-                opening_point: inc_opening_point,
-            },
-            trusted_advice_cycle_phase: trusted_advice,
-            untrusted_advice_cycle_phase: untrusted_advice,
-            bytecode_cycle_phase,
-            program_image_cycle_phase,
+            output_points,
         }));
     }
 
@@ -2254,15 +2240,12 @@ pub fn stage6_clear_output<F: Field>(
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: points
                 .trusted_advice_cycle_phase
-                .as_ref()
-                .map(|advice| AdviceCyclePhaseOutputClaim {
-                    opening_claim: advice.opening_point.clone(),
-                }),
-            untrusted: points.untrusted_advice_cycle_phase.as_ref().map(|advice| {
-                AdviceCyclePhaseOutputClaim {
-                    opening_claim: advice.opening_point.clone(),
-                }
-            }),
+                .clone()
+                .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim }),
+            untrusted: points
+                .untrusted_advice_cycle_phase
+                .clone()
+                .map(|opening_claim| AdviceCyclePhaseOutputClaim { opening_claim }),
         },
         // Committed-program reductions; the modular prover is full-only.
         bytecode_claim_reduction: None,
@@ -2388,8 +2371,8 @@ pub struct Stage6BatchPoints<F: Field> {
     pub instruction_ra_opening_points: Vec<Vec<F>>,
     pub inc_claim_reduction_sumcheck_point: Vec<F>,
     pub inc_claim_reduction_opening_point: Vec<F>,
-    pub trusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
-    pub untrusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
+    pub trusted_advice_cycle_phase: Option<Vec<F>>,
+    pub untrusted_advice_cycle_phase: Option<Vec<F>>,
 }
 
 pub fn stage6_batch_points<F: Field>(
@@ -2488,28 +2471,23 @@ pub fn stage6_batch_points<F: Field>(
     })
 }
 
+/// The advice cycle-phase produced opening point for the prover's
+/// `Stage6BatchPoints`. (`cycle_phase_variables` are recovered as
+/// `reverse(opening_point)` downstream, so only the opening point is carried.)
 fn stage6_advice_cycle_phase_points<F: Field>(
     kind: JoltAdviceKind,
     layout: Option<&AdviceClaimReductionLayout>,
     point: Option<&[F]>,
-) -> Result<Option<AdviceCyclePhasePublicOutput<F>>, VerifierError> {
+) -> Result<Option<Vec<F>>, VerifierError> {
     match (layout, point) {
-        (Some(layout), Some(point)) => Ok(Some(AdviceCyclePhasePublicOutput {
-            kind,
-            sumcheck_point: point.to_vec(),
-            opening_point: layout.cycle_phase_opening_point(point).map_err(|error| {
-                VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::AdviceClaimReductionCyclePhase,
-                    reason: error.to_string(),
-                }
-            })?,
-            cycle_phase_variables: layout.cycle_phase_variable_challenges(point).map_err(
+        (Some(layout), Some(point)) => {
+            Ok(Some(layout.cycle_phase_opening_point(point).map_err(
                 |error| VerifierError::StageClaimPublicInputFailed {
                     stage: JoltRelationId::AdviceClaimReductionCyclePhase,
                     reason: error.to_string(),
                 },
-            )?,
-        })),
+            )?))
+        }
         (None, None) => Ok(None),
         (Some(_), None) => Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::AdviceClaimReductionCyclePhase,
@@ -2662,9 +2640,7 @@ pub fn stage6_input_claim_values<F: Field>(claims: &Stage6BatchInputClaims<F>) -
 pub(super) struct Stage6AZkOutput<F: Field, C> {
     pub address_phase_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub address_phase_output_claims: CommittedOutputClaimOutput<C>,
-    pub bytecode_address_point: Vec<F>,
     pub bytecode_r_address: Vec<F>,
-    pub booleanity_address_point: Vec<F>,
     pub booleanity_r_address: Vec<F>,
 }
 
@@ -2747,9 +2723,7 @@ where
     Ok(Stage6AZkOutput {
         address_phase_consistency,
         address_phase_output_claims,
-        bytecode_address_point,
         bytecode_r_address,
-        booleanity_address_point,
         booleanity_r_address,
     })
 }
@@ -2963,37 +2937,26 @@ pub(super) fn verify_advice_cycle_phase<F: Field>(
     })
 }
 
-pub(super) fn advice_cycle_phase_public<F: Field, C>(
+/// The ZK advice cycle-phase produced opening point, for `Stage6ZkOutput`'s
+/// `output_points`. Stage 7 / BlindFold recover `cycle_phase_variables` as
+/// `reverse(opening_point)` from there.
+pub(super) fn advice_cycle_phase_opening_point<F: Field, C>(
     batch: &jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     claim: &JoltRelationClaims<F>,
     layout: &AdviceClaimReductionLayout,
-    kind: JoltAdviceKind,
-) -> Result<AdviceCyclePhasePublicOutput<F>, VerifierError> {
+) -> Result<Vec<F>, VerifierError> {
     let advice_point = batch
         .try_instance_point_at(0, claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::AdviceClaimReductionCyclePhase,
             reason: error.to_string(),
         })?;
-    let opening_point = layout
+    layout
         .cycle_phase_opening_point(&advice_point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::AdviceClaimReductionCyclePhase,
             reason: error.to_string(),
-        })?;
-    let cycle_phase_variables = layout
-        .cycle_phase_variable_challenges(&advice_point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::AdviceClaimReductionCyclePhase,
-            reason: error.to_string(),
-        })?;
-
-    Ok(AdviceCyclePhasePublicOutput {
-        kind,
-        sumcheck_point: advice_point,
-        opening_point,
-        cycle_phase_variables,
-    })
+        })
 }
 
 pub(crate) struct BytecodeReductionWeightInputs<'a, F: Field> {
@@ -3098,36 +3061,27 @@ pub(super) fn verify_bytecode_cycle_phase<F: Field>(
     })
 }
 
-pub(super) fn committed_reduction_cycle_phase_public<F: Field, C>(
+/// The ZK committed-reduction (bytecode / program-image) cycle-phase produced
+/// opening point, for `Stage6ZkOutput`'s `output_points`. `cycle_phase_variables`
+/// are recovered downstream as `reverse(opening_point)`.
+pub(super) fn committed_reduction_cycle_phase_opening_point<F: Field, C>(
     batch: &jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     claim: &JoltRelationClaims<F>,
     precommitted: &PrecommittedClaimReduction,
     stage: JoltRelationId,
-) -> Result<CommittedReductionCyclePhasePublicOutput<F>, VerifierError> {
+) -> Result<Vec<F>, VerifierError> {
     let point = batch
         .try_instance_point_at(0, claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage,
             reason: error.to_string(),
         })?;
-    let opening_point = precommitted
+    precommitted
         .cycle_phase_opening_point(&point)
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage,
             reason: error.to_string(),
-        })?;
-    let cycle_phase_variables = precommitted
-        .cycle_phase_variable_challenges(&point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage,
-            reason: error.to_string(),
-        })?;
-
-    Ok(CommittedReductionCyclePhasePublicOutput {
-        sumcheck_point: point,
-        opening_point,
-        cycle_phase_variables,
-    })
+        })
 }
 
 pub(super) fn verify_program_image_cycle_phase<F: Field>(
