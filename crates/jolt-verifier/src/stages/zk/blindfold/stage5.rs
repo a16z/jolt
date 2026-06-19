@@ -91,14 +91,8 @@ where
     let ram_cycle = trace_dimensions
         .cycle_opening_point(&ram_point)
         .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?;
-    let ram_raf_cycle = &input
-        .stage2
-        .ram_ra_claim_reduction_inputs
-        .ram_raf_evaluation_opening_point[log_k..];
-    let ram_read_write_cycle = &input
-        .stage2
-        .ram_ra_claim_reduction_inputs
-        .ram_read_write_opening_point[log_k..];
+    let ram_raf_cycle = &input.stage2.output_points.ram_raf_evaluation_point()[log_k..];
+    let ram_read_write_cycle = &input.stage2.output_points.ram_read_write_point()[log_k..];
     let ram_val_cycle = &input.stage4.ram_val_check_opening_point[log_k..];
     values.public(
         JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),

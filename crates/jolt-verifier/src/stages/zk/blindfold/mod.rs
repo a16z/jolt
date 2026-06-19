@@ -528,8 +528,8 @@ where
     let log_k = input.checked.ram_K.ilog2() as usize;
     input
         .stage2
-        .ram_val_check_inputs
-        .ram_read_write_opening_point
+        .output_points
+        .ram_read_write_point()
         .get(..log_k)
         .map(<[PCS::Field]>::to_vec)
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
@@ -938,10 +938,7 @@ where
         JoltPublicId::from(IncClaimReductionPublic::EqRamReadWrite),
         try_eq_mle(
             &inc_opening_point,
-            &input
-                .stage2
-                .ram_val_check_inputs
-                .ram_read_write_opening_point[log_k..],
+            &input.stage2.output_points.ram_read_write_point()[log_k..],
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;

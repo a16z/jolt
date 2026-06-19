@@ -30,8 +30,7 @@ use super::{
         InstructionClaimReductionOutputClaims,
     },
     outputs::{
-        Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2RamRaClaimReductionInputs,
-        Stage2RamValCheckInputs, Stage2ZkOutput, VerifiedProductUniSkip,
+        Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2ZkOutput, VerifiedProductUniSkip,
     },
     product_remainder::{ProductRemainder, ProductRemainderInputClaims},
     ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims},
@@ -70,17 +69,11 @@ struct Stage2ZkBatch<F: Field, C> {
     output_address_challenges: Vec<F>,
     consistency: jolt_sumcheck::BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: committed::CommittedOutputClaimOutput<C>,
-    ram_val_check_inputs: Stage2RamValCheckInputs<F>,
-    ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
+    output_points: Stage2BatchOutputClaims<Vec<F>>,
 }
 
 // The clear variant carries the opening claims (point + value); the ZK variant
-// carries committed consistency. Boxing the common clear variant to shrink the
-// rarer ZK one would add indirection to the hot clear path.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "clear variant holds the opening claims on the hot path; boxing it would penalize the common case"
-)]
+// carries committed consistency plus the point-only `output_points`.
 enum Stage2Batch<F: Field, C> {
     Clear {
         public: Stage2PublicOutput<F>,
@@ -239,8 +232,7 @@ where
                 product_uniskip_output_claims: product_uniskip.output_claims,
                 batch_consistency: batch.consistency,
                 batch_output_claims: batch.output_claims,
-                ram_val_check_inputs: batch.ram_val_check_inputs,
-                ram_ra_claim_reduction_inputs: batch.ram_ra_claim_reduction_inputs,
+                output_points: batch.output_points,
             }))
         }
         (Stage2ProductUniSkip::Clear(_), Stage2Batch::Zk(_)) => {
@@ -684,16 +676,27 @@ where
                     stage: JoltRelationId::RamReadWriteChecking,
                 },
             )?;
+            // Map each relation's committed sumcheck point to its produced opening
+            // points, building the point-only counterpart of the clear arm's
+            // `output_claims`. The relations match the clear arm; their
+            // `derive_opening_points` ignore inputs, so the ZK arm passes empty
+            // point-cell inputs.
             let ram_read_write_point = consistency
                 .try_instance_point(ram_read_write_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamReadWriteChecking,
                     reason: error.to_string(),
                 })?;
-            let ram_read_write_opening_point = read_write_dimensions
-                .read_write_opening_point(&ram_read_write_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamReadWriteChecking,
+            let product_point = consistency
+                .try_instance_point(product_remainder_claims.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltRelationId::SpartanProductVirtualization,
+                    reason: error.to_string(),
+                })?;
+            let instruction_point = consistency
+                .try_instance_point(instruction_claim_reduction_claims.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltRelationId::InstructionClaimReduction,
                     reason: error.to_string(),
                 })?;
             let active_stage2_rounds = log_t + log_k;
@@ -711,38 +714,86 @@ where
                     stage: JoltRelationId::RamRafEvaluation,
                     reason: error.to_string(),
                 })?;
-            let ram_raf_address_point = read_write_dimensions
-                .address_opening_point(&ram_raf_evaluation_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamRafEvaluation,
-                    reason: error.to_string(),
-                })?;
-            if ram_raf_address_point.len() != log_k {
-                return Err(VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::RamRafEvaluation,
-                    reason: format!(
-                        "RAM RAF address point length mismatch: expected {log_k}, got {}",
-                        ram_raf_address_point.len()
-                    ),
-                });
-            }
-            let ram_raf_opening_point = [
-                ram_raf_address_point.as_slice(),
-                product_uniskip.tau_low.as_slice(),
-            ]
-            .concat();
             let ram_output_check_point = consistency
                 .try_instance_point_at(phase1_offset, ram_output_check_claims.sumcheck.rounds)
                 .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                     stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
                 })?;
-            let ram_output_check_opening_point = read_write_dimensions
-                .address_opening_point(&ram_output_check_point)
-                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+
+            let lowest_address = checked.public_io.memory_layout.get_lowest_address();
+            let public_memory = PublicIoMemory::new(&checked.public_io).map_err(|error| {
+                VerifierError::StageClaimPublicInputFailed {
                     stage: JoltRelationId::RamOutputCheck,
                     reason: error.to_string(),
-                })?;
+                }
+            })?;
+            let ram_read_write = RamReadWriteChecking::new(
+                read_write_dimensions,
+                log_k,
+                ram_read_write_gamma,
+                product_uniskip.tau_low.clone(),
+            );
+            let product_remainder = ProductRemainder::new(
+                product_dimensions,
+                product_uniskip.product_uniskip_challenge,
+                product_uniskip.tau_high,
+                product_uniskip.tau_low.clone(),
+            );
+            let instruction_reduction = InstructionClaimReduction::new(
+                trace_dimensions,
+                instruction_gamma,
+                product_uniskip.tau_low.clone(),
+            );
+            let ram_raf = RamRafEvaluation::new(
+                read_write_dimensions,
+                raf_dimensions,
+                log_k,
+                lowest_address,
+                product_uniskip.tau_low.clone(),
+            );
+            let ram_output = RamOutputCheck::new(
+                read_write_dimensions,
+                output_address_challenges.clone(),
+                public_memory,
+            );
+
+            let empty = Vec::<PCS::Field>::new;
+            let output_points = Stage2BatchOutputClaims {
+                ram_read_write: ram_read_write.derive_opening_points(
+                    &ram_read_write_point,
+                    &RamReadWriteInputClaims {
+                        ram_read_value: empty(),
+                        ram_write_value: empty(),
+                    },
+                )?,
+                product_remainder: product_remainder.derive_opening_points(
+                    &product_point,
+                    &ProductRemainderInputClaims {
+                        product_uniskip: empty(),
+                    },
+                )?,
+                instruction_claim_reduction: instruction_reduction.derive_opening_points(
+                    &instruction_point,
+                    &InstructionClaimReductionInputClaims {
+                        lookup_output: empty(),
+                        left_lookup_operand: empty(),
+                        right_lookup_operand: empty(),
+                        left_instruction_input: empty(),
+                        right_instruction_input: empty(),
+                    },
+                )?,
+                ram_raf_evaluation: ram_raf.derive_opening_points(
+                    &ram_raf_evaluation_point,
+                    &RamRafEvaluationInputClaims {
+                        ram_address: empty(),
+                    },
+                )?,
+                ram_output_check: ram_output.derive_opening_points(
+                    &ram_output_check_point,
+                    &RamOutputCheckInputClaims::<Vec<PCS::Field>>::default(),
+                )?,
+            };
 
             Ok(Stage2Batch::Zk(Stage2ZkBatch {
                 challenges: consistency.challenges(),
@@ -750,18 +801,9 @@ where
                 ram_read_write_gamma,
                 instruction_gamma,
                 output_address_challenges,
-                ram_val_check_inputs: Stage2RamValCheckInputs {
-                    ram_read_write_opening_point: ram_read_write_opening_point
-                        .opening_point
-                        .clone(),
-                    ram_output_check_opening_point,
-                },
-                ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs {
-                    ram_raf_evaluation_opening_point: ram_raf_opening_point,
-                    ram_read_write_opening_point: ram_read_write_opening_point.opening_point,
-                },
                 consistency,
                 output_claims,
+                output_points,
             }))
         }
         (Deps::Clear { .. }, Stage2ProductUniSkip::Zk(_)) => {

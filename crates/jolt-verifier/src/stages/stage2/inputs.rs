@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use jolt_claims::protocols::jolt::JoltRelationId;
 
-use crate::stages::relations::OpeningClaim;
+use crate::stages::relations::{GetPoint, OpeningClaim};
 use crate::stages::stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput};
 use crate::VerifierError;
 
@@ -141,29 +141,41 @@ impl<F: Field> Stage2BatchOutputClaims<F> {
     }
 }
 
-impl<F: Field> Stage2BatchOutputClaims<OpeningClaim<F>> {
-    /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
-    pub fn ram_read_write_point(&self) -> &[F] {
-        &self.ram_read_write.val.point
-    }
+/// The shared per-relation opening-point accessors, generated for each concrete
+/// cell (`OpeningClaim<F>` on the clear path, `Vec<F>` for the ZK point-only form)
+/// so both expose the same inherent `*_point()` API. A single `impl<C: GetPoint<F>>`
+/// can't express this — `F` would be unconstrained by the self type.
+macro_rules! stage2_batch_point_accessors {
+    ($cell:ident) => {
+        impl<F: Field> Stage2BatchOutputClaims<$cell<F>> {
+            /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
+            pub fn ram_read_write_point(&self) -> &[F] {
+                self.ram_read_write.val.point()
+            }
 
-    /// The product-remainder opening point (shared by all eight openings).
-    pub fn product_remainder_point(&self) -> &[F] {
-        &self.product_remainder.left_instruction_input.point
-    }
+            /// The product-remainder opening point (shared by all eight openings).
+            pub fn product_remainder_point(&self) -> &[F] {
+                self.product_remainder.left_instruction_input.point()
+            }
 
-    /// The reduced instruction-claim opening point (shared by all five openings).
-    pub fn instruction_claim_reduction_point(&self) -> &[F] {
-        &self.instruction_claim_reduction.left_lookup_operand.point
-    }
+            /// The reduced instruction-claim opening point (shared by all five
+            /// openings).
+            pub fn instruction_claim_reduction_point(&self) -> &[F] {
+                self.instruction_claim_reduction.left_lookup_operand.point()
+            }
 
-    /// The RAM RAF opening point (`[r_address ‖ tau_low]`).
-    pub fn ram_raf_evaluation_point(&self) -> &[F] {
-        &self.ram_raf_evaluation.ram_ra.point
-    }
+            /// The RAM RAF opening point (`[r_address ‖ tau_low]`).
+            pub fn ram_raf_evaluation_point(&self) -> &[F] {
+                self.ram_raf_evaluation.ram_ra.point()
+            }
 
-    /// The RAM output-check opening point (`r_address`).
-    pub fn ram_output_check_point(&self) -> &[F] {
-        &self.ram_output_check.val_final.point
-    }
+            /// The RAM output-check opening point (`r_address`).
+            pub fn ram_output_check_point(&self) -> &[F] {
+                self.ram_output_check.val_final.point()
+            }
+        }
+    };
 }
+
+stage2_batch_point_accessors!(OpeningClaim);
+stage2_batch_point_accessors!(Vec);

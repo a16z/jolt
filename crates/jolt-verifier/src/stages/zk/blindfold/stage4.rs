@@ -65,8 +65,8 @@ where
     let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
     let r_cycle = input
         .stage2
-        .ram_val_check_inputs
-        .ram_read_write_opening_point
+        .output_points
+        .ram_read_write_point()
         .get(log_k..)
         .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamValCheck,

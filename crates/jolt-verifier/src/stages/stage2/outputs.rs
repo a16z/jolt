@@ -40,20 +40,10 @@ pub struct Stage2ZkOutput<F: Field, C> {
     pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    pub ram_val_check_inputs: Stage2RamValCheckInputs<F>,
-    pub ram_ra_claim_reduction_inputs: Stage2RamRaClaimReductionInputs<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2RamValCheckInputs<F: Field> {
-    pub ram_read_write_opening_point: Vec<F>,
-    pub ram_output_check_opening_point: Vec<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2RamRaClaimReductionInputs<F: Field> {
-    pub ram_raf_evaluation_opening_point: Vec<F>,
-    pub ram_read_write_opening_point: Vec<F>,
+    /// The produced batch opening points (point-only cell), the ZK counterpart of
+    /// the clear path's `output_claims`. Later stages read them through the same
+    /// `*_point()` accessors via [`GetPoint`](crate::stages::relations::GetPoint).
+    pub output_points: Stage2BatchOutputClaims<Vec<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

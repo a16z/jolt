@@ -202,14 +202,8 @@ where
                 reason: error.to_string(),
             })?;
         let ram_inputs = RamRaClaimReductionInputClaims {
-            raf: stage2
-                .ram_ra_claim_reduction_inputs
-                .ram_raf_evaluation_opening_point
-                .clone(),
-            read_write: stage2
-                .ram_ra_claim_reduction_inputs
-                .ram_read_write_opening_point
-                .clone(),
+            raf: stage2.output_points.ram_raf_evaluation_point().to_vec(),
+            read_write: stage2.output_points.ram_read_write_point().to_vec(),
             val_check: stage4.ram_val_check_opening_point.clone(),
         };
         let ram_reduced_opening_point = ram_relation
