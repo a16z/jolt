@@ -201,12 +201,13 @@ where
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
     /// wired input opening values. Shared by prover and verifier; clear only.
     fn input_claim(&self, inputs: &Self::Inputs<OpeningClaim<F>>) -> Result<F, VerifierError> {
+        let input_opening_value = |id: &JoltOpeningId| {
+            inputs
+                .resolve_input(id)
+                .ok_or(VerifierError::MissingOpeningClaim { id: *id })
+        };
         self.sumcheck_relation().input.expression().try_evaluate(
-            |id| {
-                inputs
-                    .resolve_input(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: *id })
-            },
+            input_opening_value,
             |id| self.resolve_challenge(id),
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )
@@ -222,12 +223,13 @@ where
         inputs: &Self::Inputs<C>,
         outputs: &Self::Outputs<OpeningClaim<F>>,
     ) -> Result<F, VerifierError> {
+        let output_opening_value = |id: &JoltOpeningId| {
+            outputs
+                .resolve_output(id)
+                .ok_or(VerifierError::MissingOpeningClaim { id: *id })
+        };
         self.sumcheck_relation().output.expression().try_evaluate(
-            |id| {
-                outputs
-                    .resolve_output(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: *id })
-            },
+            output_opening_value,
             |id| self.resolve_challenge(id),
             |id| self.resolve_public(id, inputs, outputs),
         )

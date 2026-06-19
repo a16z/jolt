@@ -131,6 +131,22 @@ pub fn registers_val_read_write() -> JoltOpeningId {
     )
 }
 
+pub fn rs1_ra_read_write_opening() -> JoltOpeningId {
+    rs1_ra_read_write()
+}
+
+pub fn rs2_ra_read_write_opening() -> JoltOpeningId {
+    rs2_ra_read_write()
+}
+
+pub fn rd_wa_read_write_opening() -> JoltOpeningId {
+    rd_wa_read_write()
+}
+
+pub fn rd_inc_read_write_opening() -> JoltOpeningId {
+    rd_inc_read_write()
+}
+
 fn rs1_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Ra,

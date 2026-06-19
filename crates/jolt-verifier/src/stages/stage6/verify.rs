@@ -1626,15 +1626,16 @@ pub fn stage6_bytecode_read_raf_expected_output<F: Field>(
         });
     }
     let claim = bytecode::read_raf::<F>(inputs.dimensions);
-    claim.output.expression().try_evaluate(
-        |id| {
-            for (index, opening) in output_openings.bytecode_ra.iter().enumerate() {
-                if *id == *opening {
-                    return Ok(inputs.bytecode_ra[index]);
-                }
+    let bytecode_ra_value = |id: &JoltOpeningId| {
+        for (index, opening) in output_openings.bytecode_ra.iter().enumerate() {
+            if *id == *opening {
+                return Ok(inputs.bytecode_ra[index]);
             }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
-        },
+        }
+        Err(VerifierError::MissingOpeningClaim { id: *id })
+    };
+    claim.output.expression().try_evaluate(
+        bytecode_ra_value,
         |id| match id {
             JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(inputs.gamma),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),

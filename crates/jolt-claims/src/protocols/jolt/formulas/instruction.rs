@@ -391,7 +391,18 @@ pub fn read_raf_output_openings(
 }
 
 pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
-    [(lookup_output_reduced(), lookup_output_product())]
+    [(
+        read_raf_lookup_output_reduced_opening(),
+        read_raf_lookup_output_product_opening(),
+    )]
+}
+
+pub fn read_raf_lookup_output_reduced_opening() -> JoltOpeningId {
+    lookup_output_reduced()
+}
+
+pub fn read_raf_lookup_output_product_opening() -> JoltOpeningId {
+    lookup_output_product()
 }
 
 pub fn read_raf_lookup_table_flag_opening(table: LookupTableKind<XLEN>) -> JoltOpeningId {

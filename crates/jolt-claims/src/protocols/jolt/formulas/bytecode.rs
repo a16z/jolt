@@ -805,9 +805,17 @@ pub fn read_raf_output_openings(
 
 pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
     [(
-        unexpanded_pc_spartan_shift(),
-        unexpanded_pc_instruction_input(),
+        read_raf_unexpanded_pc_spartan_shift_opening(),
+        read_raf_unexpanded_pc_instruction_input_opening(),
     )]
+}
+
+pub fn read_raf_unexpanded_pc_spartan_shift_opening() -> JoltOpeningId {
+    unexpanded_pc_spartan_shift()
+}
+
+pub fn read_raf_unexpanded_pc_instruction_input_opening() -> JoltOpeningId {
+    unexpanded_pc_instruction_input()
 }
 
 fn stage1_claim<F>() -> JoltExpr<F>
