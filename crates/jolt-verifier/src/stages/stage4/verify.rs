@@ -89,12 +89,15 @@ where
 
     let (ram_read_write_opening_point, ram_output_check_opening_point) = match deps {
         Deps::Clear { stage2, .. } => (
-            &stage2.batch.ram_read_write.opening_point,
-            &stage2.batch.ram_output_check.opening_point,
+            stage2.output_claims.ram_read_write_point(),
+            stage2.output_claims.ram_output_check_point(),
         ),
         Deps::Zk { stage2, .. } => (
-            &stage2.ram_val_check_inputs.ram_read_write_opening_point,
-            &stage2.ram_val_check_inputs.ram_output_check_opening_point,
+            stage2.ram_val_check_inputs.ram_read_write_opening_point.as_slice(),
+            stage2
+                .ram_val_check_inputs
+                .ram_output_check_opening_point
+                .as_slice(),
         ),
     };
     if ram_read_write_opening_point.len() != log_k + log_t {

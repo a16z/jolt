@@ -6,11 +6,14 @@ use serde::{Deserialize, Serialize};
 
 use jolt_claims::protocols::jolt::JoltRelationId;
 
+use crate::stages::relations::OpeningClaim;
 use crate::stages::stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput};
 use crate::VerifierError;
 
 pub use super::instruction_claim_reduction::InstructionClaimReductionOutputClaims;
 pub use super::product_remainder::ProductRemainderOutputClaims;
+pub use super::ram_output_check::RamOutputCheckOutputClaims;
+pub use super::ram_raf_evaluation::RamRafEvaluationOutputClaims;
 pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
 
 #[derive(Clone, Copy)]
@@ -85,14 +88,21 @@ pub struct Stage2OutputClaims<F: Field> {
     pub batch_outputs: Stage2BatchOutputClaims<F>,
 }
 
+/// The produced stage 2 batch openings, one per-relation `OutputClaims` struct.
+/// Generic over the cell: `F` is the serialized wire form (value only), and
+/// `OpeningClaim<F>` is the clear "located" form (point + value) propagated to
+/// later stages — mirroring stage 3/4's `StageNOutputClaims<OpeningClaim<F>>`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Stage2BatchOutputClaims<F: Field> {
-    pub ram_read_write: RamReadWriteOutputClaims<F>,
-    pub product_remainder: ProductRemainderOutputClaims<F>,
-    pub instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
-    pub ram_raf_evaluation: F,
-    pub ram_output_check: F,
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub struct Stage2BatchOutputClaims<C> {
+    pub ram_read_write: RamReadWriteOutputClaims<C>,
+    pub product_remainder: ProductRemainderOutputClaims<C>,
+    pub instruction_claim_reduction: InstructionClaimReductionOutputClaims<C>,
+    pub ram_raf_evaluation: RamRafEvaluationOutputClaims<C>,
+    pub ram_output_check: RamOutputCheckOutputClaims<C>,
 }
 
 impl<F: Field> Stage2BatchOutputClaims<F> {
@@ -117,8 +127,8 @@ impl<F: Field> Stage2BatchOutputClaims<F> {
             self.product_remainder.virtual_instruction,
             self.instruction_claim_reduction.left_lookup_operand,
             self.instruction_claim_reduction.right_lookup_operand,
-            self.ram_raf_evaluation,
-            self.ram_output_check,
+            self.ram_raf_evaluation.ram_ra,
+            self.ram_output_check.val_final,
         ]
     }
 
@@ -128,5 +138,32 @@ impl<F: Field> Stage2BatchOutputClaims<F> {
         for value in self.opening_values() {
             transcript.append_labeled(b"opening_claim", &value);
         }
+    }
+}
+
+impl<F: Field> Stage2BatchOutputClaims<OpeningClaim<F>> {
+    /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
+    pub fn ram_read_write_point(&self) -> &[F] {
+        &self.ram_read_write.val.point
+    }
+
+    /// The product-remainder opening point (shared by all eight openings).
+    pub fn product_remainder_point(&self) -> &[F] {
+        &self.product_remainder.left_instruction_input.point
+    }
+
+    /// The reduced instruction-claim opening point (shared by all five openings).
+    pub fn instruction_claim_reduction_point(&self) -> &[F] {
+        &self.instruction_claim_reduction.left_lookup_operand.point
+    }
+
+    /// The RAM RAF opening point (`[r_address ‖ tau_low]`).
+    pub fn ram_raf_evaluation_point(&self) -> &[F] {
+        &self.ram_raf_evaluation.ram_ra.point
+    }
+
+    /// The RAM output-check opening point (`r_address`).
+    pub fn ram_output_check_point(&self) -> &[F] {
+        &self.ram_output_check.val_final.point
     }
 }

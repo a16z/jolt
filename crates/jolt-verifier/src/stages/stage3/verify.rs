@@ -217,12 +217,12 @@ where
         dimensions,
         shift_gamma,
         stage2.product_uniskip.tau_low.clone(),
-        stage2.batch.product_remainder.opening_point.clone(),
+        stage2.output_claims.product_remainder_point().to_vec(),
     );
     let instruction_relation = InstructionInput::new(
         dimensions,
         instruction_gamma,
-        stage2.batch.product_remainder.opening_point.clone(),
+        stage2.output_claims.product_remainder_point().to_vec(),
     );
     let registers_relation = RegistersClaimReduction::new(
         dimensions,

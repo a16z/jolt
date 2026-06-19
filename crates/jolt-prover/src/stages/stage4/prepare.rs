@@ -19,7 +19,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let opening_point = &stage2.batch.ram_read_write.opening_point;
+    let opening_point = stage2.output_claims.ram_read_write_point();
     if opening_point.len() < log_k {
         return Err(ProverError::InvalidStageRequest {
             reason: format!(

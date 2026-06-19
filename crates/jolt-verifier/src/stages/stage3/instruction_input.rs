@@ -81,13 +81,15 @@ impl<F: Field> InstructionInputInputClaims<OpeningClaim<F>> {
                 stage2
                     .output_claims
                     .product_remainder
-                    .right_instruction_input,
+                    .right_instruction_input
+                    .value,
             ),
             left_instruction_input: value(
                 stage2
                     .output_claims
                     .product_remainder
-                    .left_instruction_input,
+                    .left_instruction_input
+                    .value,
             ),
         }
     }
@@ -102,8 +104,8 @@ pub fn check_instruction_input_consistency<F: Field>(
 ) -> Result<(), VerifierError> {
     let [(left_reduced, left_product), (right_reduced, right_product)] =
         instruction::input_virtualization_consistency_openings();
-    if stage2.batch.product_remainder.opening_point
-        != stage2.batch.instruction_claim_reduction.opening_point
+    if stage2.output_claims.product_remainder_point()
+        != stage2.output_claims.instruction_claim_reduction_point()
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltRelationId::InstructionInputVirtualization,
@@ -114,21 +116,25 @@ pub fn check_instruction_input_consistency<F: Field>(
     let product_left = stage2
         .output_claims
         .product_remainder
-        .left_instruction_input;
+        .left_instruction_input
+        .value;
     let product_right = stage2
         .output_claims
         .product_remainder
-        .right_instruction_input;
+        .right_instruction_input
+        .value;
     let reduced_left = stage2
         .output_claims
         .instruction_claim_reduction
         .left_instruction_input
-        .unwrap_or(product_left);
+        .as_ref()
+        .map_or(product_left, |claim| claim.value);
     let reduced_right = stage2
         .output_claims
         .instruction_claim_reduction
         .right_instruction_input
-        .unwrap_or(product_right);
+        .as_ref()
+        .map_or(product_right, |claim| claim.value);
     if reduced_left != product_left {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltRelationId::InstructionInputVirtualization,

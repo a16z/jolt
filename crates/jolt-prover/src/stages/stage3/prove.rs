@@ -430,12 +430,20 @@ where
         dimensions,
         prefix.shift_gamma,
         input.stage2.product_uniskip.tau_low.clone(),
-        input.stage2.batch.product_remainder.opening_point.clone(),
+        input
+            .stage2
+            .output_claims
+            .product_remainder_point()
+            .to_vec(),
     );
     let instruction_relation = InstructionInput::new(
         dimensions,
         prefix.instruction_gamma,
-        input.stage2.batch.product_remainder.opening_point.clone(),
+        input
+            .stage2
+            .output_claims
+            .product_remainder_point()
+            .to_vec(),
     );
     let registers_relation = RegistersClaimReduction::new(
         dimensions,
@@ -701,9 +709,9 @@ where
 
     let eq_plus_one_outer = EqPlusOnePolynomial::evals(&stage2.product_uniskip.tau_low, None).1;
     let eq_plus_one_product =
-        EqPlusOnePolynomial::evals(&stage2.batch.product_remainder.opening_point, None).1;
+        EqPlusOnePolynomial::evals(stage2.output_claims.product_remainder_point(), None).1;
     let eq_product =
-        EqPolynomial::new(stage2.batch.product_remainder.opening_point.clone()).evaluations();
+        EqPolynomial::new(stage2.output_claims.product_remainder_point().to_vec()).evaluations();
     let eq_spartan = EqPolynomial::new(stage2.product_uniskip.tau_low.clone()).evaluations();
 
     let shift_gamma = prefix.shift_gamma;
@@ -895,7 +903,7 @@ where
         "stage3.shift.prefix_suffix",
         config.log_t,
         stage2.product_uniskip.tau_low.clone(),
-        stage2.batch.product_remainder.opening_point.clone(),
+        stage2.output_claims.product_remainder_point().to_vec(),
         prefix.shift_gamma,
         rows,
     ))
@@ -1056,7 +1064,7 @@ where
     let bit_reversed_indices = stage3_bit_reversed_indices(config)?;
 
     let eq_product =
-        EqPolynomial::new(stage2.batch.product_remainder.opening_point.clone()).evaluations();
+        EqPolynomial::new(stage2.output_claims.product_remainder_point().to_vec()).evaluations();
     let eq_spartan = EqPolynomial::new(stage2.product_uniskip.tau_low.clone()).evaluations();
     let mut columns = stage3_instruction_register_reversed_columns_from_rows(
         config,
@@ -1452,16 +1460,16 @@ where
     T: Transcript<Challenge = F>,
 {
     let expected_rounds = config.log_t;
-    if stage2.batch.product_remainder.opening_point.len() != expected_rounds {
+    if stage2.output_claims.product_remainder_point().len() != expected_rounds {
         return Err(ProverError::InvalidStageRequest {
             reason: format!(
                 "Stage 3 product-remainder dependency has {} variables, expected {expected_rounds}",
-                stage2.batch.product_remainder.opening_point.len()
+                stage2.output_claims.product_remainder_point().len()
             ),
         });
     }
-    if stage2.batch.instruction_claim_reduction.opening_point
-        != stage2.batch.product_remainder.opening_point
+    if stage2.output_claims.instruction_claim_reduction_point()
+        != stage2.output_claims.product_remainder_point()
     {
         return Err(ProverError::InvalidStageRequest {
             reason: "Stage 3 instruction input dependencies use different opening points"
@@ -1486,12 +1494,12 @@ where
         dimensions,
         shift_gamma,
         stage2.product_uniskip.tau_low.clone(),
-        stage2.batch.product_remainder.opening_point.clone(),
+        stage2.output_claims.product_remainder_point().to_vec(),
     );
     let instruction_relation = InstructionInput::new(
         dimensions,
         instruction_gamma,
-        stage2.batch.product_remainder.opening_point.clone(),
+        stage2.output_claims.product_remainder_point().to_vec(),
     );
     let registers_relation = RegistersClaimReduction::new(
         dimensions,

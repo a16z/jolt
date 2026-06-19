@@ -927,7 +927,7 @@ where
         .rev()
         .copied()
         .collect::<Vec<_>>();
-    let stage2_cycle = stage2.batch.product_remainder.opening_point.clone();
+    let stage2_cycle = stage2.output_claims.product_remainder_point().to_vec();
     let stage3_cycle = stage3.output_claims.shift_opening_point().to_vec();
     let (stage4_register_address, stage4_cycle) = stage4
         .output_claims
@@ -1180,7 +1180,8 @@ where
             stage: JoltRelationId::IncClaimReduction,
             reason: error.to_string(),
         })?;
-    let (_, ram_read_write_cycle) = stage2.batch.ram_read_write.opening_point.split_at(log_k);
+    let (_, ram_read_write_cycle) =
+        stage2.output_claims.ram_read_write_point().split_at(log_k);
     let (_, ram_val_check_cycle) = stage4
         .output_claims
         .ram_val_check
@@ -1651,7 +1652,7 @@ pub fn stage6_bytecode_cycle_points<F: Field>(
         .rev()
         .copied()
         .collect::<Vec<_>>();
-    let stage2_cycle = stage2.batch.product_remainder.opening_point.clone();
+    let stage2_cycle = stage2.output_claims.product_remainder_point().to_vec();
     let stage3_cycle = stage3.output_claims.shift_opening_point().to_vec();
     let register_points = stage6_bytecode_register_points(stage4, stage5)?;
     Ok([
@@ -1887,7 +1888,7 @@ pub fn stage6_inc_claim_reduction_cycle_points<'a, F: Field>(
 ) -> Result<Stage6IncClaimReductionCyclePoints<'a, F>, VerifierError> {
     let (_, ram_read_write_cycle) = stage6_checked_split(
         "Stage 6 RAM read-write opening",
-        &stage2.batch.ram_read_write.opening_point,
+        stage2.output_claims.ram_read_write_point(),
         log_k,
         JoltRelationId::IncClaimReduction,
     )?;
@@ -2036,7 +2037,9 @@ pub fn stage6_batch_input_claims<F: Field>(
         )?,
         inc_claim_reduction: inc_claims.input.expression().try_evaluate(
             |id| match *id {
-                id if id == ram_inc_read_write => Ok(stage2.output_claims.ram_read_write.inc),
+                id if id == ram_inc_read_write => {
+                    Ok(stage2.output_claims.ram_read_write.inc.value)
+                }
                 id if id == ram_inc_val_check => {
                     Ok(stage4.output_claims.ram_val_check.ram_inc.value)
                 }
@@ -2097,10 +2100,10 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                     }
                 }
                 if *id == bytecode_input_openings.spartan_product.jump {
-                    return Ok(stage2.output_claims.product_remainder.jump_flag);
+                    return Ok(stage2.output_claims.product_remainder.jump_flag.value);
                 }
                 if *id == bytecode_input_openings.spartan_product.branch {
-                    return Ok(stage2.output_claims.product_remainder.branch_flag);
+                    return Ok(stage2.output_claims.product_remainder.branch_flag.value);
                 }
                 if *id
                     == bytecode_input_openings
@@ -2110,10 +2113,15 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                     return Ok(stage2
                         .output_claims
                         .product_remainder
-                        .write_lookup_output_to_rd);
+                        .write_lookup_output_to_rd
+                        .value);
                 }
                 if *id == bytecode_input_openings.spartan_product.virtual_instruction {
-                    return Ok(stage2.output_claims.product_remainder.virtual_instruction);
+                    return Ok(stage2
+                        .output_claims
+                        .product_remainder
+                        .virtual_instruction
+                        .value);
                 }
                 if *id == bytecode_input_openings.instruction_input.imm {
                     return Ok(stage3.output_claims.instruction_input.imm.value);

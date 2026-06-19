@@ -57,12 +57,12 @@ impl<F: Field> RamRaClaimReductionInputClaims<OpeningClaim<F>> {
     pub fn from_upstream(stage2: &Stage2ClearOutput<F>, stage4: &Stage4ClearOutput<F>) -> Self {
         Self {
             raf: OpeningClaim {
-                point: stage2.batch.ram_raf_evaluation.opening_point.clone(),
-                value: stage2.output_claims.ram_raf_evaluation,
+                point: stage2.output_claims.ram_raf_evaluation_point().to_vec(),
+                value: stage2.output_claims.ram_raf_evaluation.ram_ra.value,
             },
             read_write: OpeningClaim {
-                point: stage2.batch.ram_read_write.opening_point.clone(),
-                value: stage2.output_claims.ram_read_write.ra,
+                point: stage2.output_claims.ram_read_write_point().to_vec(),
+                value: stage2.output_claims.ram_read_write.ra.value,
             },
             val_check: stage4.output_claims.ram_val_check.ram_ra.clone(),
         }

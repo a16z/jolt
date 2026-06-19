@@ -464,9 +464,8 @@ where
         )));
     }
     let (fixed_ram_address_point, fixed_ram_cycle_point) = stage2
-        .batch
-        .ram_read_write
-        .opening_point
+        .output_claims
+        .ram_read_write_point()
         .split_at(config.log_k);
 
     let register_request = SumcheckRegistersReadWriteStateRequest::new(
@@ -704,29 +703,28 @@ fn validate_stage4_dependencies<F: Field>(
     stage3: &Stage3ClearOutput<F>,
 ) -> Result<(), ProverError> {
     let expected_ram_read_write_vars = config.log_k + config.log_t;
-    if stage2.batch.ram_read_write.opening_point.len() != expected_ram_read_write_vars {
+    if stage2.output_claims.ram_read_write_point().len() != expected_ram_read_write_vars {
         return Err(ProverError::InvalidStageRequest {
             reason: format!(
                 "Stage 4 RAM read-write opening point has {} variables, expected {expected_ram_read_write_vars}",
-                stage2.batch.ram_read_write.opening_point.len()
+                stage2.output_claims.ram_read_write_point().len()
             ),
         });
     }
-    if stage2.batch.ram_output_check.opening_point.len() != config.log_k {
+    if stage2.output_claims.ram_output_check_point().len() != config.log_k {
         return Err(ProverError::InvalidStageRequest {
             reason: format!(
                 "Stage 4 RAM output-check opening point has {} variables, expected {}",
-                stage2.batch.ram_output_check.opening_point.len(),
+                stage2.output_claims.ram_output_check_point().len(),
                 config.log_k
             ),
         });
     }
     let (ram_address_point, _) = stage2
-        .batch
-        .ram_read_write
-        .opening_point
+        .output_claims
+        .ram_read_write_point()
         .split_at(config.log_k);
-    if stage2.batch.ram_output_check.opening_point != ram_address_point {
+    if stage2.output_claims.ram_output_check_point() != ram_address_point {
         return Err(ProverError::InvalidStageRequest {
             reason: "Stage 4 RAM value-check dependencies use different address opening points"
                 .to_owned(),

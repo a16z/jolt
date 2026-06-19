@@ -524,7 +524,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
-        "claims.stage2.batch_outputs.ram_raf_evaluation",
+        "claims.stage2.batch_outputs.ram_raf_evaluation.ram_ra",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -532,7 +532,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_output_check",
-        "claims.stage2.batch_outputs.ram_output_check",
+        "claims.stage2.batch_outputs.ram_output_check.val_final",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -1344,8 +1344,8 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                         left_instruction_input: Some(zero),
                         right_instruction_input: Some(zero),
                     },
-                ram_raf_evaluation: zero,
-                ram_output_check: zero,
+                ram_raf_evaluation: stage2::inputs::RamRafEvaluationOutputClaims { ram_ra: zero },
+                ram_output_check: stage2::inputs::RamOutputCheckOutputClaims { val_final: zero },
             },
         },
         stage3: stage3::inputs::Stage3OutputClaims {

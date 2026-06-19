@@ -293,8 +293,8 @@ where
 
     let [(lookup_output_reduced, lookup_output_product)] =
         instruction::read_raf_consistency_openings();
-    if stage2.batch.product_remainder.opening_point
-        != stage2.batch.instruction_claim_reduction.opening_point
+    if stage2.output_claims.product_remainder_point()
+        != stage2.output_claims.instruction_claim_reduction_point()
     {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltRelationId::InstructionReadRaf,
@@ -302,12 +302,13 @@ where
             right: lookup_output_product,
         });
     }
-    let product_lookup_output = stage2.output_claims.product_remainder.lookup_output;
+    let product_lookup_output = stage2.output_claims.product_remainder.lookup_output.value;
     let reduced_lookup_output = stage2
         .output_claims
         .instruction_claim_reduction
         .lookup_output
-        .unwrap_or(product_lookup_output);
+        .as_ref()
+        .map_or(product_lookup_output, |claim| claim.value);
     if reduced_lookup_output != product_lookup_output {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltRelationId::InstructionReadRaf,
@@ -675,18 +676,11 @@ pub fn stage5_instruction_read_raf_dependencies<F: Field>(
     request: Stage5InstructionReadRafDependencyRequest<'_, F>,
 ) -> Result<(), VerifierError> {
     let expected_trace_vars = request.trace_dimensions.log_t();
-    let product_point = request
-        .stage2
-        .batch
-        .product_remainder
-        .opening_point
-        .as_slice();
+    let product_point = request.stage2.output_claims.product_remainder_point();
     let reduced_point = request
         .stage2
-        .batch
-        .instruction_claim_reduction
-        .opening_point
-        .as_slice();
+        .output_claims
+        .instruction_claim_reduction_point();
     for (label, point) in [
         ("product remainder", product_point),
         ("instruction claim reduction", reduced_point),
@@ -712,13 +706,19 @@ pub fn stage5_instruction_read_raf_dependencies<F: Field>(
         });
     }
 
-    let product_lookup_output = request.stage2.output_claims.product_remainder.lookup_output;
+    let product_lookup_output = request
+        .stage2
+        .output_claims
+        .product_remainder
+        .lookup_output
+        .value;
     let reduced_lookup_output = request
         .stage2
         .output_claims
         .instruction_claim_reduction
         .lookup_output
-        .unwrap_or(product_lookup_output);
+        .as_ref()
+        .map_or(product_lookup_output, |claim| claim.value);
     if reduced_lookup_output != product_lookup_output {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: JoltRelationId::InstructionReadRaf,

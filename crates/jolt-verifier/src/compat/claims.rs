@@ -11,7 +11,8 @@ use crate::{
         stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1OutputClaims},
         stage2::inputs::{
             InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
-            RamReadWriteOutputClaims, Stage2BatchOutputClaims, Stage2OutputClaims,
+            RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
+            Stage2BatchOutputClaims, Stage2OutputClaims,
         },
         stage3::inputs::{
             InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
@@ -193,8 +194,12 @@ fn stage2_claims_from_native<F: Field>(
                 left_instruction_input: claims.get(instruction_left_instruction_input),
                 right_instruction_input: claims.get(instruction_right_instruction_input),
             },
-            ram_raf_evaluation: claims.get_or_zero(ram_ra_raf_evaluation),
-            ram_output_check: claims.get_or_zero(ram_val_final),
+            ram_raf_evaluation: RamRafEvaluationOutputClaims {
+                ram_ra: claims.get_or_zero(ram_ra_raf_evaluation),
+            },
+            ram_output_check: RamOutputCheckOutputClaims {
+                val_final: claims.get_or_zero(ram_val_final),
+            },
         },
     })
 }
@@ -662,8 +667,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                     left_instruction_input: None,
                     right_instruction_input: None,
                 },
-                ram_raf_evaluation: zero,
-                ram_output_check: zero,
+                ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: zero },
+                ram_output_check: RamOutputCheckOutputClaims { val_final: zero },
             },
         },
         stage3: Stage3OutputClaims {
@@ -1086,8 +1091,8 @@ fn claim_from_stage2_batch_outputs<F: Field>(
         id if id == instruction_right_instruction_input => {
             claims.instruction_claim_reduction.right_instruction_input
         }
-        id if id == ram_ra_raf_evaluation => Some(claims.ram_raf_evaluation),
-        id if id == ram_val_final => Some(claims.ram_output_check),
+        id if id == ram_ra_raf_evaluation => Some(claims.ram_raf_evaluation.ram_ra),
+        id if id == ram_val_final => Some(claims.ram_output_check.val_final),
         _ => None,
     }
 }
@@ -1142,8 +1147,8 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
             .instruction_claim_reduction
             .right_instruction_input
             .as_mut(),
-        id if id == ram_ra_raf_evaluation => Some(&mut claims.ram_raf_evaluation),
-        id if id == ram_val_final => Some(&mut claims.ram_output_check),
+        id if id == ram_ra_raf_evaluation => Some(&mut claims.ram_raf_evaluation.ram_ra),
+        id if id == ram_val_final => Some(&mut claims.ram_output_check.val_final),
         _ => None,
     }
 }

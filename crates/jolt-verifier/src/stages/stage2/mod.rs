@@ -1,6 +1,5 @@
 //! Stage 2 product uni-skip and five-instance batch verifier.
 
-pub mod batch;
 pub mod inputs;
 pub mod instruction_claim_reduction;
 pub mod outputs;
@@ -10,15 +9,16 @@ pub mod ram_raf_evaluation;
 pub mod ram_read_write_checking;
 mod verify;
 
-pub use batch::{Stage2BatchOpeningPointRefs, Stage2BatchRelations, Stage2BatchRelationsRequest};
-pub use inputs::{deps, product_uniskip_input_claim, Deps, Stage2ProductUniSkipInputValues};
+pub use inputs::{
+    deps, product_uniskip_input_claim, Deps, Stage2BatchOutputClaims,
+    Stage2ProductUniSkipInputValues,
+};
 pub use instruction_claim_reduction::{
     InstructionClaimReduction, InstructionClaimReductionInputClaims,
     InstructionClaimReductionOutputClaims,
 };
 pub use outputs::{
     Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2ZkOutput, VerifiedProductUniSkip,
-    VerifiedStage2Batch, VerifiedStage2Sumcheck,
 };
 pub use product_remainder::{
     ProductRemainder, ProductRemainderInputClaims, ProductRemainderOutputClaims,
@@ -33,8 +33,5 @@ pub use ram_read_write_checking::{
     RamReadWriteChecking, RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
 pub use verify::{
-    stage2_batch_opening_points, stage2_clear_output, stage2_expected_final_claim, verify,
-    Stage2BatchExpectedOutputClaims, Stage2BatchInputClaims, Stage2BatchOpeningPoints,
-    Stage2BatchPointRequest, Stage2ClearOutputRequest, Stage2ProductUniSkipClearRequest,
-    Stage2RegularBatchClearRequest,
+    stage2_batch_output_claims_with_points, stage2_expected_final_claim, verify,
 };

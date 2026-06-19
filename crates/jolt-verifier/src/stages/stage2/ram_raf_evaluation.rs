@@ -21,15 +21,20 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
+use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// The produced RAM RAF `ram_ra` opening. Not part of the serialized stage-2 wire
-/// form (which keeps this as a bare field element); built locally on the clear path
-/// to evaluate the relation's output `Expr`. Generic over the cell.
-#[derive(Clone, Debug, OutputClaims)]
+/// The produced RAM RAF `ram_ra` opening, sharing the single RAF opening point.
+/// Generic over the cell (`F` on the wire / serialized proof form, `OpeningClaim<F>`
+/// on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
 #[relation(RamRafEvaluation)]
 pub struct RamRafEvaluationOutputClaims<C> {
     #[opening(RamRa)]

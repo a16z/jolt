@@ -19,14 +19,19 @@ use jolt_field::Field;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_verifier_derive::OutputClaims;
+use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{GetPoint, InputClaims, OpeningClaim, SumcheckInstance};
 use crate::VerifierError;
 
-/// The produced RAM `val_final` opening. Not part of the serialized stage-2 wire
-/// form (which keeps this as a bare field element); built locally on the clear path
-/// to evaluate the relation's output `Expr`. Generic over the cell.
-#[derive(Clone, Debug, OutputClaims)]
+/// The produced RAM `val_final` opening, sharing the single output-check opening
+/// point. Generic over the cell (`F` on the wire / serialized proof form,
+/// `OpeningClaim<F>` on the clear path).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
 #[relation(RamOutputCheck)]
 pub struct RamOutputCheckOutputClaims<C> {
     #[opening(RamValFinal)]

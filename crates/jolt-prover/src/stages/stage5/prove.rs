@@ -376,8 +376,8 @@ fn stage5_dependency_points<'a, F: Field>(
     stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
         trace_dimensions: TraceDimensions::new(config.log_t),
         ram_log_k: config.log_k,
-        ram_raf_opening_point: &stage2.batch.ram_raf_evaluation.opening_point,
-        ram_read_write_opening_point: &stage2.batch.ram_read_write.opening_point,
+        ram_raf_opening_point: stage2.output_claims.ram_raf_evaluation_point(),
+        ram_read_write_opening_point: stage2.output_claims.ram_read_write_point(),
         ram_val_check_opening_point: &stage4.output_claims.ram_val_check.ram_ra.point,
         registers_read_write_opening_point: &stage4
             .output_claims
@@ -452,10 +452,9 @@ where
         "stage5.instruction_read_raf",
         instruction_rows,
         stage2
-            .batch
-            .instruction_claim_reduction
-            .opening_point
-            .clone(),
+            .output_claims
+            .instruction_claim_reduction_point()
+            .to_vec(),
         prefix.instruction_gamma,
         prefix.input_claims.instruction_read_raf,
         config.log_t,
@@ -601,8 +600,8 @@ where
         ram_log_k: config.log_k,
         ram_ra_claim_reduction_sumcheck_point: &sumcheck_point[front_padding_rounds..],
         registers_val_evaluation_sumcheck_point: &sumcheck_point[front_padding_rounds..],
-        ram_raf_opening_point: &stage2.batch.ram_raf_evaluation.opening_point,
-        ram_read_write_opening_point: &stage2.batch.ram_read_write.opening_point,
+        ram_raf_opening_point: stage2.output_claims.ram_raf_evaluation_point(),
+        ram_read_write_opening_point: stage2.output_claims.ram_read_write_point(),
         ram_val_check_opening_point: &stage4.output_claims.ram_val_check.ram_ra.point,
         registers_read_write_opening_point: &stage4
             .output_claims
@@ -634,7 +633,7 @@ where
     let expected_outputs = stage5_expected_outputs(Stage5ExpectedOutputInputs {
         config,
         prefix,
-        instruction_fixed_cycle_point: &stage2.batch.instruction_claim_reduction.opening_point,
+        instruction_fixed_cycle_point: stage2.output_claims.instruction_claim_reduction_point(),
         instruction_r_address: &instruction_points.r_address,
         instruction_r_cycle: &instruction_points.r_cycle,
         ram_raf_fixed_cycle_point: &value_points.ram_raf_fixed_cycle_point,

@@ -75,7 +75,7 @@ impl<F: Field> SpartanShiftInputClaims<OpeningClaim<F>> {
             next_pc: value(stage1.outer.next_pc),
             next_is_virtual: value(stage1.outer.next_is_virtual),
             next_is_first_in_sequence: value(stage1.outer.next_is_first_in_sequence),
-            next_is_noop: value(stage2.output_claims.product_remainder.next_is_noop),
+            next_is_noop: value(stage2.output_claims.product_remainder.next_is_noop.value),
         }
     }
 }

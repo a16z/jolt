@@ -1045,8 +1045,12 @@ mod tests {
                             left_instruction_input: None,
                             right_instruction_input: None,
                         },
-                    ram_raf_evaluation: zero,
-                    ram_output_check: zero,
+                    ram_raf_evaluation: stage2::inputs::RamRafEvaluationOutputClaims {
+                        ram_ra: zero,
+                    },
+                    ram_output_check: stage2::inputs::RamOutputCheckOutputClaims {
+                        val_final: zero,
+                    },
                 },
             },
             stage3: stage3::inputs::Stage3OutputClaims {
