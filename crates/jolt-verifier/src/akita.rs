@@ -1128,9 +1128,17 @@ where
 {
     validate_akita_verifier_setup_config(&preprocessing.pcs_setup, config)?;
     validate_akita_proof_payload_shape(&preprocessing.pcs_setup, &proof.commitments)?;
-    validate_akita_opening_proof_payload_shape(&proof.commitments, &proof.joint_opening_proof)?;
+    validate_akita_packed_opening_proof_payload_shape(
+        &proof.commitments,
+        &proof.joint_opening_proof,
+        "Akita joint opening proof",
+    )?;
     if let Some(opening_proof) = &proof.lattice_packed_validity_opening_proof {
-        validate_akita_opening_proof_payload_shape(&proof.commitments, opening_proof)?;
+        validate_akita_packed_opening_proof_payload_shape(
+            &proof.commitments,
+            opening_proof,
+            "Akita lattice packed validity opening proof",
+        )?;
     }
     validate_akita_precommitted_opening_proof_payload_shapes(
         &proof.commitments,
@@ -1319,6 +1327,20 @@ fn validate_akita_opening_proof_payload_shape(
                 validate_akita_field_bytes("Akita packed reduction round eval", eval)?;
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_akita_packed_opening_proof_payload_shape(
+    proof_commitments: &CommitmentPayload<AkitaCommitment>,
+    opening_proof: &AkitaPackedBatchProof,
+    field: &'static str,
+) -> Result<(), VerifierError> {
+    validate_akita_opening_proof_payload_shape(proof_commitments, opening_proof)?;
+    if opening_proof.reduction.is_none() {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: format!("{field} must include a packed reduction"),
+        });
     }
     Ok(())
 }
@@ -3276,6 +3298,18 @@ mod tests {
             validate_akita_opening_proof_payload_shape(&artifact.commitments, &missing_native_proof),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("native proof bytes")
+        ));
+
+        let mut missing_reduction = proof.clone();
+        missing_reduction.reduction = None;
+        assert!(matches!(
+            validate_akita_packed_opening_proof_payload_shape(
+                &artifact.commitments,
+                &missing_reduction,
+                "Akita joint opening proof",
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("packed reduction")
         ));
 
         let mut missing_reduction_eval = proof.clone();
