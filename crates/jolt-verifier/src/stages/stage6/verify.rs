@@ -15,8 +15,8 @@ use jolt_claims::protocols::jolt::{
     },
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
     BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, BytecodeReadRafChallenge,
-    IncClaimReductionChallenge, InstructionRaVirtualizationChallenge,
-    InstructionRaVirtualizationPublic, JoltAdviceKind, JoltChallengeId, JoltPublicId,
+    InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltAdviceKind,
+    JoltChallengeId, JoltPublicId,
     JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
     PrecommittedClaimReduction, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
     RamHammingBooleanityPublic, RamRaVirtualizationPublic,
@@ -1925,115 +1925,6 @@ fn stage6_checked_exact_split<'a, F: Field>(
     Ok(point.split_at(split_at))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Stage 6 input claims bind every prior clear stage plus independent transcript challenges."
-)]
-pub fn stage6_batch_input_claims<F: Field>(
-    trace_dimensions: TraceDimensions,
-    bytecode_dimensions: BytecodeReadRafDimensions,
-    ram_ra_dimensions: RamRaVirtualizationDimensions,
-    instruction_ra_dimensions: InstructionRaVirtualizationDimensions,
-    trusted_advice_layout: Option<&AdviceClaimReductionLayout>,
-    untrusted_advice_layout: Option<&AdviceClaimReductionLayout>,
-    stage1: &Stage1ClearOutput<F>,
-    stage2: &Stage2ClearOutput<F>,
-    stage3: &Stage3ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    stage5: &Stage5ClearOutput<F>,
-    challenges: Stage6InputClaimChallengeValues<'_, F>,
-) -> Result<Stage6BatchInputClaims<F>, VerifierError> {
-    let ram_ra_claims = ram::ra_virtualization::<F>(ram_ra_dimensions);
-    let instruction_ra_claims = instruction::ra_virtualization::<F>(instruction_ra_dimensions);
-    let inc_claims = increments::claim_reduction::<F>(trace_dimensions);
-    let trusted_advice_claims = trusted_advice_layout
-        .map(|layout| advice::cycle_phase::<F>(JoltAdviceKind::Trusted, layout.dimensions()));
-    let untrusted_advice_claims = untrusted_advice_layout
-        .map(|layout| advice::cycle_phase::<F>(JoltAdviceKind::Untrusted, layout.dimensions()));
-
-    let [ram_ra_reduced] = ram::ra_virtualization_input_openings();
-    let instruction_ra_input_openings =
-        instruction::ra_virtualization_input_openings(instruction_ra_dimensions);
-    let [ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation] =
-        increments::claim_reduction_input_openings();
-    Ok(Stage6BatchInputClaims {
-        bytecode_read_raf: stage6_bytecode_read_raf_address_input(
-            bytecode_dimensions,
-            stage1,
-            stage2,
-            stage3,
-            stage4,
-            stage5,
-            challenges,
-        )?,
-        booleanity: F::zero(),
-        ram_hamming_booleanity: F::zero(),
-        ram_ra_virtualization: ram_ra_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == ram_ra_reduced => {
-                    Ok(stage5.output_claims.ram_ra_claim_reduction.ram_ra.value)
-                }
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-        instruction_ra_virtualization: instruction_ra_claims.input.expression().try_evaluate(
-            |id| {
-                for (index, opening) in instruction_ra_input_openings.iter().enumerate() {
-                    if *id == *opening {
-                        return stage5
-                            .output_claims
-                            .instruction_read_raf
-                            .instruction_ra
-                            .get(index)
-                            .map(|claim| claim.value)
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
-                    }
-                }
-                Err(VerifierError::MissingOpeningClaim { id: *id })
-            },
-            |id| match id {
-                JoltChallengeId::InstructionRaVirtualization(
-                    InstructionRaVirtualizationChallenge::Gamma,
-                ) => Ok(challenges.instruction_ra_gamma),
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-        inc_claim_reduction: inc_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == ram_inc_read_write => Ok(stage2.output_claims.ram_read_write.inc.value),
-                id if id == ram_inc_val_check => {
-                    Ok(stage4.output_claims.ram_val_check.ram_inc.value)
-                }
-                id if id == rd_inc_read_write => {
-                    Ok(stage4.output_claims.registers_read_write.rd_inc.value)
-                }
-                id if id == rd_inc_val_evaluation => {
-                    Ok(stage5.output_claims.registers_val_evaluation.rd_inc.value)
-                }
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => {
-                    Ok(challenges.inc_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
-        trusted_advice_cycle_phase: trusted_advice_claims
-            .as_ref()
-            .map(|claim| advice_cycle_phase_input::<F>(claim, stage4, JoltAdviceKind::Trusted))
-            .transpose()?,
-        untrusted_advice_cycle_phase: untrusted_advice_claims
-            .as_ref()
-            .map(|claim| advice_cycle_phase_input::<F>(claim, stage4, JoltAdviceKind::Untrusted))
-            .transpose()?,
-    })
-}
-
 pub fn stage6_bytecode_read_raf_address_input<F: Field>(
     bytecode_dimensions: BytecodeReadRafDimensions,
     stage1: &Stage1ClearOutput<F>,
@@ -3452,28 +3343,6 @@ pub(super) fn aliased_booleanity_bytecode_openings<F: Field>(
         .iter()
         .filter(|point| point.as_slice() == booleanity_opening_point)
         .count()
-}
-
-pub(super) fn advice_cycle_phase_input<F: Field>(
-    claim: &JoltRelationClaims<F>,
-    stage4: &Stage4ClearOutput<F>,
-    kind: JoltAdviceKind,
-) -> Result<F, VerifierError> {
-    let advice_input = advice::ram_val_check_advice_opening(kind);
-    claim.input.expression().try_evaluate(
-        |id| match *id {
-            id if id == advice_input => stage4
-                .ram_val_check_init
-                .advice_contributions
-                .iter()
-                .find(|contribution| contribution.kind == kind)
-                .map(|contribution| contribution.opening.value)
-                .ok_or(VerifierError::MissingOpeningClaim { id }),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-    )
 }
 
 pub(super) fn verify_advice_cycle_phase<F: Field>(
