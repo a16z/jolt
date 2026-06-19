@@ -1527,6 +1527,15 @@ fn validate_lattice_term_validity_coverage(
             "opening {id:?} uses field-byte packed family {family:?} limb {limb} without a bound canonical-byte validity requirement"
         )));
     }
+    if term_requires_fused_increment_canonical_zero(family)
+        && !requirements
+            .iter()
+            .any(fused_increment_canonical_zero_requirement)
+    {
+        return Err(unsupported_lattice_view(format!(
+            "opening {id:?} uses fused increment family {family:?} without a bound canonical-zero validity requirement"
+        )));
+    }
     Ok(())
 }
 
@@ -1588,6 +1597,22 @@ fn canonical_requirement_covers_term(
         ) => expected == chunk && limb < byte_width,
         _ => false,
     }
+}
+
+fn term_requires_fused_increment_canonical_zero(family: &LatticePackedFamilyId) -> bool {
+    matches!(
+        family,
+        LatticePackedFamilyId::IncByte { .. } | LatticePackedFamilyId::IncSign
+    )
+}
+
+fn fused_increment_canonical_zero_requirement(
+    requirement: &LatticePackedValidityRequirement,
+) -> bool {
+    matches!(
+        requirement.kind,
+        LatticePackedValidityKind::FusedIncrementCanonicalZero
+    )
 }
 
 fn jolt_lattice_row_point<F>(
@@ -3283,6 +3308,36 @@ mod tests {
     }
 
     #[test]
+    fn validity_coverage_requires_fused_increment_canonical_zero() {
+        let id = Stage8OpeningId::from(fused_increment_magnitude_opening());
+        let formula = fused_increment_magnitude_lattice_view_formula::<Fr>();
+        let without_canonical_zero = fused_increment_validity_requirements()
+            .into_iter()
+            .filter(|requirement| {
+                !matches!(
+                    requirement.kind,
+                    LatticePackedValidityKind::FusedIncrementCanonicalZero
+                )
+            })
+            .collect::<Vec<_>>();
+        let with_canonical_zero = fused_increment_validity_requirements();
+
+        assert!(matches!(
+            validate_lattice_view_validity_coverage(
+                &[(id, formula.clone(), Vec::new())],
+                &without_canonical_zero,
+            ),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("without a bound canonical-zero validity requirement")
+        ));
+
+        validate_lattice_view_validity_coverage(&[(id, formula, Vec::new())], &with_canonical_zero)
+            .unwrap_or_else(|error| {
+                panic!("fused increment canonical-zero coverage should validate: {error}")
+            });
+    }
+
+    #[test]
     fn validity_coverage_allows_core_ra_families() {
         let id = Stage8OpeningId::from(JoltOpeningId::committed(
             JoltCommittedPolynomial::InstructionRa(0),
@@ -3309,6 +3364,7 @@ mod tests {
             2,
             1,
         );
+        let canonical_zero = LatticePackedValidityRequirement::fused_increment_canonical_zero();
 
         validate_lattice_view_validity_coverage(
             &[(
@@ -3316,7 +3372,7 @@ mod tests {
                 LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1),
                 Vec::new(),
             )],
-            std::slice::from_ref(&requirement),
+            &[requirement.clone(), canonical_zero.clone()],
         )
         .unwrap_or_else(|error| panic!("covered boolean indicator should validate: {error}"));
 
@@ -3331,7 +3387,7 @@ mod tests {
                     ),
                     Vec::new(),
                 )],
-                &[requirement],
+                &[requirement, canonical_zero],
             ),
             Err(VerifierError::FinalOpeningBatchFailed { reason })
                 if reason.contains("without a bound validity requirement")
