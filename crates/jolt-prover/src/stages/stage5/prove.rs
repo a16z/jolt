@@ -11,28 +11,19 @@ use jolt_claims::protocols::jolt::formulas::{
 #[cfg(feature = "zk")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_poly::{Point, UnivariatePoly};
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
-use jolt_verifier::stages::stage5::outputs::{
-    Stage5ClearOutput, Stage5PublicOutput, VerifiedInstructionReadRafSumcheck, VerifiedStage5Batch,
-    VerifiedStage5Sumcheck,
-};
+use jolt_verifier::stages::relations::SumcheckInstance;
+use jolt_verifier::stages::stage5::outputs::{Stage5Challenges, Stage5ClearOutput};
 use jolt_verifier::stages::stage5::{
-    stage5_dependency_opening_points, stage5_expected_final_claim, stage5_expected_output_claims,
-    stage5_input_claims, stage5_instruction_opening_points,
-    stage5_instruction_read_raf_dependencies, stage5_value_opening_points,
-    Stage5DependencyOpeningPointRequest, Stage5DependencyOpeningPoints, Stage5ExpectedOutputClaims,
-    Stage5ExpectedOutputRequest, Stage5InputClaimRequest, Stage5InputClaims,
-    Stage5InstructionReadRafDependencyRequest, Stage5ValueOpeningPointRequest,
-    Stage5ValueOpeningPoints,
-};
-use jolt_verifier::stages::stage5::{
-    InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
-    RegistersValEvaluationOutputClaims, Stage5OutputClaims,
+    stage5_expected_final_claim, stage5_output_claims_with_points, InstructionReadRaf,
+    InstructionReadRafInputClaims, InstructionReadRafOutputClaims, RamRaClaimReduction,
+    RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims, RegistersValEvaluation,
+    RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims, Stage5OutputClaims,
 };
 use jolt_verifier::stages::{stage2::Stage2ClearOutput, stage4::Stage4ClearOutput};
-use jolt_verifier::CheckedInputs;
+use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::protocols::jolt_vm::{
     JoltVmRegisterReadWriteRows, JoltVmStage2Rows, JoltVmStage5InstructionReadRafRows,
 };
@@ -94,6 +85,16 @@ impl<'a, F: Field, W> Stage5ProverInput<'a, F, W> {
     }
 }
 
+/// The three stage 5 batch input claims, in canonical batch order (instruction
+/// read-RAF, RAM-RA reduction, register value-evaluation). Computed once via the
+/// shared relation objects so prover and verifier derive them identically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stage5InputClaims<F: Field> {
+    instruction_read_raf: F,
+    ram_ra_claim_reduction: F,
+    registers_val_evaluation: F,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stage5RegularBatchPrefixOutput<F: Field> {
     input_claims: Stage5InputClaims<F>,
@@ -116,7 +117,7 @@ where
     VC: VectorCommitment<Field = F>,
 {
     pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    pub public: Stage5PublicOutput<F>,
+    pub challenges: Stage5Challenges<F>,
     pub output_claim_values: Vec<F>,
     pub verifier_output: Stage5ClearOutput<F>,
     pub(crate) committed_witness: CommittedSumcheckWitness<F>,
@@ -124,31 +125,43 @@ where
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stage5RegularBatchProofOutput<F: Field, C> {
-    prefix: Stage5RegularBatchPrefixOutput<F>,
     proof: SumcheckProof<F, C>,
     #[cfg(feature = "zk")]
     committed_witness: Option<CommittedSumcheckWitness<F>>,
     #[cfg(feature = "zk")]
     output_claim_values: Option<Vec<F>>,
-    output_openings: Stage5OutputClaims<F>,
-    expected_outputs: Stage5ExpectedOutputClaims<F>,
-    batching_coefficients: Vec<F>,
-    sumcheck_point: Vec<F>,
-    sumcheck_final_claim: F,
-    expected_final_claim: F,
-    instruction_read_raf_sumcheck_point: Vec<F>,
-    instruction_read_raf_r_address: Vec<F>,
-    instruction_read_raf_r_cycle: Vec<F>,
-    instruction_read_raf_full_opening_point: Vec<F>,
-    instruction_lookup_table_flag_opening_point: Vec<F>,
-    instruction_ra_opening_points: Vec<Vec<F>>,
-    instruction_raf_flag_opening_point: Vec<F>,
-    ram_ra_claim_reduction_sumcheck_point: Vec<F>,
-    ram_ra_claim_reduction_opening_point: Vec<F>,
-    registers_val_evaluation_sumcheck_point: Vec<F>,
-    registers_val_evaluation_opening_point: Vec<F>,
+    claims: Stage5OutputClaims<F>,
+    verifier_output: Stage5ClearOutput<F>,
 }
+
 const STAGE5_BATCH_COEFFICIENTS: usize = 3;
+
+#[derive(Clone, Copy)]
+struct Stage5BatchCoefficients<F: Field> {
+    instruction_read_raf: F,
+    ram_ra_claim_reduction: F,
+    registers_val_evaluation: F,
+}
+
+/// Build the three stage 5 relation objects from the batch gammas. Shared by the
+/// prefix (input claims) and the batch sumcheck (opening points, expected output)
+/// so prover and verifier drive identical relations.
+fn stage5_relations<F: Field>(
+    config: Stage5ProverConfig,
+    instruction_gamma: F,
+    ram_gamma: F,
+) -> (
+    InstructionReadRaf<F>,
+    RamRaClaimReduction<F>,
+    RegistersValEvaluation<F>,
+) {
+    let trace_dimensions = TraceDimensions::new(config.log_t);
+    (
+        InstructionReadRaf::new(config.instruction_read_raf_dimensions, instruction_gamma),
+        RamRaClaimReduction::new(trace_dimensions, config.log_k, ram_gamma),
+        RegistersValEvaluation::new(trace_dimensions),
+    )
+}
 
 /// Canonical Stage 5 prover entrypoint (transparent path).
 ///
@@ -188,7 +201,7 @@ where
 
     let prefix =
         derive_stage5_regular_batch_prefix(input.config, input.stage2, input.stage4, transcript)?;
-    let proof_output = prove_stage5_transparent_sumchecks::<F, W, B, T, C>(
+    let proof_output = prove_stage5_specialized_regular_batch_sumcheck_with_recorder(
         input.config,
         input.witness,
         backend,
@@ -196,57 +209,13 @@ where
         input.stage4,
         &prefix,
         transcript,
+        ClearSumcheckRecorder::<F, C>::new(0),
     )?;
-
-    let claims = proof_output.output_openings.clone();
-    let public = Stage5PublicOutput {
-        challenges: proof_output.sumcheck_point.clone(),
-        batching_coefficients: proof_output.batching_coefficients.clone(),
-        instruction_gamma: prefix.instruction_gamma,
-        ram_gamma: prefix.ram_gamma,
-    };
-    let verifier_output = Stage5ClearOutput {
-        public,
-        output_claims: claims.clone(),
-        batch: VerifiedStage5Batch {
-            batching_coefficients: proof_output.batching_coefficients.clone(),
-            sumcheck_point: Point::high_to_low(proof_output.sumcheck_point.clone()),
-            sumcheck_final_claim: proof_output.sumcheck_final_claim,
-            expected_final_claim: proof_output.expected_final_claim,
-            instruction_read_raf: VerifiedInstructionReadRafSumcheck {
-                input_claim: prefix.input_claims.instruction_read_raf,
-                sumcheck_point: proof_output.instruction_read_raf_sumcheck_point.clone(),
-                r_address: proof_output.instruction_read_raf_r_address.clone(),
-                r_cycle: proof_output.instruction_read_raf_r_cycle.clone(),
-                full_opening_point: proof_output.instruction_read_raf_full_opening_point.clone(),
-                lookup_table_flag_opening_point: proof_output
-                    .instruction_lookup_table_flag_opening_point
-                    .clone(),
-                instruction_ra_opening_points: proof_output.instruction_ra_opening_points.clone(),
-                instruction_raf_flag_opening_point: proof_output
-                    .instruction_raf_flag_opening_point
-                    .clone(),
-                expected_output_claim: proof_output.expected_outputs.instruction_read_raf,
-            },
-            ram_ra_claim_reduction: VerifiedStage5Sumcheck {
-                input_claim: prefix.input_claims.ram_ra_claim_reduction,
-                sumcheck_point: proof_output.ram_ra_claim_reduction_sumcheck_point.clone(),
-                opening_point: proof_output.ram_ra_claim_reduction_opening_point.clone(),
-                expected_output_claim: proof_output.expected_outputs.ram_ra_claim_reduction,
-            },
-            registers_val_evaluation: VerifiedStage5Sumcheck {
-                input_claim: prefix.input_claims.registers_val_evaluation,
-                sumcheck_point: proof_output.registers_val_evaluation_sumcheck_point.clone(),
-                opening_point: proof_output.registers_val_evaluation_opening_point.clone(),
-                expected_output_claim: proof_output.expected_outputs.registers_val_evaluation,
-            },
-        },
-    };
 
     Ok(Stage5ProofComponent {
         stage5_sumcheck_proof: proof_output.proof,
-        claims,
-        verifier_output,
+        claims: proof_output.claims,
+        verifier_output: proof_output.verifier_output,
     })
 }
 
@@ -270,7 +239,7 @@ where
     validate_stage5_committed_checked(input.config, input.checked)?;
     let prefix =
         derive_stage5_regular_batch_prefix(input.config, input.stage2, input.stage4, transcript)?;
-    prove_stage5_committed_specialized_regular_batch_sumcheck::<F, W, B, T, VC>(
+    let output = prove_stage5_specialized_regular_batch_sumcheck_with_recorder(
         input.config,
         input.witness,
         backend,
@@ -278,8 +247,21 @@ where
         input.stage4,
         &prefix,
         transcript,
-        vc_setup,
-    )
+        CommittedSumcheckRecorder::<F, VC>::new(vc_setup)?,
+    )?;
+
+    let challenges = output.verifier_output.challenges.clone();
+    Ok(Stage5CommittedProofComponent {
+        stage5_sumcheck_proof: output.proof,
+        challenges,
+        output_claim_values: output.output_claim_values.ok_or_else(|| {
+            invalid_sumcheck_output("Stage 5 committed output claim values are missing")
+        })?,
+        verifier_output: output.verifier_output,
+        committed_witness: output.committed_witness.ok_or_else(|| {
+            invalid_sumcheck_output("Stage 5 committed witness material is missing")
+        })?,
+    })
 }
 
 fn derive_stage5_regular_batch_prefix<F, T>(
@@ -297,128 +279,26 @@ where
     let instruction_gamma = transcript.challenge_scalar();
     let ram_gamma = transcript.challenge_scalar();
 
+    let (instruction_relation, ram_relation, registers_relation) =
+        stage5_relations(config, instruction_gamma, ram_gamma);
+    let to_prover_error = |error: VerifierError| invalid_sumcheck_output(error.to_string());
+    let input_claims = Stage5InputClaims {
+        instruction_read_raf: instruction_relation
+            .input_claim(&InstructionReadRafInputClaims::from_upstream(stage2))
+            .map_err(to_prover_error)?,
+        ram_ra_claim_reduction: ram_relation
+            .input_claim(&RamRaClaimReductionInputClaims::from_upstream(stage2, stage4))
+            .map_err(to_prover_error)?,
+        registers_val_evaluation: registers_relation
+            .input_claim(&RegistersValEvaluationInputClaims::from_upstream(stage4))
+            .map_err(to_prover_error)?,
+    };
+
     Ok(Stage5RegularBatchPrefixOutput {
-        input_claims: stage5_input_claims(Stage5InputClaimRequest {
-            stage2,
-            stage4,
-            trace_dimensions: TraceDimensions::new(config.log_t),
-            instruction_read_raf_dimensions: config.instruction_read_raf_dimensions,
-            ram_log_k: config.log_k,
-            instruction_gamma,
-            ram_gamma,
-        })
-        .map_err(|error| ProverError::InvalidStageRequest {
-            reason: error.to_string(),
-        })?,
+        input_claims,
         instruction_gamma,
         ram_gamma,
     })
-}
-
-struct Stage5ExpectedOutputInputs<'a, F: Field> {
-    config: Stage5ProverConfig,
-    prefix: &'a Stage5RegularBatchPrefixOutput<F>,
-    instruction_fixed_cycle_point: &'a [F],
-    instruction_r_address: &'a [F],
-    instruction_r_cycle: &'a [F],
-    ram_raf_fixed_cycle_point: &'a [F],
-    ram_read_write_fixed_cycle_point: &'a [F],
-    ram_val_check_fixed_cycle_point: &'a [F],
-    ram_ra_claim_reduction_opening_point: &'a [F],
-    registers_fixed_cycle_point: &'a [F],
-    registers_val_evaluation_opening_point: &'a [F],
-    output_openings: &'a Stage5OutputClaims<F>,
-}
-
-fn stage5_expected_outputs<F: Field>(
-    input: Stage5ExpectedOutputInputs<'_, F>,
-) -> Result<Stage5ExpectedOutputClaims<F>, ProverError> {
-    stage5_expected_output_claims(Stage5ExpectedOutputRequest {
-        instruction_read_raf_dimensions: input.config.instruction_read_raf_dimensions,
-        ram_log_k: input.config.log_k,
-        instruction_gamma: input.prefix.instruction_gamma,
-        ram_gamma: input.prefix.ram_gamma,
-        instruction_fixed_cycle_point: input.instruction_fixed_cycle_point,
-        instruction_r_address: input.instruction_r_address,
-        instruction_r_cycle: input.instruction_r_cycle,
-        ram_raf_fixed_cycle_point: input.ram_raf_fixed_cycle_point,
-        ram_read_write_fixed_cycle_point: input.ram_read_write_fixed_cycle_point,
-        ram_val_check_fixed_cycle_point: input.ram_val_check_fixed_cycle_point,
-        ram_ra_claim_reduction_opening_point: input.ram_ra_claim_reduction_opening_point,
-        registers_fixed_cycle_point: input.registers_fixed_cycle_point,
-        registers_val_evaluation_opening_point: input.registers_val_evaluation_opening_point,
-        claims: input.output_openings,
-    })
-    .map_err(|error| ProverError::InvalidStageRequest {
-        reason: error.to_string(),
-    })
-}
-
-fn stage5_expected_batch_final_claim<F: Field>(
-    coefficients: &[F],
-    expected_outputs: &Stage5ExpectedOutputClaims<F>,
-) -> Result<F, ProverError> {
-    stage5_expected_final_claim(coefficients, expected_outputs)
-        .map_err(|error| invalid_sumcheck_output(error.to_string()))
-}
-
-fn stage5_batch_value_opening_points<F: Field>(
-    request: Stage5ValueOpeningPointRequest<'_, F>,
-) -> Result<Stage5ValueOpeningPoints<F>, ProverError> {
-    stage5_value_opening_points(request).map_err(|error| invalid_sumcheck_output(error.to_string()))
-}
-
-fn stage5_dependency_points<'a, F: Field>(
-    config: Stage5ProverConfig,
-    stage2: &'a Stage2ClearOutput<F>,
-    stage4: &'a Stage4ClearOutput<F>,
-) -> Result<Stage5DependencyOpeningPoints<'a, F>, ProverError> {
-    stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
-        trace_dimensions: TraceDimensions::new(config.log_t),
-        ram_log_k: config.log_k,
-        ram_raf_opening_point: stage2.output_claims.ram_raf_evaluation_point(),
-        ram_read_write_opening_point: stage2.output_claims.ram_read_write_point(),
-        ram_val_check_opening_point: &stage4.output_claims.ram_val_check.ram_ra.point,
-        registers_read_write_opening_point: &stage4
-            .output_claims
-            .registers_read_write
-            .registers_val
-            .point,
-    })
-    .map_err(|error| ProverError::InvalidStageRequest {
-        reason: error.to_string(),
-    })
-}
-
-fn prove_stage5_transparent_sumchecks<F, W, B, T, C>(
-    config: Stage5ProverConfig,
-    witness: &W,
-    backend: &mut B,
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    prefix: &Stage5RegularBatchPrefixOutput<F>,
-    transcript: &mut T,
-) -> Result<Stage5RegularBatchProofOutput<F, C>, ProverError>
-where
-    F: Field,
-    W: WitnessProvider<F, JoltVmNamespace>
-        + JoltVmStage2Rows
-        + JoltVmRegisterReadWriteRows
-        + JoltVmStage5InstructionReadRafRows,
-    B: SumcheckBackend<F, JoltVmNamespace> + Stage5ValueEvaluationSumcheckBackend<F>,
-    T: Transcript<Challenge = F>,
-{
-    let proof_output = prove_stage5_specialized_regular_batch_sumcheck_with_recorder(
-        config,
-        witness,
-        backend,
-        stage2,
-        stage4,
-        prefix,
-        transcript,
-        ClearSumcheckRecorder::<F, C>::new(0),
-    )?;
-    Ok(proof_output)
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -442,6 +322,10 @@ where
     T: Transcript<Challenge = F>,
     S: SumcheckRecorder<F>,
 {
+    let (instruction_relation, ram_relation, registers_relation) =
+        stage5_relations(config, prefix.instruction_gamma, prefix.ram_gamma);
+    let to_prover_error = |error: VerifierError| invalid_sumcheck_output(error.to_string());
+
     let instruction_layout = config
         .instruction_read_raf_dimensions
         .u128_address_layout()
@@ -464,16 +348,34 @@ where
     )
     .with_optimization_ids(&["cpu_stage5_regular_batch_sumcheck"]);
 
-    let dependency_points = stage5_dependency_points(config, stage2, stage4)?;
+    // Split the upstream RAM/register opening points into the fixed address prefix
+    // and fixed cycle suffixes the backend witness materialization needs. The
+    // address-agreement and length invariants are re-checked by each relation's
+    // `derive_opening_points` when the output openings are paired with points below.
+    let ram_read_write_opening_point = stage2.output_claims.ram_read_write_point();
+    let ram_raf_opening_point = stage2.output_claims.ram_raf_evaluation_point();
+    let ram_val_check_opening_point = stage4.output_claims.ram_val_check.ram_ra.point.as_slice();
+    let registers_opening_point = stage4
+        .output_claims
+        .registers_read_write
+        .registers_val
+        .point
+        .as_slice();
+    let ram_address_point = &ram_read_write_opening_point[..config.log_k];
+    let ram_raf_fixed_cycle_point = &ram_raf_opening_point[config.log_k..];
+    let ram_read_write_fixed_cycle_point = &ram_read_write_opening_point[config.log_k..];
+    let ram_val_check_fixed_cycle_point = &ram_val_check_opening_point[config.log_k..];
+    let (register_address_point, register_fixed_cycle_point) =
+        registers_opening_point.split_at(REGISTER_ADDRESS_BITS);
 
     let ram_rows = ram_read_write_rows(witness)?;
     let ram_request = SumcheckRamRaClaimReductionStateRequest::new(
         "stage5.ram_ra_claim_reduction",
         ram_rows,
-        dependency_points.ram_address_point.to_vec(),
-        dependency_points.ram_raf_fixed_cycle_point.to_vec(),
-        dependency_points.ram_read_write_fixed_cycle_point.to_vec(),
-        dependency_points.ram_val_check_fixed_cycle_point.to_vec(),
+        ram_address_point.to_vec(),
+        ram_raf_fixed_cycle_point.to_vec(),
+        ram_read_write_fixed_cycle_point.to_vec(),
+        ram_val_check_fixed_cycle_point.to_vec(),
         prefix.ram_gamma,
         prefix.input_claims.ram_ra_claim_reduction,
         config.log_t,
@@ -484,8 +386,8 @@ where
     let registers_request = SumcheckRegistersValEvaluationStateRequest::new(
         "stage5.registers_val_evaluation",
         register_rows,
-        dependency_points.register_address_point.to_vec(),
-        dependency_points.register_fixed_cycle_point.to_vec(),
+        register_address_point.to_vec(),
+        register_fixed_cycle_point.to_vec(),
         prefix.input_claims.registers_val_evaluation,
         config.log_t,
         REGISTER_ADDRESS_BITS,
@@ -592,23 +494,20 @@ where
         }
     }
 
-    let instruction_points =
-        stage5_instruction_opening_points(config.instruction_read_raf_dimensions, &sumcheck_point)
-            .map_err(|error| invalid_sumcheck_output(error.to_string()))?;
-    let value_points = stage5_batch_value_opening_points(Stage5ValueOpeningPointRequest {
-        trace_dimensions: TraceDimensions::new(config.log_t),
-        ram_log_k: config.log_k,
-        ram_ra_claim_reduction_sumcheck_point: &sumcheck_point[front_padding_rounds..],
-        registers_val_evaluation_sumcheck_point: &sumcheck_point[front_padding_rounds..],
-        ram_raf_opening_point: stage2.output_claims.ram_raf_evaluation_point(),
-        ram_read_write_opening_point: stage2.output_claims.ram_read_write_point(),
-        ram_val_check_opening_point: &stage4.output_claims.ram_val_check.ram_ra.point,
-        registers_read_write_opening_point: &stage4
-            .output_claims
-            .registers_read_write
-            .registers_val
-            .point,
-    })?;
+    let instruction_inputs = InstructionReadRafInputClaims::from_upstream(stage2);
+    let ram_inputs = RamRaClaimReductionInputClaims::from_upstream(stage2, stage4);
+    let registers_inputs = RegistersValEvaluationInputClaims::from_upstream(stage4);
+    let points = Stage5OutputClaims {
+        instruction_read_raf: instruction_relation
+            .derive_opening_points(&sumcheck_point, &instruction_inputs)
+            .map_err(to_prover_error)?,
+        ram_ra_claim_reduction: ram_relation
+            .derive_opening_points(&sumcheck_point[front_padding_rounds..], &ram_inputs)
+            .map_err(to_prover_error)?,
+        registers_val_evaluation: registers_relation
+            .derive_opening_points(&sumcheck_point[front_padding_rounds..], &registers_inputs)
+            .map_err(to_prover_error)?,
+    };
 
     let instruction_output =
         backend.output_sumcheck_instruction_read_raf_state(&instruction_state)?;
@@ -630,26 +529,24 @@ where
             rd_wa: registers_output.rd_wa,
         },
     };
-    let expected_outputs = stage5_expected_outputs(Stage5ExpectedOutputInputs {
-        config,
-        prefix,
-        instruction_fixed_cycle_point: stage2.output_claims.instruction_claim_reduction_point(),
-        instruction_r_address: &instruction_points.r_address,
-        instruction_r_cycle: &instruction_points.r_cycle,
-        ram_raf_fixed_cycle_point: &value_points.ram_raf_fixed_cycle_point,
-        ram_read_write_fixed_cycle_point: &value_points.ram_read_write_fixed_cycle_point,
-        ram_val_check_fixed_cycle_point: &value_points.ram_val_check_fixed_cycle_point,
-        ram_ra_claim_reduction_opening_point: &value_points.ram_ra_claim_reduction_opening_point,
-        registers_fixed_cycle_point: &value_points.registers_fixed_cycle_point,
-        registers_val_evaluation_opening_point: &value_points
-            .registers_val_evaluation_opening_point,
-        output_openings: &output_openings,
-    })?;
-    let instruction_expected = expected_outputs.instruction_read_raf;
-    let ram_expected = expected_outputs.ram_ra_claim_reduction;
-    let registers_expected = expected_outputs.registers_val_evaluation;
-    let expected_final_claim =
-        stage5_expected_batch_final_claim(&batching_coefficients, &expected_outputs)?;
+
+    let output_claims = stage5_output_claims_with_points(&output_openings, &points);
+    let instruction_expected = instruction_relation
+        .expected_output(&instruction_inputs, &output_claims.instruction_read_raf)
+        .map_err(to_prover_error)?;
+    let ram_expected = ram_relation
+        .expected_output(&ram_inputs, &output_claims.ram_ra_claim_reduction)
+        .map_err(to_prover_error)?;
+    let registers_expected = registers_relation
+        .expected_output(&registers_inputs, &output_claims.registers_val_evaluation)
+        .map_err(to_prover_error)?;
+    let expected_final_claim = stage5_expected_final_claim(
+        &batching_coefficients,
+        instruction_expected,
+        ram_expected,
+        registers_expected,
+    )
+    .map_err(to_prover_error)?;
     if running_claim != expected_final_claim {
         return Err(invalid_sumcheck_output(format!(
             "Stage 5 batch final claim did not match output openings: instruction={}, ram={}, registers={}, instruction_internal={}, instruction_expected_internal={}",
@@ -661,119 +558,26 @@ where
         )));
     }
 
+    let instruction_r_address = output_claims.instruction_read_raf.r_address();
+    let verifier_output = Stage5ClearOutput {
+        challenges: Stage5Challenges {
+            instruction_gamma: prefix.instruction_gamma,
+            ram_gamma: prefix.ram_gamma,
+        },
+        output_claims,
+        instruction_r_address,
+    };
+
     let output_claim_values = output_openings.opening_values();
     let recorded = proof_recorder.finish(&output_claim_values, transcript)?;
     Ok(Stage5RegularBatchProofOutput {
-        prefix: prefix.clone(),
         proof: recorded.proof,
         #[cfg(feature = "zk")]
         committed_witness: recorded.committed_witness,
         #[cfg(feature = "zk")]
         output_claim_values: recorded.output_claim_values,
-        output_openings,
-        expected_outputs,
-        batching_coefficients,
-        sumcheck_point,
-        sumcheck_final_claim: running_claim,
-        expected_final_claim,
-        instruction_read_raf_sumcheck_point: instruction_points.sumcheck_point,
-        instruction_read_raf_r_address: instruction_points.r_address,
-        instruction_read_raf_r_cycle: instruction_points.r_cycle,
-        instruction_read_raf_full_opening_point: instruction_points.full_opening_point,
-        instruction_lookup_table_flag_opening_point: instruction_points
-            .lookup_table_flag_opening_point,
-        instruction_ra_opening_points: instruction_points.instruction_ra_opening_points,
-        instruction_raf_flag_opening_point: instruction_points.instruction_raf_flag_opening_point,
-        ram_ra_claim_reduction_sumcheck_point: value_points.ram_ra_claim_reduction_sumcheck_point,
-        ram_ra_claim_reduction_opening_point: value_points.ram_ra_claim_reduction_opening_point,
-        registers_val_evaluation_sumcheck_point: value_points
-            .registers_val_evaluation_sumcheck_point,
-        registers_val_evaluation_opening_point: value_points.registers_val_evaluation_opening_point,
-    })
-}
-
-#[cfg(feature = "zk")]
-#[expect(clippy::too_many_arguments)]
-fn prove_stage5_committed_specialized_regular_batch_sumcheck<F, W, B, T, VC>(
-    config: Stage5ProverConfig,
-    witness: &W,
-    backend: &mut B,
-    stage2: &Stage2ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    prefix: &Stage5RegularBatchPrefixOutput<F>,
-    transcript: &mut T,
-    vc_setup: &VC::Setup,
-) -> Result<Stage5CommittedProofComponent<F, VC>, ProverError>
-where
-    F: Field,
-    W: WitnessProvider<F, JoltVmNamespace>
-        + JoltVmStage2Rows
-        + JoltVmRegisterReadWriteRows
-        + JoltVmStage5InstructionReadRafRows,
-    B: SumcheckBackend<F, JoltVmNamespace> + Stage5ValueEvaluationSumcheckBackend<F>,
-    T: Transcript<Challenge = F>,
-    VC: VectorCommitment<Field = F>,
-{
-    let output = prove_stage5_specialized_regular_batch_sumcheck_with_recorder(
-        config,
-        witness,
-        backend,
-        stage2,
-        stage4,
-        prefix,
-        transcript,
-        CommittedSumcheckRecorder::<F, VC>::new(vc_setup)?,
-    )?;
-
-    let public = Stage5PublicOutput {
-        challenges: output.sumcheck_point.clone(),
-        batching_coefficients: output.batching_coefficients.clone(),
-        instruction_gamma: prefix.instruction_gamma,
-        ram_gamma: prefix.ram_gamma,
-    };
-    let verifier_output = Stage5ClearOutput {
-        public: public.clone(),
-        output_claims: output.output_openings,
-        batch: VerifiedStage5Batch {
-            batching_coefficients: public.batching_coefficients.clone(),
-            sumcheck_point: Point::high_to_low(public.challenges.clone()),
-            sumcheck_final_claim: output.sumcheck_final_claim,
-            expected_final_claim: output.expected_final_claim,
-            instruction_read_raf: VerifiedInstructionReadRafSumcheck {
-                input_claim: prefix.input_claims.instruction_read_raf,
-                sumcheck_point: output.instruction_read_raf_sumcheck_point,
-                r_address: output.instruction_read_raf_r_address,
-                r_cycle: output.instruction_read_raf_r_cycle,
-                full_opening_point: output.instruction_read_raf_full_opening_point,
-                lookup_table_flag_opening_point: output.instruction_lookup_table_flag_opening_point,
-                instruction_ra_opening_points: output.instruction_ra_opening_points,
-                instruction_raf_flag_opening_point: output.instruction_raf_flag_opening_point,
-                expected_output_claim: output.expected_outputs.instruction_read_raf,
-            },
-            ram_ra_claim_reduction: VerifiedStage5Sumcheck {
-                input_claim: prefix.input_claims.ram_ra_claim_reduction,
-                sumcheck_point: output.ram_ra_claim_reduction_sumcheck_point,
-                opening_point: output.ram_ra_claim_reduction_opening_point,
-                expected_output_claim: output.expected_outputs.ram_ra_claim_reduction,
-            },
-            registers_val_evaluation: VerifiedStage5Sumcheck {
-                input_claim: prefix.input_claims.registers_val_evaluation,
-                sumcheck_point: output.registers_val_evaluation_sumcheck_point,
-                opening_point: output.registers_val_evaluation_opening_point,
-                expected_output_claim: output.expected_outputs.registers_val_evaluation,
-            },
-        },
-    };
-    Ok(Stage5CommittedProofComponent {
-        stage5_sumcheck_proof: output.proof,
-        public,
-        output_claim_values: output.output_claim_values.ok_or_else(|| {
-            invalid_sumcheck_output("Stage 5 committed output claim values are missing")
-        })?,
+        claims: output_openings,
         verifier_output,
-        committed_witness: output.committed_witness.ok_or_else(|| {
-            invalid_sumcheck_output("Stage 5 committed witness material is missing")
-        })?,
     })
 }
 
@@ -785,24 +589,50 @@ const fn instruction_sumcheck_phases(log_t: usize) -> usize {
     }
 }
 
+/// Enforce the cross-relation opening aliases the instruction read-RAF input
+/// wiring relies on: the product-remainder and instruction-claim-reduction share
+/// the trace-length opening point and agree on the reduced lookup output. Mirrors
+/// the verifier's clear-path check.
 fn validate_stage5_dependencies<F: Field>(
     config: Stage5ProverConfig,
     stage2: &Stage2ClearOutput<F>,
 ) -> Result<(), ProverError> {
-    stage5_instruction_read_raf_dependencies(Stage5InstructionReadRafDependencyRequest {
-        trace_dimensions: TraceDimensions::new(config.log_t),
-        stage2,
-    })
-    .map_err(|error| ProverError::InvalidStageRequest {
-        reason: error.to_string(),
-    })
-}
-
-#[derive(Clone, Copy)]
-struct Stage5BatchCoefficients<F: Field> {
-    instruction_read_raf: F,
-    ram_ra_claim_reduction: F,
-    registers_val_evaluation: F,
+    let expected_trace_vars = config.log_t;
+    let product_point = stage2.output_claims.product_remainder_point();
+    let reduced_point = stage2.output_claims.instruction_claim_reduction_point();
+    for (label, point) in [
+        ("product remainder", product_point),
+        ("instruction claim reduction", reduced_point),
+    ] {
+        if point.len() != expected_trace_vars {
+            return Err(ProverError::InvalidStageRequest {
+                reason: format!(
+                    "Stage 5 {label} opening point has {} variables, expected {expected_trace_vars}",
+                    point.len()
+                ),
+            });
+        }
+    }
+    if product_point != reduced_point {
+        return Err(ProverError::InvalidStageRequest {
+            reason: "Stage 5 instruction read-RAF dependencies use different opening points"
+                .to_owned(),
+        });
+    }
+    let product_lookup_output = stage2.output_claims.product_remainder.lookup_output.value;
+    let reduced_lookup_output = stage2
+        .output_claims
+        .instruction_claim_reduction
+        .lookup_output
+        .as_ref()
+        .map_or(product_lookup_output, |claim| claim.value);
+    if reduced_lookup_output != product_lookup_output {
+        return Err(ProverError::InvalidStageRequest {
+            reason: "Stage 5 instruction read-RAF dependencies disagree on the reduced lookup output"
+                .to_owned(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(feature = "zk")]

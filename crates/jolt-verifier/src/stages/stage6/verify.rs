@@ -223,15 +223,15 @@ where
 
     let (stage5_instruction_address, stage5_instruction_cycle) = match deps {
         Deps::Clear { stage5, .. } => (
-            &stage5.batch.instruction_read_raf.r_address,
-            &stage5.batch.instruction_read_raf.r_cycle,
+            stage5.instruction_r_address.as_slice(),
+            stage5.instruction_r_cycle(),
         ),
         Deps::Zk { stage5 } => (
-            &stage5.instruction_read_raf.r_address,
-            &stage5.instruction_read_raf.r_cycle,
+            stage5.instruction_r_address.as_slice(),
+            stage5.instruction_r_cycle.as_slice(),
         ),
     };
-    let mut booleanity_reference_address = stage5_instruction_address.clone();
+    let mut booleanity_reference_address = stage5_instruction_address.to_vec();
     booleanity_reference_address.reverse();
     if booleanity_reference_address.len() < proof.one_hot_config.committed_chunk_bits() {
         let missing =
@@ -242,7 +242,7 @@ where
             [booleanity_reference_address.len() - proof.one_hot_config.committed_chunk_bits()..]
             .to_vec();
     }
-    let mut booleanity_reference_cycle = stage5_instruction_cycle.clone();
+    let mut booleanity_reference_cycle = stage5_instruction_cycle.to_vec();
     booleanity_reference_cycle.reverse();
     let mut booleanity_gamma = transcript.challenge();
     if booleanity_gamma.is_zero() {
@@ -407,7 +407,7 @@ where
                 stage: JoltRelationId::RamRaVirtualization,
                 reason: error.to_string(),
             })?;
-        let ram_reduced_opening_point = &stage5.ram_ra_claim_reduction.opening_point;
+        let ram_reduced_opening_point = &stage5.ram_reduced_opening_point;
         if ram_reduced_opening_point.len() != log_k + log_t {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamRaVirtualization,
@@ -441,14 +441,14 @@ where
             })?;
         let instruction_ra_opening_points = proof
             .one_hot_config
-            .committed_address_chunks(&stage5.instruction_read_raf.r_address)
+            .committed_address_chunks(&stage5.instruction_r_address)
             .into_iter()
             .map(|r_address_chunk| {
                 [r_address_chunk.as_slice(), instruction_ra_cycle.as_slice()].concat()
             })
             .collect::<Vec<_>>();
         let instruction_ra_opening_point = [
-            stage5.instruction_read_raf.r_address.as_slice(),
+            stage5.instruction_r_address.as_slice(),
             instruction_ra_cycle.as_slice(),
         ]
         .concat();
@@ -935,11 +935,8 @@ where
         .registers_val
         .point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (stage5_register_address, stage5_cycle) = stage5
-        .batch
-        .registers_val_evaluation
-        .opening_point
-        .split_at(REGISTER_ADDRESS_BITS);
+    let (stage5_register_address, stage5_cycle) =
+        stage5.registers_opening_point().split_at(REGISTER_ADDRESS_BITS);
     let entry_bytecode_index = preprocessing
         .program
         .entry_bytecode_index()
@@ -1103,7 +1100,7 @@ where
             stage: JoltRelationId::RamRaVirtualization,
             reason: error.to_string(),
         })?;
-    let ram_reduced_opening_point = &stage5.batch.ram_ra_claim_reduction.opening_point;
+    let ram_reduced_opening_point = stage5.ram_reduced_opening_point();
     if ram_reduced_opening_point.len() != log_k + log_t {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamRaVirtualization,
@@ -1146,7 +1143,7 @@ where
     let instruction_ra_output = stage6_instruction_ra_virtualization_expected_output(
         Stage6InstructionRaVirtualizationExpectedOutputInputs {
             dimensions: formula_dimensions.instruction_ra_virtualization,
-            instruction_read_raf_cycle: &stage5.batch.instruction_read_raf.r_cycle,
+            instruction_read_raf_cycle: stage5.instruction_r_cycle(),
             r_cycle: &instruction_ra_cycle,
             committed_instruction_ra: &claims
                 .instruction_ra_virtualization
@@ -1156,14 +1153,14 @@ where
     )?;
     let instruction_ra_opening_points = proof
         .one_hot_config
-        .committed_address_chunks(&stage5.batch.instruction_read_raf.r_address)
+        .committed_address_chunks(&stage5.instruction_r_address)
         .into_iter()
         .map(|r_address_chunk| {
             [r_address_chunk.as_slice(), instruction_ra_cycle.as_slice()].concat()
         })
         .collect::<Vec<_>>();
     let instruction_ra_opening_point = [
-        stage5.batch.instruction_read_raf.r_address.as_slice(),
+        stage5.instruction_r_address.as_slice(),
         instruction_ra_cycle.as_slice(),
     ]
     .concat();
@@ -1194,11 +1191,8 @@ where
         .registers_val
         .point
         .split_at(REGISTER_ADDRESS_BITS);
-    let (_, registers_val_evaluation_cycle) = stage5
-        .batch
-        .registers_val_evaluation
-        .opening_point
-        .split_at(REGISTER_ADDRESS_BITS);
+    let (_, registers_val_evaluation_cycle) =
+        stage5.registers_opening_point().split_at(REGISTER_ADDRESS_BITS);
     let inc_output =
         stage6_inc_claim_reduction_expected_output(Stage6IncClaimReductionExpectedOutputInputs {
             opening_point: &inc_opening_point,
@@ -1628,7 +1622,7 @@ pub fn stage6_bytecode_register_points<'a, F: Field>(
     )?;
     let (register_val_evaluation_address, register_val_evaluation_cycle) = stage6_checked_split(
         "Stage 6 stage5 register value-evaluation opening",
-        &stage5.batch.registers_val_evaluation.opening_point,
+        stage5.registers_opening_point(),
         REGISTER_ADDRESS_BITS,
         JoltRelationId::BytecodeReadRaf,
     )?;
@@ -1773,11 +1767,7 @@ pub fn stage6_stage5_ram_reduced_opening_point<F: Field>(
     log_k: usize,
     log_t: usize,
 ) -> Result<Stage6RamReducedOpeningPoint<'_, F>, VerifierError> {
-    stage6_ram_reduced_opening_point(
-        &stage5.batch.ram_ra_claim_reduction.opening_point,
-        log_k,
-        log_t,
-    )
+    stage6_ram_reduced_opening_point(stage5.ram_reduced_opening_point(), log_k, log_t)
 }
 
 pub fn stage6_zk_stage5_ram_reduced_opening_point<F: Field, C>(
@@ -1785,7 +1775,7 @@ pub fn stage6_zk_stage5_ram_reduced_opening_point<F: Field, C>(
     log_k: usize,
     log_t: usize,
 ) -> Result<Stage6RamReducedOpeningPoint<'_, F>, VerifierError> {
-    stage6_ram_reduced_opening_point(&stage5.ram_ra_claim_reduction.opening_point, log_k, log_t)
+    stage6_ram_reduced_opening_point(&stage5.ram_reduced_opening_point, log_k, log_t)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1815,8 +1805,8 @@ pub fn stage6_instruction_read_raf_point<F: Field>(
     stage5: &Stage5ClearOutput<F>,
 ) -> Stage6InstructionReadRafPoint<'_, F> {
     Stage6InstructionReadRafPoint {
-        address: &stage5.batch.instruction_read_raf.r_address,
-        cycle: &stage5.batch.instruction_read_raf.r_cycle,
+        address: &stage5.instruction_r_address,
+        cycle: stage5.instruction_r_cycle(),
     }
 }
 
@@ -1824,8 +1814,8 @@ pub fn stage6_zk_instruction_read_raf_point<F: Field, C>(
     stage5: &Stage5ZkOutput<F, C>,
 ) -> Stage6InstructionReadRafPoint<'_, F> {
     Stage6InstructionReadRafPoint {
-        address: &stage5.instruction_read_raf.r_address,
-        cycle: &stage5.instruction_read_raf.r_cycle,
+        address: &stage5.instruction_r_address,
+        cycle: &stage5.instruction_r_cycle,
     }
 }
 
@@ -1910,7 +1900,7 @@ pub fn stage6_inc_claim_reduction_cycle_points<'a, F: Field>(
     )?;
     let (_, registers_val_evaluation_cycle) = stage6_checked_split(
         "Stage 6 register value-evaluation opening",
-        &stage5.batch.registers_val_evaluation.opening_point,
+        stage5.registers_opening_point(),
         REGISTER_ADDRESS_BITS,
         JoltRelationId::IncClaimReduction,
     )?;
@@ -2005,7 +1995,7 @@ pub fn stage6_batch_input_claims<F: Field>(
         ram_ra_virtualization: ram_ra_claims.input.expression().try_evaluate(
             |id| match *id {
                 id if id == ram_ra_reduced => {
-                    Ok(stage5.output_claims.ram_ra_claim_reduction.ram_ra)
+                    Ok(stage5.output_claims.ram_ra_claim_reduction.ram_ra.value)
                 }
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
@@ -2021,7 +2011,7 @@ pub fn stage6_batch_input_claims<F: Field>(
                             .instruction_read_raf
                             .instruction_ra
                             .get(index)
-                            .copied()
+                            .map(|claim| claim.value)
                             .ok_or(VerifierError::MissingOpeningClaim { id: *id });
                     }
                 }
@@ -2047,7 +2037,7 @@ pub fn stage6_batch_input_claims<F: Field>(
                     Ok(stage4.output_claims.registers_read_write.rd_inc.value)
                 }
                 id if id == rd_inc_val_evaluation => {
-                    Ok(stage5.output_claims.registers_val_evaluation.rd_inc)
+                    Ok(stage5.output_claims.registers_val_evaluation.rd_inc.value)
                 }
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
@@ -2200,7 +2190,7 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                     return Ok(stage4.output_claims.registers_read_write.rs2_ra.value);
                 }
                 if *id == bytecode_input_openings.registers_val_evaluation.rd_wa {
-                    return Ok(stage5.output_claims.registers_val_evaluation.rd_wa);
+                    return Ok(stage5.output_claims.registers_val_evaluation.rd_wa.value);
                 }
                 if *id
                     == bytecode_input_openings
@@ -2210,7 +2200,8 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                     return Ok(stage5
                         .output_claims
                         .instruction_read_raf
-                        .instruction_raf_flag);
+                        .instruction_raf_flag
+                        .value);
                 }
                 for (table, opening) in &bytecode_input_openings
                     .registers_val_evaluation
@@ -2222,7 +2213,7 @@ pub fn stage6_bytecode_read_raf_address_input<F: Field>(
                             .instruction_read_raf
                             .lookup_table_flags
                             .get(table.index())
-                            .copied()
+                            .map(|claim| claim.value)
                             .ok_or(VerifierError::MissingOpeningClaim { id: *id });
                     }
                 }

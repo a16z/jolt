@@ -24,7 +24,7 @@ use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
 /// Produced RAM-RA reduced opening, generic over the cell (`F` on the wire,
-/// `Vec<F>` for ZK points, `OpeningClaim<F>` once located on the clear path).
+/// `Vec<F>` for ZK points, `OpeningClaim<F>` (point + value) on the clear path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -53,7 +53,7 @@ pub struct RamRaClaimReductionInputClaims<C> {
 impl<F: Field> RamRaClaimReductionInputClaims<OpeningClaim<F>> {
     /// Wire this relation's consumed openings from the upstream clear outputs:
     /// the RAF-evaluation and read-write openings (stage 2) and the val-check
-    /// opening (stage 4), each as a located `(point, value)`.
+    /// opening (stage 4), each as an `OpeningClaim` (point + value).
     pub fn from_upstream(stage2: &Stage2ClearOutput<F>, stage4: &Stage4ClearOutput<F>) -> Self {
         Self {
             raf: OpeningClaim {

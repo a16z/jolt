@@ -5,7 +5,7 @@
 //! *publics* (`EqTableValue`, `EqRafConstant`, `EqRafFlag`) computed from the
 //! instruction address/cycle points and the upstream claim-reduction point. The
 //! full instruction address is split across the virtual-RA opening points, so
-//! `resolve_public` reconstructs it from the located output cells.
+//! `resolve_public` reconstructs it from the output opening cells.
 
 use jolt_claims::protocols::jolt::{
     formulas::instruction::{self, InstructionReadRafDimensions},
@@ -37,6 +37,20 @@ pub struct InstructionReadRafOutputClaims<C> {
     pub instruction_ra: Vec<C>,
     #[opening(InstructionRafFlag)]
     pub instruction_raf_flag: C,
+}
+
+impl<F: Field> InstructionReadRafOutputClaims<OpeningClaim<F>> {
+    /// The instruction read-RAF cycle point, carried by the RAF-flag opening (every
+    /// per-cycle opening shares it).
+    pub fn r_cycle(&self) -> &[F] {
+        self.instruction_raf_flag.point()
+    }
+
+    /// The contiguous instruction address point, reconstructed from the virtual-RA
+    /// opening cells (each is `chunk ++ r_cycle`).
+    pub fn r_address(&self) -> Vec<F> {
+        reconstruct_r_address(self, self.r_cycle().len())
+    }
 }
 
 /// Consumed instruction-lookup openings (the reduced lookup output + left/right
@@ -105,7 +119,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-/// Reconstruct the instruction address point from the located virtual-RA cells:
+/// Reconstruct the instruction address point from the virtual-RA opening cells:
 /// each RA opening point is `chunk ++ r_cycle`, and the chunks tile the address
 /// in order, so stripping the trailing cycle and concatenating recovers it.
 fn reconstruct_r_address<F: Field>(

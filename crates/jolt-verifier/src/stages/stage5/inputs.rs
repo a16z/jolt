@@ -44,12 +44,17 @@ pub fn deps<'a, F: Field, C>(
     }
 }
 
+/// The stage 5 produced opening claims, generic over the cell (`F` on the wire,
+/// `Vec<F>` for derived points, `OpeningClaim<F>` (point + value) on the clear path).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Stage5OutputClaims<F: Field> {
-    pub instruction_read_raf: InstructionReadRafOutputClaims<F>,
-    pub ram_ra_claim_reduction: RamRaClaimReductionOutputClaims<F>,
-    pub registers_val_evaluation: RegistersValEvaluationOutputClaims<F>,
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+pub struct Stage5OutputClaims<C> {
+    pub instruction_read_raf: InstructionReadRafOutputClaims<C>,
+    pub ram_ra_claim_reduction: RamRaClaimReductionOutputClaims<C>,
+    pub registers_val_evaluation: RegistersValEvaluationOutputClaims<C>,
 }
 
 impl<F: Field> Stage5OutputClaims<F> {
