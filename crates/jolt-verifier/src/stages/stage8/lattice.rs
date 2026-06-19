@@ -1536,6 +1536,15 @@ fn validate_lattice_term_validity_coverage(
             "opening {id:?} uses fused increment family {family:?} without a bound canonical-zero validity requirement"
         )));
     }
+    if term_requires_bytecode_store_rd_disjoint(family)
+        && !requirements.iter().any(|requirement| {
+            bytecode_store_rd_disjoint_requirement_covers_term(requirement, family)
+        })
+    {
+        return Err(unsupported_lattice_view(format!(
+            "opening {id:?} uses bytecode source family {family:?} without a bound Store/Rd disjointness requirement"
+        )));
+    }
     Ok(())
 }
 
@@ -1613,6 +1622,44 @@ fn fused_increment_canonical_zero_requirement(
         requirement.kind,
         LatticePackedValidityKind::FusedIncrementCanonicalZero
     )
+}
+
+fn term_requires_bytecode_store_rd_disjoint(family: &LatticePackedFamilyId) -> bool {
+    match family {
+        LatticePackedFamilyId::BytecodeCircuitFlag { flag, .. } => {
+            *flag == CircuitFlags::Store as usize
+        }
+        LatticePackedFamilyId::BytecodeRegisterSelector { selector, .. } => *selector == 2,
+        _ => false,
+    }
+}
+
+fn bytecode_store_rd_disjoint_requirement_covers_term(
+    requirement: &LatticePackedValidityRequirement,
+    family: &LatticePackedFamilyId,
+) -> bool {
+    let LatticePackedValidityKind::BytecodeStoreRdDisjoint = requirement.kind else {
+        return false;
+    };
+    let LatticePackedFamilyId::BytecodeCircuitFlag {
+        chunk: requirement_chunk,
+        flag,
+    } = &requirement.family
+    else {
+        return false;
+    };
+    if *flag != CircuitFlags::Store as usize {
+        return false;
+    }
+    match family {
+        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+            requirement_chunk == chunk && *flag == CircuitFlags::Store as usize
+        }
+        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+            requirement_chunk == chunk && *selector == 2
+        }
+        _ => false,
+    }
 }
 
 fn jolt_lattice_row_point<F>(
@@ -3335,6 +3382,42 @@ mod tests {
             .unwrap_or_else(|error| {
                 panic!("fused increment canonical-zero coverage should validate: {error}")
             });
+    }
+
+    #[test]
+    fn validity_coverage_requires_bytecode_store_rd_disjointness() {
+        let id = Stage8OpeningId::from(fused_increment_bytecode_source_opening(
+            LatticeFusedIncrementTarget::Ram,
+        ));
+        let formula =
+            fused_increment_source_lattice_view_formula::<Fr>(LatticeFusedIncrementTarget::Ram, 0);
+        let store_flag = LatticePackedValidityRequirement::boolean_indicator(
+            LatticePackedFamilyId::BytecodeCircuitFlag {
+                chunk: 0,
+                flag: CircuitFlags::Store as usize,
+            },
+            1,
+            2,
+            1,
+        );
+        let disjoint = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(0);
+
+        assert!(matches!(
+            validate_lattice_view_validity_coverage(
+                &[(id, formula.clone(), Vec::new())],
+                std::slice::from_ref(&store_flag),
+            ),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("without a bound Store/Rd disjointness requirement")
+        ));
+
+        validate_lattice_view_validity_coverage(
+            &[(id, formula, Vec::new())],
+            &[store_flag, disjoint],
+        )
+        .unwrap_or_else(|error| {
+            panic!("bytecode Store/Rd disjointness coverage should validate: {error}")
+        });
     }
 
     #[test]
