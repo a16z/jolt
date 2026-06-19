@@ -432,6 +432,13 @@ step G:
 - Akita Program::Committed support is not enough to bind every Jolt
   precommitted object. Jolt supplies explicit original commitment handles for
   TrustedAdvice, BytecodeChunk(i), and ProgramImageInit.
+- The crate must reject a statement/proof bundle where TrustedAdvice,
+  BytecodeChunk(i), ProgramImageInit, StoreFlag, or RdPresent source claims are
+  satisfied only by the PackedWitness proof or by an Akita backend
+  Program::Committed handle.
+- Any future optimization that packs precommitted values with proof-owned
+  witness values must include an explicit binding proof to the original Jolt
+  precommitments before those values count as precommitted openings.
 - Direct/native Akita commitments may carry the layout digest of their own
   opening statement. Only the packed witness commitment is required to match the
   packed setup layout digest.

@@ -175,6 +175,14 @@ Interface requirements for Akita:
 - In lattice mode, committed bytecode chunks and ProgramImageInit remain
   precommitted physical objects and require separate openings against their
   original commitments.
+- TrustedAdvice also remains a precommitted physical object. It is never
+  discharged by copying its values into W_pack.
+- Separate opening means an opening statement/proof keyed by the original Jolt
+  precommitment handle. Akita's proof-owned PackedWitness commitment, and any
+  Akita backend Program::Committed bytecode handle, cannot replace that handle.
+- Akita cannot batch these precommitted objects with W_pack through the target
+  packed-view path because that would require post-commitment additive
+  combination across unrelated commitments.
 - Increment selection reuses committed bytecode facts:
     Ram source = Store circuit flag.
     Rd source = sum of rd one-hot lanes.

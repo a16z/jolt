@@ -285,6 +285,26 @@ already fixed. Copying precommitted values into W_pack can be useful only for a
 future bound packed-precommitted view; in this target it is not a proof of the
 original precommitted commitment.
 
+Precommitted opening partition:
+
+```text
+input:
+  final logical opening manifest
+
+for each opening:
+  if opening targets proof-owned packed witness data:
+    add to the W_pack packed-view statement
+  if opening targets TrustedAdvice, BytecodeChunk(i), ProgramImageInit, or a
+  source fact derived from BytecodeChunk(i):
+    add a precommitted opening statement keyed by the original commitment handle
+
+requirements:
+  every precommitted statement has its own direct/native proof material.
+  precommitted proofs are ordered by the precommitted opening manifest.
+  the verifier rejects missing, extra, reordered, W_pack-backed, or
+  backend-program-only proofs for precommitted statements.
+```
+
 Akita non-requirements:
 
 ```text

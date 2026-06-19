@@ -253,6 +253,8 @@ Dispatch:
    itself.
    They are direct/native opening statements. A PackedWitness reduction proof
    does not satisfy them.
+   The verifier records these statements in a deterministic manifest and
+   requires a separate proof entry for each manifest entry.
    Fused-increment StoreFlag/RdPresent source claims use the same
    precommitted BytecodeChunk opening path, including component-opening
    recombination checks when the source is a committed-bytecode linear view.
