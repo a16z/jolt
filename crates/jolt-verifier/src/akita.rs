@@ -3459,6 +3459,86 @@ mod tests {
     }
 
     #[test]
+    fn packed_validity_value_detects_malformed_advice_byte_onehot() {
+        let (layout, statements) = small_validity_context();
+        let family = PackedFamilyId::AdviceBytes {
+            kind: PackedAdviceKind::Trusted,
+            index: 0,
+        };
+        let source = SparsePackedWitness::try_from_cells(
+            layout,
+            [
+                (packed_cell_at(family.clone(), 0, 0, 7), AkitaField::one()),
+                (packed_cell_at(family, 0, 0, 8), AkitaField::one()),
+            ],
+        )
+        .expect("malformed advice source should build");
+        let statement = validity_statement(
+            &statements,
+            LatticePackedFamilyId::AdviceBytes {
+                kind: JoltAdviceKind::Trusted,
+                index: 0,
+            },
+            LatticePackedValidityStatementKind::ExactOneHotRowSum,
+        );
+
+        assert_ne!(
+            validity_value_at_zero(&source, statement),
+            AkitaField::zero()
+        );
+    }
+
+    #[test]
+    fn packed_validity_value_detects_malformed_bytecode_optional_selector() {
+        let (layout, statements) = small_validity_context();
+        let family = PackedFamilyId::BytecodeRegisterSelector {
+            chunk: 0,
+            selector: 0,
+        };
+        let source = SparsePackedWitness::try_from_cells(
+            layout,
+            [
+                (packed_cell_at(family.clone(), 0, 0, 3), AkitaField::one()),
+                (packed_cell_at(family, 0, 0, 4), AkitaField::one()),
+            ],
+        )
+        .expect("malformed bytecode selector source should build");
+        let statement = validity_statement(
+            &statements,
+            LatticePackedFamilyId::BytecodeRegisterSelector {
+                chunk: 0,
+                selector: 0,
+            },
+            LatticePackedValidityStatementKind::OptionalOneHotRowSum,
+        );
+
+        assert_ne!(
+            validity_value_at_zero(&source, statement),
+            AkitaField::zero()
+        );
+    }
+
+    #[test]
+    fn packed_validity_value_detects_malformed_bytecode_boolean_flag() {
+        let (layout, statements) = small_validity_context();
+        let flag = CircuitFlags::Store as usize;
+        let family = PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag };
+        let source =
+            SparsePackedWitness::try_from_cells(layout, [(packed_cell_at(family, 0, 0, 1), af(2))])
+                .expect("malformed bytecode flag source should build");
+        let statement = validity_statement(
+            &statements,
+            LatticePackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag },
+            LatticePackedValidityStatementKind::BooleanIndicator,
+        );
+
+        assert_ne!(
+            validity_value_at_zero(&source, statement),
+            AkitaField::zero()
+        );
+    }
+
+    #[test]
     #[ignore = "real Akita negative canonical-byte proof is expensive; run explicitly with --run-ignored"]
     fn packed_validity_rejects_noncanonical_bytecode_imm_bytes() {
         run_on_large_stack(|| {
@@ -3548,6 +3628,71 @@ mod tests {
         requirements: &[LatticePackedValidityRequirement],
     ) -> SparsePackedWitness<AkitaField> {
         validity_source_with_symbols(layout, requirements, |_, _| 0)
+    }
+
+    fn small_validity_context() -> (PackedWitnessLayout, Vec<LatticePackedValidityStatement>) {
+        let log_t = 0;
+        let log_k_chunk = 1;
+        let precommitted = PrecommittedSchedule::new(
+            TracePolynomialOrder::CycleMajor,
+            log_t,
+            log_k_chunk,
+            Some(1),
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 1,
+                bytecode_chunk_count: 1,
+                program_image_len_words: 1,
+                program_image_start_index: 0,
+            }),
+        )
+        .expect("precommitted schedule should build");
+        let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+        config.lattice.program_mode = ProgramMode::Committed;
+        config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+        config.lattice.advice.trusted = true;
+        config.lattice.packed_witness.trusted_advice_family = true;
+        config.lattice.packed_witness.layout_digest = Some([0; 32]);
+        config.lattice.packed_witness.d_pack = Some(0);
+        config.lattice.packed_witness.validity_digest = Some([0; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.field_rd_inc_family = true;
+        }
+
+        let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+            &config,
+            log_t,
+            log_k_chunk,
+            JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+            &precommitted,
+        )
+        .expect("layout should derive");
+        let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
+            .expect("validity requirements should derive");
+        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+            .expect("validity statements should derive");
+        (layout, statements)
+    }
+
+    fn validity_statement(
+        statements: &[LatticePackedValidityStatement],
+        family: LatticePackedFamilyId,
+        kind: LatticePackedValidityStatementKind,
+    ) -> &LatticePackedValidityStatement {
+        statements
+            .iter()
+            .find(|statement| statement.requirement.family == family && statement.kind == kind)
+            .expect("validity statement should exist")
+    }
+
+    fn validity_value_at_zero(
+        source: &SparsePackedWitness<AkitaField>,
+        statement: &LatticePackedValidityStatement,
+    ) -> AkitaField {
+        let point = vec![AkitaField::zero(); statement.num_vars];
+        validity_value(source, statement, &point, &point).expect("validity value should evaluate")
     }
 
     #[cfg(feature = "field-inline")]
