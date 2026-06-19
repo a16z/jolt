@@ -31,6 +31,7 @@ pub enum PcsFamily {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PcsFamilyFlags {
     pub curve: bool,
     pub lattice: bool,
@@ -61,6 +62,7 @@ pub enum IncrementCommitmentMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackedWitnessConfig {
     pub layout_digest: Option<[u8; 32]>,
     pub d_pack: Option<usize>,
@@ -72,17 +74,20 @@ pub struct PackedWitnessConfig {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FieldInlineLatticeConfig {
     pub enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AdviceLatticeConfig {
     pub trusted: bool,
     pub untrusted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LatticeConfig {
     pub program_mode: ProgramMode,
     pub increment_mode: IncrementCommitmentMode,
@@ -93,6 +98,7 @@ pub struct LatticeConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub field_inline: FieldInlineConfig,
@@ -477,5 +483,46 @@ mod tests {
         assert!(invalid(&no_digest));
         assert!(invalid(&no_dimension));
         assert!(invalid(&no_validity));
+    }
+
+    #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "test fixture mutation should fail loudly if the serialized shape changes"
+    )]
+    fn protocol_config_rejects_unknown_serialized_fields() {
+        fn with_extra_field(path: &[&str], field: &str) -> serde_json::Value {
+            let mut value =
+                serde_json::to_value(valid_lattice_config()).expect("config should serialize");
+            let mut cursor = &mut value;
+            for segment in path {
+                cursor = cursor
+                    .as_object_mut()
+                    .expect("config segment should be an object")
+                    .get_mut(*segment)
+                    .expect("config segment should exist");
+            }
+            let previous = cursor
+                .as_object_mut()
+                .expect("target config segment should be an object")
+                .insert(field.to_string(), serde_json::Value::Bool(true));
+            assert!(previous.is_none());
+            value
+        }
+
+        for (path, field) in [
+            (&[][..], "extra_root"),
+            (&["pcs"][..], "extra_pcs_family"),
+            (&["lattice"][..], "extra_lattice_mode"),
+            (&["lattice", "packed_witness"][..], "extra_packed_witness"),
+            (&["lattice", "field_inline"][..], "extra_field_inline"),
+            (&["lattice", "advice"][..], "extra_advice"),
+        ] {
+            assert!(
+                serde_json::from_value::<JoltProtocolConfig>(with_extra_field(path, field))
+                    .is_err(),
+                "unknown config field {field} at path {path:?} must reject"
+            );
+        }
     }
 }
