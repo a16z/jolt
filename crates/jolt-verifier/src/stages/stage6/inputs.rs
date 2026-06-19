@@ -16,6 +16,7 @@ use crate::stages::{
 // (cell-generic, `#[derive(OutputClaims)]`); re-export them so `stage6::inputs::*`
 // consumers and the `Stage6OutputClaims` aggregate keep resolving them here.
 pub use super::booleanity::BooleanityOutputClaims;
+pub use super::bytecode_read_raf::BytecodeReadRafOutputClaims;
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
@@ -97,12 +98,6 @@ pub struct Stage6AddressPhaseClaims<F: Field> {
     /// `BytecodeValStage(s)` openings staged at the address-phase point;
     /// present only in committed program mode.
     pub bytecode_val_stages: Option<[F; NUM_BYTECODE_VAL_STAGES]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct BytecodeReadRafOutputClaims<F: Field> {
-    pub bytecode_ra: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

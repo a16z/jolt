@@ -3,7 +3,6 @@ use jolt_claims::protocols::jolt::{
         booleanity::{self, BooleanityDimensions},
         bytecode::{
             self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafDimensions,
-            BytecodeReadRafEvaluationInputs,
         },
         claim_reductions::{
             advice,
@@ -45,8 +44,9 @@ use super::{
         BooleanityAddressPhaseOutputClaims, BooleanityInputClaims,
     },
     bytecode_read_raf::{
-        BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
-        BytecodeReadRafAddressPhaseOutputClaims,
+        BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
+        BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCycleInputs,
+        BytecodeReadRafInputClaims,
     },
     inc_claim_reduction::{IncClaimReduction, IncClaimReductionInputClaims},
     instruction_ra_virtualization::{
@@ -1024,40 +1024,38 @@ where
                 reason: "full bytecode table is unavailable".to_string(),
             }
         })?;
-        let bytecode_public_values =
-            bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-                bytecode: &full_program.bytecode.bytecode,
-                r_address: &bytecode_r_address,
-                r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
-                    stage4_cycle,
-                    stage5_cycle,
-                ],
-                register_read_write_point: stage4_register_address,
-                register_val_evaluation_point: stage5_register_address,
-                entry_bytecode_index,
-                stage1_gammas: &stage1_gammas,
-                stage2_gammas: &stage2_gammas,
-                stage3_gammas: &stage3_gammas,
-                stage4_gammas: &stage4_gammas,
-                stage5_gammas: &stage5_gammas,
-            })
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: error.to_string(),
-            })?;
-        // The non-committed cycle output expression (`read_raf_cycle_phase`)
-        // is identical to `read_raf`'s output, so route through the shared
-        // helper rather than re-evaluating the formula inline.
-        stage6_bytecode_read_raf_expected_output(Stage6BytecodeReadRafExpectedOutputInputs {
+        let bytecode_relation = BytecodeReadRaf::new(BytecodeReadRafCycleInputs {
             dimensions: formula_dimensions.bytecode_read_raf,
-            public_values: &bytecode_public_values,
-            bytecode_ra: &claims.bytecode_read_raf.bytecode_ra,
             gamma: bytecode_gamma,
-        })?
+            bytecode: &full_program.bytecode.bytecode,
+            r_address: bytecode_r_address.clone(),
+            stage_cycle_points: [
+                stage1_cycle.clone(),
+                stage2_cycle.clone(),
+                stage3_cycle.clone(),
+                stage4_cycle.to_vec(),
+                stage5_cycle.to_vec(),
+            ],
+            register_read_write_point: stage4_register_address.to_vec(),
+            register_val_evaluation_point: stage5_register_address.to_vec(),
+            entry_bytecode_index,
+            stage_gammas: [
+                stage1_gammas.clone(),
+                stage2_gammas.clone(),
+                stage3_gammas.clone(),
+                stage4_gammas.clone(),
+                stage5_gammas.clone(),
+            ],
+            committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+        });
+        let bytecode_inputs = BytecodeReadRafInputClaims::from_upstream(OpeningClaim {
+            point: Vec::new(),
+            value: claims.address_phase.bytecode_read_raf,
+        });
+        let bytecode_points =
+            bytecode_relation.derive_opening_points(bytecode_point, &bytecode_inputs)?;
+        let bytecode_outputs = zip_openings(&claims.bytecode_read_raf, &bytecode_points);
+        bytecode_relation.expected_output(&bytecode_inputs, &bytecode_outputs)?
     };
     let bytecode_ra_opening_points = proof
         .one_hot_config

@@ -15,8 +15,9 @@ pub use booleanity::{
     BooleanityAddressPhaseOutputClaims, BooleanityInputClaims, BooleanityOutputClaims,
 };
 pub use bytecode_read_raf::{
-    BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
-    BytecodeReadRafAddressPhaseOutputClaims,
+    BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
+    BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCycleInputs,
+    BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
 };
 pub use inc_claim_reduction::{
     IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
