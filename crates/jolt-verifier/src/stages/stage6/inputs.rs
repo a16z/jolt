@@ -12,6 +12,14 @@ use crate::stages::{
     stage5::{Stage5ClearOutput, Stage5Output, Stage5ZkOutput},
 };
 
+// The per-relation produced-claim structs now live in their relation modules
+// (cell-generic, `#[derive(OutputClaims)]`); re-export them so `stage6::inputs::*`
+// consumers and the `Stage6OutputClaims` aggregate keep resolving them here.
+pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
+pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
+pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
+pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
+
 #[derive(Clone, Copy)]
 pub enum Deps<'a, F: Field, C> {
     Clear {
@@ -102,31 +110,6 @@ pub struct BooleanityOutputClaims<F: Field> {
     pub instruction_ra: Vec<F>,
     pub bytecode_ra: Vec<F>,
     pub ram_ra: Vec<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct RamHammingBooleanityOutputClaims<F: Field> {
-    pub ram_hamming_weight: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct RamRaVirtualizationOutputClaims<F: Field> {
-    pub ram_ra: Vec<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct InstructionRaVirtualizationOutputClaims<F: Field> {
-    pub committed_instruction_ra: Vec<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct IncClaimReductionOutputClaims<F: Field> {
-    pub ram_inc: F,
-    pub rd_inc: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

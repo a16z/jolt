@@ -1,9 +1,26 @@
 //! Stage 6 verifier entry point.
 
+pub mod inc_claim_reduction;
 pub mod inputs;
+pub mod instruction_ra_virtualization;
 pub mod outputs;
+pub mod ram_hamming_booleanity;
+pub mod ram_ra_virtualization;
 pub mod verify;
 
+pub use inc_claim_reduction::{
+    IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
+};
+pub use instruction_ra_virtualization::{
+    InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
+    InstructionRaVirtualizationOutputClaims,
+};
+pub use ram_hamming_booleanity::{
+    RamHammingBooleanity, RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
+};
+pub use ram_ra_virtualization::{
+    RamRaVirtualization, RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
+};
 pub use inputs::{deps, Deps};
 pub use outputs::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput};
 pub use verify::{
