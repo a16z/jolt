@@ -154,6 +154,24 @@ fn packed_reduction_term(
     .with_row_point(row_point.to_vec())
 }
 
+fn ring_sized_packed_term(
+    coefficient: AkitaField,
+    symbol: usize,
+    row_point: &[AkitaField],
+) -> PackedLinearTerm<AkitaField> {
+    PackedLinearTerm::new(
+        coefficient,
+        (PackedFamilyId::Custom {
+            namespace: 3,
+            index: 0,
+        })
+        .physical_ref(),
+        0,
+        symbol,
+    )
+    .with_row_point(row_point.to_vec())
+}
+
 fn packed_polynomial(
     layout: &PackedWitnessLayout,
     entries: &[(usize, AkitaField)],
@@ -513,6 +531,74 @@ fn akita_commit_packed_source_roundtrip_with_sparse_unit_source() {
             &proof,
         )
         .expect("source proof should verify");
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+#[test]
+fn akita_packed_source_sparse_unit_views_roundtrip() {
+    run_on_large_stack(|| {
+        let layout = ring_sized_packed_layout();
+        assert_eq!(layout.dimension, 6);
+        let witness = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (ring_sized_packed_address(0, 1), AkitaField::one()),
+                (ring_sized_packed_address(15, 3), AkitaField::one()),
+            ],
+        )
+        .expect("sparse one-hot witness should be valid");
+        let (prover_setup, verifier_setup) =
+            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+        let (commitment, hint) = AkitaPackedScheme::commit_packed_source(&prover_setup, &witness)
+            .expect("source commit should succeed");
+
+        let row_point = vec![f(2), f(3), f(5), f(7)];
+        let terms_a = vec![ring_sized_packed_term(f(1), 1, &row_point)];
+        let terms_b = vec![
+            ring_sized_packed_term(f(2), 1, &row_point),
+            ring_sized_packed_term(f(3), 3, &row_point),
+        ];
+        let claim_a = packed_view_eval(&layout, &witness, &terms_a);
+        let claim_b = packed_view_eval(&layout, &witness, &terms_b);
+        let statement = packed_reduction_statement(
+            &layout,
+            commitment.clone(),
+            &row_point,
+            terms_a,
+            claim_a,
+            terms_b,
+            claim_b,
+        );
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-sparse-reduction");
+        let proof = AkitaPackedScheme::prove_packed_source_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &witness,
+            hint,
+        )
+        .expect("sparse packed reduction proof should be produced");
+        assert!(
+            proof.reduction.is_some(),
+            "packed views should still produce a reduction proof"
+        );
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-packed-sparse-reduction");
+        let result = AkitaPackedScheme::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("sparse packed reduction proof should verify");
+
+        assert_eq!(result.joint_commitment, commitment);
+        assert_eq!(
+            result.reduced_opening,
+            result.coefficients[0] * claim_a + result.coefficients[1] * claim_b
+        );
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
     });
 }

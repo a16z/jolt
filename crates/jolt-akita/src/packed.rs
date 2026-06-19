@@ -68,22 +68,17 @@ impl AkitaPackedScheme {
                 });
             }
 
-            let dense_polynomial = packed_source_polynomial(source)?;
-            let shape = validate_packed_prover_inputs(
-                setup,
-                statement,
-                std::slice::from_ref(&dense_polynomial),
-                std::slice::from_ref(&hint),
-            )?;
+            let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
             bind_verifier_setup_key(&setup.verifier, transcript);
             bind_packed_statement(statement, shape.layout, transcript)?;
 
             let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
             let claimed_sum = reduced_claim(statement, &gamma_powers);
-            let selector = packed_selector_evals(shape.layout, statement, &gamma_powers)?;
-            let (reduction, sumcheck_point_lsb, opening_eval) = prove_product_sumcheck(
-                selector,
-                dense_polynomial.evals().to_vec(),
+            let (reduction, sumcheck_point_lsb, opening_eval) = prove_sparse_product_sumcheck(
+                shape.layout,
+                statement,
+                &gamma_powers,
+                source,
                 claimed_sum,
                 transcript,
             )?;
@@ -414,6 +409,49 @@ fn validate_packed_prover_inputs<'a, OpeningId, RelationId>(
         )));
     }
     if hints.len() != 1 || !hints[0].matches_commitment(&shape.commitment) {
+        return Err(invalid_batch(
+            "Akita packed proof requires one hint matching the packed witness commitment",
+        ));
+    }
+    Ok(shape)
+}
+
+fn validate_packed_source_prover_inputs<'a, OpeningId, RelationId, S>(
+    setup: &'a AkitaProverSetup,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    source: &S,
+    hint: &AkitaProverHint,
+) -> Result<PackedBatchShape<'a>, OpeningsError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let shape = validate_packed_statement(setup.packed_layout.as_ref(), statement)?;
+    if shape.commitment.num_vars > setup.max_num_vars {
+        return Err(OpeningsError::PolynomialTooLarge {
+            poly_size: shape.commitment.num_vars,
+            setup_max: setup.max_num_vars,
+        });
+    }
+    if shape.commitment.num_vars != setup.max_num_vars {
+        return Err(invalid_batch(format!(
+            "Akita packed commitment dimension {} does not match exact setup dimension {}",
+            shape.commitment.num_vars, setup.max_num_vars
+        )));
+    }
+    if shape.commitment.layout_digest != setup.default_layout_digest {
+        return Err(invalid_batch(
+            "Akita packed commitment layout digest does not match setup",
+        ));
+    }
+    let source_layout = source.layout();
+    if source_layout.digest != shape.layout.digest
+        || source_layout.dimension != shape.layout.dimension
+    {
+        return Err(invalid_batch(
+            "Akita packed witness source layout does not match packed statement",
+        ));
+    }
+    if !hint.matches_commitment(&shape.commitment) {
         return Err(invalid_batch(
             "Akita packed proof requires one hint matching the packed witness commitment",
         ));
@@ -906,6 +944,209 @@ where
         point,
         opening_eval,
     ))
+}
+
+fn prove_sparse_product_sumcheck<T, OpeningId, RelationId, S>(
+    layout: &PackedWitnessLayout,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    gamma_powers: &[AkitaField],
+    source: &S,
+    claimed_sum: AkitaField,
+    transcript: &mut T,
+) -> Result<(AkitaPackedReductionProof, Vec<AkitaField>, AkitaField), OpeningsError>
+where
+    T: Transcript<Challenge = AkitaField>,
+    S: PackedWitnessSource<AkitaField>,
+{
+    let mut right = sparse_product_input(source)?;
+    let rounds = layout.dimension;
+    let mut proof_rounds = Vec::with_capacity(rounds);
+    let mut point = Vec::with_capacity(rounds);
+    let mut current_claim = claimed_sum;
+    transcript.append(&LabelWithCount(b"akpk_sum_rounds", rounds as u64));
+
+    for _ in 0..rounds {
+        let round = sparse_product_round(layout, statement, gamma_powers, &point, &right)?;
+        if round[0] + round[1] != current_claim {
+            return Err(invalid_batch(
+                "Akita packed claims do not match sparse packed witness evaluations",
+            ));
+        }
+        append_round(transcript, &round);
+        let challenge = transcript.challenge_scalar();
+        point.push(challenge);
+        fold_sparse_product_input(&mut right, challenge);
+        current_claim = eval_quadratic(round, challenge);
+        proof_rounds.push(encode_round(round));
+    }
+
+    let opening_eval = right
+        .first()
+        .map_or_else(AkitaField::zero, |(_, eval)| *eval);
+    let selector_eval = packed_selector_eval(layout, statement, gamma_powers, &point)?;
+    if selector_eval * opening_eval != current_claim {
+        return Err(invalid_batch("Akita packed sumcheck final claim mismatch"));
+    }
+    opening_eval.append_to_transcript(transcript);
+    Ok((
+        AkitaPackedReductionProof {
+            rounds: proof_rounds,
+            opening_eval: field_bytes(opening_eval),
+        },
+        point,
+        opening_eval,
+    ))
+}
+
+fn sparse_product_input<S>(source: &S) -> Result<Vec<(usize, AkitaField)>, OpeningsError>
+where
+    S: PackedWitnessSource<AkitaField>,
+{
+    let layout = source.layout();
+    let domain_size = checked_domain_size(layout.dimension)?;
+    if layout.cells > domain_size {
+        return Err(invalid_batch(format!(
+            "Akita packed witness has {} cells but dimension {} supports {domain_size}",
+            layout.cells, layout.dimension
+        )));
+    }
+
+    let mut entries = Vec::new();
+    let mut error = None;
+    source.for_each_nonzero(|rank, value| {
+        if error.is_some() {
+            return;
+        }
+        if rank >= layout.cells {
+            error = Some(invalid_batch(format!(
+                "Akita packed witness source emitted rank {rank} outside {} real cells",
+                layout.cells
+            )));
+            return;
+        }
+        if value.is_zero() {
+            error = Some(invalid_batch(format!(
+                "Akita packed witness source emitted zero at rank {rank}"
+            )));
+            return;
+        }
+        entries.push((rank, value));
+    });
+    if let Some(error) = error {
+        return Err(error);
+    }
+
+    entries.sort_by_key(|(rank, _)| *rank);
+    for window in entries.windows(2) {
+        if window[0].0 == window[1].0 {
+            return Err(invalid_batch(format!(
+                "Akita packed witness source emitted rank {} more than once",
+                window[0].0
+            )));
+        }
+    }
+    Ok(entries)
+}
+
+fn sparse_product_round<OpeningId, RelationId>(
+    layout: &PackedWitnessLayout,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    gamma_powers: &[AkitaField],
+    fixed_point: &[AkitaField],
+    right: &[(usize, AkitaField)],
+) -> Result<[AkitaField; 3], OpeningsError> {
+    let mut evals = [AkitaField::zero(); 3];
+    let mut cursor = 0usize;
+    while cursor < right.len() {
+        let pair_index = right[cursor].0 / 2;
+        let mut right_0 = AkitaField::zero();
+        let mut right_1 = AkitaField::zero();
+        while cursor < right.len() && right[cursor].0 / 2 == pair_index {
+            let (index, value) = right[cursor];
+            if index & 1 == 0 {
+                right_0 += value;
+            } else {
+                right_1 += value;
+            }
+            cursor += 1;
+        }
+
+        let left_0 = packed_selector_eval_at_index(
+            layout,
+            statement,
+            gamma_powers,
+            fixed_point,
+            pair_index * 2,
+        )?;
+        let left_1 = packed_selector_eval_at_index(
+            layout,
+            statement,
+            gamma_powers,
+            fixed_point,
+            pair_index * 2 + 1,
+        )?;
+        evals[0] += left_0 * right_0;
+        evals[1] += left_1 * right_1;
+        evals[2] += (left_1 + left_1 - left_0) * (right_1 + right_1 - right_0);
+    }
+    Ok(evals)
+}
+
+fn packed_selector_eval_at_index<OpeningId, RelationId>(
+    layout: &PackedWitnessLayout,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    gamma_powers: &[AkitaField],
+    fixed_point: &[AkitaField],
+    index: usize,
+) -> Result<AkitaField, OpeningsError> {
+    if fixed_point.len() > layout.dimension {
+        return Err(invalid_batch(
+            "Akita packed selector fixed point exceeds layout dimension",
+        ));
+    }
+    let remaining_bits = layout.dimension - fixed_point.len();
+    if index >= (1usize << remaining_bits) {
+        return Err(invalid_batch(
+            "Akita packed selector index exceeds folded domain",
+        ));
+    }
+
+    let mut point = Vec::with_capacity(layout.dimension);
+    point.extend_from_slice(fixed_point);
+    for bit in 0..remaining_bits {
+        if (index >> bit) & 1 == 0 {
+            point.push(AkitaField::zero());
+        } else {
+            point.push(AkitaField::one());
+        }
+    }
+    packed_selector_eval(layout, statement, gamma_powers, &point)
+}
+
+fn fold_sparse_product_input(right: &mut Vec<(usize, AkitaField)>, r: AkitaField) {
+    let mut folded: Vec<(usize, AkitaField)> = Vec::with_capacity(right.len());
+    for &(index, value) in right.iter() {
+        let next_index = index / 2;
+        let weight = if index & 1 == 0 {
+            AkitaField::one() - r
+        } else {
+            r
+        };
+        let folded_value = value * weight;
+        if folded_value.is_zero() {
+            continue;
+        }
+        match folded.last_mut() {
+            Some((last_index, last_value)) if *last_index == next_index => {
+                *last_value += folded_value;
+                if last_value.is_zero() {
+                    let _ = folded.pop();
+                }
+            }
+            _ => folded.push((next_index, folded_value)),
+        }
+    }
+    *right = folded;
 }
 
 fn verify_product_sumcheck<T>(
