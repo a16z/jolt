@@ -305,8 +305,10 @@ dependency direction:
   jolt-akita does not depend on jolt-verifier stage internals.
 
 backend selection:
-  start with a feature-gated backend module.
-  allow a mock backend for statement/layout tests.
+  use the LayerZero Akita backend through a thin adapter module.
+  statement/layout tests may use deterministic fixtures, but they must exercise
+  the real backend or the same jolt-akita adapter path used by production.
+  do not add a mock Akita backend.
 
 setup storage:
   verifier setup stores AkitaSetupKey and backend verifier material.
@@ -326,8 +328,9 @@ Implementation steps:
 
 ```text
 step A:
-  mock Akita backend accepts/rejects BatchOpening statements by deterministic
-  statement digest. Used for verifier plumbing tests.
+  real LayerZero Akita backend or jolt-akita adapter accepts/rejects
+  BatchOpening statements by proving and verifying deterministic fixture
+  witnesses.
 
 step B:
   real Akita backend verifies a simple direct one-hot PackedWitness opening.

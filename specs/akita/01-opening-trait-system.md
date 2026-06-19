@@ -577,8 +577,9 @@ batch_statement_includes_relation_ids:
 clear_opening_ids_match_coefficients:
   every internally derived coefficient has the corresponding opening ID.
 
-akita_mock_batch_opening_requires_no_combine:
-  a non-homomorphic mock PCS or wrapper can satisfy BatchOpeningScheme.
+non_homomorphic_batch_opening_requires_no_combine:
+  a wrapper or real non-homomorphic PCS can satisfy BatchOpeningScheme without
+  exposing AdditivelyHomomorphic to Stage 8.
 
 packed_combine_requires_no_stage8_combine:
   a PackedCombine-style adapter exposes no AdditivelyHomomorphic bound to

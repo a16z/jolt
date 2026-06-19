@@ -279,7 +279,7 @@ Milestone order:
 
 ```text
 1. opening trait refactor with Dory compatibility.
-2. jolt-akita crate with mock/simple backend fixtures.
+2. jolt-akita crate with LayerZero Akita backend fixtures.
 3. PackedWitness layout planner with no verifier integration.
 4. Stage 8 logical-to-physical view resolver.
 5. fused base increment facts and validity.
@@ -296,8 +296,9 @@ Milestone details:
 
 02-jolt-akita-crate:
   Akita is introduced as a PCS adapter before Jolt PIOP packing changes depend
-  on it. A mock backend can validate layouts and statement shapes before the
-  real backend is wired in.
+  on it. Statement, layout, and proof fixtures use the real LayerZero Akita
+  backend or the jolt-akita adapter around that backend; no mock Akita backend
+  is part of the target stack.
 
 03-prefix-packed-witness:
   Proof-owned lattice-visible facts are packed into one Akita-friendly
@@ -364,7 +365,7 @@ opening_trait_dory_compat:
   Dory Stage 8 produces the same final opening claims through the new batch
   interface.
 
-akita_mock_batch_statement:
+akita_batch_statement_without_homomorphic_combine:
   Akita receives physical view statements without relying on additive commitment
   combination.
 
