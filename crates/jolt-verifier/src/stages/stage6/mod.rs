@@ -1,5 +1,6 @@
 //! Stage 6 verifier entry point.
 
+pub mod booleanity;
 pub mod inc_claim_reduction;
 pub mod inputs;
 pub mod instruction_ra_virtualization;
@@ -8,6 +9,10 @@ pub mod ram_hamming_booleanity;
 pub mod ram_ra_virtualization;
 pub mod verify;
 
+pub use booleanity::{
+    Booleanity, BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
+    BooleanityAddressPhaseOutputClaims, BooleanityInputClaims, BooleanityOutputClaims,
+};
 pub use inc_claim_reduction::{
     IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
 };

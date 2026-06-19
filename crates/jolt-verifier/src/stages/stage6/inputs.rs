@@ -15,6 +15,7 @@ use crate::stages::{
 // The per-relation produced-claim structs now live in their relation modules
 // (cell-generic, `#[derive(OutputClaims)]`); re-export them so `stage6::inputs::*`
 // consumers and the `Stage6OutputClaims` aggregate keep resolving them here.
+pub use super::booleanity::BooleanityOutputClaims;
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
@@ -102,14 +103,6 @@ pub struct Stage6AddressPhaseClaims<F: Field> {
 #[serde(bound = "")]
 pub struct BytecodeReadRafOutputClaims<F: Field> {
     pub bytecode_ra: Vec<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct BooleanityOutputClaims<F: Field> {
-    pub instruction_ra: Vec<F>,
-    pub bytecode_ra: Vec<F>,
-    pub ram_ra: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
