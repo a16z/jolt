@@ -19,8 +19,8 @@ where
     let ram_claims = ram::ra_claim_reduction::<PCS::Field>(trace_dimensions);
     let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
 
-    values.challenge(
-        JoltChallengeId::from(InstructionReadRafChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(InstructionReadRafPublic::Gamma),
         input.stage5.public.instruction_gamma,
     )?;
     let instruction_output_openings =
@@ -59,28 +59,28 @@ where
     let instruction_gamma_squared =
         input.stage5.public.instruction_gamma * input.stage5.public.instruction_gamma;
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
-        values.challenge(
-            JoltChallengeId::from(InstructionReadRafChallenge::EqTableValue(table.index())),
+        values.public(
+            JoltPublicId::from(InstructionReadRafPublic::EqTableValue(table.index())),
             eq_reduction
                 * table.evaluate_mle::<PCS::Field, PCS::Field>(&instruction_opening.r_address),
         )?;
     }
-    values.challenge(
-        JoltChallengeId::from(InstructionReadRafChallenge::EqRafConstant),
+    values.public(
+        JoltPublicId::from(InstructionReadRafPublic::EqRafConstant),
         eq_reduction
             * (input.stage5.public.instruction_gamma * left_operand_eval
                 + instruction_gamma_squared * right_operand_eval),
     )?;
-    values.challenge(
-        JoltChallengeId::from(InstructionReadRafChallenge::EqRafFlag),
+    values.public(
+        JoltPublicId::from(InstructionReadRafPublic::EqRafFlag),
         eq_reduction
             * (instruction_gamma_squared * identity_eval
                 - input.stage5.public.instruction_gamma * left_operand_eval
                 - instruction_gamma_squared * right_operand_eval),
     )?;
 
-    values.challenge(
-        JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(RamRaClaimReductionPublic::Gamma),
         input.stage5.public.ram_gamma,
     )?;
     let ram_point = input
@@ -126,8 +126,8 @@ where
         .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_read_write_cycle =
         &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..];
-    values.challenge(
-        JoltChallengeId::from(RegistersValEvaluationChallenge::LtCycle),
+    values.public(
+        JoltPublicId::from(RegistersValEvaluationPublic::LtCycle),
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 

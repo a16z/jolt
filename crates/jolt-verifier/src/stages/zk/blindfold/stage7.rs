@@ -37,8 +37,8 @@ where
                 .then(|| program_image::address_phase::<PCS::Field>(layout.dimensions()))
         });
 
-    values.challenge(
-        JoltChallengeId::from(HammingWeightClaimReductionChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(HammingWeightClaimReductionPublic::Gamma),
         input.stage7.public.hamming_gamma,
     )?;
     let hamming_point = input

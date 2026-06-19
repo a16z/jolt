@@ -74,12 +74,12 @@ where
         &ram_read_write_opening.r_cycle,
     )
     .map_err(|error| public_error(JoltRelationId::RamReadWriteChecking, error))?;
-    values.challenge(
-        JoltChallengeId::from(RamReadWriteChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(RamReadWritePublic::Gamma),
         input.stage2.public.ram_read_write_gamma,
     )?;
-    values.challenge(
-        JoltChallengeId::from(RamReadWriteChallenge::EqCycle),
+    values.public(
+        JoltPublicId::from(RamReadWritePublic::EqCycle),
         eq_cycle,
     )?;
 
@@ -122,12 +122,12 @@ where
         &input.stage2.public.product_tau_low,
     )
     .map_err(|error| public_error(JoltRelationId::InstructionClaimReduction, error))?;
-    values.challenge(
-        JoltChallengeId::from(InstructionClaimReductionChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(InstructionClaimReductionPublic::Gamma),
         input.stage2.public.instruction_gamma,
     )?;
-    values.challenge(
-        JoltChallengeId::from(InstructionClaimReductionChallenge::EqSpartan),
+    values.public(
+        JoltPublicId::from(InstructionClaimReductionPublic::EqSpartan),
         eq_spartan,
     )?;
 

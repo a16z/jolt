@@ -77,20 +77,18 @@ use jolt_claims::{
                 SpartanOuterDimensions, SpartanProductDimensions,
             },
         },
-        AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
-        BooleanityPublic, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
-        BytecodeClaimReductionPublic, BytecodeReadRafChallenge, BytecodeReadRafPublic,
-        HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
-        IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
-        InstructionInputChallenge, InstructionRaVirtualizationChallenge,
-        InstructionReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial,
-        JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-        JoltSumcheckDomain, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-        ProgramImageClaimReductionPublic, RamHammingBooleanityChallenge, RamOutputCheckPublic,
-        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationChallenge,
-        RamRafEvaluationPublic, RamReadWriteChallenge, RamValCheckChallenge,
-        RegistersClaimReductionChallenge, RegistersReadWriteChallenge,
-        RegistersValEvaluationChallenge, SpartanShiftChallenge, SpartanShiftPublic,
+        AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityPublic,
+        BytecodeClaimReductionLayout, BytecodeClaimReductionPublic, BytecodeReadRafPublic,
+        HammingWeightClaimReductionPublic, IncClaimReductionPublic,
+        InstructionClaimReductionPublic, InstructionInputPublic,
+        InstructionRaVirtualizationPublic, InstructionReadRafPublic, JoltAdviceKind,
+        JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltRelationClaims,
+        JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
+        ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
+        RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionPublic,
+        RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWritePublic,
+        RamValCheckPublic, RegistersClaimReductionPublic, RegistersReadWritePublic,
+        RegistersValEvaluationPublic, SpartanShiftPublic,
     },
     public, Expr, Source, Term,
 };
@@ -136,9 +134,8 @@ mod stage5;
 mod stage6;
 mod stage7;
 
-type Builder<F, C> =
-    BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId, VerifierChallengeId>;
-type VerifierExpr<F> = Expr<F, VerifierOpeningId, VerifierPublicId, VerifierChallengeId>;
+type Builder<F, C> = BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId>;
+type VerifierExpr<F> = Expr<F, VerifierOpeningId, VerifierPublicId>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifierOpeningId {
@@ -163,21 +160,9 @@ impl From<JoltPublicId> for VerifierPublicId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VerifierChallengeId {
-    Jolt(JoltChallengeId),
-}
-
-impl From<JoltChallengeId> for VerifierChallengeId {
-    fn from(id: JoltChallengeId) -> Self {
-        Self::Jolt(id)
-    }
-}
-
 #[derive(Default)]
 struct SourceValues<F: Field> {
     publics: Vec<(VerifierPublicId, F)>,
-    challenges: Vec<(VerifierChallengeId, F)>,
 }
 
 pub fn build<PCS, VC, ZkProof>(
@@ -192,7 +177,6 @@ where
     let mut builder = BlindFoldProtocol::<PCS::Field, VC::Output>::builder::<
         VerifierOpeningId,
         VerifierPublicId,
-        VerifierChallengeId,
     >();
 
     builder = stage1::add_stage1(&input, builder, &mut values)?;
@@ -205,9 +189,6 @@ where
 
     for (id, value) in values.publics {
         builder = builder.public(id, value);
-    }
-    for (id, value) in values.challenges {
-        builder = builder.challenge(id, value);
     }
 
     let protocol = builder
@@ -382,7 +363,7 @@ fn map_jolt_aliases(
 }
 
 fn map_jolt_expr<F: Field>(
-    expr: Expr<F, JoltOpeningId, JoltPublicId, JoltChallengeId>,
+    expr: Expr<F, JoltOpeningId, JoltPublicId>,
 ) -> VerifierExpr<F> {
     Expr {
         terms: expr
@@ -396,7 +377,6 @@ fn map_jolt_expr<F: Field>(
                     .map(|source| match source {
                         Source::Opening(id) => Source::Opening(id.into()),
                         Source::Public(id) => Source::Public(id.into()),
-                        Source::Challenge(id) => Source::Challenge(id.into()),
                     })
                     .collect(),
             })
@@ -414,13 +394,6 @@ fn require_expr_sources<F: Field>(
         if !values.has_public(id) {
             return Err(VerifierError::BlindFoldConstructionFailed {
                 reason: format!("{stage} {expression} is missing public source {id:?}"),
-            });
-        }
-    }
-    for id in expr.required_challenges() {
-        if !values.has_challenge(id) {
-            return Err(VerifierError::BlindFoldConstructionFailed {
-                reason: format!("{stage} {expression} is missing challenge source {id:?}"),
             });
         }
     }
@@ -685,36 +658,36 @@ where
     let log_k = input.checked.ram_K.ilog2() as usize;
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
 
-    values.challenge(
-        JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(BytecodeReadRafPublic::Gamma),
         input.stage6.public.bytecode_gamma_powers[1],
     )?;
-    values.challenge(
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
+    values.public(
+        JoltPublicId::from(BytecodeReadRafPublic::Stage1Gamma),
         input.stage6.public.stage1_gammas[1],
     )?;
-    values.challenge(
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
+    values.public(
+        JoltPublicId::from(BytecodeReadRafPublic::Stage2Gamma),
         input.stage6.public.stage2_gammas[1],
     )?;
-    values.challenge(
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
+    values.public(
+        JoltPublicId::from(BytecodeReadRafPublic::Stage3Gamma),
         input.stage6.public.stage3_gammas[1],
     )?;
-    values.challenge(
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
+    values.public(
+        JoltPublicId::from(BytecodeReadRafPublic::Stage4Gamma),
         input.stage6.public.stage4_gammas[1],
     )?;
-    values.challenge(
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
+    values.public(
+        JoltPublicId::from(BytecodeReadRafPublic::Stage5Gamma),
         input.stage6.public.stage5_gammas[1],
     )?;
-    values.challenge(
-        JoltChallengeId::from(BooleanityChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(BooleanityPublic::Gamma),
         input.stage6.public.booleanity_gamma,
     )?;
-    values.challenge(
-        JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(InstructionRaVirtualizationPublic::Gamma),
         input
             .stage6
             .public
@@ -723,8 +696,8 @@ where
             .copied()
             .unwrap_or_else(PCS::Field::one),
     )?;
-    values.challenge(
-        JoltChallengeId::from(IncClaimReductionChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(IncClaimReductionPublic::Gamma),
         input.stage6.public.inc_gamma,
     )?;
 
@@ -906,8 +879,8 @@ where
         .try_instance_point(ram_hamming_claims.sumcheck.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
     let stage1_cycle_binding = &input.stage1.public.remainder_challenges[1..];
-    values.challenge(
-        JoltChallengeId::from(RamHammingBooleanityChallenge::EqCycle),
+    values.public(
+        JoltPublicId::from(RamHammingBooleanityPublic::EqCycle),
         try_eq_mle(&ram_hamming_point, stage1_cycle_binding)
             .map_err(|error| public_error(JoltRelationId::RamHammingBooleanity, error))?,
     )?;
@@ -921,8 +894,8 @@ where
         .cycle_opening_point(&ram_ra_point)
         .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?;
     let ram_reduced_cycle = &input.stage5.ram_ra_claim_reduction.opening_point[log_k..];
-    values.challenge(
-        JoltChallengeId::from(RamRaVirtualizationChallenge::EqCycle),
+    values.public(
+        JoltPublicId::from(RamRaVirtualizationPublic::EqCycle),
         try_eq_mle(ram_reduced_cycle, &ram_ra_cycle)
             .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?,
     )?;
@@ -937,8 +910,8 @@ where
     let instruction_ra_cycle = trace_dimensions
         .cycle_opening_point(&instruction_ra_point)
         .map_err(|error| public_error(JoltRelationId::InstructionRaVirtualization, error))?;
-    values.challenge(
-        JoltChallengeId::from(InstructionRaVirtualizationChallenge::EqCycle),
+    values.public(
+        JoltPublicId::from(InstructionRaVirtualizationPublic::EqCycle),
         try_eq_mle(
             &input.stage5.instruction_read_raf.r_cycle,
             &instruction_ra_cycle,
@@ -1002,8 +975,8 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
-        VerifierError::MissingStageClaimChallenge {
-            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+        VerifierError::MissingStageClaimPublic {
+            id: JoltPublicId::from(BytecodeClaimReductionPublic::Eta),
         }
     })?;
     verify::bytecode_reduction_weights(
@@ -1263,22 +1236,8 @@ impl<F: Field> SourceValues<F> {
         push_unique(&mut self.publics, id.into(), value, "public")
     }
 
-    fn challenge(
-        &mut self,
-        id: impl Into<VerifierChallengeId>,
-        value: F,
-    ) -> Result<(), VerifierError> {
-        push_unique(&mut self.challenges, id.into(), value, "challenge")
-    }
-
     fn has_public(&self, id: VerifierPublicId) -> bool {
         self.publics.iter().any(|(candidate, _)| *candidate == id)
-    }
-
-    fn has_challenge(&self, id: VerifierChallengeId) -> bool {
-        self.challenges
-            .iter()
-            .any(|(candidate, _)| *candidate == id)
     }
 }
 

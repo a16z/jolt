@@ -21,8 +21,8 @@ where
     let ram_init = ram_val_check_init(input)?;
     let ram_val_claims = ram::val_check::<PCS::Field>(trace_dimensions, ram_init);
 
-    values.challenge(
-        JoltChallengeId::from(RegistersReadWriteChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(RegistersReadWritePublic::Gamma),
         input.stage4.public.registers_gamma,
     )?;
     let registers_point = input
@@ -47,14 +47,14 @@ where
         .rev()
         .copied()
         .collect::<Vec<_>>();
-    values.challenge(
-        JoltChallengeId::from(RegistersReadWriteChallenge::EqCycle),
+    values.public(
+        JoltPublicId::from(RegistersReadWritePublic::EqCycle),
         try_eq_mle(&registers_reduction_opening, &registers_opening.r_cycle)
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
 
-    values.challenge(
-        JoltChallengeId::from(RamValCheckChallenge::Gamma),
+    values.public(
+        JoltPublicId::from(RamValCheckPublic::Gamma),
         input.stage4.public.ram_val_check_gamma,
     )?;
     let ram_val_point = input
@@ -72,8 +72,8 @@ where
             stage: JoltRelationId::RamValCheck,
             reason: "RAM read-write opening point is shorter than the RAM address".to_string(),
         })?;
-    values.challenge(
-        JoltChallengeId::from(RamValCheckChallenge::LtCyclePlusGamma),
+    values.public(
+        JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
         LtPolynomial::evaluate(&ram_val_cycle, r_cycle) + input.stage4.public.ram_val_check_gamma,
     )?;
 

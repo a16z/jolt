@@ -74,12 +74,12 @@ where
     }
     if let Some(layout) = bytecode_reduction_layout.as_ref() {
         let eta = input.stage6.public.bytecode_reduction_eta.ok_or_else(|| {
-            VerifierError::MissingStageClaimChallenge {
-                id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+            VerifierError::MissingStageClaimPublic {
+                id: JoltPublicId::from(BytecodeClaimReductionPublic::Eta),
             }
         })?;
-        values.challenge(
-            JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+        values.public(
+            JoltPublicId::from(BytecodeClaimReductionPublic::Eta),
             eta,
         )?;
         let public = input.stage6.bytecode_cycle_phase.as_ref().ok_or_else(|| {
