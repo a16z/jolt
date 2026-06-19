@@ -5,7 +5,7 @@ use common::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicMemorySegment {
-    pub start_index: usize,
+    pub start_index: u128,
     pub words: Vec<u64>,
 }
 
@@ -14,7 +14,7 @@ pub struct PublicIoMemory {
     pub segments: Vec<PublicMemorySegment>,
     pub io_mask_start: u128,
     pub io_mask_end: u128,
-    pub io_len_words: usize,
+    io_num_vars: usize,
 }
 
 impl PublicIoMemory {
@@ -22,31 +22,31 @@ impl PublicIoMemory {
         let layout = &public_io.memory_layout;
         let io_mask_start = layout.remapped_word_address(layout.input_start)? as u128;
         let io_mask_end = layout.remapped_word_address(RAM_START_ADDRESS)? as u128;
-        let io_len_words = (io_mask_end as usize).next_power_of_two().max(1);
+        let io_num_vars = io_mask_end.next_power_of_two().max(1).ilog2() as usize;
         let mut segments = Vec::new();
 
         if !public_io.inputs.is_empty() {
             segments.push(PublicMemorySegment {
-                start_index: layout.remapped_word_address(layout.input_start)? as usize,
+                start_index: layout.remapped_word_address(layout.input_start)? as u128,
                 words: public_io.input_words_le(),
             });
         }
 
         if !public_io.outputs.is_empty() {
             segments.push(PublicMemorySegment {
-                start_index: layout.remapped_word_address(layout.output_start)? as usize,
+                start_index: layout.remapped_word_address(layout.output_start)? as u128,
                 words: public_io.output_words_le(),
             });
         }
 
         segments.push(PublicMemorySegment {
-            start_index: layout.remapped_word_address(layout.panic)? as usize,
+            start_index: layout.remapped_word_address(layout.panic)? as u128,
             words: vec![public_io.panic as u64],
         });
 
         if !public_io.panic {
             segments.push(PublicMemorySegment {
-                start_index: layout.remapped_word_address(layout.termination)? as usize,
+                start_index: layout.remapped_word_address(layout.termination)? as u128,
                 words: vec![1],
             });
         }
@@ -55,12 +55,12 @@ impl PublicIoMemory {
             segments,
             io_mask_start,
             io_mask_end,
-            io_len_words,
+            io_num_vars,
         })
     }
 
     pub fn io_num_vars(&self) -> usize {
-        self.io_len_words.ilog2() as usize
+        self.io_num_vars
     }
 }
 

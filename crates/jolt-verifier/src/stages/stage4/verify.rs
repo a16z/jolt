@@ -696,8 +696,8 @@ where
         reason: error.to_string(),
     })?;
     for segment in &public_initial_ram.segments {
-        let end = segment.start_index + segment.words.len();
-        if end > checked.ram_K {
+        let end = segment.start_index + segment.words.len() as u128;
+        if end > checked.ram_K as u128 {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamValCheck,
                 reason: format!(
@@ -770,7 +770,7 @@ fn collect_advice_contribution<F: Field>(
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
-        })? as usize;
+        })? as u128;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     let selector =
         block_selector_mle_msb(start_index, advice_num_vars, r_address).map_err(|error| {

@@ -1388,26 +1388,38 @@ impl MacroBuilder {
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
-        let attributes = parse_attributes(&self.attr);
-        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
 
         quote! {
             #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8]) -> bool {
-                use jolt::{RV64IMACProof, JoltRV64IMAC, Serializable};
+            pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8], io_bytes: &[u8]) -> bool {
+                use jolt::{deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof};
 
-                let decoded_preprocessing_data: DecodedData = deserialize_from_bin(preprocessing_data).unwrap();
-                let proof = RV64IMACProof::deserialize_from_bytes(proof_bytes).unwrap();
+                let preprocessing: JoltVerifierPreprocessing = match deserialize_verifier_object(preprocessing_data) {
+                    Ok(preprocessing) => preprocessing,
+                    Err(_) => return false,
+                };
+                let proof: RV64IMACProof = match deserialize_verifier_object(proof_bytes) {
+                    Ok(proof) => proof,
+                    Err(_) => return false,
+                };
+                let io_device: JoltDevice = match deserialize_verifier_object(io_bytes) {
+                    Ok(io_device) => io_device,
+                    Err(_) => return false,
+                };
 
-                let preprocessing = JoltRV64IMAC::preprocess(
-                    decoded_preprocessing_data.bytecode,
-                    decoded_preprocessing_data.memory_init,
-                    #max_trace_length,
-                );
-
-                let result = JoltRV64IMAC::verify(&preprocessing, proof);
-                result.is_ok()
+                jolt::jolt_verifier::verify::<
+                    jolt::VerifierField,
+                    jolt::VerifierPCS,
+                    jolt::VerifierVC,
+                    jolt::VerifierTranscript,
+                >(
+                    &preprocessing,
+                    &io_device,
+                    &proof,
+                    None,
+                    jolt::_ZK_FEATURE_ENABLED,
+                ).is_ok()
             }
         }
     }

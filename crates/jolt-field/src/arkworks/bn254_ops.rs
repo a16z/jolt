@@ -447,7 +447,7 @@ pub(crate) fn mul_i128(a: Fr, b: i128) -> Fr {
 /// Convert u64 → Fr using precomp table for small values, mul_u64(R, n) otherwise.
 #[inline(always)]
 pub(crate) fn from_u64(n: u64) -> Fr {
-    if (n as usize) < PRECOMP_TABLE_SIZE {
+    if n < PRECOMP_TABLE_SIZE as u64 {
         PRECOMP_TABLE[n as usize]
     } else {
         mul_u64(Fp::new_unchecked(R), n)

@@ -672,7 +672,7 @@ where
     let start_index = layout
         .remapped_word_address(start_address)
         .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?
-        as usize;
+        as u128;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
         .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?;
