@@ -143,10 +143,16 @@ jolt-akita must not understand:
   advice trust semantics
 ```
 
-Jolt-specific construction of packed sources, including trace rows, bytecode
-rows, program-image words, and advice bytes, lives in the verifier/protocol
-layer or prover-side PIOP code. `jolt-akita` only consumes the resulting
-generic PackedWitnessSource plus view formulas and layout metadata.
+Jolt-specific source construction is split by commitment class.
+Proof-owned packed-source construction, such as trace rows, untrusted advice
+bytes, field-inline auxiliary facts, and fused-increment facts, lives in the
+verifier/protocol layer or prover-side PIOP code. `jolt-akita` consumes the
+resulting generic PackedWitnessSource plus view formulas and layout metadata.
+
+TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are not
+PackedWitnessSource entries in the target protocol. They are supplied only to
+the separate precommitted opening path as original polynomials plus backend
+hints for those original commitments.
 
 Field mode:
 

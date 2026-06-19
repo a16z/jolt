@@ -320,12 +320,14 @@ Milestone details:
 
 04-logical-views-and-translation:
   Final logical openings remain Jolt claims.
-  Akita receives view formulas proving those logical values from W_pack.
+  Proof-owned claims resolve to view formulas over W_pack.
+  Precommitted claims resolve to separate openings against their original
+  commitments.
 
 05-onehot-increments:
   RdInc and RamInc move from dense logical commitments to fused byte/sign
-  facts with explicit decode and validity relations. Source is derived from
-  committed bytecode lanes.
+  facts with explicit decode and validity relations. Source facts are derived
+  from committed bytecode lanes through the separate BytecodeChunk opening path.
 
 06-advice-and-aux-onehotting:
   Advice, field-inline, precommitted program data, and future blinding data get
