@@ -27,3 +27,6 @@ jolt-riscv.workspace = true
 jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["std"] }

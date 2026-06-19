@@ -1,12 +1,12 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 use jolt_akita::{
-    AkitaCommitInput, AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaScheme,
-    AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilyId,
-    PackedFamilySpec, PackedLayoutError, PackedWitnessLayout, PackedWitnessSource,
-    SparsePackedWitness, AKITA_FIELD_MODULUS,
+    AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaPackedBatchProof,
+    AkitaPackedReductionProof, AkitaPackedScheme, AkitaScheme, AkitaSetupParams, PackedAlphabet,
+    PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedLayoutError,
+    PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness, AKITA_FIELD_MODULUS,
 };
-use jolt_field::Field;
+use jolt_field::{Field, FixedByteSize};
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
     PackedCombine, PackedLinearTerm, PhysicalView, ZkBatchOpeningScheme,
@@ -138,6 +138,68 @@ fn packed_polynomial(
         evals[rank] = value;
     }
     Polynomial::new(evals)
+}
+
+#[test]
+fn akita_proof_payloads_reject_unknown_serialized_fields() {
+    let proof = AkitaPackedBatchProof {
+        reduction: Some(AkitaPackedReductionProof {
+            rounds: Vec::new(),
+            opening_eval: vec![0; AkitaField::NUM_BYTES],
+        }),
+        native: AkitaBatchProof {
+            commitment: AkitaCommitment {
+                layout_digest: layout(7),
+                num_vars: 4,
+                poly_count: 1,
+                native: vec![1, 2, 3],
+            },
+            statement_bridge: vec![4],
+            proof_shape: vec![5],
+            proof: vec![6],
+        },
+    };
+
+    let mut root = serde_json::to_value(&proof).expect("proof should serialize");
+    let _ = root
+        .as_object_mut()
+        .expect("proof should serialize as an object")
+        .insert("extra_payload".to_string(), serde_json::Value::Bool(true));
+    assert!(
+        serde_json::from_value::<AkitaPackedBatchProof>(root).is_err(),
+        "Akita packed proof must reject unknown root fields"
+    );
+
+    let mut native = serde_json::to_value(&proof).expect("proof should serialize");
+    let _ = native
+        .as_object_mut()
+        .expect("proof should serialize as an object")
+        .get_mut("native")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("native proof should serialize as an object")
+        .insert("extra_native".to_string(), serde_json::Value::Bool(true));
+    assert!(
+        serde_json::from_value::<AkitaPackedBatchProof>(native).is_err(),
+        "Akita native proof must reject unknown fields"
+    );
+
+    let mut commitment = serde_json::to_value(&proof).expect("proof should serialize");
+    let _ = commitment
+        .as_object_mut()
+        .expect("proof should serialize as an object")
+        .get_mut("native")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|native| native.get_mut("commitment"))
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("commitment should serialize as an object")
+        .insert(
+            "extra_commitment".to_string(),
+            serde_json::Value::Bool(true),
+        );
+    assert!(
+        serde_json::from_value::<AkitaPackedBatchProof>(commitment).is_err(),
+        "Akita commitment payload must reject unknown fields"
+    );
 }
 
 fn packed_view_eval(

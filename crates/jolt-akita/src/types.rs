@@ -36,6 +36,7 @@ pub type AkitaPackedViewStatement<OpeningId = (), RelationId = ()> =
     BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaSetupParams {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
@@ -75,6 +76,7 @@ pub struct AkitaProverSetup {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
@@ -84,6 +86,7 @@ pub struct AkitaVerifierSetup {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaCommitment {
     pub layout_digest: AkitaLayoutDigest,
     pub num_vars: usize,
@@ -106,6 +109,7 @@ impl AppendToTranscript for AkitaCommitment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
     pub commitment: AkitaCommitment,
     pub statement_bridge: Vec<u8>,
@@ -114,18 +118,21 @@ pub struct AkitaBatchProof {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaPackedReductionProof {
     pub rounds: Vec<[Vec<u8>; 3]>,
     pub opening_eval: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaPackedBatchProof {
     pub reduction: Option<AkitaPackedReductionProof>,
     pub native: AkitaBatchProof,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AkitaHidingCommitment {
     pub eval: Vec<u8>,
 }
