@@ -41,10 +41,9 @@ use jolt_akita::{
     PackedViewFormula, PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
 };
 use jolt_claims::protocols::jolt::{
-    fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
     fused_increment_magnitude_lattice_view_formula, fused_increment_sign_lattice_view_formula,
     lattice_packed_validity_digest, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId, LatticePackedValidityKind,
+    JoltRelationId, LatticePackedFamilyId, LatticePackedValidityKind,
     LatticePackedValidityRequirement, FUSED_INCREMENT_BYTE_LIMBS,
 };
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
@@ -295,63 +294,11 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
-        akita_fused_claim_error(
-            relation,
-            "source-link derivation requires committed-bytecode layout",
-        )
-    })?;
-    let source_address = bytecode_layout
-        .split_address_point(&source_link.r_address)
-        .map_err(|error| akita_fused_claim_error(relation, error))?;
-    let store_flag = eval_akita_jolt_lattice_opening(
-        source,
-        fused_increment_bytecode_source_opening_for_relation(
-            relation,
-            LatticeFusedIncrementTarget::Ram,
-        )?,
-        &source_link.r_address,
-        &source_address.r_bc,
-        log_k_chunk,
-        precommitted,
+    let _ = bytecode_ra;
+    Err(akita_fused_claim_error(
         relation,
-    )?;
-    let rd_present = eval_akita_jolt_lattice_opening(
-        source,
-        fused_increment_bytecode_source_opening_for_relation(
-            relation,
-            LatticeFusedIncrementTarget::Rd,
-        )?,
-        &source_link.r_address,
-        &source_address.r_bc,
-        log_k_chunk,
-        precommitted,
-        relation,
-    )?;
-
-    Ok(FusedIncrementSourceLinkOutputClaims {
-        bytecode_ra,
-        store_flag,
-        rd_present,
-    })
-}
-
-fn fused_increment_bytecode_source_opening_for_relation(
-    relation: JoltRelationId,
-    target: LatticeFusedIncrementTarget,
-) -> Result<JoltOpeningId, VerifierError> {
-    match relation {
-        JoltRelationId::FusedIncrementSourceLink => {
-            Ok(fused_increment_bytecode_source_opening(target))
-        }
-        JoltRelationId::FusedIncrementInactiveSourceLink => {
-            Ok(fused_increment_inactive_bytecode_source_opening(target))
-        }
-        _ => Err(akita_fused_claim_error(
-            relation,
-            "unsupported fused increment source-link relation",
-        )),
-    }
+        "source-link derivation requires supplied precommitted bytecode component claims",
+    ))
 }
 
 pub fn akita_lattice_protocol_config_for_layout(
@@ -2810,11 +2757,14 @@ mod tests {
             },
         )
         .expect_err("unbound bytecode source claims should reject");
-        assert!(matches!(
-            error,
-            VerifierError::FinalOpeningBatchFailed { reason }
-                if reason.contains("bound precommitted bytecode views")
-        ));
+        assert!(
+            matches!(
+                error,
+                VerifierError::StageClaimPublicInputFailed { ref reason, .. }
+                    if reason.contains("supplied precommitted bytecode component claims")
+            ),
+            "unexpected error: {error:?}"
+        );
     }
 
     #[test]

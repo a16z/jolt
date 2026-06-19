@@ -11,7 +11,7 @@ use crate::{
     proof::{CommitmentPayload, JoltCommitments, JoltProof},
     stages::{
         stage6::{
-            inputs::Stage6Claims,
+            inputs::{FusedIncrementSourceLinkOutputClaims, Stage6Claims},
             outputs::{VerifiedBytecodeReadRafSumcheck, VerifiedStage6Sumcheck},
         },
         stage7::{inputs::Stage7Claims, outputs::PrecommittedFinalOpening},
@@ -23,11 +23,12 @@ use crate::{
 use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
 use jolt_claims::protocols::jolt::{
     formulas::{
+        claim_reductions::bytecode::{self, BYTECODE_LANE_LAYOUT},
         committed_openings::{
             commitment_embedding_scale, final_opening_id, final_opening_point,
             final_opening_polynomial_order, FinalOpeningPointInputs,
         },
-        dimensions::JoltFormulaDimensions,
+        dimensions::{JoltFormulaDimensions, TracePolynomialOrder, REGISTER_ADDRESS_BITS},
         ra::JoltRaPolynomialLayout,
     },
     fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
@@ -43,6 +44,7 @@ use jolt_openings::{
     EvaluationClaim, PhysicalView, VerifierOpeningClaim, ZkBatchOpeningScheme,
 };
 use jolt_poly::{Point, HIGH_TO_LOW};
+use jolt_riscv::CircuitFlags;
 use jolt_transcript::Transcript;
 
 struct Stage8BatchEntry<'a, F: Field, C> {
@@ -65,6 +67,10 @@ type Stage8ClearClaimBuild<F, C> = (
 type Stage8PrecommittedStatementBuild<F, C> = (
     Vec<VerifierOpeningClaim<F, C>>,
     Vec<Stage8OpeningStatement<F, C, F>>,
+);
+type Stage8EntryPartitions<'a, F, C> = (
+    Vec<Stage8BatchEntry<'a, F, C>>,
+    Vec<Stage8BatchEntry<'a, F, C>>,
 );
 
 #[cfg(feature = "field-inline")]
@@ -370,9 +376,31 @@ where
             )
         }
         CommitmentPayload::Akita(payload) => {
-            let mut entries = akita_fused_increment_entries(
+            let bytecode_layout = checked.precommitted.bytecode.as_ref().ok_or_else(|| {
+                VerifierError::FinalOpeningBatchFailed {
+                    reason: "Akita fused increment openings require committed-bytecode layout"
+                        .to_string(),
+                }
+            })?;
+            let committed_program = preprocessing.program.committed().ok_or_else(|| {
+                VerifierError::FinalOpeningBatchFailed {
+                    reason: "Akita fused increment openings require committed-program commitments"
+                        .to_string(),
+                }
+            })?;
+            let (mut entries, mut precommitted_entries) = akita_fused_increment_entries(
                 &opening_point,
                 &payload.packed_witness,
+                bytecode_layout,
+                proof.trace_polynomial_order,
+                |chunk| {
+                    committed_program
+                        .bytecode_chunk_commitments
+                        .get(chunk)
+                        .ok_or(VerifierError::MissingFinalOpeningCommitment {
+                            polynomial: JoltCommittedPolynomial::BytecodeChunk(chunk),
+                        })
+                },
                 fused_increment_translation,
                 fused_increment_source_link,
                 fused_increment_inactive_zero,
@@ -404,10 +432,12 @@ where
                 #[cfg(feature = "field-inline")]
                 &payload.packed_witness,
             )?;
-            let (mut packed_entries, precommitted_entries): (Vec<_>, Vec<_>) = final_entries
-                .into_iter()
-                .partition(|entry| !akita_precommitted_stage8_opening(entry.id));
+            let (mut packed_entries, mut final_precommitted_entries): (Vec<_>, Vec<_>) =
+                final_entries
+                    .into_iter()
+                    .partition(|entry| !akita_precommitted_stage8_opening(entry.id));
             entries.append(&mut packed_entries);
+            precommitted_entries.append(&mut final_precommitted_entries);
             (entries, precommitted_entries)
         }
     };
@@ -731,17 +761,25 @@ where
     Ok(entries)
 }
 
-fn akita_fused_increment_entries<'a, F, C>(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "gathers verified fused-increment outputs and bytecode commitments"
+)]
+fn akita_fused_increment_entries<'a, F, C, CommitmentFor>(
     opening_point: &[F],
     packed_witness: &'a C,
+    bytecode_layout: &bytecode::BytecodeClaimReductionLayout,
+    trace_order: TracePolynomialOrder,
+    mut bytecode_chunk_commitment: CommitmentFor,
     translation: Option<&VerifiedStage6Sumcheck<F>>,
     source_link: Option<&VerifiedBytecodeReadRafSumcheck<F>>,
     inactive_zero: Option<&VerifiedStage6Sumcheck<F>>,
     inactive_source_link: Option<&VerifiedBytecodeReadRafSumcheck<F>>,
     stage6_claims: Option<&Stage6Claims<F>>,
-) -> Result<Vec<Stage8BatchEntry<'a, F, C>>, VerifierError>
+) -> Result<Stage8EntryPartitions<'a, F, C>, VerifierError>
 where
     F: Field,
+    CommitmentFor: FnMut(usize) -> Result<&'a C, VerifierError>,
 {
     let translation = translation.ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
         reason: "Akita final batch requires verified fused increment translation claims"
@@ -808,12 +846,8 @@ where
 
     let translation_point = translation.opening_point.as_slice();
     let translation_scale = commitment_embedding_scale(opening_point, translation_point);
-    let source_point = source_link.r_address.as_slice();
-    let source_scale = commitment_embedding_scale(opening_point, source_point);
     let inactive_zero_point = inactive_zero.opening_point.as_slice();
     let inactive_zero_scale = commitment_embedding_scale(opening_point, inactive_zero_point);
-    let inactive_source_point = inactive_source_link.r_address.as_slice();
-    let inactive_source_scale = commitment_embedding_scale(opening_point, inactive_source_point);
     let mut entries = vec![
         Stage8BatchEntry {
             id: fused_increment_magnitude_opening().into(),
@@ -865,22 +899,17 @@ where
         });
     }
 
-    entries.extend([
-        Stage8BatchEntry {
-            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram).into(),
-            commitment: packed_witness,
-            opening_claim: Some(source_link_output_claims.store_flag),
-            own_point: source_point.to_vec(),
-            scale: source_scale,
-        },
-        Stage8BatchEntry {
-            id: fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd).into(),
-            commitment: packed_witness,
-            opening_claim: Some(source_link_output_claims.rd_present),
-            own_point: source_point.to_vec(),
-            scale: source_scale,
-        },
-    ]);
+    let mut precommitted_entries = Vec::new();
+    append_akita_fused_source_component_entries(
+        &mut precommitted_entries,
+        opening_point,
+        source_link,
+        source_link_output_claims,
+        bytecode_layout,
+        trace_order,
+        JoltRelationId::FusedIncrementSourceLink,
+        &mut bytecode_chunk_commitment,
+    )?;
 
     for (index, (claim, own_point)) in inactive_source_link_output_claims
         .bytecode_ra
@@ -902,26 +931,169 @@ where
         });
     }
 
-    entries.extend([
-        Stage8BatchEntry {
-            id: fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
-                .into(),
-            commitment: packed_witness,
-            opening_claim: Some(inactive_source_link_output_claims.store_flag),
-            own_point: inactive_source_point.to_vec(),
-            scale: inactive_source_scale,
-        },
-        Stage8BatchEntry {
-            id: fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd)
-                .into(),
-            commitment: packed_witness,
-            opening_claim: Some(inactive_source_link_output_claims.rd_present),
-            own_point: inactive_source_point.to_vec(),
-            scale: inactive_source_scale,
-        },
-    ]);
+    append_akita_fused_source_component_entries(
+        &mut precommitted_entries,
+        opening_point,
+        inactive_source_link,
+        inactive_source_link_output_claims,
+        bytecode_layout,
+        trace_order,
+        JoltRelationId::FusedIncrementInactiveSourceLink,
+        &mut bytecode_chunk_commitment,
+    )?;
 
-    Ok(entries)
+    Ok((entries, precommitted_entries))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "threads source-link geometry and original bytecode commitments"
+)]
+fn append_akita_fused_source_component_entries<'a, F, C, CommitmentFor>(
+    entries: &mut Vec<Stage8BatchEntry<'a, F, C>>,
+    opening_point: &[F],
+    source_link: &VerifiedBytecodeReadRafSumcheck<F>,
+    output_claims: &FusedIncrementSourceLinkOutputClaims<F>,
+    bytecode_layout: &bytecode::BytecodeClaimReductionLayout,
+    trace_order: TracePolynomialOrder,
+    relation: JoltRelationId,
+    bytecode_chunk_commitment: &mut CommitmentFor,
+) -> Result<(), VerifierError>
+where
+    F: Field,
+    CommitmentFor: FnMut(usize) -> Result<&'a C, VerifierError>,
+{
+    let address = bytecode_layout
+        .split_address_point(&source_link.r_address)
+        .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+            reason: error.to_string(),
+        })?;
+    let chunk_count = bytecode_layout.chunk_count();
+    let register_count = 1usize << REGISTER_ADDRESS_BITS;
+    if output_claims.store_flag_chunks.len() != chunk_count {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "fused increment {relation:?} StoreFlag component count mismatch: expected {}, got {}",
+                chunk_count,
+                output_claims.store_flag_chunks.len()
+            ),
+        });
+    }
+    let expected_rd_chunks = chunk_count * register_count;
+    if output_claims.rd_present_chunks.len() != expected_rd_chunks {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "fused increment {relation:?} RdPresent component count mismatch: expected {}, got {}",
+                expected_rd_chunks,
+                output_claims.rd_present_chunks.len()
+            ),
+        });
+    }
+
+    let store_flag = address
+        .chunk_rbc_weights
+        .iter()
+        .zip(&output_claims.store_flag_chunks)
+        .map(|(weight, claim)| *weight * *claim)
+        .sum::<F>();
+    if store_flag != output_claims.store_flag {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "fused increment {relation:?} StoreFlag components do not recombine to source claim"
+            ),
+        });
+    }
+    let rd_present = address
+        .chunk_rbc_weights
+        .iter()
+        .enumerate()
+        .map(|(chunk, weight)| {
+            let start = chunk * register_count;
+            let chunk_sum = output_claims.rd_present_chunks[start..start + register_count]
+                .iter()
+                .copied()
+                .sum::<F>();
+            *weight * chunk_sum
+        })
+        .sum::<F>();
+    if rd_present != output_claims.rd_present {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "fused increment {relation:?} RdPresent components do not recombine to source claim"
+            ),
+        });
+    }
+
+    let source_scale = commitment_embedding_scale(opening_point, &source_link.r_address);
+    let store_id = fused_increment_bytecode_source_id(relation, LatticeFusedIncrementTarget::Ram)?;
+    let rd_id = fused_increment_bytecode_source_id(relation, LatticeFusedIncrementTarget::Rd)?;
+    let store_lane = BYTECODE_LANE_LAYOUT.circuit_start + CircuitFlags::Store as usize;
+
+    for (chunk, chunk_weight) in address.chunk_rbc_weights.iter().copied().enumerate() {
+        let commitment = bytecode_chunk_commitment(chunk)?;
+        let scale = source_scale * chunk_weight;
+        entries.push(Stage8BatchEntry {
+            id: store_id.into(),
+            commitment,
+            opening_claim: Some(output_claims.store_flag_chunks[chunk]),
+            own_point: bytecode_chunk_component_point(trace_order, store_lane, &address.r_bc),
+            scale,
+        });
+        for register in 0..register_count {
+            let lane = BYTECODE_LANE_LAYOUT.rd_start + register;
+            entries.push(Stage8BatchEntry {
+                id: rd_id.into(),
+                commitment,
+                opening_claim: Some(
+                    output_claims.rd_present_chunks[chunk * register_count + register],
+                ),
+                own_point: bytecode_chunk_component_point(trace_order, lane, &address.r_bc),
+                scale,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn fused_increment_bytecode_source_id(
+    relation: JoltRelationId,
+    target: LatticeFusedIncrementTarget,
+) -> Result<JoltOpeningId, VerifierError> {
+    match relation {
+        JoltRelationId::FusedIncrementSourceLink => {
+            Ok(fused_increment_bytecode_source_opening(target))
+        }
+        JoltRelationId::FusedIncrementInactiveSourceLink => {
+            Ok(fused_increment_inactive_bytecode_source_opening(target))
+        }
+        _ => Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!("unsupported fused increment source-link relation {relation:?}"),
+        }),
+    }
+}
+
+fn bytecode_chunk_component_point<F: Field>(
+    trace_order: TracePolynomialOrder,
+    lane: usize,
+    r_bc: &[F],
+) -> Vec<F> {
+    let lane_point = binary_point_msb(bytecode::committed_lane_vars(), lane);
+    match trace_order {
+        TracePolynomialOrder::CycleMajor => {
+            lane_point.into_iter().chain(r_bc.iter().copied()).collect()
+        }
+        TracePolynomialOrder::AddressMajor => r_bc.iter().copied().chain(lane_point).collect(),
+    }
+}
+
+fn binary_point_msb<F: Field>(num_vars: usize, index: usize) -> Vec<F> {
+    (0..num_vars)
+        .map(|position| {
+            let shift = num_vars - 1 - position;
+            F::from_bool(((index >> shift) & 1) == 1)
+        })
+        .collect()
 }
 
 fn dory_final_commitment<'a, PCS, VC>(
@@ -1202,7 +1374,33 @@ mod tests {
     use crate::stages::stage6::inputs::{
         FieldInlineStage6Claims, FieldRegistersIncClaimReductionOutputOpeningClaims,
     };
+    use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
     use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn test_bytecode_layout() -> bytecode::BytecodeClaimReductionLayout {
+        PrecommittedSchedule::new(
+            TracePolynomialOrder::CycleMajor,
+            2,
+            8,
+            None,
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 4,
+                bytecode_chunk_count: 1,
+                program_image_len_words: 1,
+                program_image_start_index: 0,
+            }),
+        )
+        .expect("precommitted schedule should build")
+        .bytecode
+        .expect("committed-program schedule should include bytecode layout")
+    }
+
+    fn rd_present_components(value: Fr) -> Vec<Fr> {
+        let mut components = vec![Fr::from_u64(0); 1usize << REGISTER_ADDRESS_BITS];
+        components[0] = value;
+        components
+    }
 
     #[test]
     fn akita_fused_increment_entries_use_verified_translation_outputs() {
@@ -1229,10 +1427,15 @@ mod tests {
             Fr::from_u64(12),
             Fr::from_u64(13),
         );
+        let bytecode_layout = test_bytecode_layout();
+        let bytecode_commitment = 17_u64;
 
-        let entries = akita_fused_increment_entries(
+        let (entries, precommitted_entries) = akita_fused_increment_entries(
             &opening_point,
             &packed_witness,
+            &bytecode_layout,
+            TracePolynomialOrder::CycleMajor,
+            |_| Ok(&bytecode_commitment),
             Some(&translation),
             Some(&source_link),
             Some(&translation),
@@ -1253,17 +1456,11 @@ mod tests {
                     relation: JoltRelationId::FusedIncrementSourceLink,
                 }
                 .into(),
-                fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram).into(),
-                fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd).into(),
                 JoltOpeningId::Polynomial {
                     polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(0)),
                     relation: JoltRelationId::FusedIncrementInactiveSourceLink,
                 }
                 .into(),
-                fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
-                    .into(),
-                fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd)
-                    .into(),
             ]
         );
         assert_eq!(
@@ -1277,11 +1474,7 @@ mod tests {
                 Some(Fr::from_u64(11)),
                 Some(Fr::from_u64(12)),
                 Some(Fr::from_u64(30)),
-                Some(Fr::from_u64(31)),
-                Some(Fr::from_u64(32)),
                 Some(Fr::from_u64(33)),
-                Some(Fr::from_u64(34)),
-                Some(Fr::from_u64(35)),
             ]
         );
         assert!(entries
@@ -1295,14 +1488,40 @@ mod tests {
             entries[4].own_point,
             source_link.bytecode_ra_opening_points[0]
         );
-        assert_eq!(entries[5].own_point, source_link.r_address);
-        assert_eq!(entries[6].own_point, source_link.r_address);
         assert_eq!(
-            entries[7].own_point,
+            entries[5].own_point,
             source_link.bytecode_ra_opening_points[0]
         );
-        assert_eq!(entries[8].own_point, source_link.r_address);
-        assert_eq!(entries[9].own_point, source_link.r_address);
+        let register_count = 1usize << REGISTER_ADDRESS_BITS;
+        assert_eq!(precommitted_entries.len(), 2 * (1 + register_count));
+        assert!(precommitted_entries
+            .iter()
+            .all(|entry| entry.commitment == &bytecode_commitment));
+        assert_eq!(
+            precommitted_entries[0].id,
+            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram).into()
+        );
+        assert_eq!(
+            precommitted_entries[0].opening_claim,
+            Some(Fr::from_u64(31))
+        );
+        assert_eq!(
+            precommitted_entries[1].id,
+            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd).into()
+        );
+        assert_eq!(
+            precommitted_entries[1].opening_claim,
+            Some(Fr::from_u64(32))
+        );
+        assert_eq!(
+            precommitted_entries[1 + register_count].id,
+            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
+                .into()
+        );
+        assert_eq!(
+            precommitted_entries[1 + register_count].opening_claim,
+            Some(Fr::from_u64(34))
+        );
     }
 
     #[test]
@@ -1314,10 +1533,15 @@ mod tests {
             Fr::from_u64(12),
             Fr::from_u64(13),
         );
+        let bytecode_layout = test_bytecode_layout();
+        let bytecode_commitment = 17_u64;
 
-        let error = akita_fused_increment_entries::<Fr, _>(
+        let error = akita_fused_increment_entries::<Fr, _, _>(
             &[Fr::from_u64(1)],
             &packed_witness,
+            &bytecode_layout,
+            TracePolynomialOrder::CycleMajor,
+            |_| Ok(&bytecode_commitment),
             None,
             None,
             None,
@@ -1340,6 +1564,7 @@ mod tests {
             opening_point: vec![Fr::from_u64(1), Fr::from_u64(2)],
             expected_output_claim: Fr::from_u64(7),
         };
+        let opening_point = (1..=22).map(Fr::from_u64).collect::<Vec<_>>();
         let source_link = VerifiedBytecodeReadRafSumcheck {
             input_claim: Fr::from_u64(14),
             sumcheck_point: vec![Fr::from_u64(15), Fr::from_u64(16), Fr::from_u64(17)],
@@ -1356,9 +1581,14 @@ mod tests {
             Fr::from_u64(13),
         );
         claims.fused_increment_source_link = None;
+        let bytecode_layout = test_bytecode_layout();
+        let bytecode_commitment = 17_u64;
         let error = akita_fused_increment_entries(
-            &[Fr::from_u64(1)],
+            &opening_point,
             &packed_witness,
+            &bytecode_layout,
+            TracePolynomialOrder::CycleMajor,
+            |_| Ok(&bytecode_commitment),
             Some(&translation),
             Some(&source_link),
             Some(&translation),
@@ -1384,8 +1614,11 @@ mod tests {
             .bytecode_ra
             .clear();
         let error = akita_fused_increment_entries(
-            &[Fr::from_u64(1)],
+            &opening_point,
             &packed_witness,
+            &bytecode_layout,
+            TracePolynomialOrder::CycleMajor,
+            |_| Ok(&bytecode_commitment),
             Some(&translation),
             Some(&source_link),
             Some(&translation),
@@ -1397,6 +1630,35 @@ mod tests {
         assert!(error
             .to_string()
             .contains("inactive source-link bytecode RA claim count mismatch"));
+
+        let mut claims = stage6_claims_with_fused_outputs(
+            Fr::from_u64(10),
+            Fr::from_u64(11),
+            Fr::from_u64(12),
+            Fr::from_u64(13),
+        );
+        claims
+            .fused_increment_source_link
+            .as_mut()
+            .expect("fixture should include source-link claims")
+            .store_flag_chunks[0] += Fr::from_u64(1);
+        let error = akita_fused_increment_entries(
+            &opening_point,
+            &packed_witness,
+            &bytecode_layout,
+            TracePolynomialOrder::CycleMajor,
+            |_| Ok(&bytecode_commitment),
+            Some(&translation),
+            Some(&source_link),
+            Some(&translation),
+            Some(&source_link),
+            Some(&claims),
+        )
+        .err()
+        .expect("tampered source-link StoreFlag components should fail");
+        assert!(error
+            .to_string()
+            .contains("StoreFlag components do not recombine"));
     }
 
     #[test]
@@ -1511,6 +1773,8 @@ mod tests {
                 bytecode_ra: vec![Fr::from_u64(30)],
                 store_flag: Fr::from_u64(31),
                 rd_present: Fr::from_u64(32),
+                store_flag_chunks: vec![Fr::from_u64(31)],
+                rd_present_chunks: rd_present_components(Fr::from_u64(32)),
             }),
             fused_increment_inactive_zero: Some(FusedIncrementTranslationOutputClaims {
                 ram_source,
@@ -1522,6 +1786,8 @@ mod tests {
                 bytecode_ra: vec![Fr::from_u64(33)],
                 store_flag: Fr::from_u64(34),
                 rd_present: Fr::from_u64(35),
+                store_flag_chunks: vec![Fr::from_u64(34)],
+                rd_present_chunks: rd_present_components(Fr::from_u64(35)),
             }),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,

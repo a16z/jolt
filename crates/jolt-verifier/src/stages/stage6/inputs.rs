@@ -172,6 +172,8 @@ mod tests {
                 bytecode_ra: vec![zero],
                 store_flag: zero,
                 rd_present: zero,
+                store_flag_chunks: Vec::new(),
+                rd_present_chunks: Vec::new(),
             }),
             fused_increment_inactive_zero: Some(FusedIncrementTranslationOutputClaims {
                 ram_source: zero,
@@ -183,6 +185,8 @@ mod tests {
                 bytecode_ra: vec![zero],
                 store_flag: zero,
                 rd_present: zero,
+                store_flag_chunks: Vec::new(),
+                rd_present_chunks: Vec::new(),
             }),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,

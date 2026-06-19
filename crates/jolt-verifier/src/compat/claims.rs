@@ -580,6 +580,8 @@ fn fused_increment_source_link_claims_from_native<F: Field>(
         bytecode_ra,
         store_flag: store_claim.ok_or(VerifierError::MissingOpeningClaim { id: store_flag })?,
         rd_present: rd_claim.ok_or(VerifierError::MissingOpeningClaim { id: rd_present })?,
+        store_flag_chunks: Vec::new(),
+        rd_present_chunks: Vec::new(),
     }))
 }
 
@@ -612,6 +614,8 @@ fn fused_increment_inactive_source_link_claims_from_native<F: Field>(
         bytecode_ra,
         store_flag: store_claim.ok_or(VerifierError::MissingOpeningClaim { id: store_flag })?,
         rd_present: rd_claim.ok_or(VerifierError::MissingOpeningClaim { id: rd_present })?,
+        store_flag_chunks: Vec::new(),
+        rd_present_chunks: Vec::new(),
     }))
 }
 
@@ -1513,6 +1517,8 @@ fn fused_increment_source_link_empty<F: Field>() -> FusedIncrementSourceLinkOutp
         bytecode_ra: Vec::new(),
         store_flag: F::zero(),
         rd_present: F::zero(),
+        store_flag_chunks: Vec::new(),
+        rd_present_chunks: Vec::new(),
     }
 }
 
@@ -2473,6 +2479,8 @@ mod tests {
                 bytecode_ra: vec![Fr::from_u64(105)],
                 store_flag: Fr::from_u64(106),
                 rd_present: Fr::from_u64(107),
+                store_flag_chunks: Vec::new(),
+                rd_present_chunks: Vec::new(),
             })
         );
         Ok(())

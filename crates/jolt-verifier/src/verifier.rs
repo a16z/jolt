@@ -1285,7 +1285,8 @@ mod tests {
     #[cfg(feature = "akita")]
     use jolt_claims::protocols::jolt::{
         formulas::{
-            claim_reductions::bytecode, dimensions::JoltFormulaDimensions,
+            claim_reductions::bytecode,
+            dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
             ra::JoltRaPolynomialLayout,
         },
         lattice_packed_validity_digest, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId,
@@ -2024,7 +2025,7 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_batch_statement_rejects_unbound_bytecode_source_views() {
+    fn akita_stage8_batch_statement_uses_precommitted_bytecode_source_components() {
         let preprocessing = committed_test_preprocessing();
         let public_io = public_io_for_preprocessing(&preprocessing);
         let placeholder_config = lattice_config([0; 32], 0);
@@ -2051,19 +2052,17 @@ mod tests {
             layout.digest,
             layout.dimension,
         ));
-        let bytecode_address_point = field_zeros(
-            checked
-                .precommitted
-                .bytecode
-                .as_ref()
-                .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
-                .log_bytecode_chunk_size()
-                + 1,
-        );
+        let bytecode_layout = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"));
+        let bytecode_address_point = field_zeros(bytecode_layout.log_bytecode_chunk_size() + 1);
         let stage6 = akita_snapshot_stage6_output(
             formula_dimensions.ra_layout.bytecode(),
             log_t,
             proof.one_hot_config.committed_chunk_bits(),
+            bytecode_layout.chunk_count(),
             bytecode_address_point,
         );
         let stage7 = akita_snapshot_stage7_output(
@@ -2084,16 +2083,39 @@ mod tests {
             },
         );
 
-        assert!(matches!(
-            result,
-            Err(VerifierError::FinalOpeningBatchFailed { reason })
-                if reason.contains("bound precommitted bytecode views")
-        ));
+        let stage8::Stage8BatchStatement::Clear(batch) =
+            result.unwrap_or_else(|error| panic!("Stage 8 statement should build: {error}"))
+        else {
+            panic!("fixture is clear mode");
+        };
+        let bytecode_chunk_count = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+            .chunk_count();
+        let source_component_count =
+            2 * bytecode_chunk_count * (1 + (1usize << REGISTER_ADDRESS_BITS));
+        assert!(batch.precommitted_statements.len() >= source_component_count);
+        assert!(!batch.statement.claims.iter().any(|claim| {
+            claim.id
+                == stage8::Stage8OpeningId::from(
+                    jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
+                        jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Ram,
+                    ),
+                )
+                || claim.id
+                    == stage8::Stage8OpeningId::from(
+                        jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
+                            jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Rd,
+                        ),
+                    )
+        }));
     }
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_verify_rejects_unbound_bytecode_source_views() {
+    fn akita_stage8_verify_rejects_missing_precommitted_bytecode_source_proofs() {
         let (preprocessing, checked, proof, stage6, stage7) =
             akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"akita-stage8-test");
@@ -2118,8 +2140,8 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(VerifierError::FinalOpeningBatchFailed { reason })
-                if reason.contains("bound precommitted bytecode views")
+            Err(VerifierError::FinalOpeningVerificationFailed { reason })
+                if reason.contains("precommitted opening proofs")
         ));
     }
 
@@ -2912,19 +2934,17 @@ mod tests {
             checked.ram_K,
         ))
         .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
-        let bytecode_address_point = field_zeros(
-            checked
-                .precommitted
-                .bytecode
-                .as_ref()
-                .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
-                .log_bytecode_chunk_size()
-                + 1,
-        );
+        let bytecode_layout = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"));
+        let bytecode_address_point = field_zeros(bytecode_layout.log_bytecode_chunk_size() + 1);
         let stage6 = akita_snapshot_stage6_output(
             formula_dimensions.ra_layout.bytecode(),
             log_t,
             proof.one_hot_config.committed_chunk_bits(),
+            bytecode_layout.chunk_count(),
             bytecode_address_point,
         );
         let stage7 = akita_snapshot_stage7_output(
@@ -2942,11 +2962,15 @@ mod tests {
         bytecode_ra_count: usize,
         log_t: usize,
         log_k_chunk: usize,
+        bytecode_chunk_count: usize,
         bytecode_address_point: Vec<Fr>,
     ) -> stage6::Stage6ClearOutput<Fr> {
         let zero = Fr::zero();
         let trace_point = field_zeros(log_t);
         let ra_point = field_zeros(log_k_chunk + log_t);
+        let source_store_components = field_zeros(bytecode_chunk_count);
+        let source_rd_components =
+            field_zeros(bytecode_chunk_count * (1usize << REGISTER_ADDRESS_BITS));
         let mut output_claims = clear_claim_payload().stage6;
         output_claims.fused_increment_translation =
             Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
@@ -2960,6 +2984,8 @@ mod tests {
                 bytecode_ra: field_zeros(bytecode_ra_count),
                 store_flag: zero,
                 rd_present: zero,
+                store_flag_chunks: source_store_components.clone(),
+                rd_present_chunks: source_rd_components.clone(),
             });
         output_claims.fused_increment_inactive_zero =
             Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
@@ -2973,6 +2999,8 @@ mod tests {
                 bytecode_ra: field_zeros(bytecode_ra_count),
                 store_flag: zero,
                 rd_present: zero,
+                store_flag_chunks: source_store_components,
+                rd_present_chunks: source_rd_components,
             });
 
         stage6::Stage6ClearOutput {
