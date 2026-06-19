@@ -32,14 +32,13 @@ use jolt_sumcheck::{
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::inputs::{
-    product_uniskip_input_claim, InstructionClaimReductionOutputOpeningClaims,
-    ProductRemainderOutputOpeningClaims, RamReadWriteOutputOpeningClaims,
-    Stage2BatchOutputOpeningClaims, Stage2Claims, Stage2ProductUniSkipInputValues,
+    product_uniskip_input_claim, InstructionClaimReductionOutputClaims,
+    ProductRemainderOutputClaims, RamReadWriteOutputClaims, Stage2BatchOutputClaims,
+    Stage2OutputClaims, Stage2ProductUniSkipInputValues,
 };
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage2::outputs::Stage2PublicOutput;
-use jolt_verifier::stages::stage2::stage2_output_claim_values;
 use jolt_verifier::stages::stage2::{
     stage2_batch_input_claims, stage2_batch_opening_points, stage2_clear_output,
     stage2_expected_final_claim, stage2_expected_outputs, Stage2BatchExpectedOutputClaims,
@@ -151,7 +150,7 @@ pub struct Stage2ProductUniSkipOutput<F: Field, C> {
 pub struct Stage2ProofComponent<F: Field, Proof> {
     pub product_uniskip_proof: Proof,
     pub regular_batch_proof: Proof,
-    pub claims: Stage2Claims<F>,
+    pub claims: Stage2OutputClaims<F>,
     pub verifier_output: Stage2ClearOutput<F>,
 }
 
@@ -187,7 +186,7 @@ pub struct Stage2RamTerminalOutputOpeningClaims<F: Field> {
 }
 
 struct Stage2VerifierOutputInput<'a, F: Field, C> {
-    output_claims: Stage2BatchOutputOpeningClaims<F>,
+    output_claims: Stage2BatchOutputClaims<F>,
     product_uniskip: &'a Stage2ProductUniSkipOutput<F, C>,
     batch_prefix: &'a Stage2RegularBatchPrefixOutput<F>,
     batch_challenges: &'a [F],
@@ -329,11 +328,11 @@ where
 }
 
 fn stage2_batch_output_claims<F: Field>(
-    ram_read_write: RamReadWriteOutputOpeningClaims<F>,
+    ram_read_write: RamReadWriteOutputClaims<F>,
     tail: Stage2TailOutputOpenings<F>,
     terminal: Stage2RamTerminalOutputOpeningClaims<F>,
-) -> Stage2BatchOutputOpeningClaims<F> {
-    Stage2BatchOutputOpeningClaims {
+) -> Stage2BatchOutputClaims<F> {
+    Stage2BatchOutputClaims {
         ram_read_write,
         product_remainder: tail.product_remainder,
         instruction_claim_reduction: tail.instruction_claim_reduction,
@@ -423,9 +422,9 @@ where
 
     let recorded = batch
         .proof
-        .finish(&stage2_output_claim_values(&output_claims), transcript)?;
+        .finish(&output_claims.opening_values(), transcript)?;
 
-    let claims = Stage2Claims {
+    let claims = Stage2OutputClaims {
         product_uniskip_output_claim: product_uniskip.output_claim,
         batch_outputs: output_claims.clone(),
     };
@@ -535,7 +534,7 @@ where
         ));
     }
 
-    let batch_output_claim_values = stage2_output_claim_values(&output_claims);
+    let batch_output_claim_values = output_claims.opening_values();
     let verifier_output = stage2_verifier_output(Stage2VerifierOutputInput {
         output_claims,
         product_uniskip: &product_uniskip.output,
@@ -766,7 +765,7 @@ where
     )?;
 
     Ok(Stage2TailOutputOpenings {
-        product_remainder: ProductRemainderOutputOpeningClaims {
+        product_remainder: ProductRemainderOutputClaims {
             left_instruction_input: openings.product_remainder.left_instruction_input,
             right_instruction_input: openings.product_remainder.right_instruction_input,
             jump_flag: openings.product_remainder.jump_flag,
@@ -776,7 +775,7 @@ where
             next_is_noop: openings.product_remainder.next_is_noop,
             virtual_instruction: openings.product_remainder.virtual_instruction,
         },
-        instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
+        instruction_claim_reduction: InstructionClaimReductionOutputClaims {
             lookup_output: None,
             left_lookup_operand: openings.instruction_claim_reduction.left_lookup_operand,
             right_lookup_operand: openings.instruction_claim_reduction.right_lookup_operand,
@@ -791,15 +790,15 @@ struct RegularBatchProof<F: Field, Proof> {
     challenges: Vec<F>,
     batching_coefficients: Vec<F>,
     output_claim: F,
-    ram_read_write: RamReadWriteOutputOpeningClaims<F>,
+    ram_read_write: RamReadWriteOutputClaims<F>,
     ram_raf_evaluation: F,
     ram_output_check: F,
 }
 
 #[derive(Clone)]
 struct Stage2TailOutputOpenings<F: Field> {
-    product_remainder: ProductRemainderOutputOpeningClaims<F>,
-    instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims<F>,
+    product_remainder: ProductRemainderOutputClaims<F>,
+    instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
 }
 
 #[cfg(feature = "zk")]
@@ -1015,7 +1014,7 @@ where
         challenges,
         batching_coefficients,
         output_claim: running_claim,
-        ram_read_write: RamReadWriteOutputOpeningClaims { val, ra, inc },
+        ram_read_write: RamReadWriteOutputClaims { val, ra, inc },
         ram_raf_evaluation,
         ram_output_check,
     })
@@ -1118,7 +1117,7 @@ fn expected_regular_batch_outputs<F: Field>(
     prefix: &Stage2RegularBatchPrefixOutput<F>,
     batching_coefficients: &[F],
     opening_points: &Stage2BatchOpeningPoints<F>,
-    claims: &Stage2BatchOutputOpeningClaims<F>,
+    claims: &Stage2BatchOutputClaims<F>,
 ) -> Result<(Stage2BatchExpectedOutputClaims<F>, F), ProverError> {
     let expected_outputs = stage2_expected_outputs(Stage2ExpectedOutputRequest {
         log_k: config.log_k,

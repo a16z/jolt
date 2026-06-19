@@ -152,7 +152,7 @@ where
 #[serde(bound = "")]
 pub struct ClearProofClaims<F: Field> {
     pub stage1: stage1::inputs::Stage1Claims<F>,
-    pub stage2: stage2::inputs::Stage2Claims<F>,
+    pub stage2: stage2::inputs::Stage2OutputClaims<F>,
     pub stage3: stage3::inputs::Stage3OutputClaims<F>,
     pub stage4: stage4::inputs::Stage4OutputClaims<F>,
     pub stage5: stage5::inputs::Stage5OutputClaims<F>,

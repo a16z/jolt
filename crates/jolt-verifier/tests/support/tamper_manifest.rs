@@ -1318,15 +1318,15 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 },
             },
         },
-        stage2: stage2::inputs::Stage2Claims {
+        stage2: stage2::inputs::Stage2OutputClaims {
             product_uniskip_output_claim: zero,
-            batch_outputs: stage2::inputs::Stage2BatchOutputOpeningClaims {
-                ram_read_write: stage2::inputs::RamReadWriteOutputOpeningClaims {
+            batch_outputs: stage2::inputs::Stage2BatchOutputClaims {
+                ram_read_write: stage2::inputs::RamReadWriteOutputClaims {
                     val: zero,
                     ra: zero,
                     inc: zero,
                 },
-                product_remainder: stage2::inputs::ProductRemainderOutputOpeningClaims {
+                product_remainder: stage2::inputs::ProductRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
                     jump_flag: zero,
@@ -1337,7 +1337,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     virtual_instruction: zero,
                 },
                 instruction_claim_reduction:
-                    stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
+                    stage2::inputs::InstructionClaimReductionOutputClaims {
                         lookup_output: Some(zero),
                         left_lookup_operand: zero,
                         right_lookup_operand: zero,

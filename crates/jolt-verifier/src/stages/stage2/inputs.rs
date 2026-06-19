@@ -1,6 +1,7 @@
 //! Typed inputs consumed by stage 2.
 
 use jolt_field::Field;
+use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -75,24 +76,24 @@ fn stage2_product_public_input_failed(reason: String) -> VerifierError {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct Stage2Claims<F: Field> {
+pub struct Stage2OutputClaims<F: Field> {
     pub product_uniskip_output_claim: F,
-    pub batch_outputs: Stage2BatchOutputOpeningClaims<F>,
+    pub batch_outputs: Stage2BatchOutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct Stage2BatchOutputOpeningClaims<F: Field> {
-    pub ram_read_write: RamReadWriteOutputOpeningClaims<F>,
-    pub product_remainder: ProductRemainderOutputOpeningClaims<F>,
-    pub instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims<F>,
+pub struct Stage2BatchOutputClaims<F: Field> {
+    pub ram_read_write: RamReadWriteOutputClaims<F>,
+    pub product_remainder: ProductRemainderOutputClaims<F>,
+    pub instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
     pub ram_raf_evaluation: F,
     pub ram_output_check: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct RamReadWriteOutputOpeningClaims<F: Field> {
+pub struct RamReadWriteOutputClaims<F: Field> {
     pub val: F,
     pub ra: F,
     pub inc: F,
@@ -100,7 +101,7 @@ pub struct RamReadWriteOutputOpeningClaims<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct ProductRemainderOutputOpeningClaims<F: Field> {
+pub struct ProductRemainderOutputClaims<F: Field> {
     pub left_instruction_input: F,
     pub right_instruction_input: F,
     pub jump_flag: F,
@@ -113,10 +114,46 @@ pub struct ProductRemainderOutputOpeningClaims<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct InstructionClaimReductionOutputOpeningClaims<F: Field> {
+pub struct InstructionClaimReductionOutputClaims<F: Field> {
     pub lookup_output: Option<F>,
     pub left_lookup_operand: F,
     pub right_lookup_operand: F,
     pub left_instruction_input: Option<F>,
     pub right_instruction_input: Option<F>,
+}
+
+impl<F: Field> Stage2BatchOutputClaims<F> {
+    /// The stage 2 batch produced opening claims in canonical (Fiat-Shamir) order:
+    /// the RAM read-write openings, the eight product-remainder openings, the two
+    /// reduced instruction lookup operands (the other reduced openings alias the
+    /// product-remainder ones and are not re-absorbed), then the RAM RAF and output
+    /// openings. Single-sources [`append_to_transcript`](Self::append_to_transcript)
+    /// and the prover's batch output-claim values.
+    pub fn opening_values(&self) -> Vec<F> {
+        vec![
+            self.ram_read_write.val,
+            self.ram_read_write.ra,
+            self.ram_read_write.inc,
+            self.product_remainder.left_instruction_input,
+            self.product_remainder.right_instruction_input,
+            self.product_remainder.jump_flag,
+            self.product_remainder.write_lookup_output_to_rd,
+            self.product_remainder.lookup_output,
+            self.product_remainder.branch_flag,
+            self.product_remainder.next_is_noop,
+            self.product_remainder.virtual_instruction,
+            self.instruction_claim_reduction.left_lookup_operand,
+            self.instruction_claim_reduction.right_lookup_operand,
+            self.ram_raf_evaluation,
+            self.ram_output_check,
+        ]
+    }
+
+    /// Append every batch opening to the transcript in canonical order, each under
+    /// the `b"opening_claim"` label, matching the prover's commitment order.
+    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
+        for value in self.opening_values() {
+            transcript.append_labeled(b"opening_claim", &value);
+        }
+    }
 }

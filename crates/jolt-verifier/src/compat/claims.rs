@@ -10,8 +10,8 @@ use crate::{
     stages::{
         stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1Claims},
         stage2::inputs::{
-            InstructionClaimReductionOutputOpeningClaims, ProductRemainderOutputOpeningClaims,
-            RamReadWriteOutputOpeningClaims, Stage2BatchOutputOpeningClaims, Stage2Claims,
+            InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
+            RamReadWriteOutputClaims, Stage2BatchOutputClaims, Stage2OutputClaims,
         },
         stage3::inputs::{
             InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
@@ -160,7 +160,7 @@ fn spartan_outer_claims_from_native<F: Field>(
 
 fn stage2_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage2Claims<F>, VerifierError> {
+) -> Result<Stage2OutputClaims<F>, VerifierError> {
     let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
     let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
         product_remainder_output_openings();
@@ -169,15 +169,15 @@ fn stage2_claims_from_native<F: Field>(
     let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
     let [ram_val_final] = ram::output_check_output_openings();
 
-    Ok(Stage2Claims {
+    Ok(Stage2OutputClaims {
         product_uniskip_output_claim: claims.require(product_uniskip_opening())?,
-        batch_outputs: Stage2BatchOutputOpeningClaims {
-            ram_read_write: RamReadWriteOutputOpeningClaims {
+        batch_outputs: Stage2BatchOutputClaims {
+            ram_read_write: RamReadWriteOutputClaims {
                 val: claims.get_or_zero(ram_val),
                 ra: claims.get_or_zero(ram_ra),
                 inc: claims.get_or_zero(ram_inc),
             },
-            product_remainder: ProductRemainderOutputOpeningClaims {
+            product_remainder: ProductRemainderOutputClaims {
                 left_instruction_input: claims.get_or_zero(product_left_instruction_input),
                 right_instruction_input: claims.get_or_zero(product_right_instruction_input),
                 jump_flag: claims.get_or_zero(product_jump_flag),
@@ -187,7 +187,7 @@ fn stage2_claims_from_native<F: Field>(
                 next_is_noop: claims.get_or_zero(product_next_is_noop),
                 virtual_instruction: claims.get_or_zero(product_virtual_instruction),
             },
-            instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
+            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
                 lookup_output: claims.get(instruction_lookup_output),
                 left_lookup_operand: claims.get_or_zero(instruction_left_lookup_operand),
                 right_lookup_operand: claims.get_or_zero(instruction_right_lookup_operand),
@@ -638,15 +638,15 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             uniskip_output_claim: zero,
             outer: empty_spartan_outer_claims(),
         },
-        stage2: Stage2Claims {
+        stage2: Stage2OutputClaims {
             product_uniskip_output_claim: zero,
-            batch_outputs: Stage2BatchOutputOpeningClaims {
-                ram_read_write: RamReadWriteOutputOpeningClaims {
+            batch_outputs: Stage2BatchOutputClaims {
+                ram_read_write: RamReadWriteOutputClaims {
                     val: zero,
                     ra: zero,
                     inc: zero,
                 },
-                product_remainder: ProductRemainderOutputOpeningClaims {
+                product_remainder: ProductRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
                     jump_flag: zero,
@@ -656,7 +656,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                     next_is_noop: zero,
                     virtual_instruction: zero,
                 },
-                instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
+                instruction_claim_reduction: InstructionClaimReductionOutputClaims {
                     lookup_output: None,
                     left_lookup_operand: zero,
                     right_lookup_operand: zero,
@@ -1043,7 +1043,7 @@ fn stage1_outer_variable(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage2_batch_outputs<F: Field>(
-    claims: &Stage2BatchOutputOpeningClaims<F>,
+    claims: &Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
@@ -1095,7 +1095,7 @@ fn claim_from_stage2_batch_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage2_batch_outputs<F: Field>(
-    claims: &mut Stage2BatchOutputOpeningClaims<F>,
+    claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
@@ -1151,7 +1151,7 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn set_optional_stage2_batch_output<F: Field>(
-    claims: &mut Stage2BatchOutputOpeningClaims<F>,
+    claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {

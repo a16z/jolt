@@ -28,8 +28,7 @@ use jolt_transcript::Transcript;
 
 use super::{
     inputs::{
-        product_uniskip_input_claim, Deps, Stage2BatchOutputOpeningClaims,
-        Stage2ProductUniSkipInputValues,
+        product_uniskip_input_claim, Deps, Stage2BatchOutputClaims, Stage2ProductUniSkipInputValues,
     },
     outputs::{
         Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2RamRaClaimReductionInputs,
@@ -91,7 +90,7 @@ struct Stage2ZkBatch<F: Field, C> {
 enum Stage2Batch<F: Field, C> {
     Clear {
         verified: VerifiedStage2Batch<F>,
-        output_claims: Stage2BatchOutputOpeningClaims<F>,
+        output_claims: Stage2BatchOutputClaims<F>,
     },
     Zk(Stage2ZkBatch<F, C>),
 }
@@ -338,7 +337,7 @@ pub struct Stage2ExpectedOutputRequest<'a, F: Field> {
     pub instruction_gamma: F,
     pub output_address_challenges: &'a [F],
     pub opening_points: &'a Stage2BatchOpeningPoints<F>,
-    pub claims: &'a Stage2BatchOutputOpeningClaims<F>,
+    pub claims: &'a Stage2BatchOutputClaims<F>,
 }
 
 /// Reconstructs each stage 2 batch instance's expected output claim from the
@@ -584,7 +583,7 @@ pub struct Stage2RegularBatchClearRequest<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ClearOutputRequest<F: Field> {
-    pub output_claims: Stage2BatchOutputOpeningClaims<F>,
+    pub output_claims: Stage2BatchOutputClaims<F>,
     pub product_uniskip: Stage2ProductUniSkipClearRequest<F>,
     pub batch: Stage2RegularBatchClearRequest<F>,
 }
@@ -667,43 +666,6 @@ pub fn stage2_clear_output<F: Field>(
             },
         },
     })
-}
-
-/// Flattens the stage 2 batch output opening claims into the order the prover and
-/// verifier absorb them into the Fiat-Shamir transcript.
-pub fn stage2_output_claim_values<F: Field>(claims: &Stage2BatchOutputOpeningClaims<F>) -> Vec<F> {
-    let mut values = vec![
-        claims.ram_read_write.val,
-        claims.ram_read_write.ra,
-        claims.ram_read_write.inc,
-        claims.product_remainder.left_instruction_input,
-        claims.product_remainder.right_instruction_input,
-        claims.product_remainder.jump_flag,
-        claims.product_remainder.write_lookup_output_to_rd,
-        claims.product_remainder.lookup_output,
-        claims.product_remainder.branch_flag,
-        claims.product_remainder.next_is_noop,
-        claims.product_remainder.virtual_instruction,
-    ];
-    values.extend([
-        claims.instruction_claim_reduction.left_lookup_operand,
-        claims.instruction_claim_reduction.right_lookup_operand,
-        claims.ram_raf_evaluation,
-        claims.ram_output_check,
-    ]);
-    values
-}
-
-pub fn append_stage2_opening_claims<F, T>(
-    transcript: &mut T,
-    claims: &Stage2BatchOutputOpeningClaims<F>,
-) where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    for opening_claim in stage2_output_claim_values(claims) {
-        transcript.append_labeled(b"opening_claim", &opening_claim);
-    }
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -1177,7 +1139,7 @@ where
                 });
             }
 
-            append_stage2_opening_claims(transcript, &claims.batch_outputs);
+            claims.batch_outputs.append_to_transcript(transcript);
 
             Ok(Stage2Batch::Clear {
                 verified: VerifiedStage2Batch {
