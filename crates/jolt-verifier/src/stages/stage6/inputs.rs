@@ -208,4 +208,26 @@ impl<F: Field> Stage6OutputClaims<Vec<F>> {
             BytecodeCyclePhaseOutputClaims::Chunks(points) => points.first().map(Vec::as_slice),
         }
     }
+
+    /// The advice cycle-phase `cycle_phase_variables` for `kind`: the raw active
+    /// cycle challenges, recovered as `reverse(opening_point)` (the cycle opening
+    /// point is the reverse of the variable challenges). Stage 7's address phase
+    /// reconstructs its opening point from these.
+    pub fn advice_cycle_phase_variables(&self, kind: JoltAdviceKind) -> Option<Vec<F>> {
+        Some(reversed(self.advice_cycle_phase_opening_point(kind)?))
+    }
+
+    /// The program-image cycle-phase `cycle_phase_variables` (`reverse(opening_point)`).
+    pub fn program_image_cycle_phase_variables(&self) -> Option<Vec<F>> {
+        Some(reversed(self.program_image_opening_point()?))
+    }
+
+    /// The bytecode-reduction cycle-phase `cycle_phase_variables` (`reverse(opening_point)`).
+    pub fn bytecode_cycle_phase_variables(&self) -> Option<Vec<F>> {
+        Some(reversed(self.bytecode_reduction_opening_point()?))
+    }
+}
+
+fn reversed<F: Field>(point: &[F]) -> Vec<F> {
+    point.iter().rev().copied().collect()
 }

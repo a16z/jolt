@@ -573,14 +573,14 @@ where
         let input_claim = relation
             .input_claim(&relations.advice_inputs)
             .map_err(verifier_stage7_error)?;
-        let cycle_phase =
-            stage6
-                .advice_cycle_phase(kind)
-                .ok_or_else(|| ProverError::InvalidStageRequest {
-                    reason: format!(
-                        "Stage 6 advice cycle-phase verifier output missing for {kind:?} advice"
-                    ),
-                })?;
+        let cycle_phase_variables = stage6
+            .output_points
+            .advice_cycle_phase_variables(kind)
+            .ok_or_else(|| ProverError::InvalidStageRequest {
+                reason: format!(
+                    "Stage 6 advice cycle-phase verifier output missing for {kind:?} advice"
+                ),
+            })?;
         let contribution = stage4
             .ram_val_check_init
             .advice_contribution(kind)
@@ -593,7 +593,7 @@ where
             kind,
             layout,
             contribution.opening.point.clone(),
-            cycle_phase.cycle_phase_variables.clone(),
+            cycle_phase_variables,
             1024,
         );
         let state = backend.materialize_sumcheck_stage7_advice_address_state(&request, witness)?;

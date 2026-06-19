@@ -44,7 +44,7 @@ use crate::{
         stage4::Stage4ClearOutput,
         stage6::{
             inputs::BytecodeCyclePhaseOutputClaims,
-            outputs::{AdviceCyclePhasePublicOutput, VerifiedAdviceCyclePhaseSumcheck},
+            outputs::AdviceCyclePhasePublicOutput,
             Stage6ClearOutput, Stage6ZkOutput,
         },
         zk::committed,
@@ -824,7 +824,12 @@ fn clear_advice_relation<F: Field>(
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let cycle_phase = stage6_verified_advice_cycle_phase(stage6, kind)?;
+    let cycle_phase_variables = stage6
+        .output_points
+        .advice_cycle_phase_variables(kind)
+        .ok_or_else(|| VerifierError::MissingOpeningClaim {
+            id: advice::cycle_phase_advice_opening(kind),
+        })?;
     let contribution = stage4
         .ram_val_check_init
         .advice_contribution(kind)
@@ -835,7 +840,7 @@ fn clear_advice_relation<F: Field>(
         kind,
         layout,
         contribution.opening.point.clone(),
-        cycle_phase.cycle_phase_variables.clone(),
+        cycle_phase_variables,
     )))
 }
 
@@ -861,22 +866,24 @@ fn clear_bytecode_relation<F: Field>(
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let cycle_phase =
-        stage6
-            .batch
-            .bytecode_cycle_phase
-            .as_ref()
-            .ok_or(VerifierError::MissingOpeningClaim {
-                id: bytecode_reduction::cycle_phase_intermediate_opening(),
-            })?;
+    let weights = stage6.bytecode_reduction_weights.as_ref().ok_or(
+        VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+        },
+    )?;
+    let cycle_phase_variables = stage6.output_points.bytecode_cycle_phase_variables().ok_or(
+        VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+        },
+    )?;
     Ok(Some(BytecodeReductionAddressPhase::new(
         layout,
         BytecodeOutputWeightInputs {
-            r_bc: &cycle_phase.weights.r_bc,
-            chunk_rbc_weights: &cycle_phase.weights.chunk_rbc_weights,
-            lane_weights: &cycle_phase.weights.lane_weights,
+            r_bc: &weights.r_bc,
+            chunk_rbc_weights: &weights.chunk_rbc_weights,
+            lane_weights: &weights.lane_weights,
         },
-        cycle_phase.cycle_phase_variables.clone(),
+        cycle_phase_variables,
     )))
 }
 
@@ -904,11 +911,12 @@ fn clear_program_image_relation<F: Field>(
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let cycle_phase = stage6.batch.program_image_cycle_phase.as_ref().ok_or(
-        VerifierError::MissingOpeningClaim {
+    let cycle_phase_variables = stage6
+        .output_points
+        .program_image_cycle_phase_variables()
+        .ok_or(VerifierError::MissingOpeningClaim {
             id: program_image::cycle_phase_program_image_opening(),
-        },
-    )?;
+        })?;
     let contribution = stage4
         .ram_val_check_init
         .program_image_contribution
@@ -919,7 +927,7 @@ fn clear_program_image_relation<F: Field>(
     Ok(Some(ProgramImageReductionAddressPhase::new(
         layout,
         contribution.point.clone(),
-        cycle_phase.cycle_phase_variables.clone(),
+        cycle_phase_variables,
     )))
 }
 
@@ -955,9 +963,8 @@ fn clear_precommitted_final_openings<F: Field>(
             layouts.trusted_advice,
             output_claims.advice_address_phase.trusted.as_ref(),
             stage6
-                .batch
-                .trusted_advice_cycle_phase
-                .as_ref()
+                .output_points
+                .advice_cycle_phase_opening_point(JoltAdviceKind::Trusted)
                 .zip(stage6.output_claims.advice_cycle_phase.trusted.as_ref()),
         ),
         (
@@ -965,17 +972,16 @@ fn clear_precommitted_final_openings<F: Field>(
             layouts.untrusted_advice,
             output_claims.advice_address_phase.untrusted.as_ref(),
             stage6
-                .batch
-                .untrusted_advice_cycle_phase
-                .as_ref()
+                .output_points
+                .advice_cycle_phase_opening_point(JoltAdviceKind::Untrusted)
                 .zip(stage6.output_claims.advice_cycle_phase.untrusted.as_ref()),
         ),
     ] {
         if let Some(layout) = layout {
             let address_phase = address
                 .map(|opening| PrecommittedFinalSource::clear(&opening.point, opening.value));
-            let cycle_phase = cycle.map(|(verified, claim)| {
-                PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
+            let cycle_phase = cycle.map(|(opening_point, claim)| {
+                PrecommittedFinalSource::clear(opening_point, claim.opening_claim)
             });
             openings.push(advice_final_opening(
                 kind,
@@ -997,11 +1003,11 @@ fn clear_precommitted_final_openings<F: Field>(
                 )
             });
         let cycle_phase = match (
-            &stage6.batch.bytecode_cycle_phase,
+            stage6.output_points.bytecode_reduction_opening_point(),
             &stage6.output_claims.bytecode_claim_reduction,
         ) {
-            (Some(verified), Some(BytecodeCyclePhaseOutputClaims::Chunks(chunks))) => Some(
-                PrecommittedFinalSource::clear_chunks(&verified.opening_point, chunks.clone()),
+            (Some(opening_point), Some(BytecodeCyclePhaseOutputClaims::Chunks(chunks))) => Some(
+                PrecommittedFinalSource::clear_chunks(opening_point, chunks.clone()),
             ),
             _ => None,
         };
@@ -1018,12 +1024,11 @@ fn clear_precommitted_final_openings<F: Field>(
                 )
             });
         let cycle_phase = stage6
-            .batch
-            .program_image_cycle_phase
-            .as_ref()
+            .output_points
+            .program_image_opening_point()
             .zip(stage6.output_claims.program_image_claim_reduction.as_ref())
-            .map(|(verified, claim)| {
-                PrecommittedFinalSource::clear(&verified.opening_point, claim.opening_claim)
+            .map(|(opening_point, claim)| {
+                PrecommittedFinalSource::clear(opening_point, claim.opening_claim)
             });
         openings.push(program_image_final_opening(
             layout,
@@ -1206,19 +1211,6 @@ fn stage6_advice_cycle_phase_claim<F: Field>(
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
             id: advice::cycle_phase_advice_opening(kind),
         })
-}
-
-fn stage6_verified_advice_cycle_phase<F: Field>(
-    stage6: &Stage6ClearOutput<F>,
-    kind: JoltAdviceKind,
-) -> Result<&VerifiedAdviceCyclePhaseSumcheck<F>, VerifierError> {
-    let verified = match kind {
-        JoltAdviceKind::Trusted => stage6.batch.trusted_advice_cycle_phase.as_ref(),
-        JoltAdviceKind::Untrusted => stage6.batch.untrusted_advice_cycle_phase.as_ref(),
-    };
-    verified.ok_or_else(|| VerifierError::MissingOpeningClaim {
-        id: advice::cycle_phase_advice_opening(kind),
-    })
 }
 
 fn stage6_advice_cycle_phase_public<F: Field, C>(

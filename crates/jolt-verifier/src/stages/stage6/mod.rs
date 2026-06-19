@@ -44,8 +44,8 @@ pub use ram_ra_virtualization::{
     RamRaVirtualization, RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
 };
 pub use verify::{
-    append_stage6_opening_claims, stage6_advice_cycle_phase_reference,
-    stage6_advice_cycle_phase_verified, stage6_batch_points, stage6_booleanity_reference,
+    append_stage6_opening_claims, stage6_advice_cycle_phase_reference, stage6_batch_points,
+    stage6_booleanity_reference,
     stage6_bytecode_cycle_points, stage6_bytecode_gamma_count, stage6_bytecode_ra_point,
     stage6_bytecode_read_raf_address_input, stage6_bytecode_read_raf_expected_output,
     stage6_bytecode_read_raf_point, stage6_bytecode_register_points, stage6_clear_output,
