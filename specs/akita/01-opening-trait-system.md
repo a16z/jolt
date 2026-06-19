@@ -51,6 +51,9 @@ Assumptions:
 - Precommitted facts, such as TrustedAdvice, BytecodeChunk(i), and
   ProgramImageInit, keep their original commitments and require separate
   openings unless a future protocol proves an explicit binding to W_pack.
+- Separate precommitted opening means a distinct opening statement/proof
+  against the original commitment. It does not mean another logical term inside
+  the W_pack packed-view batch.
 - The packed-view reduction is generic with respect to the PCS family. Akita is
   one backend that can satisfy it; later hash-based PCS modes may also use the
   packed option.
@@ -187,6 +190,8 @@ Dory implementation:
 Akita implementation:
   uses the generic packed-view reduction and supplies the Akita-specific
   physical proof backend.
+  verifies precommitted objects through separate direct/native opening
+  statements keyed by their original commitments.
 ```
 
 Batching strategy taxonomy:
@@ -264,15 +269,17 @@ Akita implementation:
 3. use the generic packed-view reduction to form one packed-view opening
    relation for W_pack claims.
 4. verify the Akita physical proof for that relation.
-5. verify precommitted claims against their original commitments through their
-   owning opening path.
+5. build and verify separate precommitted opening statements against the
+   original TrustedAdvice, BytecodeChunk(i), and ProgramImageInit commitments.
 6. derive logical coefficients internally for claim binding.
 ```
 
 Only the W_pack partition is an Akita packed-view relation. The precommitted
 partition is required because Akita does not provide the additive homomorphism
 needed to batch unrelated commitments into W_pack after the commitments were
-already fixed.
+already fixed. Copying precommitted values into W_pack can be useful only for a
+future bound packed-precommitted view; in this target it is not a proof of the
+original precommitted commitment.
 
 Akita non-requirements:
 
@@ -293,6 +300,8 @@ Akita rejected behavior:
 2. using the generic packed-view reduction to form one packed-view opening
    relation that mixes precommitted commitments into the proof-owned packed
    witness without an explicit binding protocol.
+3. accepting W_pack openings of copied trusted advice, bytecode, or program
+   image values as openings of their original commitments.
 ```
 
 Same-point scope:

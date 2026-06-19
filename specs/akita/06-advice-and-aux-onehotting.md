@@ -49,6 +49,19 @@ Assumptions:
 - ZK is rejected for now.
 ```
 
+Precommitted-object rule:
+
+```text
+TrustedAdvice, BytecodeChunk(i), and ProgramImageInit values must not be added
+as ordinary proof-owned W_pack families. Their proofs are separate opening
+proofs keyed by their original commitments.
+
+A future bound packed-precommitted view may duplicate those values into a
+packed object only if the protocol also proves equivalence to the original
+commitment. That future view is an additional binding protocol, not the current
+target.
+```
+
 ## Canonical Encoding
 
 Byte order:
@@ -195,6 +208,15 @@ encoding:
   little-endian bytes of each u64 word.
 ```
 
+Akita committed-program caveat:
+
+```text
+An Akita backend mode that commits program bytecode is not, by itself, the Jolt
+precommitted-object set. Jolt still passes explicit original commitment handles
+for trusted advice, bytecode chunks, and program image, and each such handle has
+its own opening path.
+```
+
 ZK blinding:
 
 ```text
@@ -303,6 +325,8 @@ against their original commitments.
 Committed-bytecode source facts used by fused increments, such as StoreFlag and
 RdPresent, also resolve through separate BytecodeChunk(i) openings unless a
 future bound precommitted packed view is specified.
+If a source fact is a linear view over committed bytecode lanes, the verifier
+checks the component-opening recombination before accepting the source claim.
 ```
 
 ## Implementation

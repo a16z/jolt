@@ -245,6 +245,12 @@ Stage 8 remains generic:
   packed-view batch plus separate precommitted openings.
 ```
 
+For Akita, separate precommitted openings are mandatory for verifier-bound
+data. TrustedAdvice, BytecodeChunk(i), ProgramImageInit, and bytecode source
+views used by fused increments cannot be satisfied by copying their values into
+W_pack. A future packed-precommitted optimization must include an explicit
+binding proof to the original commitments.
+
 Module ownership:
 
 ```text
@@ -318,6 +324,8 @@ Milestone details:
 06-advice-and-aux-onehotting:
   Advice, field-inline, precommitted program data, and future blinding data get
   canonical opening policies. Only proof-owned data enters PackedWitness.
+  Precommitted data keeps original commitment handles and separate opening
+  proofs.
 
 07-verifier-config-and-tests:
   The verifier exposes curve/lattice PCS-family config, rejects unsupported

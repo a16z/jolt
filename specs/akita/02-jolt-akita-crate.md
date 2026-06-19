@@ -108,6 +108,8 @@ PackedWitness:
 Precommitted objects:
   TrustedAdvice, BytecodeChunk(i), and ProgramImageInit keep their original
   commitments and opening proofs outside the W_pack packed-view statement.
+  Their prover inputs are original polynomials plus backend hints for those
+  commitments, not PackedWitnessSource entries.
 
 Rejected:
   separate main/aux proof-owned Akita commitments.
@@ -189,6 +191,25 @@ Given:
 
 Verify:
   Akita proof establishes the claimed packed opening relation.
+```
+
+Precommitted opening input:
+
+```text
+Given:
+  original precommitted commitment
+  statement-bound layout/point for that object
+  direct physical view or deterministic linear component expansion
+  claimed value
+
+Prove/verify:
+  a separate opening proof against the original commitment.
+
+Rejected:
+  using the PackedWitness layout digest or W_pack commitment as evidence for
+  this original commitment.
+  accepting a copied precommitted value in W_pack without an explicit binding
+  protocol.
 ```
 
 Commit/prove contract:
@@ -353,6 +374,11 @@ step E:
   prover-facing verifier helpers accept separate precommitted opening inputs
   and produce one precommitted opening proof per verifier-built precommitted
   statement, in statement order.
+
+step F:
+  direct/native precommitted opening proofs accept the layout digest of their
+  own opening statement and reject commitment, hint, dimension, or claim
+  mismatches.
 ```
 
 ## Invariants
@@ -370,6 +396,9 @@ step E:
 - The lattice packed-view statement uses exactly one PackedWitness commitment.
 - Precommitted-object commitments are verified by their own opening statements,
   not by jolt-akita's W_pack proof.
+- Akita Program::Committed support is not enough to bind every Jolt
+  precommitted object. Jolt supplies explicit original commitment handles for
+  TrustedAdvice, BytecodeChunk(i), and ProgramImageInit.
 - Direct/native Akita commitments may carry the layout digest of their own
   opening statement. Only the packed witness commitment is required to match the
   packed setup layout digest.

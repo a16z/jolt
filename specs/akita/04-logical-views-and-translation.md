@@ -74,6 +74,9 @@ PackedWitnessView:
 
 PrecommittedOpening:
   original commitment handle plus opening relation for a precommitted object.
+  This is outside the W_pack statement. A logical precommitted view may expand
+  into multiple deterministic component openings when the original commitment is
+  chunked or lane-oriented.
 ```
 
 Packed view expression:
@@ -218,6 +221,24 @@ summed out. StoreFlag/RdPresent are not proof-owned W_pack facts unless a
 future bound precommitted packed view proves equivalence to the original
 BytecodeChunk commitment.
 
+Chunked bytecode lowering:
+
+```text
+StoreFlag(rho):
+  split the bytecode address point into chunk weights and a chunk-local point.
+  open the Store circuit-flag lane of each needed BytecodeChunk(i).
+  check the weighted sum equals the StoreFlag source claim.
+
+RdPresent(rho):
+  split the bytecode address point the same way.
+  open the rd selector lanes of each needed BytecodeChunk(i), unless the
+  committed-program interface exposes an explicitly committed rd-present view.
+  check the weighted lane/chunk sum equals the RdPresent source claim.
+```
+
+These component openings are separate precommitted openings. They are not terms
+inside the W_pack packed-view proof.
+
 Validity relation classes:
 
 ```text
@@ -257,7 +278,8 @@ Fused increment source views:
   StoreFlag and RdPresent are committed-bytecode views. They are consumed by the
   masked translation relation through separate BytecodeChunk(i) openings, or by
   a future bound precommitted packed view. They are not proof-owned W_pack
-  families.
+  families. RdPresent is a linear view over rd selector lanes unless the
+  committed-program interface adds a dedicated committed rd-present object.
 ```
 
 Stage placement:
@@ -272,6 +294,8 @@ Stage 8:
   final Akita packed-view opening over W_pack for proof-owned packed claims.
   separate precommitted openings for TrustedAdvice, BytecodeChunk(i), and
   ProgramImageInit.
+  separate component openings and recombination checks for precommitted linear
+  views such as fused-increment StoreFlag/RdPresent source claims.
 ```
 
 Stage 8 statement construction:
@@ -282,6 +306,11 @@ for each logical opening:
   add packed physical terms to the W_pack BatchOpeningStatement, or add a
   precommitted opening requirement
   record coefficient mapping logical claim -> physical statement
+
+for precommitted linear/component views:
+  add one opening requirement per original committed component
+  verify the deterministic recombination equals the logical source claim
+  then use that logical claim in the surrounding PIOP relation
 
 for direct/linear views:
   no new sumcheck instance
@@ -444,6 +473,9 @@ unsupported views:
     Rd source = sum of rd one-hot lanes.
   These source views resolve through precommitted BytecodeChunk openings unless
   a future bound precommitted packed view is specified.
+- Any component openings used to reconstruct a precommitted source claim must be
+  checked against that source claim before the claim is used by the fused
+  increment translation.
 ```
 
 ## Tests
@@ -478,7 +510,8 @@ precommitted_program_view_uses_original_commitment:
 
 fused_increment_sources_use_precommitted_bytecode_openings:
   StoreFlag and RdPresent source claims resolve through BytecodeChunk openings,
-  not W_pack families.
+  not W_pack families. Tampering with either component openings or the
+  recombined source claim rejects.
 ```
 
 ## Performance

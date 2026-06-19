@@ -179,8 +179,11 @@ proof-owned W_pack openings:
   IncSign(rho).
 
 precommitted bytecode openings:
-  StoreFlag(rho) against the original BytecodeChunk(i) commitment.
-  RdPresent(rho) against the original BytecodeChunk(i) commitment.
+  StoreFlag(rho) through Store circuit-flag lane openings against the original
+  BytecodeChunk(i) commitments.
+  RdPresent(rho) through rd selector lane openings against the original
+  BytecodeChunk(i) commitments, unless a dedicated committed rd-present view is
+  added.
 ```
 
 The exact output shape depends on whether `jolt-akita` proves byte-decode
@@ -188,6 +191,11 @@ linear views directly or whether jolt-claims exposes decoded byte openings.
 The bytecode source openings stay outside W_pack unless a future bound
 precommitted packed view proves equivalence to the original BytecodeChunk(i)
 commitment.
+
+The verifier checks that bytecode component openings recombine to the
+StoreFlag/RdPresent source claims before those claims are used in the masked
+translation. This check is part of the precommitted opening path, not the
+W_pack packed-view proof.
 
 ## Committed Bytecode Link
 
@@ -252,9 +260,9 @@ Reuse existing bytecode read-RAF staged row semantics for Store/RdPresent.
 Do not add a new committed selector family unless those staged claims cannot
 expose the required Store and rd-present evaluations.
 Do not add BytecodeChunk lanes to W_pack for Store/RdPresent. They require
-separate openings against the original BytecodeChunk commitments unless a future
-protocol also proves binding between a packed precommitted view and those
-commitments.
+separate component openings against the original BytecodeChunk commitments
+unless a future protocol also proves binding between a packed precommitted view
+and those commitments.
 ```
 
 `jolt-verifier`:
@@ -347,7 +355,8 @@ fused_source_link_tamper_rejects:
 
 fused_source_link_requires_precommitted_openings:
   Store/RdPresent source claims cannot be satisfied by W_pack bytecode lanes
-  without a binding to the original BytecodeChunk commitment.
+  without a binding to the original BytecodeChunk commitment. Component
+  openings must recombine to the claimed StoreFlag/RdPresent values.
 
 separate_increment_mode_rejects_lattice:
   verifier rejects separate base increments under lattice family.
