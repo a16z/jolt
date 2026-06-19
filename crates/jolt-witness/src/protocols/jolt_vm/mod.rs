@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use jolt_claims::protocols::jolt::{
     formulas::{committed_openings, dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    JoltChallengeId, JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig,
+    JoltCommittedPolynomial, JoltFormulaDimensions, JoltOneHotConfig,
     JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltVirtualPolynomial,
 };
 use jolt_field::{
@@ -87,7 +87,7 @@ impl WitnessNamespace for JoltVmNamespace {
     type VirtualId = JoltVirtualPolynomial;
     type OpeningId = JoltOpeningId;
     type PublicId = JoltPublicId;
-    type ChallengeId = JoltChallengeId;
+    type ChallengeId = JoltPublicId;
 
     const ID: NamespaceId = JOLT_VM_NAMESPACE;
 }
