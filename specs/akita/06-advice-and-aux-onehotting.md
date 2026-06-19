@@ -214,7 +214,9 @@ Akita committed-program caveat:
 An Akita backend mode that commits program bytecode is not, by itself, the Jolt
 precommitted-object set. Jolt still passes explicit original commitment handles
 for trusted advice, bytecode chunks, and program image, and each such handle has
-its own opening path.
+its own direct opening path. Copying those values into W_pack, or relying only
+on the backend bytecode-commit mode, does not bind the final Jolt claims to the
+original precommitted commitments.
 ```
 
 ZK blinding:

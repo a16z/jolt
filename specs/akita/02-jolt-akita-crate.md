@@ -111,6 +111,14 @@ Precommitted objects:
   Their prover inputs are original polynomials plus backend hints for those
   commitments, not PackedWitnessSource entries.
 
+Backend program mode caveat:
+  an Akita backend may have a Program::Committed option that commits program
+  bytecode for its own API. That option is not the Jolt precommitted-object
+  binding. jolt-akita must still receive the explicit Jolt precommitted
+  commitment handle for each TrustedAdvice, BytecodeChunk(i), and
+  ProgramImageInit statement and must prove or verify it through the separate
+  direct-opening path.
+
 Rejected:
   separate main/aux proof-owned Akita commitments.
   treating a precommitted object packed into W_pack as an opening of its

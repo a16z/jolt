@@ -2096,7 +2096,67 @@ mod tests {
             .chunk_count();
         let source_component_count =
             2 * bytecode_chunk_count * (1 + (1usize << REGISTER_ADDRESS_BITS));
-        assert!(batch.precommitted_statements.len() >= source_component_count);
+        assert_eq!(
+            batch.precommitted_statements.len(),
+            source_component_count + bytecode_chunk_count + 1
+        );
+        assert!(batch.precommitted_statements.iter().all(|statement| {
+            statement.claims.len() == 1
+                && statement
+                    .claims
+                    .iter()
+                    .all(|claim| matches!(claim.view, jolt_openings::PhysicalView::Direct))
+        }));
+        let precommitted_ids = batch
+            .precommitted_statements
+            .iter()
+            .map(|statement| statement.claims[0].id)
+            .collect::<Vec<_>>();
+        let active_store_id = stage8::Stage8OpeningId::from(
+            jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
+                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Ram,
+            ),
+        );
+        let active_rd_id = stage8::Stage8OpeningId::from(
+            jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
+                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Rd,
+            ),
+        );
+        let inactive_store_id = stage8::Stage8OpeningId::from(
+            jolt_claims::protocols::jolt::fused_increment_inactive_bytecode_source_opening(
+                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Ram,
+            ),
+        );
+        let inactive_rd_id = stage8::Stage8OpeningId::from(
+            jolt_claims::protocols::jolt::fused_increment_inactive_bytecode_source_opening(
+                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Rd,
+            ),
+        );
+        let count_id = |id| precommitted_ids.iter().filter(|&&got| got == id).count();
+        assert_eq!(count_id(active_store_id), bytecode_chunk_count);
+        assert_eq!(
+            count_id(active_rd_id),
+            bytecode_chunk_count * (1usize << REGISTER_ADDRESS_BITS)
+        );
+        assert_eq!(count_id(inactive_store_id), bytecode_chunk_count);
+        assert_eq!(
+            count_id(inactive_rd_id),
+            bytecode_chunk_count * (1usize << REGISTER_ADDRESS_BITS)
+        );
+        for chunk in 0..bytecode_chunk_count {
+            assert_eq!(
+                count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                    JoltCommittedPolynomial::BytecodeChunk(chunk),
+                ))),
+                1
+            );
+        }
+        assert_eq!(
+            count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                JoltCommittedPolynomial::ProgramImageInit,
+            ))),
+            1
+        );
         assert!(!batch.statement.claims.iter().any(|claim| {
             claim.id
                 == stage8::Stage8OpeningId::from(

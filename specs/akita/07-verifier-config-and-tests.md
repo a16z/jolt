@@ -245,6 +245,9 @@ Dispatch:
 5. build a packed BatchOpeningStatement for W_pack claims.
 6. build separate precommitted opening statements for TrustedAdvice,
    BytecodeChunk(i), and ProgramImageInit.
+   These statements target the original precommitted commitments, not the
+   PackedWitness commitment and not an Akita backend bytecode-commit handle by
+   itself.
    Fused-increment StoreFlag/RdPresent source claims use the same
    precommitted BytecodeChunk opening path, including component-opening
    recombination checks when the source is a committed-bytecode linear view.
@@ -390,6 +393,9 @@ fn build_batch_statement<F, C>(
   precommitted claims are present.
 - Separate precommitted opening proofs are direct native openings against their
   own commitments; they do not carry a PackedWitness reduction proof.
+- Akita backend Program::Committed support does not replace the Jolt
+  precommitted opening path for TrustedAdvice, BytecodeChunk(i), or
+  ProgramImageInit.
 - Separate direct native openings bind the opened commitment's layout digest,
   not the PackedWitness layout digest from the surrounding Stage 8 wrapper.
 - Prover helper rejects a precommitted statement unless the supplied hint

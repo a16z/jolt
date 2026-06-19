@@ -251,6 +251,12 @@ views used by fused increments cannot be satisfied by copying their values into
 W_pack. A future packed-precommitted optimization must include an explicit
 binding proof to the original commitments.
 
+Do not treat an Akita backend `Program::Committed` mode as this binding by
+itself. Jolt-level precommitted objects are the original trusted-advice,
+bytecode-chunk, and program-image commitment handles exposed by preprocessing.
+Lattice verification must keep those handles outside `W_pack` and verify a
+separate opening proof for each required precommitted statement.
+
 Module ownership:
 
 ```text
@@ -349,7 +355,7 @@ Milestone details:
   objects.
 - TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted
   objects; lattice verification must open them against their original
-  commitments, not only through W_pack.
+  commitments, not only through W_pack or a backend bytecode-commit mode.
 - StoreFlag/RdPresent source facts used by fused increments are
   precommitted-bytecode facts, so they follow the BytecodeChunk opening path
   unless an explicit bound precommitted packed view is added.
