@@ -2097,9 +2097,17 @@ mod tests {
 
         let expected_ids =
             akita_snapshot_opening_ids(formula_dimensions.ra_layout, &checked.precommitted);
+        let precommitted_ids = batch
+            .precommitted_statements
+            .iter()
+            .flat_map(|statement| statement.claims.iter().map(|claim| claim.id))
+            .collect::<Vec<_>>();
         let dense_increment_ids = dense_increment_opening_ids();
         assert_eq!(batch.opening_ids, expected_ids);
-        assert_eq!(batch.statement.claims.len(), expected_ids.len());
+        assert_eq!(
+            batch.statement.claims.len() + precommitted_ids.len(),
+            expected_ids.len()
+        );
         assert_eq!(batch.statement.layout_digest, layout.digest);
         assert_eq!(batch.physical_manifest.layout_digest, layout.digest);
         assert!(dense_increment_ids
@@ -2140,6 +2148,40 @@ mod tests {
                 } if *layout_digest == layout.digest && !terms.is_empty()
             )
         }));
+        let bytecode_chunk_count = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+            .chunk_count();
+        let expected_precommitted_ids = (0..bytecode_chunk_count)
+            .map(|index| {
+                stage8::Stage8OpeningId::from(JoltOpeningId::committed(
+                    JoltCommittedPolynomial::BytecodeChunk(index),
+                    JoltRelationId::BytecodeClaimReduction,
+                ))
+            })
+            .chain(std::iter::once(stage8::Stage8OpeningId::from(
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::ProgramImageInit,
+                    JoltRelationId::ProgramImageClaimReduction,
+                ),
+            )))
+            .collect::<Vec<_>>();
+        assert_eq!(precommitted_ids, expected_precommitted_ids);
+        assert!(batch
+            .precommitted_statements
+            .iter()
+            .all(
+                |statement| statement.layout_digest == preprocessing.preprocessing_digest
+                    && statement.claims.len() == 1
+                    && matches!(statement.claims[0].view, PhysicalView::Direct)
+            ));
+        assert!(precommitted_ids.iter().all(|id| batch
+            .statement
+            .claims
+            .iter()
+            .all(|claim| claim.id != *id && claim.relation != *id)));
 
         assert_eq!(
             first_row_point_len(
@@ -2152,39 +2194,6 @@ mod tests {
             ),
             log_t
         );
-        assert_eq!(
-            first_row_point_len(
-                &batch,
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::BytecodeChunk(0),
-                    JoltRelationId::BytecodeClaimReduction,
-                )
-                .into(),
-            ),
-            checked
-                .precommitted
-                .bytecode
-                .as_ref()
-                .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
-                .log_bytecode_chunk_size()
-        );
-        assert_eq!(
-            first_row_point_len(
-                &batch,
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::ProgramImageInit,
-                    JoltRelationId::ProgramImageClaimReduction,
-                )
-                .into(),
-            ),
-            checked
-                .precommitted
-                .program_image
-                .as_ref()
-                .unwrap_or_else(|| panic!("program image schedule should exist"))
-                .image_shape()
-                .row_vars()
-        );
         #[cfg(feature = "field-inline")]
         assert_eq!(
             first_row_point_len(
@@ -2193,6 +2202,38 @@ mod tests {
             ),
             log_t
         );
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn akita_stage8_verify_requires_separate_precommitted_opening_proofs() {
+        let (preprocessing, checked, proof, stage6, stage7) =
+            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"akita-stage8-test");
+
+        let result = stage8::verify_clear::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            &mut transcript,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::FinalOpeningVerificationFailed { reason })
+                if reason.contains("precommitted opening proofs")
+        ));
     }
 
     #[cfg(not(feature = "akita"))]

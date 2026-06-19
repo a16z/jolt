@@ -85,6 +85,8 @@ pub struct JoltProof<
     pub joint_opening_proof: PCS::Proof,
     #[serde(default)]
     pub lattice_packed_validity_opening_proof: Option<PCS::Proof>,
+    #[serde(default)]
+    pub lattice_precommitted_opening_proofs: Vec<PCS::Proof>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
@@ -152,6 +154,7 @@ where
             stages,
             joint_opening_proof,
             lattice_packed_validity_opening_proof: None,
+            lattice_precommitted_opening_proofs: Vec::new(),
             untrusted_advice_commitment,
             claims,
             trace_length,

@@ -2,8 +2,8 @@ use super::{
     inputs::Deps,
     outputs::{
         Stage8BatchStatement, Stage8ClearBatchStatement, Stage8ClearOutput, Stage8LogicalManifest,
-        Stage8LogicalOpening, Stage8OpeningId, Stage8Output, Stage8PhysicalManifest,
-        Stage8ZkBatchStatement, Stage8ZkOutput,
+        Stage8LogicalOpening, Stage8OpeningId, Stage8OpeningStatement, Stage8Output,
+        Stage8PhysicalManifest, Stage8PhysicalOpening, Stage8ZkBatchStatement, Stage8ZkOutput,
     },
 };
 use crate::{
@@ -40,7 +40,7 @@ use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-    EvaluationClaim, VerifierOpeningClaim, ZkBatchOpeningScheme,
+    EvaluationClaim, PhysicalView, VerifierOpeningClaim, ZkBatchOpeningScheme,
 };
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_transcript::Transcript;
@@ -56,6 +56,16 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     /// unified opening point.
     scale: F,
 }
+
+type Stage8ClearBatchClaim<F, C> = BatchOpeningClaim<F, C, Stage8OpeningId, Stage8OpeningId, F>;
+type Stage8ClearClaimBuild<F, C> = (
+    Vec<VerifierOpeningClaim<F, C>>,
+    Vec<Stage8ClearBatchClaim<F, C>>,
+);
+type Stage8PrecommittedStatementBuild<F, C> = (
+    Vec<VerifierOpeningClaim<F, C>>,
+    Vec<Stage8OpeningStatement<F, C, F>>,
+);
 
 #[cfg(feature = "field-inline")]
 const fn field_inline_final_opening_count() -> usize {
@@ -126,11 +136,18 @@ where
             .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                 reason: error.to_string(),
             })?;
+            let mut coefficients = batch_result.coefficients;
+            coefficients.extend(verify_precommitted_opening_batches::<PCS, _>(
+                &preprocessing.pcs_setup,
+                transcript,
+                &batch.precommitted_statements,
+                &proof.lattice_precommitted_opening_proofs,
+            )?);
 
             Ok(Stage8Output::Clear(Stage8ClearOutput {
                 opening_claims: batch.opening_claims,
                 opening_ids: batch.opening_ids,
-                constraint_coefficients: batch_result.coefficients,
+                constraint_coefficients: coefficients,
                 pcs_opening_point: batch.pcs_opening_point,
                 joint_claim: batch_result.reduced_opening,
                 joint_commitment: batch_result.joint_commitment,
@@ -178,15 +195,54 @@ where
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
+    let mut coefficients = batch_result.coefficients;
+    coefficients.extend(verify_precommitted_opening_batches::<PCS, _>(
+        &preprocessing.pcs_setup,
+        transcript,
+        &batch.precommitted_statements,
+        &proof.lattice_precommitted_opening_proofs,
+    )?);
 
     Ok(Stage8ClearOutput {
         opening_claims: batch.opening_claims,
         opening_ids: batch.opening_ids,
-        constraint_coefficients: batch_result.coefficients,
+        constraint_coefficients: coefficients,
         pcs_opening_point: batch.pcs_opening_point,
         joint_claim: batch_result.reduced_opening,
         joint_commitment: batch_result.joint_commitment,
     })
+}
+
+fn verify_precommitted_opening_batches<PCS, T>(
+    setup: &PCS::VerifierSetup,
+    transcript: &mut T,
+    statements: &[Stage8OpeningStatement<PCS::Field, PCS::Output, PCS::Field>],
+    proofs: &[PCS::Proof],
+) -> Result<Vec<PCS::Field>, VerifierError>
+where
+    PCS: BatchOpeningScheme,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    if statements.len() != proofs.len() {
+        return Err(VerifierError::FinalOpeningVerificationFailed {
+            reason: format!(
+                "expected {} precommitted opening proofs, got {}",
+                statements.len(),
+                proofs.len()
+            ),
+        });
+    }
+
+    let mut coefficients = Vec::new();
+    for (statement, proof) in statements.iter().zip(proofs) {
+        let result = PCS::verify_batch(setup, transcript, statement, proof).map_err(|error| {
+            VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            }
+        })?;
+        coefficients.extend(result.coefficients);
+    }
+    Ok(coefficients)
 }
 
 pub fn batch_statement<F, PCS, VC, ZkProof>(
@@ -283,32 +339,35 @@ where
         .committed()
         .map(|committed| committed.bytecode_chunk_count());
 
-    let entries = match &proof.commitments {
+    let (entries, precommitted_entries) = match &proof.commitments {
         CommitmentPayload::Dory(commitments) => {
             require_commitment_layout(commitments, layout)?;
-            batch_entries(
-                layout,
-                committed_bytecode_chunk_count,
-                checked.precommitted.trusted_advice.is_some(),
-                checked.precommitted.untrusted_advice.is_some(),
-                &opening_point,
-                hamming_opening_point,
-                inc_opening_point,
-                precommitted_finals,
-                clear_claims,
-                false,
-                |polynomial| {
-                    dory_final_commitment(
-                        preprocessing,
-                        commitments,
-                        proof.untrusted_advice_commitment.as_ref(),
-                        trusted_advice_commitment,
-                        polynomial,
-                    )
-                },
-                #[cfg(feature = "field-inline")]
-                &commitments.field_inline.field_registers.rd_inc,
-            )?
+            (
+                batch_entries(
+                    layout,
+                    committed_bytecode_chunk_count,
+                    checked.precommitted.trusted_advice.is_some(),
+                    checked.precommitted.untrusted_advice.is_some(),
+                    &opening_point,
+                    hamming_opening_point,
+                    inc_opening_point,
+                    precommitted_finals,
+                    clear_claims,
+                    false,
+                    |polynomial| {
+                        dory_final_commitment(
+                            preprocessing,
+                            commitments,
+                            proof.untrusted_advice_commitment.as_ref(),
+                            trusted_advice_commitment,
+                            polynomial,
+                        )
+                    },
+                    #[cfg(feature = "field-inline")]
+                    &commitments.field_inline.field_registers.rd_inc,
+                )?,
+                Vec::new(),
+            )
         }
         CommitmentPayload::Akita(payload) => {
             let mut entries = akita_fused_increment_entries(
@@ -320,7 +379,7 @@ where
                 fused_increment_inactive_source_link,
                 clear_claims.map(|(stage6, _)| stage6),
             )?;
-            entries.extend(batch_entries(
+            let final_entries = batch_entries(
                 layout,
                 committed_bytecode_chunk_count,
                 checked.precommitted.trusted_advice.is_some(),
@@ -331,14 +390,32 @@ where
                 precommitted_finals,
                 clear_claims,
                 true,
-                |_| Ok(&payload.packed_witness),
+                |polynomial| {
+                    if akita_requires_precommitted_opening(polynomial) {
+                        precommitted_final_commitment(
+                            preprocessing,
+                            trusted_advice_commitment,
+                            polynomial,
+                        )
+                    } else {
+                        Ok(&payload.packed_witness)
+                    }
+                },
                 #[cfg(feature = "field-inline")]
                 &payload.packed_witness,
-            )?);
-            entries
+            )?;
+            let (mut packed_entries, precommitted_entries): (Vec<_>, Vec<_>) = final_entries
+                .into_iter()
+                .partition(|entry| !akita_precommitted_stage8_opening(entry.id));
+            entries.append(&mut packed_entries);
+            (entries, precommitted_entries)
         }
     };
-    let logical_manifest = logical_manifest(&entries, pcs_opening_point.clone());
+    let logical_manifest = logical_manifest_with_precommitted(
+        &entries,
+        &precommitted_entries,
+        pcs_opening_point.clone(),
+    );
     let opening_ids = logical_manifest.opening_ids();
     let (physical_manifest, layout_digest) = match &proof.commitments {
         CommitmentPayload::Dory(_) => {
@@ -348,15 +425,29 @@ where
                 layout_digest,
             )
         }
-        CommitmentPayload::Akita(_) => akita_stage8_physical_manifest(
-            &proof.protocol,
-            checked,
-            proof,
-            layout,
-            &logical_manifest,
-        )?,
+        CommitmentPayload::Akita(_) => {
+            let packed_logical_manifest =
+                stage8_logical_manifest(&entries, pcs_opening_point.clone());
+            let (mut packed_manifest, layout_digest) = akita_stage8_physical_manifest(
+                &proof.protocol,
+                checked,
+                proof,
+                layout,
+                &packed_logical_manifest,
+            )?;
+            packed_manifest
+                .openings
+                .extend(direct_physical_openings(&precommitted_entries));
+            (packed_manifest, layout_digest)
+        }
     };
     let point = pcs_opening_point.as_slice().to_vec();
+
+    if checked.zk && !precommitted_entries.is_empty() {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: "precommitted lattice openings are not supported in ZK mode".to_string(),
+        });
+    }
 
     if checked.zk {
         let claims = entries
@@ -385,9 +476,56 @@ where
         }));
     }
 
+    let (mut opening_claims, claims) = clear_batch_claims(
+        &entries,
+        &physical_manifest.openings[..entries.len()],
+        &pcs_opening_point,
+    )?;
+    let (precommitted_opening_claims, precommitted_statements) = precommitted_clear_statements(
+        &precommitted_entries,
+        stage8_layout_digest(preprocessing),
+        &point,
+        &pcs_opening_point,
+    )?;
+    opening_claims.extend(precommitted_opening_claims);
+    Ok(Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
+        logical_manifest,
+        physical_manifest,
+        opening_ids,
+        opening_claims,
+        pcs_opening_point,
+        statement: BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest,
+            claims,
+        },
+        precommitted_statements,
+    }))
+}
+
+fn clear_batch_claims<F, C>(
+    entries: &[Stage8BatchEntry<'_, F, C>],
+    physical_openings: &[Stage8PhysicalOpening<F>],
+    pcs_opening_point: &Point<HIGH_TO_LOW, F>,
+) -> Result<Stage8ClearClaimBuild<F, C>, VerifierError>
+where
+    F: Field,
+    C: Clone,
+{
+    if entries.len() != physical_openings.len() {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "entry/physical opening count mismatch: {} entries, {} physical openings",
+                entries.len(),
+                physical_openings.len()
+            ),
+        });
+    }
+
     let mut opening_claims = Vec::with_capacity(entries.len());
     let mut claims = Vec::with_capacity(entries.len());
-    for (entry, physical) in entries.iter().zip(&physical_manifest.openings) {
+    for (entry, physical) in entries.iter().zip(physical_openings) {
         let opening_claim =
             entry
                 .opening_claim
@@ -410,19 +548,43 @@ where
             scale: entry.scale,
         });
     }
-    Ok(Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
-        logical_manifest,
-        physical_manifest,
-        opening_ids,
-        opening_claims,
-        pcs_opening_point,
-        statement: BatchOpeningStatement {
-            logical_point: point.clone(),
-            pcs_point: point,
+
+    Ok((opening_claims, claims))
+}
+
+fn precommitted_clear_statements<F, C>(
+    entries: &[Stage8BatchEntry<'_, F, C>],
+    layout_digest: [u8; 32],
+    point: &[F],
+    pcs_opening_point: &Point<HIGH_TO_LOW, F>,
+) -> Result<Stage8PrecommittedStatementBuild<F, C>, VerifierError>
+where
+    F: Field,
+    C: Clone,
+{
+    let mut opening_claims = Vec::with_capacity(entries.len());
+    let mut statements = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let physical = Stage8PhysicalOpening {
+            id: entry.id,
+            relation: entry.id,
+            view: PhysicalView::Direct,
+        };
+        let (mut entry_claims, claims) = clear_batch_claims(
+            std::slice::from_ref(entry),
+            std::slice::from_ref(&physical),
+            pcs_opening_point,
+        )?;
+        opening_claims.append(&mut entry_claims);
+        statements.push(BatchOpeningStatement {
+            logical_point: point.to_vec(),
+            pcs_point: point.to_vec(),
             layout_digest,
             claims,
-        },
-    }))
+        });
+    }
+
+    Ok((opening_claims, statements))
 }
 
 /// Builds the final PCS batch in the canonical order from
@@ -808,6 +970,58 @@ where
     }
 }
 
+fn precommitted_final_commitment<'a, PCS, VC>(
+    preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
+    trusted_advice_commitment: Option<&'a PCS::Output>,
+    polynomial: JoltCommittedPolynomial,
+) -> Result<&'a PCS::Output, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    match polynomial {
+        JoltCommittedPolynomial::TrustedAdvice => trusted_advice_commitment
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::BytecodeChunk(index) => preprocessing
+            .program
+            .committed()
+            .and_then(|committed| committed.bytecode_chunk_commitments.get(index))
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        JoltCommittedPolynomial::ProgramImageInit => preprocessing
+            .program
+            .committed()
+            .map(|committed| &committed.program_image_commitment)
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+        _ => Err(VerifierError::MissingFinalOpeningCommitment { polynomial }),
+    }
+}
+
+fn akita_requires_precommitted_opening(polynomial: JoltCommittedPolynomial) -> bool {
+    matches!(
+        polynomial,
+        JoltCommittedPolynomial::TrustedAdvice
+            | JoltCommittedPolynomial::BytecodeChunk(_)
+            | JoltCommittedPolynomial::ProgramImageInit
+    )
+}
+
+fn akita_precommitted_stage8_opening(id: Stage8OpeningId) -> bool {
+    matches!(
+        id,
+        Stage8OpeningId::Jolt(
+            JoltOpeningId::TrustedAdvice {
+                relation: JoltRelationId::AdviceClaimReduction,
+            } | JoltOpeningId::Polynomial {
+                polynomial: JoltPolynomialId::Committed(
+                    JoltCommittedPolynomial::BytecodeChunk(_)
+                        | JoltCommittedPolynomial::ProgramImageInit,
+                ),
+                ..
+            },
+        )
+    )
+}
+
 #[cfg(feature = "akita")]
 fn akita_stage8_physical_manifest<F, PCS, VC, ZkProof>(
     config: &crate::config::JoltProtocolConfig,
@@ -862,7 +1076,7 @@ where
     })
 }
 
-fn logical_manifest<F, C>(
+fn stage8_logical_manifest<F, C>(
     entries: &[Stage8BatchEntry<'_, F, C>],
     pcs_opening_point: Point<HIGH_TO_LOW, F>,
 ) -> Stage8LogicalManifest<F>
@@ -881,6 +1095,53 @@ where
             .collect(),
         pcs_opening_point,
     }
+}
+
+fn logical_manifest_with_precommitted<F, C>(
+    entries: &[Stage8BatchEntry<'_, F, C>],
+    precommitted_entries: &[Stage8BatchEntry<'_, F, C>],
+    pcs_opening_point: Point<HIGH_TO_LOW, F>,
+) -> Stage8LogicalManifest<F>
+where
+    F: Field,
+{
+    let mut openings = logical_openings(entries);
+    openings.extend(logical_openings(precommitted_entries));
+    Stage8LogicalManifest {
+        openings,
+        pcs_opening_point,
+    }
+}
+
+fn logical_openings<F, C>(entries: &[Stage8BatchEntry<'_, F, C>]) -> Vec<Stage8LogicalOpening<F>>
+where
+    F: Field,
+{
+    entries
+        .iter()
+        .map(|entry| Stage8LogicalOpening {
+            id: entry.id,
+            point: entry.own_point.clone(),
+            claim: entry.opening_claim,
+            scale: entry.scale,
+        })
+        .collect()
+}
+
+fn direct_physical_openings<F, C>(
+    entries: &[Stage8BatchEntry<'_, F, C>],
+) -> Vec<Stage8PhysicalOpening<F>>
+where
+    F: Field,
+{
+    entries
+        .iter()
+        .map(|entry| Stage8PhysicalOpening {
+            id: entry.id,
+            relation: entry.id,
+            view: PhysicalView::Direct,
+        })
+        .collect()
 }
 
 fn stage8_layout_digest<PCS, VC>(preprocessing: &JoltVerifierPreprocessing<PCS, VC>) -> [u8; 32]

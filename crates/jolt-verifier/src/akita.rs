@@ -606,6 +606,12 @@ where
             reason: "Akita packed opening proving requires a clear Stage 8 statement".to_string(),
         });
     };
+    if !statement.precommitted_statements.is_empty() {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: "Akita precommitted openings require separate precommitted prover inputs"
+                .to_string(),
+        });
+    }
     prove_akita_packed_openings(setup, transcript, artifacts, source, &statement.statement)
 }
 
@@ -1056,7 +1062,7 @@ fn validate_akita_field_bytes(label: &'static str, bytes: &[u8]) -> Result<(), V
 fn validate_akita_advice_commitment_aliases(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
     untrusted_advice_commitment: Option<&AkitaCommitment>,
-    trusted_advice_commitment: Option<&AkitaCommitment>,
+    _trusted_advice_commitment: Option<&AkitaCommitment>,
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
@@ -1068,12 +1074,6 @@ fn validate_akita_advice_commitment_aliases(
     if untrusted_advice_commitment.is_some_and(|commitment| commitment != &payload.packed_witness) {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita untrusted advice commitment must alias the packed witness commitment"
-                .to_string(),
-        });
-    }
-    if trusted_advice_commitment.is_some_and(|commitment| commitment != &payload.packed_witness) {
-        return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita trusted advice commitment must alias the packed witness commitment"
                 .to_string(),
         });
     }
@@ -2945,6 +2945,7 @@ mod tests {
             opening_claims: Vec::new(),
             pcs_opening_point: Point::high_to_low(Vec::new()),
             statement: statement.clone(),
+            precommitted_statements: Vec::new(),
         });
 
         let mut prover_transcript = Blake2bTranscript::new(b"derived-fused-stage6");
@@ -3070,6 +3071,7 @@ mod tests {
             opening_claims: Vec::new(),
             pcs_opening_point: Point::high_to_low(Vec::<AkitaField>::new()),
             statement: statement.clone(),
+            precommitted_statements: Vec::new(),
         });
 
         let mut prover_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
@@ -3966,7 +3968,7 @@ mod tests {
     }
 
     #[test]
-    fn akita_advice_commitments_must_alias_packed_witness() {
+    fn akita_untrusted_advice_aliases_packed_witness_but_trusted_may_be_separate() {
         let layout = tiny_layout();
         let params = AkitaSetupParams::from_packed_layout(&layout, 1);
         let (prover_setup, _) = AkitaPackedScheme::setup(params);
@@ -3986,7 +3988,7 @@ mod tests {
             Some(packed_witness),
             Some(packed_witness),
         )
-        .expect("packed-witness advice aliases should pass");
+        .expect("packed-witness untrusted advice alias should pass");
 
         let mut other_commitment = packed_witness.clone();
         other_commitment.layout_digest[0] ^= 1;
@@ -3999,15 +4001,12 @@ mod tests {
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("untrusted advice commitment")
         ));
-        assert!(matches!(
-            validate_akita_advice_commitment_aliases(
-                &artifacts.commitments,
-                None,
-                Some(&other_commitment),
-            ),
-            Err(VerifierError::InvalidProtocolConfig { reason })
-                if reason.contains("trusted advice commitment")
-        ));
+        validate_akita_advice_commitment_aliases(
+            &artifacts.commitments,
+            None,
+            Some(&other_commitment),
+        )
+        .expect("trusted advice may use a separate precommitted commitment");
     }
 
     #[test]

@@ -167,6 +167,7 @@ pub struct Stage8ClearBatchStatement<F: Field, C> {
     pub opening_claims: Vec<VerifierOpeningClaim<F, C>>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
     pub statement: Stage8OpeningStatement<F, C, F>,
+    pub precommitted_statements: Vec<Stage8OpeningStatement<F, C, F>>,
 }
 
 #[derive(Clone, Debug)]
