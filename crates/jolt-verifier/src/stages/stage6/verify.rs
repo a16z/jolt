@@ -40,6 +40,14 @@ use jolt_transcript::Transcript;
 use num_traits::{One, Zero};
 
 use super::{
+    booleanity::{
+        BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
+        BooleanityAddressPhaseOutputClaims,
+    },
+    bytecode_read_raf::{
+        BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
+        BytecodeReadRafAddressPhaseOutputClaims,
+    },
     inputs::{
         AdviceCyclePhaseOutputClaim, BytecodeCyclePhaseOutputClaims, Deps,
         ProgramImageCyclePhaseOutputClaim, Stage6OutputClaims,
@@ -60,6 +68,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
+        relations::{zip_openings, SumcheckInstance},
         stage1::Stage1ClearOutput,
         stage2::Stage2ClearOutput,
         stage3::Stage3ClearOutput,
@@ -670,7 +679,17 @@ where
             inc_gamma: PCS::Field::zero(),
         },
     )?;
-    let booleanity_address_input = PCS::Field::zero();
+    let num_bytecode_val_stages = if committed_program {
+        bytecode_reduction::NUM_BYTECODE_VAL_STAGES
+    } else {
+        0
+    };
+    let bytecode_address_relation = BytecodeReadRafAddressPhase::new(
+        formula_dimensions.bytecode_read_raf,
+        bytecode_read_raf_address_input,
+        num_bytecode_val_stages,
+    );
+    let booleanity_address_relation = BooleanityAddressPhase::new(booleanity_dimensions);
 
     if trusted_advice_claims.is_none() && claims.advice_cycle_phase.trusted.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
@@ -697,10 +716,8 @@ where
         proof,
         transcript,
         claims,
-        &bytecode_address_claims,
-        &booleanity_address_claims,
-        bytecode_read_raf_address_input,
-        booleanity_address_input,
+        &bytecode_address_relation,
+        &booleanity_address_relation,
     )?;
     let address_batch = &stage6a.address_batch;
     let bytecode_address_point = stage6a.bytecode_address_point.clone();
@@ -3335,27 +3352,23 @@ pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     claims: &Stage6OutputClaims<PCS::Field>,
-    bytecode_address_claims: &JoltRelationClaims<PCS::Field>,
-    booleanity_address_claims: &JoltRelationClaims<PCS::Field>,
-    bytecode_read_raf_input: PCS::Field,
-    booleanity_input: PCS::Field,
+    bytecode_relation: &BytecodeReadRafAddressPhase<PCS::Field>,
+    booleanity_relation: &BooleanityAddressPhase<PCS::Field>,
 ) -> Result<Stage6AClearOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
+    let bytecode_inputs = BytecodeReadRafAddressPhaseInputClaims::from_upstream();
+    let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
+    let bytecode_read_raf_input = bytecode_relation.input_claim(&bytecode_inputs)?;
+    let booleanity_input = booleanity_relation.input_claim(&booleanity_inputs)?;
+    let bytecode_spec = &bytecode_relation.sumcheck_relation().sumcheck;
+    let booleanity_spec = &booleanity_relation.sumcheck_relation().sumcheck;
     let address_sumcheck_claims = vec![
-        SumcheckClaim::new(
-            bytecode_address_claims.sumcheck.rounds,
-            bytecode_address_claims.sumcheck.degree,
-            bytecode_read_raf_input,
-        ),
-        SumcheckClaim::new(
-            booleanity_address_claims.sumcheck.rounds,
-            booleanity_address_claims.sumcheck.degree,
-            booleanity_input,
-        ),
+        SumcheckClaim::new(bytecode_spec.rounds, bytecode_spec.degree, bytecode_read_raf_input),
+        SumcheckClaim::new(booleanity_spec.rounds, booleanity_spec.degree, booleanity_input),
     ];
     let address_batch = BatchedSumcheckVerifier::verify_compressed_boolean(
         &address_sumcheck_claims,
@@ -3368,7 +3381,7 @@ where
     })?;
 
     let bytecode_address_point = address_batch
-        .try_instance_point(bytecode_address_claims.sumcheck.rounds)
+        .try_instance_point(bytecode_spec.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::BytecodeReadRaf,
             reason: error.to_string(),
@@ -3380,7 +3393,7 @@ where
         .copied()
         .collect::<Vec<_>>();
     let booleanity_address_point = address_batch
-        .try_instance_point(booleanity_address_claims.sumcheck.rounds)
+        .try_instance_point(booleanity_spec.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::Booleanity,
             reason: error.to_string(),
@@ -3391,9 +3404,29 @@ where
         .rev()
         .copied()
         .collect::<Vec<_>>();
+
+    // Pair the produced address-phase openings (wire values + derived points) and
+    // check the expected outputs through the relation objects.
+    let bytecode_points =
+        bytecode_relation.derive_opening_points(&bytecode_address_point, &bytecode_inputs)?;
+    let bytecode_values = BytecodeReadRafAddressPhaseOutputClaims {
+        intermediate: claims.address_phase.bytecode_read_raf,
+        val_stages: claims
+            .address_phase
+            .bytecode_val_stages
+            .map_or_else(Vec::new, |stages| stages.to_vec()),
+    };
+    let bytecode_outputs = zip_openings(&bytecode_values, &bytecode_points);
+    let booleanity_points =
+        booleanity_relation.derive_opening_points(&booleanity_address_point, &booleanity_inputs)?;
+    let booleanity_values = BooleanityAddressPhaseOutputClaims {
+        intermediate: claims.address_phase.booleanity,
+    };
+    let booleanity_outputs = zip_openings(&booleanity_values, &booleanity_points);
+
     let address_expected_outputs = [
-        claims.address_phase.bytecode_read_raf,
-        claims.address_phase.booleanity,
+        bytecode_relation.expected_output(&bytecode_inputs, &bytecode_outputs)?,
+        booleanity_relation.expected_output(&booleanity_inputs, &booleanity_outputs)?,
     ];
     if address_batch.batching_coefficients.len() != address_expected_outputs.len() {
         return Err(VerifierError::StageClaimSumcheckFailed {
