@@ -46,6 +46,9 @@ Assumptions:
 - Committed bytecode objects exist through the roadmap background interface.
 - TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted
   commitment objects.
+- A precommitted object can only satisfy a final claim through an opening of its
+  original commitment, unless a future protocol proves binding between that
+  commitment and a packed copy.
 - Logical opening IDs include relation IDs.
 - Translation layout is public or transcript-bound before translation
   challenges.
@@ -77,6 +80,8 @@ PrecommittedOpening:
   This is outside the W_pack statement. A logical precommitted view may expand
   into multiple deterministic component openings when the original commitment is
   chunked or lane-oriented.
+  The resulting statement/proof is separate from the PackedWitness packed-view
+  proof and binds the original commitment handle.
 ```
 
 Packed view expression:
@@ -311,6 +316,8 @@ for precommitted linear/component views:
   add one opening requirement per original committed component
   verify the deterministic recombination equals the logical source claim
   then use that logical claim in the surrounding PIOP relation
+  reject if the prover supplies only a W_pack packed-view claim or a backend
+  program-commit handle without the original precommitted opening
 
 for direct/linear views:
   no new sumcheck instance
@@ -328,6 +335,19 @@ Transcript:
 4. logical claims.
 5. translation challenges, if any.
 6. Akita batch-opening challenges.
+```
+
+Proof shape:
+
+```text
+PackedWitness opening:
+  one batch proof over W_pack for proof-owned packed claims.
+
+Precommitted openings:
+  zero or more direct/native proofs, one per precommitted statement after
+  deterministic component expansion.
+  proof order follows the precommitted opening manifest.
+  the verifier rejects missing, extra, reordered, or W_pack-backed proofs.
 ```
 
 Implementation plan:
@@ -460,6 +480,8 @@ unsupported views:
   openings when lattice mode supports ProgramMode::Committed.
 - TrustedAdvice resolves through its precommitted advice commitment; it cannot be
   satisfied only by a W_pack view.
+- BytecodeChunk(i), ProgramImageInit, and trusted-advice claims cannot appear in
+  the W_pack packed-view statement in the target protocol.
 - A direct/linear view may only use facts at the same row point as the logical
   claim.
 - A decoded view cannot assume one-hot validity; validity is a separate
@@ -476,6 +498,8 @@ unsupported views:
 - Any component openings used to reconstruct a precommitted source claim must be
   checked against that source claim before the claim is used by the fused
   increment translation.
+- Backend `Program::Committed` material is not a substitute for the original
+  Jolt precommitted commitment handles.
 ```
 
 ## Tests
@@ -508,10 +532,18 @@ precommitted_program_view_uses_original_commitment:
   BytecodeChunk and ProgramImageInit resolve to precommitted opening targets,
   not PackedWitness families.
 
+precommitted_views_are_absent_from_w_pack_statement:
+  TrustedAdvice, BytecodeChunk(i), ProgramImageInit, StoreFlag, and RdPresent
+  source components are not emitted as W_pack packed-view claims.
+
 fused_increment_sources_use_precommitted_bytecode_openings:
   StoreFlag and RdPresent source claims resolve through BytecodeChunk openings,
   not W_pack families. Tampering with either component openings or the
   recombined source claim rejects.
+
+precommitted_opening_manifest_is_exact:
+  missing, extra, or reordered precommitted proofs reject before the W_pack
+  packed-view proof can satisfy the statement.
 ```
 
 ## Performance

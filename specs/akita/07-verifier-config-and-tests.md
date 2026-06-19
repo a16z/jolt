@@ -179,6 +179,7 @@ PackedWitness layout digest.
 D_pack.
 Akita setup key.
 Akita packed-view proof.
+The packed-view proof covers only proof-owned W_pack claims.
 Precommitted opening proof material for TrustedAdvice, BytecodeChunk(i), and
 ProgramImageInit when those claims are present.
 Precommitted opening proof material for BytecodeChunk(i) source facts used by
@@ -243,6 +244,8 @@ Dispatch:
 3. resolve logical openings to physical opening targets.
 4. partition proof-owned W_pack claims from precommitted claims.
 5. build a packed BatchOpeningStatement for W_pack claims.
+   This statement must not contain TrustedAdvice, BytecodeChunk(i),
+   ProgramImageInit, StoreFlag, or RdPresent source components.
 6. build separate precommitted opening statements for TrustedAdvice,
    BytecodeChunk(i), and ProgramImageInit.
    These statements target the original precommitted commitments, not the
@@ -256,9 +259,12 @@ Dispatch:
 7. prover-side Akita helpers receive one precommitted polynomial/hint input per
    separate precommitted statement and attach the resulting proofs to
    `lattice_precommitted_opening_proofs` in the same order.
-8. call selected opening implementations.
-9. bind returned opening data to transcript.
-10. return logical coefficients for clear-mode checks.
+8. verifier-side lattice dispatch checks that
+   `lattice_precommitted_opening_proofs.len()` exactly matches the
+   precommitted statement count.
+9. call selected opening implementations.
+10. bind returned opening data to transcript.
+11. return logical coefficients for clear-mode checks.
 ```
 
 Stage 8 must not decode increments or byte data directly. It consumes view
@@ -385,6 +391,8 @@ fn build_batch_statement<F, C>(
 - Trusted advice cannot bypass its precommitted opening path.
 - Trusted advice, BytecodeChunk(i), and ProgramImageInit commitments cannot
   alias the PackedWitness commitment in Akita mode.
+- TrustedAdvice, BytecodeChunk(i), ProgramImageInit, StoreFlag, and RdPresent
+  source components cannot be emitted as PackedWitness packed-view claims.
 - Fused-increment StoreFlag/RdPresent source claims cannot bypass the
   precommitted BytecodeChunk opening path unless a bound precommitted packed
   view is specified.
@@ -470,6 +478,14 @@ akita_committed_program_precommitted_opening_missing_rejects:
 akita_precommitted_proof_shape_rejects_packed_reduction:
   auxiliary precommitted opening proof with PackedWitness commitment or packed
   reduction payload rejects.
+
+akita_precommitted_proof_count_is_exact:
+  missing, extra, or reordered `lattice_precommitted_opening_proofs` rejects.
+
+akita_w_pack_statement_excludes_precommitted_claims:
+  the Stage 8 lattice statement builder partitions TrustedAdvice,
+  BytecodeChunk(i), ProgramImageInit, StoreFlag, and RdPresent source components
+  into precommitted statements, not the W_pack packed-view statement.
 
 akita_backend_program_committed_does_not_replace_precommitments:
   Akita backend Program::Committed material without explicit Jolt

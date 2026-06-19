@@ -44,6 +44,9 @@ Assumptions:
 - TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted and are
   excluded from W_pack unless a future binding protocol proves equivalence to
   their original commitments.
+- Exclusion is by commitment class, not by value shape. A precommitted value
+  copied into W_pack is only a proof-owned copy and does not open the original
+  precommitted commitment.
 - Akita setup cost is sensitive to D_pack = ceil_log2(total packed cells).
 - The prover can stream nonzero one-hot facts without materializing W_pack.
 - Padding to 2^D_pack is an ambient domain property, not a witness construction
@@ -258,7 +261,26 @@ excluded precommitted facts:
   TrustedAdvice bytes.
   BytecodeChunk(i) committed bytecode lanes.
   ProgramImageInit little-endian word bytes.
-  These are opened against their original commitments.
+  These are opened through separate statements against their original
+  commitments.
+  They are never PackedWitness families in the target protocol.
+```
+
+Precommitted opening schedule:
+
+```text
+TrustedAdvice:
+  direct opening against the trusted-advice commitment.
+
+BytecodeChunk(i):
+  direct/component openings against the committed-bytecode chunk commitment.
+
+ProgramImageInit:
+  direct opening against the committed program-image commitment.
+
+Fused-increment source facts:
+  StoreFlag and RdPresent are derived from BytecodeChunk(i) component openings.
+  They do not add bytecode selector families to W_pack.
 ```
 
 Layout:
@@ -289,7 +311,8 @@ jolt-claims:
   expose RA fact counts through existing one-hot dimensions.
   expose fused base increment fact families through lattice increment mode.
   expose field-inline/proof-owned-advice families through lattice policy.
-  expose precommitted-program opening IDs separately from PackedWitness families.
+  expose trusted-advice and precommitted-program opening IDs separately from
+  PackedWitness families.
 
 jolt-akita:
   implement PackedWitnessLayout and PackedFamily.
@@ -345,7 +368,8 @@ fn build_packed_witness_layout(config, dimensions) -> PackedWitnessLayout:
   append fused base increment magnitude/sign families
   append field-inline families when field-inline is enabled
   append proof-owned advice byte families when advice is enabled
-  do not append TrustedAdvice, BytecodeChunk(i), or ProgramImageInit
+  do not append TrustedAdvice, BytecodeChunk(i), ProgramImageInit, or committed
+  bytecode source lanes used by fused increments
   sort families by FactId
   offset = 0
   for family:
@@ -443,6 +467,10 @@ FactId ordering:
 - W_pack contains only supported proof-owned packed facts.
 - Precommitted facts remain outside the PackedWitness layout unless an explicit
   binding protocol is specified.
+- Copying a precommitted fact value into W_pack does not satisfy any
+  precommitted opening requirement.
+- Any logical opening whose commitment class is precommitted resolves to a
+  separate opening statement keyed by the original commitment handle.
 - PackedWitnessSource emits only cells owned by PackedWitnessLayout.
 - ViewCatalog entries reference existing fact families and cannot create new
   cells.
@@ -484,6 +512,10 @@ layout_sort_order_is_stable:
 precommitted_program_families_are_excluded:
   TrustedAdvice, BytecodeChunk(i), and ProgramImageInit do not change D_pack
   unless an explicit bound-precommitted packed-view protocol is enabled.
+
+precommitted_values_cannot_enter_packed_source:
+  PackedWitnessSource rejects or cannot construct families for TrustedAdvice,
+  BytecodeChunk(i), ProgramImageInit, StoreFlag, or RdPresent source lanes.
 
 planner_audit_fields_are_reported:
   layout tests expose fact_count_by_alphabet, cells_by_domain,
