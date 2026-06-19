@@ -1,6 +1,5 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::program_image,
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
         ram,
         ram::RamValCheckInit,
@@ -11,19 +10,17 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb};
+use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::{LabelWithCount, Transcript};
 
 use super::{
     inputs::{Deps, Stage4OutputClaims},
-    outputs::{
-        RamValCheckInitialEvaluation, Stage4Challenges, Stage4ClearOutput, Stage4Output,
-        Stage4ZkOutput, VerifiedRamValCheckAdviceContribution,
-    },
+    outputs::{Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4ZkOutput},
     ram_val_check::{
-        RamValCheck, RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
+        ram_val_check_initial_evaluation, RamValCheck, RamValCheckAdviceClaims,
+        RamValCheckInitialEvaluation, RamValCheckInputClaims, RamValCheckOutputClaims,
     },
     registers_read_write_checking::{
         RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
@@ -367,75 +364,6 @@ fn ram_zk_inputs<F: Field>(ram_read_write_opening_point: &[F]) -> RamValCheckInp
     }
 }
 
-fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
-    checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    claims: &Stage4OutputClaims<PCS::Field>,
-    r_address: &[PCS::Field],
-    public_eval: PCS::Field,
-) -> Result<RamValCheckInitialEvaluation<PCS::Field>, VerifierError>
-where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-{
-    let mut full_eval = public_eval;
-    let program_image_contribution = collect_program_image_contribution(
-        checked.precommitted.program_image.is_some(),
-        claims.program_image_contribution,
-        r_address,
-        &mut full_eval,
-    )?;
-    let mut advice_contributions = Vec::new();
-    let untrusted_present = proof.untrusted_advice_commitment.is_some();
-    collect_advice_contribution(
-        JoltAdviceKind::Untrusted,
-        untrusted_present,
-        claims.advice.untrusted,
-        checked,
-        r_address,
-        &mut full_eval,
-        &mut advice_contributions,
-    )?;
-    collect_advice_contribution(
-        JoltAdviceKind::Trusted,
-        checked.trusted_advice_commitment_present,
-        claims.advice.trusted,
-        checked,
-        r_address,
-        &mut full_eval,
-        &mut advice_contributions,
-    )?;
-
-    Ok(RamValCheckInitialEvaluation {
-        public_eval,
-        program_image_contribution,
-        advice_contributions,
-        full_eval,
-    })
-}
-
-fn collect_program_image_contribution<F: Field>(
-    committed_program: bool,
-    opening_claim: Option<F>,
-    r_address: &[F],
-    full_eval: &mut F,
-) -> Result<Option<OpeningClaim<F>>, VerifierError> {
-    let opening = program_image::ram_val_check_contribution_opening();
-    if !committed_program {
-        if opening_claim.is_some() {
-            return Err(VerifierError::UnexpectedOpeningClaim { id: opening });
-        }
-        return Ok(None);
-    }
-
-    let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
-    *full_eval += opening_claim;
-    Ok(Some(OpeningClaim {
-        point: r_address.to_vec(),
-        value: opening_claim,
-    }))
-}
-
 fn public_initial_ram_evaluation<PCS, VC>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -489,66 +417,6 @@ where
         + usize::from(proof.untrusted_advice_commitment.is_some())
         + usize::from(checked.trusted_advice_commitment_present)
         + usize::from(checked.precommitted.program_image.is_some())
-}
-
-fn collect_advice_contribution<F: Field>(
-    kind: JoltAdviceKind,
-    present: bool,
-    opening_claim: Option<F>,
-    checked: &CheckedInputs,
-    r_address: &[F],
-    full_eval: &mut F,
-    contributions: &mut Vec<VerifiedRamValCheckAdviceContribution<F>>,
-) -> Result<(), VerifierError> {
-    let opening = ram::val_check_advice_opening(kind);
-    if !present {
-        if opening_claim.is_some() {
-            return Err(VerifierError::UnexpectedOpeningClaim { id: opening });
-        }
-        return Ok(());
-    }
-
-    let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
-    let layout = &checked.public_io.memory_layout;
-    let (start_address, max_size) = match kind {
-        JoltAdviceKind::Trusted => (layout.trusted_advice_start, layout.max_trusted_advice_size),
-        JoltAdviceKind::Untrusted => (
-            layout.untrusted_advice_start,
-            layout.max_untrusted_advice_size,
-        ),
-    };
-    if max_size == 0 {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: format!("{kind:?} advice commitment is present but configured size is zero"),
-        });
-    }
-
-    let start_index = layout
-        .remapped_word_address(start_address)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: error.to_string(),
-        })? as usize;
-    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
-    let selector =
-        block_selector_mle_msb(start_index, advice_num_vars, r_address).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamValCheck,
-                reason: error.to_string(),
-            }
-        })?;
-    let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
-    *full_eval += selector * opening_claim;
-    contributions.push(VerifiedRamValCheckAdviceContribution {
-        kind,
-        selector,
-        opening: OpeningClaim {
-            point: opening_point,
-            value: opening_claim,
-        },
-    });
-    Ok(())
 }
 
 fn check_boolean_hypercube(

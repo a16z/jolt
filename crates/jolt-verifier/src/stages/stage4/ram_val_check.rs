@@ -16,22 +16,27 @@
 
 use jolt_claims::protocols::jolt::{
     formulas::{
+        claim_reductions::program_image,
         dimensions::TraceDimensions,
-        ram::{self, RamValCheckInit},
+        ram::{self, RamValCheckInit, RamValCheckInitContribution},
     },
     JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
     RamValCheckChallenge, RamValCheckPublic,
 };
+use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_poly::LtPolynomial;
+use jolt_openings::CommitmentScheme;
+use jolt_poly::{block_selector_mle_msb, LtPolynomial};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
+use crate::proof::JoltProof;
 use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
 use crate::stages::stage2::outputs::Stage2ClearOutput;
+use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
-use super::outputs::RamValCheckInitialEvaluation;
+use super::inputs::Stage4OutputClaims;
 
 /// Produced RAM value-check openings (`ram_ra`, `ram_inc`) sharing one opening
 /// point. Generic over the cell.
@@ -207,4 +212,206 @@ impl<F: Field> SumcheckInstance<F> for RamValCheck<F> {
             }
         }
     }
+}
+
+/// The verifier's reconstruction of `Val_init(r_address)`: the public initial-RAM
+/// evaluation plus the present advice / program-image contributions (each carrying
+/// its staged opening). Built by [`ram_val_check_initial_evaluation`] and consumed
+/// when constructing the [`RamValCheck`] relation (via [`decomposition`]) and the
+/// stage-4 output claims.
+///
+/// [`decomposition`]: Self::decomposition
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamValCheckInitialEvaluation<F: Field> {
+    pub public_eval: F,
+    /// The staged program-image contribution to `Val_init(r_address)` (committed
+    /// program mode only): the opening claim with the full RAM address point.
+    pub program_image_contribution: Option<OpeningClaim<F>>,
+    pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
+    pub full_eval: F,
+}
+
+impl<F: Field> RamValCheckInitialEvaluation<F> {
+    pub fn advice_contribution(
+        &self,
+        kind: JoltAdviceKind,
+    ) -> Option<&VerifiedRamValCheckAdviceContribution<F>> {
+        self.advice_contributions
+            .iter()
+            .find(|contribution| contribution.kind == kind)
+    }
+
+    pub fn advice_opening_claim(&self, kind: JoltAdviceKind) -> Option<F> {
+        self.advice_contribution(kind)
+            .map(|contribution| contribution.opening.value)
+    }
+
+    pub fn advice_opening_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
+        self.advice_contribution(kind)
+            .map(|contribution| contribution.opening.point.as_slice())
+    }
+
+    /// The formula-side init decomposition: the public initial-RAM evaluation plus
+    /// the present advice / program-image contributions (with negated selectors),
+    /// in the canonical order the BlindFold constraint also uses — program image
+    /// first, then advice in `advice_contributions` order. Shared by the verifier
+    /// and the prover when building the `RamValCheck` relation, so the
+    /// decomposition cannot drift between them.
+    pub fn decomposition(&self) -> RamValCheckInit<F> {
+        let mut contributions = Vec::new();
+        if self.program_image_contribution.is_some() {
+            contributions.push(RamValCheckInitContribution::program_image(-F::one()));
+        }
+        for contribution in &self.advice_contributions {
+            let neg_selector = -contribution.selector;
+            contributions.push(match contribution.kind {
+                JoltAdviceKind::Trusted => RamValCheckInitContribution::trusted(neg_selector),
+                JoltAdviceKind::Untrusted => RamValCheckInitContribution::untrusted(neg_selector),
+            });
+        }
+        RamValCheckInit::decomposed(self.public_eval, contributions)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
+    pub kind: JoltAdviceKind,
+    pub selector: F,
+    /// The advice block opening (claim value + the address sub-point it was
+    /// evaluated at) that this contribution weights by `selector`.
+    pub opening: OpeningClaim<F>,
+}
+
+/// Reconstruct [`RamValCheckInitialEvaluation`] from the proof's staged advice /
+/// program-image openings: add each present contribution into `full_eval`
+/// (alongside the public initial-RAM `public_eval`) and record its staged opening.
+/// Mirrors the prover's own init reconstruction so both decompose `Val_init`
+/// identically.
+pub(crate) fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
+    checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    claims: &Stage4OutputClaims<PCS::Field>,
+    r_address: &[PCS::Field],
+    public_eval: PCS::Field,
+) -> Result<RamValCheckInitialEvaluation<PCS::Field>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    let mut full_eval = public_eval;
+    let program_image_contribution = collect_program_image_contribution(
+        checked.precommitted.program_image.is_some(),
+        claims.program_image_contribution,
+        r_address,
+        &mut full_eval,
+    )?;
+    let mut advice_contributions = Vec::new();
+    let untrusted_present = proof.untrusted_advice_commitment.is_some();
+    collect_advice_contribution(
+        JoltAdviceKind::Untrusted,
+        untrusted_present,
+        claims.advice.untrusted,
+        checked,
+        r_address,
+        &mut full_eval,
+        &mut advice_contributions,
+    )?;
+    collect_advice_contribution(
+        JoltAdviceKind::Trusted,
+        checked.trusted_advice_commitment_present,
+        claims.advice.trusted,
+        checked,
+        r_address,
+        &mut full_eval,
+        &mut advice_contributions,
+    )?;
+
+    Ok(RamValCheckInitialEvaluation {
+        public_eval,
+        program_image_contribution,
+        advice_contributions,
+        full_eval,
+    })
+}
+
+fn collect_program_image_contribution<F: Field>(
+    committed_program: bool,
+    opening_claim: Option<F>,
+    r_address: &[F],
+    full_eval: &mut F,
+) -> Result<Option<OpeningClaim<F>>, VerifierError> {
+    let opening = program_image::ram_val_check_contribution_opening();
+    if !committed_program {
+        if opening_claim.is_some() {
+            return Err(VerifierError::UnexpectedOpeningClaim { id: opening });
+        }
+        return Ok(None);
+    }
+
+    let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
+    *full_eval += opening_claim;
+    Ok(Some(OpeningClaim {
+        point: r_address.to_vec(),
+        value: opening_claim,
+    }))
+}
+
+fn collect_advice_contribution<F: Field>(
+    kind: JoltAdviceKind,
+    present: bool,
+    opening_claim: Option<F>,
+    checked: &CheckedInputs,
+    r_address: &[F],
+    full_eval: &mut F,
+    contributions: &mut Vec<VerifiedRamValCheckAdviceContribution<F>>,
+) -> Result<(), VerifierError> {
+    let opening = ram::val_check_advice_opening(kind);
+    if !present {
+        if opening_claim.is_some() {
+            return Err(VerifierError::UnexpectedOpeningClaim { id: opening });
+        }
+        return Ok(());
+    }
+
+    let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
+    let layout = &checked.public_io.memory_layout;
+    let (start_address, max_size) = match kind {
+        JoltAdviceKind::Trusted => (layout.trusted_advice_start, layout.max_trusted_advice_size),
+        JoltAdviceKind::Untrusted => (
+            layout.untrusted_advice_start,
+            layout.max_untrusted_advice_size,
+        ),
+    };
+    if max_size == 0 {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamValCheck,
+            reason: format!("{kind:?} advice commitment is present but configured size is zero"),
+        });
+    }
+
+    let start_index = layout
+        .remapped_word_address(start_address)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamValCheck,
+            reason: error.to_string(),
+        })? as usize;
+    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
+    let selector =
+        block_selector_mle_msb(start_index, advice_num_vars, r_address).map_err(|error| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::RamValCheck,
+                reason: error.to_string(),
+            }
+        })?;
+    let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
+    *full_eval += selector * opening_claim;
+    contributions.push(VerifiedRamValCheckAdviceContribution {
+        kind,
+        selector,
+        opening: OpeningClaim {
+            point: opening_point,
+            value: opening_claim,
+        },
+    });
+    Ok(())
 }

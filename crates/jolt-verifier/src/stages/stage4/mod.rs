@@ -9,7 +9,8 @@ mod verify;
 pub use inputs::{deps, Deps, Stage4OutputClaims};
 pub use outputs::{Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4ZkOutput};
 pub use ram_val_check::{
-    RamValCheck, RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
+    RamValCheck, RamValCheckAdviceClaims, RamValCheckInitialEvaluation, RamValCheckInputClaims,
+    RamValCheckOutputClaims, VerifiedRamValCheckAdviceContribution,
 };
 pub use registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,

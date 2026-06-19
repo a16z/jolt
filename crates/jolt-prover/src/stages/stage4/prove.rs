@@ -13,15 +13,13 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{OpeningClaim, SumcheckInstance};
-use jolt_verifier::stages::stage4::outputs::{
-    RamValCheckInitialEvaluation, Stage4Challenges, Stage4ClearOutput,
-    VerifiedRamValCheckAdviceContribution,
-};
+use jolt_verifier::stages::stage4::outputs::{Stage4Challenges, Stage4ClearOutput};
 use jolt_verifier::stages::stage4::{
     append_ram_val_check_gamma_domain_separator, stage4_expected_final_claim,
-    stage4_output_claims_with_points, RamValCheck, RamValCheckAdviceClaims, RamValCheckInputClaims,
-    RamValCheckOutputClaims, RegistersReadWriteChecking, RegistersReadWriteInputClaims,
-    RegistersReadWriteOutputClaims, Stage4OutputClaims,
+    stage4_output_claims_with_points, RamValCheck, RamValCheckAdviceClaims,
+    RamValCheckInitialEvaluation, RamValCheckInputClaims, RamValCheckOutputClaims,
+    RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
+    Stage4OutputClaims, VerifiedRamValCheckAdviceContribution,
 };
 use jolt_verifier::stages::{stage2::Stage2ClearOutput, stage3::Stage3ClearOutput};
 use jolt_verifier::CheckedInputs;
