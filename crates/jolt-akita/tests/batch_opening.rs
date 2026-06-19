@@ -1268,8 +1268,8 @@ fn akita_direct_opening_uses_commitment_layout_digest() {
         assert_eq!(commitment.layout_digest, commitment_layout);
         let statement = BatchOpeningStatement {
             logical_point: point.clone(),
-            pcs_point: point,
-            layout_digest: unrelated_statement_layout,
+            pcs_point: point.clone(),
+            layout_digest: commitment_layout,
             claims: vec![BatchOpeningClaim {
                 id: OpeningId::A,
                 relation: RelationId::Packed,
@@ -1300,6 +1300,34 @@ fn akita_direct_opening_uses_commitment_layout_digest() {
         .expect("direct proof should verify with commitment layout digest");
         assert_eq!(result.joint_commitment, commitment);
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+        let mismatched_statement = BatchOpeningStatement {
+            logical_point: point.clone(),
+            pcs_point: point,
+            layout_digest: unrelated_statement_layout,
+            claims: vec![BatchOpeningClaim {
+                id: OpeningId::A,
+                relation: RelationId::Packed,
+                commitment,
+                claim: eval,
+                view: PhysicalView::Direct,
+                scale: f(1),
+            }],
+        };
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-direct-commitment-layout");
+        assert!(
+            matches!(
+                <AkitaScheme as BatchOpeningScheme>::verify_batch(
+                    &verifier_setup,
+                    &mut verifier_transcript,
+                    &mismatched_statement,
+                    &proof,
+                ),
+                Err(OpeningsError::InvalidBatch(reason))
+                    if reason.contains("layout digest")
+            ),
+            "direct proof must reject a statement digest that differs from the opened commitment"
+        );
     });
 }
 

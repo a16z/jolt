@@ -669,6 +669,11 @@ fn normalize_clear_batch<OpeningId, RelationId>(
             commitment.num_vars
         )));
     }
+    if statement.layout_digest != commitment.layout_digest {
+        return Err(invalid_batch(
+            "Akita direct batch statement layout digest does not match commitment layout digest",
+        ));
+    }
     if statement.logical_point != statement.pcs_point {
         return Err(invalid_batch(
             "Akita direct batch requires logical point and PCS point to match",
@@ -837,6 +842,7 @@ fn bind_batch_statement<OpeningId, RelationId, T>(
 {
     transcript.append(&Label(b"akita_batch_statement"));
     normalized.commitment.append_to_transcript(transcript);
+    transcript.append_bytes(&statement.layout_digest);
     transcript.append_bytes(&normalized.commitment.layout_digest);
     append_field_slice(transcript, b"akita_logical_point", &statement.logical_point);
     append_field_slice(transcript, b"akita_pcs_point", &statement.pcs_point);
@@ -1063,12 +1069,11 @@ mod tests {
     }
 
     #[test]
-    fn direct_opening_binds_commitment_layout_digest_not_wrapper_digest() {
+    fn direct_opening_requires_statement_commitment_layout_digest() {
         let setup_params = AkitaSetupParams::new(1, 1, [7; 32]);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params);
         let polynomial = Polynomial::new(vec![AkitaField::from_u64(2), AkitaField::from_u64(5)]);
         let commitment_digest = [9; 32];
-        let wrapper_digest = [11; 32];
         let (commitment, hint) = AkitaScheme::commit_group(
             &prover_setup,
             commitment_digest,
@@ -1082,7 +1087,7 @@ mod tests {
         let statement = BatchOpeningStatement {
             logical_point: point.clone(),
             pcs_point: point,
-            layout_digest: wrapper_digest,
+            layout_digest: commitment_digest,
             claims: vec![BatchOpeningClaim {
                 id: (),
                 relation: (),
@@ -1092,7 +1097,7 @@ mod tests {
                 scale: AkitaField::one(),
             }],
         };
-        assert_ne!(statement.layout_digest, commitment.layout_digest);
+        assert_eq!(statement.layout_digest, commitment.layout_digest);
 
         let mut prover_transcript = RecordingTranscript::new(b"akita-direct-layout");
         let proof = AkitaScheme::prove_batch(
@@ -1111,14 +1116,13 @@ mod tests {
         let mut changed_wrapper_statement = statement.clone();
         changed_wrapper_statement.layout_digest = [13; 32];
         let mut verifier_transcript = RecordingTranscript::new(b"akita-direct-layout");
-        let _ = AkitaScheme::verify_batch(
+        let _error = AkitaScheme::verify_batch(
             &verifier_setup,
             &mut verifier_transcript,
             &changed_wrapper_statement,
             &proof,
         )
-        .expect("direct proof should verify");
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        .expect_err("changed direct statement digest should reject");
 
         let mut changed_commitment_statement = statement;
         changed_commitment_statement.claims[0]
