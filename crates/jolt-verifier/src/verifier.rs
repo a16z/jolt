@@ -1414,6 +1414,15 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "akita")]
+    type AkitaStage8StatementFixture = (
+        JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        CheckedInputs,
+        TestProof,
+        stage6::Stage6ClearOutput<Fr>,
+        stage7::Stage7ClearOutput<Fr>,
+    );
+
     impl jolt_transcript::AppendToTranscript for TestCommitment {
         fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
     }
@@ -1771,6 +1780,72 @@ mod tests {
             Err(VerifierError::MissingAkitaPackedValidityProof {
                 field: "sumcheck_proof"
             })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn akita_stage8_rejects_missing_committed_program_final_openings() {
+        let (preprocessing, checked, proof, stage6, stage7) =
+            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+
+        for missing in [
+            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltCommittedPolynomial::ProgramImageInit,
+        ] {
+            let mut stage7 = stage7.clone();
+            stage7
+                .precommitted_final_openings
+                .retain(|opening| opening.polynomial != missing);
+
+            let result = stage8::batch_statement(
+                &checked,
+                &preprocessing,
+                &proof,
+                None,
+                stage8::Deps::Clear {
+                    stage6: &stage6,
+                    stage7: &stage7,
+                },
+            );
+
+            assert!(matches!(
+                result,
+                Err(VerifierError::MissingOpeningClaim { id })
+                    if id == final_opening_id_for_test(missing)
+            ));
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn akita_stage8_rejects_missing_trusted_advice_final_opening() {
+        let (preprocessing, checked, proof, stage6, stage7) = akita_stage8_statement_fixture(
+            committed_test_preprocessing_with_advice(64, 0),
+            true,
+            |config| {
+                config.lattice.advice.trusted = true;
+                config.lattice.packed_witness.trusted_advice_family = true;
+            },
+        );
+
+        let result = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            Some(&TestCommitment),
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::MissingOpeningClaim { id })
+                if id == JoltOpeningId::trusted_advice(
+                    JoltRelationId::AdviceClaimReduction,
+                )
         ));
     }
 
@@ -2732,6 +2807,76 @@ mod tests {
     }
 
     #[cfg(feature = "akita")]
+    fn akita_stage8_statement_fixture(
+        preprocessing: JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        trusted_advice_commitment_present: bool,
+        configure_lattice: impl FnOnce(&mut JoltProtocolConfig),
+    ) -> AkitaStage8StatementFixture {
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        if trusted_advice_commitment_present {
+            proof.ram_K = 16;
+        }
+        let checked = validate_inputs(
+            &preprocessing,
+            &public_io,
+            &proof,
+            trusted_advice_commitment_present,
+            false,
+        )
+        .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let mut config = lattice_config([0; 32], 0);
+        configure_lattice(&mut config);
+        let layout = expected_lattice_layout(&config, &preprocessing, &proof, &checked);
+        config.lattice.packed_witness.layout_digest = Some(layout.digest);
+        config.lattice.packed_witness.d_pack = Some(layout.dimension);
+        let requirements =
+            stage8::derive_akita_packed_validity_requirements(&config, &checked.precommitted)
+                .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        config.lattice.packed_witness.validity_digest =
+            Some(lattice_packed_validity_digest(&requirements));
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        let bytecode_address_point = field_zeros(
+            checked
+                .precommitted
+                .bytecode
+                .as_ref()
+                .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+                .log_bytecode_chunk_size()
+                + 1,
+        );
+        let stage6 = akita_snapshot_stage6_output(
+            formula_dimensions.ra_layout.bytecode(),
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            bytecode_address_point,
+        );
+        let stage7 = akita_snapshot_stage7_output(
+            formula_dimensions.ra_layout,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        );
+
+        (preprocessing, checked, proof, stage6, stage7)
+    }
+
+    #[cfg(feature = "akita")]
     fn akita_snapshot_stage6_output(
         bytecode_ra_count: usize,
         log_t: usize,
@@ -3010,6 +3155,32 @@ mod tests {
     #[cfg(feature = "akita")]
     fn stage8_opening(id: JoltOpeningId) -> stage8::Stage8OpeningId {
         stage8::Stage8OpeningId::from(id)
+    }
+
+    #[cfg(feature = "akita")]
+    fn final_opening_id_for_test(polynomial: JoltCommittedPolynomial) -> JoltOpeningId {
+        match polynomial {
+            JoltCommittedPolynomial::TrustedAdvice => {
+                JoltOpeningId::trusted_advice(JoltRelationId::AdviceClaimReduction)
+            }
+            JoltCommittedPolynomial::UntrustedAdvice => {
+                JoltOpeningId::untrusted_advice(JoltRelationId::AdviceClaimReduction)
+            }
+            JoltCommittedPolynomial::BytecodeChunk(_) => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeClaimReduction)
+            }
+            JoltCommittedPolynomial::ProgramImageInit => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::ProgramImageClaimReduction)
+            }
+            JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::IncClaimReduction)
+            }
+            JoltCommittedPolynomial::InstructionRa(_)
+            | JoltCommittedPolynomial::BytecodeRa(_)
+            | JoltCommittedPolynomial::RamRa(_) => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::HammingWeightClaimReduction)
+            }
+        }
     }
 
     #[cfg(feature = "akita")]

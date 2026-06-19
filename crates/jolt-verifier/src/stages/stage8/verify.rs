@@ -289,6 +289,8 @@ where
             batch_entries(
                 layout,
                 committed_bytecode_chunk_count,
+                checked.precommitted.trusted_advice.is_some(),
+                checked.precommitted.untrusted_advice.is_some(),
                 &opening_point,
                 hamming_opening_point,
                 inc_opening_point,
@@ -321,6 +323,8 @@ where
             entries.extend(batch_entries(
                 layout,
                 committed_bytecode_chunk_count,
+                checked.precommitted.trusted_advice.is_some(),
+                checked.precommitted.untrusted_advice.is_some(),
                 &opening_point,
                 hamming_opening_point,
                 inc_opening_point,
@@ -431,6 +435,8 @@ where
 fn batch_entries<'a, F, C, CommitmentFor>(
     layout: JoltRaPolynomialLayout,
     committed_bytecode_chunk_count: Option<usize>,
+    include_trusted_advice: bool,
+    include_untrusted_advice: bool,
     opening_point: &[F],
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
@@ -449,12 +455,10 @@ where
             .iter()
             .find(|opening| opening.polynomial == polynomial)
     };
-    let include_trusted = precommitted_final(JoltCommittedPolynomial::TrustedAdvice).is_some();
-    let include_untrusted = precommitted_final(JoltCommittedPolynomial::UntrustedAdvice).is_some();
     let order = final_opening_polynomial_order(
         layout,
-        include_trusted,
-        include_untrusted,
+        include_trusted_advice,
+        include_untrusted_advice,
         committed_bytecode_chunk_count,
     );
 
@@ -1150,6 +1154,8 @@ mod tests {
         let error = batch_entries(
             layout,
             Some(1),
+            false,
+            false,
             &opening_point,
             &hamming_opening_point,
             &inc_opening_point,
@@ -1176,6 +1182,8 @@ mod tests {
         let error = batch_entries(
             layout,
             Some(1),
+            false,
+            false,
             &opening_point,
             &hamming_opening_point,
             &inc_opening_point,
