@@ -1355,6 +1355,160 @@ mod tests {
     }
 
     #[test]
+    fn sparse_packed_source_batch_verifies_and_rejects_tampering() {
+        use crate::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, SparsePackedWitness,
+        };
+
+        let log_t = 5;
+        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
+            PackedFamilyId::IncSign,
+            PackedFactDomain::TraceRows { log_t },
+            1,
+            PackedAlphabet::Bit,
+        )])
+        .expect("layout should build");
+        assert_eq!(layout.dimension, 6);
+        let source = SparsePackedWitness::try_from_cells(
+            layout.clone(),
+            [
+                (
+                    PackedCellAddress {
+                        family: PackedFamilyId::IncSign,
+                        row: 3,
+                        limb: 0,
+                        symbol: 1,
+                    },
+                    AkitaField::one(),
+                ),
+                (
+                    PackedCellAddress {
+                        family: PackedFamilyId::IncSign,
+                        row: 17,
+                        limb: 0,
+                        symbol: 0,
+                    },
+                    AkitaField::one(),
+                ),
+            ],
+        )
+        .expect("source should build");
+        assert!(
+            packed_source_sparse_polynomial(&source)
+                .expect("source should lower")
+                .is_some(),
+            "layout dimension should exercise the native sparse Akita path"
+        );
+
+        let (prover_setup, verifier_setup) =
+            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+        let (commitment, hint) = AkitaPackedScheme::commit_packed_source(&prover_setup, &source)
+            .expect("packed source should commit");
+        let row_point = (0..log_t)
+            .map(|index| f(index as u64 + 2))
+            .collect::<Vec<_>>();
+        let row_weights = EqPolynomial::new(row_point.clone()).evaluations();
+        let claim_0 = row_weights[3];
+        let claim_1 = f(7) * row_weights[17];
+        let statement = BatchOpeningStatement {
+            logical_point: row_point.clone(),
+            pcs_point: row_point.clone(),
+            layout_digest: layout.digest,
+            claims: vec![
+                BatchOpeningClaim {
+                    id: 0usize,
+                    relation: 0usize,
+                    commitment: commitment.clone(),
+                    claim: claim_0,
+                    view: PhysicalView::PackedLinear {
+                        layout_digest: layout.digest,
+                        terms: vec![PackedLinearTerm::new(
+                            AkitaField::one(),
+                            PackedFamilyId::IncSign.physical_ref(),
+                            0,
+                            1,
+                        )
+                        .with_row_point(row_point.clone())],
+                    },
+                    scale: f(5),
+                },
+                BatchOpeningClaim {
+                    id: 1usize,
+                    relation: 1usize,
+                    commitment: commitment.clone(),
+                    claim: claim_1,
+                    view: PhysicalView::PackedLinear {
+                        layout_digest: layout.digest,
+                        terms: vec![PackedLinearTerm::new(
+                            f(7),
+                            PackedFamilyId::IncSign.physical_ref(),
+                            0,
+                            0,
+                        )
+                        .with_row_point(row_point.clone())],
+                    },
+                    scale: f(11),
+                },
+            ],
+        };
+
+        let mut prover_transcript =
+            jolt_transcript::Blake2bTranscript::new(b"jolt-akita-packed-source");
+        let proof = AkitaPackedScheme::prove_packed_source_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &source,
+            hint,
+        )
+        .expect("packed source proof should prove");
+        assert!(
+            proof.reduction.is_some(),
+            "packed statement should produce a packed reduction"
+        );
+
+        let mut verifier_transcript =
+            jolt_transcript::Blake2bTranscript::new(b"jolt-akita-packed-source");
+        let result = AkitaPackedScheme::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("packed source proof should verify");
+        assert_eq!(result.joint_commitment, commitment);
+        assert_eq!(result.coefficients.len(), 2);
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+        let mut tampered_claim_statement = statement.clone();
+        tampered_claim_statement.claims[0].claim += AkitaField::one();
+        let mut tampered_transcript =
+            jolt_transcript::Blake2bTranscript::new(b"jolt-akita-packed-source");
+        let _ = AkitaPackedScheme::verify_batch(
+            &verifier_setup,
+            &mut tampered_transcript,
+            &tampered_claim_statement,
+            &proof,
+        )
+        .expect_err("tampered logical claim should reject");
+
+        let mut second_commitment_statement = statement;
+        second_commitment_statement.claims[1]
+            .commitment
+            .native
+            .push(0);
+        let mut second_commitment_transcript =
+            jolt_transcript::Blake2bTranscript::new(b"jolt-akita-packed-source");
+        let _ = AkitaPackedScheme::verify_batch(
+            &verifier_setup,
+            &mut second_commitment_transcript,
+            &second_commitment_statement,
+            &proof,
+        )
+        .expect_err("second packed witness commitment should reject");
+    }
+
+    #[test]
     fn packed_proof_field_decoding_requires_canonical_bytes() {
         let encoded = field_bytes(f(7));
         assert_eq!(
