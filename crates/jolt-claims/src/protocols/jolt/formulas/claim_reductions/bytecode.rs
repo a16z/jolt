@@ -253,6 +253,24 @@ impl BytecodeClaimReductionLayout {
         self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
     }
 
+    /// `ChunkOutputWeight(i)` values from the reduction's already-derived
+    /// cycle-phase opening point, rather than re-deriving it from the sumcheck
+    /// challenges. Lets the cycle-phase relation object's `resolve_public`
+    /// recover the weights from the opening point it produced in
+    /// `derive_opening_points`.
+    pub fn cycle_phase_final_output_weights_at_opening_point<F: Field>(
+        &self,
+        inputs: BytecodeOutputWeightInputs<'_, F>,
+        opening_point: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        let permuted = self
+            .precommitted
+            .cycle_phase_permuted_from_opening_point(opening_point)?;
+        let scale = self.eq_combined(&inputs, &permuted)?
+            * self.precommitted.cycle_phase_skip_scale::<F>();
+        self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
+    }
+
     /// `ChunkOutputWeight(i)` values when the reduction completes in the
     /// address phase.
     pub fn address_phase_final_output_weights<F: Field>(

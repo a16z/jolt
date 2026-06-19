@@ -97,6 +97,22 @@ impl ProgramImageClaimReductionLayout {
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
     }
 
+    /// `FinalScale` value from the reduction's already-derived cycle-phase
+    /// opening point, rather than re-deriving it from the sumcheck challenges.
+    /// Lets the cycle-phase relation object's `resolve_public` recover the scale
+    /// from the opening point it produced in `derive_opening_points`.
+    pub fn cycle_phase_scale_at_opening_point<F: Field>(
+        &self,
+        r_addr_rw: &[F],
+        opening_point: &[F],
+    ) -> Result<F, JoltFormulaPointError> {
+        let permuted = self
+            .precommitted
+            .cycle_phase_permuted_from_opening_point(opening_point)?;
+        let eq_eval = eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &permuted)?;
+        Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
+    }
+
     /// `FinalScale` value when the reduction completes in the address phase.
     pub fn address_phase_final_output_scale<F: Field>(
         &self,
