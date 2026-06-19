@@ -987,18 +987,12 @@ where
             let eta = eta.ok_or(VerifierError::MissingStageClaimChallenge {
                 id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
             })?;
-            let weights = bytecode_reduction_weights(
-                layout,
-                BytecodeReductionWeightInputs {
-                    eta,
-                    stage1_gammas: &stage1_gammas,
-                    stage2_gammas: &stage2_gammas,
-                    stage3_gammas: &stage3_gammas,
-                    stage4_gammas: &stage4_gammas,
-                    stage5_gammas: &stage5_gammas,
-                    register_read_write_point: register_points.register_read_write_address,
-                    register_val_evaluation_point: register_points.register_val_evaluation_address,
-                    bytecode_r_address: &bytecode_r_address,
+            // Same inputs as the bundle's `cycle_bytecode_reduction_weights`
+            // (both gated on `bytecode_reduction_layout` + `eta`), so reuse it
+            // rather than recomputing the fold.
+            let weights = cycle_bytecode_reduction_weights.clone().ok_or(
+                VerifierError::MissingStageClaimChallenge {
+                    id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
                 },
             )?;
             Some(verify_bytecode_cycle_phase(
