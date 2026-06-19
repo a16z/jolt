@@ -908,7 +908,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_program_view_uses_packed_witness_family() {
+    fn bound_precommitted_program_view_formula_validates_against_supplied_layout() {
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
             PackedFamilyId::ProgramImageInit,
             PackedFactDomain::ProgramImageWords { log_words: 2 },

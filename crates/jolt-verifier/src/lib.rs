@@ -2,6 +2,8 @@
 
 #[cfg(feature = "akita")]
 pub mod akita;
+#[cfg(feature = "akita")]
+mod akita_witness;
 pub mod compat;
 pub mod config;
 pub mod error;

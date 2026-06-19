@@ -133,6 +133,11 @@ jolt-akita must not understand:
   advice trust semantics
 ```
 
+Jolt-specific construction of packed sources, including trace rows, bytecode
+rows, program-image words, and advice bytes, lives in the verifier/protocol
+layer or prover-side PIOP code. `jolt-akita` only consumes the resulting
+generic PackedWitnessSource plus view formulas and layout metadata.
+
 Field mode:
 
 ```text

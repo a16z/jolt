@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
+    akita_witness::JoltPackedWitnessBuilder,
     config::{
         validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
         IncrementCommitmentMode, JoltProtocolConfig, LatticeConfig, PackedWitnessConfig, PcsFamily,
@@ -36,9 +37,8 @@ use crate::{
 use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
-    AkitaProverSetup, AkitaVerifierSetup, JoltPackedWitnessBuilder, PackedAdviceKind,
-    PackedFactDomain, PackedFamilyId, PackedViewFormula, PackedWitnessLayout, PackedWitnessSource,
-    SparsePackedWitness,
+    AkitaProverSetup, AkitaVerifierSetup, PackedAdviceKind, PackedFactDomain, PackedFamilyId,
+    PackedViewFormula, PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
 };
 use jolt_claims::protocols::jolt::{
     fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,

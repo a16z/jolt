@@ -9,7 +9,7 @@ use jolt_riscv::{
 };
 use thiserror::Error;
 
-use crate::{
+use jolt_akita::{
     AkitaField, PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId,
     PackedLayoutError, PackedWitnessLayout, SparsePackedWitness,
 };
@@ -628,7 +628,7 @@ mod tests {
     )]
 
     use super::*;
-    use crate::{PackedAlphabet, PackedFamilySpec, PackedWitnessSource};
+    use jolt_akita::{PackedAlphabet, PackedFamilySpec, PackedWitnessSource};
     use jolt_field::FixedByteSize;
     use jolt_riscv::{CapturedState, NormalizedOperands, StoreState};
 
