@@ -1,9 +1,7 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{self, BooleanityDimensions},
-        bytecode::{
-            self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafDimensions,
-        },
+        bytecode::{self, BytecodeReadRafDimensions},
         claim_reductions::{
             advice,
             bytecode::{self as bytecode_reduction, BytecodeLaneWeightInputs},
@@ -43,8 +41,8 @@ use super::{
     },
     bytecode_read_raf::{
         BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
-        BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCycleInputs,
-        BytecodeReadRafInputClaims,
+        BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCommitted,
+        BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
     },
     committed_reduction_cycle_phase::{
         AdviceCyclePhase, AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
@@ -971,56 +969,36 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let evaluate_bytecode_ra_claim = |id: &jolt_claims::protocols::jolt::JoltOpeningId| {
-        for (index, opening) in bytecode_output_openings.bytecode_ra.iter().enumerate() {
-            if *id == *opening {
-                return Ok(claims.bytecode_read_raf.bytecode_ra[index]);
-            }
-        }
-        Err(VerifierError::MissingOpeningClaim { id: *id })
-    };
     let bytecode_output = if committed_program {
-        let bytecode_public_values = bytecode::read_raf_committed_public_values::<PCS::Field>(
-            BytecodeReadRafCommittedEvaluationInputs {
-                r_address: &bytecode_r_address,
-                r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
-                    stage4_cycle,
-                    stage5_cycle,
-                ],
-                entry_bytecode_index,
-            },
-        );
         let stage_claims = claims.address_phase.bytecode_val_stages.as_ref().ok_or(
             VerifierError::MissingOpeningClaim {
                 id: bytecode_reduction::bytecode_val_stage_opening(0),
             },
         )?;
-        bytecode_claims.output.expression().try_evaluate(
-            |id| {
-                for (stage, stage_claim) in stage_claims.iter().enumerate() {
-                    if *id == bytecode_reduction::bytecode_val_stage_opening(stage) {
-                        return Ok(*stage_claim);
-                    }
-                }
-                evaluate_bytecode_ra_claim(id)
-            },
-            |id| match id {
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
-                    Ok(bytecode_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| match id {
-                JoltPublicId::BytecodeReadRaf(public_id) => bytecode_public_values
-                    .value(*public_id)
-                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
-                _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-            },
-        )?
+        let bytecode_relation =
+            BytecodeReadRafCommitted::new(BytecodeReadRafCommittedCycleInputs {
+                dimensions: formula_dimensions.bytecode_read_raf,
+                gamma: bytecode_gamma,
+                r_address: bytecode_r_address.clone(),
+                stage_cycle_points: [
+                    stage1_cycle.clone(),
+                    stage2_cycle.clone(),
+                    stage3_cycle.clone(),
+                    stage4_cycle.to_vec(),
+                    stage5_cycle.to_vec(),
+                ],
+                entry_bytecode_index,
+                committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+                val_stages: stage_claims.to_vec(),
+            });
+        let bytecode_inputs = BytecodeReadRafInputClaims::from_upstream(OpeningClaim {
+            point: Vec::new(),
+            value: claims.address_phase.bytecode_read_raf,
+        });
+        let bytecode_points =
+            bytecode_relation.derive_opening_points(bytecode_point, &bytecode_inputs)?;
+        let bytecode_outputs = zip_openings(&claims.bytecode_read_raf, &bytecode_points);
+        bytecode_relation.expected_output(&bytecode_inputs, &bytecode_outputs)?
     } else {
         let full_program = preprocessing.program.as_full().ok_or_else(|| {
             VerifierError::StageClaimPublicInputFailed {

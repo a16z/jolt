@@ -22,10 +22,15 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::{
     formulas::{
-        bytecode::{self, BytecodeReadRafDimensions, BytecodeReadRafEvaluationInputs},
+        bytecode::{
+            self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafDimensions,
+            BytecodeReadRafEvaluationInputs,
+        },
+        claim_reductions::bytecode::bytecode_val_stage_opening,
         dimensions::committed_address_chunks,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltRelationClaims, JoltRelationId,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationClaims,
+    JoltRelationId,
 };
 use jolt_field::Field;
 use jolt_riscv::JoltInstructionRow;
@@ -295,5 +300,141 @@ impl<F: Field> SumcheckInstance<F> for BytecodeReadRaf<'_, F> {
             bytecode_ra: &bytecode_ra,
             gamma: self.inputs.gamma,
         })
+    }
+}
+
+/// Construction inputs for the committed-program bytecode cycle relation.
+pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
+    pub dimensions: BytecodeReadRafDimensions,
+    pub gamma: F,
+    pub r_address: Vec<F>,
+    pub stage_cycle_points: [Vec<F>; 5],
+    pub entry_bytecode_index: usize,
+    pub committed_chunk_bits: usize,
+    /// The staged `BytecodeValStage` opening values from the address phase.
+    pub val_stages: Vec<F>,
+}
+
+/// The stage-6b bytecode read-RAF cycle phase, committed-program mode.
+///
+/// Mirrors [`BytecodeReadRaf`] but folds the staged `BytecodeValStage` openings
+/// into the output expression and draws its publics from a committed bytecode
+/// evaluation (`read_raf_committed_public_values`) rather than the full bytecode
+/// table. Like the full-mode relation it OVERRIDES
+/// [`SumcheckInstance::expected_output`]: the staged Val openings are inputs mixed
+/// into the output, and the committed public values are evaluated once.
+pub struct BytecodeReadRafCommitted<F: Field> {
+    claims: JoltRelationClaims<F>,
+    dimensions: BytecodeReadRafDimensions,
+    gamma: F,
+    r_address: Vec<F>,
+    stage_cycle_points: [Vec<F>; 5],
+    entry_bytecode_index: usize,
+    committed_chunk_bits: usize,
+    val_stages: Vec<F>,
+}
+
+impl<F: Field> BytecodeReadRafCommitted<F> {
+    pub fn new(inputs: BytecodeReadRafCommittedCycleInputs<F>) -> Self {
+        Self {
+            claims: bytecode::read_raf_cycle_phase_committed(inputs.dimensions),
+            dimensions: inputs.dimensions,
+            gamma: inputs.gamma,
+            r_address: inputs.r_address,
+            stage_cycle_points: inputs.stage_cycle_points,
+            entry_bytecode_index: inputs.entry_bytecode_index,
+            committed_chunk_bits: inputs.committed_chunk_bits,
+            val_stages: inputs.val_stages,
+        }
+    }
+
+    fn r_cycle<'p>(&self, opening_point: &'p [F]) -> Result<&'p [F], VerifierError> {
+        let log_t = self.dimensions.log_t();
+        opening_point
+            .get(opening_point.len() - log_t..)
+            .ok_or_else(|| public_input_failed("bytecode cycle opening point shorter than log_t"))
+    }
+}
+
+impl<F: Field> SumcheckInstance<F> for BytecodeReadRafCommitted<F> {
+    type Inputs<C> = BytecodeReadRafInputClaims<C>;
+    type Outputs<C> = BytecodeReadRafOutputClaims<C>;
+
+    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
+        &self.claims
+    }
+
+    fn derive_opening_points<C: GetPoint<F>>(
+        &self,
+        sumcheck_point: &[F],
+        _inputs: &BytecodeReadRafInputClaims<C>,
+    ) -> Result<BytecodeReadRafOutputClaims<Vec<F>>, VerifierError> {
+        let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let bytecode_ra = committed_address_chunks(&self.r_address, self.committed_chunk_bits)
+            .into_iter()
+            .map(|chunk| [chunk.as_slice(), r_cycle.as_slice()].concat())
+            .collect();
+        Ok(BytecodeReadRafOutputClaims { bytecode_ra })
+    }
+
+    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
+        match id {
+            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(self.gamma),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        }
+    }
+
+    fn expected_output<C: GetPoint<F>>(
+        &self,
+        _inputs: &BytecodeReadRafInputClaims<C>,
+        outputs: &BytecodeReadRafOutputClaims<OpeningClaim<F>>,
+    ) -> Result<F, VerifierError> {
+        let opening_point = outputs
+            .bytecode_ra
+            .first()
+            .map(GetPoint::point)
+            .ok_or_else(|| public_input_failed("bytecode cycle produced no openings"))?;
+        let r_cycle = self.r_cycle(opening_point)?;
+        let public_values = bytecode::read_raf_committed_public_values::<F>(
+            BytecodeReadRafCommittedEvaluationInputs {
+                r_address: &self.r_address,
+                r_cycle,
+                stage_cycle_points: [
+                    &self.stage_cycle_points[0],
+                    &self.stage_cycle_points[1],
+                    &self.stage_cycle_points[2],
+                    &self.stage_cycle_points[3],
+                    &self.stage_cycle_points[4],
+                ],
+                entry_bytecode_index: self.entry_bytecode_index,
+            },
+        );
+        let output_openings = bytecode::read_raf_output_openings(self.dimensions);
+        self.claims.output.expression().try_evaluate(
+            |id| {
+                for (stage, value) in self.val_stages.iter().enumerate() {
+                    if *id == bytecode_val_stage_opening(stage) {
+                        return Ok(*value);
+                    }
+                }
+                for (index, opening_id) in output_openings.bytecode_ra.iter().enumerate() {
+                    if *id == *opening_id {
+                        return outputs
+                            .bytecode_ra
+                            .get(index)
+                            .map(|claim| claim.value)
+                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+                    }
+                }
+                Err(VerifierError::MissingOpeningClaim { id: *id })
+            },
+            |id| self.resolve_challenge(id),
+            |id| match id {
+                JoltPublicId::BytecodeReadRaf(public_id) => public_values
+                    .value(*public_id)
+                    .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            },
+        )
     }
 }
