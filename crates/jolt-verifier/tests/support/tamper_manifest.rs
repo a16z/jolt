@@ -1373,19 +1373,19 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             },
         },
         stage4: stage4::inputs::Stage4Claims {
-            advice: stage4::inputs::RamValCheckAdviceOpeningClaims {
+            advice: stage4::RamValCheckAdviceClaims {
                 untrusted: Some(zero),
                 trusted: Some(zero),
             },
             program_image_contribution: None,
-            registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
+            registers_read_write: stage4::RegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
                 rs2_ra: zero,
                 rd_wa: zero,
                 rd_inc: zero,
             },
-            ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
+            ram_val_check: stage4::RamValCheckOutputClaims {
                 ram_ra: zero,
                 ram_inc: zero,
             },

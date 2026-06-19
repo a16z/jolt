@@ -1,12 +1,16 @@
 //! Typed inputs consumed by stage 4.
 
 use jolt_field::Field;
+use jolt_verifier_derive::OutputClaims;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::{
     stage2::{Stage2ClearOutput, Stage2Output, Stage2ZkOutput},
     stage3::{Stage3ClearOutput, Stage3Output, Stage3ZkOutput},
 };
+
+use super::ram_val_check::{RamValCheckAdviceClaims, RamValCheckOutputClaims};
+use super::registers_read_write_checking::RegistersReadWriteOutputClaims;
 
 #[derive(Clone, Copy)]
 pub enum Deps<'a, F: Field, C> {
@@ -38,37 +42,24 @@ pub fn deps<'a, F: Field, C>(
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct Stage4Claims<F: Field> {
-    pub advice: RamValCheckAdviceOpeningClaims<F>,
-    /// Staged `ProgramImageInitContributionRw` scalar; present only in
-    /// committed program mode.
-    pub program_image_contribution: Option<F>,
-    pub registers_read_write: RegistersReadWriteOutputOpeningClaims<F>,
-    pub ram_val_check: RamValCheckOutputOpeningClaims<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct RamValCheckAdviceOpeningClaims<F: Field> {
-    pub untrusted: Option<F>,
-    pub trusted: Option<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct RegistersReadWriteOutputOpeningClaims<F: Field> {
-    pub registers_val: F,
-    pub rs1_ra: F,
-    pub rs2_ra: F,
-    pub rd_wa: F,
-    pub rd_inc: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct RamValCheckOutputOpeningClaims<F: Field> {
-    pub ram_ra: F,
-    pub ram_inc: F,
+/// The stage 4 produced opening claims, declared in canonical (Fiat-Shamir)
+/// order: the `Val_init` advice openings, the committed program-image
+/// contribution, the register read-write openings, then the RAM value-check
+/// openings. The derived `OutputClaims` impl single-sources the transcript append
+/// order and the opening count/values from this declaration order, so they cannot
+/// drift from one another. Generic over the cell (`F` on the wire).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RamValCheck)]
+pub struct Stage4Claims<C> {
+    pub advice: RamValCheckAdviceClaims<C>,
+    /// Staged `ProgramImageInitContributionRw` scalar; present only in committed
+    /// program mode.
+    #[opening(ProgramImageInitContributionRw)]
+    pub program_image_contribution: Option<C>,
+    pub registers_read_write: RegistersReadWriteOutputClaims<C>,
+    pub ram_val_check: RamValCheckOutputClaims<C>,
 }

@@ -1,6 +1,9 @@
 //! Typed outputs produced by stage 4 verification.
 
-use jolt_claims::protocols::jolt::JoltAdviceKind;
+use jolt_claims::protocols::jolt::{
+    formulas::ram::{RamValCheckInit, RamValCheckInitContribution},
+    JoltAdviceKind,
+};
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -85,6 +88,27 @@ impl<F: Field> RamValCheckInitialEvaluation<F> {
     pub fn advice_opening_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
         self.advice_contribution(kind)
             .map(|contribution| contribution.opening_point.as_slice())
+    }
+
+    /// The formula-side init decomposition: the public initial-RAM evaluation plus
+    /// the present advice / program-image contributions (with negated selectors),
+    /// in the canonical order the BlindFold constraint also uses — program image
+    /// first, then advice in `advice_contributions` order. Shared by the verifier
+    /// and the prover when building the `RamValCheck` relation, so the
+    /// decomposition cannot drift between them.
+    pub fn decomposition(&self) -> RamValCheckInit<F> {
+        let mut contributions = Vec::new();
+        if self.program_image_contribution.is_some() {
+            contributions.push(RamValCheckInitContribution::program_image(-F::one()));
+        }
+        for contribution in &self.advice_contributions {
+            let neg_selector = -contribution.selector;
+            contributions.push(match contribution.kind {
+                JoltAdviceKind::Trusted => RamValCheckInitContribution::trusted(neg_selector),
+                JoltAdviceKind::Untrusted => RamValCheckInitContribution::untrusted(neg_selector),
+            });
+        }
+        RamValCheckInit::decomposed(self.public_eval, contributions)
     }
 }
 

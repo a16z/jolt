@@ -3,7 +3,8 @@ use jolt_backends::{
     SumcheckRamValCheckStateRequest, SumcheckRegistersReadWriteStateRequest,
 };
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::REGISTER_ADDRESS_BITS, JoltAdviceKind, JoltReadWriteConfig,
+    formulas::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
+    JoltAdviceKind, JoltReadWriteConfig,
 };
 #[cfg(feature = "zk")]
 use jolt_crypto::VectorCommitment;
@@ -11,20 +12,16 @@ use jolt_field::Field;
 use jolt_poly::{Point, UnivariatePoly};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
-use jolt_verifier::stages::stage4::inputs::{
-    RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
-    RegistersReadWriteOutputOpeningClaims, Stage4Claims,
-};
+use jolt_verifier::stages::relations::{OpeningClaim, OutputClaims, SumcheckInstance};
 use jolt_verifier::stages::stage4::outputs::{
     RamValCheckInitialEvaluation, Stage4ClearOutput, Stage4PublicOutput,
     VerifiedRamValCheckAdviceContribution, VerifiedStage4Batch, VerifiedStage4Sumcheck,
 };
 use jolt_verifier::stages::stage4::{
-    append_ram_val_check_gamma_domain_separator, stage4_expected_final_claim,
-    stage4_expected_output_claims, stage4_input_claim_values, stage4_input_claims,
-    stage4_opening_points, stage4_output_claim_values, Stage4ExpectedOutputClaims,
-    Stage4ExpectedOutputRequest, Stage4InputClaimRequest, Stage4InputClaims,
-    Stage4OpeningPointRequest, Stage4OpeningPoints,
+    append_ram_val_check_gamma_domain_separator, stage4_expected_final_claim, RamValCheck,
+    RamValCheckAdviceClaims, RamValCheckInputClaims, RamValCheckOutputClaims,
+    RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
+    Stage4Claims,
 };
 use jolt_verifier::stages::{stage2::Stage2ClearOutput, stage3::Stage3ClearOutput};
 use jolt_verifier::CheckedInputs;
@@ -84,6 +81,23 @@ impl<'a, F: Field, W> Stage4ProverInput<'a, F, W> {
             witness,
         }
     }
+}
+
+/// The two stage 4 batch input claims, in canonical batch order (registers
+/// read-write, then RAM value-check). Computed once via the shared relation
+/// objects and reused for the sumcheck setup and the verifier output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stage4InputClaims<F: Field> {
+    registers_read_write: F,
+    ram_val_check: F,
+}
+
+/// The two stage 4 batch expected output claims, evaluated via the relation
+/// objects' shared output algebra.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stage4ExpectedOutputClaims<F: Field> {
+    registers_read_write: F,
+    ram_val_check: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,7 +166,7 @@ where
 
 fn stage4_advice_claims_from_prefix<F: Field>(
     prefix: &Stage4RegularBatchPrefixOutput<F>,
-) -> Result<RamValCheckAdviceOpeningClaims<F>, ProverError> {
+) -> Result<RamValCheckAdviceClaims<F>, ProverError> {
     let mut untrusted = None;
     let mut trusted = None;
     for contribution in &prefix.ram_val_check_init.advice_contributions {
@@ -167,7 +181,7 @@ fn stage4_advice_claims_from_prefix<F: Field>(
             )));
         }
     }
-    Ok(RamValCheckAdviceOpeningClaims { untrusted, trusted })
+    Ok(RamValCheckAdviceClaims { untrusted, trusted })
 }
 
 /// Canonical Stage 4 prover entrypoint (transparent path).
@@ -348,13 +362,28 @@ where
     append_ram_val_check_gamma_domain_separator(transcript);
     let ram_val_check_gamma = transcript.challenge_scalar();
 
-    let input_claims = stage4_input_claims(Stage4InputClaimRequest {
-        stage2,
-        stage3,
-        ram_val_check_initial_eval: ram_val_check_init.full_eval,
-        registers_gamma,
+    let register_dimensions = config
+        .rw_config
+        .register_dimensions(config.log_t, REGISTER_ADDRESS_BITS);
+    let verifier_init = stage4_ram_val_check_init_to_verifier(&ram_val_check_init);
+    let registers_relation = RegistersReadWriteChecking::new(register_dimensions, registers_gamma);
+    let ram_relation = RamValCheck::new(
+        TraceDimensions::new(config.log_t),
+        config.log_k,
         ram_val_check_gamma,
-    });
+        verifier_init.decomposition(),
+    );
+    let input_claims = Stage4InputClaims {
+        registers_read_write: registers_relation
+            .input_claim(&RegistersReadWriteInputClaims::from_upstream(stage3))
+            .map_err(|error| invalid_sumcheck_output(error.to_string()))?,
+        ram_val_check: ram_relation
+            .input_claim(&RamValCheckInputClaims::from_upstream(
+                stage2,
+                &verifier_init,
+            ))
+            .map_err(|error| invalid_sumcheck_output(error.to_string()))?,
+    };
 
     Ok(Stage4RegularBatchPrefixOutput {
         input_claims,
@@ -364,42 +393,13 @@ where
     })
 }
 
-struct Stage4ExpectedOutputInputs<'a, F: Field> {
-    prefix: &'a Stage4RegularBatchPrefixOutput<F>,
-    fixed_register_cycle_point: &'a [F],
-    registers_read_write_opening_point: &'a [F],
-    fixed_ram_cycle_point: &'a [F],
-    ram_val_check_cycle_point: &'a [F],
-    output_openings: &'a Stage4Claims<F>,
-}
-
-fn stage4_expected_outputs<F: Field>(
-    input: Stage4ExpectedOutputInputs<'_, F>,
-) -> Result<Stage4ExpectedOutputClaims<F>, ProverError> {
-    stage4_expected_output_claims(Stage4ExpectedOutputRequest {
-        fixed_register_cycle_point: input.fixed_register_cycle_point,
-        registers_read_write_opening_point: input.registers_read_write_opening_point,
-        fixed_ram_cycle_point: input.fixed_ram_cycle_point,
-        ram_val_check_cycle_point: input.ram_val_check_cycle_point,
-        registers_gamma: input.prefix.registers_gamma,
-        ram_val_check_gamma: input.prefix.ram_val_check_gamma,
-        claims: input.output_openings,
-    })
-    .map_err(|error| invalid_sumcheck_output(error.to_string()))
-}
-
 fn stage4_expected_batch_final_claim<F: Field>(
     coefficients: &[F],
-    expected_outputs: &Stage4ExpectedOutputClaims<F>,
+    registers_read_write: F,
+    ram_val_check: F,
 ) -> Result<F, ProverError> {
-    stage4_expected_final_claim(coefficients, expected_outputs)
+    stage4_expected_final_claim(coefficients, registers_read_write, ram_val_check)
         .map_err(|error| invalid_sumcheck_output(error.to_string()))
-}
-
-fn stage4_batch_opening_points<F: Field>(
-    request: Stage4OpeningPointRequest<'_, F>,
-) -> Result<Stage4OpeningPoints<F>, ProverError> {
-    stage4_opening_points(request).map_err(|error| invalid_sumcheck_output(error.to_string()))
 }
 
 fn prove_stage4_transparent_sumchecks<F, W, B, T, C>(
@@ -521,8 +521,13 @@ where
         backend.materialize_sumcheck_registers_read_write_state(&register_request)?;
     let mut ram_state = backend.materialize_sumcheck_ram_val_check_state(&ram_request)?;
 
-    proof_recorder
-        .absorb_input_claims(&stage4_input_claim_values(&prefix.input_claims), transcript);
+    proof_recorder.absorb_input_claims(
+        &[
+            prefix.input_claims.registers_read_write,
+            prefix.input_claims.ram_val_check,
+        ],
+        transcript,
+    );
     let batching_coefficients = [transcript.challenge_scalar(), transcript.challenge_scalar()];
     let max_num_rounds = config.log_t + REGISTER_ADDRESS_BITS;
     let ram_offset = REGISTER_ADDRESS_BITS;
@@ -568,49 +573,89 @@ where
         }
     }
 
-    let opening_points = stage4_batch_opening_points(Stage4OpeningPointRequest {
-        register_dimensions,
-        registers_read_write_sumcheck_point: &challenges,
-        ram_val_check_sumcheck_point: &challenges[ram_offset..],
-        fixed_ram_address_point,
-        fixed_ram_cycle_point,
-    })?;
+    let verifier_init = stage4_ram_val_check_init_to_verifier(&prefix.ram_val_check_init);
+    let registers_relation =
+        RegistersReadWriteChecking::new(register_dimensions, prefix.registers_gamma);
+    let ram_relation = RamValCheck::new(
+        TraceDimensions::new(config.log_t),
+        config.log_k,
+        prefix.ram_val_check_gamma,
+        verifier_init.decomposition(),
+    );
+    let registers_inputs = RegistersReadWriteInputClaims::from_upstream(stage3);
+    let ram_inputs = RamValCheckInputClaims::from_upstream(stage2, &verifier_init);
+
+    let registers_read_write_opening_point = registers_relation
+        .derive_opening_points(&challenges, &registers_inputs)
+        .map_err(|error| invalid_sumcheck_output(error.to_string()))?
+        .registers_val;
+    let ram_val_check_opening_point = ram_relation
+        .derive_opening_points(&challenges[ram_offset..], &ram_inputs)
+        .map_err(|error| invalid_sumcheck_output(error.to_string()))?
+        .ram_ra;
+
     let registers_output = backend.output_sumcheck_registers_read_write_state(
         &register_state,
-        &opening_points.registers_read_write_opening_point,
+        &registers_read_write_opening_point,
     )?;
     let ram_output = backend.output_sumcheck_ram_val_check_state(&ram_state)?;
     let output_openings = Stage4Claims {
         advice: stage4_advice_claims_from_prefix(prefix)?,
         program_image_contribution: None,
-        registers_read_write: RegistersReadWriteOutputOpeningClaims {
+        registers_read_write: RegistersReadWriteOutputClaims {
             registers_val: registers_output.registers_val,
             rs1_ra: registers_output.rs1_ra,
             rs2_ra: registers_output.rs2_ra,
             rd_wa: registers_output.rd_wa,
             rd_inc: registers_output.rd_inc,
         },
-        ram_val_check: RamValCheckOutputOpeningClaims {
+        ram_val_check: RamValCheckOutputClaims {
             ram_ra: ram_output.ram_ra,
             ram_inc: ram_output.ram_inc,
         },
     };
-    let expected_outputs = stage4_expected_outputs(Stage4ExpectedOutputInputs {
-        prefix,
-        fixed_register_cycle_point: &fixed_register_cycle_point,
-        registers_read_write_opening_point: &opening_points.registers_read_write_opening_point,
-        fixed_ram_cycle_point,
-        ram_val_check_cycle_point: &opening_points.ram_val_check_cycle_point,
-        output_openings: &output_openings,
-    })?;
-    let expected_final_claim =
-        stage4_expected_batch_final_claim(&batching_coefficients, &expected_outputs)?;
+
+    // Locate each produced opening (value + its derived point) for the shared
+    // output algebra. All register openings share one opening point, as do the RAM
+    // openings.
+    let located_register = |value: F| OpeningClaim {
+        point: registers_read_write_opening_point.clone(),
+        value,
+    };
+    let located_ram = |value: F| OpeningClaim {
+        point: ram_val_check_opening_point.clone(),
+        value,
+    };
+    let registers_located = RegistersReadWriteOutputClaims {
+        registers_val: located_register(output_openings.registers_read_write.registers_val),
+        rs1_ra: located_register(output_openings.registers_read_write.rs1_ra),
+        rs2_ra: located_register(output_openings.registers_read_write.rs2_ra),
+        rd_wa: located_register(output_openings.registers_read_write.rd_wa),
+        rd_inc: located_register(output_openings.registers_read_write.rd_inc),
+    };
+    let ram_located = RamValCheckOutputClaims {
+        ram_ra: located_ram(output_openings.ram_val_check.ram_ra),
+        ram_inc: located_ram(output_openings.ram_val_check.ram_inc),
+    };
+    let expected_outputs = Stage4ExpectedOutputClaims {
+        registers_read_write: registers_relation
+            .expected_output(&registers_inputs, &registers_located)
+            .map_err(|error| invalid_sumcheck_output(error.to_string()))?,
+        ram_val_check: ram_relation
+            .expected_output(&ram_inputs, &ram_located)
+            .map_err(|error| invalid_sumcheck_output(error.to_string()))?,
+    };
+    let expected_final_claim = stage4_expected_batch_final_claim(
+        &batching_coefficients,
+        expected_outputs.registers_read_write,
+        expected_outputs.ram_val_check,
+    )?;
     if running_claim != expected_final_claim {
         return Err(invalid_sumcheck_output(
             "Stage 4 batch final claim did not match output openings",
         ));
     }
-    let output_claim_values = stage4_output_claim_values(&output_openings);
+    let output_claim_values = output_openings.opening_values();
     let recorded = proof_recorder.finish(&output_claim_values, transcript)?;
 
     Ok(Stage4RegularBatchProofOutput {
@@ -623,13 +668,13 @@ where
         output_openings,
         expected_outputs,
         batching_coefficients: batching_coefficients.to_vec(),
-        sumcheck_point: challenges,
+        sumcheck_point: challenges.clone(),
         sumcheck_final_claim: running_claim,
         expected_final_claim,
-        registers_read_write_sumcheck_point: opening_points.registers_read_write_sumcheck_point,
-        registers_read_write_opening_point: opening_points.registers_read_write_opening_point,
-        ram_val_check_sumcheck_point: opening_points.ram_val_check_sumcheck_point,
-        ram_val_check_opening_point: opening_points.ram_val_check_opening_point,
+        registers_read_write_sumcheck_point: challenges.clone(),
+        registers_read_write_opening_point,
+        ram_val_check_sumcheck_point: challenges[ram_offset..].to_vec(),
+        ram_val_check_opening_point,
     })
 }
 

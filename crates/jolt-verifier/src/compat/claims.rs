@@ -17,9 +17,9 @@ use crate::{
             InstructionInputOutputOpeningClaims, RegistersClaimReductionOutputOpeningClaims,
             SpartanShiftOutputOpeningClaims, Stage3Claims,
         },
-        stage4::inputs::{
-            RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
-            RegistersReadWriteOutputOpeningClaims, Stage4Claims,
+        stage4::{
+            RamValCheckAdviceClaims, RamValCheckOutputClaims, RegistersReadWriteOutputClaims,
+            Stage4Claims,
         },
         stage5::{
             InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
@@ -254,19 +254,19 @@ fn stage4_claims_from_native<F: Field>(
     let [ram_ra, ram_inc] = ram::val_check_output_openings();
 
     Ok(Stage4Claims {
-        advice: RamValCheckAdviceOpeningClaims {
+        advice: RamValCheckAdviceClaims {
             untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
             trusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
         },
         program_image_contribution: claims.get(program_image::ram_val_check_contribution_opening()),
-        registers_read_write: RegistersReadWriteOutputOpeningClaims {
+        registers_read_write: RegistersReadWriteOutputClaims {
             registers_val: claims.require(registers_val)?,
             rs1_ra: claims.require(rs1_ra)?,
             rs2_ra: claims.require(rs2_ra)?,
             rd_wa: claims.require(rd_wa)?,
             rd_inc: claims.require(rd_inc)?,
         },
-        ram_val_check: RamValCheckOutputOpeningClaims {
+        ram_val_check: RamValCheckOutputClaims {
             ram_ra: claims.require(ram_ra)?,
             ram_inc: claims.require(ram_inc)?,
         },
@@ -692,19 +692,19 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             },
         },
         stage4: Stage4Claims {
-            advice: RamValCheckAdviceOpeningClaims {
+            advice: RamValCheckAdviceClaims {
                 untrusted: None,
                 trusted: None,
             },
             program_image_contribution: None,
-            registers_read_write: RegistersReadWriteOutputOpeningClaims {
+            registers_read_write: RegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
                 rs2_ra: zero,
                 rd_wa: zero,
                 rd_inc: zero,
             },
-            ram_val_check: RamValCheckOutputOpeningClaims {
+            ram_val_check: RamValCheckOutputClaims {
                 ram_ra: zero,
                 ram_inc: zero,
             },

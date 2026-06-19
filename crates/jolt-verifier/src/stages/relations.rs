@@ -392,6 +392,49 @@ mod tests {
         assert_append_matches_values(&claims);
     }
 
+    #[derive(OutputClaims)]
+    #[relation(RamValCheck)]
+    struct OptionalOutput<C> {
+        #[opening(untrusted_advice)]
+        untrusted: Option<C>,
+        #[opening(committed = RamInc)]
+        ram_inc: C,
+    }
+
+    #[test]
+    fn output_leaf_handles_optional_fields() {
+        let relation = JoltRelationId::RamValCheck;
+        let present = OptionalOutput {
+            untrusted: Some(fr(7)),
+            ram_inc: fr(8),
+        };
+        assert_eq!(present.opening_count(), 2);
+        assert_eq!(present.opening_values(), vec![fr(7), fr(8)]);
+        assert_eq!(
+            present.resolve_output(&JoltOpeningId::untrusted_advice(relation)),
+            Some(fr(7)),
+        );
+        assert_eq!(
+            present.resolve_output(&committed(JoltCommittedPolynomial::RamInc, relation)),
+            Some(fr(8)),
+        );
+        assert_append_matches_values(&present);
+
+        // An absent optional opening drops out of the count, the value stream,
+        // the transcript appends, and id resolution.
+        let absent = OptionalOutput {
+            untrusted: None,
+            ram_inc: fr(8),
+        };
+        assert_eq!(absent.opening_count(), 1);
+        assert_eq!(absent.opening_values(), vec![fr(8)]);
+        assert_eq!(
+            absent.resolve_output(&JoltOpeningId::untrusted_advice(relation)),
+            None,
+        );
+        assert_append_matches_values(&absent);
+    }
+
     #[derive(InputClaims)]
     struct ReductionInputs<C> {
         #[opening(RamRa, from = RamRafEvaluation)]

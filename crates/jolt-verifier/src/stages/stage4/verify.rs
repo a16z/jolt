@@ -1,9 +1,9 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
         claim_reductions::{program_image, registers as registers_claim_reduction},
-        dimensions::{ReadWriteDimensions, TraceDimensions, REGISTER_ADDRESS_BITS},
+        dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram,
-        ram::{RamValCheckInit, RamValCheckInitContribution as FormulaInitContribution},
+        ram::RamValCheckInit,
         registers,
     },
     JoltAdviceKind, JoltRelationId, JoltSumcheckDomain,
@@ -11,11 +11,10 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb, try_eq_mle, LtPolynomial};
+use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb};
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::{LabelWithCount, Transcript};
-use num_traits::One;
 
 use super::{
     inputs::{Deps, Stage4Claims},
@@ -24,142 +23,31 @@ use super::{
         Stage4ZkOutput, VerifiedRamValCheckAdviceContribution,
         VerifiedRamValCheckProgramImageContribution, VerifiedStage4Batch, VerifiedStage4Sumcheck,
     },
+    ram_val_check::{RamValCheck, RamValCheckInputClaims, RamValCheckOutputClaims},
+    registers_read_write_checking::{
+        RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
+    },
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        stage2::outputs::Stage2ClearOutput, stage3::outputs::Stage3ClearOutput, zk::committed,
+        relations::{OpeningClaim, OutputClaims, SumcheckInstance},
+        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4InputClaims<F: Field> {
-    pub registers_read_write: F,
-    pub ram_val_check: F,
-}
-
-pub struct Stage4InputClaimRequest<'a, F: Field> {
-    pub stage2: &'a Stage2ClearOutput<F>,
-    pub stage3: &'a Stage3ClearOutput<F>,
-    pub ram_val_check_initial_eval: F,
-    pub registers_gamma: F,
-    pub ram_val_check_gamma: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4ExpectedOutputClaims<F: Field> {
-    pub registers_read_write: F,
-    pub ram_val_check: F,
-}
-
-pub struct Stage4ExpectedOutputRequest<'a, F: Field> {
-    pub fixed_register_cycle_point: &'a [F],
-    pub registers_read_write_opening_point: &'a [F],
-    pub fixed_ram_cycle_point: &'a [F],
-    pub ram_val_check_cycle_point: &'a [F],
-    pub registers_gamma: F,
-    pub ram_val_check_gamma: F,
-    pub claims: &'a Stage4Claims<F>,
-}
-
-pub struct Stage4OpeningPointRequest<'a, F: Field> {
-    pub register_dimensions: ReadWriteDimensions,
-    pub registers_read_write_sumcheck_point: &'a [F],
-    pub ram_val_check_sumcheck_point: &'a [F],
-    pub fixed_ram_address_point: &'a [F],
-    pub fixed_ram_cycle_point: &'a [F],
-}
-
-pub struct Stage4OpeningPoints<F: Field> {
-    pub registers_read_write_sumcheck_point: Vec<F>,
-    pub registers_read_write_opening_point: Vec<F>,
-    pub ram_val_check_sumcheck_point: Vec<F>,
-    pub ram_val_check_cycle_point: Vec<F>,
-    pub ram_val_check_opening_point: Vec<F>,
-}
-
 const STAGE4_BATCH_BASE_OUTPUT_CLAIMS: usize = 7;
 
-pub fn stage4_input_claims<F: Field>(
-    request: Stage4InputClaimRequest<'_, F>,
-) -> Stage4InputClaims<F> {
-    let registers_gamma2 = request.registers_gamma * request.registers_gamma;
-
-    Stage4InputClaims {
-        registers_read_write: request
-            .stage3
-            .output_claims
-            .registers_claim_reduction
-            .rd_write_value
-            + request.registers_gamma
-                * request
-                    .stage3
-                    .output_claims
-                    .registers_claim_reduction
-                    .rs1_value
-            + registers_gamma2
-                * request
-                    .stage3
-                    .output_claims
-                    .registers_claim_reduction
-                    .rs2_value,
-        ram_val_check: request.stage2.output_claims.ram_read_write.val
-            + request.ram_val_check_gamma * request.stage2.output_claims.ram_output_check
-            - (F::one() + request.ram_val_check_gamma) * request.ram_val_check_initial_eval,
-    }
-}
-
-pub fn stage4_expected_output_claims<F: Field>(
-    request: Stage4ExpectedOutputRequest<'_, F>,
-) -> Result<Stage4ExpectedOutputClaims<F>, VerifierError> {
-    if request.registers_read_write_opening_point.len() < REGISTER_ADDRESS_BITS {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RegistersReadWriteChecking,
-            reason: format!(
-                "register read-write opening point has {} variables, expected at least {REGISTER_ADDRESS_BITS}",
-                request.registers_read_write_opening_point.len()
-            ),
-        });
-    }
-    let (_, registers_cycle_point) = request
-        .registers_read_write_opening_point
-        .split_at(REGISTER_ADDRESS_BITS);
-    let eq_cycle =
-        try_eq_mle(request.fixed_register_cycle_point, registers_cycle_point).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RegistersReadWriteChecking,
-                reason: error.to_string(),
-            }
-        })?;
-    let registers = &request.claims.registers_read_write;
-    let registers_read_write = eq_cycle
-        * (registers.rd_wa * (registers.rd_inc + registers.registers_val)
-            + request.registers_gamma * registers.rs1_ra * registers.registers_val
-            + request.registers_gamma
-                * request.registers_gamma
-                * registers.rs2_ra
-                * registers.registers_val);
-
-    let ram_lt = LtPolynomial::evaluate(
-        request.ram_val_check_cycle_point,
-        request.fixed_ram_cycle_point,
-    );
-    let ram_val_check = (ram_lt + request.ram_val_check_gamma)
-        * request.claims.ram_val_check.ram_inc
-        * request.claims.ram_val_check.ram_ra;
-
-    Ok(Stage4ExpectedOutputClaims {
-        registers_read_write,
-        ram_val_check,
-    })
-}
-
+/// Combine the two stage 4 expected output claims with the batch's coefficients,
+/// in canonical batch order (registers read-write, then RAM value-check). Shared
+/// by the verifier and the prover so the combination cannot drift.
 pub fn stage4_expected_final_claim<F: Field>(
     coefficients: &[F],
-    expected_outputs: &Stage4ExpectedOutputClaims<F>,
+    registers_read_write: F,
+    ram_val_check: F,
 ) -> Result<F, VerifierError> {
     let [registers_coefficient, ram_val_coefficient] = coefficients else {
         return Err(VerifierError::StageClaimSumcheckFailed {
@@ -167,92 +55,7 @@ pub fn stage4_expected_final_claim<F: Field>(
             reason: "Stage 4 batch verifier returned the wrong number of coefficients".to_string(),
         });
     };
-    Ok(
-        *registers_coefficient * expected_outputs.registers_read_write
-            + *ram_val_coefficient * expected_outputs.ram_val_check,
-    )
-}
-
-pub fn stage4_opening_points<F: Field>(
-    request: Stage4OpeningPointRequest<'_, F>,
-) -> Result<Stage4OpeningPoints<F>, VerifierError> {
-    let registers_read_write_opening = request
-        .register_dimensions
-        .read_write_opening_point(request.registers_read_write_sumcheck_point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RegistersReadWriteChecking,
-            reason: error.to_string(),
-        })?;
-
-    let ram_val_check_cycle_point = request
-        .ram_val_check_sumcheck_point
-        .iter()
-        .rev()
-        .copied()
-        .collect::<Vec<_>>();
-    if ram_val_check_cycle_point.len() != request.fixed_ram_cycle_point.len() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: format!(
-                "RAM value cycle point length mismatch: expected {}, got {}",
-                request.fixed_ram_cycle_point.len(),
-                ram_val_check_cycle_point.len()
-            ),
-        });
-    }
-    let ram_val_check_opening_point = [
-        request.fixed_ram_address_point,
-        ram_val_check_cycle_point.as_slice(),
-    ]
-    .concat();
-
-    Ok(Stage4OpeningPoints {
-        registers_read_write_sumcheck_point: request.registers_read_write_sumcheck_point.to_vec(),
-        registers_read_write_opening_point: registers_read_write_opening.opening_point,
-        ram_val_check_sumcheck_point: request.ram_val_check_sumcheck_point.to_vec(),
-        ram_val_check_cycle_point,
-        ram_val_check_opening_point,
-    })
-}
-
-/// Canonical order in which Stage 4 batched-sumcheck input claims are absorbed
-/// into the transcript. The prover's `absorb_input_claims` and the verifier's
-/// batched-sumcheck claim list both derive their order from this single
-/// function, so the Fiat-Shamir batching coefficients cannot drift between
-/// prover and verifier. Mirrors [`stage4_output_claim_values`].
-pub fn stage4_input_claim_values<F: Field>(claims: &Stage4InputClaims<F>) -> Vec<F> {
-    let mut values = vec![claims.registers_read_write];
-    values.push(claims.ram_val_check);
-    values
-}
-
-/// Canonical order in which Stage 4 output opening claims are absorbed into the
-/// transcript. Single-sources [`append_stage4_opening_claims`] so the prover's
-/// `output_claim_values` and the verifier's transcript appends cannot drift.
-pub fn stage4_output_claim_values<F: Field>(claims: &Stage4Claims<F>) -> Vec<F> {
-    let mut values = Vec::with_capacity(
-        STAGE4_BATCH_BASE_OUTPUT_CLAIMS
-            + usize::from(claims.advice.untrusted.is_some())
-            + usize::from(claims.advice.trusted.is_some())
-            + usize::from(claims.program_image_contribution.is_some()),
-    );
-    if let Some(opening_claim) = claims.advice.untrusted {
-        values.push(opening_claim);
-    }
-    if let Some(opening_claim) = claims.advice.trusted {
-        values.push(opening_claim);
-    }
-    if let Some(opening_claim) = claims.program_image_contribution {
-        values.push(opening_claim);
-    }
-    values.push(claims.registers_read_write.registers_val);
-    values.push(claims.registers_read_write.rs1_ra);
-    values.push(claims.registers_read_write.rs2_ra);
-    values.push(claims.registers_read_write.rd_wa);
-    values.push(claims.registers_read_write.rd_inc);
-    values.push(claims.ram_val_check.ram_ra);
-    values.push(claims.ram_val_check.ram_inc);
-    values
+    Ok(*registers_coefficient * registers_read_write + *ram_val_coefficient * ram_val_check)
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -274,13 +77,14 @@ where
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
 
-    let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
+    let registers_spec = registers::read_write_checking_sumcheck(register_dimensions);
     check_boolean_hypercube(
-        registers_claims.id,
-        registers_claims.sumcheck.degree,
-        &registers_claims.sumcheck.domain,
+        JoltRelationId::RegistersReadWriteChecking,
+        registers_spec.degree,
+        &registers_spec.domain,
     )?;
     let registers_gamma = transcript.challenge_scalar();
+    let registers_relation = RegistersReadWriteChecking::new(register_dimensions, registers_gamma);
 
     let (ram_read_write_opening_point, ram_output_check_opening_point) = match deps {
         Deps::Clear { stage2, .. } => (
@@ -302,7 +106,7 @@ where
             ),
         });
     }
-    let (r_address, r_cycle) = ram_read_write_opening_point.split_at(log_k);
+    let (r_address, _r_cycle) = ram_read_write_opening_point.split_at(log_k);
     if ram_output_check_opening_point != r_address {
         let [ram_val, ram_val_final] = ram::val_check_input_openings();
         return Err(VerifierError::StageClaimOpeningMismatch {
@@ -318,11 +122,11 @@ where
     append_ram_val_check_gamma_domain_separator(transcript);
     let ram_val_check_gamma = transcript.challenge_scalar();
 
-    let ram_val_check_sumcheck = ram::val_check_sumcheck(trace_dimensions);
+    let ram_val_check_spec = ram::val_check_sumcheck(trace_dimensions);
     check_boolean_hypercube(
         JoltRelationId::RamValCheck,
-        ram_val_check_sumcheck.degree,
-        &ram_val_check_sumcheck.domain,
+        ram_val_check_spec.degree,
+        &ram_val_check_spec.domain,
     )?;
 
     let public =
@@ -337,14 +141,10 @@ where
         let Deps::Zk { .. } = deps else {
             return Err(VerifierError::ExpectedCommittedProof { field: "stage3" });
         };
-        let mut statements = vec![SumcheckStatement::new(
-            registers_claims.sumcheck.rounds,
-            registers_claims.sumcheck.degree,
-        )];
-        statements.push(SumcheckStatement::new(
-            ram_val_check_sumcheck.rounds,
-            ram_val_check_sumcheck.degree,
-        ));
+        let statements = [
+            SumcheckStatement::new(registers_spec.rounds, registers_spec.degree),
+            SumcheckStatement::new(ram_val_check_spec.rounds, ram_val_check_spec.degree),
+        ];
         let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
             &statements,
             &proof.stages.stage4_sumcheck_proof,
@@ -364,24 +164,33 @@ where
             })?;
 
         let registers_point = consistency
-            .try_instance_point(registers_claims.sumcheck.rounds)
+            .try_instance_point(registers_spec.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RegistersReadWriteChecking,
                 reason: error.to_string(),
             })?;
         let ram_val_point = consistency
-            .try_instance_point(ram_val_check_sumcheck.rounds)
+            .try_instance_point(ram_val_check_spec.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RamValCheck,
                 reason: error.to_string(),
             })?;
-        let opening_points = stage4_opening_points(Stage4OpeningPointRequest {
-            register_dimensions,
-            registers_read_write_sumcheck_point: &registers_point,
-            ram_val_check_sumcheck_point: &ram_val_point,
-            fixed_ram_address_point: r_address,
-            fixed_ram_cycle_point: r_cycle,
-        })?;
+
+        let registers_opening_point = registers_relation
+            .derive_opening_points(&registers_point, &registers_zk_inputs())?
+            .registers_val;
+        // The init decomposition is value-data unused by `derive_opening_points`
+        // (which is value-independent), so the ZK relation carries only the public
+        // initial-RAM evaluation; the committed decomposition lives in BlindFold.
+        let ram_relation = RamValCheck::new(
+            trace_dimensions,
+            log_k,
+            ram_val_check_gamma,
+            RamValCheckInit::full(ram_val_check_public_eval),
+        );
+        let ram_val_check_opening_point = ram_relation
+            .derive_opening_points(&ram_val_point, &ram_zk_inputs(ram_read_write_opening_point))?
+            .ram_ra;
 
         return Ok(Stage4Output::Zk(Stage4ZkOutput {
             public: public(
@@ -391,8 +200,8 @@ where
             batch_consistency: consistency,
             batch_output_claims,
             ram_val_check_public_eval,
-            registers_read_write_opening_point: opening_points.registers_read_write_opening_point,
-            ram_val_check_opening_point: opening_points.ram_val_check_opening_point,
+            registers_read_write_opening_point: registers_opening_point,
+            ram_val_check_opening_point,
         }));
     }
 
@@ -408,23 +217,14 @@ where
         ram_val_check_public_eval,
     )?;
 
-    // WARNING: contribution order and selectors must stay in lockstep with
-    // `ram_val_check_init` in zk/blindfold/mod.rs — the BlindFold constraint
-    // is built from the same decomposition.
-    let mut init_contributions = Vec::new();
-    if ram_val_check_init.program_image_contribution.is_some() {
-        init_contributions.push(FormulaInitContribution::program_image(-PCS::Field::one()));
-    }
-    for contribution in &ram_val_check_init.advice_contributions {
-        let neg_selector = -contribution.selector;
-        init_contributions.push(match contribution.kind {
-            JoltAdviceKind::Trusted => FormulaInitContribution::trusted(neg_selector),
-            JoltAdviceKind::Untrusted => FormulaInitContribution::untrusted(neg_selector),
-        });
-    }
-    let ram_val_check_claims = ram::val_check::<PCS::Field>(
+    // The init decomposition (public eval + advice/program-image contributions) is
+    // shared with the prover and the BlindFold constraint via `decomposition()`, so
+    // the contribution order and selectors cannot drift between them.
+    let ram_relation = RamValCheck::new(
         trace_dimensions,
-        RamValCheckInit::decomposed(ram_val_check_init.public_eval, init_contributions),
+        log_k,
+        ram_val_check_gamma,
+        ram_val_check_init.decomposition(),
     );
 
     let [_right_operand_is_rs2, rs2_value_instruction, _right_operand_is_imm, _imm, _left_operand_is_rs1, rs1_value_instruction, _left_operand_is_pc, _unexpanded_pc] =
@@ -450,27 +250,23 @@ where
         });
     }
 
-    let input_claims = stage4_input_claims(Stage4InputClaimRequest {
-        stage2,
-        stage3,
-        ram_val_check_initial_eval: ram_val_check_init.full_eval,
-        registers_gamma,
-        ram_val_check_gamma,
-    });
+    let registers_inputs = RegistersReadWriteInputClaims::from_upstream(stage3);
+    let ram_inputs = RamValCheckInputClaims::from_upstream(stage2, &ram_val_check_init);
+    let registers_input_claim = registers_relation.input_claim(&registers_inputs)?;
+    let ram_input_claim = ram_relation.input_claim(&ram_inputs)?;
 
-    let mut sumcheck_dimensions = vec![(
-        registers_claims.sumcheck.rounds,
-        registers_claims.sumcheck.degree,
-    )];
-    sumcheck_dimensions.push((
-        ram_val_check_claims.sumcheck.rounds,
-        ram_val_check_claims.sumcheck.degree,
-    ));
-    let sumcheck_claims: Vec<_> = sumcheck_dimensions
-        .into_iter()
-        .zip(stage4_input_claim_values(&input_claims))
-        .map(|((rounds, degree), input_claim)| SumcheckClaim::new(rounds, degree, input_claim))
-        .collect();
+    let sumcheck_claims = [
+        SumcheckClaim::new(
+            registers_spec.rounds,
+            registers_spec.degree,
+            registers_input_claim,
+        ),
+        SumcheckClaim::new(
+            ram_val_check_spec.rounds,
+            ram_val_check_spec.degree,
+            ram_input_claim,
+        ),
+    ];
     let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
         &sumcheck_claims,
         &proof.stages.stage4_sumcheck_proof,
@@ -482,49 +278,48 @@ where
     })?;
 
     let registers_point = batch
-        .try_instance_point(registers_claims.sumcheck.rounds)
+        .try_instance_point(registers_spec.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
     let ram_val_point = batch
-        .try_instance_point(ram_val_check_claims.sumcheck.rounds)
+        .try_instance_point(ram_val_check_spec.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
         })?;
-    let opening_points = stage4_opening_points(Stage4OpeningPointRequest {
-        register_dimensions,
-        registers_read_write_sumcheck_point: registers_point,
-        ram_val_check_sumcheck_point: ram_val_point,
-        fixed_ram_address_point: r_address,
-        fixed_ram_cycle_point: r_cycle,
-    })?;
 
-    let expected_outputs = stage4_expected_output_claims(Stage4ExpectedOutputRequest {
-        fixed_register_cycle_point: &stage3.batch.registers_claim_reduction.opening_point,
-        registers_read_write_opening_point: &opening_points.registers_read_write_opening_point,
-        fixed_ram_cycle_point: r_cycle,
-        ram_val_check_cycle_point: &opening_points.ram_val_check_cycle_point,
-        registers_gamma,
-        ram_val_check_gamma,
-        claims,
-    })?;
+    let registers_output_points =
+        registers_relation.derive_opening_points(registers_point, &registers_inputs)?;
+    let registers_outputs = located_registers_outputs(&registers_output_points, claims);
+    let registers_output =
+        registers_relation.expected_output(&registers_inputs, &registers_outputs)?;
+    let registers_opening_point = registers_outputs.registers_val.point;
+
+    let ram_output_points = ram_relation.derive_opening_points(ram_val_point, &ram_inputs)?;
+    let ram_outputs = RamValCheckOutputClaims {
+        ram_ra: OpeningClaim {
+            point: ram_output_points.ram_ra,
+            value: claims.ram_val_check.ram_ra,
+        },
+        ram_inc: OpeningClaim {
+            point: ram_output_points.ram_inc,
+            value: claims.ram_val_check.ram_inc,
+        },
+    };
+    let ram_output = ram_relation.expected_output(&ram_inputs, &ram_outputs)?;
+    let ram_opening_point = ram_outputs.ram_ra.point;
+
     let expected_final_claim =
-        stage4_expected_final_claim(&batch.batching_coefficients, &expected_outputs)?;
+        stage4_expected_final_claim(&batch.batching_coefficients, registers_output, ram_output)?;
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: JoltRelationId::RegistersReadWriteChecking,
         });
     }
 
-    append_stage4_opening_claims(
-        transcript,
-        proof.untrusted_advice_commitment.is_some(),
-        checked.trusted_advice_commitment_present,
-        checked.precommitted.program_image.is_some(),
-        claims,
-    )?;
+    claims.append_openings(transcript);
 
     Ok(Stage4Output::Clear(Stage4ClearOutput {
         public: public(
@@ -539,19 +334,61 @@ where
             sumcheck_final_claim: batch.reduction.value,
             expected_final_claim,
             registers_read_write: VerifiedStage4Sumcheck {
-                input_claim: input_claims.registers_read_write,
-                sumcheck_point: opening_points.registers_read_write_sumcheck_point,
-                opening_point: opening_points.registers_read_write_opening_point,
-                expected_output_claim: expected_outputs.registers_read_write,
+                input_claim: registers_input_claim,
+                sumcheck_point: registers_point.to_vec(),
+                opening_point: registers_opening_point,
+                expected_output_claim: registers_output,
             },
             ram_val_check: VerifiedStage4Sumcheck {
-                input_claim: input_claims.ram_val_check,
-                sumcheck_point: opening_points.ram_val_check_sumcheck_point,
-                opening_point: opening_points.ram_val_check_opening_point,
-                expected_output_claim: expected_outputs.ram_val_check,
+                input_claim: ram_input_claim,
+                sumcheck_point: ram_val_point.to_vec(),
+                opening_point: ram_opening_point,
+                expected_output_claim: ram_output,
             },
         },
     }))
+}
+
+/// Locate every register read-write output opening at the relation's shared
+/// opening point, pairing it with the proof's claimed value.
+fn located_registers_outputs<F: Field>(
+    points: &RegistersReadWriteOutputClaims<Vec<F>>,
+    claims: &Stage4Claims<F>,
+) -> RegistersReadWriteOutputClaims<OpeningClaim<F>> {
+    let registers = &claims.registers_read_write;
+    let locate = |point: &[F], value: F| OpeningClaim {
+        point: point.to_vec(),
+        value,
+    };
+    RegistersReadWriteOutputClaims {
+        registers_val: locate(&points.registers_val, registers.registers_val),
+        rs1_ra: locate(&points.rs1_ra, registers.rs1_ra),
+        rs2_ra: locate(&points.rs2_ra, registers.rs2_ra),
+        rd_wa: locate(&points.rd_wa, registers.rd_wa),
+        rd_inc: locate(&points.rd_inc, registers.rd_inc),
+    }
+}
+
+/// ZK register inputs carry no points: `derive_opening_points` for the register
+/// read-write relation reads only its sumcheck point.
+fn registers_zk_inputs<F: Field>() -> RegistersReadWriteInputClaims<Vec<F>> {
+    RegistersReadWriteInputClaims {
+        rd_write_value: Vec::new(),
+        rs1_value: Vec::new(),
+        rs2_value: Vec::new(),
+    }
+}
+
+/// ZK RAM value-check inputs carry only the read-write opening point, the one
+/// input `derive_opening_points` reads (to splice the fixed address prefix).
+fn ram_zk_inputs<F: Field>(ram_read_write_opening_point: &[F]) -> RamValCheckInputClaims<Vec<F>> {
+    RamValCheckInputClaims {
+        ram_val: ram_read_write_opening_point.to_vec(),
+        ram_val_final: Vec::new(),
+        untrusted_advice: None,
+        trusted_advice: None,
+        program_image: None,
+    }
 }
 
 fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
@@ -750,50 +587,6 @@ fn check_boolean_hypercube(
     Ok(())
 }
 
-pub fn append_stage4_opening_claims<F, T>(
-    transcript: &mut T,
-    untrusted_advice_commitment_present: bool,
-    trusted_advice_commitment_present: bool,
-    committed_program: bool,
-    claims: &Stage4Claims<F>,
-) -> Result<(), VerifierError>
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    if untrusted_advice_commitment_present {
-        let id = ram::val_check_advice_opening(JoltAdviceKind::Untrusted);
-        let opening_claim = claims
-            .advice
-            .untrusted
-            .ok_or(VerifierError::MissingOpeningClaim { id })?;
-        transcript.append_labeled(b"opening_claim", &opening_claim);
-    }
-    if trusted_advice_commitment_present {
-        let id = ram::val_check_advice_opening(JoltAdviceKind::Trusted);
-        let opening_claim = claims
-            .advice
-            .trusted
-            .ok_or(VerifierError::MissingOpeningClaim { id })?;
-        transcript.append_labeled(b"opening_claim", &opening_claim);
-    }
-    if committed_program {
-        let id = program_image::ram_val_check_contribution_opening();
-        let opening_claim = claims
-            .program_image_contribution
-            .ok_or(VerifierError::MissingOpeningClaim { id })?;
-        transcript.append_labeled(b"opening_claim", &opening_claim);
-    }
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.registers_val);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rs1_ra);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rs2_ra);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rd_wa);
-    transcript.append_labeled(b"opening_claim", &claims.registers_read_write.rd_inc);
-    transcript.append_labeled(b"opening_claim", &claims.ram_val_check.ram_ra);
-    transcript.append_labeled(b"opening_claim", &claims.ram_val_check.ram_inc);
-    Ok(())
-}
-
 pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
     transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
     transcript.append_bytes(&[]);
@@ -803,10 +596,9 @@ pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &m
 mod tests {
     use super::*;
 
-    use crate::stages::stage4::inputs::{
-        RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
-        RegistersReadWriteOutputOpeningClaims,
-    };
+    use crate::stages::relations::OutputClaims;
+    use crate::stages::stage4::ram_val_check::{RamValCheckAdviceClaims, RamValCheckOutputClaims};
+    use crate::stages::stage4::registers_read_write_checking::RegistersReadWriteOutputClaims;
     use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};
 
     #[derive(Clone, Default)]
@@ -836,23 +628,52 @@ mod tests {
     }
 
     #[test]
-    fn opening_claim_appends_follow_core_order_without_advice() {
-        let claims = test_claims();
+    fn opening_claim_appends_follow_declaration_order_without_advice() {
+        let claims = test_claims_without_advice();
         let mut transcript = RecordingTranscript::new(b"stage4-openings");
 
-        let result = append_stage4_opening_claims(&mut transcript, false, false, false, &claims);
-        assert!(result.is_ok(), "stage 4 openings should append: {result:?}");
+        claims.append_openings(&mut transcript);
 
-        let expected = [
+        let expected = vec![
             claims.registers_read_write.registers_val,
             claims.registers_read_write.rs1_ra,
             claims.registers_read_write.rs2_ra,
             claims.registers_read_write.rd_wa,
             claims.registers_read_write.rd_inc,
+            claims.ram_val_check.ram_ra,
+            claims.ram_val_check.ram_inc,
         ];
-        let mut expected = expected.to_vec();
-        expected.extend([claims.ram_val_check.ram_ra, claims.ram_val_check.ram_inc]);
 
+        assert_opening_claim_payloads(&transcript, &expected);
+    }
+
+    #[test]
+    fn opening_claim_appends_order_advice_before_registers() {
+        let claims = test_claims_with_advice();
+        let mut transcript = RecordingTranscript::new(b"stage4-openings");
+
+        claims.append_openings(&mut transcript);
+
+        // Canonical order: advice openings precede the register openings, then the
+        // RAM value-check openings come last.
+        let mut expected = Vec::new();
+        if let Some(value) = claims.advice.untrusted {
+            expected.push(value);
+        }
+        if let Some(value) = claims.advice.trusted {
+            expected.push(value);
+        }
+        expected.extend([
+            claims.registers_read_write.registers_val,
+            claims.registers_read_write.rs1_ra,
+            claims.registers_read_write.rs2_ra,
+            claims.registers_read_write.rd_wa,
+            claims.registers_read_write.rd_inc,
+            claims.ram_val_check.ram_ra,
+            claims.ram_val_check.ram_inc,
+        ]);
+
+        assert_eq!(claims.opening_count(), expected.len());
         assert_opening_claim_payloads(&transcript, &expected);
     }
 
@@ -869,24 +690,44 @@ mod tests {
         assert!(transcript.chunks[1].is_empty());
     }
 
-    fn test_claims() -> Stage4Claims<Fr> {
+    fn registers_claims() -> RegistersReadWriteOutputClaims<Fr> {
+        RegistersReadWriteOutputClaims {
+            registers_val: Fr::from_u64(3),
+            rs1_ra: Fr::from_u64(4),
+            rs2_ra: Fr::from_u64(5),
+            rd_wa: Fr::from_u64(6),
+            rd_inc: Fr::from_u64(7),
+        }
+    }
+
+    fn ram_claims() -> RamValCheckOutputClaims<Fr> {
+        RamValCheckOutputClaims {
+            ram_ra: Fr::from_u64(8),
+            ram_inc: Fr::from_u64(9),
+        }
+    }
+
+    fn test_claims_without_advice() -> Stage4Claims<Fr> {
         Stage4Claims {
-            advice: RamValCheckAdviceOpeningClaims {
+            advice: RamValCheckAdviceClaims {
+                untrusted: None,
+                trusted: None,
+            },
+            program_image_contribution: None,
+            registers_read_write: registers_claims(),
+            ram_val_check: ram_claims(),
+        }
+    }
+
+    fn test_claims_with_advice() -> Stage4Claims<Fr> {
+        Stage4Claims {
+            advice: RamValCheckAdviceClaims {
                 untrusted: Some(Fr::from_u64(1)),
                 trusted: Some(Fr::from_u64(2)),
             },
             program_image_contribution: None,
-            registers_read_write: RegistersReadWriteOutputOpeningClaims {
-                registers_val: Fr::from_u64(3),
-                rs1_ra: Fr::from_u64(4),
-                rs2_ra: Fr::from_u64(5),
-                rd_wa: Fr::from_u64(6),
-                rd_inc: Fr::from_u64(7),
-            },
-            ram_val_check: RamValCheckOutputOpeningClaims {
-                ram_ra: Fr::from_u64(8),
-                ram_inc: Fr::from_u64(9),
-            },
+            registers_read_write: registers_claims(),
+            ram_val_check: ram_claims(),
         }
     }
 
