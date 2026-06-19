@@ -13,7 +13,10 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig, PcsFamily, ZkConfig},
+    config::{
+        validate_proof_config, IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode,
+        ZkConfig,
+    },
     preprocessing::JoltVerifierPreprocessing,
     proof::{CommitmentPayload, JoltProof},
     stages::{
@@ -1066,6 +1069,7 @@ where
             }
         }
         CommitmentPayload::Akita(payload) => {
+            absorb_akita_protocol_header(transcript, &proof.protocol);
             append_payload_label(transcript, b"akita_packed_witness", &payload.packed_witness);
             transcript.append(&payload.packed_witness);
             absorb_labeled_bytes(transcript, b"akita_layout_digest", &payload.layout_digest);
@@ -1076,6 +1080,80 @@ where
         }
     }
     Ok(())
+}
+
+fn absorb_akita_protocol_header<T: Transcript>(transcript: &mut T, protocol: &JoltProtocolConfig) {
+    transcript.append(&Label(b"akita_protocol_header"));
+    absorb_labeled_u64(transcript, b"akita_pcs_curve", protocol.pcs.curve as u64);
+    absorb_labeled_u64(
+        transcript,
+        b"akita_pcs_lattice",
+        protocol.pcs.lattice as u64,
+    );
+    absorb_labeled_u64(transcript, b"akita_zk", zk_config_tag(protocol.zk));
+    absorb_labeled_u64(
+        transcript,
+        b"akita_program_mode",
+        program_mode_tag(protocol.lattice.program_mode),
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"akita_increment_mode",
+        increment_mode_tag(protocol.lattice.increment_mode),
+    );
+    absorb_labeled_u64(transcript, b"akita_lattice_zk", protocol.lattice.zk as u64);
+    absorb_labeled_u64(
+        transcript,
+        b"akita_field_inline",
+        protocol.lattice.field_inline.enabled as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"akita_advice_trusted",
+        protocol.lattice.advice.trusted as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"akita_advice_untrusted",
+        protocol.lattice.advice.untrusted as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"akita_field_rd_inc_family",
+        protocol.lattice.packed_witness.field_rd_inc_family as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"akita_trusted_advice_family",
+        protocol.lattice.packed_witness.trusted_advice_family as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"akita_untrusted_advice_family",
+        protocol.lattice.packed_witness.untrusted_advice_family as u64,
+    );
+}
+
+const fn zk_config_tag(zk: ZkConfig) -> u64 {
+    match zk {
+        ZkConfig::Transparent => 0,
+        ZkConfig::BlindFold => 1,
+    }
+}
+
+const fn program_mode_tag(mode: ProgramMode) -> u64 {
+    match mode {
+        ProgramMode::Full => 0,
+        ProgramMode::Committed => 1,
+    }
+}
+
+const fn increment_mode_tag(mode: IncrementCommitmentMode) -> u64 {
+    match mode {
+        IncrementCommitmentMode::Dense => 0,
+        IncrementCommitmentMode::SeparateOneHot => 1,
+        IncrementCommitmentMode::FusedOneHot => 2,
+    }
 }
 
 fn append_payload_label<T, A>(transcript: &mut T, label: &'static [u8], payload: &A)
@@ -1943,6 +2021,19 @@ mod tests {
         absorb_commitments(&preprocessing, &proof, None, &mut transcript)
             .unwrap_or_else(|error| panic!("Akita commitment absorption should succeed: {error}"));
 
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"akita_protocol_header"
+        ));
+        assert!(contains_subslice(&transcript.bytes, b"akita_program_mode"));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"akita_increment_mode"
+        ));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"akita_advice_trusted"
+        ));
         assert!(contains_subslice(&transcript.bytes, &layout_digest));
         assert!(contains_subslice(&transcript.bytes, b"akita_d_pack"));
         assert!(contains_subslice(
@@ -1950,6 +2041,31 @@ mod tests {
             &u64_word_bytes(d_pack as u64)
         ));
         assert!(contains_subslice(&transcript.bytes, &validity_digest));
+    }
+
+    #[test]
+    fn absorb_commitments_binds_akita_protocol_header_flags() {
+        let preprocessing = committed_test_preprocessing();
+        let layout_digest = [9; 32];
+        let d_pack = 44;
+        let config = lattice_config(layout_digest, d_pack);
+        let proof = proof_with_lattice_payload(&config, layout_digest, d_pack);
+        let mut transcript = RecordingTranscript::new(b"test");
+        absorb_commitments(&preprocessing, &proof, None, &mut transcript)
+            .unwrap_or_else(|error| panic!("Akita commitment absorption should succeed: {error}"));
+
+        let mut changed_proof = proof;
+        changed_proof.protocol.lattice.advice.trusted = true;
+        let mut changed_transcript = RecordingTranscript::new(b"test");
+        absorb_commitments(
+            &preprocessing,
+            &changed_proof,
+            None,
+            &mut changed_transcript,
+        )
+        .unwrap_or_else(|error| panic!("Akita commitment absorption should succeed: {error}"));
+
+        assert_ne!(transcript.bytes, changed_transcript.bytes);
     }
 
     #[test]
