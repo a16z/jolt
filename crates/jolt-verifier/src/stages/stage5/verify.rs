@@ -3,8 +3,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::{JoltFormulaDimensions, TraceDimensions, REGISTER_ADDRESS_BITS},
         instruction, ram, registers,
     },
-    InstructionReadRafChallenge, JoltChallengeId, JoltRelationId, JoltSumcheckDomain,
-    RegistersValEvaluationChallenge,
+    JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -16,18 +15,21 @@ use jolt_poly::{
 };
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
-use num_traits::Zero;
 
 use super::{
     inputs::{
-        Deps, RamRaClaimReductionInputs, RamRaClaimReductionOutputOpeningClaims, Stage5Claims,
+        Deps, InstructionReadRafInputs, InstructionReadRafOutputOpeningClaims,
+        RamRaClaimReductionInputs, RamRaClaimReductionOutputOpeningClaims,
+        RegistersValEvaluationInputs, RegistersValEvaluationOutputOpeningClaims, Stage5Claims,
     },
+    instruction_read_raf::InstructionReadRafRelation,
     outputs::{
         InstructionReadRafPublicOutput, Stage5ClearOutput, Stage5Output, Stage5PublicOutput,
         Stage5SumcheckPublicOutput, Stage5ZkOutput, VerifiedInstructionReadRafSumcheck,
         VerifiedStage5Batch, VerifiedStage5Sumcheck,
     },
     ram_ra_claim_reduction::RamRaClaimReductionRelation,
+    registers_val_evaluation::RegistersValEvaluationRelation,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -98,10 +100,12 @@ where
         }
     }
     let instruction_gamma = transcript.challenge_scalar();
-    let instruction_gamma_squared = instruction_gamma * instruction_gamma;
     let ram_gamma = transcript.challenge_scalar();
 
+    let instruction_relation =
+        InstructionReadRafRelation::new(formula_dimensions.instruction_read_raf, instruction_gamma);
     let ram_relation = RamRaClaimReductionRelation::new(trace_dimensions, log_k, ram_gamma);
+    let registers_relation = RegistersValEvaluationRelation::new(trace_dimensions);
 
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
@@ -204,19 +208,6 @@ where
                 stage: JoltRelationId::RamRaClaimReduction,
                 reason: error.to_string(),
             })?;
-        let dependency_points =
-            stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
-                trace_dimensions,
-                ram_log_k: log_k,
-                ram_raf_opening_point: &stage2
-                    .ram_ra_claim_reduction_inputs
-                    .ram_raf_evaluation_opening_point,
-                ram_read_write_opening_point: &stage2
-                    .ram_ra_claim_reduction_inputs
-                    .ram_read_write_opening_point,
-                ram_val_check_opening_point: &stage4.ram_val_check_opening_point,
-                registers_read_write_opening_point: &stage4.registers_read_write_opening_point,
-            })?;
         let ram_inputs = RamRaClaimReductionInputs {
             raf: stage2
                 .ram_ra_claim_reduction_inputs
@@ -238,17 +229,12 @@ where
                 stage: JoltRelationId::RegistersValEvaluation,
                 reason: error.to_string(),
             })?;
-        let registers_cycle = trace_dimensions
-            .cycle_opening_point(&registers_point)
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RegistersValEvaluation,
-                reason: error.to_string(),
-            })?;
-        let registers_opening_point = [
-            dependency_points.register_address_point,
-            registers_cycle.as_slice(),
-        ]
-        .concat();
+        let registers_inputs = RegistersValEvaluationInputs {
+            registers_val: stage4.registers_read_write_opening_point.clone(),
+        };
+        let registers_opening_point = registers_relation
+            .derive_output_points(&registers_point, &registers_inputs)?
+            .rd_inc;
 
         return Ok(Stage5Output::Zk(Stage5ZkOutput {
             public: public(
@@ -331,43 +317,13 @@ where
         });
     }
 
-    let [lookup_output, left_lookup_operand, right_lookup_operand] =
-        instruction::read_raf_input_openings();
-    let [registers_val] = registers::val_evaluation_input_openings();
+    let instruction_inputs = InstructionReadRafInputs::from_clear(stage2);
     let ram_inputs = RamRaClaimReductionInputs::from_clear(stage2, stage4);
+    let registers_inputs = RegistersValEvaluationInputs::from_clear(stage4);
     let input_claims = Stage5InputClaims {
-        instruction_read_raf: instruction_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == lookup_output => Ok(reduced_lookup_output),
-                id if id == left_lookup_operand => Ok(stage2
-                    .output_claims
-                    .instruction_claim_reduction
-                    .left_lookup_operand),
-                id if id == right_lookup_operand => Ok(stage2
-                    .output_claims
-                    .instruction_claim_reduction
-                    .right_lookup_operand),
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::InstructionReadRaf(InstructionReadRafChallenge::Gamma) => {
-                    Ok(instruction_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
+        instruction_read_raf: instruction_relation.input_claim(&instruction_inputs)?,
         ram_ra_claim_reduction: ram_relation.input_claim(&ram_inputs)?,
-        registers_val_evaluation: registers_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == registers_val => {
-                    Ok(stage4.output_claims.registers_read_write.registers_val)
-                }
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
+        registers_val_evaluation: registers_relation.input_claim(&registers_inputs)?,
     };
 
     let sumcheck_claims = [
@@ -410,69 +366,6 @@ where
             stage: JoltRelationId::InstructionReadRaf,
             reason: error.to_string(),
         })?;
-    let eq_reduction = try_eq_mle(
-        &stage2.batch.instruction_claim_reduction.opening_point,
-        &instruction_opening_point.r_cycle,
-    )
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::InstructionReadRaf,
-        reason: error.to_string(),
-    })?;
-    let left_operand_eval = OperandPolynomial::new(2 * RISCV_XLEN, OperandSide::Left)
-        .evaluate(&instruction_opening_point.r_address);
-    let right_operand_eval = OperandPolynomial::new(2 * RISCV_XLEN, OperandSide::Right)
-        .evaluate(&instruction_opening_point.r_address);
-    let identity_eval =
-        IdentityPolynomial::new(2 * RISCV_XLEN).evaluate(&instruction_opening_point.r_address);
-    let mut table_values = [PCS::Field::zero(); LookupTableKind::<RISCV_XLEN>::COUNT];
-    for table in LookupTableKind::<RISCV_XLEN>::iter() {
-        table_values[table.index()] =
-            table.evaluate_mle::<PCS::Field, PCS::Field>(&instruction_opening_point.r_address);
-    }
-    let instruction_output = instruction_claims.output.expression().try_evaluate(
-        |id| {
-            if let Some(index) = instruction_output_openings
-                .lookup_table_flags
-                .iter()
-                .position(|opening| *opening == *id)
-            {
-                return Ok(claims.instruction_read_raf.lookup_table_flags[index]);
-            }
-            if let Some(index) = instruction_output_openings
-                .instruction_ra
-                .iter()
-                .position(|opening| *opening == *id)
-            {
-                return Ok(claims.instruction_read_raf.instruction_ra[index]);
-            }
-            if *id == instruction_output_openings.instruction_raf_flag {
-                return Ok(claims.instruction_read_raf.instruction_raf_flag);
-            }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
-        },
-        |id| match id {
-            JoltChallengeId::InstructionReadRaf(InstructionReadRafChallenge::EqTableValue(
-                index,
-            )) => table_values
-                .get(*index)
-                .copied()
-                .map(|table_value| eq_reduction * table_value)
-                .ok_or(VerifierError::MissingStageClaimChallenge { id: *id }),
-            JoltChallengeId::InstructionReadRaf(InstructionReadRafChallenge::EqRafConstant) => {
-                Ok(eq_reduction
-                    * (instruction_gamma * left_operand_eval
-                        + instruction_gamma_squared * right_operand_eval))
-            }
-            JoltChallengeId::InstructionReadRaf(InstructionReadRafChallenge::EqRafFlag) => {
-                Ok(eq_reduction
-                    * (instruction_gamma_squared * identity_eval
-                        - instruction_gamma * left_operand_eval
-                        - instruction_gamma_squared * right_operand_eval))
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-    )?;
     let instruction_ra_chunk_size = instruction_opening_point
         .r_address
         .len()
@@ -504,21 +397,39 @@ where
             .concat()
         })
         .collect::<Vec<_>>();
+    let instruction_outputs = InstructionReadRafOutputOpeningClaims {
+        lookup_table_flags: claims
+            .instruction_read_raf
+            .lookup_table_flags
+            .iter()
+            .map(|&value| OpeningClaim {
+                point: instruction_opening_point.r_cycle.clone(),
+                value,
+            })
+            .collect(),
+        instruction_ra: claims
+            .instruction_read_raf
+            .instruction_ra
+            .iter()
+            .zip(&instruction_ra_opening_points)
+            .map(|(&value, point)| OpeningClaim {
+                point: point.clone(),
+                value,
+            })
+            .collect(),
+        instruction_raf_flag: OpeningClaim {
+            point: instruction_opening_point.r_cycle.clone(),
+            value: claims.instruction_read_raf.instruction_raf_flag,
+        },
+    };
+    let instruction_output =
+        instruction_relation.expected_output(&instruction_inputs, &instruction_outputs)?;
 
     let ram_point = batch
         .try_instance_point(ram_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RamRaClaimReduction,
             reason: error.to_string(),
-        })?;
-    let dependency_points =
-        stage5_dependency_opening_points(Stage5DependencyOpeningPointRequest {
-            trace_dimensions,
-            ram_log_k: log_k,
-            ram_raf_opening_point: &stage2.batch.ram_raf_evaluation.opening_point,
-            ram_read_write_opening_point: &stage2.batch.ram_read_write.opening_point,
-            ram_val_check_opening_point: &stage4.batch.ram_val_check.opening_point,
-            registers_read_write_opening_point: &stage4.batch.registers_read_write.opening_point,
         })?;
     let ram_output_points = ram_relation.derive_output_points(ram_point, &ram_inputs)?;
     let ram_outputs = RamRaClaimReductionOutputOpeningClaims {
@@ -536,36 +447,21 @@ where
             stage: JoltRelationId::RegistersValEvaluation,
             reason: error.to_string(),
         })?;
-    let registers_cycle = trace_dimensions
-        .cycle_opening_point(registers_point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RegistersValEvaluation,
-            reason: error.to_string(),
-        })?;
-    let lt_cycle = LtPolynomial::evaluate(
-        &registers_cycle,
-        dependency_points.register_fixed_cycle_point,
-    );
-    let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
-    let registers_output = registers_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == rd_inc => Ok(claims.registers_val_evaluation.rd_inc),
-            id if id == rd_wa => Ok(claims.registers_val_evaluation.rd_wa),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
+    let registers_output_points =
+        registers_relation.derive_output_points(registers_point, &registers_inputs)?;
+    let registers_outputs = RegistersValEvaluationOutputOpeningClaims {
+        rd_inc: OpeningClaim {
+            point: registers_output_points.rd_inc,
+            value: claims.registers_val_evaluation.rd_inc,
         },
-        |id| match id {
-            JoltChallengeId::RegistersValEvaluation(RegistersValEvaluationChallenge::LtCycle) => {
-                Ok(lt_cycle)
-            }
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        rd_wa: OpeningClaim {
+            point: registers_output_points.rd_wa,
+            value: claims.registers_val_evaluation.rd_wa,
         },
-        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-    )?;
-    let registers_opening_point = [
-        dependency_points.register_address_point,
-        registers_cycle.as_slice(),
-    ]
-    .concat();
+    };
+    let registers_output =
+        registers_relation.expected_output(&registers_inputs, &registers_outputs)?;
+    let registers_opening_point = registers_outputs.rd_inc.point;
 
     let expected_outputs = Stage5ExpectedOutputClaims {
         instruction_read_raf: instruction_output,

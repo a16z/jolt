@@ -48,12 +48,62 @@ pub struct Stage5Claims<F: Field> {
     pub registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims<F>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct InstructionReadRafOutputOpeningClaims<F: Field> {
-    pub lookup_table_flags: Vec<F>,
-    pub instruction_ra: Vec<F>,
-    pub instruction_raf_flag: F,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(InstructionReadRaf)]
+pub struct InstructionReadRafOutputOpeningClaims<C> {
+    #[opening(LookupTableFlag)]
+    pub lookup_table_flags: Vec<C>,
+    #[opening(InstructionRa)]
+    pub instruction_ra: Vec<C>,
+    #[opening(InstructionRafFlag)]
+    pub instruction_raf_flag: C,
+}
+
+/// Consumed instruction-lookup openings (the reduced lookup output + left/right
+/// operands), wired from the upstream instruction claim-reduction.
+#[derive(Clone, Debug, InputClaims)]
+pub struct InstructionReadRafInputs<C> {
+    #[opening(LookupOutput, from = InstructionClaimReduction)]
+    pub lookup_output: C,
+    #[opening(LeftLookupOperand, from = InstructionClaimReduction)]
+    pub left_lookup_operand: C,
+    #[opening(RightLookupOperand, from = InstructionClaimReduction)]
+    pub right_lookup_operand: C,
+}
+
+impl<F: Field> InstructionReadRafInputs<OpeningClaim<F>> {
+    /// Wire the consumed openings from the upstream instruction claim-reduction
+    /// (stage 2), applying the lookup-output fallback to the product remainder.
+    /// All three share the claim-reduction opening point.
+    pub fn from_clear(stage2: &Stage2ClearOutput<F>) -> Self {
+        let reduction = &stage2.output_claims.instruction_claim_reduction;
+        let lookup_output = reduction
+            .lookup_output
+            .unwrap_or(stage2.output_claims.product_remainder.lookup_output);
+        let point = stage2
+            .batch
+            .instruction_claim_reduction
+            .opening_point
+            .clone();
+        Self {
+            lookup_output: OpeningClaim {
+                point: point.clone(),
+                value: lookup_output,
+            },
+            left_lookup_operand: OpeningClaim {
+                point: point.clone(),
+                value: reduction.left_lookup_operand,
+            },
+            right_lookup_operand: OpeningClaim {
+                point,
+                value: reduction.right_lookup_operand,
+            },
+        }
+    }
 }
 
 /// Produced RAM-RA reduced opening, generic over the cell (`F` on the wire,
@@ -105,9 +155,36 @@ impl<F: Field> RamRaClaimReductionInputs<OpeningClaim<F>> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
-pub struct RegistersValEvaluationOutputOpeningClaims<F: Field> {
-    pub rd_inc: F,
-    pub rd_wa: F,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[serde(bound(
+    serialize = "C: serde::Serialize",
+    deserialize = "C: serde::Deserialize<'de>"
+))]
+#[relation(RegistersValEvaluation)]
+pub struct RegistersValEvaluationOutputOpeningClaims<C> {
+    #[opening(committed = RdInc)]
+    pub rd_inc: C,
+    #[opening(RdWa)]
+    pub rd_wa: C,
+}
+
+/// Consumed register value-evaluation opening, wired from the upstream register
+/// read-write checking.
+#[derive(Clone, Debug, InputClaims)]
+pub struct RegistersValEvaluationInputs<C> {
+    #[opening(RegistersVal, from = RegistersReadWriteChecking)]
+    pub registers_val: C,
+}
+
+impl<F: Field> RegistersValEvaluationInputs<OpeningClaim<F>> {
+    /// Wire the consumed `RegistersVal` opening from the upstream register
+    /// read-write checking (stage 4).
+    pub fn from_clear(stage4: &Stage4ClearOutput<F>) -> Self {
+        Self {
+            registers_val: OpeningClaim {
+                point: stage4.batch.registers_read_write.opening_point.clone(),
+                value: stage4.output_claims.registers_read_write.registers_val,
+            },
+        }
+    }
 }
