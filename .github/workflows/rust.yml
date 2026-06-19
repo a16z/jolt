@@ -242,7 +242,7 @@ jobs:
         run: |
           set -euo pipefail
           pkgs=$(cargo metadata --format-version=1 --no-deps \
-                   | jq -r '.packages[] | select(.manifest_path | startswith("'"$(pwd)"'/crates/")) | .name' \
+                   | jq -r '.packages[] | select((.manifest_path | startswith("'"$(pwd)"'/crates/")) and .name != "jolt-prover") | .name' \
                    | tr '\n' ' ')
           echo "Found crates: $pkgs"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"

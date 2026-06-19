@@ -1,4 +1,5 @@
-use jolt_sdk::{JoltVerifierPreprocessing, Serializable};
+use jolt_sdk::jolt_prover::zkvm::proof::verifier_preprocessing_from_prover;
+use jolt_sdk::serialize_verifier_object;
 use tracing::info;
 
 pub fn main() {
@@ -9,9 +10,9 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_fib(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing);
-    let verifier_preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
+    let verifier_preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
 
-    let pp_bytes = verifier_preprocessing.serialize_to_bytes().expect("serialize pp");
+    let pp_bytes = serialize_verifier_object(&verifier_preprocessing).expect("serialize pp");
     std::fs::write("pp.bin", &pp_bytes).expect("write pp");
     info!("preprocessing: {} bytes", pp_bytes.len());
 
@@ -19,11 +20,11 @@ pub fn main() {
     let (output, proof, io_device) = prove_fib(50);
     info!("output: {output}");
 
-    let proof_bytes = proof.serialize_to_bytes().expect("serialize proof");
+    let proof_bytes = serialize_verifier_object(&proof).expect("serialize proof");
     std::fs::write("proof.bin", &proof_bytes).expect("write proof");
     info!("proof: {} bytes", proof_bytes.len());
 
-    let io_bytes = io_device.serialize_to_bytes().expect("serialize io");
+    let io_bytes = serialize_verifier_object(&io_device).expect("serialize io");
     std::fs::write("io.bin", &io_bytes).expect("write io");
     info!("io: {} bytes", io_bytes.len());
 }

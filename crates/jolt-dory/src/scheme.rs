@@ -84,7 +84,12 @@ pub struct DoryScheme;
 impl DoryScheme {
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_prover", fields(max_num_vars))]
     pub fn setup_prover(max_num_vars: usize) -> DoryProverSetup {
-        DoryProverSetup(ArkworksProverSetup::new_from_urs(max_num_vars))
+        #[cfg(not(target_arch = "wasm32"))]
+        let setup = ArkworksProverSetup::new_from_urs(max_num_vars);
+        #[cfg(target_arch = "wasm32")]
+        let setup = ArkworksProverSetup::new(max_num_vars);
+
+        DoryProverSetup(setup)
     }
 
     /// Derives the verifier SRS (a subset of the prover SRS).

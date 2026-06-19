@@ -32,7 +32,7 @@ prover = [
   "ark-ff/parallel",
   "ark-std/parallel",
   "dory/backends",
-  "dory/cache",            # This includes `parallel` feature
+  "dory/cache", # This includes `parallel` feature
   "dory/disk-persistence",
   "dep:jolt-claims",
   "dep:jolt-crypto",
