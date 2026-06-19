@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage6AddressPhaseClaims<F: Field> {
     pub bytecode_read_raf: F,

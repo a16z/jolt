@@ -1563,12 +1563,100 @@ mod tests {
         for (value, path, field) in [
             (clear.clone(), &[][..], "extra_proof"),
             (clear.clone(), &["stages"][..], "extra_stage_proof"),
-            (clear, &["claims", "Clear"][..], "extra_clear_claims"),
+            (
+                clear.clone(),
+                &["claims", "Clear"][..],
+                "extra_clear_claims",
+            ),
+            (
+                clear.clone(),
+                &["claims", "Clear", "stage1"][..],
+                "extra_stage1",
+            ),
+            (
+                clear.clone(),
+                &["claims", "Clear", "stage1", "outer"][..],
+                "extra_outer",
+            ),
+            (
+                clear.clone(),
+                &["claims", "Clear", "stage6", "inc_claim_reduction"][..],
+                "extra_inc_claim_reduction",
+            ),
+            (
+                clear,
+                &[
+                    "claims",
+                    "Clear",
+                    "stage7",
+                    "hamming_weight_claim_reduction",
+                ][..],
+                "extra_hamming_weight",
+            ),
             (zk, &["claims", "Zk"][..], "extra_zk_claims"),
         ] {
             assert!(
                 serde_json::from_value::<TestProof>(with_extra_field(value, path, field)).is_err(),
                 "unknown proof field {field} at path {path:?} must reject"
+            );
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "test fixture mutation should fail loudly if the serialized shape changes"
+    )]
+    fn proof_model_rejects_unknown_akita_nested_fields() {
+        fn with_extra_field(
+            mut value: serde_json::Value,
+            path: &[&str],
+            field: &str,
+        ) -> serde_json::Value {
+            let mut cursor = &mut value;
+            for segment in path {
+                cursor = cursor
+                    .as_object_mut()
+                    .expect("proof segment should be an object")
+                    .get_mut(*segment)
+                    .expect("proof segment should exist");
+            }
+            let previous = cursor
+                .as_object_mut()
+                .expect("target proof segment should be an object")
+                .insert(field.to_string(), serde_json::Value::Bool(true));
+            assert!(previous.is_none());
+            value
+        }
+
+        let (_, _, _, mut proof) = lattice_validity_surface_fixture();
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("Akita fixture should be a clear proof");
+        };
+        claims.stage6.fused_increment_translation =
+            Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
+                ram_source: Fr::zero(),
+                magnitude: Fr::zero(),
+                sign: Fr::zero(),
+                rd_source: Fr::zero(),
+            });
+        let value = serde_json::to_value(proof).expect("Akita proof should serialize");
+
+        for (path, field) in [
+            (
+                &["claims", "Clear", "stage7", "lattice_packed_validity"][..],
+                "extra_validity_claim",
+            ),
+            (
+                &["claims", "Clear", "stage6", "fused_increment_translation"][..],
+                "extra_fused_translation",
+            ),
+        ] {
+            assert!(
+                serde_json::from_value::<TestProof>(with_extra_field(value.clone(), path, field))
+                    .is_err(),
+                "unknown Akita proof field {field} at path {path:?} must reject"
             );
         }
     }

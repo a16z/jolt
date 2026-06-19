@@ -39,6 +39,7 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage4Claims<F: Field> {
     pub advice: RamValCheckAdviceOpeningClaims<F>,
@@ -52,6 +53,7 @@ pub struct Stage4Claims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RamValCheckAdviceOpeningClaims<F: Field> {
     pub untrusted: Option<F>,
@@ -59,6 +61,7 @@ pub struct RamValCheckAdviceOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RegistersReadWriteOutputOpeningClaims<F: Field> {
     pub registers_val: F,
@@ -70,6 +73,7 @@ pub struct RegistersReadWriteOutputOpeningClaims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineStage4Claims<F: Field> {
     pub field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims<F>,
@@ -77,6 +81,7 @@ pub struct FieldInlineStage4Claims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldRegistersReadWriteOutputOpeningClaims<F: Field> {
     pub field_registers_val: F,
@@ -87,6 +92,7 @@ pub struct FieldRegistersReadWriteOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RamValCheckOutputOpeningClaims<F: Field> {
     pub ram_ra: F,

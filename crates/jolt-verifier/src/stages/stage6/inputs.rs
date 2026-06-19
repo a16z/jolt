@@ -72,6 +72,7 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage6Claims<F: Field> {
     pub address_phase: Stage6AddressPhaseClaims<F>,
@@ -104,6 +105,7 @@ pub struct Stage6Claims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineStage6Claims<F: Field> {
     pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputOpeningClaims<F>,
@@ -111,6 +113,7 @@ pub struct FieldInlineStage6Claims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldRegistersIncClaimReductionOutputOpeningClaims<F: Field> {
     pub field_rd_inc: F,

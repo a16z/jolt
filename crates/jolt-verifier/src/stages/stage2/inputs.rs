@@ -19,6 +19,7 @@ pub fn deps<F: Field, C>(stage1: &Stage1Output<F, C>) -> Deps<'_, F, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage2Claims<F: Field> {
     pub product_uniskip_output_claim: F,
@@ -26,6 +27,7 @@ pub struct Stage2Claims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage2BatchOutputOpeningClaims<F: Field> {
     pub ram_read_write: RamReadWriteOutputOpeningClaims<F>,
@@ -38,6 +40,7 @@ pub struct Stage2BatchOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RamReadWriteOutputOpeningClaims<F: Field> {
     pub val: F,
@@ -46,6 +49,7 @@ pub struct RamReadWriteOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct ProductRemainderOutputOpeningClaims<F: Field> {
     pub left_instruction_input: F,
@@ -60,6 +64,7 @@ pub struct ProductRemainderOutputOpeningClaims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineStage2OutputOpeningClaims<F: Field> {
     pub product: FieldInlineProductOutputOpeningClaims<F>,
@@ -67,6 +72,7 @@ pub struct FieldInlineStage2OutputOpeningClaims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineProductOutputOpeningClaims<F: Field> {
     pub field_rs1_value: F,
@@ -75,6 +81,7 @@ pub struct FieldInlineProductOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct InstructionClaimReductionOutputOpeningClaims<F: Field> {
     pub lookup_output: Option<F>,
