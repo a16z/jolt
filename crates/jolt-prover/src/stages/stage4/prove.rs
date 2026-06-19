@@ -12,14 +12,14 @@ use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
-use jolt_verifier::stages::relations::{OpeningClaim, SumcheckInstance};
+use jolt_verifier::stages::relations::SumcheckInstance;
 use jolt_verifier::stages::stage4::outputs::{Stage4Challenges, Stage4ClearOutput};
 use jolt_verifier::stages::stage4::{
     append_ram_val_check_gamma_domain_separator, stage4_expected_final_claim,
     stage4_output_claims_with_points, RamValCheck, RamValCheckAdviceClaims,
     RamValCheckInitialEvaluation, RamValCheckInputClaims, RamValCheckOutputClaims,
     RegistersReadWriteChecking, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
-    Stage4OutputClaims, VerifiedRamValCheckAdviceContribution,
+    Stage4OutputClaims,
 };
 use jolt_verifier::stages::{stage2::Stage2ClearOutput, stage3::Stage3ClearOutput};
 use jolt_verifier::CheckedInputs;
@@ -57,7 +57,7 @@ pub struct Stage4ProverInput<'a, F: Field, W> {
     pub checked: &'a CheckedInputs,
     pub stage2: &'a Stage2ClearOutput<F>,
     pub stage3: &'a Stage3ClearOutput<F>,
-    pub ram_val_check_init: Stage4RamValCheckInitialEvaluation<F>,
+    pub ram_val_check_init: RamValCheckInitialEvaluation<F>,
     pub witness: &'a W,
 }
 
@@ -67,7 +67,7 @@ impl<'a, F: Field, W> Stage4ProverInput<'a, F, W> {
         checked: &'a CheckedInputs,
         stage2: &'a Stage2ClearOutput<F>,
         stage3: &'a Stage3ClearOutput<F>,
-        ram_val_check_init: Stage4RamValCheckInitialEvaluation<F>,
+        ram_val_check_init: RamValCheckInitialEvaluation<F>,
         witness: &'a W,
     ) -> Self {
         Self {
@@ -95,22 +95,7 @@ struct Stage4RegularBatchPrefixOutput<F: Field> {
     input_claims: Stage4InputClaims<F>,
     registers_gamma: F,
     ram_val_check_gamma: F,
-    ram_val_check_init: Stage4RamValCheckInitialEvaluation<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4RamValCheckInitialEvaluation<F: Field> {
-    pub public_eval: F,
-    pub advice_contributions: Vec<Stage4RamValCheckAdviceContribution<F>>,
-    pub full_eval: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage4RamValCheckAdviceContribution<F: Field> {
-    pub kind: JoltAdviceKind,
-    pub selector: F,
-    pub opening_claim: F,
-    pub opening_point: Vec<F>,
+    ram_val_check_init: RamValCheckInitialEvaluation<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,7 +142,7 @@ fn stage4_advice_claims_from_prefix<F: Field>(
             JoltAdviceKind::Trusted => &mut trusted,
             JoltAdviceKind::Untrusted => &mut untrusted,
         };
-        if target.replace(contribution.opening_claim).is_some() {
+        if target.replace(contribution.opening.value).is_some() {
             return Err(invalid_sumcheck_output(format!(
                 "duplicate Stage 4 RAM value-check {:?} advice contribution",
                 contribution.kind
@@ -239,7 +224,7 @@ where
         registers_gamma: prefix.registers_gamma,
         ram_val_check_gamma: prefix.ram_val_check_gamma,
     };
-    let ram_val_check_init = stage4_ram_val_check_init_to_verifier(&prefix.ram_val_check_init);
+    let ram_val_check_init = prefix.ram_val_check_init.clone();
     let output_claims = stage4_output_claims_with_points(
         &claims,
         &proof_output.registers_read_write_opening_point,
@@ -294,33 +279,11 @@ where
     Ok(output)
 }
 
-fn stage4_ram_val_check_init_to_verifier<F: Field>(
-    init: &Stage4RamValCheckInitialEvaluation<F>,
-) -> RamValCheckInitialEvaluation<F> {
-    RamValCheckInitialEvaluation {
-        public_eval: init.public_eval,
-        program_image_contribution: None,
-        advice_contributions: init
-            .advice_contributions
-            .iter()
-            .map(|contribution| VerifiedRamValCheckAdviceContribution {
-                kind: contribution.kind,
-                selector: contribution.selector,
-                opening: OpeningClaim {
-                    point: contribution.opening_point.clone(),
-                    value: contribution.opening_claim,
-                },
-            })
-            .collect(),
-        full_eval: init.full_eval,
-    }
-}
-
 fn derive_stage4_regular_batch_prefix<F, T>(
     config: Stage4ProverConfig,
     stage2: &Stage2ClearOutput<F>,
     stage3: &Stage3ClearOutput<F>,
-    ram_val_check_init: Stage4RamValCheckInitialEvaluation<F>,
+    ram_val_check_init: RamValCheckInitialEvaluation<F>,
     transcript: &mut T,
 ) -> Result<Stage4RegularBatchPrefixOutput<F>, ProverError>
 where
@@ -337,13 +300,12 @@ where
     let register_dimensions = config
         .rw_config
         .register_dimensions(config.log_t, REGISTER_ADDRESS_BITS);
-    let verifier_init = stage4_ram_val_check_init_to_verifier(&ram_val_check_init);
     let registers_relation = RegistersReadWriteChecking::new(register_dimensions, registers_gamma);
     let ram_relation = RamValCheck::new(
         TraceDimensions::new(config.log_t),
         config.log_k,
         ram_val_check_gamma,
-        verifier_init.decomposition(),
+        ram_val_check_init.decomposition(),
     );
     let input_claims = Stage4InputClaims {
         registers_read_write: registers_relation
@@ -352,7 +314,7 @@ where
         ram_val_check: ram_relation
             .input_claim(&RamValCheckInputClaims::from_upstream(
                 stage2,
-                &verifier_init,
+                &ram_val_check_init,
             ))
             .map_err(|error| invalid_sumcheck_output(error.to_string()))?,
     };
@@ -544,17 +506,16 @@ where
         }
     }
 
-    let verifier_init = stage4_ram_val_check_init_to_verifier(&prefix.ram_val_check_init);
     let registers_relation =
         RegistersReadWriteChecking::new(register_dimensions, prefix.registers_gamma);
     let ram_relation = RamValCheck::new(
         TraceDimensions::new(config.log_t),
         config.log_k,
         prefix.ram_val_check_gamma,
-        verifier_init.decomposition(),
+        prefix.ram_val_check_init.decomposition(),
     );
     let registers_inputs = RegistersReadWriteInputClaims::from_upstream(stage3);
-    let ram_inputs = RamValCheckInputClaims::from_upstream(stage2, &verifier_init);
+    let ram_inputs = RamValCheckInputClaims::from_upstream(stage2, &prefix.ram_val_check_init);
 
     let registers_read_write_opening_point = registers_relation
         .derive_opening_points(&challenges, &registers_inputs)
@@ -588,12 +549,11 @@ where
 
     // Pair the produced openings with their points via the shared helper for the
     // output-algebra check — the same form the verifier builds.
-    let verifier_init = stage4_ram_val_check_init_to_verifier(&prefix.ram_val_check_init);
     let claims_with_points = stage4_output_claims_with_points(
         &output_openings,
         &registers_read_write_opening_point,
         &ram_val_check_opening_point,
-        &verifier_init,
+        &prefix.ram_val_check_init,
     );
     let registers_expected = registers_relation
         .expected_output(&registers_inputs, &claims_with_points.registers_read_write)
@@ -669,8 +629,7 @@ where
         registers_gamma: batch.prefix.registers_gamma,
         ram_val_check_gamma: batch.prefix.ram_val_check_gamma,
     };
-    let ram_val_check_init =
-        stage4_ram_val_check_init_to_verifier(&batch.prefix.ram_val_check_init);
+    let ram_val_check_init = batch.prefix.ram_val_check_init.clone();
     let output_claims = stage4_output_claims_with_points(
         &claims,
         &batch.registers_read_write_opening_point,

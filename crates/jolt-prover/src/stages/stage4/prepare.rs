@@ -2,11 +2,14 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{block_selector_mle_msb, sparse_segments_mle_msb};
+use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
+use jolt_verifier::stages::relations::OpeningClaim;
+use jolt_verifier::stages::stage4::{
+    ram_val_check_advice_block, RamValCheckInitialEvaluation, VerifiedRamValCheckAdviceContribution,
+};
 use jolt_verifier::{stages::stage2::outputs::Stage2ClearOutput, CheckedInputs};
 
-use super::prove::{Stage4RamValCheckAdviceContribution, Stage4RamValCheckInitialEvaluation};
 use crate::{JoltProverPreprocessing, ProverError};
 
 pub(crate) fn ram_val_check_initial_evaluation<PCS, VC>(
@@ -14,7 +17,7 @@ pub(crate) fn ram_val_check_initial_evaluation<PCS, VC>(
     checked: &CheckedInputs,
     stage2: &Stage2ClearOutput<PCS::Field>,
     log_k: usize,
-) -> Result<Stage4RamValCheckInitialEvaluation<PCS::Field>, ProverError>
+) -> Result<RamValCheckInitialEvaluation<PCS::Field>, ProverError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -80,8 +83,9 @@ where
         &mut advice_contributions,
     )?;
 
-    Ok(Stage4RamValCheckInitialEvaluation {
+    Ok(RamValCheckInitialEvaluation {
         public_eval,
+        program_image_contribution: None,
         advice_contributions,
         full_eval,
     })
@@ -94,25 +98,16 @@ fn collect_advice_contribution<F: Field>(
     checked: &CheckedInputs,
     r_address: &[F],
     full_eval: &mut F,
-    contributions: &mut Vec<Stage4RamValCheckAdviceContribution<F>>,
+    contributions: &mut Vec<VerifiedRamValCheckAdviceContribution<F>>,
 ) -> Result<(), ProverError> {
     if !present {
         return Ok(());
     }
 
-    let layout = &checked.public_io.memory_layout;
-    let (start_address, max_size) = match kind {
-        JoltAdviceKind::Trusted => (layout.trusted_advice_start, layout.max_trusted_advice_size),
-        JoltAdviceKind::Untrusted => (
-            layout.untrusted_advice_start,
-            layout.max_untrusted_advice_size,
-        ),
+    let max_size = match kind {
+        JoltAdviceKind::Trusted => checked.public_io.memory_layout.max_trusted_advice_size,
+        JoltAdviceKind::Untrusted => checked.public_io.memory_layout.max_untrusted_advice_size,
     };
-    if max_size == 0 {
-        return Err(ProverError::InvalidStageRequest {
-            reason: format!("Stage 4 {kind:?} advice is present but configured size is zero"),
-        });
-    }
     if bytes.len() > max_size as usize {
         return Err(ProverError::InvalidStageRequest {
             reason: format!(
@@ -122,35 +117,22 @@ fn collect_advice_contribution<F: Field>(
         });
     }
 
-    let start_index = layout
-        .remapped_word_address(start_address)
+    // The selector and opening point are the shared advice-block geometry the
+    // verifier checks against; compute the opening value here from the witness bytes.
+    let block = ram_val_check_advice_block(kind, checked, r_address)
         .map_err(|error| ProverError::InvalidStageRequest {
-            reason: format!("Stage 4 {kind:?} advice start address is invalid: {error}"),
-        })? as usize;
-    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
-    if advice_num_vars > r_address.len() {
-        return Err(ProverError::InvalidStageRequest {
-            reason: format!(
-                "Stage 4 {kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
-                r_address.len()
-            ),
-        });
-    }
-    let selector =
-        block_selector_mle_msb(start_index, advice_num_vars, r_address).map_err(|error| {
-            ProverError::InvalidStageRequest {
-                reason: format!("Stage 4 {kind:?} advice selector failed: {error}"),
-            }
+            reason: error.to_string(),
         })?;
-    let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
     let words = advice_words_le(bytes);
-    let opening_claim = sparse_segments_mle_msb([(0, words.as_slice())], &opening_point);
-    *full_eval += selector * opening_claim;
-    contributions.push(Stage4RamValCheckAdviceContribution {
+    let opening_claim = sparse_segments_mle_msb([(0, words.as_slice())], &block.opening_point);
+    *full_eval += block.selector * opening_claim;
+    contributions.push(VerifiedRamValCheckAdviceContribution {
         kind,
-        selector,
-        opening_claim,
-        opening_point,
+        selector: block.selector,
+        opening: OpeningClaim {
+            point: block.opening_point,
+            value: opening_claim,
+        },
     });
     Ok(())
 }

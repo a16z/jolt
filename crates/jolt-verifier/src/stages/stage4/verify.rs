@@ -433,6 +433,13 @@ fn check_boolean_hypercube(
     Ok(())
 }
 
+/// Absorb jolt-core's Fiat-Shamir domain separator for the RAM value-check gamma:
+/// an empty message labeled `b"ram_val_check_gamma"`. jolt-core appends this empty
+/// labeled chunk before sampling the gamma, so the modular verifier and prover must
+/// reproduce it byte-for-byte (label chunk + empty payload) or every challenge from
+/// here on diverges from a jolt-core-produced proof. Shared by both sides so the
+/// transcript can't drift; the `core-fixtures` suite (which replays real jolt-core
+/// proofs) pins it.
 pub fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
     transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
     transcript.append_bytes(&[]);

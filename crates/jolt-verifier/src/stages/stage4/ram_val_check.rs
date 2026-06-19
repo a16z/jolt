@@ -356,6 +356,56 @@ fn collect_program_image_contribution<F: Field>(
     }))
 }
 
+/// The advice block's selector and opening point, derived from the memory layout
+/// and the RAM address point. The prover (which produces the advice opening from
+/// the witness) and the verifier (which checks the claimed opening) must compute
+/// this geometry identically, so it is single-sourced here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamValCheckAdviceBlock<F: Field> {
+    pub selector: F,
+    pub opening_point: Vec<F>,
+}
+
+/// Compute the [`RamValCheckAdviceBlock`] for `kind` against `r_address`, using the
+/// advice block's start/size from the memory layout. Shared by the verifier and the
+/// prover so the advice selector and opening point cannot drift between them.
+pub fn ram_val_check_advice_block<F: Field>(
+    kind: JoltAdviceKind,
+    checked: &CheckedInputs,
+    r_address: &[F],
+) -> Result<RamValCheckAdviceBlock<F>, VerifierError> {
+    let layout = &checked.public_io.memory_layout;
+    let (start_address, max_size) = match kind {
+        JoltAdviceKind::Trusted => (layout.trusted_advice_start, layout.max_trusted_advice_size),
+        JoltAdviceKind::Untrusted => (
+            layout.untrusted_advice_start,
+            layout.max_untrusted_advice_size,
+        ),
+    };
+    if max_size == 0 {
+        return Err(public_input_failed(format!(
+            "{kind:?} advice commitment is present but configured size is zero"
+        )));
+    }
+    let start_index = layout
+        .remapped_word_address(start_address)
+        .map_err(public_input_failed)? as usize;
+    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
+    if advice_num_vars > r_address.len() {
+        return Err(public_input_failed(format!(
+            "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
+            r_address.len()
+        )));
+    }
+    let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
+        .map_err(public_input_failed)?;
+    let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
+    Ok(RamValCheckAdviceBlock {
+        selector,
+        opening_point,
+    })
+}
+
 fn collect_advice_contribution<F: Field>(
     kind: JoltAdviceKind,
     present: bool,
@@ -373,44 +423,15 @@ fn collect_advice_contribution<F: Field>(
         return Ok(());
     }
 
-    let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
-    let layout = &checked.public_io.memory_layout;
-    let (start_address, max_size) = match kind {
-        JoltAdviceKind::Trusted => (layout.trusted_advice_start, layout.max_trusted_advice_size),
-        JoltAdviceKind::Untrusted => (
-            layout.untrusted_advice_start,
-            layout.max_untrusted_advice_size,
-        ),
-    };
-    if max_size == 0 {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: format!("{kind:?} advice commitment is present but configured size is zero"),
-        });
-    }
-
-    let start_index = layout
-        .remapped_word_address(start_address)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::RamValCheck,
-            reason: error.to_string(),
-        })? as usize;
-    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
-    let selector =
-        block_selector_mle_msb(start_index, advice_num_vars, r_address).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamValCheck,
-                reason: error.to_string(),
-            }
-        })?;
-    let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
-    *full_eval += selector * opening_claim;
+    let value = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
+    let block = ram_val_check_advice_block(kind, checked, r_address)?;
+    *full_eval += block.selector * value;
     contributions.push(VerifiedRamValCheckAdviceContribution {
         kind,
-        selector,
+        selector: block.selector,
         opening: OpeningClaim {
-            point: opening_point,
-            value: opening_claim,
+            point: block.opening_point,
+            value,
         },
     });
     Ok(())
