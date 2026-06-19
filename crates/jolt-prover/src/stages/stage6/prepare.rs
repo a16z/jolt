@@ -18,14 +18,15 @@ use jolt_verifier::stages::relations::SumcheckInstance;
 use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
 use jolt_verifier::stages::stage6::{
     stage6_advice_cycle_phase_reference, stage6_bytecode_cycle_points,
-    stage6_bytecode_read_raf_address_input, stage6_bytecode_register_points,
-    stage6_inc_claim_reduction_cycle_points, stage6_instruction_read_raf_point,
-    stage6_post_address_transcript_challenges, stage6_pre_address_transcript_challenges,
-    stage6_stage1_cycle_binding, stage6_stage5_ram_reduced_opening_point, AdviceCyclePhase,
-    AdviceCyclePhaseInputClaims, IncClaimReduction, IncClaimReductionInputClaims,
-    InstructionRaVirtualization, InstructionRaVirtualizationInputClaims, RamHammingBooleanity,
-    RamHammingBooleanityInputClaims, RamRaVirtualization, RamRaVirtualizationInputClaims,
-    Stage6BatchInputClaims, Stage6PreAddressChallenges, Stage6TranscriptChallenges,
+    stage6_bytecode_register_points, stage6_inc_claim_reduction_cycle_points,
+    stage6_instruction_read_raf_point, stage6_post_address_transcript_challenges,
+    stage6_pre_address_transcript_challenges, stage6_stage1_cycle_binding,
+    stage6_stage5_ram_reduced_opening_point, AdviceCyclePhase, AdviceCyclePhaseInputClaims,
+    BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims, IncClaimReduction,
+    IncClaimReductionInputClaims, InstructionRaVirtualization,
+    InstructionRaVirtualizationInputClaims, RamHammingBooleanity, RamHammingBooleanityInputClaims,
+    RamRaVirtualization, RamRaVirtualizationInputClaims, Stage6BatchInputClaims,
+    Stage6PreAddressChallenges, Stage6TranscriptChallenges,
 };
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
@@ -133,31 +134,25 @@ pub(super) fn bytecode_read_raf_address_input<F>(
 where
     F: Field,
 {
-    stage6_bytecode_read_raf_address_input(
-        config.bytecode_read_raf_dimensions,
-        stage1,
-        stage2,
-        stage3,
-        stage4,
-        stage5,
-        pre_address_input_claim_challenge_values(pre),
+    let inputs = BytecodeReadRafAddressPhaseInputClaims::from_upstream(
+        stage1, stage2, stage3, stage4, stage5,
     )
+    .map_err(invalid_stage_request)?;
+    // `num_val_stages` only affects produced opening points, not the input claim.
+    BytecodeReadRafAddressPhase::new(
+        config.bytecode_read_raf_dimensions,
+        pre.bytecode_gamma_powers[1],
+        [
+            pre.stage1_gammas[1],
+            pre.stage2_gammas[1],
+            pre.stage3_gammas[1],
+            pre.stage4_gammas[1],
+            pre.stage5_gammas[1],
+        ],
+        0,
+    )
+    .input_claim(&inputs)
     .map_err(invalid_stage_request)
-}
-
-fn pre_address_input_claim_challenge_values<F: Field>(
-    pre: &Stage6PreAddressChallenges<F>,
-) -> jolt_verifier::stages::stage6::Stage6InputClaimChallengeValues<'_, F> {
-    jolt_verifier::stages::stage6::Stage6InputClaimChallengeValues {
-        bytecode_gamma_powers: &pre.bytecode_gamma_powers,
-        stage1_gammas: &pre.stage1_gammas,
-        stage2_gammas: &pre.stage2_gammas,
-        stage3_gammas: &pre.stage3_gammas,
-        stage4_gammas: &pre.stage4_gammas,
-        stage5_gammas: &pre.stage5_gammas,
-        instruction_ra_gamma: F::zero(),
-        inc_gamma: F::zero(),
-    }
 }
 
 #[expect(

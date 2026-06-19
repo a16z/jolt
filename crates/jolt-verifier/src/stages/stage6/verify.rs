@@ -15,8 +15,8 @@ use jolt_claims::protocols::jolt::{
     },
     AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
     BytecodeReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial, PrecommittedClaimReduction,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    JoltRelationId, JoltSumcheckDomain, PrecommittedClaimReduction, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -602,26 +602,11 @@ where
         });
     }
 
-    // The bytecode address-phase input claim binds every prior clear stage but
-    // not the post-address-phase challenges (`instruction_ra_gamma`/`inc_gamma`),
-    // so the placeholder zeros below are never read.
-    let bytecode_read_raf_address_input = stage6_bytecode_read_raf_address_input(
-        formula_dimensions.bytecode_read_raf,
-        stage1,
-        stage2,
-        stage3,
-        stage4,
-        stage5,
-        Stage6InputClaimChallengeValues {
-            bytecode_gamma_powers: &bytecode_gamma_powers,
-            stage1_gammas: &stage1_gammas,
-            stage2_gammas: &stage2_gammas,
-            stage3_gammas: &stage3_gammas,
-            stage4_gammas: &stage4_gammas,
-            stage5_gammas: &stage5_gammas,
-            instruction_ra_gamma: PCS::Field::zero(),
-            inc_gamma: PCS::Field::zero(),
-        },
+    // The bytecode address-phase input claim is the gamma-folded bind of every
+    // prior clear stage opening; the relation evaluates it through its input `Expr`
+    // from these wired openings + the per-stage folding gammas.
+    let bytecode_address_inputs = BytecodeReadRafAddressPhaseInputClaims::from_upstream(
+        stage1, stage2, stage3, stage4, stage5,
     )?;
     let num_bytecode_val_stages = if committed_program {
         bytecode_reduction::NUM_BYTECODE_VAL_STAGES
@@ -630,7 +615,14 @@ where
     };
     let bytecode_address_relation = BytecodeReadRafAddressPhase::new(
         formula_dimensions.bytecode_read_raf,
-        bytecode_read_raf_address_input,
+        bytecode_gamma,
+        [
+            stage1_gammas[1],
+            stage2_gammas[1],
+            stage3_gammas[1],
+            stage4_gammas[1],
+            stage5_gammas[1],
+        ],
         num_bytecode_val_stages,
     );
     let booleanity_address_relation = BooleanityAddressPhase::new(booleanity_dimensions);
@@ -661,6 +653,7 @@ where
         transcript,
         claims,
         &bytecode_address_relation,
+        &bytecode_address_inputs,
         &booleanity_address_relation,
     )?;
     let address_batch = &stage6a.address_batch;
@@ -1228,33 +1221,6 @@ pub struct Stage6TranscriptChallenges<F: Field> {
     pub inc_gamma: F,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Stage6InputClaimChallengeValues<'a, F: Field> {
-    pub bytecode_gamma_powers: &'a [F],
-    pub stage1_gammas: &'a [F],
-    pub stage2_gammas: &'a [F],
-    pub stage3_gammas: &'a [F],
-    pub stage4_gammas: &'a [F],
-    pub stage5_gammas: &'a [F],
-    pub instruction_ra_gamma: F,
-    pub inc_gamma: F,
-}
-
-impl<F: Field> Stage6TranscriptChallenges<F> {
-    pub fn input_claim_challenge_values(&self) -> Stage6InputClaimChallengeValues<'_, F> {
-        Stage6InputClaimChallengeValues {
-            bytecode_gamma_powers: &self.bytecode_gamma_powers,
-            stage1_gammas: &self.stage1_gammas,
-            stage2_gammas: &self.stage2_gammas,
-            stage3_gammas: &self.stage3_gammas,
-            stage4_gammas: &self.stage4_gammas,
-            stage5_gammas: &self.stage5_gammas,
-            instruction_ra_gamma: self.instruction_ra_gamma,
-            inc_gamma: self.inc_gamma,
-        }
-    }
-}
-
 pub fn stage6_stage1_cycle_binding<F: Field>(
     stage1: &Stage1ClearOutput<F>,
 ) -> Result<&[F], VerifierError> {
@@ -1541,199 +1507,6 @@ fn stage6_checked_exact_split<'a, F: Field>(
         });
     }
     Ok(point.split_at(split_at))
-}
-
-pub fn stage6_bytecode_read_raf_address_input<F: Field>(
-    bytecode_dimensions: BytecodeReadRafDimensions,
-    stage1: &Stage1ClearOutput<F>,
-    stage2: &Stage2ClearOutput<F>,
-    stage3: &Stage3ClearOutput<F>,
-    stage4: &Stage4ClearOutput<F>,
-    stage5: &Stage5ClearOutput<F>,
-    challenges: Stage6InputClaimChallengeValues<'_, F>,
-) -> Result<F, VerifierError> {
-    let bytecode_claims = bytecode::read_raf_address_phase::<F>(bytecode_dimensions);
-    let bytecode_gamma = challenges.bytecode_gamma_powers[1];
-    let bytecode_input_openings = bytecode::read_raf_input_openings();
-    {
-        let input_claim = bytecode_claims.input.expression().try_evaluate(
-            |id| {
-                if *id == bytecode_input_openings.spartan_outer.unexpanded_pc {
-                    return Ok(stage1.outer.unexpanded_pc);
-                }
-                if *id == bytecode_input_openings.spartan_outer.imm {
-                    return Ok(stage1.outer.imm);
-                }
-                for (flag, opening) in &bytecode_input_openings.spartan_outer.op_flags {
-                    if *id == *opening {
-                        return stage1
-                            .outer
-                            .claim(JoltVirtualPolynomial::OpFlags(*flag))
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
-                    }
-                }
-                if *id == bytecode_input_openings.spartan_product.jump {
-                    return Ok(stage2.output_claims.product_remainder.jump_flag.value);
-                }
-                if *id == bytecode_input_openings.spartan_product.branch {
-                    return Ok(stage2.output_claims.product_remainder.branch_flag.value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .spartan_product
-                        .write_lookup_output_to_rd
-                {
-                    return Ok(stage2
-                        .output_claims
-                        .product_remainder
-                        .write_lookup_output_to_rd
-                        .value);
-                }
-                if *id == bytecode_input_openings.spartan_product.virtual_instruction {
-                    return Ok(stage2
-                        .output_claims
-                        .product_remainder
-                        .virtual_instruction
-                        .value);
-                }
-                if *id == bytecode_input_openings.instruction_input.imm {
-                    return Ok(stage3.output_claims.instruction_input.imm.value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .unexpanded_pc_from_shift
-                {
-                    return Ok(stage3.output_claims.shift.unexpanded_pc.value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .left_operand_is_rs1_value
-                {
-                    return Ok(stage3
-                        .output_claims
-                        .instruction_input
-                        .left_operand_is_rs1
-                        .value);
-                }
-                if *id == bytecode_input_openings.instruction_input.left_operand_is_pc {
-                    return Ok(stage3
-                        .output_claims
-                        .instruction_input
-                        .left_operand_is_pc
-                        .value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .right_operand_is_rs2_value
-                {
-                    return Ok(stage3
-                        .output_claims
-                        .instruction_input
-                        .right_operand_is_rs2
-                        .value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .right_operand_is_imm
-                {
-                    return Ok(stage3
-                        .output_claims
-                        .instruction_input
-                        .right_operand_is_imm
-                        .value);
-                }
-                if *id == bytecode_input_openings.instruction_input.is_noop_from_shift {
-                    return Ok(stage3.output_claims.shift.is_noop.value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .virtual_instruction_from_shift
-                {
-                    return Ok(stage3.output_claims.shift.is_virtual.value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .instruction_input
-                        .is_first_in_sequence_from_shift
-                {
-                    return Ok(stage3.output_claims.shift.is_first_in_sequence.value);
-                }
-                if *id == bytecode_input_openings.registers_read_write.rd_wa {
-                    return Ok(stage4.output_claims.registers_read_write.rd_wa.value);
-                }
-                if *id == bytecode_input_openings.registers_read_write.rs1_ra {
-                    return Ok(stage4.output_claims.registers_read_write.rs1_ra.value);
-                }
-                if *id == bytecode_input_openings.registers_read_write.rs2_ra {
-                    return Ok(stage4.output_claims.registers_read_write.rs2_ra.value);
-                }
-                if *id == bytecode_input_openings.registers_val_evaluation.rd_wa {
-                    return Ok(stage5.output_claims.registers_val_evaluation.rd_wa.value);
-                }
-                if *id
-                    == bytecode_input_openings
-                        .registers_val_evaluation
-                        .instruction_raf_flag
-                {
-                    return Ok(stage5
-                        .output_claims
-                        .instruction_read_raf
-                        .instruction_raf_flag
-                        .value);
-                }
-                for (table, opening) in &bytecode_input_openings
-                    .registers_val_evaluation
-                    .lookup_table_flags
-                {
-                    if *id == *opening {
-                        return stage5
-                            .output_claims
-                            .instruction_read_raf
-                            .lookup_table_flags
-                            .get(table.index())
-                            .map(|claim| claim.value)
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
-                    }
-                }
-                if *id == bytecode_input_openings.spartan_outer_pc {
-                    return Ok(stage1.outer.pc);
-                }
-                if *id == bytecode_input_openings.spartan_shift_pc {
-                    return Ok(stage3.output_claims.shift.pc.value);
-                }
-                Err(VerifierError::MissingOpeningClaim { id: *id })
-            },
-            |id| match id {
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
-                    Ok(bytecode_gamma)
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage1Gamma) => {
-                    Ok(challenges.stage1_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage2Gamma) => {
-                    Ok(challenges.stage2_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage3Gamma) => {
-                    Ok(challenges.stage3_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage4Gamma) => {
-                    Ok(challenges.stage4_gammas[1])
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage5Gamma) => {
-                    Ok(challenges.stage5_gammas[1])
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?;
-
-        Ok(input_claim)
-    }
 }
 
 fn stage6_booleanity_reference<F, T>(
@@ -2167,6 +1940,7 @@ pub(super) fn verify_clear<PCS, VC, T, ZkProof>(
     transcript: &mut T,
     claims: &Stage6OutputClaims<PCS::Field>,
     bytecode_relation: &BytecodeReadRafAddressPhase<PCS::Field>,
+    bytecode_inputs: &BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<PCS::Field>>,
     booleanity_relation: &BooleanityAddressPhase<PCS::Field>,
 ) -> Result<Stage6AClearOutput<PCS::Field>, VerifierError>
 where
@@ -2174,9 +1948,8 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let bytecode_inputs = BytecodeReadRafAddressPhaseInputClaims::from_upstream();
     let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
-    let bytecode_read_raf_input = bytecode_relation.input_claim(&bytecode_inputs)?;
+    let bytecode_read_raf_input = bytecode_relation.input_claim(bytecode_inputs)?;
     let booleanity_input = booleanity_relation.input_claim(&booleanity_inputs)?;
     let bytecode_spec = &bytecode_relation.sumcheck_relation().sumcheck;
     let booleanity_spec = &booleanity_relation.sumcheck_relation().sumcheck;
@@ -2230,7 +2003,7 @@ where
     // Pair the produced address-phase openings (wire values + derived points) and
     // check the expected outputs through the relation objects.
     let bytecode_points =
-        bytecode_relation.derive_opening_points(&bytecode_address_point, &bytecode_inputs)?;
+        bytecode_relation.derive_opening_points(&bytecode_address_point, bytecode_inputs)?;
     let bytecode_values = BytecodeReadRafAddressPhaseOutputClaims {
         intermediate: claims.address_phase.bytecode_read_raf,
         val_stages: claims
@@ -2247,7 +2020,7 @@ where
     let booleanity_outputs = zip_openings(&booleanity_values, &booleanity_points);
 
     let address_expected_outputs = [
-        bytecode_relation.expected_output(&bytecode_inputs, &bytecode_outputs)?,
+        bytecode_relation.expected_output(bytecode_inputs, &bytecode_outputs)?,
         booleanity_relation.expected_output(&booleanity_inputs, &booleanity_outputs)?,
     ];
     if address_batch.batching_coefficients.len() != address_expected_outputs.len() {

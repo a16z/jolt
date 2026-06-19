@@ -42,11 +42,15 @@
 //! - `#[opening(trusted_advice)]` / `#[opening(untrusted_advice)]` — an advice
 //!   opening.
 //!
-//! Arity is read from the field type, not the annotation: a `Vec<C>` field is an
-//! indexed family (element `i` maps to `Variant(i)`, so `Variant` must be a
-//! tuple variant taking the index), while a `C` or `Option<C>` field is a
-//! single opening (`Variant` must be a unit variant, or a payload-carrying
-//! variant — but a payload variant cannot also be indexed).
+//! Arity is read from the field type, not the annotation. A `C` or `Option<C>`
+//! field is a single opening: `Variant` must be a unit variant or a
+//! payload-carrying variant (`OpFlags(CircuitFlags::VirtualInstruction)`). A
+//! `Vec<C>` field is an indexed family; element `i` maps to:
+//! - `Variant(i)` for a `usize`-indexed variant, e.g. `#[opening(LookupTableFlag)]`
+//!   → `LookupTableFlag(i)`; or
+//! - `Variant(ARRAY[i])` when the annotation supplies a per-element payload array,
+//!   e.g. `#[opening(OpFlags(CIRCUIT_FLAGS))]` → `OpFlags(CIRCUIT_FLAGS[i])`, for
+//!   families keyed by an enum rather than a contiguous index.
 //!
 //! `InputClaims` leaves additionally take `, from = ProducingRelation`.
 
@@ -299,20 +303,6 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
             "advice openings are scalar; a `Vec` advice field has no indexed id",
         ));
     }
-    if is_many
-        && matches!(
-            spec.kind,
-            LeafKind::Virtual {
-                payload: Some(_),
-                ..
-            }
-        )
-    {
-        return Err(syn::Error::new_spanned(
-            &field.ty,
-            "an indexed (`Vec`) opening uses the index as its variant payload, so it cannot also carry an explicit payload",
-        ));
-    }
     Ok(FieldPlan {
         ident,
         is_option: is_option_type(&field.ty),
@@ -329,12 +319,19 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
     let rel = quote!(#jolt::JoltRelationId::#relation);
     match kind {
         LeafKind::Virtual { variant, payload } => {
-            let polynomial = if let Some(index) = index {
-                quote!(#jolt::JoltVirtualPolynomial::#variant(#index))
-            } else if let Some(payload) = payload {
-                quote!(#jolt::JoltVirtualPolynomial::#variant(#payload))
-            } else {
-                quote!(#jolt::JoltVirtualPolynomial::#variant)
+            let polynomial = match (index, payload) {
+                // Indexed family over an enum payload: the field is a `Vec` and the
+                // annotation supplies the per-element payload *array*, so element `i`
+                // maps to `Variant(ARRAY[i])` (e.g. `OpFlags(CIRCUIT_FLAGS[i])`).
+                (Some(index), Some(payload)) => {
+                    quote!(#jolt::JoltVirtualPolynomial::#variant(#payload[#index]))
+                }
+                // Indexed family over a `usize` payload: `Variant(i)`.
+                (Some(index), None) => quote!(#jolt::JoltVirtualPolynomial::#variant(#index)),
+                // Single payload-carrying variant: `Variant(PAYLOAD)`.
+                (None, Some(payload)) => quote!(#jolt::JoltVirtualPolynomial::#variant(#payload)),
+                // Single unit variant: `Variant`.
+                (None, None) => quote!(#jolt::JoltVirtualPolynomial::#variant),
             };
             quote!(#jolt::JoltOpeningId::virtual_polynomial(#polynomial, #rel))
         }

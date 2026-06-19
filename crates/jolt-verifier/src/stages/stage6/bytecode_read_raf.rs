@@ -18,8 +18,6 @@
 //!
 //! [`stage6_bytecode_read_raf_address_input`]: super::verify::stage6_bytecode_read_raf_address_input
 
-use core::marker::PhantomData;
-
 use jolt_claims::protocols::jolt::{
     formulas::{
         bytecode::{
@@ -30,10 +28,10 @@ use jolt_claims::protocols::jolt::{
         dimensions::committed_address_chunks,
     },
     BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId,
+    JoltRelationId, JoltVirtualPolynomial,
 };
 use jolt_field::Field;
-use jolt_riscv::JoltInstructionRow;
+use jolt_riscv::{CircuitFlags, InstructionFlags, JoltInstructionRow, CIRCUIT_FLAGS};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +39,10 @@ use super::verify::{
     stage6_bytecode_read_raf_expected_output, Stage6BytecodeReadRafExpectedOutputInputs,
 };
 use crate::stages::relations::{GetPoint, GetValue, OpeningClaim, SumcheckInstance};
+use crate::stages::{
+    stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
+    stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
+};
 use crate::VerifierError;
 
 /// The address-phase produced openings: the `BytecodeReadRafAddrClaim`
@@ -59,38 +61,147 @@ pub struct BytecodeReadRafAddressPhaseOutputClaims<C> {
     pub val_stages: Vec<C>,
 }
 
-/// The address phase's input claim is the gamma-folded prior-proof bind, supplied
-/// precomputed (see the module docs), so it consumes no openings through the
-/// generic path.
+/// The prior-proof openings the address-phase input claim binds: every stage-1..5
+/// opening the `read_raf_address_phase` input `Expr` folds (plus the two PC
+/// claims). The generic `input_claim` evaluates the bind from these via that
+/// `Expr`, so the gamma-folding formula lives in one place rather than a
+/// hand-written 25-opening resolver. The `op_flags` / `lookup_table_flags`
+/// families are indexed openings (`OpFlags(CIRCUIT_FLAGS[i])` /
+/// `LookupTableFlag(i)`).
+#[derive(Clone, Debug, InputClaims)]
 pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
-    _cell: PhantomData<C>,
+    #[opening(UnexpandedPC, from = SpartanOuter)]
+    pub outer_unexpanded_pc: C,
+    #[opening(Imm, from = SpartanOuter)]
+    pub outer_imm: C,
+    #[opening(OpFlags(CIRCUIT_FLAGS), from = SpartanOuter)]
+    pub outer_op_flags: Vec<C>,
+    #[opening(PC, from = SpartanOuter)]
+    pub outer_pc: C,
+    #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
+    pub product_jump: C,
+    #[opening(InstructionFlags(InstructionFlags::Branch), from = SpartanProductVirtualization)]
+    pub product_branch: C,
+    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD), from = SpartanProductVirtualization)]
+    pub product_write_lookup_output_to_rd: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanProductVirtualization)]
+    pub product_virtual_instruction: C,
+    #[opening(Imm, from = InstructionInputVirtualization)]
+    pub instruction_input_imm: C,
+    #[opening(UnexpandedPC, from = SpartanShift)]
+    pub shift_unexpanded_pc: C,
+    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value), from = InstructionInputVirtualization)]
+    pub left_operand_is_rs1_value: C,
+    #[opening(InstructionFlags(InstructionFlags::LeftOperandIsPC), from = InstructionInputVirtualization)]
+    pub left_operand_is_pc: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRs2Value), from = InstructionInputVirtualization)]
+    pub right_operand_is_rs2_value: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm), from = InstructionInputVirtualization)]
+    pub right_operand_is_imm: C,
+    #[opening(InstructionFlags(InstructionFlags::IsNoop), from = SpartanShift)]
+    pub is_noop: C,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanShift)]
+    pub shift_virtual_instruction: C,
+    #[opening(OpFlags(CircuitFlags::IsFirstInSequence), from = SpartanShift)]
+    pub shift_is_first_in_sequence: C,
+    #[opening(PC, from = SpartanShift)]
+    pub shift_pc: C,
+    #[opening(RdWa, from = RegistersReadWriteChecking)]
+    pub rd_wa_read_write: C,
+    #[opening(Rs1Ra, from = RegistersReadWriteChecking)]
+    pub rs1_ra: C,
+    #[opening(Rs2Ra, from = RegistersReadWriteChecking)]
+    pub rs2_ra: C,
+    #[opening(RdWa, from = RegistersValEvaluation)]
+    pub rd_wa_val_evaluation: C,
+    #[opening(InstructionRafFlag, from = InstructionReadRaf)]
+    pub instruction_raf_flag: C,
+    #[opening(LookupTableFlag, from = InstructionReadRaf)]
+    pub lookup_table_flags: Vec<C>,
 }
 
-impl<C> Default for BytecodeReadRafAddressPhaseInputClaims<C> {
-    fn default() -> Self {
-        Self { _cell: PhantomData }
+/// The input claim reads only opening *values* (the points are unused), so wrap
+/// each upstream value in a point-free clear cell.
+fn input_opening<F: Field>(value: F) -> OpeningClaim<F> {
+    OpeningClaim {
+        point: Vec::new(),
+        value,
     }
 }
 
 impl<F: Field> BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>> {
-    pub fn from_upstream() -> Self {
-        Self::default()
-    }
-}
-
-impl<F: Field> crate::stages::relations::InputClaims<F>
-    for BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>>
-{
-    fn resolve_input(&self, _id: &JoltOpeningId) -> Option<F> {
-        None
+    pub fn from_upstream(
+        stage1: &Stage1ClearOutput<F>,
+        stage2: &Stage2ClearOutput<F>,
+        stage3: &Stage3ClearOutput<F>,
+        stage4: &Stage4ClearOutput<F>,
+        stage5: &Stage5ClearOutput<F>,
+    ) -> Result<Self, VerifierError> {
+        let outer_op_flags = CIRCUIT_FLAGS
+            .iter()
+            .map(|flag| {
+                stage1
+                    .outer
+                    .claim(JoltVirtualPolynomial::OpFlags(*flag))
+                    .map(input_opening)
+                    .ok_or(VerifierError::MissingOpeningClaim {
+                        id: JoltOpeningId::virtual_polynomial(
+                            JoltVirtualPolynomial::OpFlags(*flag),
+                            JoltRelationId::SpartanOuter,
+                        ),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let product = &stage2.output_claims.product_remainder;
+        let instruction_input = &stage3.output_claims.instruction_input;
+        let shift = &stage3.output_claims.shift;
+        let registers_read_write = &stage4.output_claims.registers_read_write;
+        let instruction_read_raf = &stage5.output_claims.instruction_read_raf;
+        let lookup_table_flags = instruction_read_raf
+            .lookup_table_flags
+            .iter()
+            .map(|claim| input_opening(claim.value))
+            .collect();
+        Ok(Self {
+            outer_unexpanded_pc: input_opening(stage1.outer.unexpanded_pc),
+            outer_imm: input_opening(stage1.outer.imm),
+            outer_op_flags,
+            outer_pc: input_opening(stage1.outer.pc),
+            product_jump: input_opening(product.jump_flag.value),
+            product_branch: input_opening(product.branch_flag.value),
+            product_write_lookup_output_to_rd: input_opening(
+                product.write_lookup_output_to_rd.value,
+            ),
+            product_virtual_instruction: input_opening(product.virtual_instruction.value),
+            instruction_input_imm: input_opening(instruction_input.imm.value),
+            shift_unexpanded_pc: input_opening(shift.unexpanded_pc.value),
+            left_operand_is_rs1_value: input_opening(instruction_input.left_operand_is_rs1.value),
+            left_operand_is_pc: input_opening(instruction_input.left_operand_is_pc.value),
+            right_operand_is_rs2_value: input_opening(instruction_input.right_operand_is_rs2.value),
+            right_operand_is_imm: input_opening(instruction_input.right_operand_is_imm.value),
+            is_noop: input_opening(shift.is_noop.value),
+            shift_virtual_instruction: input_opening(shift.is_virtual.value),
+            shift_is_first_in_sequence: input_opening(shift.is_first_in_sequence.value),
+            shift_pc: input_opening(shift.pc.value),
+            rd_wa_read_write: input_opening(registers_read_write.rd_wa.value),
+            rs1_ra: input_opening(registers_read_write.rs1_ra.value),
+            rs2_ra: input_opening(registers_read_write.rs2_ra.value),
+            rd_wa_val_evaluation: input_opening(
+                stage5.output_claims.registers_val_evaluation.rd_wa.value,
+            ),
+            instruction_raf_flag: input_opening(instruction_read_raf.instruction_raf_flag.value),
+            lookup_table_flags,
+        })
     }
 }
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     claims: JoltRelationClaims<F>,
-    /// The gamma-folded prior-proof bind, precomputed by
-    /// `stage6_bytecode_read_raf_address_input`.
-    input_claim: F,
+    /// The bytecode read-RAF gamma and the five per-stage folding gammas
+    /// (`stageN_gammas[1]`) the input bind multiplies the stage sub-claims by; the
+    /// generic `input_claim` resolves them through [`Self::resolve_challenge`].
+    gamma: F,
+    stage_gammas: [F; 5],
     /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, else 0.
     num_val_stages: usize,
 }
@@ -98,12 +209,14 @@ pub struct BytecodeReadRafAddressPhase<F: Field> {
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
     pub fn new(
         dimensions: BytecodeReadRafDimensions,
-        input_claim: F,
+        gamma: F,
+        stage_gammas: [F; 5],
         num_val_stages: usize,
     ) -> Self {
         Self {
             claims: bytecode::read_raf_address_phase(dimensions),
-            input_claim,
+            gamma,
+            stage_gammas,
             num_val_stages,
         }
     }
@@ -117,11 +230,18 @@ impl<F: Field> SumcheckInstance<F> for BytecodeReadRafAddressPhase<F> {
         &self.claims
     }
 
-    fn input_claim(
-        &self,
-        _inputs: &BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>>,
-    ) -> Result<F, VerifierError> {
-        Ok(self.input_claim)
+    fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
+        let JoltChallengeId::BytecodeReadRaf(challenge) = id else {
+            return Err(VerifierError::MissingStageClaimChallenge { id: *id });
+        };
+        Ok(match challenge {
+            BytecodeReadRafChallenge::Gamma => self.gamma,
+            BytecodeReadRafChallenge::Stage1Gamma => self.stage_gammas[0],
+            BytecodeReadRafChallenge::Stage2Gamma => self.stage_gammas[1],
+            BytecodeReadRafChallenge::Stage3Gamma => self.stage_gammas[2],
+            BytecodeReadRafChallenge::Stage4Gamma => self.stage_gammas[3],
+            BytecodeReadRafChallenge::Stage5Gamma => self.stage_gammas[4],
+        })
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

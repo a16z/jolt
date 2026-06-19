@@ -221,7 +221,7 @@ mod tests {
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_riscv::CircuitFlags;
+    use jolt_riscv::{CircuitFlags, CIRCUIT_FLAGS};
     use jolt_verifier_derive::{InputClaims, OutputClaims};
 
     fn fr(value: u64) -> Fr {
@@ -621,5 +621,51 @@ mod tests {
             absent.resolve_input(&virt(JoltVirtualPolynomial::LookupOutput, relation)),
             None,
         );
+    }
+
+    // A `Vec` field whose payload annotation is an *array* indexes the family by
+    // enum element: `op_flags[i]` is `OpFlags(CIRCUIT_FLAGS[i])`. Exercised in
+    // both derives.
+    #[derive(InputClaims)]
+    struct EnumIndexedInputs<C> {
+        #[opening(OpFlags(CIRCUIT_FLAGS), from = SpartanOuter)]
+        op_flags: Vec<C>,
+    }
+
+    #[derive(OutputClaims)]
+    #[relation(SpartanOuter)]
+    struct EnumIndexedOutputs<C> {
+        #[opening(OpFlags(CIRCUIT_FLAGS))]
+        op_flags: Vec<C>,
+    }
+
+    #[test]
+    fn enum_indexed_vec_resolves_by_flag() {
+        let relation = JoltRelationId::SpartanOuter;
+        let values: Vec<Fr> = (0..CIRCUIT_FLAGS.len()).map(|i| fr(i as u64)).collect();
+
+        let inputs = EnumIndexedInputs {
+            op_flags: values.clone(),
+        };
+        let outputs = EnumIndexedOutputs {
+            op_flags: values.clone(),
+        };
+        for (i, flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
+            let id = virt(JoltVirtualPolynomial::OpFlags(flag), relation);
+            assert_eq!(inputs.resolve_input(&id), Some(fr(i as u64)));
+            assert_eq!(outputs.resolve_output(&id), Some(fr(i as u64)));
+        }
+
+        // Same flag, different relation misses; the encoders follow declaration order.
+        assert_eq!(
+            inputs.resolve_input(&virt(
+                JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
+                JoltRelationId::SpartanShift,
+            )),
+            None,
+        );
+        assert_eq!(outputs.opening_count(), CIRCUIT_FLAGS.len());
+        assert_eq!(outputs.opening_values(), values);
+        assert_append_matches_values(&outputs);
     }
 }
