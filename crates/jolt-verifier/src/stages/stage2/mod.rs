@@ -1,6 +1,5 @@
 //! Stage 2 product uni-skip and five-instance batch verifier.
 
-pub mod inputs;
 pub mod instruction_claim_reduction;
 pub mod outputs;
 pub mod product_remainder;
@@ -9,15 +8,13 @@ pub mod ram_raf_evaluation;
 pub mod ram_read_write_checking;
 mod verify;
 
-pub use inputs::{
-    product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ProductUniSkipInputValues,
-};
 pub use instruction_claim_reduction::{
     InstructionClaimReduction, InstructionClaimReductionInputClaims,
     InstructionClaimReductionOutputClaims,
 };
 pub use outputs::{
-    Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2ZkOutput, VerifiedProductUniSkip,
+    product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output,
+    Stage2ProductUniSkipInputValues, Stage2PublicOutput, Stage2ZkOutput, VerifiedProductUniSkip,
 };
 pub use product_remainder::{
     ProductRemainder, ProductRemainderInputClaims, ProductRemainderOutputClaims,

@@ -39,7 +39,7 @@ use jolt_sumcheck::{
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{OpeningClaim, SumcheckInstance};
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
-use jolt_verifier::stages::stage2::inputs::{
+use jolt_verifier::stages::stage2::outputs::{
     product_uniskip_input_claim, InstructionClaimReductionOutputClaims,
     ProductRemainderOutputClaims, RamReadWriteOutputClaims, Stage2BatchOutputClaims,
     Stage2OutputClaims, Stage2ProductUniSkipInputValues,

@@ -30,7 +30,7 @@ use jolt_verifier::stages::{
     stage7::{
         advice_address_phase::AdviceAddressPhaseOutputClaims,
         hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
-        inputs::Stage7OutputClaims, outputs::Stage7ClearOutput,
+        outputs::{Stage7ClearOutput, Stage7OutputClaims},
         stage7_hamming_virtualization_address_points, Stage7InstancePoints, Stage7Layouts,
         Stage7Relations,
     },

@@ -4,7 +4,7 @@ use jolt_backends::{
     SumcheckRamRaVirtualizationOutput,
 };
 use jolt_field::Field;
-use jolt_verifier::stages::stage6::inputs::{
+use jolt_verifier::stages::stage6::outputs::{
     AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeReadRafOutputClaims,
     IncClaimReductionOutputClaims, InstructionRaVirtualizationOutputClaims,
     RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims, Stage6AddressPhaseClaims,

@@ -8,13 +8,13 @@ use crate::compat::ids as legacy;
 use crate::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
     stages::{
-        stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1OutputClaims},
-        stage2::inputs::{
+        stage1::outputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1OutputClaims},
+        stage2::outputs::{
             InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
             RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
             Stage2BatchOutputClaims, Stage2OutputClaims,
         },
-        stage3::inputs::{
+        stage3::outputs::{
             InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
             SpartanShiftOutputClaims, Stage3OutputClaims,
         },
@@ -26,7 +26,7 @@ use crate::{
             InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
             RegistersValEvaluationOutputClaims, Stage5OutputClaims,
         },
-        stage6::inputs::{
+        stage6::outputs::{
             AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeCyclePhaseOutputClaims,
             BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
             InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
@@ -40,7 +40,7 @@ use crate::{
                 ProgramImageReductionAddressPhaseOutputClaims,
             },
             hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
-            inputs::Stage7OutputClaims,
+            outputs::Stage7OutputClaims,
         },
     },
     VerifierError,

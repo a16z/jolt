@@ -9,7 +9,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_verifier::stages::relations::{zip_openings, SumcheckInstance};
 use jolt_verifier::stages::stage6::batch::{Stage6Relations, Stage6RelationsParams};
-use jolt_verifier::stages::stage6::inputs::{
+use jolt_verifier::stages::stage6::outputs::{
     AdviceCyclePhaseOutputClaim, Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims,
     Stage6OutputClaims,
 };

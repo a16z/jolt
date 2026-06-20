@@ -15,7 +15,7 @@ use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::SumcheckInstance;
-use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
+use jolt_verifier::stages::stage6::outputs::Stage6AddressPhaseClaims;
 use jolt_verifier::stages::stage6::{
     stage6_advice_cycle_phase_reference, stage6_bytecode_cycle_points,
     stage6_bytecode_register_points, stage6_inc_claim_reduction_cycle_points,

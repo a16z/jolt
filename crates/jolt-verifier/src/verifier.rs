@@ -1018,19 +1018,19 @@ mod tests {
         let zero = Fr::zero();
 
         JoltProofClaims::Clear(ClearProofClaims {
-            stage1: stage1::inputs::Stage1OutputClaims {
+            stage1: stage1::outputs::Stage1OutputClaims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
             },
-            stage2: stage2::inputs::Stage2OutputClaims {
+            stage2: stage2::outputs::Stage2OutputClaims {
                 product_uniskip_output_claim: zero,
-                batch_outputs: stage2::inputs::Stage2BatchOutputClaims {
-                    ram_read_write: stage2::inputs::RamReadWriteOutputClaims {
+                batch_outputs: stage2::outputs::Stage2BatchOutputClaims {
+                    ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                         val: zero,
                         ra: zero,
                         inc: zero,
                     },
-                    product_remainder: stage2::inputs::ProductRemainderOutputClaims {
+                    product_remainder: stage2::outputs::ProductRemainderOutputClaims {
                         left_instruction_input: zero,
                         right_instruction_input: zero,
                         jump_flag: zero,
@@ -1041,30 +1041,30 @@ mod tests {
                         virtual_instruction: zero,
                     },
                     instruction_claim_reduction:
-                        stage2::inputs::InstructionClaimReductionOutputClaims {
+                        stage2::outputs::InstructionClaimReductionOutputClaims {
                             lookup_output: None,
                             left_lookup_operand: zero,
                             right_lookup_operand: zero,
                             left_instruction_input: None,
                             right_instruction_input: None,
                         },
-                    ram_raf_evaluation: stage2::inputs::RamRafEvaluationOutputClaims {
+                    ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims {
                         ram_ra: zero,
                     },
-                    ram_output_check: stage2::inputs::RamOutputCheckOutputClaims {
+                    ram_output_check: stage2::outputs::RamOutputCheckOutputClaims {
                         val_final: zero,
                     },
                 },
             },
-            stage3: stage3::inputs::Stage3OutputClaims {
-                shift: stage3::inputs::SpartanShiftOutputClaims {
+            stage3: stage3::outputs::Stage3OutputClaims {
+                shift: stage3::outputs::SpartanShiftOutputClaims {
                     unexpanded_pc: zero,
                     pc: zero,
                     is_virtual: zero,
                     is_first_in_sequence: zero,
                     is_noop: zero,
                 },
-                instruction_input: stage3::inputs::InstructionInputOutputClaims {
+                instruction_input: stage3::outputs::InstructionInputOutputClaims {
                     left_operand_is_rs1: zero,
                     rs1_value: zero,
                     left_operand_is_pc: zero,
@@ -1074,13 +1074,13 @@ mod tests {
                     right_operand_is_imm: zero,
                     imm: zero,
                 },
-                registers_claim_reduction: stage3::inputs::RegistersClaimReductionOutputClaims {
+                registers_claim_reduction: stage3::outputs::RegistersClaimReductionOutputClaims {
                     rd_write_value: zero,
                     rs1_value: zero,
                     rs2_value: zero,
                 },
             },
-            stage4: stage4::inputs::Stage4OutputClaims {
+            stage4: stage4::outputs::Stage4OutputClaims {
                 advice: stage4::RamValCheckAdviceClaims {
                     untrusted: None,
                     trusted: None,
@@ -1098,7 +1098,7 @@ mod tests {
                     ram_inc: zero,
                 },
             },
-            stage5: stage5::inputs::Stage5OutputClaims {
+            stage5: stage5::outputs::Stage5OutputClaims {
                 instruction_read_raf: stage5::InstructionReadRafOutputClaims {
                     lookup_table_flags: Vec::new(),
                     instruction_ra: Vec::new(),
@@ -1110,42 +1110,42 @@ mod tests {
                     rd_wa: zero,
                 },
             },
-            stage6: stage6::inputs::Stage6OutputClaims {
-                address_phase: stage6::inputs::Stage6AddressPhaseClaims {
+            stage6: stage6::outputs::Stage6OutputClaims {
+                address_phase: stage6::outputs::Stage6AddressPhaseClaims {
                     bytecode_read_raf: zero,
                     booleanity: zero,
                     bytecode_val_stages: None,
                 },
-                bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputClaims {
+                bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
                     bytecode_ra: Vec::new(),
                 },
-                booleanity: stage6::inputs::BooleanityOutputClaims {
+                booleanity: stage6::outputs::BooleanityOutputClaims {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputClaims {
+                ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
                 },
-                ram_ra_virtualization: stage6::inputs::RamRaVirtualizationOutputClaims {
+                ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),
                 },
                 instruction_ra_virtualization:
-                    stage6::inputs::InstructionRaVirtualizationOutputClaims {
+                    stage6::outputs::InstructionRaVirtualizationOutputClaims {
                         committed_instruction_ra: Vec::new(),
                     },
-                inc_claim_reduction: stage6::inputs::IncClaimReductionOutputClaims {
+                inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
-                advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
+                advice_cycle_phase: stage6::outputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,
                 },
                 bytecode_claim_reduction: None,
                 program_image_claim_reduction: None,
             },
-            stage7: stage7::inputs::Stage7OutputClaims {
+            stage7: stage7::outputs::Stage7OutputClaims {
                 hamming_weight_claim_reduction:
                     stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                         instruction_ra: Vec::new(),
@@ -1163,10 +1163,10 @@ mod tests {
         })
     }
 
-    fn empty_spartan_outer_claims() -> stage1::inputs::SpartanOuterClaims<Fr> {
+    fn empty_spartan_outer_claims() -> stage1::outputs::SpartanOuterClaims<Fr> {
         let zero = Fr::zero();
 
-        stage1::inputs::SpartanOuterClaims {
+        stage1::outputs::SpartanOuterClaims {
             left_instruction_input: zero,
             right_instruction_input: zero,
             product: zero,
@@ -1188,7 +1188,7 @@ mod tests {
             next_is_first_in_sequence: zero,
             lookup_output: zero,
             should_jump: zero,
-            flags: stage1::inputs::SpartanOuterFlagClaims {
+            flags: stage1::outputs::SpartanOuterFlagClaims {
                 add_operands: zero,
                 subtract_operands: zero,
                 multiply_operands: zero,

@@ -31,9 +31,9 @@ use super::committed_reduction_address_phase::{
 use super::hamming_weight_claim_reduction::{
     HammingWeightClaimReduction, HammingWeightClaimReductionInputClaims,
 };
-use super::inputs::Stage7OutputClaims;
 use super::outputs::{
-    PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7PublicOutput, Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7OutputClaims,
+    Stage7PublicOutput, Stage7ZkOutput,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -42,7 +42,8 @@ use crate::{
         relations::{zip_openings, OpeningClaim, SumcheckInstance},
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6::{
-            inputs::BytecodeCyclePhaseOutputClaims, Stage6ClearOutput, Stage6Output, Stage6ZkOutput,
+            outputs::BytecodeCyclePhaseOutputClaims, Stage6ClearOutput, Stage6Output,
+            Stage6ZkOutput,
         },
         zk::committed,
     },

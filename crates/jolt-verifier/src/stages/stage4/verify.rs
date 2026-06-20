@@ -16,8 +16,9 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::{LabelWithCount, Transcript};
 
 use super::{
-    inputs::Stage4OutputClaims,
-    outputs::{Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4ZkOutput},
+    outputs::{
+        Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4OutputClaims, Stage4ZkOutput,
+    },
     ram_val_check::{
         ram_val_check_initial_evaluation, RamValCheck, RamValCheckAdviceClaims,
         RamValCheckInitialEvaluation, RamValCheckInputClaims, RamValCheckOutputClaims,

@@ -14,11 +14,11 @@ use jolt_verifier::stages::relations::SumcheckInstance;
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput,
     stage2::Stage2ClearOutput,
-    stage3::inputs::{
+    stage3::instruction_input::{InstructionInput, InstructionInputInputClaims},
+    stage3::outputs::{
         InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
         SpartanShiftOutputClaims, Stage3OutputClaims,
     },
-    stage3::instruction_input::{InstructionInput, InstructionInputInputClaims},
     stage3::outputs::{Stage3Challenges, Stage3ClearOutput},
     stage3::registers_claim_reduction::{
         RegistersClaimReduction, RegistersClaimReductionInputClaims,

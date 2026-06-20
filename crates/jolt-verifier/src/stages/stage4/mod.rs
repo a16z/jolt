@@ -1,13 +1,13 @@
 //! Stage 4 verifier entry point.
 
-pub mod inputs;
 pub mod outputs;
 pub mod ram_val_check;
 pub mod registers_read_write_checking;
 mod verify;
 
-pub use inputs::Stage4OutputClaims;
-pub use outputs::{Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4ZkOutput};
+pub use outputs::{
+    Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4OutputClaims, Stage4ZkOutput,
+};
 pub use ram_val_check::{
     ram_val_check_advice_block, RamValCheck, RamValCheckAdviceBlock, RamValCheckAdviceClaims,
     RamValCheckInitialEvaluation, RamValCheckInputClaims, RamValCheckOutputClaims,

@@ -1,18 +1,18 @@
 //! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
 
-pub mod inputs;
 pub mod instruction_input;
 pub mod outputs;
 pub mod registers_claim_reduction;
 pub mod spartan_shift;
 mod verify;
 
-pub use inputs::Stage3OutputClaims;
 pub use instruction_input::{
     check_instruction_input_consistency, InstructionInput, InstructionInputInputClaims,
     InstructionInputOutputClaims,
 };
-pub use outputs::{Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3ZkOutput};
+pub use outputs::{
+    Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3OutputClaims, Stage3ZkOutput,
+};
 pub use registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionInputClaims,
     RegistersClaimReductionOutputClaims,

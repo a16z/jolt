@@ -36,7 +36,7 @@ use crate::stages::stage2::outputs::Stage2ClearOutput;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
-use super::inputs::Stage4OutputClaims;
+use super::outputs::Stage4OutputClaims;
 
 /// Produced RAM value-check openings (`ram_ra`, `ram_inc`) sharing one opening
 /// point. Generic over the cell.

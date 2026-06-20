@@ -14,11 +14,12 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::Stage3OutputClaims,
     instruction_input::{
         check_instruction_input_consistency, InstructionInput, InstructionInputInputClaims,
     },
-    outputs::{Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3ZkOutput},
+    outputs::{
+        Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3OutputClaims, Stage3ZkOutput,
+    },
     registers_claim_reduction::{RegistersClaimReduction, RegistersClaimReductionInputClaims},
     spartan_shift::{SpartanShift, SpartanShiftInputClaims},
 };
@@ -271,8 +272,8 @@ where
 mod tests {
     use super::*;
 
-    use crate::stages::stage3::inputs::Stage3OutputClaims;
     use crate::stages::stage3::instruction_input::InstructionInputOutputClaims;
+    use crate::stages::stage3::outputs::Stage3OutputClaims;
     use crate::stages::stage3::registers_claim_reduction::RegistersClaimReductionOutputClaims;
     use crate::stages::stage3::spartan_shift::SpartanShiftOutputClaims;
     use jolt_field::{CanonicalBytes, FixedByteSize, Fr, FromPrimitiveInt};

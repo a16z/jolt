@@ -13,9 +13,10 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::Stage5OutputClaims,
     instruction_read_raf::{InstructionReadRaf, InstructionReadRafInputClaims},
-    outputs::{Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5ZkOutput},
+    outputs::{
+        Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5OutputClaims, Stage5ZkOutput,
+    },
     ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionInputClaims},
     registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationInputClaims},
 };

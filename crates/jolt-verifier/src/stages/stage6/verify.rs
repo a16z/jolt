@@ -43,16 +43,13 @@ use super::{
         BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhase,
         ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
     },
-    inputs::{
+    outputs::{
         AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeCyclePhaseOutputClaims,
-        BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
+        BytecodeReadRafOutputClaims, BytecodeReductionWeights, IncClaimReductionOutputClaims,
         InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
         RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
-        Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
-    },
-    outputs::{
-        BytecodeReductionWeights, Stage6ClearOutput, Stage6Output, Stage6PublicOutput,
-        Stage6ZkOutput,
+        Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6ClearOutput, Stage6Output,
+        Stage6OutputClaims, Stage6PublicOutput, Stage6ZkOutput,
     },
 };
 use crate::{

@@ -151,13 +151,13 @@ where
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct ClearProofClaims<F: Field> {
-    pub stage1: stage1::inputs::Stage1OutputClaims<F>,
-    pub stage2: stage2::inputs::Stage2OutputClaims<F>,
-    pub stage3: stage3::inputs::Stage3OutputClaims<F>,
-    pub stage4: stage4::inputs::Stage4OutputClaims<F>,
-    pub stage5: stage5::inputs::Stage5OutputClaims<F>,
-    pub stage6: stage6::inputs::Stage6OutputClaims<F>,
-    pub stage7: stage7::inputs::Stage7OutputClaims<F>,
+    pub stage1: stage1::outputs::Stage1OutputClaims<F>,
+    pub stage2: stage2::outputs::Stage2OutputClaims<F>,
+    pub stage3: stage3::outputs::Stage3OutputClaims<F>,
+    pub stage4: stage4::outputs::Stage4OutputClaims<F>,
+    pub stage5: stage5::outputs::Stage5OutputClaims<F>,
+    pub stage6: stage6::outputs::Stage6OutputClaims<F>,
+    pub stage7: stage7::outputs::Stage7OutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

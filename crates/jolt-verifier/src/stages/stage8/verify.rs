@@ -4,8 +4,11 @@ use crate::{
     proof::{JoltCommitments, JoltProof},
     stages::{
         relations::OpeningClaim,
-        stage6::{inputs::Stage6OutputClaims, Stage6Output},
-        stage7::{inputs::Stage7OutputClaims, outputs::PrecommittedFinalOpening, Stage7Output},
+        stage6::{outputs::Stage6OutputClaims, Stage6Output},
+        stage7::{
+            outputs::{PrecommittedFinalOpening, Stage7OutputClaims},
+            Stage7Output,
+        },
     },
     verifier::CheckedInputs,
     VerifierError,

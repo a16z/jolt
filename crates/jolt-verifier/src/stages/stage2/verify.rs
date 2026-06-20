@@ -22,15 +22,14 @@ use jolt_sumcheck::{
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::{
-        product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ProductUniSkipInputValues,
-    },
     instruction_claim_reduction::{
         InstructionClaimReduction, InstructionClaimReductionInputClaims,
         InstructionClaimReductionOutputClaims,
     },
     outputs::{
-        Stage2ClearOutput, Stage2Output, Stage2PublicOutput, Stage2ZkOutput, VerifiedProductUniSkip,
+        product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ClearOutput, Stage2Output,
+        Stage2ProductUniSkipInputValues, Stage2PublicOutput, Stage2ZkOutput,
+        VerifiedProductUniSkip,
     },
     product_remainder::{ProductRemainder, ProductRemainderInputClaims},
     ram_output_check::{RamOutputCheck, RamOutputCheckInputClaims},

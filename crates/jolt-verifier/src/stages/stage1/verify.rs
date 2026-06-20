@@ -14,10 +14,9 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::Transcript;
 
-use super::inputs::spartan_outer_opening_order;
 use super::outputs::{
-    Stage1ClearOutput, Stage1Output, Stage1PublicOutput, Stage1ZkOutput,
-    VerifiedSpartanOuterSumcheck,
+    spartan_outer_opening_order, Stage1ClearOutput, Stage1Output, Stage1PublicOutput,
+    Stage1ZkOutput, VerifiedSpartanOuterSumcheck,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,

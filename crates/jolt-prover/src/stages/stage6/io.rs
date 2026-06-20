@@ -14,8 +14,8 @@ use jolt_sumcheck::SumcheckProof;
 #[cfg(feature = "zk")]
 use jolt_verifier::stages::stage6::outputs::Stage6PublicOutput;
 use jolt_verifier::stages::stage6::{
-    inputs::Stage6OutputClaims, outputs::Stage6ClearOutput, Stage6BatchInputClaims,
-    Stage6TranscriptChallenges,
+    outputs::{Stage6ClearOutput, Stage6OutputClaims},
+    Stage6BatchInputClaims, Stage6TranscriptChallenges,
 };
 use jolt_verifier::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,

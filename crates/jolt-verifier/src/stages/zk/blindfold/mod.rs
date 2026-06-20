@@ -125,7 +125,7 @@ use super::{
     outputs::{BlindFoldOutput, CommittedOutputClaimOutput},
 };
 use crate::stages::{
-    stage1::inputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
+    stage1::outputs::{spartan_outer_opening_order, Stage1SpartanOuterOpening},
     stage6::{outputs::BytecodeReductionWeights, verify},
     stage8::outputs::Stage8OpeningId,
 };

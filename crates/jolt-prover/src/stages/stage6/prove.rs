@@ -8,7 +8,7 @@ use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
-use jolt_verifier::stages::stage6::inputs::Stage6AddressPhaseClaims;
+use jolt_verifier::stages::stage6::outputs::Stage6AddressPhaseClaims;
 use jolt_verifier::stages::stage6::{
     stage6_expected_final_claim, stage6_expected_output_claim_values, stage6_input_claim_values,
     stage6_output_claim_values, stage6_public_output, Stage6ClearOutput,
