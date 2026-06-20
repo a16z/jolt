@@ -846,14 +846,7 @@ where
     // clear output directly from the bundle-derived points (mirroring the
     // verifier's `verify()`), rather than re-deriving them through a helper.
     let verifier_output = Stage6ClearOutput {
-        public: stage6_public_output(
-            &prefix.challenges,
-            Vec::new(),
-            Vec::new(),
-            sumcheck_point.clone(),
-            batching_coefficients.clone(),
-            None,
-        ),
+        public: stage6_public_output(&prefix.challenges, None),
         output_claims: output_openings,
         output_points,
         // The modular prover is full-only, so no committed bytecode reduction.

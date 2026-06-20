@@ -56,7 +56,5 @@ pub enum Stage7Output<F: Field, C> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7PublicOutput<F: Field> {
-    pub challenges: Vec<F>,
-    pub batching_coefficients: Vec<F>,
     pub hamming_gamma: F,
 }

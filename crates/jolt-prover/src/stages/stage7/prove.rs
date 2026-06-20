@@ -211,8 +211,6 @@ where
     Ok(Stage7CommittedProofComponent {
         stage7_sumcheck_proof: batch.proof,
         public: Stage7PublicOutput {
-            challenges: batch.challenges.clone(),
-            batching_coefficients: batch.batching_coefficients.clone(),
             hamming_gamma: relations.hamming_gamma(),
         },
         output_claim_values: batch.output_claim_values.ok_or_else(|| {
@@ -232,8 +230,6 @@ struct Stage7Batch<F: Field, C> {
     reduced_claims: Vec<F>,
     trusted_advice: Option<F>,
     untrusted_advice: Option<F>,
-    #[cfg(feature = "zk")]
-    batching_coefficients: Vec<F>,
     #[cfg(feature = "zk")]
     committed_witness: Option<CommittedSumcheckWitness<F>>,
     #[cfg(feature = "zk")]
@@ -464,8 +460,6 @@ where
         reduced_claims,
         trusted_advice,
         untrusted_advice,
-        #[cfg(feature = "zk")]
-        batching_coefficients,
         #[cfg(feature = "zk")]
         committed_witness: proof_artifacts.committed_witness,
         #[cfg(feature = "zk")]

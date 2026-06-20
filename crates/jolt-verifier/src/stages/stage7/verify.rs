@@ -137,13 +137,6 @@ where
         let Deps::Zk { stage6 } = deps else {
             return Err(VerifierError::ExpectedCommittedProof { field: "stage6" });
         };
-        let public = |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| {
-            Stage7PublicOutput {
-                challenges,
-                batching_coefficients,
-                hamming_gamma,
-            }
-        };
         let mut statements = vec![SumcheckStatement::new(
             hamming_claims.sumcheck.rounds,
             hamming_claims.sumcheck.degree,
@@ -339,10 +332,7 @@ where
         }
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
-            public: public(
-                batch_consistency.challenges(),
-                batch_consistency.batching_coefficients.clone(),
-            ),
+            public: Stage7PublicOutput { hamming_gamma },
             batch_consistency,
             batch_output_claims,
             hamming_weight_opening_point: hamming_opening_point,

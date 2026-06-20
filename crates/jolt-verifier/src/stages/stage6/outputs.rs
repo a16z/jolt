@@ -9,10 +9,6 @@ use super::inputs::Stage6OutputClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6PublicOutput<F: Field> {
-    pub address_phase_challenges: Vec<F>,
-    pub address_phase_batching_coefficients: Vec<F>,
-    pub challenges: Vec<F>,
-    pub batching_coefficients: Vec<F>,
     pub bytecode_gamma_powers: Vec<F>,
     pub stage1_gammas: Vec<F>,
     pub stage2_gammas: Vec<F>,

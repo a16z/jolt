@@ -62,8 +62,6 @@ enum Stage2ProductUniSkip<F: Field, C> {
 }
 
 struct Stage2ZkBatch<F: Field, C> {
-    challenges: Vec<F>,
-    batching_coefficients: Vec<F>,
     ram_read_write_gamma: F,
     instruction_gamma: F,
     output_address_challenges: Vec<F>,
@@ -219,8 +217,6 @@ where
         })),
         (Stage2ProductUniSkip::Zk(product_uniskip), Stage2Batch::Zk(batch)) => {
             let public = Stage2PublicOutput {
-                challenges: batch.challenges,
-                batching_coefficients: batch.batching_coefficients,
                 product_uniskip_challenge: product_uniskip.product_uniskip_challenge,
                 product_tau_low: product_uniskip.tau_low,
                 product_tau_high: product_uniskip.tau_high,
@@ -621,8 +617,6 @@ where
             claims.batch_outputs.append_to_transcript(transcript);
 
             let public = Stage2PublicOutput {
-                challenges: batch.reduction.point.as_slice().to_vec(),
-                batching_coefficients: batch.batching_coefficients,
                 product_uniskip_challenge,
                 product_tau_low: product_uniskip.tau_low.clone(),
                 product_tau_high: product_uniskip.tau_high,
@@ -796,8 +790,6 @@ where
             };
 
             Ok(Stage2Batch::Zk(Stage2ZkBatch {
-                challenges: consistency.challenges(),
-                batching_coefficients: consistency.batching_coefficients.clone(),
                 ram_read_write_gamma,
                 instruction_gamma,
                 output_address_challenges,

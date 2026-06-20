@@ -11,8 +11,6 @@ use super::inputs::Stage2BatchOutputClaims;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2PublicOutput<F: Field> {
-    pub challenges: Vec<F>,
-    pub batching_coefficients: Vec<F>,
     pub product_uniskip_challenge: F,
     pub product_tau_low: Vec<F>,
     pub product_tau_high: F,

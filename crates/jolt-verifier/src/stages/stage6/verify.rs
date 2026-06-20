@@ -7,9 +7,7 @@ use jolt_claims::protocols::jolt::{
             bytecode::{self as bytecode_reduction, BytecodeLaneWeightInputs},
             increments, program_image,
         },
-        dimensions::{
-            committed_address_chunks, JoltFormulaDimensions, REGISTER_ADDRESS_BITS,
-        },
+        dimensions::{committed_address_chunks, JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction::{self, InstructionRaVirtualizationDimensions},
         ram,
     },
@@ -24,8 +22,7 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{
-    BatchedCommittedSumcheckConsistency, BatchedEvaluationClaim, BatchedSumcheckVerifier,
-    SumcheckClaim, SumcheckStatement,
+    BatchedCommittedSumcheckConsistency, BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement,
 };
 use jolt_transcript::Transcript;
 use num_traits::{One, Zero};
@@ -215,15 +212,7 @@ where
 
     let public = |instruction_ra_gamma_powers: Vec<PCS::Field>,
                   inc_gamma: PCS::Field,
-                  eta: Option<PCS::Field>,
-                  address_phase_challenges: Vec<PCS::Field>,
-                  address_phase_batching_coefficients: Vec<PCS::Field>,
-                  challenges: Vec<PCS::Field>,
-                  batching_coefficients: Vec<PCS::Field>| Stage6PublicOutput {
-        address_phase_challenges,
-        address_phase_batching_coefficients,
-        challenges,
-        batching_coefficients,
+                  eta: Option<PCS::Field>| Stage6PublicOutput {
         bytecode_gamma_powers: bytecode_gamma_powers.clone(),
         stage1_gammas: stage1_gammas.clone(),
         stage2_gammas: stage2_gammas.clone(),
@@ -423,14 +412,22 @@ where
         let trusted_advice = if let (Some(layout), Some(claim)) =
             (trusted_advice_layout, trusted_advice_claims.as_ref())
         {
-            Some(advice_cycle_phase_opening_point(&consistency, claim, layout)?)
+            Some(advice_cycle_phase_opening_point(
+                &consistency,
+                claim,
+                layout,
+            )?)
         } else {
             None
         };
         let untrusted_advice = if let (Some(layout), Some(claim)) =
             (untrusted_advice_layout, untrusted_advice_claims.as_ref())
         {
-            Some(advice_cycle_phase_opening_point(&consistency, claim, layout)?)
+            Some(advice_cycle_phase_opening_point(
+                &consistency,
+                claim,
+                layout,
+            )?)
         } else {
             None
         };
@@ -507,8 +504,7 @@ where
             })?;
 
         let booleanity_layout = booleanity_dimensions.layout;
-        let booleanity_points =
-            |count: usize| vec![booleanity_opening_point.clone(); count];
+        let booleanity_points = |count: usize| vec![booleanity_opening_point.clone(); count];
         let output_points = Stage6OutputClaims {
             address_phase: Stage6AddressPhaseClaims {
                 bytecode_read_raf: stage6a.bytecode_r_address.clone(),
@@ -561,18 +557,7 @@ where
         };
 
         return Ok(Stage6Output::Zk(Stage6ZkOutput {
-            public: public(
-                instruction_ra_gamma_powers,
-                inc_gamma,
-                eta,
-                stage6a.address_phase_consistency.challenges(),
-                stage6a
-                    .address_phase_consistency
-                    .batching_coefficients
-                    .clone(),
-                consistency.challenges(),
-                consistency.batching_coefficients.clone(),
-            ),
+            public: public(instruction_ra_gamma_powers, inc_gamma, eta),
             batch_consistency: consistency,
             batch_output_claims,
             address_phase_consistency: stage6a.address_phase_consistency,
@@ -656,7 +641,6 @@ where
         &bytecode_address_inputs,
         &booleanity_address_relation,
     )?;
-    let address_batch = &stage6a.address_batch;
     let bytecode_r_address = stage6a.bytecode_r_address.clone();
     let booleanity_r_address = stage6a.booleanity_r_address.clone();
 
@@ -1108,9 +1092,11 @@ where
         instruction_ra_virtualization: instruction_ra_points,
         inc_claim_reduction: inc_points,
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
-            trusted: trusted_advice.as_ref().map(|verified| AdviceCyclePhaseOutputClaim {
-                opening_claim: verified.opening_point.clone(),
-            }),
+            trusted: trusted_advice
+                .as_ref()
+                .map(|verified| AdviceCyclePhaseOutputClaim {
+                    opening_claim: verified.opening_point.clone(),
+                }),
             untrusted: untrusted_advice
                 .as_ref()
                 .map(|verified| AdviceCyclePhaseOutputClaim {
@@ -1136,15 +1122,7 @@ where
     };
 
     Ok(Stage6Output::Clear(Stage6ClearOutput {
-        public: public(
-            instruction_ra_gamma_powers,
-            inc_gamma,
-            eta,
-            address_batch.reduction.point.as_slice().to_vec(),
-            address_batch.batching_coefficients.clone(),
-            batch.reduction.point.as_slice().to_vec(),
-            batch.batching_coefficients.clone(),
-        ),
+        public: public(instruction_ra_gamma_powers, inc_gamma, eta),
         output_claims: claims.clone(),
         output_points,
         bytecode_reduction_weights: cycle_bytecode_reduction_weights,
@@ -1641,17 +1619,9 @@ impl<F: Field> Stage6TranscriptChallenges<F> {
 
 pub fn stage6_public_output<F: Field>(
     transcript_challenges: &Stage6TranscriptChallenges<F>,
-    address_phase_challenges: Vec<F>,
-    address_phase_batching_coefficients: Vec<F>,
-    challenges: Vec<F>,
-    batching_coefficients: Vec<F>,
     bytecode_reduction_eta: Option<F>,
 ) -> Stage6PublicOutput<F> {
     Stage6PublicOutput {
-        address_phase_challenges,
-        address_phase_batching_coefficients,
-        challenges,
-        batching_coefficients,
         bytecode_gamma_powers: transcript_challenges.bytecode_gamma_powers.clone(),
         stage1_gammas: transcript_challenges.stage1_gammas.clone(),
         stage2_gammas: transcript_challenges.stage2_gammas.clone(),
@@ -1854,7 +1824,6 @@ pub(super) struct Stage6AZkOutput<F: Field, C> {
 }
 
 pub(super) struct Stage6AClearOutput<F: Field> {
-    pub address_batch: BatchedEvaluationClaim<F>,
     pub bytecode_r_address: Vec<F>,
     pub booleanity_r_address: Vec<F>,
 }
@@ -2048,7 +2017,6 @@ where
     append_address_phase_opening_claims(transcript, claims);
 
     Ok(Stage6AClearOutput {
-        address_batch,
         bytecode_r_address,
         booleanity_r_address,
     })

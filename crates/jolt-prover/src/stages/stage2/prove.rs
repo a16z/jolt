@@ -551,8 +551,6 @@ where
         batch_outputs: wire_claims,
     };
     let public = Stage2PublicOutput {
-        challenges: input.batch.challenges.clone(),
-        batching_coefficients: input.batch.batching_coefficients.clone(),
         product_uniskip_challenge: input.product_uniskip.challenge,
         product_tau_low: input.product_uniskip.tau_low.clone(),
         product_tau_high: input.product_uniskip.tau_high,
