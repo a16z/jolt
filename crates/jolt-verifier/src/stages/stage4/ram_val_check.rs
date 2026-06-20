@@ -228,7 +228,6 @@ pub struct RamValCheckInitialEvaluation<F: Field> {
     /// program mode only): the opening claim with the full RAM address point.
     pub program_image_contribution: Option<OpeningClaim<F>>,
     pub advice_contributions: Vec<VerifiedRamValCheckAdviceContribution<F>>,
-    pub full_eval: F,
 }
 
 impl<F: Field> RamValCheckInitialEvaluation<F> {
@@ -239,16 +238,6 @@ impl<F: Field> RamValCheckInitialEvaluation<F> {
         self.advice_contributions
             .iter()
             .find(|contribution| contribution.kind == kind)
-    }
-
-    pub fn advice_opening_claim(&self, kind: JoltAdviceKind) -> Option<F> {
-        self.advice_contribution(kind)
-            .map(|contribution| contribution.opening.value)
-    }
-
-    pub fn advice_opening_point(&self, kind: JoltAdviceKind) -> Option<&[F]> {
-        self.advice_contribution(kind)
-            .map(|contribution| contribution.opening.point.as_slice())
     }
 
     /// The formula-side init decomposition: the public initial-RAM evaluation plus
@@ -283,10 +272,9 @@ pub struct VerifiedRamValCheckAdviceContribution<F: Field> {
 }
 
 /// Reconstruct [`RamValCheckInitialEvaluation`] from the proof's staged advice /
-/// program-image openings: add each present contribution into `full_eval`
-/// (alongside the public initial-RAM `public_eval`) and record its staged opening.
-/// Mirrors the prover's own init reconstruction so both decompose `Val_init`
-/// identically.
+/// program-image openings: record each present contribution's staged opening
+/// alongside the public initial-RAM `public_eval`. Mirrors the prover's own init
+/// reconstruction so both decompose `Val_init` identically.
 pub(crate) fn ram_val_check_initial_evaluation<PCS, VC, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -298,12 +286,10 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let mut full_eval = public_eval;
     let program_image_contribution = collect_program_image_contribution(
         checked.precommitted.program_image.is_some(),
         claims.program_image_contribution,
         r_address,
-        &mut full_eval,
     )?;
     let mut advice_contributions = Vec::new();
     let untrusted_present = proof.untrusted_advice_commitment.is_some();
@@ -313,7 +299,6 @@ where
         claims.advice.untrusted,
         checked,
         r_address,
-        &mut full_eval,
         &mut advice_contributions,
     )?;
     collect_advice_contribution(
@@ -322,7 +307,6 @@ where
         claims.advice.trusted,
         checked,
         r_address,
-        &mut full_eval,
         &mut advice_contributions,
     )?;
 
@@ -330,7 +314,6 @@ where
         public_eval,
         program_image_contribution,
         advice_contributions,
-        full_eval,
     })
 }
 
@@ -338,7 +321,6 @@ fn collect_program_image_contribution<F: Field>(
     committed_program: bool,
     opening_claim: Option<F>,
     r_address: &[F],
-    full_eval: &mut F,
 ) -> Result<Option<OpeningClaim<F>>, VerifierError> {
     let opening = program_image::ram_val_check_contribution_opening();
     if !committed_program {
@@ -349,7 +331,6 @@ fn collect_program_image_contribution<F: Field>(
     }
 
     let opening_claim = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
-    *full_eval += opening_claim;
     Ok(Some(OpeningClaim {
         point: r_address.to_vec(),
         value: opening_claim,
@@ -412,7 +393,6 @@ fn collect_advice_contribution<F: Field>(
     opening_claim: Option<F>,
     checked: &CheckedInputs,
     r_address: &[F],
-    full_eval: &mut F,
     contributions: &mut Vec<VerifiedRamValCheckAdviceContribution<F>>,
 ) -> Result<(), VerifierError> {
     let opening = ram::val_check_advice_opening(kind);
@@ -425,7 +405,6 @@ fn collect_advice_contribution<F: Field>(
 
     let value = opening_claim.ok_or(VerifierError::MissingOpeningClaim { id: opening })?;
     let block = ram_val_check_advice_block(kind, checked, r_address)?;
-    *full_eval += block.selector * value;
     contributions.push(VerifiedRamValCheckAdviceContribution {
         kind,
         selector: block.selector,

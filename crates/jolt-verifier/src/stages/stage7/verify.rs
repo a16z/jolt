@@ -33,8 +33,7 @@ use super::hamming_weight_claim_reduction::{
 };
 use super::inputs::{Deps, Stage7OutputClaims};
 use super::outputs::{
-    PrecommittedFinalOpening, Stage7Challenges, Stage7ClearOutput, Stage7Output,
-    Stage7PublicOutput, Stage7ZkOutput,
+    PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7PublicOutput, Stage7ZkOutput,
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
@@ -244,26 +243,25 @@ where
         } else {
             None
         };
-        let bytecode_address_phase =
-            if let (Some(layout), Some(claim)) =
-                (layouts.bytecode, bytecode_reduction_claims.as_ref())
-            {
-                let cycle_phase_variables = stage6
-                    .output_points
-                    .bytecode_cycle_phase_variables()
-                    .ok_or(VerifierError::MissingOpeningClaim {
-                        id: bytecode_reduction::cycle_phase_intermediate_opening(),
-                    })?;
-                Some(committed_reduction_address_phase_opening_point(
-                    &batch_consistency,
-                    claim,
-                    layout.precommitted(),
-                    &cycle_phase_variables,
-                    JoltRelationId::BytecodeClaimReduction,
-                )?)
-            } else {
-                None
-            };
+        let bytecode_address_phase = if let (Some(layout), Some(claim)) =
+            (layouts.bytecode, bytecode_reduction_claims.as_ref())
+        {
+            let cycle_phase_variables = stage6
+                .output_points
+                .bytecode_cycle_phase_variables()
+                .ok_or(VerifierError::MissingOpeningClaim {
+                    id: bytecode_reduction::cycle_phase_intermediate_opening(),
+                })?;
+            Some(committed_reduction_address_phase_opening_point(
+                &batch_consistency,
+                claim,
+                layout.precommitted(),
+                &cycle_phase_variables,
+                JoltRelationId::BytecodeClaimReduction,
+            )?)
+        } else {
+            None
+        };
         let program_image_address_phase = if let (Some(layout), Some(claim)) = (
             layouts.program_image,
             program_image_reduction_claims.as_ref(),
@@ -475,13 +473,12 @@ impl<F: Field> Stage7Relations<F> {
         stage4: &Stage4ClearOutput<F>,
         stage6: &Stage6ClearOutput<F>,
     ) -> Result<Self, VerifierError> {
-        let booleanity_opening = stage6
-            .output_points
-            .booleanity_opening_point()
-            .ok_or(VerifierError::StageClaimPublicInputFailed {
+        let booleanity_opening = stage6.output_points.booleanity_opening_point().ok_or(
+            VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::HammingWeightClaimReduction,
                 reason: "Stage 6 booleanity produced no opening point".to_string(),
-            })?;
+            },
+        )?;
         let (booleanity_r_address, booleanity_r_cycle) =
             booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
         let hamming = HammingWeightClaimReduction::new(
@@ -734,9 +731,6 @@ impl<F: Field> Stage7Relations<F> {
 
         Ok(Stage7ClearOutputParts {
             output: Stage7ClearOutput {
-                challenges: Stage7Challenges {
-                    hamming_gamma: self.hamming_gamma,
-                },
                 output_claims,
                 hamming_weight_opening_point,
                 precommitted_final_openings,
@@ -871,16 +865,19 @@ fn clear_bytecode_relation<F: Field>(
     let Some(layout) = layout.filter(|layout| layout.dimensions().has_address_phase()) else {
         return Ok(None);
     };
-    let weights = stage6.bytecode_reduction_weights.as_ref().ok_or(
-        VerifierError::MissingOpeningClaim {
+    let weights =
+        stage6
+            .bytecode_reduction_weights
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            })?;
+    let cycle_phase_variables = stage6
+        .output_points
+        .bytecode_cycle_phase_variables()
+        .ok_or(VerifierError::MissingOpeningClaim {
             id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        },
-    )?;
-    let cycle_phase_variables = stage6.output_points.bytecode_cycle_phase_variables().ok_or(
-        VerifierError::MissingOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        },
-    )?;
+        })?;
     Ok(Some(BytecodeReductionAddressPhase::new(
         layout,
         BytecodeOutputWeightInputs {

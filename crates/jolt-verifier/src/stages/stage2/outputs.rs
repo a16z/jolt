@@ -56,8 +56,5 @@ pub enum Stage2Output<F: Field, C> {
 pub struct VerifiedProductUniSkip<F: Field> {
     pub tau_low: Vec<F>,
     pub tau_high: F,
-    pub input_claim: F,
     pub sumcheck_point: Point<HIGH_TO_LOW, F>,
-    pub sumcheck_final_claim: F,
-    pub expected_output_claim: F,
 }

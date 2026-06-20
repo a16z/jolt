@@ -145,11 +145,6 @@ impl<F: Field> Stage3OutputClaims<OpeningClaim<F>> {
         &self.shift.unexpanded_pc.point
     }
 
-    /// The instruction-input relation's shared opening point.
-    pub fn instruction_opening_point(&self) -> &[F] {
-        &self.instruction_input.unexpanded_pc.point
-    }
-
     /// The register claim-reduction relation's shared opening point.
     pub fn registers_opening_point(&self) -> &[F] {
         &self.registers_claim_reduction.rd_write_value.point

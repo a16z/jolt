@@ -204,7 +204,7 @@ where
         input.ram_val_check_init.clone(),
         transcript,
     )?;
-    let proof_output = prove_stage4_transparent_sumchecks::<F, W, B, T, C>(
+    let proof_output = prove_stage4_specialized_regular_batch_sumcheck::<F, W, B, T, C>(
         input.config,
         input.witness,
         backend,
@@ -334,27 +334,6 @@ fn stage4_expected_batch_final_claim<F: Field>(
 ) -> Result<F, ProverError> {
     stage4_expected_final_claim(coefficients, registers_read_write, ram_val_check)
         .map_err(|error| invalid_sumcheck_output(error.to_string()))
-}
-
-fn prove_stage4_transparent_sumchecks<F, W, B, T, C>(
-    config: Stage4ProverConfig,
-    witness: &W,
-    backend: &mut B,
-    stage2: &Stage2ClearOutput<F>,
-    stage3: &Stage3ClearOutput<F>,
-    prefix: &Stage4RegularBatchPrefixOutput<F>,
-    transcript: &mut T,
-) -> Result<Stage4RegularBatchProofOutput<F, C>, ProverError>
-where
-    F: Field,
-    W: WitnessProvider<F, JoltVmNamespace> + JoltVmStage2Rows + JoltVmRegisterReadWriteRows,
-    B: SumcheckBackend<F, JoltVmNamespace> + Stage4ReadWriteSumcheckBackend<F>,
-    T: Transcript<Challenge = F>,
-{
-    let proof_output = prove_stage4_specialized_regular_batch_sumcheck::<F, W, B, T, C>(
-        config, witness, backend, stage2, stage3, prefix, transcript,
-    )?;
-    Ok(proof_output)
 }
 
 #[derive(Clone, Copy)]

@@ -344,10 +344,7 @@ where
             Ok(Stage2ProductUniSkip::Clear(VerifiedProductUniSkip {
                 tau_low,
                 tau_high,
-                input_claim: uniskip_input_claim,
                 sumcheck_point: uniskip_reduction.point,
-                sumcheck_final_claim: uniskip_reduction.value,
-                expected_output_claim: uniskip_claim,
             }))
         }
         Deps::Zk { .. } => {

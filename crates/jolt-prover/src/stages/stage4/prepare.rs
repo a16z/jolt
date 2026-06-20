@@ -62,7 +62,6 @@ where
             .map(|segment| (segment.start_index, segment.words.as_slice())),
         r_address,
     );
-    let mut full_eval = public_eval;
     let mut advice_contributions = Vec::new();
     collect_advice_contribution(
         JoltAdviceKind::Untrusted,
@@ -70,7 +69,6 @@ where
         &checked.public_io.untrusted_advice,
         checked,
         r_address,
-        &mut full_eval,
         &mut advice_contributions,
     )?;
     collect_advice_contribution(
@@ -79,7 +77,6 @@ where
         &checked.public_io.trusted_advice,
         checked,
         r_address,
-        &mut full_eval,
         &mut advice_contributions,
     )?;
 
@@ -87,7 +84,6 @@ where
         public_eval,
         program_image_contribution: None,
         advice_contributions,
-        full_eval,
     })
 }
 
@@ -97,7 +93,6 @@ fn collect_advice_contribution<F: Field>(
     bytes: &[u8],
     checked: &CheckedInputs,
     r_address: &[F],
-    full_eval: &mut F,
     contributions: &mut Vec<VerifiedRamValCheckAdviceContribution<F>>,
 ) -> Result<(), ProverError> {
     if !present {
@@ -126,7 +121,6 @@ fn collect_advice_contribution<F: Field>(
     })?;
     let words = advice_words_le(bytes);
     let opening_claim = sparse_segments_mle_msb([(0, words.as_slice())], &block.opening_point);
-    *full_eval += block.selector * opening_claim;
     contributions.push(VerifiedRamValCheckAdviceContribution {
         kind,
         selector: block.selector,

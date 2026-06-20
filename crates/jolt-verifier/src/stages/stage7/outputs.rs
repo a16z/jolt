@@ -21,18 +21,8 @@ pub struct PrecommittedFinalOpening<F: Field> {
     pub opening_claim: Option<F>,
 }
 
-/// The Fiat-Shamir challenge the verifier draws during stage 7: the hamming-weight
-/// reduction's batching gamma. (The batch's own sumcheck point and batching
-/// coefficients are stage-local verification artifacts and are not propagated to
-/// later stages.)
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7Challenges<F: Field> {
-    pub hamming_gamma: F,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ClearOutput<F: Field> {
-    pub challenges: Stage7Challenges<F>,
     /// The produced stage-7 openings paired with their points (point + value) via
     /// the `OpeningClaim` cell.
     pub output_claims: Stage7OutputClaims<OpeningClaim<F>>,

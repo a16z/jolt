@@ -566,10 +566,7 @@ where
         product_uniskip: VerifiedProductUniSkip {
             tau_low: input.product_uniskip.tau_low.clone(),
             tau_high: input.product_uniskip.tau_high,
-            input_claim: input.product_uniskip.input_claim,
             sumcheck_point: Point::high_to_low(vec![input.product_uniskip.challenge]),
-            sumcheck_final_claim: input.product_uniskip.output_claim,
-            expected_output_claim: input.product_uniskip.output_claim,
         },
     };
 
