@@ -410,7 +410,13 @@ where
         &self,
         sumcheck_point: &[F],
         openings: &Stage6OutputClaims<F>,
-    ) -> Result<(Stage6BatchExpectedOutputClaims<F>, Stage6OutputClaims<Vec<F>>), ProverError> {
+    ) -> Result<
+        (
+            Stage6BatchExpectedOutputClaims<F>,
+            Stage6OutputClaims<Vec<F>>,
+        ),
+        ProverError,
+    > {
         let relations = self.cycle_relations()?;
         let algebra =
             |error: jolt_verifier::VerifierError| invalid_sumcheck_output(error.to_string());
@@ -551,8 +557,10 @@ where
             }
         };
         let trusted_advice = advice(JoltAdviceKind::Trusted, relations.trusted_advice.as_ref())?;
-        let untrusted_advice =
-            advice(JoltAdviceKind::Untrusted, relations.untrusted_advice.as_ref())?;
+        let untrusted_advice = advice(
+            JoltAdviceKind::Untrusted,
+            relations.untrusted_advice.as_ref(),
+        )?;
 
         let reversed = |challenges: &[F]| challenges.iter().rev().copied().collect::<Vec<_>>();
         let output_points = Stage6OutputClaims {
@@ -574,11 +582,11 @@ where
                     .map(|(_, point)| AdviceCyclePhaseOutputClaim {
                         opening_claim: point.clone(),
                     }),
-                untrusted: untrusted_advice
-                    .as_ref()
-                    .map(|(_, point)| AdviceCyclePhaseOutputClaim {
+                untrusted: untrusted_advice.as_ref().map(|(_, point)| {
+                    AdviceCyclePhaseOutputClaim {
                         opening_claim: point.clone(),
-                    }),
+                    }
+                }),
             },
             // Committed-program reductions; the modular prover is full-only.
             bytecode_claim_reduction: None,
@@ -616,12 +624,11 @@ where
         {
             return Ok(None);
         }
-        let point = self.instance_point(sumcheck_point, Stage6InstanceKind::AdviceCyclePhase(kind))?;
-        Ok(Some(
-            layout
-                .cycle_phase_opening_point(&point)
-                .map_err(|error| invalid_sumcheck_output(error.to_string()))?,
-        ))
+        let point =
+            self.instance_point(sumcheck_point, Stage6InstanceKind::AdviceCyclePhase(kind))?;
+        Ok(Some(layout.cycle_phase_opening_point(&point).map_err(
+            |error| invalid_sumcheck_output(error.to_string()),
+        )?))
     }
 
     pub(super) fn instance(

@@ -52,7 +52,8 @@ pub use verify::{
     stage6_post_address_transcript_challenges, stage6_pre_address_transcript_challenges,
     stage6_public_output, stage6_stage1_cycle_binding, stage6_stage5_ram_reduced_opening_point,
     verify, Stage6AdviceCyclePhaseReference, Stage6BatchExpectedOutputClaims,
-    Stage6BatchInputClaims, Stage6BytecodeReadRafExpectedOutputInputs, Stage6BytecodeRegisterPoints,
-    Stage6IncClaimReductionCyclePoints, Stage6InstructionReadRafPoint, Stage6PostAddressChallenges,
-    Stage6PreAddressChallenges, Stage6RamReducedOpeningPoint, Stage6TranscriptChallenges,
+    Stage6BatchInputClaims, Stage6BytecodeReadRafExpectedOutputInputs,
+    Stage6BytecodeRegisterPoints, Stage6IncClaimReductionCyclePoints,
+    Stage6InstructionReadRafPoint, Stage6PostAddressChallenges, Stage6PreAddressChallenges,
+    Stage6RamReducedOpeningPoint, Stage6TranscriptChallenges,
 };

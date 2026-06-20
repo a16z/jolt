@@ -222,8 +222,7 @@ where
     T: Transcript<Challenge = F>,
 {
     let hamming_weight_opening_point = input.stage7.hamming_weight_opening_point.clone();
-    let inc_claim_reduction_opening_point =
-        input.stage6.output_points.inc_opening_point().to_vec();
+    let inc_claim_reduction_opening_point = input.stage6.output_points.inc_opening_point().to_vec();
 
     let anchor_points: Vec<&[F]> = input
         .stage7
