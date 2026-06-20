@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use jolt_claims::protocols::jolt::JoltRelationId;
 
 use crate::stages::relations::{GetPoint, OpeningClaim};
-use crate::stages::stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput};
+use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
 pub use super::instruction_claim_reduction::InstructionClaimReductionOutputClaims;
@@ -15,19 +15,6 @@ pub use super::product_remainder::ProductRemainderOutputClaims;
 pub use super::ram_output_check::RamOutputCheckOutputClaims;
 pub use super::ram_raf_evaluation::RamRafEvaluationOutputClaims;
 pub use super::ram_read_write_checking::RamReadWriteOutputClaims;
-
-#[derive(Clone, Copy)]
-pub enum Deps<'a, F: Field, C> {
-    Clear { stage1: &'a Stage1ClearOutput<F> },
-    Zk { stage1: &'a Stage1ZkOutput<F, C> },
-}
-
-pub fn deps<F: Field, C>(stage1: &Stage1Output<F, C>) -> Deps<'_, F, C> {
-    match stage1 {
-        Stage1Output::Clear(stage1) => Deps::Clear { stage1 },
-        Stage1Output::Zk(stage1) => Deps::Zk { stage1 },
-    }
-}
 
 /// Stage 1 outputs that feed the stage 2 product uni-skip input claim. Extracted
 /// into a typed value so the prover and verifier derive the same input claim from

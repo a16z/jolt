@@ -84,47 +84,49 @@ where
     );
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
-    let stage2 = stage2::verify(
-        &checked,
-        preprocessing,
-        proof,
-        &mut transcript,
-        stage2::deps(&stage1),
-    )?;
+    let stage2 = stage2::verify(&checked, preprocessing, proof, &mut transcript, &stage1)?;
     let stage3 = stage3::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage3::deps(&stage1, &stage2)?,
+        &stage1,
+        &stage2,
     )?;
     let stage4 = stage4::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage4::deps(&stage2, &stage3)?,
+        &stage2,
+        &stage3,
     )?;
     let stage5 = stage5::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage5::deps(&stage2, &stage4)?,
+        &stage2,
+        &stage4,
     )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
     )?;
     let stage7 = stage7::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage7::deps(&stage4, &stage6)?,
+        &stage4,
+        &stage6,
     )?;
     let stage8 = stage8::verify(
         &checked,
@@ -132,7 +134,8 @@ where
         proof,
         trusted_advice_commitment,
         &mut transcript,
-        stage8::deps(&stage6, &stage7)?,
+        &stage6,
+        &stage7,
     )?;
 
     if checked.zk {

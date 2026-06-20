@@ -16,7 +16,7 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::{LabelWithCount, Transcript};
 
 use super::{
-    inputs::{Deps, Stage4OutputClaims},
+    inputs::Stage4OutputClaims,
     outputs::{Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4ZkOutput},
     ram_val_check::{
         ram_val_check_initial_evaluation, RamValCheck, RamValCheckAdviceClaims,
@@ -31,6 +31,8 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{OpeningClaim, SumcheckInstance},
+        stage2::Stage2Output,
+        stage3::Stage3Output,
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -61,7 +63,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage2: &Stage2Output<PCS::Field, VC::Output>,
+    stage3: &Stage3Output<PCS::Field, VC::Output>,
 ) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -84,12 +87,12 @@ where
     let registers_gamma = transcript.challenge_scalar();
     let registers_relation = RegistersReadWriteChecking::new(register_dimensions, registers_gamma);
 
-    let (ram_read_write_opening_point, ram_output_check_opening_point) = match deps {
-        Deps::Clear { stage2, .. } => (
+    let (ram_read_write_opening_point, ram_output_check_opening_point) = match stage2 {
+        Stage2Output::Clear(stage2) => (
             stage2.output_claims.ram_read_write_point(),
             stage2.output_claims.ram_output_check_point(),
         ),
-        Deps::Zk { stage2, .. } => (
+        Stage2Output::Zk(stage2) => (
             stage2.output_points.ram_read_write_point(),
             stage2.output_points.ram_output_check_point(),
         ),
@@ -133,9 +136,6 @@ where
     };
 
     if checked.zk {
-        let Deps::Zk { .. } = deps else {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage3" });
-        };
         let statements = [
             SumcheckStatement::new(registers_spec.rounds, registers_spec.degree),
             SumcheckStatement::new(ram_val_check_spec.rounds, ram_val_check_spec.degree),
@@ -206,9 +206,8 @@ where
         }));
     }
 
-    let Deps::Clear { stage2, stage3, .. } = deps else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage3" });
-    };
+    let stage2 = stage2.clear()?;
+    let stage3 = stage3.clear()?;
     let claims = &proof.clear_claims()?.stage4;
     let ram_val_check_init = ram_val_check_initial_evaluation(
         checked,

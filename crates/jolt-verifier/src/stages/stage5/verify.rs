@@ -13,7 +13,7 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::{Deps, Stage5OutputClaims},
+    inputs::Stage5OutputClaims,
     instruction_read_raf::{InstructionReadRaf, InstructionReadRafInputClaims},
     outputs::{Stage5Challenges, Stage5ClearOutput, Stage5Output, Stage5ZkOutput},
     ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionInputClaims},
@@ -24,6 +24,8 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{zip_openings, OpeningClaim, SumcheckInstance},
+        stage2::Stage2Output,
+        stage4::Stage4Output,
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -79,23 +81,14 @@ pub fn verify<PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage2: &Stage2Output<PCS::Field, VC::Output>,
+    stage4: &Stage4Output<PCS::Field, VC::Output>,
 ) -> Result<Stage5Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    match (checked.zk, deps) {
-        (true, Deps::Clear { .. }) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage4" });
-        }
-        (false, Deps::Zk { .. }) => {
-            return Err(VerifierError::ExpectedClearProof { field: "stage4" });
-        }
-        _ => {}
-    }
-
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);
@@ -149,9 +142,8 @@ where
         + 2;
 
     if checked.zk {
-        let Deps::Zk { stage2, stage4 } = deps else {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage4" });
-        };
+        let stage2 = stage2.zk()?;
+        let stage4 = stage4.zk()?;
         let statements = [
             SumcheckStatement::new(
                 instruction_claims.sumcheck.rounds,
@@ -236,9 +228,8 @@ where
         }));
     }
 
-    let Deps::Clear { stage2, stage4 } = deps else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage4" });
-    };
+    let stage2 = stage2.clear()?;
+    let stage4 = stage4.clear()?;
     let claims = &proof.clear_claims()?.stage5;
     if claims.instruction_read_raf.lookup_table_flags.len()
         != instruction_output_openings.lookup_table_flags.len()

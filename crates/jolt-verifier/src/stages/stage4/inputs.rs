@@ -5,43 +5,9 @@ use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims};
-use crate::stages::{
-    stage2::{Stage2ClearOutput, Stage2Output, Stage2ZkOutput},
-    stage3::{Stage3ClearOutput, Stage3Output, Stage3ZkOutput},
-};
 
 use super::ram_val_check::{RamValCheckAdviceClaims, RamValCheckOutputClaims};
 use super::registers_read_write_checking::RegistersReadWriteOutputClaims;
-
-#[derive(Clone, Copy)]
-pub enum Deps<'a, F: Field, C> {
-    Clear {
-        stage2: &'a Stage2ClearOutput<F>,
-        stage3: &'a Stage3ClearOutput<F>,
-    },
-    Zk {
-        stage2: &'a Stage2ZkOutput<F, C>,
-        stage3: &'a Stage3ZkOutput<F, C>,
-    },
-}
-
-pub fn deps<'a, F: Field, C>(
-    stage2: &'a Stage2Output<F, C>,
-    stage3: &'a Stage3Output<F, C>,
-) -> Result<Deps<'a, F, C>, crate::VerifierError> {
-    match (stage2, stage3) {
-        (Stage2Output::Clear(stage2), Stage3Output::Clear(stage3)) => {
-            Ok(Deps::Clear { stage2, stage3 })
-        }
-        (Stage2Output::Zk(stage2), Stage3Output::Zk(stage3)) => Ok(Deps::Zk { stage2, stage3 }),
-        (Stage2Output::Clear(_), Stage3Output::Zk(_)) => {
-            Err(crate::VerifierError::ExpectedClearProof { field: "stage3" })
-        }
-        (Stage2Output::Zk(_), Stage3Output::Clear(_)) => {
-            Err(crate::VerifierError::ExpectedCommittedProof { field: "stage3" })
-        }
-    }
-}
 
 /// The stage 4 produced opening claims, declared in canonical (Fiat-Shamir)
 /// order: the `Val_init` advice openings, the committed program-image

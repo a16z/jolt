@@ -45,7 +45,7 @@ use super::{
     },
     inputs::{
         AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeCyclePhaseOutputClaims,
-        BytecodeReadRafOutputClaims, Deps, IncClaimReductionOutputClaims,
+        BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
         InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
         RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
         Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
@@ -60,39 +60,37 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{zip_openings, OpeningClaim, SumcheckInstance},
-        stage1::Stage1ClearOutput,
-        stage2::Stage2ClearOutput,
-        stage3::Stage3ClearOutput,
-        stage4::Stage4ClearOutput,
-        stage5::Stage5ClearOutput,
+        stage1::{Stage1ClearOutput, Stage1Output},
+        stage2::{Stage2ClearOutput, Stage2Output},
+        stage3::{Stage3ClearOutput, Stage3Output},
+        stage4::{Stage4ClearOutput, Stage4Output},
+        stage5::{Stage5ClearOutput, Stage5Output},
         zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
     VerifierError,
 };
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage 6 consumes all five prior clear-stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
+)]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage1: &Stage1Output<PCS::Field, VC::Output>,
+    stage2: &Stage2Output<PCS::Field, VC::Output>,
+    stage3: &Stage3Output<PCS::Field, VC::Output>,
+    stage4: &Stage4Output<PCS::Field, VC::Output>,
+    stage5: &Stage5Output<PCS::Field, VC::Output>,
 ) -> Result<Stage6Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    match (checked.zk, deps) {
-        (true, Deps::Clear { .. }) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage5" });
-        }
-        (false, Deps::Zk { .. }) => {
-            return Err(VerifierError::ExpectedClearProof { field: "stage5" });
-        }
-        _ => {}
-    }
-
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions =
@@ -182,12 +180,12 @@ where
     let stage5_gammas =
         transcript.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT);
 
-    let (stage5_instruction_address, stage5_instruction_cycle) = match deps {
-        Deps::Clear { stage5, .. } => (
+    let (stage5_instruction_address, stage5_instruction_cycle) = match stage5 {
+        Stage5Output::Clear(stage5) => (
             stage5.instruction_r_address.as_slice(),
             stage5.instruction_r_cycle(),
         ),
-        Deps::Zk { stage5 } => (
+        Stage5Output::Zk(stage5) => (
             stage5.instruction_r_address.as_slice(),
             stage5.output_points.instruction_r_cycle(),
         ),
@@ -228,9 +226,7 @@ where
     };
 
     if checked.zk {
-        let Deps::Zk { stage5 } = deps else {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage5" });
-        };
+        let stage5 = stage5.zk()?;
         let stage6a = verify_zk(
             checked,
             proof,
@@ -566,16 +562,11 @@ where
         }));
     }
 
-    let Deps::Clear {
-        stage1,
-        stage2,
-        stage3,
-        stage4,
-        stage5,
-    } = deps
-    else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage5" });
-    };
+    let stage1 = stage1.clear()?;
+    let stage2 = stage2.clear()?;
+    let stage3 = stage3.clear()?;
+    let stage4 = stage4.clear()?;
+    let stage5 = stage5.clear()?;
     let claims = &proof.clear_claims()?.stage6;
     if committed_program != claims.address_phase.bytecode_val_stages.is_some() {
         return Err(VerifierError::StageClaimPublicInputFailed {

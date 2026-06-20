@@ -54,6 +54,22 @@ pub enum Stage7Output<F: Field, C> {
     Zk(Stage7ZkOutput<F, C>),
 }
 
+impl<F: Field, C> Stage7Output<F, C> {
+    pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage7" }),
+        }
+    }
+
+    pub fn zk(&self) -> Result<&Stage7ZkOutput<F, C>, crate::VerifierError> {
+        match self {
+            Self::Zk(output) => Ok(output),
+            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage7" }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7PublicOutput<F: Field> {
     pub hamming_gamma: F,

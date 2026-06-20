@@ -7,7 +7,7 @@ pub mod registers_claim_reduction;
 pub mod spartan_shift;
 mod verify;
 
-pub use inputs::{deps, Deps, Stage3OutputClaims};
+pub use inputs::Stage3OutputClaims;
 pub use instruction_input::{
     check_instruction_input_consistency, InstructionInput, InstructionInputInputClaims,
     InstructionInputOutputClaims,

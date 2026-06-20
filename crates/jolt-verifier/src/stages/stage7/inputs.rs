@@ -5,45 +5,12 @@ use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::OutputClaims;
-use crate::stages::{
-    stage4::{Stage4ClearOutput, Stage4Output},
-    stage6::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput},
-};
 
 use super::advice_address_phase::AdviceAddressPhaseOutputClaims;
 use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhaseOutputClaims, ProgramImageReductionAddressPhaseOutputClaims,
 };
 use super::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
-
-#[derive(Clone, Copy)]
-pub enum Deps<'a, F: Field, C> {
-    Clear {
-        stage4: &'a Stage4ClearOutput<F>,
-        stage6: &'a Stage6ClearOutput<F>,
-    },
-    Zk {
-        stage6: &'a Stage6ZkOutput<F, C>,
-    },
-}
-
-pub fn deps<'a, F: Field, C>(
-    stage4: &'a Stage4Output<F, C>,
-    stage6: &'a Stage6Output<F, C>,
-) -> Result<Deps<'a, F, C>, crate::VerifierError> {
-    match (stage4, stage6) {
-        (Stage4Output::Clear(stage4), Stage6Output::Clear(stage6)) => {
-            Ok(Deps::Clear { stage4, stage6 })
-        }
-        (Stage4Output::Zk(_), Stage6Output::Zk(stage6)) => Ok(Deps::Zk { stage6 }),
-        (Stage4Output::Clear(_), Stage6Output::Zk(_)) => {
-            Err(crate::VerifierError::ExpectedClearProof { field: "stage6" })
-        }
-        (Stage4Output::Zk(_), Stage6Output::Clear(_)) => {
-            Err(crate::VerifierError::ExpectedCommittedProof { field: "stage6" })
-        }
-    }
-}
 
 /// The stage 7 produced opening claims, declared in canonical (Fiat-Shamir)
 /// order: the hamming-weight reduced RA openings (instruction, bytecode, RAM),

@@ -1,14 +1,11 @@
-use super::{
-    inputs::Deps,
-    outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput},
-};
+use super::outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
         relations::OpeningClaim,
-        stage6::inputs::Stage6OutputClaims,
-        stage7::{inputs::Stage7OutputClaims, outputs::PrecommittedFinalOpening},
+        stage6::{inputs::Stage6OutputClaims, Stage6Output},
+        stage7::{inputs::Stage7OutputClaims, outputs::PrecommittedFinalOpening, Stage7Output},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -49,7 +46,8 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-    deps: Deps<'_, F, VC::Output>,
+    stage6: &Stage6Output<F, VC::Output>,
+    stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: Field,
@@ -60,16 +58,6 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    match (checked.zk, deps) {
-        (true, Deps::Clear { .. }) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage8" });
-        }
-        (false, Deps::Zk { .. }) => {
-            return Err(VerifierError::ExpectedClearProof { field: "stage8" });
-        }
-        _ => {}
-    }
-
     let log_t = checked.trace_length.ilog2() as usize;
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
@@ -82,20 +70,27 @@ where
     })?;
     let layout = formula_dimensions.ra_layout;
 
-    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
-        Deps::Clear { stage6, stage7 } => (
-            stage7.hamming_weight_opening_point.as_slice(),
-            stage6.output_points.inc_opening_point(),
-            stage7.precommitted_final_openings.as_slice(),
-            Some((&stage6.output_claims, &stage7.output_claims)),
-        ),
-        Deps::Zk { stage6, stage7 } => (
-            stage7.hamming_weight_opening_point.as_slice(),
-            stage6.output_points.inc_opening_point(),
-            stage7.precommitted_final_openings.as_slice(),
-            None,
-        ),
-    };
+    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) =
+        match (stage6, stage7) {
+            (Stage6Output::Clear(stage6), Stage7Output::Clear(stage7)) => (
+                stage7.hamming_weight_opening_point.as_slice(),
+                stage6.output_points.inc_opening_point(),
+                stage7.precommitted_final_openings.as_slice(),
+                Some((&stage6.output_claims, &stage7.output_claims)),
+            ),
+            (Stage6Output::Zk(stage6), Stage7Output::Zk(stage7)) => (
+                stage7.hamming_weight_opening_point.as_slice(),
+                stage6.output_points.inc_opening_point(),
+                stage7.precommitted_final_openings.as_slice(),
+                None,
+            ),
+            (Stage6Output::Clear(_), Stage7Output::Zk(_)) => {
+                return Err(VerifierError::ExpectedClearProof { field: "stage7" });
+            }
+            (Stage6Output::Zk(_), Stage7Output::Clear(_)) => {
+                return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
+            }
+        };
     require_commitment_layout(&proof.commitments, layout)?;
 
     let anchor_points: Vec<&[F]> = precommitted_finals

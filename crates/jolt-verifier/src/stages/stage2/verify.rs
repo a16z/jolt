@@ -23,7 +23,7 @@ use jolt_transcript::Transcript;
 
 use super::{
     inputs::{
-        product_uniskip_input_claim, Deps, Stage2BatchOutputClaims, Stage2ProductUniSkipInputValues,
+        product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ProductUniSkipInputValues,
     },
     instruction_claim_reduction::{
         InstructionClaimReduction, InstructionClaimReductionInputClaims,
@@ -42,6 +42,7 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{zip_openings, OpeningClaim, SumcheckInstance},
+        stage1::Stage1Output,
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -176,31 +177,31 @@ pub fn verify<PCS, VC, T, ZkProof>(
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    match (checked.zk, deps) {
-        (true, Deps::Clear { .. }) => {
+    match (checked.zk, stage1) {
+        (true, Stage1Output::Clear(_)) => {
             return Err(VerifierError::ExpectedCommittedProof { field: "stage1" });
         }
-        (false, Deps::Zk { .. }) => {
+        (false, Stage1Output::Zk(_)) => {
             return Err(VerifierError::ExpectedClearProof { field: "stage1" });
         }
         _ => {}
     }
 
     let product_uniskip =
-        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, deps)?;
+        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
     let batch = verify_regular_batch::<PCS, VC, T, ZkProof>(
         checked,
         proof,
         transcript,
         &product_uniskip,
-        deps,
+        stage1,
     )?;
 
     match (product_uniskip, batch) {
@@ -251,7 +252,7 @@ fn verify_product_uniskip<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2ProductUniSkip<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -261,10 +262,7 @@ where
     let stage = JoltRelationId::SpartanProductVirtualization;
     let log_t = checked.trace_length.ilog2() as usize;
     let _dimensions = SpartanProductDimensions::new(log_t);
-    let stage1_public = match deps {
-        Deps::Clear { stage1 } => &stage1.public,
-        Deps::Zk { stage1 } => &stage1.public,
-    };
+    let stage1_public = stage1.public();
     let mut tau_low = stage1_public
         .remainder_challenges
         .get(1..)
@@ -299,8 +297,8 @@ where
                 .to_string(),
         });
     };
-    match deps {
-        Deps::Clear { stage1 } => {
+    match stage1 {
+        Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
             let weights = centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)
                 .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -343,7 +341,7 @@ where
                 sumcheck_point: uniskip_reduction.point,
             }))
         }
-        Deps::Zk { .. } => {
+        Stage1Output::Zk(_) => {
             let consistency = proof
                 .stages
                 .stage2_uni_skip_first_round_proof
@@ -388,7 +386,7 @@ fn verify_regular_batch<PCS, VC, T, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     product_uniskip: &Stage2ProductUniSkip<PCS::Field, VC::Output>,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage1: &Stage1Output<PCS::Field, VC::Output>,
 ) -> Result<Stage2Batch<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -440,8 +438,8 @@ where
         }
     }
 
-    match (deps, product_uniskip) {
-        (Deps::Clear { stage1 }, Stage2ProductUniSkip::Clear(product_uniskip)) => {
+    match (stage1, product_uniskip) {
+        (Stage1Output::Clear(stage1), Stage2ProductUniSkip::Clear(product_uniskip)) => {
             let claims = &proof.clear_claims()?.stage2;
             let [product_uniskip_challenge] = product_uniskip.sumcheck_point.as_slice() else {
                 return Err(VerifierError::StageClaimSumcheckFailed {
@@ -629,7 +627,7 @@ where
                 output_claims,
             })
         }
-        (Deps::Zk { .. }, Stage2ProductUniSkip::Zk(product_uniskip)) => {
+        (Stage1Output::Zk(_), Stage2ProductUniSkip::Zk(product_uniskip)) => {
             let statements = vec![
                 SumcheckStatement::new(
                     ram_read_write_claims.sumcheck.rounds,
@@ -798,12 +796,12 @@ where
                 output_points,
             }))
         }
-        (Deps::Clear { .. }, Stage2ProductUniSkip::Zk(_)) => {
+        (Stage1Output::Clear(_), Stage2ProductUniSkip::Zk(_)) => {
             Err(VerifierError::ExpectedClearProof {
                 field: "stage2_uni_skip_first_round_proof",
             })
         }
-        (Deps::Zk { .. }, Stage2ProductUniSkip::Clear(_)) => {
+        (Stage1Output::Zk(_), Stage2ProductUniSkip::Clear(_)) => {
             Err(VerifierError::ExpectedCommittedProof {
                 field: "stage2_uni_skip_first_round_proof",
             })

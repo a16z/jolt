@@ -63,6 +63,22 @@ pub enum Stage6Output<F: Field, C> {
     Zk(Stage6ZkOutput<F, C>),
 }
 
+impl<F: Field, C> Stage6Output<F, C> {
+    pub fn clear(&self) -> Result<&Stage6ClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage6" }),
+        }
+    }
+
+    pub fn zk(&self) -> Result<&Stage6ZkOutput<F, C>, crate::VerifierError> {
+        match self {
+            Self::Zk(output) => Ok(output),
+            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage6" }),
+        }
+    }
+}
+
 /// Public bytecode claim-reduction state shared by the cycle and address
 /// phases: the per-chunk weights over dropped address bits, the chunk-local
 /// cycle point, and the gamma-folded lane weights.

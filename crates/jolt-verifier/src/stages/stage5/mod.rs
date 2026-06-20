@@ -5,7 +5,7 @@ pub mod ram_ra_claim_reduction;
 pub mod registers_val_evaluation;
 mod verify;
 
-pub use inputs::{deps, Deps, Stage5OutputClaims};
+pub use inputs::Stage5OutputClaims;
 pub use instruction_read_raf::{
     InstructionReadRaf, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };

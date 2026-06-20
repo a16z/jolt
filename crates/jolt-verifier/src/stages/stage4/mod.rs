@@ -6,7 +6,7 @@ pub mod ram_val_check;
 pub mod registers_read_write_checking;
 mod verify;
 
-pub use inputs::{deps, Deps, Stage4OutputClaims};
+pub use inputs::Stage4OutputClaims;
 pub use outputs::{Stage4Challenges, Stage4ClearOutput, Stage4Output, Stage4ZkOutput};
 pub use ram_val_check::{
     ram_val_check_advice_block, RamValCheck, RamValCheckAdviceBlock, RamValCheckAdviceClaims,

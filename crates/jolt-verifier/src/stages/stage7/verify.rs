@@ -31,7 +31,7 @@ use super::committed_reduction_address_phase::{
 use super::hamming_weight_claim_reduction::{
     HammingWeightClaimReduction, HammingWeightClaimReductionInputClaims,
 };
-use super::inputs::{Deps, Stage7OutputClaims};
+use super::inputs::Stage7OutputClaims;
 use super::outputs::{
     PrecommittedFinalOpening, Stage7ClearOutput, Stage7Output, Stage7PublicOutput, Stage7ZkOutput,
 };
@@ -40,8 +40,10 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{zip_openings, OpeningClaim, SumcheckInstance},
-        stage4::Stage4ClearOutput,
-        stage6::{inputs::BytecodeCyclePhaseOutputClaims, Stage6ClearOutput, Stage6ZkOutput},
+        stage4::{Stage4ClearOutput, Stage4Output},
+        stage6::{
+            inputs::BytecodeCyclePhaseOutputClaims, Stage6ClearOutput, Stage6Output, Stage6ZkOutput,
+        },
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -53,23 +55,14 @@ pub fn verify<PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage4: &Stage4Output<PCS::Field, VC::Output>,
+    stage6: &Stage6Output<PCS::Field, VC::Output>,
 ) -> Result<Stage7Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    match (checked.zk, deps) {
-        (true, Deps::Clear { .. }) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage6" });
-        }
-        (false, Deps::Zk { .. }) => {
-            return Err(VerifierError::ExpectedClearProof { field: "stage6" });
-        }
-        _ => {}
-    }
-
     let log_t = checked.trace_length.ilog2() as usize;
     let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
         log_t,
@@ -134,9 +127,7 @@ where
     let hamming_gamma = transcript.challenge_scalar();
 
     if checked.zk {
-        let Deps::Zk { stage6 } = deps else {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage6" });
-        };
+        let stage6 = stage6.zk()?;
         let mut statements = vec![SumcheckStatement::new(
             hamming_claims.sumcheck.rounds,
             hamming_claims.sumcheck.degree,
@@ -340,9 +331,8 @@ where
         }));
     }
 
-    let Deps::Clear { stage4, stage6 } = deps else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage6" });
-    };
+    let stage4 = stage4.clear()?;
+    let stage6 = stage6.clear()?;
     let claims = &proof.clear_claims()?.stage7;
 
     let relations =

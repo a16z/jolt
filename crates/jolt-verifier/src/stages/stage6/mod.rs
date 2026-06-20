@@ -31,7 +31,6 @@ pub use committed_reduction_cycle_phase::{
 pub use inc_claim_reduction::{
     IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
 };
-pub use inputs::{deps, Deps};
 pub use instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
     InstructionRaVirtualizationOutputClaims,

@@ -41,6 +41,30 @@ pub enum Stage1Output<F: Field, C> {
     Zk(Stage1ZkOutput<F, C>),
 }
 
+impl<F: Field, C> Stage1Output<F, C> {
+    /// The shared public output, available regardless of proving mode.
+    pub fn public(&self) -> &Stage1PublicOutput<F> {
+        match self {
+            Self::Clear(output) => &output.public,
+            Self::Zk(output) => &output.public,
+        }
+    }
+
+    pub fn clear(&self) -> Result<&Stage1ClearOutput<F>, VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage1" }),
+        }
+    }
+
+    pub fn zk(&self) -> Result<&Stage1ZkOutput<F, C>, VerifierError> {
+        match self {
+            Self::Zk(output) => Ok(output),
+            Self::Clear(_) => Err(VerifierError::ExpectedCommittedProof { field: "stage1" }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedSpartanOuterSumcheck<F: Field> {
     pub input_claim: F,

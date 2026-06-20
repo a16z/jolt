@@ -14,7 +14,7 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::{Deps, Stage3OutputClaims},
+    inputs::Stage3OutputClaims,
     instruction_input::{
         check_instruction_input_consistency, InstructionInput, InstructionInputInputClaims,
     },
@@ -27,6 +27,8 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{zip_openings, OpeningClaim, SumcheckInstance},
+        stage1::Stage1Output,
+        stage2::Stage2Output,
         zk::committed,
     },
     verifier::CheckedInputs,
@@ -77,23 +79,14 @@ pub fn verify<PCS, VC, T, ZkProof>(
     _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
-    deps: Deps<'_, PCS::Field, VC::Output>,
+    stage1: &Stage1Output<PCS::Field, VC::Output>,
+    stage2: &Stage2Output<PCS::Field, VC::Output>,
 ) -> Result<Stage3Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    match (checked.zk, deps) {
-        (true, Deps::Clear { .. }) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage2" });
-        }
-        (false, Deps::Zk { .. }) => {
-            return Err(VerifierError::ExpectedClearProof { field: "stage2" });
-        }
-        _ => {}
-    }
-
     let log_t = checked.trace_length.ilog2() as usize;
     let dimensions = TraceDimensions::new(log_t);
 
@@ -162,9 +155,8 @@ where
         }));
     }
 
-    let Deps::Clear { stage1, stage2 } = deps else {
-        return Err(VerifierError::ExpectedClearProof { field: "stage2" });
-    };
+    let stage1 = stage1.clear()?;
+    let stage2 = stage2.clear()?;
     let claims = &proof.clear_claims()?.stage3;
 
     check_instruction_input_consistency(stage2)?;

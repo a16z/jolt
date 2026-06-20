@@ -91,42 +91,50 @@ where
         preprocessing,
         &proof,
         &mut transcript,
-        jolt_verifier::stages::stage2::deps(&stage1),
+        &stage1,
     )?;
     let stage3 = jolt_verifier::stages::stage3::verify(
         &checked,
         preprocessing,
         &proof,
         &mut transcript,
-        jolt_verifier::stages::stage3::deps(&stage1, &stage2)?,
+        &stage1,
+        &stage2,
     )?;
     let stage4 = jolt_verifier::stages::stage4::verify(
         &checked,
         preprocessing,
         &proof,
         &mut transcript,
-        jolt_verifier::stages::stage4::deps(&stage2, &stage3)?,
+        &stage2,
+        &stage3,
     )?;
     let stage5 = jolt_verifier::stages::stage5::verify(
         &checked,
         preprocessing,
         &proof,
         &mut transcript,
-        jolt_verifier::stages::stage5::deps(&stage2, &stage4)?,
+        &stage2,
+        &stage4,
     )?;
     let stage6 = jolt_verifier::stages::stage6::verify(
         &checked,
         preprocessing,
         &proof,
         &mut transcript,
-        jolt_verifier::stages::stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
     )?;
     let stage7 = jolt_verifier::stages::stage7::verify(
         &checked,
         preprocessing,
         &proof,
         &mut transcript,
-        jolt_verifier::stages::stage7::deps(&stage4, &stage6)?,
+        &stage4,
+        &stage6,
     )?;
     let stage8 = jolt_verifier::stages::stage8::verify(
         &checked,
@@ -134,7 +142,8 @@ where
         &proof,
         stage0.trusted_advice_commitment.as_ref(),
         &mut transcript,
-        jolt_verifier::stages::stage8::deps(&stage6, &stage7)?,
+        &stage6,
+        &stage7,
     )?;
 
     let zk_stages = zk_stage_outputs::<PCS, VC>(

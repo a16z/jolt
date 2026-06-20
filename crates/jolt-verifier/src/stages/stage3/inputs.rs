@@ -9,45 +9,11 @@ use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::OpeningClaim;
-use crate::stages::{
-    stage1::{Stage1ClearOutput, Stage1Output, Stage1ZkOutput},
-    stage2::{Stage2ClearOutput, Stage2Output, Stage2ZkOutput},
-};
 use crate::VerifierError;
 
 pub use super::instruction_input::InstructionInputOutputClaims;
 pub use super::registers_claim_reduction::RegistersClaimReductionOutputClaims;
 pub use super::spartan_shift::SpartanShiftOutputClaims;
-
-#[derive(Clone, Copy)]
-pub enum Deps<'a, F: Field, C> {
-    Clear {
-        stage1: &'a Stage1ClearOutput<F>,
-        stage2: &'a Stage2ClearOutput<F>,
-    },
-    Zk {
-        stage1: &'a Stage1ZkOutput<F, C>,
-        stage2: &'a Stage2ZkOutput<F, C>,
-    },
-}
-
-pub fn deps<'a, F: Field, C>(
-    stage1: &'a Stage1Output<F, C>,
-    stage2: &'a Stage2Output<F, C>,
-) -> Result<Deps<'a, F, C>, crate::VerifierError> {
-    match (stage1, stage2) {
-        (Stage1Output::Clear(stage1), Stage2Output::Clear(stage2)) => {
-            Ok(Deps::Clear { stage1, stage2 })
-        }
-        (Stage1Output::Zk(stage1), Stage2Output::Zk(stage2)) => Ok(Deps::Zk { stage1, stage2 }),
-        (Stage1Output::Clear(_), Stage2Output::Zk(_)) => {
-            Err(crate::VerifierError::ExpectedClearProof { field: "stage2" })
-        }
-        (Stage1Output::Zk(_), Stage2Output::Clear(_)) => {
-            Err(crate::VerifierError::ExpectedCommittedProof { field: "stage2" })
-        }
-    }
-}
 
 /// The stage 3 produced opening claims: the Spartan shift, instruction-input
 /// virtualization, and register claim-reduction relations' outputs. Generic over

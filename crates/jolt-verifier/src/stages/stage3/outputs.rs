@@ -50,3 +50,19 @@ pub enum Stage3Output<F: Field, C> {
     Clear(Stage3ClearOutput<F>),
     Zk(Stage3ZkOutput<F, C>),
 }
+
+impl<F: Field, C> Stage3Output<F, C> {
+    pub fn clear(&self) -> Result<&Stage3ClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage3" }),
+        }
+    }
+
+    pub fn zk(&self) -> Result<&Stage3ZkOutput<F, C>, crate::VerifierError> {
+        match self {
+            Self::Zk(output) => Ok(output),
+            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage3" }),
+        }
+    }
+}

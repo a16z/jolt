@@ -101,7 +101,7 @@ fn stage2_committed_proof_component_produces_native_verifier_output(
         &preprocessing,
         &proof,
         &mut verifier_transcript,
-        jolt_verifier::stages::stage2::inputs::deps(&stage1_native),
+        &stage1_native,
     )?;
     let jolt_verifier::stages::stage2::Stage2Output::Zk(stage2_native) = stage2_native else {
         return Err("Stage 2 verifier did not return ZK output".into());

@@ -50,6 +50,22 @@ pub enum Stage2Output<F: Field, C> {
     Zk(Stage2ZkOutput<F, C>),
 }
 
+impl<F: Field, C> Stage2Output<F, C> {
+    pub fn clear(&self) -> Result<&Stage2ClearOutput<F>, crate::VerifierError> {
+        match self {
+            Self::Clear(output) => Ok(output),
+            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage2" }),
+        }
+    }
+
+    pub fn zk(&self) -> Result<&Stage2ZkOutput<F, C>, crate::VerifierError> {
+        match self {
+            Self::Zk(output) => Ok(output),
+            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage2" }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedProductUniSkip<F: Field> {
     pub tau_low: Vec<F>,

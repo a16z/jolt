@@ -10,8 +10,7 @@ pub mod ram_read_write_checking;
 mod verify;
 
 pub use inputs::{
-    deps, product_uniskip_input_claim, Deps, Stage2BatchOutputClaims,
-    Stage2ProductUniSkipInputValues,
+    product_uniskip_input_claim, Stage2BatchOutputClaims, Stage2ProductUniSkipInputValues,
 };
 pub use instruction_claim_reduction::{
     InstructionClaimReduction, InstructionClaimReductionInputClaims,

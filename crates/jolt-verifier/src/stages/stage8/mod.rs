@@ -1,5 +1,4 @@
 pub mod final_openings;
-pub mod inputs;
 pub mod outputs;
 mod verify;
 
@@ -9,6 +8,5 @@ pub use final_openings::{
     Stage8FinalOpeningBatch, Stage8FinalOpeningBatchInput, Stage8FinalOpeningClaim,
     Stage8FinalOpeningClaimsInput, Stage8FinalOpeningStructure,
 };
-pub use inputs::{deps, Deps};
 pub use outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
 pub use verify::verify;
