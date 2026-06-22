@@ -49,6 +49,9 @@ pub struct Stage7Claims<F: Field> {
     /// Final `ProgramImageInit` claim from the program-image reduction's
     /// address phase; present only when that phase runs.
     pub program_image_address_phase: Option<ProgramImageAddressPhaseOutputClaim<F>>,
+    /// Lattice PCS mode only: final lower `UnsignedIncChunk(j)` openings
+    /// produced by the increment chunk reconstruction stage.
+    pub unsigned_inc_chunk_reconstruction: Option<UnsignedIncChunkReconstructionOutputClaims<F>>,
     /// Lattice PCS mode only: final packed view openings produced by packed
     /// validity sumchecks, in verifier-derived statement order.
     #[serde(default)]
@@ -91,6 +94,13 @@ pub struct BytecodeAddressPhaseOutputClaims<F: Field> {
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct ProgramImageAddressPhaseOutputClaim<F: Field> {
     pub opening_claim: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct UnsignedIncChunkReconstructionOutputClaims<F: Field> {
+    pub chunks: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

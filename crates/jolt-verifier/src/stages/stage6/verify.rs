@@ -993,6 +993,11 @@ where
         trace_dimensions,
         claims.unsigned_inc_claim_reduction.is_some(),
     )?;
+    validate_unsigned_inc_claim_shape(
+        unsigned_inc_claims.as_ref(),
+        claims.unsigned_inc_claim_reduction.as_ref(),
+        proof.one_hot_config.committed_chunk_bits(),
+    )?;
     if let Some(claim) = &unsigned_inc_claims {
         validate_compressed_stage_claim(claim)?;
     }
@@ -2317,6 +2322,38 @@ fn unsigned_inc_claims_for_protocol<F: Field>(
     })
 }
 
+fn validate_unsigned_inc_claim_shape<F: Field>(
+    claim: Option<&JoltRelationClaims<F>>,
+    output_claims: Option<&super::inputs::UnsignedIncClaimReductionOutputOpeningClaims<F>>,
+    log_k_chunk: usize,
+) -> Result<(), VerifierError> {
+    let Some(_claim) = claim else {
+        return Ok(());
+    };
+    let output_claims = output_claims.ok_or(VerifierError::MissingOpeningClaim {
+        id: lattice::unsigned_inc_opening(),
+    })?;
+    let expected_chunks =
+        lattice::unsigned_inc_lower_chunk_count(log_k_chunk).ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::UnsignedIncClaimReduction,
+                reason: format!(
+                    "unsigned increment chunk size must evenly divide 64 bits, got {log_k_chunk}"
+                ),
+            }
+        })?;
+    if output_claims.unsigned_inc_chunks.len() != expected_chunks {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::UnsignedIncClaimReduction,
+            reason: format!(
+                "unsigned increment chunk claim count mismatch: expected {expected_chunks}, got {}",
+                output_claims.unsigned_inc_chunks.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn validate_bytecode_val_stage_claim_count<F: Field>(
     committed_program: bool,
     bind_store_bytecode: bool,
@@ -2400,6 +2437,28 @@ mod tests {
             claims.expect("unsigned increment claims should exist").id,
             JoltRelationId::UnsignedIncClaimReduction
         );
+    }
+
+    #[test]
+    fn lattice_stage6_rejects_wrong_unsigned_increment_chunk_count() {
+        let claims =
+            unsigned_inc_claims_for_protocol::<Fr>(&lattice_config(), trace_dimensions(), true)
+                .expect("lattice mode with unsigned claim should build stage claims");
+        let output_claims = super::super::inputs::UnsignedIncClaimReductionOutputOpeningClaims {
+            unsigned_inc: Fr::zero(),
+            unsigned_inc_msb: Fr::zero(),
+            unsigned_inc_chunks: vec![Fr::zero(); 7],
+        };
+
+        let error = validate_unsigned_inc_claim_shape(claims.as_ref(), Some(&output_claims), 8)
+            .expect_err("lattice unsigned increment must require all lower chunks");
+        assert!(matches!(
+            error,
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::UnsignedIncClaimReduction,
+                ..
+            }
+        ));
     }
 
     #[test]

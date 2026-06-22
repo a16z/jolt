@@ -25,6 +25,7 @@ use jolt_claims::protocols::jolt::{
             final_opening_polynomial_order, FinalOpeningPointInputs,
         },
         dimensions::JoltFormulaDimensions,
+        lattice as lattice_formulas,
         ra::JoltRaPolynomialLayout,
     },
     JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltRelationId,
@@ -49,6 +50,13 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     /// Lagrange factor embedding this polynomial's own opening point into the
     /// unified opening point.
     scale: F,
+}
+
+struct LatticeUnsignedIncFinalOpenings<'a, F: Field> {
+    chunk_point: &'a [F],
+    chunk_claims: Option<&'a [F]>,
+    msb_point: &'a [F],
+    msb_claim: Option<F>,
 }
 
 type Stage8ClearBatchClaim<F, C> = BatchOpeningClaim<F, C, Stage8OpeningId, Stage8OpeningId, F>;
@@ -272,26 +280,71 @@ where
         reason: error.to_string(),
     })?;
     let layout = formula_dimensions.ra_layout;
-    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
-        Deps::Clear { stage6, stage7 } => (
-            stage7
+    let (
+        hamming_opening_point,
+        inc_opening_point,
+        precommitted_finals,
+        clear_claims,
+        unsigned_inc_finals,
+    ) = match deps {
+        Deps::Clear { stage6, stage7 } => {
+            let unsigned_inc_finals = stage6
                 .batch
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
-            stage6.batch.inc_claim_reduction.opening_point.as_slice(),
-            stage7.precommitted_final_openings.as_slice(),
-            Some((&stage6.output_claims, &stage7.output_claims)),
-        ),
-        Deps::Zk { stage6, stage7 } => (
-            stage7
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
-            stage6.inc_claim_reduction.opening_point.as_slice(),
-            stage7.precommitted_final_openings.as_slice(),
-            None,
-        ),
+                .unsigned_inc_claim_reduction
+                .as_ref()
+                .zip(stage6.output_claims.unsigned_inc_claim_reduction.as_ref())
+                .zip(
+                    stage7.batch.unsigned_inc_chunk_reconstruction.as_ref().zip(
+                        stage7
+                            .output_claims
+                            .unsigned_inc_chunk_reconstruction
+                            .as_ref(),
+                    ),
+                )
+                .map(|((msb_source, msb_claims), (chunk_source, chunk_claims))| {
+                    LatticeUnsignedIncFinalOpenings {
+                        chunk_point: chunk_source.opening_point.as_slice(),
+                        chunk_claims: Some(chunk_claims.chunks.as_slice()),
+                        msb_point: msb_source.opening_point.as_slice(),
+                        msb_claim: Some(msb_claims.unsigned_inc_msb),
+                    }
+                });
+            (
+                stage7
+                    .batch
+                    .hamming_weight_claim_reduction
+                    .opening_point
+                    .as_slice(),
+                stage6.batch.inc_claim_reduction.opening_point.as_slice(),
+                stage7.precommitted_final_openings.as_slice(),
+                Some((&stage6.output_claims, &stage7.output_claims)),
+                unsigned_inc_finals,
+            )
+        }
+        Deps::Zk { stage6, stage7 } => {
+            let unsigned_inc_finals = stage6
+                .unsigned_inc_claim_reduction
+                .as_ref()
+                .zip(stage7.unsigned_inc_chunk_reconstruction.as_ref())
+                .map(
+                    |(msb_source, chunk_source)| LatticeUnsignedIncFinalOpenings {
+                        chunk_point: chunk_source.opening_point.as_slice(),
+                        chunk_claims: None,
+                        msb_point: msb_source.opening_point.as_slice(),
+                        msb_claim: None,
+                    },
+                );
+            (
+                stage7
+                    .hamming_weight_claim_reduction
+                    .opening_point
+                    .as_slice(),
+                stage6.inc_claim_reduction.opening_point.as_slice(),
+                stage7.precommitted_final_openings.as_slice(),
+                None,
+                unsigned_inc_finals,
+            )
+        }
     };
 
     let anchor_points: Vec<&[F]> = precommitted_finals
@@ -346,7 +399,7 @@ where
             )
         }
         CommitmentPayload::Akita(payload) => {
-            let final_entries = batch_entries(
+            let mut final_entries = batch_entries(
                 layout,
                 committed_bytecode_chunk_count,
                 checked.precommitted.trusted_advice.is_some(),
@@ -371,6 +424,12 @@ where
                 #[cfg(feature = "field-inline")]
                 &payload.packed_witness,
             )?;
+            final_entries.extend(akita_unsigned_inc_batch_entries(
+                proof.one_hot_config.committed_chunk_bits(),
+                &opening_point,
+                unsigned_inc_finals.as_ref(),
+                &payload.packed_witness,
+            )?);
             let (entries, precommitted_entries): (Vec<_>, Vec<_>) = final_entries
                 .into_iter()
                 .partition(|entry| !akita_precommitted_stage8_opening(entry.id));
@@ -709,6 +768,57 @@ where
             });
         }
     }
+    Ok(entries)
+}
+
+fn akita_unsigned_inc_batch_entries<'a, F, C>(
+    log_k_chunk: usize,
+    opening_point: &[F],
+    sources: Option<&LatticeUnsignedIncFinalOpenings<'_, F>>,
+    commitment: &'a C,
+) -> Result<Vec<Stage8BatchEntry<'a, F, C>>, VerifierError>
+where
+    F: Field,
+{
+    let sources = sources.ok_or(VerifierError::MissingOpeningClaim {
+        id: lattice_formulas::unsigned_inc_chunk_opening(0),
+    })?;
+    let chunk_count =
+        lattice_formulas::unsigned_inc_lower_chunk_count(log_k_chunk).ok_or_else(|| {
+            VerifierError::FinalOpeningBatchFailed {
+                reason: format!(
+                    "unsigned increment chunk size must evenly divide 64 bits, got {log_k_chunk}"
+                ),
+            }
+        })?;
+    if let Some(chunk_claims) = sources.chunk_claims {
+        if chunk_claims.len() != chunk_count {
+            return Err(VerifierError::FinalOpeningBatchFailed {
+                reason: format!(
+                    "unsigned increment final chunk opening count mismatch: expected {chunk_count}, got {}",
+                    chunk_claims.len()
+                ),
+            });
+        }
+    }
+
+    let mut entries = Vec::with_capacity(chunk_count + 1);
+    for index in 0..chunk_count {
+        entries.push(Stage8BatchEntry {
+            id: Stage8OpeningId::from(lattice_formulas::unsigned_inc_chunk_opening(index)),
+            commitment,
+            opening_claim: sources.chunk_claims.map(|claims| claims[index]),
+            own_point: sources.chunk_point.to_vec(),
+            scale: commitment_embedding_scale(opening_point, sources.chunk_point),
+        });
+    }
+    entries.push(Stage8BatchEntry {
+        id: Stage8OpeningId::from(lattice_formulas::unsigned_inc_msb_opening()),
+        commitment,
+        opening_claim: sources.msb_claim,
+        own_point: sources.msb_point.to_vec(),
+        scale: commitment_embedding_scale(opening_point, sources.msb_point),
+    });
     Ok(entries)
 }
 

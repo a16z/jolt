@@ -2158,6 +2158,44 @@ mod tests {
             ))),
             1
         );
+        let packed_ids = batch
+            .statement
+            .claims
+            .iter()
+            .map(|claim| claim.id)
+            .collect::<Vec<_>>();
+        let packed_count_id = |id| packed_ids.iter().filter(|&&got| got == id).count();
+        assert_eq!(
+            packed_count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                JoltCommittedPolynomial::RamInc,
+            ))),
+            0
+        );
+        assert_eq!(
+            packed_count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                JoltCommittedPolynomial::RdInc,
+            ))),
+            0
+        );
+        let unsigned_inc_chunk_count =
+            jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count(
+                proof.one_hot_config.committed_chunk_bits(),
+            )
+            .unwrap_or_else(|| panic!("test unsigned increment chunks should derive"));
+        for index in 0..unsigned_inc_chunk_count {
+            assert_eq!(
+                packed_count_id(stage8::Stage8OpeningId::from(
+                    jolt_claims::protocols::jolt::unsigned_inc_chunk_opening(index),
+                )),
+                1
+            );
+        }
+        assert_eq!(
+            packed_count_id(stage8::Stage8OpeningId::from(
+                jolt_claims::protocols::jolt::unsigned_inc_msb_opening(),
+            )),
+            1
+        );
     }
 
     #[cfg(feature = "akita")]
@@ -2666,6 +2704,7 @@ mod tests {
                 },
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
+                unsigned_inc_chunk_reconstruction: None,
                 lattice_packed_validity: None,
             },
         })
@@ -3078,15 +3117,22 @@ mod tests {
     fn akita_snapshot_stage6_output(
         _bytecode_ra_count: usize,
         log_t: usize,
-        _log_k_chunk: usize,
+        log_k_chunk: usize,
         _bytecode_chunk_count: usize,
         _bytecode_address_point: Vec<Fr>,
     ) -> stage6::Stage6ClearOutput<Fr> {
         let zero = Fr::zero();
         let trace_point = field_zeros(log_t);
+        let unsigned_inc_chunk_count =
+            jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count(log_k_chunk)
+                .unwrap_or_else(|| panic!("test unsigned increment chunks should derive"));
         let mut output_claims = clear_claim_payload().stage6;
         output_claims.unsigned_inc_claim_reduction = Some(
-            stage6::inputs::UnsignedIncClaimReductionOutputOpeningClaims { unsigned_inc: zero },
+            stage6::inputs::UnsignedIncClaimReductionOutputOpeningClaims {
+                unsigned_inc: zero,
+                unsigned_inc_msb: zero,
+                unsigned_inc_chunks: field_zeros(unsigned_inc_chunk_count),
+            },
         );
 
         stage6::Stage6ClearOutput {
@@ -3172,12 +3218,19 @@ mod tests {
     ) -> stage7::Stage7ClearOutput<Fr> {
         let zero = Fr::zero();
         let ra_point = field_zeros(log_k_chunk + log_t);
+        let unsigned_inc_chunk_count =
+            jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count(log_k_chunk)
+                .unwrap_or_else(|| panic!("test unsigned increment chunks should derive"));
         let mut output_claims = clear_claim_payload().stage7;
         output_claims.hamming_weight_claim_reduction.instruction_ra =
             field_zeros(ra_layout.instruction());
         output_claims.hamming_weight_claim_reduction.bytecode_ra =
             field_zeros(ra_layout.bytecode());
         output_claims.hamming_weight_claim_reduction.ram_ra = field_zeros(ra_layout.ram());
+        output_claims.unsigned_inc_chunk_reconstruction =
+            Some(stage7::inputs::UnsignedIncChunkReconstructionOutputClaims {
+                chunks: field_zeros(unsigned_inc_chunk_count),
+            });
 
         let bytecode_layout = precommitted
             .bytecode
@@ -3225,13 +3278,21 @@ mod tests {
                             ra_layout.instruction()
                         ],
                         bytecode_ra_opening_points: vec![ra_point.clone(); ra_layout.bytecode()],
-                        ram_ra_opening_points: vec![ra_point; ra_layout.ram()],
+                        ram_ra_opening_points: vec![ra_point.clone(); ra_layout.ram()],
                         expected_output_claim: zero,
                     },
                 trusted_advice_address_phase: None,
                 untrusted_advice_address_phase: None,
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
+                unsigned_inc_chunk_reconstruction: Some(
+                    stage7::outputs::VerifiedUnsignedIncChunkReconstructionSumcheck {
+                        input_claim: zero,
+                        sumcheck_point: field_zeros(log_k_chunk),
+                        opening_point: ra_point.clone(),
+                        expected_output_claim: zero,
+                    },
+                ),
             },
             precommitted_final_openings,
         }

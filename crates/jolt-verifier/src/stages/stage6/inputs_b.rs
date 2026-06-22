@@ -53,6 +53,8 @@ pub struct IncClaimReductionOutputOpeningClaims<F: Field> {
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct UnsignedIncClaimReductionOutputOpeningClaims<F: Field> {
     pub unsigned_inc: F,
+    pub unsigned_inc_msb: F,
+    pub unsigned_inc_chunks: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -46,6 +46,7 @@ pub struct Stage7ZkOutput<F: Field, C> {
     pub untrusted_advice_address_phase: Option<AdviceAddressPhasePublicOutput<F>>,
     pub bytecode_address_phase: Option<CommittedReductionAddressPhasePublicOutput<F>>,
     pub program_image_address_phase: Option<CommittedReductionAddressPhasePublicOutput<F>>,
+    pub unsigned_inc_chunk_reconstruction: Option<UnsignedIncChunkReconstructionPublicOutput<F>>,
     pub precommitted_final_openings: Vec<PrecommittedFinalOpening<F>>,
 }
 
@@ -66,6 +67,8 @@ pub struct VerifiedStage7Batch<F: Field> {
     pub untrusted_advice_address_phase: Option<VerifiedAdviceAddressPhaseSumcheck<F>>,
     pub bytecode_address_phase: Option<VerifiedCommittedReductionAddressPhaseSumcheck<F>>,
     pub program_image_address_phase: Option<VerifiedCommittedReductionAddressPhaseSumcheck<F>>,
+    pub unsigned_inc_chunk_reconstruction:
+        Option<VerifiedUnsignedIncChunkReconstructionSumcheck<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,6 +118,20 @@ pub struct VerifiedCommittedReductionAddressPhaseSumcheck<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommittedReductionAddressPhasePublicOutput<F: Field> {
+    pub sumcheck_point: Vec<F>,
+    pub opening_point: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedUnsignedIncChunkReconstructionSumcheck<F: Field> {
+    pub input_claim: F,
+    pub sumcheck_point: Vec<F>,
+    pub opening_point: Vec<F>,
+    pub expected_output_claim: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnsignedIncChunkReconstructionPublicOutput<F: Field> {
     pub sumcheck_point: Vec<F>,
     pub opening_point: Vec<F>,
 }

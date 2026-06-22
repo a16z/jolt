@@ -459,6 +459,10 @@ pub(super) fn append_opening_claims<F, T>(
     transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.rd_inc);
     if let Some(output_claims) = &claims.unsigned_inc_claim_reduction {
         transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc);
+        transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc_msb);
+        for opening_claim in &output_claims.unsigned_inc_chunks {
+            transcript.append_labeled(b"opening_claim", opening_claim);
+        }
     }
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);

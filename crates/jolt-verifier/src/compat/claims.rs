@@ -601,6 +601,7 @@ fn stage7_claims_from_native<F: Field>(
         },
         bytecode_address_phase: bytecode_address_phase_claims_from_native(claims),
         program_image_address_phase: program_image_address_phase_claim_from_native(claims),
+        unsigned_inc_chunk_reconstruction: None,
         lattice_packed_validity: None,
     })
 }
@@ -845,6 +846,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             },
             bytecode_address_phase: None,
             program_image_address_phase: None,
+            unsigned_inc_chunk_reconstruction: None,
             lattice_packed_validity: None,
         },
     }

@@ -1050,6 +1050,14 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         "committed fixture test offsets the final program-image claim",
     ),
     checked_standard(
+        "stage7.claims.unsigned_inc_chunk_reconstruction",
+        "claims.stage7.unsigned_inc_chunk_reconstruction",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with unsigned increment reconstruction needed to actively cover final chunk claims",
+    ),
+    checked_standard(
         "stage7.claims.lattice_packed_validity",
         "claims.stage7.lattice_packed_validity",
         VerifierPhase::Stage7,
@@ -1613,6 +1621,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     opening_claim: zero,
                 },
             ),
+            unsigned_inc_chunk_reconstruction: None,
             lattice_packed_validity: None,
         },
     }

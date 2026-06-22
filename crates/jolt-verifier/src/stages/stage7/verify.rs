@@ -6,32 +6,39 @@ use jolt_claims::protocols::jolt::{
             hamming_weight, program_image,
         },
         dimensions::JoltFormulaDimensions,
+        lattice,
     },
     AdviceClaimReductionLayout, AdviceClaimReductionPublic, BytecodeClaimReductionLayout,
     BytecodeClaimReductionPublic, HammingWeightClaimReductionChallenge,
     HammingWeightClaimReductionPublic, JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial,
     JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
     PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-    ProgramImageClaimReductionPublic,
+    ProgramImageClaimReductionPublic, UnsignedIncChunkReconstructionChallenge,
+    UnsignedIncChunkReconstructionPublic,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::try_eq_mle;
+use jolt_poly::{try_eq_mle, IdentityPolynomial, MultilinearEvaluation};
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement,
 };
 use jolt_transcript::Transcript;
 
 use super::{
-    inputs::{AdviceAddressPhaseOutputClaim, Deps, Stage7Claims},
+    inputs::{
+        AdviceAddressPhaseOutputClaim, Deps, Stage7Claims,
+        UnsignedIncChunkReconstructionOutputClaims,
+    },
     outputs::{
         AdviceAddressPhasePublicOutput, CommittedReductionAddressPhasePublicOutput,
         HammingWeightClaimReductionPublicOutput, PrecommittedFinalOpening, Stage7ClearOutput,
-        Stage7Output, Stage7PublicOutput, Stage7ZkOutput, VerifiedAdviceAddressPhaseSumcheck,
+        Stage7Output, Stage7PublicOutput, Stage7ZkOutput,
+        UnsignedIncChunkReconstructionPublicOutput, VerifiedAdviceAddressPhaseSumcheck,
         VerifiedCommittedReductionAddressPhaseSumcheck,
         VerifiedHammingWeightClaimReductionSumcheck, VerifiedStage7Batch,
+        VerifiedUnsignedIncChunkReconstructionSumcheck,
     },
 };
 use crate::{
@@ -57,6 +64,7 @@ struct Stage7BatchInputClaims<F: Field> {
     untrusted_advice_address_phase: Option<F>,
     bytecode_address_phase: Option<F>,
     program_image_address_phase: Option<F>,
+    unsigned_inc_chunk_reconstruction: Option<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,6 +74,7 @@ struct Stage7BatchExpectedOutputClaims<F: Field> {
     untrusted_advice_address_phase: Option<F>,
     bytecode_address_phase: Option<F>,
     program_image_address_phase: Option<F>,
+    unsigned_inc_chunk_reconstruction: Option<F>,
 }
 
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -106,6 +115,24 @@ where
         proof.one_hot_config.committed_chunk_bits(),
     );
     let hamming_claims = hamming_weight::claim_reduction::<PCS::Field>(hamming_dimensions);
+    let lattice_protocol = crate::config::validate_protocol_config(&proof.protocol)?
+        == crate::config::PcsFamily::Lattice;
+    let unsigned_inc_chunk_reconstruction_claims = if lattice_protocol {
+        Some(
+            lattice::unsigned_inc_chunk_reconstruction_claim::<PCS::Field>(
+                proof.one_hot_config.committed_chunk_bits(),
+            )
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::UnsignedIncChunkReconstruction,
+                reason: format!(
+                    "unsigned increment chunk size must evenly divide 64 bits, got {}",
+                    proof.one_hot_config.committed_chunk_bits()
+                ),
+            })?,
+        )
+    } else {
+        None
+    };
 
     let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
     let untrusted_advice_layout = checked.precommitted.untrusted_advice.as_ref();
@@ -152,6 +179,7 @@ where
         &untrusted_advice_claims,
         &bytecode_reduction_claims,
         &program_image_reduction_claims,
+        &unsigned_inc_chunk_reconstruction_claims,
     ]
     .into_iter()
     .flatten()
@@ -160,6 +188,9 @@ where
     }
 
     let hamming_gamma = transcript.challenge_scalar();
+    let unsigned_inc_reconstruction_gamma = unsigned_inc_chunk_reconstruction_claims
+        .as_ref()
+        .map(|_| transcript.challenge_scalar());
     let public =
         |challenges: Vec<PCS::Field>, batching_coefficients: Vec<PCS::Field>| Stage7PublicOutput {
             challenges,
@@ -180,6 +211,7 @@ where
             &untrusted_advice_claims,
             &bytecode_reduction_claims,
             &program_image_reduction_claims,
+            &unsigned_inc_chunk_reconstruction_claims,
         ]
         .into_iter()
         .flatten()
@@ -210,7 +242,10 @@ where
                 .as_ref()
                 .and(bytecode_reduction_layout)
                 .map_or(0, BytecodeClaimReductionLayout::chunk_count)
-            + usize::from(program_image_reduction_claims.is_some());
+            + usize::from(program_image_reduction_claims.is_some())
+            + unsigned_inc_chunk_reconstruction_claims
+                .as_ref()
+                .map_or(0, |claim| claim.output.required_openings.len());
         let batch_output_claims =
             committed::verify_output_claim_commitments(committed::CommittedOutputClaimInputs {
                 checked,
@@ -300,6 +335,21 @@ where
         } else {
             None
         };
+        let unsigned_inc_chunk_reconstruction =
+            if let Some(claim) = unsigned_inc_chunk_reconstruction_claims.as_ref() {
+                let cycle_phase = stage6.unsigned_inc_claim_reduction.as_ref().ok_or(
+                    VerifierError::MissingOpeningClaim {
+                        id: lattice::unsigned_inc_opening(),
+                    },
+                )?;
+                Some(unsigned_inc_chunk_reconstruction_public(
+                    &batch_consistency,
+                    claim,
+                    cycle_phase.opening_point.as_slice(),
+                )?)
+            } else {
+                None
+            };
 
         let mut precommitted_final_openings = Vec::new();
         for (kind, layout, address_phase, cycle_phase) in [
@@ -378,6 +428,7 @@ where
             untrusted_advice_address_phase: untrusted_advice,
             bytecode_address_phase,
             program_image_address_phase,
+            unsigned_inc_chunk_reconstruction,
             precommitted_final_openings,
         }));
     }
@@ -456,6 +507,17 @@ where
                 )
             })
             .transpose()?,
+        unsigned_inc_chunk_reconstruction: unsigned_inc_chunk_reconstruction_claims
+            .as_ref()
+            .map(|claim| {
+                let gamma = unsigned_inc_reconstruction_gamma.ok_or(
+                    VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(UnsignedIncChunkReconstructionChallenge::Gamma),
+                    },
+                )?;
+                unsigned_inc_chunk_reconstruction_input(claim, stage6, gamma)
+            })
+            .transpose()?,
     };
 
     if trusted_advice_claims.is_none() && claims.advice_address_phase.trusted.is_some() {
@@ -476,6 +538,13 @@ where
     if program_image_reduction_claims.is_none() && claims.program_image_address_phase.is_some() {
         return Err(VerifierError::UnexpectedOpeningClaim {
             id: program_image::final_program_image_opening(),
+        });
+    }
+    if unsigned_inc_chunk_reconstruction_claims.is_none()
+        && claims.unsigned_inc_chunk_reconstruction.is_some()
+    {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: lattice::unsigned_inc_chunk_opening(0),
         });
     }
 
@@ -517,6 +586,16 @@ where
     if let (Some(claim), Some(input_claim)) = (
         &program_image_reduction_claims,
         input_claims.program_image_address_phase,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &unsigned_inc_chunk_reconstruction_claims,
+        input_claims.unsigned_inc_chunk_reconstruction,
     ) {
         sumcheck_claims.push(SumcheckClaim::new(
             claim.sumcheck.rounds,
@@ -657,6 +736,37 @@ where
             id: program_image::final_program_image_opening(),
         });
     }
+    let unsigned_inc_chunk_reconstruction = if let (Some(claim), Some(output_claims)) = (
+        unsigned_inc_chunk_reconstruction_claims.as_ref(),
+        claims.unsigned_inc_chunk_reconstruction.as_ref(),
+    ) {
+        let input_claim = input_claims.unsigned_inc_chunk_reconstruction.ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: lattice::unsigned_inc_opening(),
+            },
+        )?;
+        let gamma =
+            unsigned_inc_reconstruction_gamma.ok_or(VerifierError::MissingStageClaimChallenge {
+                id: JoltChallengeId::from(UnsignedIncChunkReconstructionChallenge::Gamma),
+            })?;
+        Some(verify_unsigned_inc_chunk_reconstruction(
+            &batch,
+            claim,
+            output_claims,
+            stage6,
+            input_claim,
+            gamma,
+        )?)
+    } else {
+        None
+    };
+    if unsigned_inc_chunk_reconstruction_claims.is_some()
+        && unsigned_inc_chunk_reconstruction.is_none()
+    {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: lattice::unsigned_inc_chunk_opening(0),
+        });
+    }
 
     let expected_outputs = Stage7BatchExpectedOutputClaims {
         hamming_weight_claim_reduction: hamming_output,
@@ -672,6 +782,9 @@ where
         program_image_address_phase: program_image_address_phase
             .as_ref()
             .map(|verified| verified.expected_output_claim),
+        unsigned_inc_chunk_reconstruction: unsigned_inc_chunk_reconstruction
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
     };
     let mut expected_outputs_in_order = vec![expected_outputs.hamming_weight_claim_reduction];
     if let Some(output_claim) = expected_outputs.trusted_advice_address_phase {
@@ -684,6 +797,9 @@ where
         expected_outputs_in_order.push(output_claim);
     }
     if let Some(output_claim) = expected_outputs.program_image_address_phase {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.unsigned_inc_chunk_reconstruction {
         expected_outputs_in_order.push(output_claim);
     }
     if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
@@ -829,6 +945,7 @@ where
             untrusted_advice_address_phase: untrusted_advice,
             bytecode_address_phase,
             program_image_address_phase,
+            unsigned_inc_chunk_reconstruction,
         },
         precommitted_final_openings,
     }))
@@ -1142,6 +1259,138 @@ fn hamming_opening_points<F: Field>(
     }
 }
 
+fn unsigned_inc_chunk_reconstruction_input<F: Field>(
+    claim: &JoltRelationClaims<F>,
+    stage6: &Stage6ClearOutput<F>,
+    gamma: F,
+) -> Result<F, VerifierError> {
+    let output_claims = stage6
+        .output_claims
+        .unsigned_inc_claim_reduction
+        .as_ref()
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: lattice::unsigned_inc_opening(),
+        })?;
+    claim.input.expression().try_evaluate(
+        |id| {
+            if *id == lattice::unsigned_inc_opening() {
+                return Ok(output_claims.unsigned_inc);
+            }
+            if *id == lattice::unsigned_inc_msb_opening() {
+                return Ok(output_claims.unsigned_inc_msb);
+            }
+            for (index, opening_claim) in output_claims.unsigned_inc_chunks.iter().enumerate() {
+                if *id == lattice::unsigned_inc_chunk_opening(index) {
+                    return Ok(*opening_claim);
+                }
+            }
+            Err(VerifierError::MissingOpeningClaim { id: *id })
+        },
+        |id| match id {
+            JoltChallengeId::UnsignedIncChunkReconstruction(
+                UnsignedIncChunkReconstructionChallenge::Gamma,
+            ) => Ok(gamma),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+    )
+}
+
+fn verify_unsigned_inc_chunk_reconstruction<F: Field>(
+    batch: &jolt_sumcheck::BatchedEvaluationClaim<F>,
+    claim: &JoltRelationClaims<F>,
+    output_claims: &UnsignedIncChunkReconstructionOutputClaims<F>,
+    stage6: &Stage6ClearOutput<F>,
+    input_claim: F,
+    gamma: F,
+) -> Result<VerifiedUnsignedIncChunkReconstructionSumcheck<F>, VerifierError> {
+    let stage = JoltRelationId::UnsignedIncChunkReconstruction;
+    let point = batch
+        .try_instance_point(claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let r_address = point.iter().rev().copied().collect::<Vec<_>>();
+    let cycle_point = stage6
+        .batch
+        .unsigned_inc_claim_reduction
+        .as_ref()
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: lattice::unsigned_inc_opening(),
+        })?
+        .opening_point
+        .as_slice();
+    let opening_point = [r_address.as_slice(), cycle_point].concat();
+    let expected_chunks = claim.output.required_openings.len();
+    if output_claims.chunks.len() != expected_chunks {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: format!(
+                "unsigned increment chunk reconstruction claim count mismatch: expected {expected_chunks}, got {}",
+                output_claims.chunks.len()
+            ),
+        });
+    }
+    let eq_booleanity_address = try_eq_mle(&r_address, &stage6.batch.booleanity.r_address)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let identity_at_address = IdentityPolynomial::new(r_address.len()).evaluate(&r_address);
+    let expected_output_claim = claim.output.expression().try_evaluate(
+        |id| {
+            for (index, opening_claim) in output_claims.chunks.iter().enumerate() {
+                if *id == lattice::unsigned_inc_chunk_opening(index) {
+                    return Ok(*opening_claim);
+                }
+            }
+            Err(VerifierError::MissingOpeningClaim { id: *id })
+        },
+        |id| match id {
+            JoltChallengeId::UnsignedIncChunkReconstruction(
+                UnsignedIncChunkReconstructionChallenge::Gamma,
+            ) => Ok(gamma),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| match id {
+            JoltPublicId::UnsignedIncChunkReconstruction(
+                UnsignedIncChunkReconstructionPublic::EqBooleanityAddress,
+            ) => Ok(eq_booleanity_address),
+            JoltPublicId::UnsignedIncChunkReconstruction(
+                UnsignedIncChunkReconstructionPublic::IdentityAtAddress,
+            ) => Ok(identity_at_address),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
+    )?;
+
+    Ok(VerifiedUnsignedIncChunkReconstructionSumcheck {
+        input_claim,
+        sumcheck_point: point.to_vec(),
+        opening_point,
+        expected_output_claim,
+    })
+}
+
+fn unsigned_inc_chunk_reconstruction_public<F: Field, C>(
+    batch: &BatchedCommittedSumcheckConsistency<F, C>,
+    claim: &JoltRelationClaims<F>,
+    cycle_point: &[F],
+) -> Result<UnsignedIncChunkReconstructionPublicOutput<F>, VerifierError> {
+    let stage = JoltRelationId::UnsignedIncChunkReconstruction;
+    let point = batch
+        .try_instance_point(claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage,
+            reason: error.to_string(),
+        })?;
+    let r_address = point.iter().rev().copied().collect::<Vec<_>>();
+    Ok(UnsignedIncChunkReconstructionPublicOutput {
+        sumcheck_point: point,
+        opening_point: [r_address.as_slice(), cycle_point].concat(),
+    })
+}
+
 /// Opening point and (clear-mode) claim payload recorded by the stage that
 /// completed a precommitted claim reduction. `T` is a single claim for advice
 /// and the program image, and the per-chunk claim slice for the committed
@@ -1370,6 +1619,11 @@ where
     }
     if let Some(opening_claim) = &claims.program_image_address_phase {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
+    }
+    if let Some(output_claims) = &claims.unsigned_inc_chunk_reconstruction {
+        for opening_claim in &output_claims.chunks {
+            transcript.append_labeled(b"opening_claim", opening_claim);
+        }
     }
 }
 

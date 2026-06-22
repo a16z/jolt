@@ -200,9 +200,9 @@ Unchecked items are still required before the full verifier/protocol side of thi
 - [x] Stage 6 bytecode read-RAF validates `Store(r_cycle_inc)` against the committed bytecode row's `CircuitFlags::Store` value before later stages rely on it.
 - [x] Stage 6b reduces `Inc(r_cycle_inc) + 2^64` to `UnsignedInc(r_cycle_6)`.
 - [ ] Stage 6a/6b booleanity includes lower `UnsignedIncChunk(j)` and size-`T` `UnsignedIncMsb`.
-- [ ] Stage 7 reconstructs `UnsignedInc(r_cycle_6)` from lower `UnsignedIncChunk(j)` openings and the size-`T` `UnsignedIncMsb(r_cycle_6)` opening.
-- [ ] Stage 8 opens each lower `UnsignedIncChunk(j)` at its Stage 7 address-plus-cycle point.
-- [ ] Stage 8 opens `UnsignedIncMsb` at the Stage 6b cycle point with `num_vars = log_T`; it is not represented as an address-plus-cycle one-hot family.
+- [x] Stage 7 reconstructs `UnsignedInc(r_cycle_6)` from lower `UnsignedIncChunk(j)` openings and the size-`T` `UnsignedIncMsb(r_cycle_6)` opening.
+- [x] Stage 8 opens each lower `UnsignedIncChunk(j)` at its Stage 7 address-plus-cycle point.
+- [x] Stage 8 opens `UnsignedIncMsb` at the Stage 6b cycle point with `num_vars = log_T`; it is not represented as an address-plus-cycle one-hot family.
 - [ ] Existing curve/Dory standard and curve/Dory ZK `muldiv` tests keep passing.
 - [ ] Modular lattice verifier/tamper tests reject missing or tampered increment virtualization, store binding, unsigned reduction, chunk reconstruction, and MSB opening claims.
 - [ ] When a `jolt-core` Akita prover exists, its e2e proofs must satisfy this modular verifier surface; that e2e is not required for the verifier-only slice.
