@@ -739,15 +739,18 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    transcript.append(&Label(b"AkitaPackedValidity"));
+    transcript.append(&Label(b"LatticePackedValidity"));
     transcript.append(&LabelWithCount(
-        b"ak_val_layout",
+        b"lattice_validity_layout",
         layout.digest.len() as u64,
     ));
     transcript.append_bytes(&layout.digest);
     transcript.append(&U64Word(layout.dimension as u64));
     transcript.append(&U64Word(layout.cells as u64));
-    transcript.append(&LabelWithCount(b"ak_val_stmts", statements.len() as u64));
+    transcript.append(&LabelWithCount(
+        b"lattice_validity_stmts",
+        statements.len() as u64,
+    ));
     for (index, statement) in statements.iter().enumerate() {
         let family = akita_packed_family_id(&statement.requirement.family).physical_ref();
         transcript.append(&U64Word(index as u64));
