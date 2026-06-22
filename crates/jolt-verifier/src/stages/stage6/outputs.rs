@@ -71,6 +71,7 @@ pub struct Stage6ZkOutput<F: Field, C> {
     pub instruction_ra_virtualization: InstructionRaVirtualizationPublicOutput<F>,
     pub inc_claim_reduction: Stage6SumcheckPublicOutput<F>,
     pub unsigned_inc_claim_reduction: Option<Stage6SumcheckPublicOutput<F>>,
+    pub unsigned_inc_msb_booleanity: Option<Stage6SumcheckPublicOutput<F>>,
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction: Stage6SumcheckPublicOutput<F>,
     pub trusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
@@ -104,6 +105,7 @@ pub struct VerifiedStage6Batch<F: Field> {
     pub instruction_ra_virtualization: VerifiedInstructionRaVirtualizationSumcheck<F>,
     pub inc_claim_reduction: VerifiedStage6Sumcheck<F>,
     pub unsigned_inc_claim_reduction: Option<VerifiedStage6Sumcheck<F>>,
+    pub unsigned_inc_msb_booleanity: Option<VerifiedStage6Sumcheck<F>>,
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction: VerifiedStage6Sumcheck<F>,
     pub trusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,

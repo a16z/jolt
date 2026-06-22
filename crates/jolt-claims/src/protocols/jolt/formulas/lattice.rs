@@ -387,6 +387,19 @@ where
     )
 }
 
+pub fn unsigned_inc_msb_booleanity_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    let msb = opening(unsigned_inc_msb_opening());
+    JoltRelationClaims::new(
+        JoltRelationId::Booleanity,
+        dimensions.sumcheck(2),
+        JoltExpr::zero(),
+        msb.clone() * msb.clone() - msb,
+    )
+}
+
 fn inc_virtualization_challenge<F>(id: IncVirtualizationChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -1077,6 +1090,34 @@ mod tests {
 
         assert_eq!(input, unsigned_inc);
         assert_eq!(output, unsigned_inc);
+    }
+
+    #[test]
+    fn unsigned_inc_msb_booleanity_claim_checks_cycle_bit() {
+        let claims = unsigned_inc_msb_booleanity_claim::<Fr>(TraceDimensions::new(5));
+        let zero = Fr::from_u64(0);
+        let msb = Fr::from_u64(7);
+
+        assert_eq!(claims.id, JoltRelationId::Booleanity);
+        assert_eq!(claims.sumcheck, TraceDimensions::new(5).sumcheck(2));
+        assert!(claims.input.required_openings.is_empty());
+        assert_eq!(
+            claims.output.required_openings,
+            vec![unsigned_inc_msb_opening()]
+        );
+        assert!(claims.required_challenges().is_empty());
+        assert!(claims.required_publics().is_empty());
+
+        let output = claims.output.expression().evaluate(
+            |id| match *id {
+                id if id == unsigned_inc_msb_opening() => msb,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+
+        assert_eq!(output, msb * msb - msb);
     }
 
     #[test]

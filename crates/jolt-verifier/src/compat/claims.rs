@@ -462,6 +462,7 @@ fn stage6_claims_from_native<F: Field>(
             instruction_ra: booleanity_instruction_ra,
             bytecode_ra: booleanity_bytecode_ra,
             ram_ra: booleanity_ram_ra,
+            unsigned_inc_chunks: Vec::new(),
         },
         ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
             ram_hamming_weight: claims.require(ram_hamming_weight)?,
@@ -809,6 +810,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
+                unsigned_inc_chunks: Vec::new(),
             },
             ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
                 ram_hamming_weight: zero,

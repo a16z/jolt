@@ -290,7 +290,7 @@ where
         Deps::Clear { stage6, stage7 } => {
             let unsigned_inc_finals = stage6
                 .batch
-                .unsigned_inc_claim_reduction
+                .unsigned_inc_msb_booleanity
                 .as_ref()
                 .zip(stage6.output_claims.unsigned_inc_claim_reduction.as_ref())
                 .zip(
@@ -323,7 +323,7 @@ where
         }
         Deps::Zk { stage6, stage7 } => {
             let unsigned_inc_finals = stage6
-                .unsigned_inc_claim_reduction
+                .unsigned_inc_msb_booleanity
                 .as_ref()
                 .zip(stage7.unsigned_inc_chunk_reconstruction.as_ref())
                 .map(

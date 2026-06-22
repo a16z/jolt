@@ -66,6 +66,7 @@ struct Stage6BatchInputClaims<F: Field> {
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
     unsigned_inc_claim_reduction: Option<F>,
+    unsigned_inc_msb_booleanity: Option<F>,
     #[cfg(feature = "field-inline")]
     field_registers_inc_claim_reduction: F,
     trusted_advice_cycle_phase: Option<F>,
@@ -85,6 +86,7 @@ struct Stage6BatchExpectedOutputClaims<F: Field> {
     instruction_ra_virtualization: F,
     inc_claim_reduction: F,
     unsigned_inc_claim_reduction: Option<F>,
+    unsigned_inc_msb_booleanity: Option<F>,
     #[cfg(feature = "field-inline")]
     field_registers_inc_claim_reduction: F,
     trusted_advice_cycle_phase: Option<F>,
@@ -134,6 +136,18 @@ where
     let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
     let committed_program = bytecode_reduction_layout.is_some();
     let bind_store_bytecode = validate_protocol_config(&proof.protocol)? == PcsFamily::Lattice;
+    let unsigned_inc_chunk_count = if bind_store_bytecode {
+        lattice::unsigned_inc_lower_chunk_count(proof.one_hot_config.committed_chunk_bits())
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: format!(
+                    "unsigned increment chunk size must evenly divide 64 bits, got {}",
+                    proof.one_hot_config.committed_chunk_bits()
+                ),
+            })?
+    } else {
+        0
+    };
 
     let bytecode_address_claims = if bind_store_bytecode {
         bytecode::read_raf_address_phase_with_store_binding::<PCS::Field>(
@@ -159,6 +173,7 @@ where
         formula_dimensions.ra_layout,
         log_t,
         proof.one_hot_config.committed_chunk_bits(),
+        unsigned_inc_chunk_count,
     );
     let booleanity_address_claims =
         booleanity::booleanity_address_phase::<PCS::Field>(booleanity_dimensions);
@@ -170,6 +185,8 @@ where
         formula_dimensions.instruction_ra_virtualization,
     );
     let inc_claims = increments::claim_reduction::<PCS::Field>(trace_dimensions);
+    let unsigned_inc_msb_booleanity_claims = bind_store_bytecode
+        .then(|| lattice::unsigned_inc_msb_booleanity_claim::<PCS::Field>(trace_dimensions));
     #[cfg(feature = "field-inline")]
     let field_inc_claims =
         field_increments::claim_reduction::<PCS::Field>(FieldRegistersTraceDimensions::new(log_t));
@@ -212,6 +229,7 @@ where
         &untrusted_advice_claims,
         &bytecode_reduction_claims,
         &program_image_reduction_claims,
+        &unsigned_inc_msb_booleanity_claims,
     ]
     .into_iter()
     .flatten()
@@ -569,8 +587,10 @@ where
 
         let bytecode_output_openings =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
-        let booleanity_output_openings =
-            booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
+        let booleanity_output_openings = booleanity::booleanity_output_openings(
+            formula_dimensions.ra_layout,
+            unsigned_inc_chunk_count,
+        );
         let ram_ra_output_openings =
             ram::ra_virtualization_output_openings(formula_dimensions.ram_ra_virtualization);
         let instruction_ra_output_openings = instruction::ra_virtualization_output_openings(
@@ -683,6 +703,7 @@ where
                 opening_point: inc_opening_point,
             },
             unsigned_inc_claim_reduction: None,
+            unsigned_inc_msb_booleanity: None,
             #[cfg(feature = "field-inline")]
             field_registers_inc_claim_reduction: field_inc_claim_reduction,
             trusted_advice_cycle_phase: trusted_advice,
@@ -993,9 +1014,10 @@ where
         trace_dimensions,
         claims.unsigned_inc_claim_reduction.is_some(),
     )?;
-    validate_unsigned_inc_claim_shape(
+    validate_lattice_increment_claim_shape(
         unsigned_inc_claims.as_ref(),
         claims.unsigned_inc_claim_reduction.as_ref(),
+        &claims.booleanity,
         proof.one_hot_config.committed_chunk_bits(),
     )?;
     if let Some(claim) = &unsigned_inc_claims {
@@ -1118,6 +1140,9 @@ where
                 )
             })
             .transpose()?,
+        unsigned_inc_msb_booleanity: unsigned_inc_msb_booleanity_claims
+            .as_ref()
+            .map(|_| PCS::Field::zero()),
         #[cfg(feature = "field-inline")]
         field_registers_inc_claim_reduction: {
             let [field_rd_inc_read_write, field_rd_inc_val_evaluation] =
@@ -1258,6 +1283,16 @@ where
     if let (Some(claim), Some(input_claim)) = (
         &unsigned_inc_claims,
         input_claims.unsigned_inc_claim_reduction,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &unsigned_inc_msb_booleanity_claims,
+        input_claims.unsigned_inc_msb_booleanity,
     ) {
         sumcheck_claims.push(SumcheckClaim::new(
             claim.sumcheck.rounds,
@@ -1567,17 +1602,20 @@ where
     if claims.booleanity.instruction_ra.len() != formula_dimensions.ra_layout.instruction()
         || claims.booleanity.bytecode_ra.len() != formula_dimensions.ra_layout.bytecode()
         || claims.booleanity.ram_ra.len() != formula_dimensions.ra_layout.ram()
+        || claims.booleanity.unsigned_inc_chunks.len() != unsigned_inc_chunk_count
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::Booleanity,
             reason: format!(
-                "booleanity RA claim count mismatch: expected ({}, {}, {}), got ({}, {}, {})",
+                "booleanity claim count mismatch: expected ({}, {}, {}, {}), got ({}, {}, {}, {})",
                 formula_dimensions.ra_layout.instruction(),
                 formula_dimensions.ra_layout.bytecode(),
                 formula_dimensions.ra_layout.ram(),
+                unsigned_inc_chunk_count,
                 claims.booleanity.instruction_ra.len(),
                 claims.booleanity.bytecode_ra.len(),
-                claims.booleanity.ram_ra.len()
+                claims.booleanity.ram_ra.len(),
+                claims.booleanity.unsigned_inc_chunks.len()
             ),
         });
     }
@@ -1593,8 +1631,10 @@ where
             stage: JoltRelationId::Booleanity,
             reason: error.to_string(),
         })?;
-    let booleanity_output_openings =
-        booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
+    let booleanity_output_openings = booleanity::booleanity_output_openings(
+        formula_dimensions.ra_layout,
+        unsigned_inc_chunk_count,
+    );
     let booleanity_output = booleanity_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in booleanity_output_openings.iter().enumerate() {
@@ -1607,7 +1647,11 @@ where
                         return Ok(claims.booleanity.bytecode_ra[bytecode_index]);
                     }
                     let ram_index = bytecode_index - formula_dimensions.ra_layout.bytecode();
-                    return Ok(claims.booleanity.ram_ra[ram_index]);
+                    if ram_index < formula_dimensions.ra_layout.ram() {
+                        return Ok(claims.booleanity.ram_ra[ram_index]);
+                    }
+                    let unsigned_inc_chunk_index = ram_index - formula_dimensions.ra_layout.ram();
+                    return Ok(claims.booleanity.unsigned_inc_chunks[unsigned_inc_chunk_index]);
                 }
             }
             Err(VerifierError::MissingOpeningClaim { id: *id })
@@ -1981,6 +2025,42 @@ where
         } else {
             None
         };
+    let unsigned_inc_msb_booleanity = if let (Some(claim), Some(output_claims), Some(input_claim)) = (
+        &unsigned_inc_msb_booleanity_claims,
+        claims.unsigned_inc_claim_reduction.as_ref(),
+        input_claims.unsigned_inc_msb_booleanity,
+    ) {
+        let point = batch
+            .try_instance_point(claim.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?;
+        let opening_point = trace_dimensions
+            .cycle_opening_point(point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?;
+        let expected_output_claim = claim.output.expression().try_evaluate(
+            |id| match *id {
+                id if id == lattice::unsigned_inc_msb_opening() => {
+                    Ok(output_claims.unsigned_inc_msb)
+                }
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        )?;
+        Some(VerifiedStage6Sumcheck {
+            input_claim,
+            sumcheck_point: point.to_vec(),
+            opening_point,
+            expected_output_claim,
+        })
+    } else {
+        None
+    };
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
@@ -2121,6 +2201,9 @@ where
         unsigned_inc_claim_reduction: unsigned_inc_claim_reduction
             .as_ref()
             .map(|verified| verified.expected_output_claim),
+        unsigned_inc_msb_booleanity: unsigned_inc_msb_booleanity
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
         #[cfg(feature = "field-inline")]
         field_registers_inc_claim_reduction: field_inc_claim_reduction.expected_output_claim,
         trusted_advice_cycle_phase: trusted_advice
@@ -2147,6 +2230,9 @@ where
     #[cfg(feature = "field-inline")]
     expected_outputs_in_order.push(expected_outputs.field_registers_inc_claim_reduction);
     if let Some(output_claim) = expected_outputs.unsigned_inc_claim_reduction {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.unsigned_inc_msb_booleanity {
         expected_outputs_in_order.push(output_claim);
     }
     if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
@@ -2270,6 +2356,7 @@ where
                 expected_output_claim: expected_outputs.inc_claim_reduction,
             },
             unsigned_inc_claim_reduction,
+            unsigned_inc_msb_booleanity,
             #[cfg(feature = "field-inline")]
             field_registers_inc_claim_reduction: field_inc_claim_reduction,
             trusted_advice_cycle_phase: trusted_advice,
@@ -2322,15 +2409,21 @@ fn unsigned_inc_claims_for_protocol<F: Field>(
     })
 }
 
-fn validate_unsigned_inc_claim_shape<F: Field>(
+fn validate_lattice_increment_claim_shape<F: Field>(
     claim: Option<&JoltRelationClaims<F>>,
     output_claims: Option<&super::inputs::UnsignedIncClaimReductionOutputOpeningClaims<F>>,
+    booleanity_claims: &super::inputs::BooleanityOutputOpeningClaims<F>,
     log_k_chunk: usize,
 ) -> Result<(), VerifierError> {
     let Some(_claim) = claim else {
+        if !booleanity_claims.unsigned_inc_chunks.is_empty() {
+            return Err(VerifierError::UnexpectedOpeningClaim {
+                id: lattice::unsigned_inc_chunk_opening(0),
+            });
+        }
         return Ok(());
     };
-    let output_claims = output_claims.ok_or(VerifierError::MissingOpeningClaim {
+    let _output_claims = output_claims.ok_or(VerifierError::MissingOpeningClaim {
         id: lattice::unsigned_inc_opening(),
     })?;
     let expected_chunks =
@@ -2342,12 +2435,12 @@ fn validate_unsigned_inc_claim_shape<F: Field>(
                 ),
             }
         })?;
-    if output_claims.unsigned_inc_chunks.len() != expected_chunks {
+    if booleanity_claims.unsigned_inc_chunks.len() != expected_chunks {
         return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::UnsignedIncClaimReduction,
+            stage: JoltRelationId::Booleanity,
             reason: format!(
-                "unsigned increment chunk claim count mismatch: expected {expected_chunks}, got {}",
-                output_claims.unsigned_inc_chunks.len()
+                "unsigned increment chunk booleanity claim count mismatch: expected {expected_chunks}, got {}",
+                booleanity_claims.unsigned_inc_chunks.len()
             ),
         });
     }
@@ -2447,15 +2540,25 @@ mod tests {
         let output_claims = super::super::inputs::UnsignedIncClaimReductionOutputOpeningClaims {
             unsigned_inc: Fr::zero(),
             unsigned_inc_msb: Fr::zero(),
+        };
+        let booleanity_claims = super::super::inputs::BooleanityOutputOpeningClaims {
+            instruction_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            ram_ra: Vec::new(),
             unsigned_inc_chunks: vec![Fr::zero(); 7],
         };
 
-        let error = validate_unsigned_inc_claim_shape(claims.as_ref(), Some(&output_claims), 8)
-            .expect_err("lattice unsigned increment must require all lower chunks");
+        let error = validate_lattice_increment_claim_shape(
+            claims.as_ref(),
+            Some(&output_claims),
+            &booleanity_claims,
+            8,
+        )
+        .expect_err("lattice booleanity must require all lower chunks");
         assert!(matches!(
             error,
             VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::UnsignedIncClaimReduction,
+                stage: JoltRelationId::Booleanity,
                 ..
             }
         ));

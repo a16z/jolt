@@ -139,6 +139,7 @@ mod tests {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
+                unsigned_inc_chunks: Vec::new(),
             },
             ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
                 ram_hamming_weight: zero,
@@ -177,6 +178,63 @@ mod tests {
             error
                 .to_string()
                 .contains("unknown field `extra_stage6_claim`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn stage6_claims_reject_legacy_unsigned_increment_chunks_field() {
+        let zero = Fr::from_u64(0);
+        let value = serde_json::json!({
+            "address_phase": {
+                "bytecode_read_raf": zero,
+                "booleanity": zero,
+                "bytecode_val_stages": null
+            },
+            "bytecode_read_raf": { "bytecode_ra": [zero] },
+            "booleanity": {
+                "instruction_ra": [zero],
+                "bytecode_ra": [zero],
+                "ram_ra": [zero],
+                "unsigned_inc_chunks": [zero]
+            },
+            "ram_hamming_booleanity": { "ram_hamming_weight": zero },
+            "ram_ra_virtualization": { "ram_ra": [zero] },
+            "instruction_ra_virtualization": { "committed_instruction_ra": [zero] },
+            "inc_claim_reduction": { "ram_inc": zero, "rd_inc": zero },
+            "unsigned_inc_claim_reduction": {
+                "unsigned_inc": zero,
+                "unsigned_inc_msb": zero,
+                "unsigned_inc_chunks": [zero]
+            },
+            "advice_cycle_phase": { "trusted": null, "untrusted": null },
+            "bytecode_claim_reduction": null,
+            "program_image_claim_reduction": null
+        });
+
+        #[cfg(feature = "field-inline")]
+        let value = {
+            let mut value = value;
+            let object = value
+                .as_object_mut()
+                .expect("claims should serialize to a map");
+            let _ = object.insert(
+                "field_inline".to_string(),
+                serde_json::json!({
+                    "field_registers_inc_claim_reduction": {
+                        "field_rd_inc": zero
+                    }
+                }),
+            );
+            value
+        };
+
+        let error = serde_json::from_value::<Stage6Claims<Fr>>(value)
+            .expect_err("legacy unsigned increment chunk field should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("unknown field `unsigned_inc_chunks`"),
             "{error}"
         );
     }

@@ -199,7 +199,7 @@ Unchecked items are still required before the full verifier/protocol side of thi
 - [x] The new modular increment stage proves `IncVirtualization` and outputs claims for `Inc(r_cycle_inc)` and `Store(r_cycle_inc)`.
 - [x] Stage 6 bytecode read-RAF validates `Store(r_cycle_inc)` against the committed bytecode row's `CircuitFlags::Store` value before later stages rely on it.
 - [x] Stage 6b reduces `Inc(r_cycle_inc) + 2^64` to `UnsignedInc(r_cycle_6)`.
-- [ ] Stage 6a/6b booleanity includes lower `UnsignedIncChunk(j)` and size-`T` `UnsignedIncMsb`.
+- [x] Stage 6a/6b booleanity includes lower `UnsignedIncChunk(j)` and size-`T` `UnsignedIncMsb`.
 - [x] Stage 7 reconstructs `UnsignedInc(r_cycle_6)` from lower `UnsignedIncChunk(j)` openings and the size-`T` `UnsignedIncMsb(r_cycle_6)` opening.
 - [x] Stage 8 opens each lower `UnsignedIncChunk(j)` at its Stage 7 address-plus-cycle point.
 - [x] Stage 8 opens `UnsignedIncMsb` at the Stage 6b cycle point with `num_vars = log_T`; it is not represented as an address-plus-cycle one-hot family.

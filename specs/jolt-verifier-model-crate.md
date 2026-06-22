@@ -1858,9 +1858,10 @@ Outputs:
 
 Boundary/API pressure before wiring:
 
-- `jolt-claims` exposes `booleanity_output_openings(layout)`. The verifier
-  should consume the canonical `JoltRaPolynomialLayout`, not assemble three
-  unrelated vectors by hand.
+- `jolt-claims` exposes `booleanity_output_openings(layout, unsigned_inc_chunk_count)`.
+  The verifier should consume the canonical `JoltRaPolynomialLayout` and the
+  protocol-derived lattice increment chunk count, not assemble unrelated
+  vectors by hand.
 - if the Stage 5-derived address point is ever shorter than `log_k_chunk`,
   core samples extra transcript challenges. The modular API should make that
   policy explicit before the verifier wires it.

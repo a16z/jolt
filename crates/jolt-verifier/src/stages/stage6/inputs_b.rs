@@ -17,6 +17,7 @@ pub struct BooleanityOutputOpeningClaims<F: Field> {
     pub instruction_ra: Vec<F>,
     pub bytecode_ra: Vec<F>,
     pub ram_ra: Vec<F>,
+    pub unsigned_inc_chunks: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,7 +55,6 @@ pub struct IncClaimReductionOutputOpeningClaims<F: Field> {
 pub struct UnsignedIncClaimReductionOutputOpeningClaims<F: Field> {
     pub unsigned_inc: F,
     pub unsigned_inc_msb: F,
-    pub unsigned_inc_chunks: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

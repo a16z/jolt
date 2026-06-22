@@ -1264,22 +1264,33 @@ fn unsigned_inc_chunk_reconstruction_input<F: Field>(
     stage6: &Stage6ClearOutput<F>,
     gamma: F,
 ) -> Result<F, VerifierError> {
-    let output_claims = stage6
+    let unsigned_output_claims = stage6
         .output_claims
         .unsigned_inc_claim_reduction
         .as_ref()
         .ok_or(VerifierError::MissingOpeningClaim {
             id: lattice::unsigned_inc_opening(),
         })?;
+    let chunk_claims = &stage6.output_claims.booleanity.unsigned_inc_chunks;
+    let expected_chunks = claim.output.required_openings.len();
+    if chunk_claims.len() != expected_chunks {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::UnsignedIncChunkReconstruction,
+            reason: format!(
+                "unsigned increment Booleanity chunk claim count mismatch: expected {expected_chunks}, got {}",
+                chunk_claims.len()
+            ),
+        });
+    }
     claim.input.expression().try_evaluate(
         |id| {
             if *id == lattice::unsigned_inc_opening() {
-                return Ok(output_claims.unsigned_inc);
+                return Ok(unsigned_output_claims.unsigned_inc);
             }
             if *id == lattice::unsigned_inc_msb_opening() {
-                return Ok(output_claims.unsigned_inc_msb);
+                return Ok(unsigned_output_claims.unsigned_inc_msb);
             }
-            for (index, opening_claim) in output_claims.unsigned_inc_chunks.iter().enumerate() {
+            for (index, opening_claim) in chunk_claims.iter().enumerate() {
                 if *id == lattice::unsigned_inc_chunk_opening(index) {
                     return Ok(*opening_claim);
                 }

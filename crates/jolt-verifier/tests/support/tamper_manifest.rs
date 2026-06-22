@@ -871,6 +871,14 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "core-fixture test offsets every Booleanity RAM RA output claim",
     ),
     checked_standard(
+        "stage6.claims.booleanity.unsigned_inc_chunks",
+        "claims.stage6.booleanity.unsigned_inc_chunks",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "lattice-only fused increment chunk claims need an Akita clear fixture; curve fixtures carry an empty vector",
+    ),
+    checked_standard(
         "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
         "claims.stage6.ram_hamming_booleanity.ram_hamming_weight",
         VerifierPhase::Stage6,
@@ -1558,6 +1566,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
+                unsigned_inc_chunks: Vec::new(),
             },
             ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
                 ram_hamming_weight: zero,

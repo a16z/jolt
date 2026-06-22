@@ -442,6 +442,9 @@ pub(super) fn append_opening_claims<F, T>(
     for opening_claim in &claims.booleanity.ram_ra {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
+    for opening_claim in &claims.booleanity.unsigned_inc_chunks {
+        transcript.append_labeled(b"opening_claim", opening_claim);
+    }
     transcript.append_labeled(
         b"opening_claim",
         &claims.ram_hamming_booleanity.ram_hamming_weight,
@@ -460,9 +463,6 @@ pub(super) fn append_opening_claims<F, T>(
     if let Some(output_claims) = &claims.unsigned_inc_claim_reduction {
         transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc);
         transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc_msb);
-        for opening_claim in &output_claims.unsigned_inc_chunks {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
     }
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);

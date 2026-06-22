@@ -2661,6 +2661,7 @@ mod tests {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
+                    unsigned_inc_chunks: Vec::new(),
                 },
                 ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
                     ram_hamming_weight: zero,
@@ -3127,11 +3128,11 @@ mod tests {
             jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count(log_k_chunk)
                 .unwrap_or_else(|| panic!("test unsigned increment chunks should derive"));
         let mut output_claims = clear_claim_payload().stage6;
+        output_claims.booleanity.unsigned_inc_chunks = field_zeros(unsigned_inc_chunk_count);
         output_claims.unsigned_inc_claim_reduction = Some(
             stage6::inputs::UnsignedIncClaimReductionOutputOpeningClaims {
                 unsigned_inc: zero,
                 unsigned_inc_msb: zero,
-                unsigned_inc_chunks: field_zeros(unsigned_inc_chunk_count),
             },
         );
 
@@ -3199,6 +3200,7 @@ mod tests {
                     },
                 inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
                 unsigned_inc_claim_reduction: Some(verified_stage6_sumcheck(trace_point.clone())),
+                unsigned_inc_msb_booleanity: Some(verified_stage6_sumcheck(trace_point.clone())),
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
                 trusted_advice_cycle_phase: None,
