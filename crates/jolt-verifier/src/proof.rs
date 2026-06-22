@@ -285,7 +285,7 @@ pub fn validate_lattice_commitment_payload_config<C>(
         });
     };
     if payload.layout_digest != expected_digest {
-        return Err(VerifierError::AkitaPayloadLayoutDigestMismatch {
+        return Err(VerifierError::LatticePayloadLayoutDigestMismatch {
             expected: expected_digest,
             got: payload.layout_digest,
         });
@@ -297,7 +297,7 @@ pub fn validate_lattice_commitment_payload_config<C>(
         });
     };
     if payload.d_pack != expected_d_pack {
-        return Err(VerifierError::AkitaPayloadDimensionMismatch {
+        return Err(VerifierError::LatticePayloadDimensionMismatch {
             expected: expected_d_pack,
             got: payload.d_pack,
         });
@@ -663,7 +663,7 @@ mod tests {
 
         assert!(matches!(
             validate_commitment_payload_config(&lattice, &payload),
-            Err(VerifierError::AkitaPayloadLayoutDigestMismatch {
+            Err(VerifierError::LatticePayloadLayoutDigestMismatch {
                 expected,
                 got,
             }) if expected == [7; 32] && got == [8; 32]
@@ -677,7 +677,7 @@ mod tests {
 
         assert!(matches!(
             validate_commitment_payload_config(&lattice, &payload),
-            Err(VerifierError::AkitaPayloadDimensionMismatch {
+            Err(VerifierError::LatticePayloadDimensionMismatch {
                 expected: 43,
                 got: 44,
             })

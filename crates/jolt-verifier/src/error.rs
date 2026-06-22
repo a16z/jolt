@@ -26,36 +26,36 @@ pub enum VerifierError {
     )]
     CommitmentPayloadFamilyMismatch { expected: PcsFamily, got: PcsFamily },
 
-    #[error("Akita commitment payload layout digest does not match verifier config")]
-    AkitaPayloadLayoutDigestMismatch { expected: [u8; 32], got: [u8; 32] },
+    #[error("lattice commitment payload layout digest does not match verifier config")]
+    LatticePayloadLayoutDigestMismatch { expected: [u8; 32], got: [u8; 32] },
 
     #[error(
-        "Akita commitment payload D_pack {got} does not match verifier config D_pack {expected}"
+        "lattice commitment payload D_pack {got} does not match verifier config D_pack {expected}"
     )]
-    AkitaPayloadDimensionMismatch { expected: usize, got: usize },
+    LatticePayloadDimensionMismatch { expected: usize, got: usize },
 
     #[error("Akita packed witness commitment failed: {reason}")]
     AkitaCommitmentFailed { reason: String },
 
-    #[error("Akita packed validity proof is missing {field}")]
-    MissingAkitaPackedValidityProof { field: &'static str },
+    #[error("lattice packed validity proof is missing {field}")]
+    MissingLatticePackedValidityProof { field: &'static str },
 
-    #[error("non-lattice proof unexpectedly includes Akita packed validity {field}")]
-    UnexpectedAkitaPackedValidityProof { field: &'static str },
+    #[error("non-lattice proof unexpectedly includes lattice packed validity {field}")]
+    UnexpectedLatticePackedValidityProof { field: &'static str },
 
     #[error(
-        "Akita packed validity opening claim count {got} does not match derived statement count {expected}"
+        "lattice packed validity opening claim count {got} does not match derived statement count {expected}"
     )]
-    AkitaPackedValidityClaimCountMismatch { expected: usize, got: usize },
+    LatticePackedValidityClaimCountMismatch { expected: usize, got: usize },
 
-    #[error("Akita packed validity sumcheck failed: {reason}")]
-    AkitaPackedValiditySumcheckFailed { reason: String },
+    #[error("lattice packed validity sumcheck failed: {reason}")]
+    LatticePackedValiditySumcheckFailed { reason: String },
 
-    #[error("Akita packed validity sumcheck output does not match packed opening claims")]
-    AkitaPackedValidityOutputMismatch,
+    #[error("lattice packed validity sumcheck output does not match packed opening claims")]
+    LatticePackedValidityOutputMismatch,
 
-    #[error("Akita packed validity opening proof verification failed: {reason}")]
-    AkitaPackedValidityOpeningVerificationFailed { reason: String },
+    #[error("lattice packed validity opening proof verification failed: {reason}")]
+    LatticePackedValidityOpeningVerificationFailed { reason: String },
 
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },

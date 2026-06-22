@@ -594,18 +594,18 @@ where
             .stage7
             .lattice_packed_validity
             .as_ref()
-            .ok_or(VerifierError::MissingAkitaPackedValidityProof {
+            .ok_or(VerifierError::MissingLatticePackedValidityProof {
                 field: "opening_claims",
             })?;
         let sumcheck_proof = proof
             .stages
             .lattice_packed_validity_sumcheck_proof
             .as_ref()
-            .ok_or(VerifierError::MissingAkitaPackedValidityProof {
+            .ok_or(VerifierError::MissingLatticePackedValidityProof {
                 field: "sumcheck_proof",
             })?;
         let opening_proof = proof.lattice_packed_validity_opening_proof.as_ref().ok_or(
-            VerifierError::MissingAkitaPackedValidityProof {
+            VerifierError::MissingLatticePackedValidityProof {
                 field: "opening_proof",
             },
         )?;
@@ -897,17 +897,17 @@ where
             .lattice_packed_validity_sumcheck_proof
             .is_some()
         {
-            return Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+            return Err(VerifierError::UnexpectedLatticePackedValidityProof {
                 field: "sumcheck_proof",
             });
         }
         if proof.lattice_packed_validity_opening_proof.is_some() {
-            return Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+            return Err(VerifierError::UnexpectedLatticePackedValidityProof {
                 field: "opening_proof",
             });
         }
         if validity_claims.is_some() {
-            return Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+            return Err(VerifierError::UnexpectedLatticePackedValidityProof {
                 field: "opening_claims",
             });
         }
@@ -919,17 +919,17 @@ where
         .lattice_packed_validity_sumcheck_proof
         .is_none()
     {
-        return Err(VerifierError::MissingAkitaPackedValidityProof {
+        return Err(VerifierError::MissingLatticePackedValidityProof {
             field: "sumcheck_proof",
         });
     }
     if proof.lattice_packed_validity_opening_proof.is_none() {
-        return Err(VerifierError::MissingAkitaPackedValidityProof {
+        return Err(VerifierError::MissingLatticePackedValidityProof {
             field: "opening_proof",
         });
     }
     let validity_claims =
-        validity_claims.ok_or(VerifierError::MissingAkitaPackedValidityProof {
+        validity_claims.ok_or(VerifierError::MissingLatticePackedValidityProof {
             field: "opening_claims",
         })?;
 
@@ -969,7 +969,7 @@ where
         let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)?;
         let expected_opening_claims = stage8::lattice_packed_validity_opening_count(&statements);
         if validity_claims.opening_claims.len() != expected_opening_claims {
-            return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
+            return Err(VerifierError::LatticePackedValidityClaimCountMismatch {
                 expected: expected_opening_claims,
                 got: validity_claims.opening_claims.len(),
             });
@@ -1727,7 +1727,7 @@ mod tests {
 
         assert!(matches!(
             validate_proof_config(&config, &proof),
-            Err(VerifierError::AkitaPayloadLayoutDigestMismatch {
+            Err(VerifierError::LatticePayloadLayoutDigestMismatch {
                 expected,
                 got,
             }) if expected == [7; 32] && got == [8; 32]
@@ -1885,7 +1885,7 @@ mod tests {
 
         assert!(matches!(
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
-            Err(VerifierError::MissingAkitaPackedValidityProof {
+            Err(VerifierError::MissingLatticePackedValidityProof {
                 field: "sumcheck_proof"
             })
         ));
@@ -1895,7 +1895,7 @@ mod tests {
 
         assert!(matches!(
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
-            Err(VerifierError::MissingAkitaPackedValidityProof {
+            Err(VerifierError::MissingLatticePackedValidityProof {
                 field: "opening_proof"
             })
         ));
@@ -1908,7 +1908,7 @@ mod tests {
 
         assert!(matches!(
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
-            Err(VerifierError::MissingAkitaPackedValidityProof {
+            Err(VerifierError::MissingLatticePackedValidityProof {
                 field: "opening_claims"
             })
         ));
@@ -1931,7 +1931,7 @@ mod tests {
 
         assert!(matches!(
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
-            Err(VerifierError::AkitaPackedValidityClaimCountMismatch { expected, got })
+            Err(VerifierError::LatticePackedValidityClaimCountMismatch { expected, got })
                 if expected == got + 1
         ));
     }
@@ -1953,7 +1953,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(VerifierError::MissingAkitaPackedValidityProof {
+            Err(VerifierError::MissingLatticePackedValidityProof {
                 field: "sumcheck_proof"
             })
         ));
@@ -2036,7 +2036,7 @@ mod tests {
 
         assert!(matches!(
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
-            Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+            Err(VerifierError::UnexpectedLatticePackedValidityProof {
                 field: "sumcheck_proof"
             })
         ));
@@ -2048,7 +2048,7 @@ mod tests {
 
         assert!(matches!(
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
-            Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+            Err(VerifierError::UnexpectedLatticePackedValidityProof {
                 field: "opening_proof"
             })
         ));
@@ -2066,7 +2066,7 @@ mod tests {
 
         assert!(matches!(
             validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
-            Err(VerifierError::UnexpectedAkitaPackedValidityProof {
+            Err(VerifierError::UnexpectedLatticePackedValidityProof {
                 field: "opening_claims"
             })
         ));

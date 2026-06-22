@@ -598,13 +598,13 @@ where
     }
     let expected_opening_claims = lattice_packed_validity_opening_count(statements);
     if opening_claims.len() != expected_opening_claims {
-        return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
+        return Err(VerifierError::LatticePackedValidityClaimCountMismatch {
             expected: expected_opening_claims,
             got: opening_claims.len(),
         });
     }
     if reduction.batching_coefficients.len() != statements.len() {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+        return Err(VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!(
                 "batch verifier returned {} coefficients for {} packed validity statements",
                 reduction.batching_coefficients.len(),
@@ -619,13 +619,13 @@ where
     for (index, statement) in statements.iter().enumerate() {
         let point = reduction
             .try_instance_point(statement.num_vars)
-            .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+            .map_err(|error| VerifierError::LatticePackedValiditySumcheckFailed {
                 reason: error.to_string(),
             })?;
         let opening_count = validity_statement_opening_count(statement);
         let statement_openings = &opening_claims[opening_offset..opening_offset + opening_count];
         let eq_mask = try_eq_mle(point, &eq_points[index]).map_err(|error| {
-            VerifierError::AkitaPackedValiditySumcheckFailed {
+            VerifierError::LatticePackedValiditySumcheckFailed {
                 reason: error.to_string(),
             }
         })?;
@@ -685,7 +685,7 @@ where
     let statements = derive_akita_packed_validity_statements(layout, &requirements)?;
     let expected_opening_claims = lattice_packed_validity_opening_count(&statements);
     if opening_claims.len() != expected_opening_claims {
-        return Err(VerifierError::AkitaPackedValidityClaimCountMismatch {
+        return Err(VerifierError::LatticePackedValidityClaimCountMismatch {
             expected: expected_opening_claims,
             got: opening_claims.len(),
         });
@@ -696,7 +696,7 @@ where
     let compressed = match sumcheck_proof {
         SumcheckProof::Clear(ClearProof::Compressed(proof)) => proof,
         SumcheckProof::Clear(ClearProof::Full(_)) => {
-            return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+            return Err(VerifierError::LatticePackedValiditySumcheckFailed {
                 reason: "expected compressed clear proof, got full clear".to_string(),
             });
         }
@@ -708,7 +708,7 @@ where
     };
     let reduction =
         BatchedSumcheckVerifier::verify_compressed(&sumcheck_claims, compressed, transcript)
-            .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+            .map_err(|error| VerifierError::LatticePackedValiditySumcheckFailed {
                 reason: error.to_string(),
             })?;
     let batch = build_lattice_packed_validity_batch(
@@ -720,11 +720,11 @@ where
         opening_claims,
     )?;
     if reduction.reduction.value != batch.expected_final_claim {
-        return Err(VerifierError::AkitaPackedValidityOutputMismatch);
+        return Err(VerifierError::LatticePackedValidityOutputMismatch);
     }
     PCS::verify_batch(setup, transcript, &batch.statement, opening_proof)
         .map_err(
-            |error| VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+            |error| VerifierError::LatticePackedValidityOpeningVerificationFailed {
                 reason: error.to_string(),
             },
         )
@@ -1004,7 +1004,7 @@ where
     })?;
     let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
     if point.len() != row_vars {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+        return Err(VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!(
                 "field-element canonical-byte point has {} variables but statement requires {row_vars}",
                 point.len()
@@ -1059,7 +1059,7 @@ where
     })?;
     let row_vars = power_of_two_log(rows, "bytecode Store/Rd disjointness row count")?;
     if point.len() != row_vars {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+        return Err(VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!(
                 "bytecode Store/Rd disjointness point has {} variables but statement requires {row_vars}",
                 point.len()
@@ -1179,7 +1179,7 @@ where
         | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => shape.row_vars,
     };
     if point.len() != expected {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+        return Err(VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!(
                 "packed validity point has {} variables but statement requires {expected}",
                 point.len()

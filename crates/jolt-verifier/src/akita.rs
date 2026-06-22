@@ -606,7 +606,7 @@ where
 {
     if source.layout() != &artifacts.layout {
         return Err(
-            VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+            VerifierError::LatticePackedValidityOpeningVerificationFailed {
                 reason: "Akita packed validity source layout does not match committed artifact"
                     .to_string(),
             },
@@ -629,14 +629,14 @@ where
         .iter()
         .map(|statement| statement.num_vars)
         .max()
-        .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+        .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
             reason: "cannot prove an empty Akita packed validity batch".to_string(),
         })?;
     let max_degree = statements
         .iter()
         .map(|statement| statement.degree)
         .max()
-        .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+        .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
             reason: "cannot prove an empty Akita packed validity batch".to_string(),
         })?;
 
@@ -653,7 +653,7 @@ where
     for statement in &statements {
         let point = reduction
             .try_instance_point(statement.num_vars)
-            .map_err(|error| VerifierError::AkitaPackedValiditySumcheckFailed {
+            .map_err(|error| VerifierError::LatticePackedValiditySumcheckFailed {
                 reason: error.to_string(),
             })?;
         opening_claims.extend(validity_opening_values(source, statement, point)?);
@@ -664,7 +664,7 @@ where
         artifacts
             .payload()
             .ok_or_else(
-                || VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                || VerifierError::LatticePackedValidityOpeningVerificationFailed {
                     reason: "Akita packed validity artifacts do not carry an Akita payload"
                         .to_string(),
                 },
@@ -676,7 +676,7 @@ where
         &opening_claims,
     )?;
     if reduction.reduction.value != batch.expected_final_claim {
-        return Err(VerifierError::AkitaPackedValidityOutputMismatch);
+        return Err(VerifierError::LatticePackedValidityOutputMismatch);
     }
     let opening_proof =
         prove_akita_packed_openings(setup, transcript, artifacts, source, &batch.statement)?;
@@ -1556,13 +1556,13 @@ where
     {
         let offset = max_num_vars
             .checked_sub(statement.num_vars)
-            .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+            .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
                 reason: "packed validity statement has more variables than the combined batch"
                     .to_string(),
             })?;
         let instance_point = point
             .get(offset..offset + statement.num_vars)
-            .ok_or_else(|| VerifierError::AkitaPackedValiditySumcheckFailed {
+            .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
                 reason: "packed validity instance point is out of range".to_string(),
             })?;
         value += *coefficient * validity_value(source, statement, eq_point, instance_point)?;
@@ -1580,7 +1580,7 @@ where
     S: PackedWitnessSource<AkitaField>,
 {
     let eq_mask = try_eq_mle(point, eq_point).map_err(|error| {
-        VerifierError::AkitaPackedValiditySumcheckFailed {
+        VerifierError::LatticePackedValiditySumcheckFailed {
             reason: error.to_string(),
         }
     })?;
@@ -1733,7 +1733,7 @@ where
         }
         let Some(address) = source.layout().unrank(rank) else {
             error = Some(
-                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                VerifierError::LatticePackedValidityOpeningVerificationFailed {
                     reason: format!("packed validity source emitted out-of-layout rank {rank}"),
                 },
             );
@@ -1744,7 +1744,7 @@ where
         }
         let Some(row_weight) = row_weights.get(address.row).copied() else {
             error = Some(
-                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                VerifierError::LatticePackedValidityOpeningVerificationFailed {
                     reason: format!("packed validity row {} is outside row weights", address.row),
                 },
             );
@@ -1824,7 +1824,7 @@ where
         })?;
     let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
     if point.len() != row_vars {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+        return Err(VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!(
                 "field-element canonical-byte point has {} variables but statement requires {row_vars}",
                 point.len()
@@ -1864,7 +1864,7 @@ where
         })?;
     let row_vars = power_of_two_log(rows, "bytecode Store/Rd disjointness row count")?;
     if point.len() != row_vars {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+        return Err(VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!(
                 "bytecode Store/Rd disjointness point has {} variables but statement requires {row_vars}",
                 point.len()
@@ -1994,7 +1994,7 @@ fn split_validity_point(
         | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => shape.row,
     };
     if point.len() != expected {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
+        return Err(VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!(
                 "packed validity point has {} variables but statement requires {expected}",
                 point.len()
@@ -2040,7 +2040,7 @@ where
         }
         let Some(address) = source.layout().unrank(rank) else {
             error = Some(
-                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                VerifierError::LatticePackedValidityOpeningVerificationFailed {
                     reason: format!("packed validity source emitted out-of-layout rank {rank}"),
                 },
             );
@@ -2051,7 +2051,7 @@ where
         }
         let Some(row_weight) = row_weights.get(address.row).copied() else {
             error = Some(
-                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                VerifierError::LatticePackedValidityOpeningVerificationFailed {
                     reason: format!("packed validity row {} is outside row weights", address.row),
                 },
             );
@@ -2059,7 +2059,7 @@ where
         };
         let Some(limb_weight) = limb_weights.get(address.limb).copied() else {
             error = Some(
-                VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                VerifierError::LatticePackedValidityOpeningVerificationFailed {
                     reason: format!(
                         "packed validity limb {} is outside limb weights",
                         address.limb
@@ -2072,7 +2072,7 @@ where
             SymbolWeights::Point(weights) => {
                 let Some(weight) = weights.get(address.symbol).copied() else {
                     error = Some(
-                        VerifierError::AkitaPackedValidityOpeningVerificationFailed {
+                        VerifierError::LatticePackedValidityOpeningVerificationFailed {
                             reason: format!(
                                 "packed validity symbol {} is outside symbol weights",
                                 address.symbol
@@ -2109,7 +2109,7 @@ fn append_boolean_bits(point: &mut Vec<AkitaField>, index: usize, bits: usize) {
 
 fn checked_power_of_two(bits: usize, name: &'static str) -> Result<usize, VerifierError> {
     1usize.checked_shl(bits as u32).ok_or_else(|| {
-        VerifierError::AkitaPackedValiditySumcheckFailed {
+        VerifierError::LatticePackedValiditySumcheckFailed {
             reason: format!("{name} dimension is too large"),
         }
     })
@@ -3078,8 +3078,8 @@ mod tests {
             .expect_err("tampered validity opening claim should reject");
             assert!(matches!(
                 error,
-                VerifierError::AkitaPackedValidityOutputMismatch
-                    | VerifierError::AkitaPackedValidityOpeningVerificationFailed { .. }
+                VerifierError::LatticePackedValidityOutputMismatch
+                    | VerifierError::LatticePackedValidityOpeningVerificationFailed { .. }
             ));
         });
     }
@@ -3161,9 +3161,9 @@ mod tests {
             .expect_err("noncanonical field bytes should reject");
             assert!(matches!(
                 error,
-                VerifierError::AkitaPackedValidityOutputMismatch
-                    | VerifierError::AkitaPackedValiditySumcheckFailed { .. }
-                    | VerifierError::AkitaPackedValidityOpeningVerificationFailed { .. }
+                VerifierError::LatticePackedValidityOutputMismatch
+                    | VerifierError::LatticePackedValiditySumcheckFailed { .. }
+                    | VerifierError::LatticePackedValidityOpeningVerificationFailed { .. }
             ));
         });
     }
