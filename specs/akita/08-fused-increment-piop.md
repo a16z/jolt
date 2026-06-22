@@ -205,7 +205,8 @@ Unchecked items are still required before the full verifier/protocol side of thi
 - [x] Stage 8 opens each lower `UnsignedIncChunk(j)` at its Stage 7 address-plus-cycle point.
 - [x] Stage 8 opens `UnsignedIncMsb` at the Stage 6b cycle point with `num_vars = log_T`; it is not represented as an address-plus-cycle one-hot family.
 - [x] Existing curve/Dory standard and curve/Dory ZK `muldiv` tests keep passing.
-- [ ] Modular lattice verifier/tamper tests reject missing or tampered increment virtualization, store binding, unsigned reduction, chunk reconstruction, and MSB opening claims.
+- [x] Modular verifier-local tests reject or detect missing/tampered increment virtualization shape, store binding arity, unsigned reduction claims, chunk reconstruction inputs, and MSB opening sources without requiring a lattice prover fixture.
+- [ ] Once a lattice proof fixture exists, active modular lattice tamper tests reject missing or tampered increment virtualization, store binding, unsigned reduction, chunk reconstruction, and MSB opening claims.
 - [ ] When a `jolt-core` Akita prover exists, its e2e proofs must satisfy this modular verifier surface; that e2e is not required for the verifier-only slice.
 
 ### Testing Strategy
