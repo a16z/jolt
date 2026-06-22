@@ -1,6 +1,6 @@
 //! Akita PCS adapter for Jolt.
 //!
-//! Wraps the LayerZero Labs Akita PCS over its fp128 field using Jolt's
+//! Wraps the upstream Akita PCS over its fp128 field using Jolt's
 //! `CommitmentScheme` and same-point `BatchOpeningScheme` traits.
 
 mod backend;

@@ -25,7 +25,7 @@ use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
     NativeCommitment, NativeDensePoly, NativeHint, NativeProof, NativeProofShape, NativeScheme,
-    NativeSparsePoly, NativeVerifier, AKITA_D, LAYERZERO_AKITA_REV,
+    NativeSparsePoly, NativeVerifier, AKITA_D,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -807,12 +807,7 @@ where
     T: Transcript<Challenge = AkitaField>,
 {
     transcript.append(&Label(b"akita_setup_key"));
-    transcript.append_bytes(b"layerzero-akita/fp128/d64full");
-    transcript.append(&LabelWithCount(
-        b"layerzero_akita_rev",
-        LAYERZERO_AKITA_REV.len() as u64,
-    ));
-    transcript.append_bytes(LAYERZERO_AKITA_REV.as_bytes());
+    transcript.append_bytes(b"akita/fp128/d64full");
     transcript.append(&U64Word(AKITA_D as u64));
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
@@ -1044,8 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_key_transcript_binds_layerzero_revision() {
-        assert!(include_str!("../Cargo.toml").contains(LAYERZERO_AKITA_REV));
+    fn setup_key_transcript_binds_native_shape_without_upstream_revision() {
         let setup = AkitaVerifierSetup {
             max_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
@@ -1057,14 +1051,10 @@ mod tests {
 
         bind_verifier_setup_key(&setup, &mut transcript);
 
+        assert!(contains_subslice(&transcript.bytes, b"akita/fp128/d64full"));
         assert!(contains_subslice(
             &transcript.bytes,
-            b"layerzero-akita/fp128/d64full"
-        ));
-        assert!(contains_subslice(&transcript.bytes, b"layerzero_akita_rev"));
-        assert!(contains_subslice(
-            &transcript.bytes,
-            LAYERZERO_AKITA_REV.as_bytes()
+            b"akita_verifier_setup"
         ));
     }
 
