@@ -8,10 +8,14 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::mock::{MockCommitment, MockCommitmentScheme, MockProof};
-use crate::BatchOpeningClaim;
+use crate::{
+    BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement,
+    CommitmentScheme, OpeningsError, PackedFamilyRef, PackedLinearTerm, PhysicalView,
+};
+use jolt_crypto::Commitment;
 use jolt_field::{Fr, FromPrimitiveInt};
-use jolt_poly::Polynomial;
-use jolt_transcript::Blake2bTranscript;
+use jolt_poly::{EqPolynomial, MultilinearPoly, Polynomial};
+use jolt_transcript::{Blake2bTranscript, Transcript};
 
 const FAMILY: PackedFamilyRef = PackedFamilyRef {
     namespace: 0x6a6f_6c74,

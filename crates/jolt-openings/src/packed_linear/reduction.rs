@@ -1,0 +1,1031 @@
+use jolt_field::Field;
+use jolt_poly::{EqPolynomial, MultilinearPoly};
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+
+use crate::{
+    BatchOpeningResult, BatchOpeningStatement, OpeningsError, PackedLinearTerm, PhysicalView,
+};
+
+use super::types::{
+    PackedLinearAddress, PackedLinearFamily, PackedLinearLayout, PackedLinearProverReduction,
+    PackedLinearReductionProof, PackedLinearVerifierReduction, PackedLinearWitnessSource,
+};
+
+pub fn has_packed_linear_view<F, C, OpeningId, RelationId, Claim>(
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId, Claim>,
+) -> bool {
+    statement
+        .claims
+        .iter()
+        .any(|claim| matches!(claim.view, PhysicalView::PackedLinear { .. }))
+}
+
+pub fn validate_packed_linear_statement<F, C, OpeningId, RelationId, L>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+) -> Result<C, OpeningsError>
+where
+    F: Field,
+    C: Clone + Eq,
+    L: PackedLinearLayout,
+{
+    let digest = layout.digest();
+    if statement.claims.is_empty() {
+        return Err(invalid_batch(
+            "packed linear opening requires at least one claim",
+        ));
+    }
+    if statement.layout_digest != digest {
+        return Err(invalid_batch(
+            "packed linear statement layout digest does not match setup layout",
+        ));
+    }
+    let commitment = statement.claims[0].commitment.clone();
+    for claim in &statement.claims {
+        if claim.commitment != commitment {
+            return Err(invalid_batch(
+                "packed linear opening claims must use one packed commitment",
+            ));
+        }
+        let PhysicalView::PackedLinear {
+            layout_digest,
+            terms,
+        } = &claim.view
+        else {
+            return Err(invalid_batch(
+                "packed linear opening requires PackedLinear physical views",
+            ));
+        };
+        if layout_digest != &digest {
+            return Err(invalid_batch(
+                "packed linear view layout digest does not match statement layout",
+            ));
+        }
+        if terms.is_empty() {
+            return Err(invalid_batch(
+                "packed linear view requires at least one term",
+            ));
+        }
+        for term in terms {
+            validate_term(layout, term)?;
+        }
+    }
+    Ok(commitment)
+}
+
+pub fn prove_packed_linear_reduction<F, C, OpeningId, RelationId, L, T>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    packed_evals: Vec<F>,
+    transcript: &mut T,
+) -> Result<PackedLinearProverReduction<F>, OpeningsError>
+where
+    F: Field,
+    C: Clone + Eq + AppendToTranscript,
+    L: PackedLinearLayout,
+    T: Transcript<Challenge = F>,
+{
+    let _ = validate_packed_linear_statement(layout, statement)?;
+    bind_packed_statement(layout, statement, transcript)?;
+    let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
+    let claimed_sum = reduced_claim(statement, &gamma_powers);
+    let selector = packed_selector_evals(layout, statement, &gamma_powers)?;
+    let (proof, sumcheck_point_lsb, opening_eval) =
+        prove_product_sumcheck(selector, packed_evals, claimed_sum, transcript)?;
+    Ok(PackedLinearProverReduction {
+        proof,
+        opening_point: native_opening_point(&sumcheck_point_lsb),
+        opening_eval,
+    })
+}
+
+pub fn prove_sparse_packed_linear_reduction<F, C, OpeningId, RelationId, L, S, T>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    source: &S,
+    transcript: &mut T,
+) -> Result<PackedLinearProverReduction<F>, OpeningsError>
+where
+    F: Field,
+    C: Clone + Eq + AppendToTranscript,
+    L: PackedLinearLayout,
+    S: PackedLinearWitnessSource<F>,
+    T: Transcript<Challenge = F>,
+{
+    let _ = validate_packed_linear_statement(layout, statement)?;
+    validate_source_layout(layout, source.layout())?;
+    bind_packed_statement(layout, statement, transcript)?;
+    let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
+    let claimed_sum = reduced_claim(statement, &gamma_powers);
+    let (proof, sumcheck_point_lsb, opening_eval) = prove_sparse_product_sumcheck(
+        layout,
+        statement,
+        &gamma_powers,
+        source,
+        claimed_sum,
+        transcript,
+    )?;
+    Ok(PackedLinearProverReduction {
+        proof,
+        opening_point: native_opening_point(&sumcheck_point_lsb),
+        opening_eval,
+    })
+}
+
+pub fn verify_packed_linear_reduction<F, C, OpeningId, RelationId, L, T>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    proof: &PackedLinearReductionProof,
+    transcript: &mut T,
+) -> Result<PackedLinearVerifierReduction<F, C>, OpeningsError>
+where
+    F: Field,
+    C: Clone + Eq + AppendToTranscript,
+    L: PackedLinearLayout,
+    T: Transcript<Challenge = F>,
+{
+    let commitment = validate_packed_linear_statement(layout, statement)?;
+    bind_packed_statement(layout, statement, transcript)?;
+    let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
+    let coefficients = logical_coefficients(statement, &gamma_powers);
+    let claimed_sum = reduced_claim(statement, &gamma_powers);
+    let (sumcheck_point_lsb, final_claim) =
+        verify_product_sumcheck::<F, _>(proof, claimed_sum, transcript)?;
+    let selector_eval =
+        packed_selector_eval(layout, statement, &gamma_powers, &sumcheck_point_lsb)?;
+    let opening_eval = field_from_bytes::<F>(&proof.opening_eval)?;
+    if final_claim != selector_eval * opening_eval {
+        return Err(OpeningsError::VerificationFailed);
+    }
+    Ok(PackedLinearVerifierReduction {
+        opening_point: native_opening_point(&sumcheck_point_lsb),
+        opening_eval,
+        result: BatchOpeningResult {
+            coefficients,
+            joint_commitment: commitment,
+            reduced_opening: claimed_sum,
+        },
+    })
+}
+
+fn validate_source_layout<L, S>(layout: &L, source_layout: &S) -> Result<(), OpeningsError>
+where
+    L: PackedLinearLayout,
+    S: PackedLinearLayout,
+{
+    if source_layout.digest() != layout.digest() || source_layout.dimension() != layout.dimension()
+    {
+        return Err(invalid_batch(
+            "packed linear source layout does not match packed statement",
+        ));
+    }
+    Ok(())
+}
+
+fn family_for_term<F, L>(
+    layout: &L,
+    term: &PackedLinearTerm<F>,
+) -> Result<PackedLinearFamily, OpeningsError>
+where
+    L: PackedLinearLayout,
+{
+    layout
+        .family(term.family)?
+        .ok_or_else(|| invalid_batch("packed linear term references an unknown family"))
+}
+
+fn validate_term<F, L>(layout: &L, term: &PackedLinearTerm<F>) -> Result<(), OpeningsError>
+where
+    F: Field,
+    L: PackedLinearLayout,
+{
+    let family = family_for_term(layout, term)?;
+    let row_vars = log2_power_of_two(family.rows, "packed family rows")?;
+    if term.row_point.len() != row_vars {
+        return Err(invalid_batch(format!(
+            "packed linear term row point has {} variables but family requires {row_vars}",
+            term.row_point.len()
+        )));
+    }
+    if !family.alphabet_size.is_power_of_two() {
+        return Err(invalid_batch(
+            "packed linear verifier currently requires power-of-two alphabets",
+        ));
+    }
+    if !family.limbs.is_power_of_two() {
+        return Err(invalid_batch(
+            "packed linear verifier currently requires power-of-two limb counts",
+        ));
+    }
+    layout
+        .rank(PackedLinearAddress {
+            family: term.family,
+            row: 0,
+            limb: term.limb,
+            symbol: term.symbol,
+        })
+        .map(|_| ())
+}
+
+fn logical_coefficients<F, C, OpeningId, RelationId>(
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+) -> Vec<F>
+where
+    F: Field,
+{
+    statement
+        .claims
+        .iter()
+        .zip(gamma_powers)
+        .map(|(claim, gamma)| *gamma * claim.scale)
+        .collect()
+}
+
+fn reduced_claim<F, C, OpeningId, RelationId>(
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+) -> F
+where
+    F: Field,
+{
+    statement
+        .claims
+        .iter()
+        .zip(gamma_powers)
+        .fold(F::zero(), |acc, (claim, gamma)| {
+            acc + *gamma * claim.scale * claim.claim
+        })
+}
+
+fn packed_selector_evals<F, C, OpeningId, RelationId, L>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+) -> Result<Vec<F>, OpeningsError>
+where
+    F: Field,
+    L: PackedLinearLayout,
+{
+    let domain_size = checked_domain_size(layout.dimension())?;
+    let mut selector = vec![F::zero(); domain_size];
+    for (claim, gamma) in statement.claims.iter().zip(gamma_powers) {
+        let PhysicalView::PackedLinear { terms, .. } = &claim.view else {
+            return Err(invalid_batch(
+                "packed linear selector requires PackedLinear views",
+            ));
+        };
+        let claim_weight = *gamma * claim.scale;
+        for term in terms {
+            let family = family_for_term(layout, term)?;
+            let row_weights = EqPolynomial::new(term.row_point.clone()).evaluations();
+            if row_weights.len() != family.rows {
+                return Err(invalid_batch(
+                    "packed linear term row point does not match family row count",
+                ));
+            }
+            let weight = claim_weight * term.coefficient;
+            for (row, row_weight) in row_weights.iter().copied().enumerate() {
+                if row_weight.is_zero() {
+                    continue;
+                }
+                let rank = layout.rank(PackedLinearAddress {
+                    family: term.family,
+                    row,
+                    limb: term.limb,
+                    symbol: term.symbol,
+                })?;
+                selector[rank] += weight * row_weight;
+            }
+        }
+    }
+    Ok(selector)
+}
+
+fn packed_selector_eval<F, C, OpeningId, RelationId, L>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+    point: &[F],
+) -> Result<F, OpeningsError>
+where
+    F: Field,
+    L: PackedLinearLayout,
+{
+    if point.len() != layout.dimension() {
+        return Err(invalid_batch(format!(
+            "packed linear selector point has {} variables but layout has {}",
+            point.len(),
+            layout.dimension()
+        )));
+    }
+    let mut result = F::zero();
+    for (claim, gamma) in statement.claims.iter().zip(gamma_powers) {
+        let PhysicalView::PackedLinear { terms, .. } = &claim.view else {
+            return Err(invalid_batch(
+                "packed linear selector requires PackedLinear views",
+            ));
+        };
+        let claim_weight = *gamma * claim.scale;
+        for term in terms {
+            result += packed_term_selector_eval(layout, term, point)? * claim_weight;
+        }
+    }
+    Ok(result)
+}
+
+fn packed_term_selector_eval<F, L>(
+    layout: &L,
+    term: &PackedLinearTerm<F>,
+    point: &[F],
+) -> Result<F, OpeningsError>
+where
+    F: Field,
+    L: PackedLinearLayout,
+{
+    let family = family_for_term(layout, term)?;
+    let row_vars = log2_power_of_two(family.rows, "packed family rows")?;
+    if term.row_point.len() != row_vars {
+        return Err(invalid_batch(format!(
+            "packed linear term row point has {} variables but family requires {row_vars}",
+            term.row_point.len()
+        )));
+    }
+    let alphabet_vars = log2_power_of_two(family.alphabet_size, "packed alphabet")?;
+    let limb_vars = log2_power_of_two(family.limbs, "packed limb count")?;
+    let factors = [
+        SelectorFactor::Fixed {
+            value: term.symbol,
+            bits: alphabet_vars,
+        },
+        SelectorFactor::Fixed {
+            value: term.limb,
+            bits: limb_vars,
+        },
+        SelectorFactor::RowEq {
+            point: &term.row_point,
+        },
+    ];
+    selector_eval_with_offset(point, family.offset, term.coefficient, &factors)
+}
+
+#[derive(Clone, Copy)]
+enum SelectorFactor<'a, F> {
+    Fixed { value: usize, bits: usize },
+    RowEq { point: &'a [F] },
+}
+
+impl<F> SelectorFactor<'_, F>
+where
+    F: Field,
+{
+    fn bits(self) -> usize {
+        match self {
+            Self::Fixed { bits, .. } => bits,
+            Self::RowEq { point } => point.len(),
+        }
+    }
+
+    fn bit_weight(self, bit_index: usize, bit: usize) -> F {
+        match self {
+            Self::Fixed { value, .. } => {
+                if ((value >> bit_index) & 1) == bit {
+                    F::one()
+                } else {
+                    F::zero()
+                }
+            }
+            Self::RowEq { point } => {
+                let challenge = point[point.len() - 1 - bit_index];
+                if bit == 1 {
+                    challenge
+                } else {
+                    F::one() - challenge
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CarryMatrix<F>([[F; 2]; 2]);
+
+impl<F> CarryMatrix<F>
+where
+    F: Field,
+{
+    fn identity() -> Self {
+        Self([[F::one(), F::zero()], [F::zero(), F::one()]])
+    }
+
+    fn zero() -> Self {
+        Self([[F::zero(); 2]; 2])
+    }
+
+    fn add_assign(&mut self, carry_in: usize, carry_out: usize, value: F) {
+        self.0[carry_in][carry_out] += value;
+    }
+
+    fn mul(&self, rhs: &Self) -> Self {
+        let a = &self.0;
+        let b = &rhs.0;
+        Self([
+            [
+                a[0][0] * b[0][0] + a[0][1] * b[1][0],
+                a[0][0] * b[0][1] + a[0][1] * b[1][1],
+            ],
+            [
+                a[1][0] * b[0][0] + a[1][1] * b[1][0],
+                a[1][0] * b[0][1] + a[1][1] * b[1][1],
+            ],
+        ])
+    }
+}
+
+fn selector_eval_with_offset<F>(
+    point: &[F],
+    offset: usize,
+    scale: F,
+    factors: &[SelectorFactor<'_, F>],
+) -> Result<F, OpeningsError>
+where
+    F: Field,
+{
+    let total_bits = factors.iter().map(|factor| factor.bits()).sum::<usize>();
+    if total_bits > point.len() {
+        return Err(invalid_batch(format!(
+            "packed linear selector needs {total_bits} bits but point has {}",
+            point.len()
+        )));
+    }
+
+    let mut matrix = CarryMatrix::identity();
+    let mut bit_cursor = 0usize;
+    for &factor in factors {
+        for bit_index in 0..factor.bits() {
+            let bit_matrix = selector_bit_matrix(
+                point[bit_cursor],
+                offset_bit(offset, bit_cursor),
+                factor,
+                bit_index,
+            );
+            matrix = matrix.mul(&bit_matrix);
+            bit_cursor += 1;
+        }
+    }
+    for (bit_index, &challenge) in point.iter().enumerate().skip(bit_cursor) {
+        let bit_matrix = fixed_zero_bit_matrix(challenge, offset_bit(offset, bit_index));
+        matrix = matrix.mul(&bit_matrix);
+    }
+    Ok(scale * matrix.0[0][0])
+}
+
+fn native_opening_point<F: Copy>(sumcheck_point_lsb: &[F]) -> Vec<F> {
+    sumcheck_point_lsb.iter().rev().copied().collect()
+}
+
+fn selector_bit_matrix<F>(
+    challenge: F,
+    offset_bit: bool,
+    factor: SelectorFactor<'_, F>,
+    factor_bit_index: usize,
+) -> CarryMatrix<F>
+where
+    F: Field,
+{
+    let mut matrix = CarryMatrix::zero();
+    for local_bit in 0..=1 {
+        let factor_weight = factor.bit_weight(factor_bit_index, local_bit);
+        if factor_weight.is_zero() {
+            continue;
+        }
+        add_transition(&mut matrix, challenge, offset_bit, local_bit, factor_weight);
+    }
+    matrix
+}
+
+fn fixed_zero_bit_matrix<F>(challenge: F, offset_bit: bool) -> CarryMatrix<F>
+where
+    F: Field,
+{
+    let mut matrix = CarryMatrix::zero();
+    add_transition(&mut matrix, challenge, offset_bit, 0, F::one());
+    matrix
+}
+
+fn add_transition<F>(
+    matrix: &mut CarryMatrix<F>,
+    challenge: F,
+    offset_bit: bool,
+    local_bit: usize,
+    scale: F,
+) where
+    F: Field,
+{
+    for carry_in in 0..=1 {
+        let sum = usize::from(offset_bit) + local_bit + carry_in;
+        let output_bit = sum & 1;
+        let carry_out = sum >> 1;
+        let eq_weight = if output_bit == 1 {
+            challenge
+        } else {
+            F::one() - challenge
+        };
+        matrix.add_assign(carry_in, carry_out, scale * eq_weight);
+    }
+}
+
+fn prove_product_sumcheck<F, T>(
+    mut left: Vec<F>,
+    mut right: Vec<F>,
+    claimed_sum: F,
+    transcript: &mut T,
+) -> Result<(PackedLinearReductionProof, Vec<F>, F), OpeningsError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    if left.len() != right.len() || !left.len().is_power_of_two() {
+        return Err(invalid_batch(
+            "packed linear sumcheck inputs must have equal power-of-two lengths",
+        ));
+    }
+    let rounds = left.len().trailing_zeros() as usize;
+    let mut proof_rounds = Vec::with_capacity(rounds);
+    let mut point = Vec::with_capacity(rounds);
+    let mut current_claim = claimed_sum;
+    transcript.append(&LabelWithCount(b"akpk_sum_rounds", rounds as u64));
+
+    while left.len() > 1 {
+        let round = product_round(&left, &right);
+        if round[0] + round[1] != current_claim {
+            return Err(invalid_batch(
+                "packed linear claims do not match packed witness evaluations",
+            ));
+        }
+        append_round(transcript, &round);
+        let challenge = transcript.challenge_scalar();
+        point.push(challenge);
+        fold_product_inputs(&mut left, &mut right, challenge);
+        current_claim = eval_quadratic(round, challenge);
+        proof_rounds.push(encode_round(round));
+    }
+    if left[0] * right[0] != current_claim {
+        return Err(invalid_batch("packed linear sumcheck final claim mismatch"));
+    }
+    let opening_eval = right[0];
+    opening_eval.append_to_transcript(transcript);
+    Ok((
+        PackedLinearReductionProof {
+            rounds: proof_rounds,
+            opening_eval: field_bytes(opening_eval),
+        },
+        point,
+        opening_eval,
+    ))
+}
+
+fn prove_sparse_product_sumcheck<F, C, OpeningId, RelationId, L, S, T>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+    source: &S,
+    claimed_sum: F,
+    transcript: &mut T,
+) -> Result<(PackedLinearReductionProof, Vec<F>, F), OpeningsError>
+where
+    F: Field,
+    L: PackedLinearLayout,
+    S: PackedLinearWitnessSource<F>,
+    T: Transcript<Challenge = F>,
+{
+    let mut right = sparse_product_input(source)?;
+    let rounds = layout.dimension();
+    let mut proof_rounds = Vec::with_capacity(rounds);
+    let mut point = Vec::with_capacity(rounds);
+    let mut current_claim = claimed_sum;
+    transcript.append(&LabelWithCount(b"akpk_sum_rounds", rounds as u64));
+
+    for _ in 0..rounds {
+        let round = sparse_product_round(layout, statement, gamma_powers, &point, &right)?;
+        if round[0] + round[1] != current_claim {
+            return Err(invalid_batch(
+                "packed linear claims do not match sparse packed witness evaluations",
+            ));
+        }
+        append_round(transcript, &round);
+        let challenge = transcript.challenge_scalar();
+        point.push(challenge);
+        fold_sparse_product_input(&mut right, challenge);
+        current_claim = eval_quadratic(round, challenge);
+        proof_rounds.push(encode_round(round));
+    }
+
+    let opening_eval = right.first().map_or_else(F::zero, |(_, eval)| *eval);
+    let selector_eval = packed_selector_eval(layout, statement, gamma_powers, &point)?;
+    if selector_eval * opening_eval != current_claim {
+        return Err(invalid_batch("packed linear sumcheck final claim mismatch"));
+    }
+    opening_eval.append_to_transcript(transcript);
+    Ok((
+        PackedLinearReductionProof {
+            rounds: proof_rounds,
+            opening_eval: field_bytes(opening_eval),
+        },
+        point,
+        opening_eval,
+    ))
+}
+
+fn sparse_product_input<F, S>(source: &S) -> Result<Vec<(usize, F)>, OpeningsError>
+where
+    F: Field,
+    S: PackedLinearWitnessSource<F>,
+{
+    let layout = source.layout();
+    let domain_size = checked_domain_size(layout.dimension())?;
+    if layout.cells() > domain_size {
+        return Err(invalid_batch(format!(
+            "packed linear witness has {} cells but dimension {} supports {domain_size}",
+            layout.cells(),
+            layout.dimension()
+        )));
+    }
+
+    let mut entries = Vec::new();
+    let mut error = None;
+    source.for_each_nonzero(|rank, value| {
+        if error.is_some() {
+            return;
+        }
+        if rank >= layout.cells() {
+            error = Some(invalid_batch(format!(
+                "packed linear witness source emitted rank {rank} outside {} real cells",
+                layout.cells()
+            )));
+            return;
+        }
+        if value.is_zero() {
+            error = Some(invalid_batch(format!(
+                "packed linear witness source emitted zero at rank {rank}"
+            )));
+            return;
+        }
+        entries.push((rank, value));
+    });
+    if let Some(error) = error {
+        return Err(error);
+    }
+
+    entries.sort_by_key(|(rank, _)| *rank);
+    for window in entries.windows(2) {
+        if window[0].0 == window[1].0 {
+            return Err(invalid_batch(format!(
+                "packed linear witness source emitted rank {} more than once",
+                window[0].0
+            )));
+        }
+    }
+    Ok(entries)
+}
+
+fn sparse_product_round<F, C, OpeningId, RelationId, L>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+    fixed_point: &[F],
+    right: &[(usize, F)],
+) -> Result<[F; 3], OpeningsError>
+where
+    F: Field,
+    L: PackedLinearLayout,
+{
+    let mut evals = [F::zero(); 3];
+    let mut cursor = 0usize;
+    while cursor < right.len() {
+        let pair_index = right[cursor].0 / 2;
+        let mut right_0 = F::zero();
+        let mut right_1 = F::zero();
+        while cursor < right.len() && right[cursor].0 / 2 == pair_index {
+            let (index, value) = right[cursor];
+            if index & 1 == 0 {
+                right_0 += value;
+            } else {
+                right_1 += value;
+            }
+            cursor += 1;
+        }
+
+        let left_0 = packed_selector_eval_at_index(
+            layout,
+            statement,
+            gamma_powers,
+            fixed_point,
+            pair_index * 2,
+        )?;
+        let left_1 = packed_selector_eval_at_index(
+            layout,
+            statement,
+            gamma_powers,
+            fixed_point,
+            pair_index * 2 + 1,
+        )?;
+        evals[0] += left_0 * right_0;
+        evals[1] += left_1 * right_1;
+        evals[2] += (left_1 + left_1 - left_0) * (right_1 + right_1 - right_0);
+    }
+    Ok(evals)
+}
+
+fn packed_selector_eval_at_index<F, C, OpeningId, RelationId, L>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+    fixed_point: &[F],
+    index: usize,
+) -> Result<F, OpeningsError>
+where
+    F: Field,
+    L: PackedLinearLayout,
+{
+    if fixed_point.len() > layout.dimension() {
+        return Err(invalid_batch(
+            "packed linear selector fixed point exceeds layout dimension",
+        ));
+    }
+    let remaining_bits = layout.dimension() - fixed_point.len();
+    if index >= (1usize << remaining_bits) {
+        return Err(invalid_batch(
+            "packed linear selector index exceeds folded domain",
+        ));
+    }
+
+    let mut point = Vec::with_capacity(layout.dimension());
+    point.extend_from_slice(fixed_point);
+    for bit in 0..remaining_bits {
+        if (index >> bit) & 1 == 0 {
+            point.push(F::zero());
+        } else {
+            point.push(F::one());
+        }
+    }
+    packed_selector_eval(layout, statement, gamma_powers, &point)
+}
+
+fn fold_sparse_product_input<F>(right: &mut Vec<(usize, F)>, r: F)
+where
+    F: Field,
+{
+    let mut folded: Vec<(usize, F)> = Vec::with_capacity(right.len());
+    for &(index, value) in right.iter() {
+        let next_index = index / 2;
+        let weight = if index & 1 == 0 { F::one() - r } else { r };
+        let folded_value = value * weight;
+        if folded_value.is_zero() {
+            continue;
+        }
+        match folded.last_mut() {
+            Some((last_index, last_value)) if *last_index == next_index => {
+                *last_value += folded_value;
+                if last_value.is_zero() {
+                    let _ = folded.pop();
+                }
+            }
+            _ => folded.push((next_index, folded_value)),
+        }
+    }
+    *right = folded;
+}
+
+fn verify_product_sumcheck<F, T>(
+    proof: &PackedLinearReductionProof,
+    claimed_sum: F,
+    transcript: &mut T,
+) -> Result<(Vec<F>, F), OpeningsError>
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.append(&LabelWithCount(
+        b"akpk_sum_rounds",
+        proof.rounds.len() as u64,
+    ));
+    let mut point = Vec::with_capacity(proof.rounds.len());
+    let mut current_claim = claimed_sum;
+    for encoded_round in &proof.rounds {
+        let round = decode_round(encoded_round)?;
+        if round[0] + round[1] != current_claim {
+            return Err(OpeningsError::VerificationFailed);
+        }
+        append_round(transcript, &round);
+        let challenge = transcript.challenge_scalar();
+        point.push(challenge);
+        current_claim = eval_quadratic(round, challenge);
+    }
+    field_from_bytes::<F>(&proof.opening_eval)?.append_to_transcript(transcript);
+    Ok((point, current_claim))
+}
+
+fn product_round<F>(left: &[F], right: &[F]) -> [F; 3]
+where
+    F: Field,
+{
+    let mut evals = [F::zero(); 3];
+    for (left_pair, right_pair) in left.chunks_exact(2).zip(right.chunks_exact(2)) {
+        let left_0 = left_pair[0];
+        let left_1 = left_pair[1];
+        let right_0 = right_pair[0];
+        let right_1 = right_pair[1];
+        evals[0] += left_0 * right_0;
+        evals[1] += left_1 * right_1;
+        evals[2] += (left_1 + left_1 - left_0) * (right_1 + right_1 - right_0);
+    }
+    evals
+}
+
+fn fold_product_inputs<F>(left: &mut Vec<F>, right: &mut Vec<F>, r: F)
+where
+    F: Field,
+{
+    let half = left.len() / 2;
+    for index in 0..half {
+        let left_0 = left[2 * index];
+        let left_1 = left[2 * index + 1];
+        let right_0 = right[2 * index];
+        let right_1 = right[2 * index + 1];
+        left[index] = left_0 + r * (left_1 - left_0);
+        right[index] = right_0 + r * (right_1 - right_0);
+    }
+    left.truncate(half);
+    right.truncate(half);
+}
+
+fn eval_quadratic<F>(evals: [F; 3], r: F) -> F
+where
+    F: Field,
+{
+    let two_inv = F::from_u64(2).inv_or_zero();
+    let l0 = (r - F::one()) * (r - F::from_u64(2)) * two_inv;
+    let l1 = F::zero() - r * (r - F::from_u64(2));
+    let l2 = r * (r - F::one()) * two_inv;
+    evals[0] * l0 + evals[1] * l1 + evals[2] * l2
+}
+
+fn append_round<F, T>(transcript: &mut T, round: &[F; 3])
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.append(&Label(b"akpk_sum_round"));
+    for eval in round {
+        eval.append_to_transcript(transcript);
+    }
+}
+
+fn bind_packed_statement<F, C, OpeningId, RelationId, L, T>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    transcript: &mut T,
+) -> Result<(), OpeningsError>
+where
+    F: Field,
+    C: AppendToTranscript,
+    L: PackedLinearLayout,
+    T: Transcript<Challenge = F>,
+{
+    transcript.append(&Label(b"akpk_batch_stmt"));
+    transcript.append_bytes(&layout.digest());
+    transcript.append(&U64Word(layout.dimension() as u64));
+    transcript.append(&U64Word(layout.cells() as u64));
+    append_field_slice(transcript, b"akpk_logical_point", &statement.logical_point);
+    append_field_slice(transcript, b"akpk_pcs_point", &statement.pcs_point);
+    transcript.append(&LabelWithCount(
+        b"akita_packed_claims",
+        statement.claims.len() as u64,
+    ));
+    for claim in &statement.claims {
+        claim.commitment.append_to_transcript(transcript);
+        claim.claim.append_to_transcript(transcript);
+        claim.scale.append_to_transcript(transcript);
+        match &claim.view {
+            PhysicalView::Direct => transcript.append_bytes(&[0]),
+            PhysicalView::PackedLinear {
+                layout_digest,
+                terms,
+            } => {
+                transcript.append_bytes(&[1]);
+                transcript.append_bytes(layout_digest);
+                transcript.append(&LabelWithCount(b"akpk_view_terms", terms.len() as u64));
+                for term in terms {
+                    validate_term(layout, term)?;
+                    transcript.append(&U64Word(term.family.namespace));
+                    transcript.append(&U64Word(term.family.id));
+                    transcript.append(&U64Word(term.family.index));
+                    transcript.append(&U64Word(term.limb as u64));
+                    transcript.append(&U64Word(term.symbol as u64));
+                    append_field_slice(transcript, b"akpk_view_row_point", &term.row_point);
+                    term.coefficient.append_to_transcript(transcript);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn checked_domain_size(num_vars: usize) -> Result<usize, OpeningsError> {
+    if num_vars >= usize::BITS as usize {
+        return Err(invalid_batch(format!(
+            "packed linear dimension {num_vars} exceeds usize bit width"
+        )));
+    }
+    Ok(1usize << num_vars)
+}
+
+fn log2_power_of_two(value: usize, label: &'static str) -> Result<usize, OpeningsError> {
+    if value == 0 || !value.is_power_of_two() {
+        return Err(invalid_batch(format!(
+            "{label} must be a nonzero power of two"
+        )));
+    }
+    Ok(value.trailing_zeros() as usize)
+}
+
+fn offset_bit(offset: usize, bit: usize) -> bool {
+    bit < usize::BITS as usize && ((offset >> bit) & 1) != 0
+}
+
+fn field_bytes<F>(value: F) -> Vec<u8>
+where
+    F: Field,
+{
+    value.to_bytes_le_vec()
+}
+
+fn field_from_bytes<F>(bytes: &[u8]) -> Result<F, OpeningsError>
+where
+    F: Field,
+{
+    if bytes.len() != F::NUM_BYTES {
+        return Err(invalid_batch(format!(
+            "packed linear proof field encoding has {} bytes but expected {}",
+            bytes.len(),
+            F::NUM_BYTES
+        )));
+    }
+    let value = F::from_le_bytes_mod_order(bytes);
+    if value.to_bytes_le_vec() != bytes {
+        return Err(invalid_batch(
+            "packed linear proof field encoding is not canonical",
+        ));
+    }
+    Ok(value)
+}
+
+fn encode_round<F>(round: [F; 3]) -> [Vec<u8>; 3]
+where
+    F: Field,
+{
+    [
+        field_bytes(round[0]),
+        field_bytes(round[1]),
+        field_bytes(round[2]),
+    ]
+}
+
+fn decode_round<F>(round: &[Vec<u8>; 3]) -> Result<[F; 3], OpeningsError>
+where
+    F: Field,
+{
+    Ok([
+        field_from_bytes(&round[0])?,
+        field_from_bytes(&round[1])?,
+        field_from_bytes(&round[2])?,
+    ])
+}
+
+pub(super) fn polynomial_evaluations<F, P>(polynomial: &P) -> Vec<F>
+where
+    F: Field,
+    P: MultilinearPoly<F>,
+{
+    let mut evals = Vec::with_capacity(1usize << polynomial.num_vars());
+    polynomial.for_each_row(polynomial.num_vars(), &mut |_, row| {
+        evals.extend_from_slice(row);
+    });
+    evals
+}
+
+fn append_field_slice<F, T>(transcript: &mut T, label: &'static [u8], values: &[F])
+where
+    F: Field,
+    T: Transcript<Challenge = F>,
+{
+    transcript.append(&LabelWithCount(label, values.len() as u64));
+    for value in values {
+        value.append_to_transcript(transcript);
+    }
+}
+
+pub(super) fn invalid_batch(reason: impl Into<String>) -> OpeningsError {
+    OpeningsError::InvalidBatch(reason.into())
+}
