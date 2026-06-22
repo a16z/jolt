@@ -406,7 +406,7 @@ where
                 Vec::new(),
             )
         }
-        CommitmentPayload::Akita(payload) => {
+        CommitmentPayload::Lattice(payload) => {
             let mut final_entries = batch_entries(
                 layout,
                 committed_bytecode_chunk_count,
@@ -458,7 +458,7 @@ where
                 layout_digest,
             )
         }
-        CommitmentPayload::Akita(_) => {
+        CommitmentPayload::Lattice(_) => {
             let packed_logical_manifest =
                 stage8_logical_manifest(&entries, pcs_opening_point.clone());
             let (mut packed_manifest, layout_digest) = akita_stage8_physical_manifest(

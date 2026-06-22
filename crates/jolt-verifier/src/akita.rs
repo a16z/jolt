@@ -9,8 +9,8 @@ use crate::{
     },
     preprocessing::JoltVerifierPreprocessing,
     proof::{
-        AkitaCommitmentPayload, ClearOnlyCommitment, ClearOnlyVectorCommitment, CommitmentPayload,
-        JoltProof, JoltProofClaims,
+        ClearOnlyCommitment, ClearOnlyVectorCommitment, CommitmentPayload, JoltProof,
+        JoltProofClaims, LatticeCommitmentPayload,
     },
     stages::{
         stage7::inputs::LatticePackedValidityOutputClaims,
@@ -98,8 +98,8 @@ pub struct AkitaPackedValidityProofArtifacts {
 }
 
 impl AkitaPackedWitnessArtifacts {
-    pub fn payload(&self) -> Option<&AkitaCommitmentPayload<AkitaCommitment>> {
-        self.commitments.as_akita()
+    pub fn payload(&self) -> Option<&LatticeCommitmentPayload<AkitaCommitment>> {
+        self.commitments.as_lattice()
     }
 }
 
@@ -357,13 +357,13 @@ where
                 reason: error.to_string(),
             }
         })?;
-    let payload = AkitaCommitmentPayload::new(commitment, layout.digest, layout.dimension);
-    crate::proof::validate_akita_commitment_payload_config(&protocol, &payload)?;
+    let payload = LatticeCommitmentPayload::new(commitment, layout.digest, layout.dimension);
+    crate::proof::validate_lattice_commitment_payload_config(&protocol, &payload)?;
 
     Ok(AkitaPackedWitnessArtifacts {
         protocol,
         layout,
-        commitments: CommitmentPayload::Akita(payload),
+        commitments: CommitmentPayload::Lattice(payload),
         hint,
     })
 }
@@ -973,7 +973,7 @@ fn validate_akita_artifacts_for_proof(
             })?;
     let proof_payload =
         proof_commitments
-            .as_akita()
+            .as_lattice()
             .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
@@ -1039,7 +1039,7 @@ fn validate_akita_proof_payload_shape(
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
-            .as_akita()
+            .as_lattice()
             .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
@@ -1073,7 +1073,7 @@ fn validate_akita_opening_proof_payload_shape(
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
-            .as_akita()
+            .as_lattice()
             .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
@@ -1144,7 +1144,7 @@ fn validate_akita_precommitted_opening_proof_payload_shape(
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
-            .as_akita()
+            .as_lattice()
             .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
@@ -1226,7 +1226,7 @@ fn validate_akita_advice_commitment_aliases(
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
-            .as_akita()
+            .as_lattice()
             .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
@@ -1254,7 +1254,7 @@ fn validate_akita_precommitted_commitment_aliases(
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
-            .as_akita()
+            .as_lattice()
             .ok_or(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Lattice,
                 got: proof_commitments.family(),
@@ -2327,7 +2327,7 @@ mod tests {
         assert_eq!(artifact.layout, layout);
         let payload = artifact
             .payload()
-            .expect("artifact should carry Akita payload");
+            .expect("artifact should carry lattice payload");
         assert_eq!(payload.layout_digest, layout.digest);
         assert_eq!(payload.d_pack, layout.dimension);
         assert_eq!(payload.packed_witness.layout_digest, layout.digest);
@@ -2445,7 +2445,7 @@ mod tests {
         let payload = committed
             .artifacts
             .payload()
-            .expect("artifact should carry Akita payload");
+            .expect("artifact should carry lattice payload");
         assert_eq!(payload.layout_digest, layout.digest);
 
         let witness = &committed.witness;
@@ -2595,7 +2595,7 @@ mod tests {
             .expect("packed witness should commit");
         let commitment = artifact
             .payload()
-            .expect("artifact should carry Akita payload")
+            .expect("artifact should carry lattice payload")
             .packed_witness
             .clone();
         let instruction_claim = AkitaField::from_u64(2);
@@ -2789,7 +2789,7 @@ mod tests {
             .expect("packed witness should commit");
         let packed_commitment = artifact
             .payload()
-            .expect("artifact should carry Akita payload")
+            .expect("artifact should carry lattice payload")
             .packed_witness
             .clone();
         let sign_id = Stage8OpeningId::from(unsigned_inc_msb_opening());
@@ -3585,7 +3585,7 @@ mod tests {
             &artifacts.layout,
             artifacts
                 .payload()
-                .expect("artifact should carry Akita payload")
+                .expect("artifact should carry lattice payload")
                 .packed_witness
                 .clone(),
             &validity.sumcheck_proof,
@@ -3727,15 +3727,15 @@ mod tests {
             .expect("matching payload shape should pass");
         let payload = artifacts
             .commitments
-            .as_akita()
-            .expect("artifact should carry Akita payload");
+            .as_lattice()
+            .expect("artifact should carry lattice payload");
 
         let mut wrong_commitment_digest = payload.clone();
         wrong_commitment_digest.packed_witness.layout_digest = [9; 32];
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
-                &CommitmentPayload::Akita(wrong_commitment_digest),
+                &CommitmentPayload::Lattice(wrong_commitment_digest),
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("commitment layout digest")
@@ -3746,7 +3746,7 @@ mod tests {
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
-                &CommitmentPayload::Akita(wrong_commitment_dimension),
+                &CommitmentPayload::Lattice(wrong_commitment_dimension),
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("commitment dimension")
@@ -3757,7 +3757,7 @@ mod tests {
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
-                &CommitmentPayload::Akita(wrong_poly_count),
+                &CommitmentPayload::Lattice(wrong_poly_count),
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("exactly one polynomial")
@@ -3768,7 +3768,7 @@ mod tests {
         assert!(matches!(
             validate_akita_proof_payload_shape(
                 &verifier_setup,
-                &CommitmentPayload::Akita(missing_native_commitment),
+                &CommitmentPayload::Lattice(missing_native_commitment),
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("native commitment bytes")
@@ -3786,8 +3786,8 @@ mod tests {
             .expect("packed witness should commit");
         let payload = artifacts
             .commitments
-            .as_akita()
-            .expect("artifact should carry Akita payload");
+            .as_lattice()
+            .expect("artifact should carry lattice payload");
         let packed_witness = &payload.packed_witness;
         validate_akita_advice_commitment_aliases(&artifacts.commitments, None, None)
             .expect("absent advice commitments should pass");
@@ -3837,8 +3837,8 @@ mod tests {
             .expect("packed witness should commit");
         let packed_witness = &artifacts
             .commitments
-            .as_akita()
-            .expect("artifact should carry Akita payload")
+            .as_lattice()
+            .expect("artifact should carry lattice payload")
             .packed_witness;
 
         assert!(matches!(

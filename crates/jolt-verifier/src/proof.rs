@@ -195,28 +195,28 @@ pub type DoryCommitmentPayload<C> = JoltCommitments<C>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitmentPayload<C> {
     Dory(DoryCommitmentPayload<C>),
-    Akita(AkitaCommitmentPayload<C>),
+    Lattice(LatticeCommitmentPayload<C>),
 }
 
 impl<C> CommitmentPayload<C> {
     pub const fn family(&self) -> PcsFamily {
         match self {
             Self::Dory(_) => PcsFamily::Curve,
-            Self::Akita(_) => PcsFamily::Lattice,
+            Self::Lattice(_) => PcsFamily::Lattice,
         }
     }
 
     pub fn as_dory(&self) -> Option<&DoryCommitmentPayload<C>> {
         match self {
             Self::Dory(payload) => Some(payload),
-            Self::Akita(_) => None,
+            Self::Lattice(_) => None,
         }
     }
 
-    pub fn as_akita(&self) -> Option<&AkitaCommitmentPayload<C>> {
+    pub fn as_lattice(&self) -> Option<&LatticeCommitmentPayload<C>> {
         match self {
             Self::Dory(_) => None,
-            Self::Akita(payload) => Some(payload),
+            Self::Lattice(payload) => Some(payload),
         }
     }
 }
@@ -229,13 +229,13 @@ impl<C> From<DoryCommitmentPayload<C>> for CommitmentPayload<C> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AkitaCommitmentPayload<C> {
+pub struct LatticeCommitmentPayload<C> {
     pub packed_witness: C,
     pub layout_digest: [u8; 32],
     pub d_pack: usize,
 }
 
-impl<C> AkitaCommitmentPayload<C> {
+impl<C> LatticeCommitmentPayload<C> {
     pub fn new(packed_witness: C, layout_digest: [u8; 32], d_pack: usize) -> Self {
         Self {
             packed_witness,
@@ -261,15 +261,15 @@ pub fn validate_commitment_payload_config<C>(
     if expected != got {
         return Err(VerifierError::CommitmentPayloadFamilyMismatch { expected, got });
     }
-    if let CommitmentPayload::Akita(payload) = payload {
-        validate_akita_commitment_payload_config(config, payload)?;
+    if let CommitmentPayload::Lattice(payload) = payload {
+        validate_lattice_commitment_payload_config(config, payload)?;
     }
     Ok(())
 }
 
-pub fn validate_akita_commitment_payload_config<C>(
+pub fn validate_lattice_commitment_payload_config<C>(
     config: &JoltProtocolConfig,
-    payload: &AkitaCommitmentPayload<C>,
+    payload: &LatticeCommitmentPayload<C>,
 ) -> Result<(), VerifierError> {
     let expected = validate_protocol_config(config)?;
     if expected != PcsFamily::Lattice {
@@ -462,8 +462,8 @@ mod tests {
         ))
     }
 
-    fn akita_payload() -> CommitmentPayload<u64> {
-        CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [7; 32], 43))
+    fn lattice_payload() -> CommitmentPayload<u64> {
+        CommitmentPayload::Lattice(LatticeCommitmentPayload::new(9, [7; 32], 43))
     }
 
     fn lattice_config() -> JoltProtocolConfig {
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn commitment_payload_family_tracks_variant() {
         assert_eq!(dory_payload().family(), PcsFamily::Curve);
-        assert_eq!(akita_payload().family(), PcsFamily::Lattice);
+        assert_eq!(lattice_payload().family(), PcsFamily::Lattice);
     }
 
     #[test]
@@ -500,21 +500,21 @@ mod tests {
     fn commitment_payload_serialization_is_variant_tagged() {
         let dory_value = serde_json::to_value(dory_payload())
             .unwrap_or_else(|error| panic!("Dory payload should serialize: {error}"));
-        let akita_value = serde_json::to_value(akita_payload())
-            .unwrap_or_else(|error| panic!("Akita payload should serialize: {error}"));
+        let lattice_value = serde_json::to_value(lattice_payload())
+            .unwrap_or_else(|error| panic!("Lattice payload should serialize: {error}"));
 
         assert!(dory_value.get("Dory").is_some());
-        assert!(dory_value.get("Akita").is_none());
-        assert!(akita_value.get("Akita").is_some());
-        assert!(akita_value.get("Dory").is_none());
+        assert!(dory_value.get("Lattice").is_none());
+        assert!(lattice_value.get("Lattice").is_some());
+        assert!(lattice_value.get("Dory").is_none());
 
         let dory_roundtrip: CommitmentPayload<u64> = serde_json::from_value(dory_value)
             .unwrap_or_else(|error| panic!("Dory payload should deserialize: {error}"));
-        let akita_roundtrip: CommitmentPayload<u64> = serde_json::from_value(akita_value)
-            .unwrap_or_else(|error| panic!("Akita payload should deserialize: {error}"));
+        let lattice_roundtrip: CommitmentPayload<u64> = serde_json::from_value(lattice_value)
+            .unwrap_or_else(|error| panic!("Lattice payload should deserialize: {error}"));
 
         assert!(matches!(dory_roundtrip, CommitmentPayload::Dory(_)));
-        assert!(matches!(akita_roundtrip, CommitmentPayload::Akita(_)));
+        assert!(matches!(lattice_roundtrip, CommitmentPayload::Lattice(_)));
     }
 
     #[test]
@@ -605,14 +605,14 @@ mod tests {
         clippy::panic,
         reason = "test serialization failures should fail loudly"
     )]
-    fn akita_payload_rejects_extra_packed_commitments() {
-        let mut value = serde_json::to_value(akita_payload())
-            .unwrap_or_else(|error| panic!("Akita payload should serialize: {error}"));
-        let akita = value
-            .get_mut("Akita")
+    fn lattice_payload_rejects_extra_packed_commitments() {
+        let mut value = serde_json::to_value(lattice_payload())
+            .unwrap_or_else(|error| panic!("Lattice payload should serialize: {error}"));
+        let lattice = value
+            .get_mut("Lattice")
             .and_then(|payload| payload.as_object_mut())
-            .unwrap_or_else(|| panic!("Akita payload should be an object"));
-        let previous = akita.insert(
+            .unwrap_or_else(|| panic!("Lattice payload should be an object"));
+        let previous = lattice.insert(
             "extra_packed_witness".to_string(),
             serde_json::Value::from(10_u64),
         );
@@ -622,7 +622,7 @@ mod tests {
 
         assert!(
             result.is_err(),
-            "Akita payloads must reject extra packed commitments"
+            "Lattice payloads must reject extra packed commitments"
         );
     }
 
@@ -632,7 +632,7 @@ mod tests {
         let lattice = lattice_config();
 
         assert!(validate_commitment_payload_family(&curve, &dory_payload()).is_ok());
-        assert!(validate_commitment_payload_family(&lattice, &akita_payload()).is_ok());
+        assert!(validate_commitment_payload_family(&lattice, &lattice_payload()).is_ok());
     }
 
     #[test]
@@ -641,7 +641,7 @@ mod tests {
         let lattice = lattice_config();
 
         assert!(matches!(
-            validate_commitment_payload_family(&curve, &akita_payload()),
+            validate_commitment_payload_family(&curve, &lattice_payload()),
             Err(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Curve,
                 got: PcsFamily::Lattice,
@@ -657,9 +657,9 @@ mod tests {
     }
 
     #[test]
-    fn akita_payload_layout_digest_mismatch_rejects() {
+    fn lattice_payload_layout_digest_mismatch_rejects() {
         let lattice = lattice_config();
-        let payload = CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [8; 32], 43));
+        let payload = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(9, [8; 32], 43));
 
         assert!(matches!(
             validate_commitment_payload_config(&lattice, &payload),
@@ -671,9 +671,9 @@ mod tests {
     }
 
     #[test]
-    fn akita_payload_dimension_mismatch_rejects() {
+    fn lattice_payload_dimension_mismatch_rejects() {
         let lattice = lattice_config();
-        let payload = CommitmentPayload::Akita(AkitaCommitmentPayload::new(9, [7; 32], 44));
+        let payload = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(9, [7; 32], 44));
 
         assert!(matches!(
             validate_commitment_payload_config(&lattice, &payload),
@@ -685,12 +685,12 @@ mod tests {
     }
 
     #[test]
-    fn direct_akita_payload_validator_requires_lattice_config() {
+    fn direct_lattice_payload_validator_requires_lattice_config() {
         let curve = JoltProtocolConfig::for_zk(false);
-        let payload = AkitaCommitmentPayload::new(9, [7; 32], 43);
+        let payload = LatticeCommitmentPayload::new(9, [7; 32], 43);
 
         assert!(matches!(
-            validate_akita_commitment_payload_config(&curve, &payload),
+            validate_lattice_commitment_payload_config(&curve, &payload),
             Err(VerifierError::CommitmentPayloadFamilyMismatch {
                 expected: PcsFamily::Curve,
                 got: PcsFamily::Lattice,

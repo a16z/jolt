@@ -584,9 +584,9 @@ where
         let payload =
             proof
                 .commitments
-                .as_akita()
+                .as_lattice()
                 .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                    reason: "lattice packed validity verification requires Akita commitments"
+                    reason: "lattice packed validity verification requires lattice commitments"
                         .to_string(),
                 })?;
         let validity_claims = proof
@@ -1117,7 +1117,7 @@ where
                 transcript.append(&committed.program_image_commitment);
             }
         }
-        CommitmentPayload::Akita(payload) => {
+        CommitmentPayload::Lattice(payload) => {
             absorb_akita_protocol_header(transcript, &proof.protocol);
             append_payload_label(transcript, b"akita_packed_witness", &payload.packed_witness);
             transcript.append(&payload.packed_witness);
@@ -1335,8 +1335,8 @@ mod tests {
 
     use super::*;
     use crate::proof::{
-        AkitaCommitmentPayload, ClearProofClaims, CommitmentPayload, JoltProofClaims,
-        JoltStageProofs,
+        ClearProofClaims, CommitmentPayload, JoltProofClaims, JoltStageProofs,
+        LatticeCommitmentPayload,
     };
     use common::jolt_device::{JoltDevice, MemoryConfig};
     #[cfg(feature = "akita")]
@@ -1721,8 +1721,8 @@ mod tests {
 
         let mut proof = proof_with_zk(false, clear_claims());
         proof.protocol = config;
-        proof.commitments = crate::proof::CommitmentPayload::Akita(
-            crate::proof::AkitaCommitmentPayload::new(TestCommitment, [8; 32], 43),
+        proof.commitments = crate::proof::CommitmentPayload::Lattice(
+            crate::proof::LatticeCommitmentPayload::new(TestCommitment, [8; 32], 43),
         );
 
         assert!(matches!(
@@ -1801,7 +1801,7 @@ mod tests {
             &checked.precommitted,
         );
         proof.protocol = config;
-        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
             TestCommitment,
             layout.digest,
             layout.dimension,
@@ -2096,7 +2096,7 @@ mod tests {
             &checked.precommitted,
         );
         proof.protocol = config;
-        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
             TestCommitment,
             layout.digest,
             layout.dimension,
@@ -3037,7 +3037,7 @@ mod tests {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 8,
         };
-        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
             TestCommitment,
             layout_digest,
             d_pack,
@@ -3127,7 +3127,7 @@ mod tests {
             &checked.precommitted,
         );
         proof.protocol = config;
-        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
             TestCommitment,
             layout.digest,
             layout.dimension,
@@ -3170,7 +3170,7 @@ mod tests {
         config.lattice.packed_witness.validity_digest =
             Some(lattice_packed_validity_digest(&requirements));
         proof.protocol = config;
-        proof.commitments = CommitmentPayload::Akita(AkitaCommitmentPayload::new(
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
             TestCommitment,
             layout.digest,
             layout.dimension,

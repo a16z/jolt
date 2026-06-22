@@ -34,10 +34,10 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 pub use proof::{
-    validate_akita_commitment_payload_config, validate_commitment_payload_config,
-    validate_commitment_payload_family, AkitaCommitmentPayload, ClearOnlyCommitment,
-    ClearOnlyVectorCommitment, ClearOnlyVectorCommitmentSetup, ClearProofClaims, CommitmentPayload,
-    DoryCommitmentPayload, JoltProof, JoltProofClaims,
+    validate_commitment_payload_config, validate_commitment_payload_family,
+    validate_lattice_commitment_payload_config, ClearOnlyCommitment, ClearOnlyVectorCommitment,
+    ClearOnlyVectorCommitmentSetup, ClearProofClaims, CommitmentPayload, DoryCommitmentPayload,
+    JoltProof, JoltProofClaims, LatticeCommitmentPayload,
 };
 #[cfg(feature = "field-inline")]
 pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};
