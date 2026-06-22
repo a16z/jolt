@@ -1,4 +1,3 @@
-
 #![expect(
     clippy::expect_used,
     reason = "tests assert successful packed-view setup"
