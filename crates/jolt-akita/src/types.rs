@@ -8,8 +8,7 @@ use akita_types::{
     RingCommitment as NativeRingCommitment,
 };
 use jolt_openings::{
-    BatchOpeningStatement, CommitmentLayoutDigest, PackedLinearBatchProof,
-    PackedLinearReductionProof, PackedWitnessLayout, PhysicalView,
+    CommitmentLayoutDigest, PackedLinearBatchProof, PackedLinearReductionProof, PackedWitnessLayout,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -32,9 +31,6 @@ pub(crate) type NativeSparsePoly = SparseRingPoly<AkitaField, AKITA_D>;
 pub(crate) type NativePreparedSetup = CpuPreparedSetup<AkitaField, AKITA_D>;
 
 pub type AkitaLayoutDigest = [u8; 32];
-pub type AkitaViewFormula = PhysicalView<AkitaField>;
-pub type AkitaPackedViewStatement<OpeningId = (), RelationId = ()> =
-    BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

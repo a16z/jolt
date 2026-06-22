@@ -12,6 +12,6 @@ pub use packed::AkitaPackedScheme;
 pub use types::{
     AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaConfig, AkitaField,
     AkitaHidingCommitment, AkitaLayoutDigest, AkitaPackedBatchProof, AkitaPackedReductionProof,
-    AkitaPackedViewStatement, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
-    AkitaVerifierSetup, AkitaViewFormula, AKITA_D, AKITA_FIELD_MODULUS,
+    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_D,
+    AKITA_FIELD_MODULUS,
 };
