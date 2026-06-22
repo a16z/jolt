@@ -689,7 +689,7 @@ fn normalize_clear_batch<OpeningId, RelationId>(
         }
         if !matches!(claim.view, PhysicalView::Direct) {
             return Err(invalid_batch(
-                "Akita native adapter expects direct physical views; use PackedCombine to lower packed views first",
+                "Akita native adapter expects direct physical views; lower packed views before calling it",
             ));
         }
         coefficients.push(claim.scale);

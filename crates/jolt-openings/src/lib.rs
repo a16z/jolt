@@ -34,6 +34,7 @@ mod error;
 mod homomorphic_batch;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
+#[cfg(any(test, feature = "test-utils"))]
 mod packed_combine;
 mod packed_linear;
 mod reduction;
@@ -41,6 +42,7 @@ mod schemes;
 
 pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
+#[cfg(any(test, feature = "test-utils"))]
 pub use packed_combine::PackedCombine;
 pub use packed_linear::{
     has_packed_linear_view, prove_packed_linear_reduction, prove_sparse_packed_linear_reduction,

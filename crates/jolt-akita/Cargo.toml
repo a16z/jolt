@@ -27,4 +27,5 @@ serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
+jolt-openings = { workspace = true, features = ["test-utils"] }
 serde_json = { workspace = true, features = ["std"] }
