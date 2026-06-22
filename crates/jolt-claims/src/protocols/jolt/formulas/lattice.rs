@@ -1,35 +1,35 @@
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
-use jolt_field::{Field, RingCore};
+use jolt_field::{Field, FromPrimitiveInt, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use serde::{Deserialize, Serialize};
 
-use crate::{challenge, opening};
+use crate::{challenge, constant, opening, public};
 
 use super::super::{
-    FusedIncrementInactiveSourceLinkChallenge, FusedIncrementInactiveZeroChallenge,
-    FusedIncrementSourceLinkChallenge, FusedIncrementTranslationChallenge, JoltChallengeId,
-    JoltExpr, JoltRelationClaims,
+    IncVirtualizationChallenge, IncVirtualizationPublic, JoltChallengeId, JoltExpr, JoltPublicId,
+    JoltRelationClaims, UnsignedIncChunkReconstructionChallenge,
+    UnsignedIncChunkReconstructionPublic,
 };
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
-use super::bytecode::BytecodeReadRafDimensions;
 use super::claim_reductions::bytecode as bytecode_reduction;
 use super::dimensions::{
-    JoltFormulaPointError, TraceDimensions, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
+    JoltFormulaPointError, JoltSumcheckSpec, TraceDimensions, TracePolynomialOrder,
+    REGISTER_ADDRESS_BITS,
 };
 use jolt_riscv::CircuitFlags;
 
-pub const FUSED_INCREMENT_BYTE_LIMBS: usize = 8;
+pub const UNSIGNED_INC_BITS: usize = 64;
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LatticePackedFamilyId {
     InstructionRa { index: usize },
     BytecodeRa { index: usize },
     RamRa { index: usize },
-    IncByte { index: usize },
-    IncSign,
+    UnsignedIncChunk { index: usize },
+    UnsignedIncMsb,
     FieldRdIncByte { index: usize },
     FieldRdIncSign,
     AdviceBytes { kind: JoltAdviceKind, index: usize },
@@ -110,7 +110,6 @@ pub enum LatticePackedValidityKind {
     ExactOneHot,
     OptionalOneHot,
     BooleanIndicator { symbol: usize },
-    FusedIncrementCanonicalZero,
     BytecodeStoreRdDisjoint,
     FieldElementCanonicalBytes { byte_width: usize, modulus: u128 },
 }
@@ -161,15 +160,6 @@ impl LatticePackedValidityRequirement {
             limbs,
             alphabet_size,
             kind: LatticePackedValidityKind::BooleanIndicator { symbol },
-        }
-    }
-
-    pub fn fused_increment_canonical_zero() -> Self {
-        Self {
-            family: LatticePackedFamilyId::IncSign,
-            limbs: 1,
-            alphabet_size: 2,
-            kind: LatticePackedValidityKind::FusedIncrementCanonicalZero,
         }
     }
 
@@ -245,13 +235,12 @@ fn write_validity_kind(bytes: &mut Vec<u8>, kind: &LatticePackedValidityKind) {
             bytes.push(2);
             write_usize(bytes, *symbol);
         }
-        LatticePackedValidityKind::FusedIncrementCanonicalZero => bytes.push(3),
-        LatticePackedValidityKind::BytecodeStoreRdDisjoint => bytes.push(4),
+        LatticePackedValidityKind::BytecodeStoreRdDisjoint => bytes.push(3),
         LatticePackedValidityKind::FieldElementCanonicalBytes {
             byte_width,
             modulus,
         } => {
-            bytes.push(5);
+            bytes.push(4);
             write_usize(bytes, *byte_width);
             bytes.extend_from_slice(&modulus.to_le_bytes());
         }
@@ -272,11 +261,11 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &LatticePackedFamilyId) {
             bytes.push(2);
             write_usize(bytes, *index);
         }
-        LatticePackedFamilyId::IncByte { index } => {
+        LatticePackedFamilyId::UnsignedIncChunk { index } => {
             bytes.push(3);
             write_usize(bytes, *index);
         }
-        LatticePackedFamilyId::IncSign => bytes.push(4),
+        LatticePackedFamilyId::UnsignedIncMsb => bytes.push(4),
         LatticePackedFamilyId::FieldRdIncByte { index } => {
             bytes.push(9);
             write_usize(bytes, *index);
@@ -342,156 +331,78 @@ fn advice_kind_tag(kind: JoltAdviceKind) -> u8 {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum LatticeFusedIncrementTarget {
-    Ram,
-    Rd,
+pub fn inc_virtualization_relation() -> JoltRelationId {
+    JoltRelationId::IncVirtualization
 }
 
-pub fn fused_increment_translation_relation() -> JoltRelationId {
-    JoltRelationId::FusedIncrementTranslation
+pub fn unsigned_inc_claim_reduction_relation() -> JoltRelationId {
+    JoltRelationId::UnsignedIncClaimReduction
 }
 
-pub fn fused_increment_source_link_relation() -> JoltRelationId {
-    JoltRelationId::FusedIncrementSourceLink
+pub fn unsigned_inc_chunk_reconstruction_relation() -> JoltRelationId {
+    JoltRelationId::UnsignedIncChunkReconstruction
 }
 
-pub fn fused_increment_inactive_zero_relation() -> JoltRelationId {
-    JoltRelationId::FusedIncrementInactiveZero
-}
-
-pub fn fused_increment_inactive_source_link_relation() -> JoltRelationId {
-    JoltRelationId::FusedIncrementInactiveSourceLink
-}
-
-pub fn fused_increment_translation_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
+pub fn inc_virtualization_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    let gamma = fused_increment_translation_challenge(FusedIncrementTranslationChallenge::Gamma);
-    let input = opening(fused_increment_translation_input_opening(
-        LatticeFusedIncrementTarget::Ram,
-    )) + gamma.clone()
-        * opening(fused_increment_translation_input_opening(
-            LatticeFusedIncrementTarget::Rd,
-        ));
-    let output = signed_source_output(LatticeFusedIncrementTarget::Ram)
-        + gamma * signed_source_output(LatticeFusedIncrementTarget::Rd);
+    let gamma = inc_virtualization_challenge(IncVirtualizationChallenge::Gamma);
+
+    let input = opening(inc_virtualization_ram_read_write_opening())
+        + gamma.clone() * opening(inc_virtualization_ram_val_check_opening())
+        + gamma.clone().pow(2) * opening(inc_virtualization_rd_read_write_opening())
+        + gamma.clone().pow(3) * opening(inc_virtualization_rd_val_evaluation_opening());
+
+    let ram_coeff = inc_virtualization_public(IncVirtualizationPublic::EqRamReadWrite)
+        + gamma.clone() * inc_virtualization_public(IncVirtualizationPublic::EqRamValCheck);
+    let gamma_2 = gamma.clone().pow(2);
+    let rd_coeff = inc_virtualization_public(IncVirtualizationPublic::EqRegistersReadWrite)
+        + gamma.clone()
+            * inc_virtualization_public(IncVirtualizationPublic::EqRegistersValEvaluation);
+    let store = opening(inc_virtualization_store_opening());
+    let output = opening(inc_virtualization_inc_opening())
+        * (ram_coeff * store.clone() + gamma_2 * rd_coeff * (JoltExpr::one() - store));
 
     JoltRelationClaims::new(
-        JoltRelationId::FusedIncrementTranslation,
-        dimensions.sumcheck(4),
-        input,
-        output,
-    )
-}
-
-pub fn fused_increment_source_link_claim<F>(
-    dimensions: BytecodeReadRafDimensions,
-) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    let gamma = fused_increment_source_link_challenge(FusedIncrementSourceLinkChallenge::Gamma);
-    let input = opening(fused_increment_source_opening(
-        LatticeFusedIncrementTarget::Ram,
-    )) + gamma.clone()
-        * opening(fused_increment_source_opening(
-            LatticeFusedIncrementTarget::Rd,
-        ));
-    let source_output = opening(fused_increment_bytecode_source_opening(
-        LatticeFusedIncrementTarget::Ram,
-    )) + gamma
-        * opening(fused_increment_bytecode_source_opening(
-            LatticeFusedIncrementTarget::Rd,
-        ));
-    let output = fused_increment_source_link_bytecode_ra_product(dimensions) * source_output;
-
-    JoltRelationClaims::new(
-        JoltRelationId::FusedIncrementSourceLink,
-        dimensions.sumcheck(),
-        input,
-        output,
-    )
-    .with_input_challenges([JoltChallengeId::from(
-        FusedIncrementSourceLinkChallenge::Gamma,
-    )])
-}
-
-pub fn fused_increment_inactive_zero_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    let beta = fused_increment_inactive_zero_challenge(FusedIncrementInactiveZeroChallenge::Beta);
-    let inactive = JoltExpr::one()
-        - opening(fused_increment_inactive_source_opening(
-            LatticeFusedIncrementTarget::Ram,
-        ))
-        - opening(fused_increment_inactive_source_opening(
-            LatticeFusedIncrementTarget::Rd,
-        ));
-    let value = opening(fused_increment_inactive_magnitude_opening())
-        + beta * opening(fused_increment_inactive_sign_opening());
-
-    JoltRelationClaims::new(
-        JoltRelationId::FusedIncrementInactiveZero,
+        JoltRelationId::IncVirtualization,
         dimensions.sumcheck(3),
-        JoltExpr::zero(),
-        inactive * value,
-    )
-}
-
-pub fn fused_increment_inactive_source_link_claim<F>(
-    dimensions: BytecodeReadRafDimensions,
-) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    let gamma = fused_increment_inactive_source_link_challenge(
-        FusedIncrementInactiveSourceLinkChallenge::Gamma,
-    );
-    let input = opening(fused_increment_inactive_source_opening(
-        LatticeFusedIncrementTarget::Ram,
-    )) + gamma.clone()
-        * opening(fused_increment_inactive_source_opening(
-            LatticeFusedIncrementTarget::Rd,
-        ));
-    let source_output = opening(fused_increment_inactive_bytecode_source_opening(
-        LatticeFusedIncrementTarget::Ram,
-    )) + gamma
-        * opening(fused_increment_inactive_bytecode_source_opening(
-            LatticeFusedIncrementTarget::Rd,
-        ));
-    let output =
-        fused_increment_inactive_source_link_bytecode_ra_product(dimensions) * source_output;
-
-    JoltRelationClaims::new(
-        JoltRelationId::FusedIncrementInactiveSourceLink,
-        dimensions.sumcheck(),
         input,
         output,
     )
-    .with_input_challenges([JoltChallengeId::from(
-        FusedIncrementInactiveSourceLinkChallenge::Gamma,
-    )])
 }
 
-fn fused_increment_translation_challenge<F>(id: FusedIncrementTranslationChallenge) -> JoltExpr<F>
+pub fn unsigned_inc_claim_reduction_claim<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
+where
+    F: RingCore + FromPrimitiveInt,
+{
+    let input = opening(inc_virtualization_inc_opening()) + constant(F::from_u128(1u128 << 64));
+    let output = opening(unsigned_inc_opening());
+
+    JoltRelationClaims::new(
+        JoltRelationId::UnsignedIncClaimReduction,
+        dimensions.sumcheck(2),
+        input,
+        output,
+    )
+}
+
+fn inc_virtualization_challenge<F>(id: IncVirtualizationChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn fused_increment_source_link_challenge<F>(id: FusedIncrementSourceLinkChallenge) -> JoltExpr<F>
+fn inc_virtualization_public<F>(id: IncVirtualizationPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    challenge(JoltChallengeId::from(id))
+    public(JoltPublicId::from(id))
 }
 
-fn fused_increment_inactive_zero_challenge<F>(
-    id: FusedIncrementInactiveZeroChallenge,
+fn unsigned_inc_chunk_reconstruction_challenge<F>(
+    id: UnsignedIncChunkReconstructionChallenge,
 ) -> JoltExpr<F>
 where
     F: RingCore,
@@ -499,209 +410,129 @@ where
     challenge(JoltChallengeId::from(id))
 }
 
-fn fused_increment_inactive_source_link_challenge<F>(
-    id: FusedIncrementInactiveSourceLinkChallenge,
+fn unsigned_inc_chunk_reconstruction_public<F>(
+    id: UnsignedIncChunkReconstructionPublic,
 ) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    challenge(JoltChallengeId::from(id))
+    public(JoltPublicId::from(id))
 }
 
-pub fn fused_increment_translation_input_opening(
-    target: LatticeFusedIncrementTarget,
-) -> JoltOpeningId {
-    let polynomial = match target {
-        LatticeFusedIncrementTarget::Ram => JoltCommittedPolynomial::RamInc,
-        LatticeFusedIncrementTarget::Rd => JoltCommittedPolynomial::RdInc,
-    };
-    JoltOpeningId::committed(polynomial, JoltRelationId::IncClaimReduction)
-}
-
-pub fn fused_increment_translation_output_openings() -> [JoltOpeningId; 4] {
+pub fn inc_virtualization_input_openings() -> [JoltOpeningId; 4] {
     [
-        fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
-        fused_increment_magnitude_opening(),
-        fused_increment_sign_opening(),
-        fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
+        inc_virtualization_ram_read_write_opening(),
+        inc_virtualization_ram_val_check_opening(),
+        inc_virtualization_rd_read_write_opening(),
+        inc_virtualization_rd_val_evaluation_opening(),
     ]
 }
 
-pub fn fused_increment_source_opening(target: LatticeFusedIncrementTarget) -> JoltOpeningId {
-    JoltOpeningId::lattice(
-        JoltRelationId::FusedIncrementTranslation,
-        match target {
-            LatticeFusedIncrementTarget::Ram => 0,
-            LatticeFusedIncrementTarget::Rd => 1,
-        },
-    )
-}
-
-pub fn fused_increment_inactive_source_opening(
-    target: LatticeFusedIncrementTarget,
-) -> JoltOpeningId {
-    JoltOpeningId::lattice(
-        JoltRelationId::FusedIncrementInactiveZero,
-        match target {
-            LatticeFusedIncrementTarget::Ram => 0,
-            LatticeFusedIncrementTarget::Rd => 1,
-        },
-    )
-}
-
-pub fn fused_increment_bytecode_source_opening(
-    target: LatticeFusedIncrementTarget,
-) -> JoltOpeningId {
-    JoltOpeningId::lattice(
-        JoltRelationId::FusedIncrementSourceLink,
-        match target {
-            LatticeFusedIncrementTarget::Ram => 0,
-            LatticeFusedIncrementTarget::Rd => 1,
-        },
-    )
-}
-
-pub fn fused_increment_inactive_bytecode_source_opening(
-    target: LatticeFusedIncrementTarget,
-) -> JoltOpeningId {
-    JoltOpeningId::lattice(
-        JoltRelationId::FusedIncrementInactiveSourceLink,
-        match target {
-            LatticeFusedIncrementTarget::Ram => 0,
-            LatticeFusedIncrementTarget::Rd => 1,
-        },
-    )
-}
-
-pub fn fused_increment_source_link_output_openings(
-    dimensions: BytecodeReadRafDimensions,
-) -> Vec<JoltOpeningId> {
-    let mut openings = fused_increment_source_link_bytecode_ra_openings(dimensions);
-    openings.extend([
-        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-        fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
-    ]);
-    openings
-}
-
-pub fn fused_increment_inactive_zero_output_openings() -> [JoltOpeningId; 4] {
+pub fn inc_virtualization_output_openings() -> [JoltOpeningId; 2] {
     [
-        fused_increment_inactive_magnitude_opening(),
-        fused_increment_inactive_sign_opening(),
-        fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram),
-        fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd),
+        inc_virtualization_inc_opening(),
+        inc_virtualization_store_opening(),
     ]
 }
 
-pub fn fused_increment_inactive_source_link_output_openings(
-    dimensions: BytecodeReadRafDimensions,
-) -> Vec<JoltOpeningId> {
-    let mut openings = fused_increment_inactive_source_link_bytecode_ra_openings(dimensions);
-    openings.extend([
-        fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-        fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
-    ]);
-    openings
-}
-
-pub fn fused_increment_magnitude_opening() -> JoltOpeningId {
-    JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 2)
-}
-
-pub fn fused_increment_sign_opening() -> JoltOpeningId {
-    JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 3)
-}
-
-pub fn fused_increment_inactive_magnitude_opening() -> JoltOpeningId {
-    JoltOpeningId::lattice(JoltRelationId::FusedIncrementInactiveZero, 2)
-}
-
-pub fn fused_increment_inactive_sign_opening() -> JoltOpeningId {
-    JoltOpeningId::lattice(JoltRelationId::FusedIncrementInactiveZero, 3)
-}
-
-fn signed_source_output<F>(target: LatticeFusedIncrementTarget) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    let source = opening(fused_increment_source_opening(target));
-    let magnitude = opening(fused_increment_magnitude_opening());
-    let sign = opening(fused_increment_sign_opening());
-
-    let source_magnitude = source.clone() * magnitude.clone();
-    let sign_correction = source * sign * magnitude;
-    source_magnitude - sign_correction.clone() - sign_correction
-}
-
-fn fused_increment_source_link_bytecode_ra_product<F>(
-    dimensions: BytecodeReadRafDimensions,
-) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    fused_increment_bytecode_ra_product(dimensions, JoltRelationId::FusedIncrementSourceLink)
-}
-
-fn fused_increment_inactive_source_link_bytecode_ra_product<F>(
-    dimensions: BytecodeReadRafDimensions,
-) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    fused_increment_bytecode_ra_product(
-        dimensions,
-        JoltRelationId::FusedIncrementInactiveSourceLink,
+pub fn inc_virtualization_ram_read_write_opening() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::RamInc,
+        JoltRelationId::RamReadWriteChecking,
     )
 }
 
-fn fused_increment_bytecode_ra_product<F>(
-    dimensions: BytecodeReadRafDimensions,
-    relation: JoltRelationId,
-) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    let mut product = JoltExpr::one();
-    for opening_id in fused_increment_bytecode_ra_openings(dimensions, relation) {
-        product = product * opening(opening_id);
-    }
-    product
+pub fn inc_virtualization_ram_val_check_opening() -> JoltOpeningId {
+    JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, JoltRelationId::RamValCheck)
 }
 
-fn fused_increment_source_link_bytecode_ra_openings(
-    dimensions: BytecodeReadRafDimensions,
-) -> Vec<JoltOpeningId> {
-    fused_increment_bytecode_ra_openings(dimensions, JoltRelationId::FusedIncrementSourceLink)
-}
-
-fn fused_increment_inactive_source_link_bytecode_ra_openings(
-    dimensions: BytecodeReadRafDimensions,
-) -> Vec<JoltOpeningId> {
-    fused_increment_bytecode_ra_openings(
-        dimensions,
-        JoltRelationId::FusedIncrementInactiveSourceLink,
+pub fn inc_virtualization_rd_read_write_opening() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::RdInc,
+        JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn fused_increment_bytecode_ra_openings(
-    dimensions: BytecodeReadRafDimensions,
-    relation: JoltRelationId,
-) -> Vec<JoltOpeningId> {
-    (0..dimensions.num_committed_ra_polys())
-        .map(|index| JoltOpeningId::committed(JoltCommittedPolynomial::BytecodeRa(index), relation))
-        .collect()
+pub fn inc_virtualization_rd_val_evaluation_opening() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::RdInc,
+        JoltRelationId::RegistersValEvaluation,
+    )
 }
 
-pub fn fused_increment_source_lattice_view_formula<F: Field>(
-    target: LatticeFusedIncrementTarget,
-    bytecode_chunk: usize,
-) -> LatticePackedViewFormula<F> {
-    match target {
-        LatticeFusedIncrementTarget::Ram => {
-            bytecode_store_flag_lattice_view_formula(bytecode_chunk)
-        }
-        LatticeFusedIncrementTarget::Rd => bytecode_rd_present_lattice_view_formula(bytecode_chunk),
+pub fn inc_virtualization_inc_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::IncVirtualization, 0)
+}
+
+pub fn inc_virtualization_store_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::IncVirtualization, 1)
+}
+
+pub fn unsigned_inc_input_opening() -> JoltOpeningId {
+    inc_virtualization_inc_opening()
+}
+
+pub fn unsigned_inc_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::UnsignedIncClaimReduction, 0)
+}
+
+pub fn unsigned_inc_msb_opening() -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::UnsignedIncClaimReduction, 1)
+}
+
+pub fn unsigned_inc_chunk_opening(index: usize) -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::UnsignedIncClaimReduction, 2 + index)
+}
+
+pub fn unsigned_inc_lower_chunk_count(log_k_chunk: usize) -> Option<usize> {
+    (log_k_chunk != 0 && UNSIGNED_INC_BITS % log_k_chunk == 0)
+        .then_some(UNSIGNED_INC_BITS / log_k_chunk)
+}
+
+pub fn unsigned_inc_chunk_reconstruction_claim<F>(
+    log_k_chunk: usize,
+) -> Option<JoltRelationClaims<F>>
+where
+    F: RingCore + FromPrimitiveInt,
+{
+    let chunk_count = unsigned_inc_lower_chunk_count(log_k_chunk)?;
+    let gamma =
+        unsigned_inc_chunk_reconstruction_challenge(UnsignedIncChunkReconstructionChallenge::Gamma);
+    let eq_booleanity_address = unsigned_inc_chunk_reconstruction_public(
+        UnsignedIncChunkReconstructionPublic::EqBooleanityAddress,
+    );
+    let identity_at_address = unsigned_inc_chunk_reconstruction_public(
+        UnsignedIncChunkReconstructionPublic::IdentityAtAddress,
+    );
+    let delta = gamma.clone().pow(2 * chunk_count);
+    let lower_value = opening(unsigned_inc_opening())
+        - constant(F::from_u128(1u128 << 64)) * opening(unsigned_inc_msb_opening());
+
+    let mut input = delta.clone() * lower_value;
+    let mut output = JoltExpr::zero();
+    let mut place = F::one();
+    for index in 0..chunk_count {
+        input = input
+            + gamma.clone().pow(2 * index)
+            + gamma.clone().pow(2 * index + 1) * opening(unsigned_inc_chunk_opening(index));
+        let output_coeff = gamma.clone().pow(2 * index)
+            + gamma.clone().pow(2 * index + 1) * eq_booleanity_address.clone()
+            + delta.clone() * constant(place) * identity_at_address.clone();
+        output = output + output_coeff * opening(unsigned_inc_chunk_opening(index));
+        place *= F::from_u64(1u64 << log_k_chunk);
     }
+
+    Some(
+        JoltRelationClaims::new(
+            JoltRelationId::UnsignedIncChunkReconstruction,
+            JoltSumcheckSpec::boolean(log_k_chunk, 3),
+            input,
+            output,
+        )
+        .with_input_challenges([JoltChallengeId::from(
+            UnsignedIncChunkReconstructionChallenge::Gamma,
+        )]),
+    )
 }
 
 pub fn bytecode_store_flag_lattice_view_formula<F>(chunk: usize) -> LatticePackedViewFormula<F> {
@@ -725,45 +556,57 @@ pub fn bytecode_rd_present_lattice_view_formula<F: Field>(
     ))
 }
 
-pub fn fused_increment_magnitude_lattice_view_formula<F: Field>() -> LatticePackedViewFormula<F> {
-    LatticePackedViewFormula::linear_decoded(fused_increment_magnitude_terms())
+pub fn unsigned_inc_lower_value_lattice_view_formula<F: Field>(
+    log_k_chunk: usize,
+) -> Option<LatticePackedViewFormula<F>> {
+    Some(LatticePackedViewFormula::linear_decoded(
+        unsigned_inc_lower_value_terms(log_k_chunk)?,
+    ))
 }
 
-pub fn fused_increment_magnitude_terms<F: Field>() -> Vec<LatticePackedViewTerm<F>> {
-    let mut terms = Vec::with_capacity(FUSED_INCREMENT_BYTE_LIMBS * 256);
+pub fn unsigned_inc_lower_value_terms<F: Field>(
+    log_k_chunk: usize,
+) -> Option<Vec<LatticePackedViewTerm<F>>> {
+    let chunk_count = unsigned_inc_lower_chunk_count(log_k_chunk)?;
+    let alphabet_size = 1usize << log_k_chunk;
+    let mut terms = Vec::with_capacity(chunk_count * alphabet_size);
     let mut place = F::one();
-    for index in 0..FUSED_INCREMENT_BYTE_LIMBS {
-        terms.extend(weighted_byte_decode_terms(
-            LatticePackedFamilyId::IncByte { index },
-            [(0, place)],
+    for index in 0..chunk_count {
+        terms.extend(weighted_symbol_terms(
+            LatticePackedFamilyId::UnsignedIncChunk { index },
+            0,
+            (0..alphabet_size).map(|symbol| place * F::from_u64(symbol as u64)),
         ));
-        place *= F::from_u64(256);
+        place *= F::from_u64(1u64 << log_k_chunk);
     }
-    terms
+    Some(terms)
 }
 
-pub fn fused_increment_sign_lattice_view_formula<F>() -> LatticePackedViewFormula<F> {
-    LatticePackedViewFormula::direct(LatticePackedFamilyId::IncSign, 0, 1)
+pub fn unsigned_inc_msb_lattice_view_formula<F>() -> LatticePackedViewFormula<F> {
+    LatticePackedViewFormula::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1)
 }
 
-pub fn fused_increment_validity_requirements() -> Vec<LatticePackedValidityRequirement> {
-    let mut requirements = (0..FUSED_INCREMENT_BYTE_LIMBS)
+pub fn unsigned_inc_validity_requirements(
+    log_k_chunk: usize,
+) -> Option<Vec<LatticePackedValidityRequirement>> {
+    let chunk_count = unsigned_inc_lower_chunk_count(log_k_chunk)?;
+    let alphabet_size = 1usize << log_k_chunk;
+    let mut requirements = (0..chunk_count)
         .map(|index| {
             LatticePackedValidityRequirement::exact_one_hot(
-                LatticePackedFamilyId::IncByte { index },
+                LatticePackedFamilyId::UnsignedIncChunk { index },
                 1,
-                256,
+                alphabet_size,
             )
         })
         .collect::<Vec<_>>();
     requirements.push(LatticePackedValidityRequirement::boolean_indicator(
-        LatticePackedFamilyId::IncSign,
+        LatticePackedFamilyId::UnsignedIncMsb,
         1,
         2,
         1,
     ));
-    requirements.push(LatticePackedValidityRequirement::fused_increment_canonical_zero());
-    requirements
+    Some(requirements)
 }
 
 pub fn advice_bytes_validity_requirement(kind: JoltAdviceKind) -> LatticePackedValidityRequirement {
@@ -851,9 +694,7 @@ pub enum LatticeFinalOpeningRequirement {
         family: LatticePackedFamilyId,
         relation: JoltRelationId,
     },
-    RequiresTranslation {
-        relation: JoltRelationId,
-    },
+    LogicalOnly,
 }
 
 pub fn final_opening_lattice_requirement(
@@ -861,9 +702,7 @@ pub fn final_opening_lattice_requirement(
 ) -> LatticeFinalOpeningRequirement {
     match polynomial {
         JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
-            LatticeFinalOpeningRequirement::RequiresTranslation {
-                relation: JoltRelationId::FusedIncrementTranslation,
-            }
+            LatticeFinalOpeningRequirement::LogicalOnly
         }
         JoltCommittedPolynomial::InstructionRa(index) => packed_family_requirement(
             LatticePackedFamilyId::InstructionRa { index },
@@ -1072,22 +911,17 @@ mod tests {
     )]
 
     use super::*;
-    use crate::protocols::jolt::JoltPolynomialId;
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[test]
-    fn final_opening_lattice_requirement_marks_increments_as_translation() {
+    fn final_opening_lattice_requirement_marks_increments_as_logical_only() {
         assert_eq!(
             final_opening_lattice_requirement(JoltCommittedPolynomial::RamInc),
-            LatticeFinalOpeningRequirement::RequiresTranslation {
-                relation: JoltRelationId::FusedIncrementTranslation
-            }
+            LatticeFinalOpeningRequirement::LogicalOnly
         );
         assert_eq!(
             final_opening_lattice_requirement(JoltCommittedPolynomial::RdInc),
-            LatticeFinalOpeningRequirement::RequiresTranslation {
-                relation: JoltRelationId::FusedIncrementTranslation
-            }
+            LatticeFinalOpeningRequirement::LogicalOnly
         );
     }
 
@@ -1110,485 +944,272 @@ mod tests {
     }
 
     #[test]
-    fn fused_increment_translation_names_existing_inc_claim_outputs() {
-        assert_eq!(
-            fused_increment_translation_relation(),
-            JoltRelationId::FusedIncrementTranslation
-        );
-        assert_eq!(
-            fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Ram),
-            JoltOpeningId::committed(
-                JoltCommittedPolynomial::RamInc,
-                JoltRelationId::IncClaimReduction
-            )
-        );
-        assert_eq!(
-            fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Rd),
-            JoltOpeningId::committed(
-                JoltCommittedPolynomial::RdInc,
-                JoltRelationId::IncClaimReduction
-            )
-        );
-        assert_eq!(
-            fused_increment_translation_output_openings(),
-            [
-                fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
-                fused_increment_magnitude_opening(),
-                fused_increment_sign_opening(),
-                fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
-            ]
-        );
-        assert_eq!(
-            fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
-            JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 0)
-        );
-        assert_eq!(
-            fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
-            JoltOpeningId::lattice(JoltRelationId::FusedIncrementTranslation, 1)
-        );
-    }
+    fn inc_virtualization_claim_exposes_expected_dependencies() {
+        let claims = inc_virtualization_claim::<Fr>(TraceDimensions::new(5));
 
-    #[test]
-    fn fused_increment_translation_claim_batches_ram_and_rd() {
-        let claims = fused_increment_translation_claim::<Fr>(TraceDimensions::new(5));
-
-        assert_eq!(claims.id, JoltRelationId::FusedIncrementTranslation);
-        assert_eq!(claims.sumcheck, TraceDimensions::new(5).sumcheck(4));
-        assert_eq!(
-            claims.input.required_openings,
-            vec![
-                fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Ram),
-                fused_increment_translation_input_opening(LatticeFusedIncrementTarget::Rd),
-            ]
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            fused_increment_translation_output_openings()
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                FusedIncrementTranslationChallenge::Gamma
-            )]
-        );
-    }
-
-    #[test]
-    fn fused_increment_source_link_claim_batches_translation_sources() {
-        let dimensions = BytecodeReadRafDimensions::new(5, 10, 2);
-        let claims = fused_increment_source_link_claim::<Fr>(dimensions);
-        let expected_bytecode_ra = (0..2)
-            .map(|index| {
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::BytecodeRa(index),
-                    JoltRelationId::FusedIncrementSourceLink,
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut expected_output = expected_bytecode_ra.clone();
-        expected_output.extend([
-            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
-        ]);
-
-        assert_eq!(
-            fused_increment_source_link_relation(),
-            JoltRelationId::FusedIncrementSourceLink
-        );
-        assert_eq!(claims.id, JoltRelationId::FusedIncrementSourceLink);
-        assert_eq!(claims.sumcheck, dimensions.sumcheck());
-        assert_eq!(
-            claims.input.required_openings,
-            vec![
-                fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
-                fused_increment_source_opening(LatticeFusedIncrementTarget::Rd),
-            ]
-        );
-        assert_eq!(claims.output.required_openings, expected_output);
-        assert_eq!(
-            fused_increment_source_link_output_openings(dimensions),
-            claims.output.required_openings
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                FusedIncrementSourceLinkChallenge::Gamma
-            )]
-        );
-    }
-
-    #[test]
-    fn fused_increment_inactive_zero_claim_batches_magnitude_and_sign() {
-        let claims = fused_increment_inactive_zero_claim::<Fr>(TraceDimensions::new(5));
-
-        assert_eq!(
-            fused_increment_inactive_zero_relation(),
-            JoltRelationId::FusedIncrementInactiveZero
-        );
-        assert_eq!(claims.id, JoltRelationId::FusedIncrementInactiveZero);
+        assert_eq!(claims.id, JoltRelationId::IncVirtualization);
         assert_eq!(claims.sumcheck, TraceDimensions::new(5).sumcheck(3));
-        assert!(claims.input.required_openings.is_empty());
-        assert_eq!(
-            claims.output.required_openings,
-            fused_increment_inactive_zero_output_openings()
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                FusedIncrementInactiveZeroChallenge::Beta
-            )]
-        );
-    }
-
-    #[test]
-    fn fused_increment_inactive_source_link_claim_batches_inactive_sources() {
-        let dimensions = BytecodeReadRafDimensions::new(5, 10, 2);
-        let claims = fused_increment_inactive_source_link_claim::<Fr>(dimensions);
-        let expected_bytecode_ra = (0..2)
-            .map(|index| {
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::BytecodeRa(index),
-                    JoltRelationId::FusedIncrementInactiveSourceLink,
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut expected_output = expected_bytecode_ra.clone();
-        expected_output.extend([
-            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
-        ]);
-
-        assert_eq!(
-            fused_increment_inactive_source_link_relation(),
-            JoltRelationId::FusedIncrementInactiveSourceLink
-        );
-        assert_eq!(claims.id, JoltRelationId::FusedIncrementInactiveSourceLink);
-        assert_eq!(claims.sumcheck, dimensions.sumcheck());
         assert_eq!(
             claims.input.required_openings,
+            inc_virtualization_input_openings()
+        );
+        assert_eq!(
+            claims.output.required_openings,
+            inc_virtualization_output_openings()
+        );
+        assert_eq!(
+            claims.required_challenges(),
+            vec![JoltChallengeId::from(IncVirtualizationChallenge::Gamma)]
+        );
+        assert_eq!(
+            claims.required_publics(),
             vec![
-                fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram),
-                fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd),
+                JoltPublicId::from(IncVirtualizationPublic::EqRamReadWrite),
+                JoltPublicId::from(IncVirtualizationPublic::EqRamValCheck),
+                JoltPublicId::from(IncVirtualizationPublic::EqRegistersReadWrite),
+                JoltPublicId::from(IncVirtualizationPublic::EqRegistersValEvaluation),
             ]
         );
-        assert_eq!(claims.output.required_openings, expected_output);
+    }
+
+    #[test]
+    fn inc_virtualization_claim_evaluates_store_selected_inc() {
+        let claims = inc_virtualization_claim::<Fr>(TraceDimensions::new(5));
+        let ram_rw = Fr::from_u64(3);
+        let ram_val = Fr::from_u64(5);
+        let rd_rw = Fr::from_u64(7);
+        let rd_val = Fr::from_u64(11);
+        let inc = Fr::from_u64(13);
+        let store = Fr::from_u64(0);
+        let eq_ram_rw = Fr::from_u64(17);
+        let eq_ram_val = Fr::from_u64(19);
+        let eq_rd_rw = Fr::from_u64(23);
+        let eq_rd_val = Fr::from_u64(29);
+        let gamma = Fr::from_u64(31);
+        let zero = Fr::from_u64(0);
+
+        let input = claims.input.expression().evaluate(
+            |id| match *id {
+                id if id == inc_virtualization_ram_read_write_opening() => ram_rw,
+                id if id == inc_virtualization_ram_val_check_opening() => ram_val,
+                id if id == inc_virtualization_rd_read_write_opening() => rd_rw,
+                id if id == inc_virtualization_rd_val_evaluation_opening() => rd_val,
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::IncVirtualization(IncVirtualizationChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |_| zero,
+        );
+        let output = claims.output.expression().evaluate(
+            |id| match *id {
+                id if id == inc_virtualization_inc_opening() => inc,
+                id if id == inc_virtualization_store_opening() => store,
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::IncVirtualization(IncVirtualizationChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltPublicId::IncVirtualization(IncVirtualizationPublic::EqRamReadWrite) => {
+                    eq_ram_rw
+                }
+                JoltPublicId::IncVirtualization(IncVirtualizationPublic::EqRamValCheck) => {
+                    eq_ram_val
+                }
+                JoltPublicId::IncVirtualization(IncVirtualizationPublic::EqRegistersReadWrite) => {
+                    eq_rd_rw
+                }
+                JoltPublicId::IncVirtualization(
+                    IncVirtualizationPublic::EqRegistersValEvaluation,
+                ) => eq_rd_val,
+                _ => zero,
+            },
+        );
+
+        let gamma_2 = gamma * gamma;
         assert_eq!(
-            fused_increment_inactive_source_link_output_openings(dimensions),
-            claims.output.required_openings
+            input,
+            ram_rw + gamma * ram_val + gamma_2 * rd_rw + gamma_2 * gamma * rd_val
+        );
+        assert_eq!(output, inc * gamma_2 * (eq_rd_rw + gamma * eq_rd_val));
+    }
+
+    #[test]
+    fn unsigned_inc_claim_reduction_offsets_inc_by_two_to_64() {
+        let claims = unsigned_inc_claim_reduction_claim::<Fr>(TraceDimensions::new(5));
+        let inc = Fr::from_u64(13);
+        let unsigned_inc = Fr::from_u128((1u128 << 64) + 13);
+        let zero = Fr::from_u64(0);
+
+        assert_eq!(claims.id, JoltRelationId::UnsignedIncClaimReduction);
+        assert_eq!(claims.sumcheck, TraceDimensions::new(5).sumcheck(2));
+        assert_eq!(
+            claims.input.required_openings,
+            vec![inc_virtualization_inc_opening()]
+        );
+        assert_eq!(
+            claims.output.required_openings,
+            vec![unsigned_inc_opening()]
+        );
+        assert!(claims.required_challenges().is_empty());
+        assert!(claims.required_publics().is_empty());
+
+        let input = claims.input.expression().evaluate(
+            |id| match *id {
+                id if id == inc_virtualization_inc_opening() => inc,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+        let output = claims.output.expression().evaluate(
+            |id| match *id {
+                id if id == unsigned_inc_opening() => unsigned_inc,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+
+        assert_eq!(input, unsigned_inc);
+        assert_eq!(output, unsigned_inc);
+    }
+
+    #[test]
+    fn unsigned_inc_chunk_reconstruction_claim_batches_hamming_point_and_value() {
+        let claims = unsigned_inc_chunk_reconstruction_claim::<Fr>(8)
+            .expect("8-bit chunking should be valid");
+
+        assert_eq!(claims.id, JoltRelationId::UnsignedIncChunkReconstruction);
+        assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(8, 3));
+        assert!(claims
+            .input
+            .required_openings
+            .contains(&unsigned_inc_opening()));
+        assert!(claims
+            .input
+            .required_openings
+            .contains(&unsigned_inc_msb_opening()));
+        assert_eq!(
+            claims.output.required_openings,
+            (0..8).map(unsigned_inc_chunk_opening).collect::<Vec<_>>()
         );
         assert_eq!(
             claims.required_challenges(),
             vec![JoltChallengeId::from(
-                FusedIncrementInactiveSourceLinkChallenge::Gamma
+                UnsignedIncChunkReconstructionChallenge::Gamma,
             )]
         );
-    }
-
-    #[test]
-    fn fused_increment_source_link_claim_evaluates_read_raf_source_formula() {
-        let dimensions = BytecodeReadRafDimensions::new(5, 10, 2);
-        let claims = fused_increment_source_link_claim::<Fr>(dimensions);
-        let ram_source = Fr::from_u64(13);
-        let rd_source = Fr::from_u64(17);
-        let bytecode_ra = [Fr::from_u64(2), Fr::from_u64(3)];
-        let store_flag = Fr::from_u64(5);
-        let rd_present = Fr::from_u64(7);
-        let gamma = Fr::from_u64(11);
-        let zero = Fr::from_u64(0);
-
-        let input = claims.input.expression().evaluate(
-            |id| match *id {
-                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) => {
-                    ram_source
-                }
-                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) => {
-                    rd_source
-                }
-                _ => zero,
-            },
-            |id| match id {
-                JoltChallengeId::FusedIncrementSourceLink(
-                    FusedIncrementSourceLinkChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-        let output = claims.output.expression().evaluate(
-            |id| match *id {
-                JoltOpeningId::Polynomial {
-                    polynomial:
-                        JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(index)),
-                    relation: JoltRelationId::FusedIncrementSourceLink,
-                } => bytecode_ra[index],
-                id if id
-                    == fused_increment_bytecode_source_opening(
-                        LatticeFusedIncrementTarget::Ram,
-                    ) =>
-                {
-                    store_flag
-                }
-                id if id
-                    == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) =>
-                {
-                    rd_present
-                }
-                _ => zero,
-            },
-            |id| match id {
-                JoltChallengeId::FusedIncrementSourceLink(
-                    FusedIncrementSourceLinkChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        assert_eq!(input, ram_source + gamma * rd_source);
         assert_eq!(
-            output,
-            bytecode_ra[0] * bytecode_ra[1] * (store_flag + gamma * rd_present)
+            claims.required_publics(),
+            vec![
+                JoltPublicId::from(UnsignedIncChunkReconstructionPublic::EqBooleanityAddress),
+                JoltPublicId::from(UnsignedIncChunkReconstructionPublic::IdentityAtAddress),
+            ]
         );
     }
 
     #[test]
-    fn fused_increment_inactive_zero_claim_evaluates_inactive_selector() {
-        let claims = fused_increment_inactive_zero_claim::<Fr>(TraceDimensions::new(5));
-        let ram_source = Fr::from_u64(0);
-        let rd_source = Fr::from_u64(0);
-        let magnitude = Fr::from_u64(19);
-        let sign = Fr::from_u64(1);
-        let beta = Fr::from_u64(23);
-        let zero = Fr::from_u64(0);
-
-        let input = claims
-            .input
-            .expression()
-            .evaluate(|_| zero, |_| zero, |_| zero);
-        let output = claims.output.expression().evaluate(
-            |id| match *id {
-                id if id
-                    == fused_increment_inactive_source_opening(
-                        LatticeFusedIncrementTarget::Ram,
-                    ) =>
-                {
-                    ram_source
-                }
-                id if id
-                    == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd) =>
-                {
-                    rd_source
-                }
-                id if id == fused_increment_inactive_magnitude_opening() => magnitude,
-                id if id == fused_increment_inactive_sign_opening() => sign,
-                _ => zero,
-            },
-            |id| match id {
-                JoltChallengeId::FusedIncrementInactiveZero(
-                    FusedIncrementInactiveZeroChallenge::Beta,
-                ) => beta,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        assert_eq!(input, zero);
-        assert_eq!(output, magnitude + beta * sign);
-    }
-
-    #[test]
-    fn fused_increment_translation_claim_evaluates_signed_source_formula() {
-        let claims = fused_increment_translation_claim::<Fr>(TraceDimensions::new(5));
-        let ram_inc = Fr::from_u64(11);
-        let rd_inc = Fr::from_u64(13);
-        let ram_source = Fr::from_u64(1);
-        let rd_source = Fr::from_u64(0);
-        let magnitude = Fr::from_u64(19);
-        let sign = Fr::from_u64(1);
-        let gamma = Fr::from_u64(23);
-        let zero = Fr::from_u64(0);
-
-        let input = claims.input.expression().evaluate(
-            |id| match *id {
-                id if id
-                    == fused_increment_translation_input_opening(
-                        LatticeFusedIncrementTarget::Ram,
-                    ) =>
-                {
-                    ram_inc
-                }
-                id if id
-                    == fused_increment_translation_input_opening(
-                        LatticeFusedIncrementTarget::Rd,
-                    ) =>
-                {
-                    rd_inc
-                }
-                _ => zero,
-            },
-            |id| match id {
-                JoltChallengeId::FusedIncrementTranslation(
-                    FusedIncrementTranslationChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-        let output = claims.output.expression().evaluate(
-            |id| match *id {
-                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram) => {
-                    ram_source
-                }
-                id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd) => {
-                    rd_source
-                }
-                id if id == fused_increment_magnitude_opening() => magnitude,
-                id if id == fused_increment_sign_opening() => sign,
-                _ => zero,
-            },
-            |id| match id {
-                JoltChallengeId::FusedIncrementTranslation(
-                    FusedIncrementTranslationChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        assert_eq!(input, ram_inc + gamma * rd_inc);
-        assert_eq!(output, -magnitude);
-    }
-
-    #[test]
-    fn fused_increment_source_formulas_use_committed_bytecode_lanes() {
+    fn unsigned_inc_decode_formulas_use_configured_chunks_and_msb() {
         assert_eq!(
-            fused_increment_source_lattice_view_formula::<Fr>(LatticeFusedIncrementTarget::Ram, 3),
-            LatticePackedViewFormula::direct(
-                LatticePackedFamilyId::BytecodeCircuitFlag {
-                    chunk: 3,
-                    flag: CircuitFlags::Store as usize,
-                },
-                0,
-                1
-            )
+            unsigned_inc_msb_lattice_view_formula::<Fr>(),
+            LatticePackedViewFormula::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1)
         );
 
-        let rd_present =
-            fused_increment_source_lattice_view_formula::<Fr>(LatticeFusedIncrementTarget::Rd, 2);
-        let terms = linear_decoded_terms(&rd_present);
-        assert_eq!(terms.len(), 1 << REGISTER_ADDRESS_BITS);
+        let lower = unsigned_inc_lower_value_lattice_view_formula::<Fr>(4)
+            .expect("4-bit chunking should be valid");
+        let terms = linear_decoded_terms(&lower);
+        assert_eq!(terms.len(), 16 * 16);
         assert_eq!(
             find_term(
                 terms,
-                LatticePackedFamilyId::BytecodeRegisterSelector {
-                    chunk: 2,
-                    selector: 2,
-                },
+                LatticePackedFamilyId::UnsignedIncChunk { index: 0 },
                 0,
-                0
+                7
             )
             .coefficient,
-            Fr::from_u64(1)
-        );
-        assert_eq!(
-            find_term(
-                terms,
-                LatticePackedFamilyId::BytecodeRegisterSelector {
-                    chunk: 2,
-                    selector: 2,
-                },
-                0,
-                (1 << REGISTER_ADDRESS_BITS) - 1
-            )
-            .coefficient,
-            Fr::from_u64(1)
-        );
-    }
-
-    #[test]
-    fn fused_increment_decode_formulas_use_sign_magnitude_families() {
-        assert_eq!(
-            fused_increment_sign_lattice_view_formula::<Fr>(),
-            LatticePackedViewFormula::direct(LatticePackedFamilyId::IncSign, 0, 1)
-        );
-
-        let magnitude = fused_increment_magnitude_lattice_view_formula::<Fr>();
-        let terms = linear_decoded_terms(&magnitude);
-        assert_eq!(terms.len(), FUSED_INCREMENT_BYTE_LIMBS * 256);
-        assert_eq!(
-            find_term(terms, LatticePackedFamilyId::IncByte { index: 0 }, 0, 7).coefficient,
             Fr::from_u64(7)
         );
         assert_eq!(
-            find_term(terms, LatticePackedFamilyId::IncByte { index: 1 }, 0, 3).coefficient,
-            Fr::from_u64(256 * 3)
+            find_term(
+                terms,
+                LatticePackedFamilyId::UnsignedIncChunk { index: 1 },
+                0,
+                3
+            )
+            .coefficient,
+            Fr::from_u64(16 * 3)
         );
         assert_eq!(
-            find_term(terms, LatticePackedFamilyId::IncByte { index: 7 }, 0, 2).coefficient,
-            Fr::from_u64(1u64 << 57)
+            find_term(
+                terms,
+                LatticePackedFamilyId::UnsignedIncChunk { index: 15 },
+                0,
+                2
+            )
+            .coefficient,
+            Fr::from_u64(1u64 << 60) * Fr::from_u64(2)
         );
     }
 
     #[test]
-    fn fused_increment_validity_requirements_cover_bytes_and_sign() {
-        let requirements = fused_increment_validity_requirements();
+    fn unsigned_inc_validity_requirements_cover_chunks_and_msb() {
+        let requirements =
+            unsigned_inc_validity_requirements(4).expect("4-bit chunking should be valid");
 
-        assert_eq!(requirements.len(), FUSED_INCREMENT_BYTE_LIMBS + 2);
+        assert_eq!(requirements.len(), 17);
         assert_eq!(
             requirements[0],
             LatticePackedValidityRequirement::exact_one_hot(
-                LatticePackedFamilyId::IncByte { index: 0 },
+                LatticePackedFamilyId::UnsignedIncChunk { index: 0 },
                 1,
-                256,
+                16,
             )
         );
         assert_eq!(
-            requirements[FUSED_INCREMENT_BYTE_LIMBS - 1],
+            requirements[15],
             LatticePackedValidityRequirement::exact_one_hot(
-                LatticePackedFamilyId::IncByte {
-                    index: FUSED_INCREMENT_BYTE_LIMBS - 1
-                },
+                LatticePackedFamilyId::UnsignedIncChunk { index: 15 },
                 1,
-                256,
+                16,
             )
         );
         assert_eq!(
-            requirements[FUSED_INCREMENT_BYTE_LIMBS],
+            requirements[16],
             LatticePackedValidityRequirement::boolean_indicator(
-                LatticePackedFamilyId::IncSign,
+                LatticePackedFamilyId::UnsignedIncMsb,
                 1,
                 2,
                 1,
             )
-        );
-        assert_eq!(
-            requirements[FUSED_INCREMENT_BYTE_LIMBS + 1],
-            LatticePackedValidityRequirement::fused_increment_canonical_zero()
         );
     }
 
     #[test]
     fn packed_validity_digest_is_order_stable_and_kind_sensitive() {
         let exact = LatticePackedValidityRequirement::exact_one_hot(
-            LatticePackedFamilyId::IncByte { index: 0 },
+            LatticePackedFamilyId::UnsignedIncChunk { index: 0 },
             1,
             256,
         );
-        let sign = LatticePackedValidityRequirement::boolean_indicator(
-            LatticePackedFamilyId::IncSign,
+        let msb = LatticePackedValidityRequirement::boolean_indicator(
+            LatticePackedFamilyId::UnsignedIncMsb,
             1,
             2,
             1,
         );
         let optional = LatticePackedValidityRequirement::optional_one_hot(
-            LatticePackedFamilyId::IncByte { index: 0 },
+            LatticePackedFamilyId::UnsignedIncChunk { index: 0 },
             1,
             256,
         );
 
         assert_eq!(
-            lattice_packed_validity_digest(&[exact.clone(), sign.clone()]),
-            lattice_packed_validity_digest(&[sign, exact.clone()])
+            lattice_packed_validity_digest(&[exact.clone(), msb.clone()]),
+            lattice_packed_validity_digest(&[msb, exact.clone()])
         );
         assert_ne!(
             lattice_packed_validity_digest(&[exact]),

@@ -395,6 +395,11 @@ Milestone details:
   The verifier exposes curve/lattice PCS-family config, rejects unsupported
   combinations, binds the PackedWitness layout, and dispatches Stage 8 by
   selected PCS.
+
+08-fused-increment-piop:
+  Proposed replacement for the earlier byte/sign fused increment surface in 05.
+  Akita uses UnsignedIncChunk(j) plus a size-T UnsignedIncMsb, adds an
+  Akita-only Stage 5i/Stage 5 increment proof, and leaves Dory unchanged.
 ```
 
 ## Implementation Evidence
@@ -581,4 +586,5 @@ open:
 - 05-onehot-increments.md
 - 06-advice-and-aux-onehotting.md
 - 07-verifier-config-and-tests.md
+- 08-fused-increment-piop.md
 ```

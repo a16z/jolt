@@ -51,24 +51,8 @@ pub struct IncClaimReductionOutputOpeningClaims<F: Field> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
-pub struct FusedIncrementTranslationOutputClaims<F: Field> {
-    pub ram_source: F,
-    pub magnitude: F,
-    pub sign: F,
-    pub rd_source: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
-pub struct FusedIncrementSourceLinkOutputClaims<F: Field> {
-    pub bytecode_ra: Vec<F>,
-    pub store_flag: F,
-    pub rd_present: F,
-    #[serde(default)]
-    pub store_flag_chunks: Vec<F>,
-    #[serde(default)]
-    pub rd_present_chunks: Vec<F>,
+pub struct UnsignedIncClaimReductionOutputOpeningClaims<F: Field> {
+    pub unsigned_inc: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

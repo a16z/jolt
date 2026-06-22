@@ -372,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn akita_requires_fused_increments() {
+    fn akita_requires_packed_onehot_increments() {
         let mut dense = valid_lattice_config();
         dense.lattice.increment_mode = IncrementCommitmentMode::Dense;
         let mut separate = valid_lattice_config();

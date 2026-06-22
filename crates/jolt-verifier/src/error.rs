@@ -63,6 +63,12 @@ pub enum VerifierError {
     #[error("proof field {field} must be committed for ZK verification")]
     ExpectedCommittedProof { field: &'static str },
 
+    #[error("proof is missing optional stage proof field {field}")]
+    MissingStageProof { field: &'static str },
+
+    #[error("proof unexpectedly includes optional stage proof field {field}")]
+    UnexpectedStageProof { field: &'static str },
+
     #[error("clear proof is missing opening claims")]
     MissingOpeningClaims,
 

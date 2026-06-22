@@ -298,7 +298,7 @@ mod tests {
             pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
         };
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::IncSign,
+            PackedFamilyId::UnsignedIncMsb,
             PackedFactDomain::TraceRows { log_t: 0 },
             1,
             PackedAlphabet::Bit,
@@ -309,7 +309,7 @@ mod tests {
             [PackedViewEntry::new(
                 id,
                 id,
-                PackedViewFormula::direct(PackedFamilyId::IncSign, 0, 1),
+                PackedViewFormula::direct(PackedFamilyId::UnsignedIncMsb, 0, 1),
             )],
         )
         .unwrap_or_else(|error| panic!("test catalog should be valid: {error}"));
@@ -329,7 +329,7 @@ mod tests {
             } if *layout_digest == layout.digest
                 && terms.len() == 1
                 && terms[0].coefficient == Fr::from_u64(1)
-                && terms[0].family == PackedFamilyId::IncSign.physical_ref()
+                && terms[0].family == PackedFamilyId::UnsignedIncMsb.physical_ref()
                 && terms[0].symbol == 1
         ));
     }
@@ -425,7 +425,7 @@ mod tests {
             pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
         };
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::IncSign,
+            PackedFamilyId::UnsignedIncMsb,
             PackedFactDomain::TraceRows { log_t: 0 },
             1,
             PackedAlphabet::Bit,
@@ -438,7 +438,11 @@ mod tests {
                 &layout,
                 [(
                     Stage8OpeningId::from(supplied_id),
-                    LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1,),
+                    LatticePackedViewFormula::<Fr>::direct(
+                        LatticePackedFamilyId::UnsignedIncMsb,
+                        0,
+                        1,
+                    ),
                     vec![Fr::from_u64(1)],
                 )],
             ),
@@ -469,7 +473,7 @@ mod tests {
             pcs_opening_point: Point::high_to_low(vec![Fr::from_u64(4)]),
         };
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::IncSign,
+            PackedFamilyId::UnsignedIncMsb,
             PackedFactDomain::TraceRows { log_t: 0 },
             1,
             PackedAlphabet::Bit,
@@ -483,7 +487,7 @@ mod tests {
                 [(
                     Stage8OpeningId::from(jolt_id),
                     LatticePackedViewFormula::<Fr>::masked_decoded(
-                        JoltRelationId::FusedIncrementTranslation,
+                        JoltRelationId::UnsignedIncClaimReduction,
                     ),
                     vec![Fr::from_u64(1)],
                 )],

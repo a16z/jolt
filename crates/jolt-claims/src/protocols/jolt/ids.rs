@@ -30,10 +30,9 @@ pub enum JoltRelationId {
     ProgramImageClaimReductionCyclePhase,
     ProgramImageClaimReduction,
     IncClaimReduction,
-    FusedIncrementTranslation,
-    FusedIncrementSourceLink,
-    FusedIncrementInactiveZero,
-    FusedIncrementInactiveSourceLink,
+    IncVirtualization,
+    UnsignedIncClaimReduction,
+    UnsignedIncChunkReconstruction,
     HammingWeightClaimReduction,
 }
 
@@ -98,22 +97,12 @@ pub enum IncClaimReductionChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FusedIncrementTranslationChallenge {
+pub enum IncVirtualizationChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FusedIncrementSourceLinkChallenge {
-    Gamma,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FusedIncrementInactiveZeroChallenge {
-    Beta,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FusedIncrementInactiveSourceLinkChallenge {
+pub enum UnsignedIncChunkReconstructionChallenge {
     Gamma,
 }
 
@@ -123,6 +112,20 @@ pub enum IncClaimReductionPublic {
     EqRamValCheck,
     EqRegistersReadWrite,
     EqRegistersValEvaluation,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum IncVirtualizationPublic {
+    EqRamReadWrite,
+    EqRamValCheck,
+    EqRegistersReadWrite,
+    EqRegistersValEvaluation,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum UnsignedIncChunkReconstructionPublic {
+    EqBooleanityAddress,
+    IdentityAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -265,10 +268,8 @@ pub enum JoltChallengeId {
     RamHammingBooleanity(RamHammingBooleanityChallenge),
     Booleanity(BooleanityChallenge),
     IncClaimReduction(IncClaimReductionChallenge),
-    FusedIncrementTranslation(FusedIncrementTranslationChallenge),
-    FusedIncrementSourceLink(FusedIncrementSourceLinkChallenge),
-    FusedIncrementInactiveZero(FusedIncrementInactiveZeroChallenge),
-    FusedIncrementInactiveSourceLink(FusedIncrementInactiveSourceLinkChallenge),
+    IncVirtualization(IncVirtualizationChallenge),
+    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
     BytecodeClaimReduction(BytecodeClaimReductionChallenge),
@@ -411,6 +412,8 @@ pub enum JoltPublicId {
     RamRaClaimReduction(RamRaClaimReductionPublic),
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
+    IncVirtualization(IncVirtualizationPublic),
+    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
     BytecodeReadRaf(BytecodeReadRafPublic),
     AdviceClaimReduction(AdviceClaimReductionPublic),

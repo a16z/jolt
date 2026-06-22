@@ -12,7 +12,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
+        stage1, stage2, stage3, stage4, stage5, stage5_increment, stage6, stage7, stage8,
         zk::{blindfold, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
     },
     verifier::{absorb_commitments, absorb_preamble, validate_inputs, validate_proof_consistency},
@@ -115,12 +115,25 @@ where
         &mut transcript,
         stage5::deps(&stage2, &stage4)?,
     )?;
+    let stage5_increment = stage5_increment::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stage5_increment::deps(&stage2, &stage4, &stage5),
+    )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        stage6::deps(
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            stage5_increment.as_ref(),
+        )?,
     )?;
     let stage7 = stage7::verify(
         &checked,

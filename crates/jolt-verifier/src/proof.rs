@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{validate_protocol_config, JoltProtocolConfig, PcsFamily},
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6, stage7},
+    stages::{stage1, stage2, stage3, stage4, stage5, stage5_increment, stage6, stage7},
     VerifierError,
 };
 
@@ -414,6 +414,8 @@ pub struct ClearProofClaims<F: Field> {
     pub stage3: stage3::inputs::Stage3Claims<F>,
     pub stage4: stage4::inputs::Stage4Claims<F>,
     pub stage5: stage5::inputs::Stage5Claims<F>,
+    #[serde(default)]
+    pub stage5_increment: Option<stage5_increment::Stage5IncrementClaims<F>>,
     pub stage6: stage6::inputs::Stage6Claims<F>,
     pub stage7: stage7::inputs::Stage7Claims<F>,
 }
@@ -436,6 +438,8 @@ where
     pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    #[serde(default)]
+    pub stage5_increment_sumcheck_proof: Option<SumcheckProof<F, VC::Output>>,
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,

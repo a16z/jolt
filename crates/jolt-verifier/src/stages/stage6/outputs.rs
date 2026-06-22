@@ -70,6 +70,7 @@ pub struct Stage6ZkOutput<F: Field, C> {
     pub ram_ra_virtualization: RamRaVirtualizationPublicOutput<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationPublicOutput<F>,
     pub inc_claim_reduction: Stage6SumcheckPublicOutput<F>,
+    pub unsigned_inc_claim_reduction: Option<Stage6SumcheckPublicOutput<F>>,
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction: Stage6SumcheckPublicOutput<F>,
     pub trusted_advice_cycle_phase: Option<AdviceCyclePhasePublicOutput<F>>,
@@ -106,12 +107,9 @@ pub struct VerifiedStage6Batch<F: Field> {
     pub ram_ra_virtualization: VerifiedRamRaVirtualizationSumcheck<F>,
     pub instruction_ra_virtualization: VerifiedInstructionRaVirtualizationSumcheck<F>,
     pub inc_claim_reduction: VerifiedStage6Sumcheck<F>,
+    pub unsigned_inc_claim_reduction: Option<VerifiedStage6Sumcheck<F>>,
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction: VerifiedStage6Sumcheck<F>,
-    pub fused_increment_translation: Option<VerifiedStage6Sumcheck<F>>,
-    pub fused_increment_source_link: Option<VerifiedBytecodeReadRafSumcheck<F>>,
-    pub fused_increment_inactive_zero: Option<VerifiedStage6Sumcheck<F>>,
-    pub fused_increment_inactive_source_link: Option<VerifiedBytecodeReadRafSumcheck<F>>,
     pub trusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub untrusted_advice_cycle_phase: Option<VerifiedAdviceCyclePhaseSumcheck<F>>,
     pub bytecode_cycle_phase: Option<VerifiedBytecodeCyclePhaseSumcheck<F>>,

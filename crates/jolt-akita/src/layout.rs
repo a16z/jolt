@@ -5,7 +5,9 @@ use std::fmt::{self, Display, Formatter};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
-use jolt_openings::PackedFamilyRef;
+use jolt_openings::{
+    OpeningsError, PackedFamilyRef, PackedLinearAddress, PackedLinearFamily, PackedLinearLayout,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{AkitaLayoutDigest, AkitaSetupParams};
@@ -240,6 +242,60 @@ impl PackedWitnessLayout {
     }
 }
 
+impl PackedLinearLayout for PackedWitnessLayout {
+    fn digest(&self) -> [u8; 32] {
+        self.digest
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    fn cells(&self) -> usize {
+        self.cells
+    }
+
+    fn family(&self, family: PackedFamilyRef) -> Result<Option<PackedLinearFamily>, OpeningsError> {
+        self.families
+            .iter()
+            .find(|candidate| candidate.id.physical_ref() == family)
+            .map(|candidate| {
+                let rows = candidate.domain.rows().map_err(layout_error)?;
+                Ok(PackedLinearFamily {
+                    id: family,
+                    offset: candidate.offset,
+                    rows,
+                    limbs: candidate.limbs,
+                    alphabet_size: candidate.alphabet.size(),
+                })
+            })
+            .transpose()
+    }
+
+    fn rank(&self, address: PackedLinearAddress) -> Result<usize, OpeningsError> {
+        let family = self
+            .families
+            .iter()
+            .find(|candidate| candidate.id.physical_ref() == address.family)
+            .ok_or_else(|| {
+                OpeningsError::InvalidBatch(
+                    "packed linear term references an unknown family".to_string(),
+                )
+            })?;
+        self.rank(&PackedCellAddress {
+            family: family.id.clone(),
+            row: address.row,
+            limb: address.limb,
+            symbol: address.symbol,
+        })
+        .map_err(layout_error)
+    }
+}
+
+fn layout_error(error: impl ToString) -> OpeningsError {
+    OpeningsError::InvalidBatch(error.to_string())
+}
+
 impl AkitaSetupParams {
     pub fn from_packed_layout(
         layout: &PackedWitnessLayout,
@@ -312,10 +368,10 @@ pub enum PackedFamilyId {
     RamRa {
         index: usize,
     },
-    IncByte {
+    UnsignedIncChunk {
         index: usize,
     },
-    IncSign,
+    UnsignedIncMsb,
     FieldRdIncByte {
         index: usize,
     },
@@ -366,8 +422,8 @@ impl PackedFamilyId {
             Self::InstructionRa { index } => (0, *index as u64),
             Self::BytecodeRa { index } => (1, *index as u64),
             Self::RamRa { index } => (2, *index as u64),
-            Self::IncByte { index } => (3, *index as u64),
-            Self::IncSign => (4, 0),
+            Self::UnsignedIncChunk { index } => (3, *index as u64),
+            Self::UnsignedIncMsb => (4, 0),
             Self::FieldRdIncByte { index } => (9, *index as u64),
             Self::FieldRdIncSign => (10, 0),
             Self::AdviceBytes { kind, index } => match kind {
@@ -744,11 +800,11 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
             bytes.push(2);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::IncByte { index } => {
+        PackedFamilyId::UnsignedIncChunk { index } => {
             bytes.push(3);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::IncSign => bytes.push(4),
+        PackedFamilyId::UnsignedIncMsb => bytes.push(4),
         PackedFamilyId::FieldRdIncByte { index } => {
             bytes.push(9);
             write_usize(bytes, *index);
@@ -867,11 +923,11 @@ mod tests {
         specs
     }
 
-    fn fused_increment_specs(log_t: usize) -> Vec<PackedFamilySpec> {
+    fn unsigned_increment_specs(log_t: usize) -> Vec<PackedFamilySpec> {
         let mut specs = (0..8)
-            .map(|index| byte_family(PackedFamilyId::IncByte { index }, log_t))
+            .map(|index| byte_family(PackedFamilyId::UnsignedIncChunk { index }, log_t))
             .collect::<Vec<_>>();
-        specs.push(bit_family(PackedFamilyId::IncSign, log_t));
+        specs.push(bit_family(PackedFamilyId::UnsignedIncMsb, log_t));
         specs
     }
 
@@ -879,7 +935,7 @@ mod tests {
     fn packed_witness_layout_digest_stable() {
         let mut specs = vec![
             byte_family(PackedFamilyId::RamRa { index: 0 }, 4),
-            bit_family(PackedFamilyId::IncSign, 4),
+            bit_family(PackedFamilyId::UnsignedIncMsb, 4),
             byte_family(PackedFamilyId::InstructionRa { index: 0 }, 4),
         ];
         let layout_a = PackedWitnessLayout::new(specs.clone()).expect("layout should build");
@@ -912,10 +968,10 @@ mod tests {
     }
 
     #[test]
-    fn fused_increment_budget_is_n_plus_13() {
+    fn unsigned_increment_budget_is_n_plus_13() {
         let log_t = 20;
         let mut specs = base_ra_specs(log_t);
-        specs.extend(fused_increment_specs(log_t));
+        specs.extend(unsigned_increment_specs(log_t));
 
         let layout = PackedWitnessLayout::new(specs).expect("layout should build");
         let audit = layout.audit();
@@ -926,7 +982,7 @@ mod tests {
 
     #[test]
     fn bit_fact_costs_two_cells_per_row() {
-        let layout = PackedWitnessLayout::new([bit_family(PackedFamilyId::IncSign, 5)])
+        let layout = PackedWitnessLayout::new([bit_family(PackedFamilyId::UnsignedIncMsb, 5)])
             .expect("layout should build");
         let audit = layout.audit();
 
@@ -939,7 +995,7 @@ mod tests {
     fn rank_unrank_roundtrip() {
         let layout = PackedWitnessLayout::new([
             byte_family(PackedFamilyId::RamRa { index: 0 }, 1),
-            bit_family(PackedFamilyId::IncSign, 1),
+            bit_family(PackedFamilyId::UnsignedIncMsb, 1),
             PackedFamilySpec::direct(
                 PackedFamilyId::BytecodeChunk { index: 0 },
                 PackedFactDomain::BytecodeRows { log_bytecode: 1 },
@@ -1112,7 +1168,7 @@ mod tests {
     fn planner_audit_fields_are_reported() {
         let layout = PackedWitnessLayout::new([
             byte_family(PackedFamilyId::InstructionRa { index: 0 }, 2),
-            bit_family(PackedFamilyId::IncSign, 2),
+            bit_family(PackedFamilyId::UnsignedIncMsb, 2),
             PackedFamilySpec::direct(
                 PackedFamilyId::AdviceBytes {
                     kind: PackedAdviceKind::Trusted,
@@ -1147,7 +1203,7 @@ mod tests {
     fn packed_witness_source_respects_layout() {
         let layout = PackedWitnessLayout::new([
             byte_family(PackedFamilyId::RamRa { index: 0 }, 1),
-            bit_family(PackedFamilyId::IncSign, 1),
+            bit_family(PackedFamilyId::UnsignedIncMsb, 1),
         ])
         .expect("layout should build");
         let one_address = PackedCellAddress {
@@ -1157,7 +1213,7 @@ mod tests {
             symbol: 17,
         };
         let sign_address = PackedCellAddress {
-            family: PackedFamilyId::IncSign,
+            family: PackedFamilyId::UnsignedIncMsb,
             row: 0,
             limb: 0,
             symbol: 1,
@@ -1200,7 +1256,7 @@ mod tests {
             .validate_view_families(&[PackedFamilyId::RamRa { index: 0 }])
             .expect("existing family should validate");
         assert!(matches!(
-            layout.validate_view_families(&[PackedFamilyId::IncSign]),
+            layout.validate_view_families(&[PackedFamilyId::UnsignedIncMsb]),
             Err(PackedLayoutError::MissingViewFamily { .. })
         ));
     }
@@ -1217,7 +1273,7 @@ mod tests {
 
     #[test]
     fn sparse_source_rejects_out_of_layout_ranks() {
-        let layout = PackedWitnessLayout::new([bit_family(PackedFamilyId::IncSign, 0)])
+        let layout = PackedWitnessLayout::new([bit_family(PackedFamilyId::UnsignedIncMsb, 0)])
             .expect("layout should build");
 
         assert!(matches!(

@@ -20,7 +20,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{CommitmentPayload, JoltProof},
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
+        stage1, stage2, stage3, stage4, stage5, stage5_increment, stage6, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
         CommittedProgramSchedule, PrecommittedSchedule,
     },
@@ -146,12 +146,25 @@ where
         &mut transcript,
         stage5::deps(&stage2, &stage4)?,
     )?;
+    let _stage5_increment = stage5_increment::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stage5_increment::deps(&stage2, &stage4, &stage5),
+    )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        stage6::deps(
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            _stage5_increment.as_ref(),
+        )?,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -279,12 +292,25 @@ where
         &mut transcript,
         stage5::deps(&stage2, &stage4)?,
     )?;
+    let _stage5_increment = stage5_increment::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stage5_increment::deps(&stage2, &stage4, &stage5),
+    )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        stage6::deps(
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            _stage5_increment.as_ref(),
+        )?,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -487,12 +513,25 @@ where
         &mut transcript,
         stage5::deps(&stage2, &stage4)?,
     )?;
+    let _stage5_increment = stage5_increment::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stage5_increment::deps(&stage2, &stage4, &stage5),
+    )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        stage6::deps(
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            _stage5_increment.as_ref(),
+        )?,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -590,6 +629,7 @@ where
             &preprocessing.pcs_setup,
             transcript,
             config,
+            proof.one_hot_config.committed_chunk_bits(),
             &checked.precommitted,
             &layout,
             payload.packed_witness.clone(),
@@ -792,7 +832,11 @@ where
             &checked.precommitted,
         )?;
         stage8::validate_akita_packed_witness_layout_config(config, &layout)?;
-        stage8::validate_akita_packed_witness_validity_config(config, &checked.precommitted)
+        stage8::validate_akita_packed_witness_validity_config(
+            config,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        )
     }
 }
 
@@ -915,8 +959,11 @@ where
             formula_dimensions.ra_layout,
             &checked.precommitted,
         )?;
-        let requirements =
-            stage8::derive_akita_packed_validity_requirements(config, &checked.precommitted)?;
+        let requirements = stage8::derive_akita_packed_validity_requirements(
+            config,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        )?;
         let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)?;
         let expected_opening_claims = stage8::lattice_packed_validity_opening_count(&statements);
         if validity_claims.opening_claims.len() != expected_opening_claims {
@@ -1285,8 +1332,7 @@ mod tests {
     #[cfg(feature = "akita")]
     use jolt_claims::protocols::jolt::{
         formulas::{
-            claim_reductions::bytecode,
-            dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
+            claim_reductions::bytecode, dimensions::JoltFormulaDimensions,
             ra::JoltRaPolynomialLayout,
         },
         lattice_packed_validity_digest, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId,
@@ -1624,17 +1670,7 @@ mod tests {
             value
         }
 
-        let (_, _, _, mut proof) = lattice_validity_surface_fixture();
-        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-            panic!("Akita fixture should be a clear proof");
-        };
-        claims.stage6.fused_increment_translation =
-            Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
-                ram_source: Fr::zero(),
-                magnitude: Fr::zero(),
-                sign: Fr::zero(),
-                rd_source: Fr::zero(),
-            });
+        let (_, _, _, proof) = lattice_validity_surface_fixture();
         let value = serde_json::to_value(proof).expect("Akita proof should serialize");
 
         for (path, field) in [
@@ -1642,10 +1678,7 @@ mod tests {
                 &["claims", "Clear", "stage7", "lattice_packed_validity"][..],
                 "extra_validity_claim",
             ),
-            (
-                &["claims", "Clear", "stage6", "fused_increment_translation"][..],
-                "extra_fused_translation",
-            ),
+            (&["claims", "Clear", "stage6"][..], "extra_stage6_claim"),
         ] {
             assert!(
                 serde_json::from_value::<TestProof>(with_extra_field(value.clone(), path, field))
@@ -2094,11 +2127,9 @@ mod tests {
             .as_ref()
             .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
             .chunk_count();
-        let source_component_count =
-            2 * bytecode_chunk_count * (1 + (1usize << REGISTER_ADDRESS_BITS));
         assert_eq!(
             batch.precommitted_statements.len(),
-            source_component_count + bytecode_chunk_count + 1
+            bytecode_chunk_count + 1
         );
         assert!(batch.precommitted_statements.iter().all(|statement| {
             statement.claims.len() == 1
@@ -2112,37 +2143,7 @@ mod tests {
             .iter()
             .map(|statement| statement.claims[0].id)
             .collect::<Vec<_>>();
-        let active_store_id = stage8::Stage8OpeningId::from(
-            jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
-                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Ram,
-            ),
-        );
-        let active_rd_id = stage8::Stage8OpeningId::from(
-            jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
-                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Rd,
-            ),
-        );
-        let inactive_store_id = stage8::Stage8OpeningId::from(
-            jolt_claims::protocols::jolt::fused_increment_inactive_bytecode_source_opening(
-                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Ram,
-            ),
-        );
-        let inactive_rd_id = stage8::Stage8OpeningId::from(
-            jolt_claims::protocols::jolt::fused_increment_inactive_bytecode_source_opening(
-                jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Rd,
-            ),
-        );
         let count_id = |id| precommitted_ids.iter().filter(|&&got| got == id).count();
-        assert_eq!(count_id(active_store_id), bytecode_chunk_count);
-        assert_eq!(
-            count_id(active_rd_id),
-            bytecode_chunk_count * (1usize << REGISTER_ADDRESS_BITS)
-        );
-        assert_eq!(count_id(inactive_store_id), bytecode_chunk_count);
-        assert_eq!(
-            count_id(inactive_rd_id),
-            bytecode_chunk_count * (1usize << REGISTER_ADDRESS_BITS)
-        );
         for chunk in 0..bytecode_chunk_count {
             assert_eq!(
                 count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
@@ -2157,20 +2158,6 @@ mod tests {
             ))),
             1
         );
-        assert!(!batch.statement.claims.iter().any(|claim| {
-            claim.id
-                == stage8::Stage8OpeningId::from(
-                    jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
-                        jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Ram,
-                    ),
-                )
-                || claim.id
-                    == stage8::Stage8OpeningId::from(
-                        jolt_claims::protocols::jolt::fused_increment_bytecode_source_opening(
-                            jolt_claims::protocols::jolt::LatticeFusedIncrementTarget::Rd,
-                        ),
-                    )
-        }));
     }
 
     #[cfg(feature = "akita")]
@@ -2230,13 +2217,13 @@ mod tests {
             .as_ref()
             .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
             .chunk_count();
-        let source_component_count =
-            2 * bytecode_chunk_count * (1 + (1usize << REGISTER_ADDRESS_BITS));
+        let expected_precommitted_count = bytecode_chunk_count + 1;
         assert_eq!(
             batch.precommitted_statements.len(),
-            source_component_count + bytecode_chunk_count + 1
+            expected_precommitted_count
         );
-        proof.lattice_precommitted_opening_proofs = vec![(); source_component_count];
+        proof.lattice_precommitted_opening_proofs =
+            vec![(); expected_precommitted_count.saturating_sub(1)];
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"akita-stage8-test");
 
         let result = stage8::verify_clear::<
@@ -2261,8 +2248,9 @@ mod tests {
             result,
             Err(VerifierError::FinalOpeningVerificationFailed { reason })
                 if reason.contains(&format!(
-                    "expected {} precommitted opening proofs, got {source_component_count}",
-                    source_component_count + bytecode_chunk_count + 1
+                    "expected {} precommitted opening proofs, got {}",
+                    expected_precommitted_count,
+                    expected_precommitted_count.saturating_sub(1)
                 ))
         ));
     }
@@ -2621,6 +2609,7 @@ mod tests {
                         },
                 },
             },
+            stage5_increment: None,
             stage6: stage6::inputs::Stage6Claims {
                 address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                     bytecode_read_raf: zero,
@@ -2649,6 +2638,7 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                unsigned_inc_claim_reduction: None,
                 #[cfg(feature = "field-inline")]
                 field_inline: stage6::inputs::FieldInlineStage6Claims {
                     field_registers_inc_claim_reduction:
@@ -2656,10 +2646,6 @@ mod tests {
                             field_rd_inc: zero,
                         },
                 },
-                fused_increment_translation: None,
-                fused_increment_source_link: None,
-                fused_increment_inactive_zero: None,
-                fused_increment_inactive_source_link: None,
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,
@@ -2774,6 +2760,7 @@ mod tests {
             stage3_sumcheck_proof: sumcheck_proof(is_zk),
             stage4_sumcheck_proof: sumcheck_proof(is_zk),
             stage5_sumcheck_proof: sumcheck_proof(is_zk),
+            stage5_increment_sumcheck_proof: None,
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
@@ -2896,8 +2883,9 @@ mod tests {
         precommitted: &crate::stages::PrecommittedSchedule,
     ) -> JoltProtocolConfig {
         let mut config = lattice_config(layout_digest, d_pack);
-        let requirements = stage8::derive_akita_packed_validity_requirements(&config, precommitted)
-            .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        let requirements =
+            stage8::derive_akita_packed_validity_requirements(&config, 8, precommitted)
+                .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         config.lattice.packed_witness.validity_digest =
             Some(lattice_packed_validity_digest(&requirements));
         config
@@ -2945,8 +2933,12 @@ mod tests {
             &precommitted,
         )
         .unwrap_or_else(|error| panic!("packed witness layout should derive: {error}"));
-        let requirements = stage8::derive_akita_packed_validity_requirements(config, &precommitted)
-            .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        let requirements = stage8::derive_akita_packed_validity_requirements(
+            config,
+            proof.one_hot_config.committed_chunk_bits(),
+            &precommitted,
+        )
+        .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)
             .unwrap_or_else(|error| panic!("validity statements should derive: {error}"));
 
@@ -3036,9 +3028,12 @@ mod tests {
         let layout = expected_lattice_layout(&config, &preprocessing, &proof, &checked);
         config.lattice.packed_witness.layout_digest = Some(layout.digest);
         config.lattice.packed_witness.d_pack = Some(layout.dimension);
-        let requirements =
-            stage8::derive_akita_packed_validity_requirements(&config, &checked.precommitted)
-                .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        let requirements = stage8::derive_akita_packed_validity_requirements(
+            &config,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        )
+        .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         config.lattice.packed_witness.validity_digest =
             Some(lattice_packed_validity_digest(&requirements));
         proof.protocol = config;
@@ -3081,49 +3076,18 @@ mod tests {
 
     #[cfg(feature = "akita")]
     fn akita_snapshot_stage6_output(
-        bytecode_ra_count: usize,
+        _bytecode_ra_count: usize,
         log_t: usize,
-        log_k_chunk: usize,
-        bytecode_chunk_count: usize,
-        bytecode_address_point: Vec<Fr>,
+        _log_k_chunk: usize,
+        _bytecode_chunk_count: usize,
+        _bytecode_address_point: Vec<Fr>,
     ) -> stage6::Stage6ClearOutput<Fr> {
         let zero = Fr::zero();
         let trace_point = field_zeros(log_t);
-        let ra_point = field_zeros(log_k_chunk + log_t);
-        let source_store_components = field_zeros(bytecode_chunk_count);
-        let source_rd_components =
-            field_zeros(bytecode_chunk_count * (1usize << REGISTER_ADDRESS_BITS));
         let mut output_claims = clear_claim_payload().stage6;
-        output_claims.fused_increment_translation =
-            Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
-                ram_source: zero,
-                magnitude: zero,
-                sign: zero,
-                rd_source: zero,
-            });
-        output_claims.fused_increment_source_link =
-            Some(stage6::inputs::FusedIncrementSourceLinkOutputClaims {
-                bytecode_ra: field_zeros(bytecode_ra_count),
-                store_flag: zero,
-                rd_present: zero,
-                store_flag_chunks: source_store_components.clone(),
-                rd_present_chunks: source_rd_components.clone(),
-            });
-        output_claims.fused_increment_inactive_zero =
-            Some(stage6::inputs::FusedIncrementTranslationOutputClaims {
-                ram_source: zero,
-                magnitude: zero,
-                sign: zero,
-                rd_source: zero,
-            });
-        output_claims.fused_increment_inactive_source_link =
-            Some(stage6::inputs::FusedIncrementSourceLinkOutputClaims {
-                bytecode_ra: field_zeros(bytecode_ra_count),
-                store_flag: zero,
-                rd_present: zero,
-                store_flag_chunks: source_store_components,
-                rd_present_chunks: source_rd_components,
-            });
+        output_claims.unsigned_inc_claim_reduction = Some(
+            stage6::inputs::UnsignedIncClaimReductionOutputOpeningClaims { unsigned_inc: zero },
+        );
 
         stage6::Stage6ClearOutput {
             public: stage6::outputs::Stage6PublicOutput {
@@ -3188,20 +3152,9 @@ mod tests {
                         expected_output_claim: zero,
                     },
                 inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
+                unsigned_inc_claim_reduction: Some(verified_stage6_sumcheck(trace_point.clone())),
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
-                fused_increment_translation: Some(verified_stage6_sumcheck(trace_point.clone())),
-                fused_increment_source_link: Some(verified_bytecode_read_raf(
-                    bytecode_address_point.clone(),
-                    trace_point.clone(),
-                    vec![ra_point.clone(); bytecode_ra_count],
-                )),
-                fused_increment_inactive_zero: Some(verified_stage6_sumcheck(trace_point.clone())),
-                fused_increment_inactive_source_link: Some(verified_bytecode_read_raf(
-                    bytecode_address_point.clone(),
-                    trace_point,
-                    vec![ra_point; bytecode_ra_count],
-                )),
                 trusted_advice_cycle_phase: None,
                 untrusted_advice_cycle_phase: None,
                 bytecode_cycle_phase: None,

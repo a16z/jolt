@@ -6,11 +6,10 @@ use serde::{Deserialize, Serialize};
 pub use super::inputs_a::Stage6AddressPhaseClaims;
 pub use super::inputs_b::{
     AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims, BytecodeCyclePhaseOutputClaims,
-    BytecodeReadRafOutputOpeningClaims, FusedIncrementSourceLinkOutputClaims,
-    FusedIncrementTranslationOutputClaims, IncClaimReductionOutputOpeningClaims,
+    BytecodeReadRafOutputOpeningClaims, IncClaimReductionOutputOpeningClaims,
     InstructionRaVirtualizationOutputOpeningClaims, ProgramImageCyclePhaseOutputClaim,
     RamHammingBooleanityOutputOpeningClaims, RamRaVirtualizationOutputOpeningClaims,
-    Stage6AdviceCyclePhaseClaims,
+    Stage6AdviceCyclePhaseClaims, UnsignedIncClaimReductionOutputOpeningClaims,
 };
 use crate::stages::{
     stage1::{Stage1ClearOutput, Stage1Output},
@@ -18,6 +17,7 @@ use crate::stages::{
     stage3::{Stage3ClearOutput, Stage3Output},
     stage4::{Stage4ClearOutput, Stage4Output},
     stage5::{Stage5ClearOutput, Stage5Output, Stage5ZkOutput},
+    stage5_increment::Stage5IncrementClearOutput,
 };
 
 #[derive(Clone, Copy)]
@@ -28,6 +28,7 @@ pub enum Deps<'a, F: Field, C> {
         stage3: &'a Stage3ClearOutput<F>,
         stage4: &'a Stage4ClearOutput<F>,
         stage5: &'a Stage5ClearOutput<F>,
+        stage5_increment: Option<&'a Stage5IncrementClearOutput<F>>,
     },
     Zk {
         stage5: &'a Stage5ZkOutput<F, C>,
@@ -40,6 +41,7 @@ pub fn deps<'a, F: Field, C>(
     stage3: &'a Stage3Output<F, C>,
     stage4: &'a Stage4Output<F, C>,
     stage5: &'a Stage5Output<F, C>,
+    stage5_increment: Option<&'a Stage5IncrementClearOutput<F>>,
 ) -> Result<Deps<'a, F, C>, crate::VerifierError> {
     match (stage1, stage2, stage3, stage4, stage5) {
         (
@@ -54,6 +56,7 @@ pub fn deps<'a, F: Field, C>(
             stage3,
             stage4,
             stage5,
+            stage5_increment,
         }),
         (
             Stage1Output::Zk(_),
@@ -82,20 +85,11 @@ pub struct Stage6Claims<F: Field> {
     pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
     pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
+    /// Lattice PCS mode only, once Stage 5 increment virtualization is present.
+    #[serde(default)]
+    pub unsigned_inc_claim_reduction: Option<UnsignedIncClaimReductionOutputOpeningClaims<F>>,
     #[cfg(feature = "field-inline")]
     pub field_inline: FieldInlineStage6Claims<F>,
-    /// Lattice PCS mode only, once the fused increment translation sumcheck is present.
-    #[serde(default)]
-    pub fused_increment_translation: Option<FusedIncrementTranslationOutputClaims<F>>,
-    /// Lattice PCS mode only, links fused translation source outputs to bytecode lanes.
-    #[serde(default)]
-    pub fused_increment_source_link: Option<FusedIncrementSourceLinkOutputClaims<F>>,
-    /// Lattice PCS mode only, proves inactive bytecode sources force zero fused increments.
-    #[serde(default)]
-    pub fused_increment_inactive_zero: Option<FusedIncrementTranslationOutputClaims<F>>,
-    /// Lattice PCS mode only, links inactive-zero source outputs to bytecode lanes.
-    #[serde(default)]
-    pub fused_increment_inactive_source_link: Option<FusedIncrementSourceLinkOutputClaims<F>>,
     pub advice_cycle_phase: Stage6AdviceCyclePhaseClaims<F>,
     /// Committed program mode only.
     pub bytecode_claim_reduction: Option<BytecodeCyclePhaseOutputClaims<F>>,
@@ -130,7 +124,7 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[test]
-    fn stage6_claims_default_missing_fused_increment_translation() {
+    fn stage6_claims_rejects_unknown_fields() {
         let zero = Fr::from_u64(0);
         let claims = Stage6Claims {
             address_phase: Stage6AddressPhaseClaims {
@@ -157,37 +151,12 @@ mod tests {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            unsigned_inc_claim_reduction: None,
             #[cfg(feature = "field-inline")]
             field_inline: FieldInlineStage6Claims {
                 field_registers_inc_claim_reduction:
                     FieldRegistersIncClaimReductionOutputOpeningClaims { field_rd_inc: zero },
             },
-            fused_increment_translation: Some(FusedIncrementTranslationOutputClaims {
-                ram_source: zero,
-                magnitude: zero,
-                sign: zero,
-                rd_source: zero,
-            }),
-            fused_increment_source_link: Some(FusedIncrementSourceLinkOutputClaims {
-                bytecode_ra: vec![zero],
-                store_flag: zero,
-                rd_present: zero,
-                store_flag_chunks: Vec::new(),
-                rd_present_chunks: Vec::new(),
-            }),
-            fused_increment_inactive_zero: Some(FusedIncrementTranslationOutputClaims {
-                ram_source: zero,
-                magnitude: zero,
-                sign: zero,
-                rd_source: zero,
-            }),
-            fused_increment_inactive_source_link: Some(FusedIncrementSourceLinkOutputClaims {
-                bytecode_ra: vec![zero],
-                store_flag: zero,
-                rd_present: zero,
-                store_flag_chunks: Vec::new(),
-                rd_present_chunks: Vec::new(),
-            }),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
                 untrusted: None,
@@ -197,32 +166,18 @@ mod tests {
         };
 
         let mut value = serde_json::to_value(claims).expect("claims should serialize");
-        let removed = value
+        let _ = value
             .as_object_mut()
             .expect("claims should serialize to a map")
-            .remove("fused_increment_translation");
-        assert!(removed.is_some());
-        let removed = value
-            .as_object_mut()
-            .expect("claims should serialize to a map")
-            .remove("fused_increment_source_link");
-        assert!(removed.is_some());
-        let removed = value
-            .as_object_mut()
-            .expect("claims should serialize to a map")
-            .remove("fused_increment_inactive_zero");
-        assert!(removed.is_some());
-        let removed = value
-            .as_object_mut()
-            .expect("claims should serialize to a map")
-            .remove("fused_increment_inactive_source_link");
-        assert!(removed.is_some());
+            .insert("extra_stage6_claim".to_string(), serde_json::json!(null));
 
-        let decoded: Stage6Claims<Fr> =
-            serde_json::from_value(value).expect("missing fused field should deserialize");
-        assert_eq!(decoded.fused_increment_translation, None);
-        assert_eq!(decoded.fused_increment_source_link, None);
-        assert_eq!(decoded.fused_increment_inactive_zero, None);
-        assert_eq!(decoded.fused_increment_inactive_source_link, None);
+        let error = serde_json::from_value::<Stage6Claims<Fr>>(value)
+            .expect_err("unknown Stage 6 fields should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("unknown field `extra_stage6_claim`"),
+            "{error}"
+        );
     }
 }

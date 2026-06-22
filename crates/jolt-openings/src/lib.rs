@@ -33,11 +33,19 @@ mod claims;
 mod error;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
+mod packed_linear;
 mod reduction;
 mod schemes;
 
 pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
+pub use packed_linear::{
+    has_packed_linear_view, prove_packed_linear_reduction, prove_sparse_packed_linear_reduction,
+    validate_packed_linear_statement, verify_packed_linear_reduction, PackedLinearAddress,
+    PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof, PackedLinearFamily,
+    PackedLinearLayout, PackedLinearProverReduction, PackedLinearReductionProof,
+    PackedLinearVerifierReduction, PackedLinearWitnessSource,
+};
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 
 pub use schemes::{

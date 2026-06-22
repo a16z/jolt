@@ -6,6 +6,7 @@ use jolt_akita::{
     AkitaField, PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId,
     PackedLayoutError, PackedWitnessLayout, SparsePackedWitness,
 };
+use jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count;
 
 #[derive(Clone, Debug)]
 pub struct JoltPackedWitnessBuilder {
@@ -77,7 +78,7 @@ impl JoltPackedWitnessBuilder {
                 }
             }
 
-            self.pack_increment_row(row_index, row)?;
+            self.pack_increment_row(row_index, row, log_k_chunk)?;
         }
         Ok(self)
     }
@@ -112,11 +113,12 @@ impl JoltPackedWitnessBuilder {
         &mut self,
         row_index: usize,
         row: &JoltTraceRow,
+        log_k_chunk: usize,
     ) -> Result<(), JoltPackedWitnessError> {
         let is_store = row.is_store();
         let has_rd = row.rd_index().is_some();
         if is_store && has_rd {
-            return Err(JoltPackedWitnessError::FusedIncrementSourceConflict { row: row_index });
+            return Err(JoltPackedWitnessError::IncrementSourceConflict { row: row_index });
         }
 
         let delta = if is_store {
@@ -126,12 +128,7 @@ impl JoltPackedWitnessBuilder {
         } else {
             0
         };
-        self.emit_signed_increment(
-            PackedFamilyId::IncByte { index: 0 },
-            PackedFamilyId::IncSign,
-            row_index,
-            delta,
-        )?;
+        self.emit_unsigned_increment(row_index, delta, log_k_chunk)?;
 
         if self
             .layout
@@ -151,30 +148,35 @@ impl JoltPackedWitnessBuilder {
         Ok(())
     }
 
-    fn emit_signed_increment(
+    fn emit_unsigned_increment(
         &mut self,
-        first_byte_family: PackedFamilyId,
-        sign_family: PackedFamilyId,
         row: usize,
         delta: i128,
+        log_k_chunk: usize,
     ) -> Result<(), JoltPackedWitnessError> {
-        let magnitude = delta.unsigned_abs() as u64;
-        let bytes = magnitude.to_le_bytes();
-        match first_byte_family {
-            PackedFamilyId::IncByte { .. } => {
-                for (index, byte) in bytes.iter().copied().enumerate() {
-                    self.emit_byte(PackedFamilyId::IncByte { index }, row, 0, byte)?;
-                }
-            }
-            PackedFamilyId::FieldRdIncByte { .. } => {
-                for (index, byte) in bytes.iter().copied().enumerate() {
-                    self.emit_byte(PackedFamilyId::FieldRdIncByte { index }, row, 0, byte)?;
-                }
-            }
-            _ => {}
+        let chunk_count = unsigned_inc_lower_chunk_count(log_k_chunk).ok_or(
+            JoltPackedWitnessError::InvalidChunkGeometry {
+                chunks: 0,
+                index: 0,
+                log_k_chunk,
+            },
+        )?;
+        let shifted = (1u128 << 64)
+            .checked_add_signed(delta)
+            .ok_or(JoltPackedWitnessError::DimensionOverflow)?;
+        let lower_mask = (1u128 << 64) - 1;
+        let lower = shifted & lower_mask;
+        let msb = shifted >> 64;
+        for index in 0..chunk_count {
+            self.emit_one(
+                PackedFamilyId::UnsignedIncChunk { index },
+                row,
+                0,
+                little_endian_chunk(lower, index, log_k_chunk)?,
+            )?;
         }
-        if delta < 0 {
-            self.emit_one(sign_family, row, 0, 1)?;
+        if msb == 1 {
+            self.emit_one(PackedFamilyId::UnsignedIncMsb, row, 0, 1)?;
         }
         Ok(())
     }
@@ -273,8 +275,8 @@ pub enum JoltPackedWitnessError {
         index: usize,
         log_k_chunk: usize,
     },
-    #[error("fused increment row {row} exposes both store and rd-present sources")]
-    FusedIncrementSourceConflict { row: usize },
+    #[error("increment row {row} exposes both store and rd-present sources")]
+    IncrementSourceConflict { row: usize },
     #[error(transparent)]
     Layout(#[from] PackedLayoutError),
 }
@@ -326,6 +328,25 @@ fn chunk(
     }
     let shift = log_k_chunk
         .checked_mul(chunks - 1 - index)
+        .ok_or(JoltPackedWitnessError::DimensionOverflow)?;
+    let mask = (1u128 << log_k_chunk) - 1;
+    Ok(((value >> shift) & mask) as usize)
+}
+
+fn little_endian_chunk(
+    value: u128,
+    index: usize,
+    log_k_chunk: usize,
+) -> Result<usize, JoltPackedWitnessError> {
+    if log_k_chunk == 0 || log_k_chunk >= usize::BITS as usize {
+        return Err(JoltPackedWitnessError::InvalidChunkGeometry {
+            chunks: 0,
+            index,
+            log_k_chunk,
+        });
+    }
+    let shift = log_k_chunk
+        .checked_mul(index)
         .ok_or(JoltPackedWitnessError::DimensionOverflow)?;
     let mask = (1u128 << log_k_chunk) - 1;
     Ok(((value >> shift) & mask) as usize)
@@ -385,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn packs_trace_ra_and_fused_increment_facts() {
+    fn packs_trace_ra_and_unsigned_increment_facts() {
         let layout = PackedWitnessLayout::new([
             PackedFamilySpec::direct(
                 PackedFamilyId::InstructionRa { index: 0 },
@@ -406,13 +427,13 @@ mod tests {
                 PackedAlphabet::Byte,
             ),
             PackedFamilySpec::direct(
-                PackedFamilyId::IncByte { index: 0 },
+                PackedFamilyId::UnsignedIncChunk { index: 0 },
                 trace_domain(),
                 1,
                 PackedAlphabet::Byte,
             ),
             PackedFamilySpec::direct(
-                PackedFamilyId::IncSign,
+                PackedFamilyId::UnsignedIncMsb,
                 trace_domain(),
                 1,
                 PackedAlphabet::Bit,
@@ -484,22 +505,34 @@ mod tests {
             AkitaField::one()
         );
         assert_eq!(
-            get(&witness, PackedFamilyId::IncByte { index: 0 }, 0, 0, 7),
+            get(
+                &witness,
+                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                0,
+                0,
+                249
+            ),
+            AkitaField::one()
+        );
+        assert!(get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
+        assert_eq!(
+            get(
+                &witness,
+                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                1,
+                0,
+                20
+            ),
             AkitaField::one()
         );
         assert_eq!(
-            get(&witness, PackedFamilyId::IncSign, 0, 0, 1),
+            get(&witness, PackedFamilyId::UnsignedIncMsb, 1, 0, 1),
             AkitaField::one()
         );
-        assert_eq!(
-            get(&witness, PackedFamilyId::IncByte { index: 0 }, 1, 0, 20),
-            AkitaField::one()
-        );
-        assert!(get(&witness, PackedFamilyId::IncSign, 1, 0, 1).is_zero());
     }
 
     #[test]
-    fn fused_increment_emits_canonical_zero_byte_symbols() {
+    fn zero_increment_emits_zero_lower_chunks_and_set_msb() {
         let layout = increment_layout();
         let rows = [
             trace_row(
@@ -544,15 +577,24 @@ mod tests {
 
         for index in 0..8 {
             assert_eq!(
-                get(&witness, PackedFamilyId::IncByte { index }, 0, 0, 0),
+                get(
+                    &witness,
+                    PackedFamilyId::UnsignedIncChunk { index },
+                    0,
+                    0,
+                    0
+                ),
                 AkitaField::one()
             );
         }
-        assert!(get(&witness, PackedFamilyId::IncSign, 0, 0, 1).is_zero());
+        assert_eq!(
+            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            AkitaField::one()
+        );
     }
 
     #[test]
-    fn fused_increment_ignores_rd_slots_without_rd_destination() {
+    fn unsigned_increment_ignores_rd_slots_without_rd_destination() {
         let layout = increment_layout();
         let rows = [
             trace_row(
@@ -582,15 +624,24 @@ mod tests {
 
         for index in 0..8 {
             assert_eq!(
-                get(&witness, PackedFamilyId::IncByte { index }, 0, 0, 0),
+                get(
+                    &witness,
+                    PackedFamilyId::UnsignedIncChunk { index },
+                    0,
+                    0,
+                    0
+                ),
                 AkitaField::one()
             );
         }
-        assert!(get(&witness, PackedFamilyId::IncSign, 0, 0, 1).is_zero());
+        assert_eq!(
+            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            AkitaField::one()
+        );
     }
 
     #[test]
-    fn fused_increment_rejects_store_with_rd_destination() {
+    fn unsigned_increment_rejects_store_with_rd_destination() {
         let layout = increment_layout();
         let rows = [
             trace_row(
@@ -615,16 +666,16 @@ mod tests {
         let mut builder = JoltPackedWitnessBuilder::new(layout);
         let error = builder
             .pack_trace_rows(&rows, 8, |_, _| 0, |index, _| [Some(0x34), None][index])
-            .expect_err("ambiguous fused increment source should reject");
+            .expect_err("ambiguous increment source should reject");
 
         assert!(matches!(
             error,
-            JoltPackedWitnessError::FusedIncrementSourceConflict { row: 0 }
+            JoltPackedWitnessError::IncrementSourceConflict { row: 0 }
         ));
     }
 
     #[test]
-    fn negative_increment_emits_sign_and_zero_high_bytes() {
+    fn negative_increment_emits_offset_lower_chunks_and_clear_msb() {
         let layout = increment_layout();
         let rows = [
             trace_row(
@@ -668,19 +719,28 @@ mod tests {
         let witness = builder.finish().expect("source should build");
 
         assert_eq!(
-            get(&witness, PackedFamilyId::IncByte { index: 0 }, 0, 0, 7),
+            get(
+                &witness,
+                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                0,
+                0,
+                249
+            ),
             AkitaField::one()
         );
         for index in 1..8 {
             assert_eq!(
-                get(&witness, PackedFamilyId::IncByte { index }, 0, 0, 0),
+                get(
+                    &witness,
+                    PackedFamilyId::UnsignedIncChunk { index },
+                    0,
+                    0,
+                    255
+                ),
                 AkitaField::one()
             );
         }
-        assert_eq!(
-            get(&witness, PackedFamilyId::IncSign, 0, 0, 1),
-            AkitaField::one()
-        );
+        assert!(get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
     }
 
     #[test]
@@ -838,7 +898,7 @@ mod tests {
         let mut specs = (0..8)
             .map(|index| {
                 PackedFamilySpec::direct(
-                    PackedFamilyId::IncByte { index },
+                    PackedFamilyId::UnsignedIncChunk { index },
                     trace_domain(),
                     1,
                     PackedAlphabet::Byte,
@@ -846,7 +906,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::IncSign,
+            PackedFamilyId::UnsignedIncMsb,
             trace_domain(),
             1,
             PackedAlphabet::Bit,

@@ -96,11 +96,14 @@ pub struct BatchOpeningResult<F, C, R = F> {
     pub reduced_opening: R,
 }
 
-/// Generic packed-view adapter over an inner batch-opening PCS.
+/// Lightweight packed-view coefficient adapter over an inner batch-opening PCS.
 ///
 /// This adapter is intentionally a newtype so an additively homomorphic inner
 /// PCS can still use the blanket [`BatchOpeningScheme`] implementation while
 /// packed-view tests exercise a path that does not expose that bound to callers.
+///
+/// Use [`crate::PackedLinearBatch`] for packed-linear views that require the
+/// selector/product-sumcheck reduction to a native packed-polynomial opening.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackedCombine<PCS>(PhantomData<PCS>);
 

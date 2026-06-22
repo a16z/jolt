@@ -542,11 +542,11 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
             bytes.push(2);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::IncByte { index } => {
+        PackedFamilyId::UnsignedIncChunk { index } => {
             bytes.push(3);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::IncSign => bytes.push(4),
+        PackedFamilyId::UnsignedIncMsb => bytes.push(4),
         PackedFamilyId::FieldRdIncByte { index } => {
             bytes.push(9);
             write_usize(bytes, *index);
@@ -651,7 +651,7 @@ mod tests {
                 PackedAlphabet::Byte,
             ),
             PackedFamilySpec::direct(
-                PackedFamilyId::IncSign,
+                PackedFamilyId::UnsignedIncMsb,
                 PackedFactDomain::TraceRows { log_t: 1 },
                 1,
                 PackedAlphabet::Bit,
@@ -670,7 +670,7 @@ mod tests {
     fn direct_view_translation_matches_packed_eval() {
         let layout = byte_layout();
         let address = PackedCellAddress {
-            family: PackedFamilyId::IncSign,
+            family: PackedFamilyId::UnsignedIncMsb,
             row: 1,
             limb: 0,
             symbol: 1,
@@ -678,7 +678,7 @@ mod tests {
         let source =
             SparsePackedWitness::try_from_cells(layout.clone(), [(address, AkitaField::one())])
                 .expect("source should build");
-        let formula = PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 1);
+        let formula = PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1);
 
         assert_eq!(
             formula.eval_row(&source, 1).expect("view should evaluate"),
@@ -691,7 +691,7 @@ mod tests {
             PhysicalView::PackedLinear { terms, .. }
                 if terms.len() == 1
                     && terms[0].coefficient == AkitaField::one()
-                    && terms[0].family == PackedFamilyId::IncSign.physical_ref()
+                    && terms[0].family == PackedFamilyId::UnsignedIncMsb.physical_ref()
                     && terms[0].symbol == 1
         ));
     }
@@ -733,14 +733,14 @@ mod tests {
     fn direct_view_point_eval_interpolates_rows() {
         let layout = byte_layout();
         let address = PackedCellAddress {
-            family: PackedFamilyId::IncSign,
+            family: PackedFamilyId::UnsignedIncMsb,
             row: 1,
             limb: 0,
             symbol: 1,
         };
         let source = SparsePackedWitness::try_from_cells(layout, [(address, AkitaField::one())])
             .expect("source should build");
-        let formula = PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 1);
+        let formula = PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1);
         let point = [f(3)];
 
         assert_eq!(
@@ -799,7 +799,7 @@ mod tests {
             layout,
             [(
                 PackedCellAddress {
-                    family: PackedFamilyId::IncSign,
+                    family: PackedFamilyId::UnsignedIncMsb,
                     row: 1,
                     limb: 0,
                     symbol: 1,
@@ -808,7 +808,7 @@ mod tests {
             )],
         )
         .expect("source should build");
-        let formula = PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 1);
+        let formula = PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1);
 
         assert!(matches!(
             formula.eval_row_point(&source, &[]),
@@ -838,7 +838,7 @@ mod tests {
             [PackedViewEntry::new(
                 OpeningId::A,
                 RelationId::First,
-                PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 1),
+                PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1),
             )],
         )
         .expect("catalog should build");
@@ -847,7 +847,7 @@ mod tests {
             [PackedViewEntry::new(
                 OpeningId::A,
                 RelationId::First,
-                PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 0),
+                PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 0),
             )],
         )
         .expect("catalog should build");
@@ -882,12 +882,12 @@ mod tests {
                 PackedViewEntry::new(
                     OpeningId::A,
                     RelationId::Second,
-                    PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 0),
+                    PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 0),
                 ),
                 PackedViewEntry::new(
                     OpeningId::A,
                     RelationId::First,
-                    PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 1),
+                    PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1),
                 ),
             ],
         )
@@ -897,13 +897,13 @@ mod tests {
             catalog
                 .lookup(&OpeningId::A, &RelationId::First)
                 .expect("first relation should exist"),
-            &PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 1)
+            &PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1)
         );
         assert_eq!(
             catalog
                 .lookup(&OpeningId::A, &RelationId::Second)
                 .expect("second relation should exist"),
-            &PackedViewFormula::<AkitaField>::direct(PackedFamilyId::IncSign, 0, 0)
+            &PackedViewFormula::<AkitaField>::direct(PackedFamilyId::UnsignedIncMsb, 0, 0)
         );
     }
 

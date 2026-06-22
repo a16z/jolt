@@ -7,7 +7,9 @@ use akita_types::{
     AkitaCommitmentHint as NativeCommitmentHint, AkitaVerifierSetup as NativeVerifierSetup,
     RingCommitment as NativeRingCommitment,
 };
-use jolt_openings::{BatchOpeningStatement, PhysicalView};
+use jolt_openings::{
+    BatchOpeningStatement, PackedLinearBatchProof, PackedLinearReductionProof, PhysicalView,
+};
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
@@ -118,19 +120,8 @@ pub struct AkitaBatchProof {
     pub proof: Vec<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AkitaPackedReductionProof {
-    pub rounds: Vec<[Vec<u8>; 3]>,
-    pub opening_eval: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AkitaPackedBatchProof {
-    pub reduction: Option<AkitaPackedReductionProof>,
-    pub native: AkitaBatchProof,
-}
+pub type AkitaPackedReductionProof = PackedLinearReductionProof;
+pub type AkitaPackedBatchProof = PackedLinearBatchProof<AkitaBatchProof>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -755,6 +755,22 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         TamperCoverage::IgnoredUntilFixture,
         "field-inline fixture needed to actively cover field register value-evaluation output claims",
     ),
+    checked_standard(
+        "stage5.increment.batch",
+        "proof.stages.stage5_increment_sumcheck_proof",
+        VerifierPhase::Stage5,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the optional proof",
+    ),
+    checked_standard(
+        "stage5.increment.claims",
+        "claims.stage5_increment",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover optional Inc/Store claims",
+    ),
 ];
 
 pub const STAGE6_TARGETS: &[TamperTarget] = &[
@@ -895,44 +911,20 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "core-fixture test offsets the register increment reduction output claim",
     ),
     checked_standard(
+        "stage6.claims.unsigned_inc_claim_reduction",
+        "claims.stage6.unsigned_inc_claim_reduction",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with unsigned increment claim reduction needed to actively cover the optional claim",
+    ),
+    checked_standard(
         "stage6.claims.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
         "claims.stage6.field_inline.field_registers_inc_claim_reduction.field_rd_inc",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
         "field-inline fixture needed to actively cover field register increment reduction output claims",
-    ),
-    checked_standard(
-        "stage6.claims.fused_increment_translation",
-        "claims.stage6.fused_increment_translation",
-        VerifierPhase::Stage6,
-        MutationStrategy::AddItem,
-        TamperCoverage::Deferred,
-        "active coverage needs a lattice fixture whose Stage 6 batch includes the fused translation sumcheck",
-    ),
-    checked_standard(
-        "stage6.claims.fused_increment_source_link",
-        "claims.stage6.fused_increment_source_link",
-        VerifierPhase::Stage6,
-        MutationStrategy::AddItem,
-        TamperCoverage::Deferred,
-        "active coverage needs a lattice fixture whose Stage 6 batch includes the fused source-link sumcheck",
-    ),
-    checked_standard(
-        "stage6.claims.fused_increment_inactive_zero",
-        "claims.stage6.fused_increment_inactive_zero",
-        VerifierPhase::Stage6,
-        MutationStrategy::AddItem,
-        TamperCoverage::Deferred,
-        "active coverage needs a lattice fixture whose Stage 6 batch includes the fused inactive-zero sumcheck",
-    ),
-    checked_standard(
-        "stage6.claims.fused_increment_inactive_source_link",
-        "claims.stage6.fused_increment_inactive_source_link",
-        VerifierPhase::Stage6,
-        MutationStrategy::AddItem,
-        TamperCoverage::Deferred,
-        "active coverage needs a lattice fixture whose Stage 6 batch includes the fused inactive source-link sumcheck",
     ),
     checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
@@ -1544,6 +1536,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     },
             },
         },
+        stage5_increment: None,
         stage6: stage6::inputs::Stage6Claims {
             address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
@@ -1572,6 +1565,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            unsigned_inc_claim_reduction: None,
             #[cfg(feature = "field-inline")]
             field_inline: stage6::inputs::FieldInlineStage6Claims {
                 field_registers_inc_claim_reduction:
@@ -1579,10 +1573,6 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                         field_rd_inc: zero,
                     },
             },
-            fused_increment_translation: None,
-            fused_increment_source_link: None,
-            fused_increment_inactive_zero: None,
-            fused_increment_inactive_source_link: None,
             advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                 trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
                     opening_claim: zero,

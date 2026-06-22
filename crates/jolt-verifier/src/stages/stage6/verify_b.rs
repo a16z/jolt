@@ -451,18 +451,8 @@ pub(super) fn append_opening_claims<F, T>(
     }
     transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.ram_inc);
     transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.rd_inc);
-    if let Some(output_claims) = &claims.fused_increment_translation {
-        transcript.append_labeled(b"opening_claim", &output_claims.ram_source);
-        transcript.append_labeled(b"opening_claim", &output_claims.magnitude);
-        transcript.append_labeled(b"opening_claim", &output_claims.sign);
-        transcript.append_labeled(b"opening_claim", &output_claims.rd_source);
-    }
-    if let Some(output_claims) = &claims.fused_increment_source_link {
-        for opening_claim in &output_claims.bytecode_ra {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
-        transcript.append_labeled(b"opening_claim", &output_claims.store_flag);
-        transcript.append_labeled(b"opening_claim", &output_claims.rd_present);
+    if let Some(output_claims) = &claims.unsigned_inc_claim_reduction {
+        transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc);
     }
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);

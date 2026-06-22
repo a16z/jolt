@@ -13,20 +13,15 @@ use crate::{
         JoltProof, JoltProofClaims,
     },
     stages::{
-        stage6::{
-            inputs::{FusedIncrementSourceLinkOutputClaims, FusedIncrementTranslationOutputClaims},
-            outputs::VerifiedBytecodeReadRafSumcheck,
-        },
         stage7::inputs::LatticePackedValidityOutputClaims,
         stage8::{
-            akita_packed_family_id, akita_packed_view_formula, build_lattice_packed_validity_batch,
+            akita_packed_family_id, build_lattice_packed_validity_batch,
             derive_akita_packed_validity_requirements, derive_akita_packed_validity_statements,
             field_element_canonical_factors, field_element_canonical_value_from_openings,
-            jolt_lattice_view_formula, lattice_packed_validity_claims,
-            lattice_packed_validity_opening_count, sample_lattice_packed_validity_eq_points,
-            validate_akita_packed_witness_layout_config, FieldCanonicalFactor,
-            LatticePackedValidityStatement, LatticePackedValidityStatementKind,
-            Stage8BatchStatement, Stage8OpeningId,
+            lattice_packed_validity_claims, lattice_packed_validity_opening_count,
+            sample_lattice_packed_validity_eq_points, validate_akita_packed_witness_layout_config,
+            FieldCanonicalFactor, LatticePackedValidityStatement,
+            LatticePackedValidityStatementKind, Stage8BatchStatement, Stage8OpeningId,
         },
         PrecommittedSchedule,
     },
@@ -36,13 +31,11 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
     AkitaProverSetup, AkitaVerifierSetup, PackedAdviceKind, PackedFactDomain, PackedFamilyId,
-    PackedViewFormula, PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
+    PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
 };
 use jolt_claims::protocols::jolt::{
-    formulas::dimensions::REGISTER_ADDRESS_BITS, fused_increment_magnitude_lattice_view_formula,
-    fused_increment_sign_lattice_view_formula, lattice_packed_validity_digest, JoltAdviceKind,
-    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticePackedFamilyId,
-    LatticePackedValidityKind, LatticePackedValidityRequirement, FUSED_INCREMENT_BYTE_LIMBS,
+    lattice_packed_validity_digest, JoltAdviceKind, LatticePackedFamilyId,
+    LatticePackedValidityKind, LatticePackedValidityRequirement,
 };
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
 use jolt_openings::{BatchOpeningScheme, BatchOpeningStatement, PhysicalView};
@@ -100,38 +93,6 @@ pub struct AkitaPackedValidityProofArtifacts {
     pub sumcheck_proof: SumcheckProof<AkitaField, ClearOnlyCommitment>,
     pub opening_claims: LatticePackedValidityOutputClaims<AkitaField>,
     pub opening_proof: AkitaPackedBatchProof,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AkitaFusedIncrementTranslationSources {
-    pub ram_source: AkitaField,
-    pub rd_source: AkitaField,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AkitaFusedIncrementStage6Claims {
-    pub translation: FusedIncrementTranslationOutputClaims<AkitaField>,
-    pub source_link: FusedIncrementSourceLinkOutputClaims<AkitaField>,
-    pub inactive_zero: FusedIncrementTranslationOutputClaims<AkitaField>,
-    pub inactive_source_link: FusedIncrementSourceLinkOutputClaims<AkitaField>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct AkitaFusedIncrementBytecodeSourceComponents<'a> {
-    pub store_flag_chunks: &'a [AkitaField],
-    pub rd_present_chunks: &'a [AkitaField],
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct AkitaFusedIncrementStage6Derivation<'a> {
-    pub translation_opening_point: &'a [AkitaField],
-    pub source_link: &'a VerifiedBytecodeReadRafSumcheck<AkitaField>,
-    pub source_link_components: AkitaFusedIncrementBytecodeSourceComponents<'a>,
-    pub translation_sources: AkitaFusedIncrementTranslationSources,
-    pub inactive_zero_opening_point: &'a [AkitaField],
-    pub inactive_source_link: &'a VerifiedBytecodeReadRafSumcheck<AkitaField>,
-    pub inactive_source_link_components: AkitaFusedIncrementBytecodeSourceComponents<'a>,
-    pub inactive_sources: AkitaFusedIncrementTranslationSources,
 }
 
 impl AkitaPackedWitnessArtifacts {
@@ -214,181 +175,6 @@ fn jolt_packed_witness_family_is_precommitted(family: &PackedFamilyId) -> bool {
     )
 }
 
-pub fn derive_akita_fused_increment_stage6_claims<S>(
-    source: &S,
-    precommitted: &PrecommittedSchedule,
-    log_k_chunk: usize,
-    input: AkitaFusedIncrementStage6Derivation<'_>,
-) -> Result<AkitaFusedIncrementStage6Claims, VerifierError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let translation = derive_akita_fused_increment_translation_claim(
-        source,
-        input.translation_opening_point,
-        JoltRelationId::FusedIncrementTranslation,
-        input.translation_sources,
-    )?;
-    let source_link = derive_akita_fused_increment_source_link_claim(
-        source,
-        precommitted,
-        log_k_chunk,
-        input.source_link,
-        input.source_link_components,
-        JoltRelationId::FusedIncrementSourceLink,
-    )?;
-    let inactive_zero = derive_akita_fused_increment_translation_claim(
-        source,
-        input.inactive_zero_opening_point,
-        JoltRelationId::FusedIncrementInactiveZero,
-        input.inactive_sources,
-    )?;
-    let inactive_source_link = derive_akita_fused_increment_source_link_claim(
-        source,
-        precommitted,
-        log_k_chunk,
-        input.inactive_source_link,
-        input.inactive_source_link_components,
-        JoltRelationId::FusedIncrementInactiveSourceLink,
-    )?;
-
-    Ok(AkitaFusedIncrementStage6Claims {
-        translation,
-        source_link,
-        inactive_zero,
-        inactive_source_link,
-    })
-}
-
-fn derive_akita_fused_increment_translation_claim<S>(
-    source: &S,
-    opening_point: &[AkitaField],
-    relation: JoltRelationId,
-    sources: AkitaFusedIncrementTranslationSources,
-) -> Result<FusedIncrementTranslationOutputClaims<AkitaField>, VerifierError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let magnitude = eval_akita_packed_formula(
-        source,
-        fused_increment_magnitude_lattice_view_formula(),
-        opening_point,
-        relation,
-    )?;
-    let sign = eval_akita_packed_formula(
-        source,
-        fused_increment_sign_lattice_view_formula(),
-        opening_point,
-        relation,
-    )?;
-
-    Ok(FusedIncrementTranslationOutputClaims {
-        ram_source: sources.ram_source,
-        magnitude,
-        sign,
-        rd_source: sources.rd_source,
-    })
-}
-
-fn derive_akita_fused_increment_source_link_claim<S>(
-    source: &S,
-    precommitted: &PrecommittedSchedule,
-    log_k_chunk: usize,
-    source_link: &VerifiedBytecodeReadRafSumcheck<AkitaField>,
-    components: AkitaFusedIncrementBytecodeSourceComponents<'_>,
-    relation: JoltRelationId,
-) -> Result<FusedIncrementSourceLinkOutputClaims<AkitaField>, VerifierError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let bytecode_ra = source_link
-        .bytecode_ra_opening_points
-        .iter()
-        .enumerate()
-        .map(|(index, point)| {
-            let row_point = point.get(log_k_chunk..).ok_or_else(|| {
-                akita_fused_claim_error(
-                    relation,
-                    format!(
-                        "BytecodeRa({index}) source-link opening point has {} variables but needs at least {log_k_chunk}",
-                        point.len()
-                    ),
-                )
-            })?;
-            eval_akita_jolt_lattice_opening(
-                source,
-                JoltOpeningId::committed(JoltCommittedPolynomial::BytecodeRa(index), relation),
-                point,
-                row_point,
-                log_k_chunk,
-                precommitted,
-                relation,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let bytecode_layout = precommitted.bytecode.as_ref().ok_or_else(|| {
-        akita_fused_claim_error(
-            relation,
-            "source-link derivation requires committed-bytecode layout",
-        )
-    })?;
-    let address = bytecode_layout
-        .split_address_point(&source_link.r_address)
-        .map_err(|error| akita_fused_claim_error(relation, error))?;
-    let chunk_count = bytecode_layout.chunk_count();
-    let register_count = 1usize << REGISTER_ADDRESS_BITS;
-    if components.store_flag_chunks.len() != chunk_count {
-        return Err(akita_fused_claim_error(
-            relation,
-            format!(
-                "StoreFlag component count mismatch: expected {}, got {}",
-                chunk_count,
-                components.store_flag_chunks.len()
-            ),
-        ));
-    }
-    let expected_rd_components = chunk_count * register_count;
-    if components.rd_present_chunks.len() != expected_rd_components {
-        return Err(akita_fused_claim_error(
-            relation,
-            format!(
-                "RdPresent component count mismatch: expected {}, got {}",
-                expected_rd_components,
-                components.rd_present_chunks.len()
-            ),
-        ));
-    }
-
-    let store_flag = address
-        .chunk_rbc_weights
-        .iter()
-        .zip(components.store_flag_chunks)
-        .map(|(weight, claim)| *weight * *claim)
-        .sum::<AkitaField>();
-    let rd_present = address
-        .chunk_rbc_weights
-        .iter()
-        .enumerate()
-        .map(|(chunk, weight)| {
-            let start = chunk * register_count;
-            let chunk_sum = components.rd_present_chunks[start..start + register_count]
-                .iter()
-                .copied()
-                .sum::<AkitaField>();
-            *weight * chunk_sum
-        })
-        .sum::<AkitaField>();
-
-    Ok(FusedIncrementSourceLinkOutputClaims {
-        bytecode_ra,
-        store_flag,
-        rd_present,
-        store_flag_chunks: components.store_flag_chunks.to_vec(),
-        rd_present_chunks: components.rd_present_chunks.to_vec(),
-    })
-}
-
 pub fn akita_lattice_protocol_config_for_layout(
     layout: &PackedWitnessLayout,
 ) -> JoltProtocolConfig {
@@ -427,16 +213,16 @@ pub fn akita_lattice_validity_requirements_for_layout(
             let limbs = family.limbs;
             let alphabet_size = family.alphabet.size();
             match family.id {
-                PackedFamilyId::IncByte { index } => {
+                PackedFamilyId::UnsignedIncChunk { index } => {
                     Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::IncByte { index },
+                        LatticePackedFamilyId::UnsignedIncChunk { index },
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::IncSign => {
+                PackedFamilyId::UnsignedIncMsb => {
                     Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::IncSign,
+                        LatticePackedFamilyId::UnsignedIncMsb,
                         limbs,
                         alphabet_size,
                         1,
@@ -527,12 +313,6 @@ pub fn akita_lattice_validity_requirements_for_layout(
             }
         })
         .collect::<Vec<_>>();
-    if layout.family(&PackedFamilyId::IncSign).is_some()
-        && (0..FUSED_INCREMENT_BYTE_LIMBS)
-            .all(|index| layout.family(&PackedFamilyId::IncByte { index }).is_some())
-    {
-        requirements.push(LatticePackedValidityRequirement::fused_increment_canonical_zero());
-    }
     for family in &layout.families {
         let PackedFamilyId::BytecodeCircuitFlag { chunk, flag } = &family.id else {
             continue;
@@ -816,6 +596,7 @@ pub fn prove_akita_packed_validity<T, S>(
     transcript: &mut T,
     artifacts: &AkitaPackedWitnessArtifacts,
     source: &S,
+    log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
 ) -> Result<AkitaPackedValidityProofArtifacts, VerifierError>
 where
@@ -832,7 +613,7 @@ where
     }
 
     let requirements =
-        derive_akita_packed_validity_requirements(&artifacts.protocol, precommitted)?;
+        derive_akita_packed_validity_requirements(&artifacts.protocol, log_k_chunk, precommitted)?;
     let statements = derive_akita_packed_validity_statements(&artifacts.layout, &requirements)?;
     let eq_points =
         sample_lattice_packed_validity_eq_points(transcript, &artifacts.layout, &statements);
@@ -957,6 +738,7 @@ where
         &mut transcript,
         artifacts,
         source,
+        proof.one_hot_config.committed_chunk_bits(),
         &checked.precommitted,
     )
 }
@@ -1657,50 +1439,6 @@ fn padded_slice<T: Clone + Default>(
     Ok(padded)
 }
 
-fn eval_akita_jolt_lattice_opening<S>(
-    source: &S,
-    id: JoltOpeningId,
-    formula_point: &[AkitaField],
-    row_point: &[AkitaField],
-    log_k_chunk: usize,
-    precommitted: &PrecommittedSchedule,
-    stage: JoltRelationId,
-) -> Result<AkitaField, VerifierError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let formula = jolt_lattice_view_formula(id, formula_point, log_k_chunk, precommitted)?;
-    eval_akita_packed_formula(source, formula, row_point, stage)
-}
-
-fn eval_akita_packed_formula<S>(
-    source: &S,
-    formula: jolt_claims::protocols::jolt::LatticePackedViewFormula<AkitaField>,
-    row_point: &[AkitaField],
-    stage: JoltRelationId,
-) -> Result<AkitaField, VerifierError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let formula = akita_packed_view_formula(&formula)
-        .map_err(|error| akita_fused_claim_error(stage, error))?;
-    eval_akita_packed_view(source, &formula, row_point, stage)
-}
-
-fn eval_akita_packed_view<S>(
-    source: &S,
-    formula: &PackedViewFormula<AkitaField>,
-    row_point: &[AkitaField],
-    stage: JoltRelationId,
-) -> Result<AkitaField, VerifierError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    formula
-        .eval_row_point(source, row_point)
-        .map_err(|error| akita_fused_claim_error(stage, error))
-}
-
 fn prove_combined_validity_sumcheck<T, S>(
     source: &S,
     statements: &[LatticePackedValidityStatement],
@@ -1846,11 +1584,6 @@ where
         }
     })?;
     let value = match statement.kind {
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
-            validity_opening_values(source, statement, point)?
-                .into_iter()
-                .fold(AkitaField::one(), |acc, opening| acc * opening)
-        }
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => {
             let openings = validity_opening_values(source, statement, point)?;
             openings[0] * openings[1]
@@ -1875,33 +1608,20 @@ fn validity_opening_values<S>(
 where
     S: PackedWitnessSource<AkitaField>,
 {
-    if statement.kind != LatticePackedValidityStatementKind::FusedIncrementCanonicalZero {
-        if statement.kind == LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint {
-            return Ok(vec![
-                bytecode_store_rd_disjoint_factor_value(source, statement, point, 0)?,
-                bytecode_store_rd_disjoint_factor_value(source, statement, point, 1)?,
-            ]);
-        }
-        if statement.kind == LatticePackedValidityStatementKind::FieldElementCanonicalBytes {
-            let factors = field_element_canonical_factors(&statement.requirement)?;
-            return factors
-                .into_iter()
-                .map(|factor| field_element_canonical_factor_value(source, point, factor))
-                .collect();
-        }
-        return validity_opening_value(source, statement, point).map(|value| vec![value]);
+    if statement.kind == LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint {
+        return Ok(vec![
+            bytecode_store_rd_disjoint_factor_value(source, statement, point, 0)?,
+            bytecode_store_rd_disjoint_factor_value(source, statement, point, 1)?,
+        ]);
     }
-
-    let mut values = Vec::with_capacity(FUSED_INCREMENT_BYTE_LIMBS + 1);
-    values.push(fused_increment_canonical_zero_factor_value(
-        source, point, 0,
-    )?);
-    for factor in 1..=FUSED_INCREMENT_BYTE_LIMBS {
-        values.push(fused_increment_canonical_zero_factor_value(
-            source, point, factor,
-        )?);
+    if statement.kind == LatticePackedValidityStatementKind::FieldElementCanonicalBytes {
+        let factors = field_element_canonical_factors(&statement.requirement)?;
+        return factors
+            .into_iter()
+            .map(|factor| field_element_canonical_factor_value(source, point, factor))
+            .collect();
     }
-    Ok(values)
+    validity_opening_value(source, statement, point).map(|value| vec![value])
 }
 
 fn validity_opening_value<S>(
@@ -1952,11 +1672,6 @@ where
                 SymbolWeights::Fixed(symbol),
             )
         }
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
-            Err(VerifierError::InvalidProtocolConfig {
-                reason: "canonical-zero validity has multiple opening factors".to_string(),
-            })
-        }
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => {
             Err(VerifierError::InvalidProtocolConfig {
                 reason: "bytecode Store/Rd disjointness has multiple opening factors".to_string(),
@@ -1982,57 +1697,9 @@ fn validity_violation(kind: LatticePackedValidityStatementKind, opening: AkitaFi
             let difference = opening - AkitaField::one();
             difference * difference
         }
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
         | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => opening,
     }
-}
-
-fn fused_increment_canonical_zero_factor_value<S>(
-    source: &S,
-    point: &[AkitaField],
-    factor: usize,
-) -> Result<AkitaField, VerifierError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let (family_id, symbol) = if factor == 0 {
-        (PackedFamilyId::IncSign, 1)
-    } else {
-        let byte_index = factor - 1;
-        if byte_index >= FUSED_INCREMENT_BYTE_LIMBS {
-            return Err(VerifierError::InvalidProtocolConfig {
-                reason: format!("fused increment canonical-zero has no opening factor {factor}"),
-            });
-        }
-        (PackedFamilyId::IncByte { index: byte_index }, 0)
-    };
-    let family =
-        source
-            .layout()
-            .family(&family_id)
-            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                reason: format!("fused increment canonical-zero factor requires {family_id:?}"),
-            })?;
-    let rows = family
-        .domain
-        .rows()
-        .map_err(|error| VerifierError::InvalidProtocolConfig {
-            reason: format!(
-                "fused increment canonical-zero factor {family_id:?} has invalid row domain: {error}"
-            ),
-        })?;
-    let row_vars = power_of_two_log(rows, "fused increment canonical-zero row count")?;
-    if point.len() != row_vars {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
-            reason: format!(
-                "fused increment canonical-zero point has {} variables but statement requires {row_vars}",
-                point.len()
-            ),
-        });
-    }
-    let row_weights = EqPolynomial::<AkitaField>::evals(point, None);
-    weighted_direct_symbol_value(source, &family_id, &row_weights, symbol)
 }
 
 fn weighted_direct_symbol_value<S>(
@@ -2322,8 +1989,7 @@ fn split_validity_point(
         LatticePackedValidityStatementKind::ExactOneHotRowSum
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => shape.row + shape.limb,
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
         | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => shape.row,
     };
     if point.len() != expected {
@@ -2458,16 +2124,6 @@ fn power_of_two_log(value: usize, name: &'static str) -> Result<usize, VerifierE
     }
 }
 
-fn akita_fused_claim_error(stage: JoltRelationId, reason: impl ToString) -> VerifierError {
-    VerifierError::StageClaimPublicInputFailed {
-        stage,
-        reason: format!(
-            "Akita fused increment claim derivation failed: {}",
-            reason.to_string()
-        ),
-    }
-}
-
 fn akita_witness_error(reason: impl ToString) -> VerifierError {
     VerifierError::AkitaCommitmentFailed {
         reason: format!(
@@ -2526,7 +2182,7 @@ mod tests {
             dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
             ra::JoltRaPolynomialLayout,
         },
-        fused_increment_sign_opening, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+        unsigned_inc_msb_opening, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
     };
     use jolt_field::FixedByteSize;
     use jolt_openings::{
@@ -2549,7 +2205,7 @@ mod tests {
                 PackedAlphabet::Byte,
             ),
             PackedFamilySpec::direct(
-                PackedFamilyId::IncSign,
+                PackedFamilyId::UnsignedIncMsb,
                 PackedFactDomain::TraceRows { log_t: 0 },
                 1,
                 PackedAlphabet::Bit,
@@ -2705,7 +2361,7 @@ mod tests {
                 PackedAlphabet::Byte,
             ),
             PackedFamilySpec::direct(
-                PackedFamilyId::IncByte { index: 0 },
+                PackedFamilyId::UnsignedIncChunk { index: 0 },
                 PackedFactDomain::TraceRows { log_t: 1 },
                 1,
                 PackedAlphabet::Byte,
@@ -2830,7 +2486,7 @@ mod tests {
         assert_eq!(
             witness
                 .eval_direct_fact(&packed_cell_at(
-                    PackedFamilyId::IncByte { index: 0 },
+                    PackedFamilyId::UnsignedIncChunk { index: 0 },
                     0,
                     0,
                     3
@@ -2919,265 +2575,12 @@ mod tests {
     }
 
     #[test]
-    fn derives_fused_increment_stage6_claims_from_supplied_bytecode_components() {
-        let log_t = 1;
-        let log_k_chunk = 2;
-        let mut specs = (0..8)
-            .map(|index| {
-                PackedFamilySpec::direct(
-                    PackedFamilyId::IncByte { index },
-                    PackedFactDomain::TraceRows { log_t },
-                    1,
-                    PackedAlphabet::Byte,
-                )
-            })
-            .collect::<Vec<_>>();
-        specs.extend([
-            PackedFamilySpec::direct(
-                PackedFamilyId::IncSign,
-                PackedFactDomain::TraceRows { log_t },
-                1,
-                PackedAlphabet::Bit,
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRa { index: 0 },
-                PackedFactDomain::TraceRows { log_t },
-                1,
-                PackedAlphabet::Fixed {
-                    size: 1 << log_k_chunk,
-                },
-            ),
-        ]);
-        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
-        let source = SparsePackedWitness::try_from_cells(
-            layout,
-            [
-                (
-                    packed_cell_at(PackedFamilyId::IncByte { index: 0 }, 0, 0, 5),
-                    AkitaField::one(),
-                ),
-                (
-                    packed_cell_at(PackedFamilyId::IncByte { index: 0 }, 1, 0, 9),
-                    AkitaField::one(),
-                ),
-                (
-                    packed_cell_at(PackedFamilyId::IncSign, 1, 0, 1),
-                    AkitaField::one(),
-                ),
-                (
-                    packed_cell_at(PackedFamilyId::BytecodeRa { index: 0 }, 0, 0, 1),
-                    AkitaField::one(),
-                ),
-                (
-                    packed_cell_at(PackedFamilyId::BytecodeRa { index: 0 }, 1, 0, 3),
-                    AkitaField::one(),
-                ),
-            ],
-        )
-        .expect("source should build");
-        let precommitted = PrecommittedSchedule::new(
-            TracePolynomialOrder::CycleMajor,
-            log_t,
-            log_k_chunk,
-            None,
-            None,
-            Some(CommittedProgramSchedule {
-                bytecode_len: 4,
-                bytecode_chunk_count: 2,
-                program_image_len_words: 1,
-                program_image_start_index: 0,
-            }),
-        )
-        .expect("precommitted schedule should build");
-        let translation_point = [af(3)];
-        let source_link = VerifiedBytecodeReadRafSumcheck {
-            input_claim: AkitaField::zero(),
-            sumcheck_point: Vec::new(),
-            r_address: vec![af(11), af(13)],
-            r_cycle: vec![af(7)],
-            full_opening_point: vec![af(11), af(13), af(7)],
-            bytecode_ra_opening_points: vec![vec![af(2), af(5), af(7)]],
-            expected_output_claim: AkitaField::zero(),
-        };
-        let register_count = 1usize << REGISTER_ADDRESS_BITS;
-        let store_components = [af(2), af(3)];
-        let mut rd_components = vec![AkitaField::zero(); 2 * register_count];
-        rd_components[0] = af(5);
-        rd_components[register_count] = af(7);
-        let inactive_store_components = [AkitaField::zero(), AkitaField::one()];
-        let mut inactive_rd_components = vec![AkitaField::zero(); 2 * register_count];
-        inactive_rd_components[0] = af(2);
-        inactive_rd_components[register_count] = af(4);
-        let chunk_0_weight = AkitaField::one() - af(11);
-        let chunk_1_weight = af(11);
-
-        let claims = derive_akita_fused_increment_stage6_claims(
-            &source,
-            &precommitted,
-            log_k_chunk,
-            AkitaFusedIncrementStage6Derivation {
-                translation_opening_point: &translation_point,
-                source_link: &source_link,
-                source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
-                    store_flag_chunks: &store_components,
-                    rd_present_chunks: &rd_components,
-                },
-                translation_sources: AkitaFusedIncrementTranslationSources {
-                    ram_source: af(17),
-                    rd_source: af(19),
-                },
-                inactive_zero_opening_point: &translation_point,
-                inactive_source_link: &source_link,
-                inactive_source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
-                    store_flag_chunks: &inactive_store_components,
-                    rd_present_chunks: &inactive_rd_components,
-                },
-                inactive_sources: AkitaFusedIncrementTranslationSources {
-                    ram_source: af(23),
-                    rd_source: af(29),
-                },
-            },
-        )
-        .expect("fused increment claims should derive from supplied precommitted components");
-
-        assert_eq!(
-            claims.source_link.store_flag,
-            chunk_0_weight * af(2) + chunk_1_weight * af(3)
-        );
-        assert_eq!(
-            claims.source_link.rd_present,
-            chunk_0_weight * af(5) + chunk_1_weight * af(7)
-        );
-        assert_eq!(
-            claims.source_link.store_flag_chunks,
-            store_components.to_vec()
-        );
-        assert_eq!(claims.source_link.rd_present_chunks, rd_components);
-        assert_eq!(
-            claims.inactive_source_link.store_flag,
-            chunk_1_weight * AkitaField::one()
-        );
-        assert_eq!(
-            claims.inactive_source_link.rd_present,
-            chunk_0_weight * af(2) + chunk_1_weight * af(4)
-        );
-    }
-
-    #[test]
-    fn fused_increment_stage6_derivation_rejects_bad_source_component_count() {
-        let log_t = 1;
-        let log_k_chunk = 2;
-        let mut specs = (0..8)
-            .map(|index| {
-                PackedFamilySpec::direct(
-                    PackedFamilyId::IncByte { index },
-                    PackedFactDomain::TraceRows { log_t },
-                    1,
-                    PackedAlphabet::Byte,
-                )
-            })
-            .collect::<Vec<_>>();
-        specs.extend([
-            PackedFamilySpec::direct(
-                PackedFamilyId::IncSign,
-                PackedFactDomain::TraceRows { log_t },
-                1,
-                PackedAlphabet::Bit,
-            ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRa { index: 0 },
-                PackedFactDomain::TraceRows { log_t },
-                1,
-                PackedAlphabet::Fixed {
-                    size: 1 << log_k_chunk,
-                },
-            ),
-        ]);
-        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
-        let source = SparsePackedWitness::try_from_cells(
-            layout,
-            [
-                (
-                    packed_cell_at(PackedFamilyId::IncByte { index: 0 }, 0, 0, 5),
-                    AkitaField::one(),
-                ),
-                (
-                    packed_cell_at(PackedFamilyId::BytecodeRa { index: 0 }, 0, 0, 1),
-                    AkitaField::one(),
-                ),
-            ],
-        )
-        .expect("source should build");
-        let precommitted = PrecommittedSchedule::new(
-            TracePolynomialOrder::CycleMajor,
-            log_t,
-            log_k_chunk,
-            None,
-            None,
-            Some(CommittedProgramSchedule {
-                bytecode_len: 4,
-                bytecode_chunk_count: 2,
-                program_image_len_words: 1,
-                program_image_start_index: 0,
-            }),
-        )
-        .expect("precommitted schedule should build");
-        let source_link = VerifiedBytecodeReadRafSumcheck {
-            input_claim: AkitaField::zero(),
-            sumcheck_point: Vec::new(),
-            r_address: vec![af(11), af(13)],
-            r_cycle: vec![af(7)],
-            full_opening_point: vec![af(11), af(13), af(7)],
-            bytecode_ra_opening_points: vec![vec![af(2), af(5), af(7)]],
-            expected_output_claim: AkitaField::zero(),
-        };
-        let store_components = [af(2)];
-        let rd_components = vec![AkitaField::zero(); 2 * (1usize << REGISTER_ADDRESS_BITS)];
-        let error = derive_akita_fused_increment_stage6_claims(
-            &source,
-            &precommitted,
-            log_k_chunk,
-            AkitaFusedIncrementStage6Derivation {
-                translation_opening_point: &[af(3)],
-                source_link: &source_link,
-                source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
-                    store_flag_chunks: &store_components,
-                    rd_present_chunks: &rd_components,
-                },
-                translation_sources: AkitaFusedIncrementTranslationSources {
-                    ram_source: af(17),
-                    rd_source: af(19),
-                },
-                inactive_zero_opening_point: &[af(3)],
-                inactive_source_link: &source_link,
-                inactive_source_link_components: AkitaFusedIncrementBytecodeSourceComponents {
-                    store_flag_chunks: &[af(2), af(3)],
-                    rd_present_chunks: &rd_components,
-                },
-                inactive_sources: AkitaFusedIncrementTranslationSources {
-                    ram_source: af(23),
-                    rd_source: af(29),
-                },
-            },
-        )
-        .expect_err("bad source component count should reject");
-        assert!(
-            matches!(
-                error,
-                VerifierError::StageClaimPublicInputFailed { ref reason, .. }
-                    if reason.contains("StoreFlag component count mismatch")
-            ),
-            "unexpected error: {error:?}"
-        );
-    }
-
-    #[test]
     fn packed_witness_artifacts_feed_akita_packed_batch_verifier() {
         let layout = tiny_layout();
         let params = AkitaSetupParams::from_packed_layout(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
         let instruction_family = PackedFamilyId::InstructionRa { index: 0 };
-        let sign_family = PackedFamilyId::IncSign;
+        let sign_family = PackedFamilyId::UnsignedIncMsb;
         let source = SparsePackedWitness::try_from_cells(
             layout.clone(),
             [
@@ -3202,7 +2605,7 @@ mod tests {
             JoltCommittedPolynomial::InstructionRa(0),
             JoltRelationId::HammingWeightClaimReduction,
         ));
-        let sign_id = Stage8OpeningId::from(fused_increment_sign_opening());
+        let sign_id = Stage8OpeningId::from(unsigned_inc_msb_opening());
         let statement = BatchOpeningStatement {
             logical_point: Vec::new(),
             pcs_point: Vec::new(),
@@ -3377,7 +2780,7 @@ mod tests {
         let layout = tiny_layout();
         let params = AkitaSetupParams::from_packed_layout(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
-        let sign_family = PackedFamilyId::IncSign;
+        let sign_family = PackedFamilyId::UnsignedIncMsb;
         let source = SparsePackedWitness::try_from_cells(
             layout.clone(),
             [(packed_cell(sign_family.clone(), 1), AkitaField::one())],
@@ -3390,7 +2793,7 @@ mod tests {
             .expect("artifact should carry Akita payload")
             .packed_witness
             .clone();
-        let sign_id = Stage8OpeningId::from(fused_increment_sign_opening());
+        let sign_id = Stage8OpeningId::from(unsigned_inc_msb_opening());
         let packed_statement = BatchOpeningStatement {
             logical_point: Vec::new(),
             pcs_point: Vec::new(),
@@ -3628,8 +3031,9 @@ mod tests {
             .expect("layout should derive");
             config.lattice.packed_witness.layout_digest = Some(layout.digest);
             config.lattice.packed_witness.d_pack = Some(layout.dimension);
-            let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
-                .expect("validity requirements should derive");
+            let requirements =
+                derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                    .expect("validity requirements should derive");
             config.lattice.packed_witness.validity_digest =
                 Some(lattice_packed_validity_digest(&requirements));
             let source = validity_default_source(&layout, &requirements);
@@ -3644,6 +3048,7 @@ mod tests {
                 &mut prover_transcript,
                 &artifacts,
                 &source,
+                log_k_chunk,
                 &precommitted,
             )
             .expect("validity proof should prove");
@@ -3653,6 +3058,7 @@ mod tests {
                 &verifier_setup,
                 &mut verifier_transcript,
                 &artifacts,
+                log_k_chunk,
                 &precommitted,
                 &validity,
             )
@@ -3666,6 +3072,7 @@ mod tests {
                 &verifier_setup,
                 &mut tampered_transcript,
                 &artifacts,
+                log_k_chunk,
                 &precommitted,
                 &tampered,
             )
@@ -3718,8 +3125,9 @@ mod tests {
             .expect("layout should derive");
             config.lattice.packed_witness.layout_digest = Some(layout.digest);
             config.lattice.packed_witness.d_pack = Some(layout.dimension);
-            let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
-                .expect("validity requirements should derive");
+            let requirements =
+                derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                    .expect("validity requirements should derive");
             config.lattice.packed_witness.validity_digest =
                 Some(lattice_packed_validity_digest(&requirements));
 
@@ -3737,6 +3145,7 @@ mod tests {
                 &mut prover_transcript,
                 &artifacts,
                 &source,
+                log_k_chunk,
                 &precommitted,
             )
             .expect("invalid packed witness can still produce a proof transcript");
@@ -3746,6 +3155,7 @@ mod tests {
                 &verifier_setup,
                 &mut verifier_transcript,
                 &artifacts,
+                log_k_chunk,
                 &precommitted,
                 &validity,
             )
@@ -3795,8 +3205,9 @@ mod tests {
             &precommitted,
         )
         .expect("layout should derive");
-        let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
-            .expect("validity requirements should derive");
+        let requirements =
+            derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                .expect("validity requirements should derive");
         let statements = derive_akita_packed_validity_statements(&layout, &requirements)
             .expect("validity statements should derive");
         let source = validity_source_with_field_rd_inc_bytes(
@@ -3996,8 +3407,9 @@ mod tests {
             &precommitted,
         )
         .expect("layout should derive");
-        let requirements = derive_akita_packed_validity_requirements(&config, &precommitted)
-            .expect("validity requirements should derive");
+        let requirements =
+            derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                .expect("validity requirements should derive");
         let statements = derive_akita_packed_validity_statements(&layout, &requirements)
             .expect("validity statements should derive");
         (layout, statements)
@@ -4153,6 +3565,7 @@ mod tests {
         setup: &AkitaVerifierSetup,
         transcript: &mut T,
         artifacts: &AkitaPackedWitnessArtifacts,
+        log_k_chunk: usize,
         precommitted: &PrecommittedSchedule,
         validity: &AkitaPackedValidityProofArtifacts,
     ) -> Result<(), VerifierError>
@@ -4168,6 +3581,7 @@ mod tests {
             setup,
             transcript,
             &artifacts.protocol,
+            log_k_chunk,
             precommitted,
             &artifacts.layout,
             artifacts
@@ -4476,7 +3890,10 @@ mod tests {
                     packed_cell(PackedFamilyId::InstructionRa { index: 0 }, 7),
                     AkitaField::one(),
                 ),
-                (packed_cell(PackedFamilyId::IncSign, 1), AkitaField::one()),
+                (
+                    packed_cell(PackedFamilyId::UnsignedIncMsb, 1),
+                    AkitaField::one(),
+                ),
             ],
         )
         .expect("source should build");
@@ -4487,7 +3904,10 @@ mod tests {
                     packed_cell(PackedFamilyId::InstructionRa { index: 0 }, 8),
                     AkitaField::one(),
                 ),
-                (packed_cell(PackedFamilyId::IncSign, 0), AkitaField::one()),
+                (
+                    packed_cell(PackedFamilyId::UnsignedIncMsb, 0),
+                    AkitaField::one(),
+                ),
             ],
         )
         .expect("other source should build");

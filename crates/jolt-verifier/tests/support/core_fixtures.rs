@@ -1164,11 +1164,10 @@ fn core_sumcheck_id(id: JoltRelationId) -> CoreSumcheckId {
         JoltRelationId::ProgramImageClaimReduction => CoreSumcheckId::ProgramImageClaimReduction,
         JoltRelationId::IncClaimReduction => CoreSumcheckId::IncClaimReduction,
         JoltRelationId::HammingWeightClaimReduction => CoreSumcheckId::HammingWeightClaimReduction,
-        JoltRelationId::FusedIncrementTranslation
-        | JoltRelationId::FusedIncrementSourceLink
-        | JoltRelationId::FusedIncrementInactiveZero
-        | JoltRelationId::FusedIncrementInactiveSourceLink => {
-            panic!("legacy core fixtures cannot contain lattice relation IDs")
+        JoltRelationId::IncVirtualization
+        | JoltRelationId::UnsignedIncClaimReduction
+        | JoltRelationId::UnsignedIncChunkReconstruction => {
+            panic!("core fixtures cannot contain lattice relation IDs")
         }
     }
 }

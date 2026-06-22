@@ -17,16 +17,11 @@ use jolt_claims::protocols::field_inline::{
 use jolt_claims::protocols::jolt::{
     advice_bytes_validity_requirement, byte_decode_terms,
     formulas::{dimensions::REGISTER_ADDRESS_BITS, ra::JoltRaPolynomialLayout},
-    fused_increment_bytecode_source_opening, fused_increment_inactive_bytecode_source_opening,
-    fused_increment_inactive_magnitude_opening, fused_increment_inactive_sign_opening,
-    fused_increment_inactive_source_opening, fused_increment_magnitude_lattice_view_formula,
-    fused_increment_magnitude_opening, fused_increment_sign_lattice_view_formula,
-    fused_increment_sign_opening, fused_increment_source_opening,
-    fused_increment_validity_requirements, lattice_packed_validity_digest, weighted_symbol_terms,
+    lattice_packed_validity_digest, unsigned_inc_msb_lattice_view_formula,
+    unsigned_inc_msb_opening, unsigned_inc_validity_requirements, weighted_symbol_terms,
     AdviceClaimReductionLayout, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltPolynomialId, JoltRelationId, LatticeFusedIncrementTarget, LatticePackedFamilyId,
-    LatticePackedValidityKind, LatticePackedValidityRequirement, LatticePackedViewFormula,
-    FUSED_INCREMENT_BYTE_LIMBS,
+    JoltPolynomialId, JoltRelationId, LatticePackedFamilyId, LatticePackedValidityKind,
+    LatticePackedValidityRequirement, LatticePackedViewFormula,
 };
 use jolt_field::{Field, FixedByteSize};
 use jolt_openings::{
@@ -61,7 +56,6 @@ pub enum LatticePackedValidityStatementKind {
     ExactOneHotRowSum,
     OptionalOneHotRowSum,
     BooleanIndicator,
-    FusedIncrementCanonicalZero,
     BytecodeStoreRdDisjoint,
     FieldElementCanonicalBytes,
 }
@@ -119,11 +113,13 @@ pub fn derive_akita_packed_witness_layout(
         PackedFamilySpec::direct(PackedFamilyId::RamRa { index }, trace, 1, ra_alphabet)
     }));
 
-    extend_validity_requirement_families(
-        &mut specs,
-        &fused_increment_validity_requirements(),
-        trace,
-    )?;
+    let unsigned_inc_requirements =
+        unsigned_inc_validity_requirements(log_k_chunk).ok_or_else(|| {
+            invalid_lattice_config(format!(
+                "unsigned increment chunk reconstruction requires log_k_chunk to divide 64, got {log_k_chunk}",
+            ))
+        })?;
+    extend_validity_requirement_families(&mut specs, &unsigned_inc_requirements, trace)?;
 
     if config.lattice.field_inline.enabled {
         extend_field_rd_inc_families(&mut specs, trace)?;
@@ -153,6 +149,7 @@ pub fn derive_akita_packed_witness_layout(
 
 pub fn derive_akita_packed_validity_requirements(
     config: &JoltProtocolConfig,
+    log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
 ) -> Result<Vec<LatticePackedValidityRequirement>, VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
@@ -161,7 +158,11 @@ pub fn derive_akita_packed_validity_requirements(
         ));
     }
 
-    let mut requirements = fused_increment_validity_requirements();
+    let mut requirements = unsigned_inc_validity_requirements(log_k_chunk).ok_or_else(|| {
+        invalid_lattice_config(format!(
+            "unsigned increment chunk reconstruction requires log_k_chunk to divide 64, got {log_k_chunk}",
+        ))
+    })?;
     if config.lattice.field_inline.enabled {
         requirements.extend(field_rd_inc_validity_requirements());
     }
@@ -278,15 +279,6 @@ pub fn derive_akita_packed_validity_statements(
                     degree: 3,
                 });
             }
-            LatticePackedValidityKind::FusedIncrementCanonicalZero => {
-                let row_vars = validate_fused_increment_canonical_zero_layout(layout, requirement)?;
-                statements.push(LatticePackedValidityStatement {
-                    requirement: requirement.clone(),
-                    kind: LatticePackedValidityStatementKind::FusedIncrementCanonicalZero,
-                    num_vars: row_vars,
-                    degree: FUSED_INCREMENT_BYTE_LIMBS + 2,
-                });
-            }
             LatticePackedValidityKind::BytecodeStoreRdDisjoint => {
                 let row_vars = validate_bytecode_store_rd_disjoint_layout(layout, requirement)?;
                 statements.push(LatticePackedValidityStatement {
@@ -302,48 +294,6 @@ pub fn derive_akita_packed_validity_statements(
         }
     }
     Ok(statements)
-}
-
-fn validate_fused_increment_canonical_zero_layout(
-    layout: &PackedWitnessLayout,
-    requirement: &LatticePackedValidityRequirement,
-) -> Result<usize, VerifierError> {
-    if requirement.family != LatticePackedFamilyId::IncSign
-        || requirement.limbs != 1
-        || requirement.alphabet_size != 2
-    {
-        return Err(invalid_lattice_config(
-            "fused increment canonical-zero validity must be anchored on IncSign",
-        ));
-    }
-    let sign = layout.family(&PackedFamilyId::IncSign).ok_or_else(|| {
-        invalid_lattice_config("fused increment canonical-zero validity requires IncSign")
-    })?;
-    if sign.limbs != 1 || sign.alphabet.size() != 2 {
-        return Err(invalid_lattice_config(
-            "fused increment canonical-zero validity requires a boolean IncSign family",
-        ));
-    }
-    let rows = sign.domain.rows().map_err(|error| {
-        invalid_lattice_config(format!(
-            "fused increment canonical-zero IncSign row domain is invalid: {error}"
-        ))
-    })?;
-    let row_vars = power_of_two_log(rows, "fused increment canonical-zero row count")?;
-    for index in 0..FUSED_INCREMENT_BYTE_LIMBS {
-        let family_id = PackedFamilyId::IncByte { index };
-        let family = layout.family(&family_id).ok_or_else(|| {
-            invalid_lattice_config(format!(
-                "fused increment canonical-zero validity requires {family_id:?}"
-            ))
-        })?;
-        if family.domain != sign.domain || family.limbs != 1 || family.alphabet.size() != 256 {
-            return Err(invalid_lattice_config(format!(
-                "fused increment canonical-zero validity requires {family_id:?} to be a byte family over the IncSign row domain"
-            )));
-        }
-    }
-    Ok(row_vars)
 }
 
 fn validate_bytecode_store_rd_disjoint_layout(
@@ -604,9 +554,6 @@ fn validity_statement_opening_count(statement: &LatticePackedValidityStatement) 
         | LatticePackedValidityStatementKind::ExactOneHotRowSum
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => 1,
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
-            FUSED_INCREMENT_BYTE_LIMBS + 1
-        }
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => 2,
         LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
             field_element_canonical_factors(&statement.requirement)
@@ -720,6 +667,7 @@ pub fn verify_lattice_packed_validity_proof<F, PCS, T, RoundCommitment>(
     setup: &PCS::VerifierSetup,
     transcript: &mut T,
     config: &JoltProtocolConfig,
+    log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
     layout: &PackedWitnessLayout,
     commitment: PCS::Output,
@@ -733,7 +681,8 @@ where
     PCS::Output: Clone,
     T: Transcript<Challenge = F>,
 {
-    let requirements = derive_akita_packed_validity_requirements(config, precommitted)?;
+    let requirements =
+        derive_akita_packed_validity_requirements(config, log_k_chunk, precommitted)?;
     let statements = derive_akita_packed_validity_statements(layout, &requirements)?;
     let expected_opening_claims = lattice_packed_validity_opening_count(&statements);
     if opening_claims.len() != expected_opening_claims {
@@ -824,19 +773,15 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
                 transcript.append(&U64Word(2));
                 transcript.append(&U64Word(symbol as u64));
             }
-            LatticePackedValidityKind::FusedIncrementCanonicalZero => {
-                transcript.append(&U64Word(3));
-                transcript.append(&U64Word(0));
-            }
             LatticePackedValidityKind::BytecodeStoreRdDisjoint => {
-                transcript.append(&U64Word(4));
+                transcript.append(&U64Word(3));
                 transcript.append(&U64Word(0));
             }
             LatticePackedValidityKind::FieldElementCanonicalBytes {
                 byte_width,
                 modulus,
             } => {
-                transcript.append(&U64Word(5));
+                transcript.append(&U64Word(4));
                 transcript.append(&U64Word(byte_width as u64));
                 transcript.append(&U64Word((modulus & u64::MAX as u128) as u64));
                 transcript.append(&U64Word((modulus >> u64::BITS) as u64));
@@ -851,9 +796,8 @@ fn validity_statement_kind_tag(kind: LatticePackedValidityStatementKind) -> u64 
         LatticePackedValidityStatementKind::ExactOneHotRowSum => 1,
         LatticePackedValidityStatementKind::OptionalOneHotRowSum => 2,
         LatticePackedValidityStatementKind::BooleanIndicator => 3,
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => 4,
-        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => 5,
-        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => 6,
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => 4,
+        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => 5,
     }
 }
 
@@ -871,10 +815,6 @@ where
         | LatticePackedValidityStatementKind::BooleanIndicator => {
             validity_violation(statement.kind, openings[0])
         }
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => openings
-            .iter()
-            .copied()
-            .fold(F::one(), |acc, opening| acc * opening),
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => openings[0] * openings[1],
         LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
             field_element_canonical_value_from_openings(statement, openings)?
@@ -941,8 +881,7 @@ where
             let difference = opening - F::one();
             difference * difference
         }
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
         | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => opening,
     }
 }
@@ -956,9 +895,6 @@ fn validity_factor_physical_view<F>(
 where
     F: Field,
 {
-    if statement.kind == LatticePackedValidityStatementKind::FusedIncrementCanonicalZero {
-        return fused_increment_canonical_zero_physical_view(layout, point, factor);
-    }
     if statement.kind == LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint {
         return bytecode_store_rd_disjoint_physical_view(layout, statement, point, factor);
     }
@@ -1019,9 +955,6 @@ where
             }
             terms
         }
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero => {
-            return fused_increment_canonical_zero_physical_view(layout, point, factor);
-        }
         LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => {
             return bytecode_store_rd_disjoint_physical_view(layout, statement, point, factor);
         }
@@ -1033,49 +966,6 @@ where
     Ok(PhysicalView::PackedLinear {
         layout_digest: layout.digest,
         terms,
-    })
-}
-
-fn fused_increment_canonical_zero_physical_view<F>(
-    layout: &PackedWitnessLayout,
-    point: &[F],
-    factor: usize,
-) -> Result<PhysicalView<F>, VerifierError>
-where
-    F: Field,
-{
-    let (family_id, symbol) = fused_increment_canonical_zero_factor(factor)?;
-    let family = layout.family(&family_id).ok_or_else(|| {
-        invalid_lattice_config(format!(
-            "fused increment canonical-zero factor requires {family_id:?}"
-        ))
-    })?;
-    if family.limbs != 1 {
-        return Err(invalid_lattice_config(format!(
-            "fused increment canonical-zero factor {family_id:?} must have one limb"
-        )));
-    }
-    let rows = family.domain.rows().map_err(|error| {
-        invalid_lattice_config(format!(
-            "fused increment canonical-zero factor {family_id:?} has invalid row domain: {error}"
-        ))
-    })?;
-    let row_vars = power_of_two_log(rows, "fused increment canonical-zero row count")?;
-    if point.len() != row_vars {
-        return Err(VerifierError::AkitaPackedValiditySumcheckFailed {
-            reason: format!(
-                "fused increment canonical-zero point has {} variables but statement requires {row_vars}",
-                point.len()
-            ),
-        });
-    }
-
-    Ok(PhysicalView::PackedLinear {
-        layout_digest: layout.digest,
-        terms: vec![
-            PackedLinearTerm::new(F::one(), family_id.physical_ref(), 0, symbol)
-                .with_row_point(point.to_vec()),
-        ],
     })
 }
 
@@ -1142,21 +1032,6 @@ where
         layout_digest: layout.digest,
         terms,
     })
-}
-
-fn fused_increment_canonical_zero_factor(
-    factor: usize,
-) -> Result<(PackedFamilyId, usize), VerifierError> {
-    if factor == 0 {
-        return Ok((PackedFamilyId::IncSign, 1));
-    }
-    let byte_index = factor - 1;
-    if byte_index < FUSED_INCREMENT_BYTE_LIMBS {
-        return Ok((PackedFamilyId::IncByte { index: byte_index }, 0));
-    }
-    Err(invalid_lattice_config(format!(
-        "fused increment canonical-zero has no opening factor {factor}"
-    )))
 }
 
 fn bytecode_store_rd_disjoint_physical_view<F>(
@@ -1301,8 +1176,7 @@ where
         LatticePackedValidityStatementKind::ExactOneHotRowSum
         | LatticePackedValidityStatementKind::OptionalOneHotRowSum
         | LatticePackedValidityStatementKind::BooleanIndicator => shape.row_vars + shape.limb_vars,
-        LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
+        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
         | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => shape.row_vars,
     };
     if point.len() != expected {
@@ -1330,9 +1204,11 @@ where
 
 pub fn validate_akita_packed_witness_validity_config(
     config: &JoltProtocolConfig,
+    log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
 ) -> Result<(), VerifierError> {
-    let requirements = derive_akita_packed_validity_requirements(config, precommitted)?;
+    let requirements =
+        derive_akita_packed_validity_requirements(config, log_k_chunk, precommitted)?;
     let digest = lattice_packed_validity_digest(&requirements);
     if config.lattice.packed_witness.validity_digest != Some(digest) {
         return Err(invalid_lattice_config(
@@ -1528,15 +1404,6 @@ fn validate_lattice_term_validity_coverage(
             "opening {id:?} uses field-byte packed family {family:?} limb {limb} without a bound canonical-byte validity requirement"
         )));
     }
-    if term_requires_fused_increment_canonical_zero(family)
-        && !requirements
-            .iter()
-            .any(fused_increment_canonical_zero_requirement)
-    {
-        return Err(unsupported_lattice_view(format!(
-            "opening {id:?} uses fused increment family {family:?} without a bound canonical-zero validity requirement"
-        )));
-    }
     if term_requires_bytecode_store_rd_disjoint(family)
         && !requirements.iter().any(|requirement| {
             bytecode_store_rd_disjoint_requirement_covers_term(requirement, family)
@@ -1574,8 +1441,7 @@ fn requirement_covers_term(
         LatticePackedValidityKind::BooleanIndicator { symbol: indicator } => {
             symbol == indicator && indicator < requirement.alphabet_size
         }
-        LatticePackedValidityKind::FusedIncrementCanonicalZero
-        | LatticePackedValidityKind::BytecodeStoreRdDisjoint
+        LatticePackedValidityKind::BytecodeStoreRdDisjoint
         | LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => false,
     }
 }
@@ -1607,22 +1473,6 @@ fn canonical_requirement_covers_term(
         ) => expected == chunk && limb < byte_width,
         _ => false,
     }
-}
-
-fn term_requires_fused_increment_canonical_zero(family: &LatticePackedFamilyId) -> bool {
-    matches!(
-        family,
-        LatticePackedFamilyId::IncByte { .. } | LatticePackedFamilyId::IncSign
-    )
-}
-
-fn fused_increment_canonical_zero_requirement(
-    requirement: &LatticePackedValidityRequirement,
-) -> bool {
-    matches!(
-        requirement.kind,
-        LatticePackedValidityKind::FusedIncrementCanonicalZero
-    )
 }
 
 fn term_requires_bytecode_store_rd_disjoint(family: &LatticePackedFamilyId) -> bool {
@@ -1685,35 +1535,8 @@ where
         JoltOpeningId::UntrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
         } => Ok(point.to_vec()),
-        id if id == fused_increment_magnitude_opening()
-            || id == fused_increment_sign_opening()
-            || id == fused_increment_inactive_magnitude_opening()
-            || id == fused_increment_inactive_sign_opening() =>
-        {
-            Ok(point.to_vec())
-        }
-        id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd)
-            || id
-                == fused_increment_inactive_bytecode_source_opening(
-                    LatticeFusedIncrementTarget::Ram,
-                )
-            || id
-                == fused_increment_inactive_bytecode_source_opening(
-                    LatticeFusedIncrementTarget::Rd,
-                ) =>
-        {
-            Err(unsupported_lattice_view(
-                "fused increment bytecode source openings require bound precommitted bytecode views",
-            ))
-        }
-        id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd)
-            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd) =>
-        {
-            Ok(point.to_vec())
-        }
+        id if id == unsigned_inc_msb_opening() => Ok(point.to_vec()),
+        id if unsigned_inc_chunk_index(id).is_some() => ra_row_point(point, log_k_chunk),
         _ => Err(unsupported_lattice_view(format!(
             "final opening {id:?} has no supported lattice packed row point"
         ))),
@@ -1735,16 +1558,13 @@ where
             | JoltCommittedPolynomial::BytecodeRa(_)
             | JoltCommittedPolynomial::RamRa(_),
             JoltRelationId::HammingWeightClaimReduction,
-        )
-        | (
-            JoltCommittedPolynomial::BytecodeRa(_),
-            JoltRelationId::FusedIncrementSourceLink
-            | JoltRelationId::FusedIncrementInactiveSourceLink,
         ) => ra_row_point(point, log_k_chunk),
         (
             JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc,
             JoltRelationId::IncClaimReduction,
-        ) => Ok(point.to_vec()),
+        ) => Err(unsupported_lattice_view(
+            "lattice mode opens increment chunks/MSB through unsigned increment reconstruction, not dense IncClaimReduction polynomials",
+        )),
         (JoltCommittedPolynomial::ProgramImageInit, JoltRelationId::ProgramImageClaimReduction) => {
             Err(unsupported_lattice_view(
                 "ProgramImageInit uses a separate precommitted opening, not a packed witness row point",
@@ -1837,58 +1657,15 @@ where
         JoltOpeningId::UntrustedAdvice {
             relation: JoltRelationId::AdviceClaimReduction,
         } => Ok(advice_lattice_view_formula(JoltAdviceKind::Untrusted)),
-        id if id == fused_increment_magnitude_opening() => {
-            Ok(fused_increment_magnitude_lattice_view_formula())
+        id if id == unsigned_inc_msb_opening() => Ok(unsigned_inc_msb_lattice_view_formula()),
+        id => {
+            if let Some(index) = unsigned_inc_chunk_index(id) {
+                return unsigned_inc_chunk_lattice_view_formula(index, point, log_k_chunk);
+            }
+            Err(unsupported_lattice_view(format!(
+                "final opening {id:?} has no supported lattice packed view"
+            )))
         }
-        id if id == fused_increment_inactive_magnitude_opening() => {
-            Ok(fused_increment_magnitude_lattice_view_formula())
-        }
-        id if id == fused_increment_sign_opening() => {
-            Ok(fused_increment_sign_lattice_view_formula())
-        }
-        id if id == fused_increment_inactive_sign_opening() => {
-            Ok(fused_increment_sign_lattice_view_formula())
-        }
-        id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram) => {
-            Err(unsupported_lattice_view(
-                "fused increment bytecode source openings require bound precommitted bytecode views",
-            ))
-        }
-        id if id == fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd) => {
-            Err(unsupported_lattice_view(
-                "fused increment bytecode source openings require bound precommitted bytecode views",
-            ))
-        }
-        id if id
-            == fused_increment_inactive_bytecode_source_opening(
-                LatticeFusedIncrementTarget::Ram,
-            ) =>
-        {
-            Err(unsupported_lattice_view(
-                "fused increment bytecode source openings require bound precommitted bytecode views",
-            ))
-        }
-        id if id
-            == fused_increment_inactive_bytecode_source_opening(
-                LatticeFusedIncrementTarget::Rd,
-            ) =>
-        {
-            Err(unsupported_lattice_view(
-                "fused increment bytecode source openings require bound precommitted bytecode views",
-            ))
-        }
-        id if id == fused_increment_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_source_opening(LatticeFusedIncrementTarget::Rd)
-            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Ram)
-            || id == fused_increment_inactive_source_opening(LatticeFusedIncrementTarget::Rd) =>
-        {
-            Err(unsupported_lattice_view(
-                "fused increment source outputs require a bytecode-derived packed view relation",
-            ))
-        }
-        _ => Err(unsupported_lattice_view(format!(
-            "final opening {id:?} has no supported lattice packed view"
-        ))),
     }
 }
 
@@ -1899,8 +1676,10 @@ pub fn akita_packed_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId 
         }
         LatticePackedFamilyId::BytecodeRa { index } => PackedFamilyId::BytecodeRa { index: *index },
         LatticePackedFamilyId::RamRa { index } => PackedFamilyId::RamRa { index: *index },
-        LatticePackedFamilyId::IncByte { index } => PackedFamilyId::IncByte { index: *index },
-        LatticePackedFamilyId::IncSign => PackedFamilyId::IncSign,
+        LatticePackedFamilyId::UnsignedIncChunk { index } => {
+            PackedFamilyId::UnsignedIncChunk { index: *index }
+        }
+        LatticePackedFamilyId::UnsignedIncMsb => PackedFamilyId::UnsignedIncMsb,
         LatticePackedFamilyId::FieldRdIncByte { index } => {
             PackedFamilyId::FieldRdIncByte { index: *index }
         }
@@ -1970,9 +1749,7 @@ where
         ),
         (
             JoltCommittedPolynomial::BytecodeRa(index),
-            JoltRelationId::HammingWeightClaimReduction
-            | JoltRelationId::FusedIncrementSourceLink
-            | JoltRelationId::FusedIncrementInactiveSourceLink,
+            JoltRelationId::HammingWeightClaimReduction,
         ) => {
             ra_lattice_view_formula(
                 LatticePackedFamilyId::BytecodeRa { index },
@@ -1988,8 +1765,8 @@ where
             )
         }
         (JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc, JoltRelationId::IncClaimReduction) => {
-            Ok(LatticePackedViewFormula::masked_decoded(
-                JoltRelationId::FusedIncrementTranslation,
+            Err(unsupported_lattice_view(
+                "lattice mode opens increment chunks/MSB through unsigned increment reconstruction, not dense IncClaimReduction polynomials",
             ))
         }
         (JoltCommittedPolynomial::ProgramImageInit, JoltRelationId::ProgramImageClaimReduction) => {
@@ -2014,6 +1791,43 @@ where
             "committed polynomial {polynomial:?} under relation {relation:?} has no supported lattice packed view"
         ))),
     }
+}
+
+fn unsigned_inc_chunk_index(id: JoltOpeningId) -> Option<usize> {
+    let JoltOpeningId::Lattice {
+        relation: JoltRelationId::UnsignedIncClaimReduction,
+        index,
+    } = id
+    else {
+        return None;
+    };
+    (index >= 2).then_some(index - 2)
+}
+
+fn unsigned_inc_chunk_lattice_view_formula<F>(
+    index: usize,
+    point: &[F],
+    log_k_chunk: usize,
+) -> Result<LatticePackedViewFormula<F>, VerifierError>
+where
+    F: Field,
+{
+    if log_k_chunk == 0 {
+        return Err(unsupported_lattice_view(
+            "unsigned increment chunk view requires a nonzero chunk size",
+        ));
+    }
+    if point.len() < log_k_chunk {
+        return Err(unsupported_lattice_view(format!(
+            "unsigned increment chunk opening point has {} variables but needs at least {log_k_chunk}",
+            point.len()
+        )));
+    }
+    ra_lattice_view_formula(
+        LatticePackedFamilyId::UnsignedIncChunk { index },
+        point,
+        log_k_chunk,
+    )
 }
 
 fn ra_lattice_view_formula<F>(
@@ -2136,8 +1950,7 @@ fn extend_validity_requirement_families(
     for requirement in requirements {
         if matches!(
             requirement.kind,
-            LatticePackedValidityKind::FusedIncrementCanonicalZero
-                | LatticePackedValidityKind::BytecodeStoreRdDisjoint
+            LatticePackedValidityKind::BytecodeStoreRdDisjoint
                 | LatticePackedValidityKind::FieldElementCanonicalBytes { .. }
         ) {
             continue;
@@ -2278,7 +2091,8 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         byte_decode_terms, bytecode_imm_canonical_bytes_requirement,
         bytecode_validity_requirements, formulas::dimensions::REGISTER_ADDRESS_BITS,
-        fused_increment_source_lattice_view_formula, program_image_validity_requirement,
+        program_image_validity_requirement, unsigned_inc_chunk_opening,
+        unsigned_inc_lower_chunk_count, unsigned_inc_lower_value_lattice_view_formula,
         JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticePackedFamilyId,
         LatticePackedViewFormula, LatticePackedViewTerm, TracePolynomialOrder,
     };
@@ -2404,26 +2218,25 @@ mod tests {
             .unwrap_or_else(|| panic!("missing physical term"))
     }
 
-    fn fused_increment_validity_layout(log_t: usize) -> PackedWitnessLayout {
+    fn unsigned_increment_validity_layout(log_t: usize, log_k_chunk: usize) -> PackedWitnessLayout {
         let trace = PackedFactDomain::TraceRows { log_t };
-        let mut specs = (0..FUSED_INCREMENT_BYTE_LIMBS)
+        let requirements = unsigned_inc_validity_requirements(log_k_chunk)
+            .unwrap_or_else(|| panic!("unsigned increment requirements should derive"));
+        let specs = requirements
+            .into_iter()
             .map(|index| {
+                let alphabet = packed_alphabet_with_size(index.alphabet_size)
+                    .unwrap_or_else(|error| panic!("packed alphabet should derive: {error}"));
                 PackedFamilySpec::direct(
-                    PackedFamilyId::IncByte { index },
+                    akita_packed_family_id(&index.family),
                     trace,
-                    1,
-                    PackedAlphabet::Byte,
+                    index.limbs,
+                    alphabet,
                 )
             })
             .collect::<Vec<_>>();
-        specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::IncSign,
-            trace,
-            1,
-            PackedAlphabet::Bit,
-        ));
         PackedWitnessLayout::new(specs)
-            .unwrap_or_else(|error| panic!("fused increment layout should build: {error}"))
+            .unwrap_or_else(|error| panic!("unsigned increment layout should build: {error}"))
     }
 
     fn bytecode_source_validity_layout(chunk: usize, log_bytecode: usize) -> PackedWitnessLayout {
@@ -2467,9 +2280,9 @@ mod tests {
             .is_some());
         assert!(layout.family(&PackedFamilyId::RamRa { index: 0 }).is_some());
         assert!(layout
-            .family(&PackedFamilyId::IncByte { index: 7 })
+            .family(&PackedFamilyId::UnsignedIncChunk { index: 7 })
             .is_some());
-        assert!(layout.family(&PackedFamilyId::IncSign).is_some());
+        assert!(layout.family(&PackedFamilyId::UnsignedIncMsb).is_some());
         assert!(layout
             .family(&PackedFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
@@ -2506,21 +2319,21 @@ mod tests {
     fn validate_validity_config_rejects_mismatched_digest() {
         let mut config = lattice_config();
         let schedule = precommitted_schedule(None);
-        let requirements = derive_akita_packed_validity_requirements(&config, &schedule)
+        let requirements = derive_akita_packed_validity_requirements(&config, 8, &schedule)
             .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         let digest = lattice_packed_validity_digest(&requirements);
         config.lattice.packed_witness.validity_digest = Some(digest);
 
-        validate_akita_packed_witness_validity_config(&config, &schedule).unwrap_or_else(|error| {
-            panic!("validity config should match derived requirements: {error}")
-        });
+        validate_akita_packed_witness_validity_config(&config, 8, &schedule).unwrap_or_else(
+            |error| panic!("validity config should match derived requirements: {error}"),
+        );
 
         let mut wrong_digest = digest;
         wrong_digest[0] ^= 1;
         config.lattice.packed_witness.validity_digest = Some(wrong_digest);
 
         assert!(matches!(
-            validate_akita_packed_witness_validity_config(&config, &schedule),
+            validate_akita_packed_witness_validity_config(&config, 8, &schedule),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("validity digest")
         ));
@@ -2542,7 +2355,7 @@ mod tests {
                 PackedAlphabet::Fixed { size: 8 },
             ),
             PackedFamilySpec::direct(
-                PackedFamilyId::IncSign,
+                PackedFamilyId::UnsignedIncMsb,
                 PackedFactDomain::TraceRows { log_t: 4 },
                 1,
                 PackedAlphabet::Bit,
@@ -2561,7 +2374,7 @@ mod tests {
                 8,
             ),
             LatticePackedValidityRequirement::boolean_indicator(
-                LatticePackedFamilyId::IncSign,
+                LatticePackedFamilyId::UnsignedIncMsb,
                 1,
                 2,
                 1,
@@ -2601,28 +2414,33 @@ mod tests {
     }
 
     #[test]
-    fn derive_validity_statements_adds_fused_increment_canonical_zero() {
-        let layout = fused_increment_validity_layout(4);
-        let requirement = LatticePackedValidityRequirement::fused_increment_canonical_zero();
+    fn derive_validity_statements_adds_unsigned_increment_chunk_and_msb_checks() {
+        let layout = unsigned_increment_validity_layout(4, 4);
+        let requirements = unsigned_inc_validity_requirements(4)
+            .unwrap_or_else(|| panic!("unsigned increment requirements should derive"));
 
-        let statements =
-            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
-                .unwrap_or_else(|error| {
-                    panic!("canonical-zero validity statement should derive: {error}")
-                });
+        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+            .unwrap_or_else(|error| {
+                panic!("unsigned increment validity statements should derive: {error}")
+            });
 
-        assert_eq!(statements.len(), 1);
-        assert_eq!(statements[0].requirement, requirement);
+        let chunk_count = unsigned_inc_lower_chunk_count(4)
+            .unwrap_or_else(|| panic!("chunk count should derive"));
+        assert_eq!(requirements.len(), chunk_count + 1);
+        assert_eq!(statements.len(), chunk_count * 2 + 1);
         assert_eq!(
             statements[0].kind,
-            LatticePackedValidityStatementKind::FusedIncrementCanonicalZero
+            LatticePackedValidityStatementKind::CellBooleanity
         );
-        assert_eq!(statements[0].num_vars, 4);
-        assert_eq!(statements[0].degree, FUSED_INCREMENT_BYTE_LIMBS + 2);
         assert_eq!(
-            lattice_packed_validity_opening_count(&statements),
-            FUSED_INCREMENT_BYTE_LIMBS + 1
+            statements[1].kind,
+            LatticePackedValidityStatementKind::ExactOneHotRowSum
         );
+        assert_eq!(
+            statements.last().map(|statement| statement.kind),
+            Some(LatticePackedValidityStatementKind::BooleanIndicator)
+        );
+        assert!(statements.iter().all(|statement| statement.degree == 3));
     }
 
     #[test]
@@ -2786,90 +2604,6 @@ mod tests {
         let term = find_physical_term(terms, PackedFamilyId::ProgramImageInit, 1, 3);
         assert_eq!(term.row_point, vec![Fr::from_u64(2)]);
         assert_eq!(term.coefficient, limb_weights[1] * symbol_weights[3]);
-    }
-
-    #[test]
-    fn validity_batch_builder_lowers_fused_increment_canonical_zero_factors() {
-        let layout = fused_increment_validity_layout(4);
-        let statement = LatticePackedValidityStatement {
-            requirement: LatticePackedValidityRequirement::fused_increment_canonical_zero(),
-            kind: LatticePackedValidityStatementKind::FusedIncrementCanonicalZero,
-            num_vars: 4,
-            degree: FUSED_INCREMENT_BYTE_LIMBS + 2,
-        };
-        let point = vec![
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(7),
-        ];
-        let eq_point = vec![
-            Fr::from_u64(11),
-            Fr::from_u64(13),
-            Fr::from_u64(17),
-            Fr::from_u64(19),
-        ];
-        let batching_coefficient = Fr::from_u64(23);
-        let opening_claims = (0..=FUSED_INCREMENT_BYTE_LIMBS)
-            .map(|index| Fr::from_u64(29 + index as u64))
-            .collect::<Vec<_>>();
-        let reduction = BatchedEvaluationClaim {
-            reduction: EvaluationClaim::new(point.clone(), Fr::from_u64(31)),
-            batching_coefficients: vec![batching_coefficient],
-            max_num_vars: 4,
-            max_degree: FUSED_INCREMENT_BYTE_LIMBS + 2,
-        };
-
-        let batch = build_lattice_packed_validity_batch(
-            &layout,
-            std::slice::from_ref(&statement),
-            99_u64,
-            std::slice::from_ref(&eq_point),
-            &reduction,
-            &opening_claims,
-        )
-        .unwrap_or_else(|error| panic!("canonical-zero batch should build: {error}"));
-
-        let expected_eq = try_eq_mle(&point, &eq_point)
-            .unwrap_or_else(|error| panic!("eq mask should evaluate: {error}"));
-        let opening_product = opening_claims
-            .iter()
-            .copied()
-            .fold(Fr::from_u64(1), |acc, opening| acc * opening);
-        assert_eq!(
-            batch.expected_final_claim,
-            batching_coefficient * expected_eq * opening_product
-        );
-        assert_eq!(batch.statement.claims.len(), FUSED_INCREMENT_BYTE_LIMBS + 1);
-
-        let PhysicalView::PackedLinear {
-            layout_digest,
-            terms,
-        } = &batch.statement.claims[0].view
-        else {
-            panic!("canonical-zero sign factor should use a packed linear view");
-        };
-        assert_eq!(layout_digest, &layout.digest);
-        assert_eq!(terms.len(), 1);
-        assert_eq!(terms[0].family, PackedFamilyId::IncSign.physical_ref());
-        assert_eq!(terms[0].limb, 0);
-        assert_eq!(terms[0].symbol, 1);
-        assert_eq!(terms[0].coefficient, Fr::from_u64(1));
-        assert_eq!(terms[0].row_point, point);
-
-        for index in 0..FUSED_INCREMENT_BYTE_LIMBS {
-            let PhysicalView::PackedLinear { terms, .. } = &batch.statement.claims[index + 1].view
-            else {
-                panic!("canonical-zero byte factor should use a packed linear view");
-            };
-            assert_eq!(terms.len(), 1);
-            assert_eq!(
-                terms[0].family,
-                PackedFamilyId::IncByte { index }.physical_ref()
-            );
-            assert_eq!(terms[0].limb, 0);
-            assert_eq!(terms[0].symbol, 0);
-        }
     }
 
     #[test]
@@ -3113,14 +2847,14 @@ mod tests {
     #[test]
     fn derive_validity_statements_rejects_layout_requirement_mismatch() {
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::IncSign,
+            PackedFamilyId::UnsignedIncMsb,
             PackedFactDomain::TraceRows { log_t: 4 },
             1,
             PackedAlphabet::Bit,
         )])
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
         let requirements = [LatticePackedValidityRequirement::exact_one_hot(
-            LatticePackedFamilyId::IncSign,
+            LatticePackedFamilyId::UnsignedIncMsb,
             8,
             256,
         )];
@@ -3203,42 +2937,33 @@ mod tests {
     }
 
     #[test]
-    fn validity_coverage_requires_fused_increment_canonical_zero() {
-        let id = Stage8OpeningId::from(fused_increment_magnitude_opening());
-        let formula = fused_increment_magnitude_lattice_view_formula::<Fr>();
-        let without_canonical_zero = fused_increment_validity_requirements()
-            .into_iter()
-            .filter(|requirement| {
-                !matches!(
-                    requirement.kind,
-                    LatticePackedValidityKind::FusedIncrementCanonicalZero
-                )
-            })
-            .collect::<Vec<_>>();
-        let with_canonical_zero = fused_increment_validity_requirements();
+    fn validity_coverage_accepts_unsigned_increment_validity_requirements() {
+        let id = Stage8OpeningId::from(unsigned_inc_chunk_opening(0));
+        let formula = unsigned_inc_lower_value_lattice_view_formula::<Fr>(8)
+            .unwrap_or_else(|| panic!("unsigned increment lower-value view should derive"));
+        let requirements = unsigned_inc_validity_requirements(8)
+            .unwrap_or_else(|| panic!("unsigned increment requirements should derive"));
 
-        assert!(matches!(
-            validate_lattice_view_validity_coverage(
-                &[(id, formula.clone(), Vec::new())],
-                &without_canonical_zero,
-            ),
-            Err(VerifierError::FinalOpeningBatchFailed { reason })
-                if reason.contains("without a bound canonical-zero validity requirement")
-        ));
-
-        validate_lattice_view_validity_coverage(&[(id, formula, Vec::new())], &with_canonical_zero)
+        validate_lattice_view_validity_coverage(&[(id, formula, Vec::new())], &requirements)
             .unwrap_or_else(|error| {
-                panic!("fused increment canonical-zero coverage should validate: {error}")
+                panic!("unsigned increment validity coverage should validate: {error}")
             });
     }
 
     #[test]
     fn validity_coverage_requires_bytecode_store_rd_disjointness() {
-        let id = Stage8OpeningId::from(fused_increment_bytecode_source_opening(
-            LatticeFusedIncrementTarget::Ram,
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltRelationId::BytecodeClaimReduction,
         ));
-        let formula =
-            fused_increment_source_lattice_view_formula::<Fr>(LatticeFusedIncrementTarget::Ram, 0);
+        let formula = LatticePackedViewFormula::<Fr>::direct(
+            LatticePackedFamilyId::BytecodeCircuitFlag {
+                chunk: 0,
+                flag: CircuitFlags::Store as usize,
+            },
+            0,
+            1,
+        );
         let store_flag = LatticePackedValidityRequirement::boolean_indicator(
             LatticePackedFamilyId::BytecodeCircuitFlag {
                 chunk: 0,
@@ -3288,22 +3013,21 @@ mod tests {
 
     #[test]
     fn validity_coverage_checks_boolean_indicator_symbol() {
-        let id = Stage8OpeningId::from(fused_increment_sign_opening());
+        let id = Stage8OpeningId::from(unsigned_inc_msb_opening());
         let requirement = LatticePackedValidityRequirement::boolean_indicator(
-            LatticePackedFamilyId::IncSign,
+            LatticePackedFamilyId::UnsignedIncMsb,
             1,
             2,
             1,
         );
-        let canonical_zero = LatticePackedValidityRequirement::fused_increment_canonical_zero();
 
         validate_lattice_view_validity_coverage(
             &[(
                 id,
-                LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1),
+                LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1),
                 Vec::new(),
             )],
-            &[requirement.clone(), canonical_zero.clone()],
+            std::slice::from_ref(&requirement),
         )
         .unwrap_or_else(|error| panic!("covered boolean indicator should validate: {error}"));
 
@@ -3312,13 +3036,13 @@ mod tests {
                 &[(
                     id,
                     LatticePackedViewFormula::<Fr>::direct(
-                        LatticePackedFamilyId::IncSign,
+                        LatticePackedFamilyId::UnsignedIncMsb,
                         0,
                         0,
                     ),
                     Vec::new(),
                 )],
-                &[requirement, canonical_zero],
+                &[requirement],
             ),
             Err(VerifierError::FinalOpeningBatchFailed { reason })
                 if reason.contains("without a bound validity requirement")
@@ -3326,7 +3050,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_layout_uses_fused_increment_validity_requirements() {
+    fn derive_layout_uses_unsigned_increment_validity_requirements() {
         let config = lattice_config();
         let log_t = 3;
         let layout = derive_akita_packed_witness_layout(
@@ -3338,7 +3062,9 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
-        for requirement in fused_increment_validity_requirements() {
+        for requirement in unsigned_inc_validity_requirements(8)
+            .unwrap_or_else(|| panic!("unsigned increment requirements should derive"))
+        {
             let family_id = akita_packed_family_id(&requirement.family);
             let family = layout
                 .family(&family_id)
@@ -3357,7 +3083,7 @@ mod tests {
         let layout = derive_akita_packed_witness_layout(&config, 2, 8, ra_layout(), &precommitted)
             .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
         let validity_requirements =
-            derive_akita_packed_validity_requirements(&config, &precommitted)
+            derive_akita_packed_validity_requirements(&config, 8, &precommitted)
                 .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
 
         for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
@@ -3414,12 +3140,13 @@ mod tests {
 
     #[test]
     fn lattice_direct_view_converts_to_akita_view_formula() {
-        let formula = LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::IncSign, 0, 1);
+        let formula =
+            LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1);
 
         assert_eq!(
             akita_packed_view_formula(&formula)
                 .unwrap_or_else(|error| panic!("direct view should convert: {error}")),
-            PackedViewFormula::direct(PackedFamilyId::IncSign, 0, 1)
+            PackedViewFormula::direct(PackedFamilyId::UnsignedIncMsb, 0, 1)
         );
     }
 
@@ -3448,7 +3175,7 @@ mod tests {
     fn lattice_masked_views_require_prior_translation() {
         assert!(matches!(
             akita_packed_view_formula::<Fr>(&LatticePackedViewFormula::masked_decoded(
-                JoltRelationId::FusedIncrementTranslation,
+                JoltRelationId::UnsignedIncClaimReduction,
             )),
             Err(PackedViewError::MaskedViewRequiresTranslation)
         ));
@@ -3457,10 +3184,10 @@ mod tests {
     #[test]
     fn lattice_reduced_masked_view_converts_terms_to_akita_formula() {
         let formula = LatticePackedViewFormula::reduced_masked(
-            JoltRelationId::FusedIncrementTranslation,
+            JoltRelationId::UnsignedIncClaimReduction,
             vec![jolt_claims::protocols::jolt::LatticePackedViewTerm::new(
                 Fr::from_u64(9),
-                LatticePackedFamilyId::IncSign,
+                LatticePackedFamilyId::UnsignedIncMsb,
                 0,
                 1,
             )],
@@ -3470,7 +3197,7 @@ mod tests {
             Ok(PackedViewFormula::ReducedMasked { terms })
                 if terms.len() == 1
                     && terms[0].coefficient == Fr::from_u64(9)
-                    && terms[0].family == PackedFamilyId::IncSign
+                    && terms[0].family == PackedFamilyId::UnsignedIncMsb
                     && terms[0].limb == 0
                     && terms[0].symbol == 1
         ));
@@ -3568,113 +3295,55 @@ mod tests {
     }
 
     #[test]
-    fn jolt_lattice_resolver_marks_increments_as_masked() {
+    fn jolt_lattice_resolver_rejects_dense_increment_openings() {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::RamInc,
             JoltRelationId::IncClaimReduction,
         );
         assert!(matches!(
-            jolt_lattice_view_formula(id, &[Fr::from_u64(1)], 8, &precommitted_schedule(None))
-                .unwrap_or_else(|error| panic!("increment view should resolve: {error}")),
-            LatticePackedViewFormula::MaskedDecoded {
-                relation: JoltRelationId::FusedIncrementTranslation
-            }
+            jolt_lattice_view_formula(id, &[Fr::from_u64(1)], 8, &precommitted_schedule(None)),
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("not dense IncClaimReduction polynomials")
         ));
     }
 
     #[test]
-    fn jolt_lattice_resolver_lowers_fused_increment_decode_outputs() {
-        let magnitude = jolt_lattice_view_formula(
-            fused_increment_magnitude_opening(),
-            &[Fr::from_u64(1)],
+    fn jolt_lattice_resolver_lowers_unsigned_increment_chunk_and_msb_outputs() {
+        let point = (1..=9).map(Fr::from_u64).collect::<Vec<_>>();
+        let chunk = jolt_lattice_view_formula(
+            unsigned_inc_chunk_opening(7),
+            &point,
             8,
             &precommitted_schedule(None),
         )
-        .unwrap_or_else(|error| panic!("magnitude view should resolve: {error}"));
-        let magnitude_terms = linear_decoded_terms(&magnitude);
+        .unwrap_or_else(|error| panic!("chunk view should resolve: {error}"));
+        let chunk_terms = linear_decoded_terms(&chunk);
+        let expected_weights = EqPolynomial::<Fr>::evals(&point[..8], None);
         assert_eq!(
             find_lattice_term(
-                magnitude_terms,
-                LatticePackedFamilyId::IncByte { index: 7 },
+                chunk_terms,
+                LatticePackedFamilyId::UnsignedIncChunk { index: 7 },
                 0,
                 3,
             )
             .coefficient,
-            Fr::from_u64(256_u64.pow(7) * 3)
+            expected_weights[3]
         );
 
         assert!(matches!(
             jolt_lattice_view_formula(
-                fused_increment_sign_opening(),
+                unsigned_inc_msb_opening(),
                 &[Fr::from_u64(1)],
                 8,
                 &precommitted_schedule(None),
             )
             .unwrap_or_else(|error| panic!("sign view should resolve: {error}")),
             LatticePackedViewFormula::Direct {
-                family: LatticePackedFamilyId::IncSign,
+                family: LatticePackedFamilyId::UnsignedIncMsb,
                 limb: 0,
                 symbol: 1
             }
         ));
-    }
-
-    #[test]
-    fn jolt_lattice_resolver_rejects_fused_increment_source_until_bytecode_relation() {
-        let error = match jolt_lattice_view_formula::<Fr>(
-            fused_increment_source_opening(LatticeFusedIncrementTarget::Ram),
-            &[Fr::from_u64(1)],
-            8,
-            &precommitted_schedule(None),
-        ) {
-            Ok(_) => panic!("source view should require a bytecode-derived relation"),
-            Err(error) => error,
-        };
-        assert!(error
-            .to_string()
-            .contains("bytecode-derived packed view relation"));
-    }
-
-    #[test]
-    fn jolt_lattice_resolver_lowers_source_link_bytecode_ra() {
-        let id = JoltOpeningId::committed(
-            JoltCommittedPolynomial::BytecodeRa(0),
-            JoltRelationId::FusedIncrementSourceLink,
-        );
-        let point = (1..=9).map(Fr::from_u64).collect::<Vec<_>>();
-        let formula = jolt_lattice_view_formula(id, &point, 8, &precommitted_schedule(None))
-            .unwrap_or_else(|error| panic!("source-link BytecodeRa should resolve: {error}"));
-        let terms = linear_decoded_terms(&formula);
-
-        assert_eq!(
-            find_lattice_term(terms, LatticePackedFamilyId::BytecodeRa { index: 0 }, 0, 7,)
-                .coefficient,
-            EqPolynomial::<Fr>::evals(&point[..8], None)[7]
-        );
-    }
-
-    #[test]
-    fn jolt_lattice_resolver_rejects_fused_increment_bytecode_sources_without_binding() {
-        let schedule = precommitted_schedule(None);
-        let point = [
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(7),
-            Fr::from_u64(11),
-        ];
-
-        for id in [
-            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-            fused_increment_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
-            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Ram),
-            fused_increment_inactive_bytecode_source_opening(LatticeFusedIncrementTarget::Rd),
-        ] {
-            assert!(matches!(
-                jolt_lattice_view_formula::<Fr>(id, &point, 8, &schedule),
-                Err(VerifierError::FinalOpeningBatchFailed { reason })
-                    if reason.contains("bound precommitted bytecode views")
-            ));
-        }
     }
 
     #[test]
@@ -3769,13 +3438,13 @@ mod tests {
     }
 
     #[test]
-    fn jolt_lattice_physical_manifest_rejects_masked_increment_view() {
+    fn jolt_lattice_physical_manifest_rejects_dense_increment_view() {
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::RamInc,
             JoltRelationId::IncClaimReduction,
         );
         let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::IncSign,
+            PackedFamilyId::UnsignedIncMsb,
             PackedFactDomain::TraceRows { log_t: 0 },
             1,
             PackedAlphabet::Bit,
@@ -3790,7 +3459,7 @@ mod tests {
                 &precommitted_schedule(None),
             ),
             Err(VerifierError::FinalOpeningBatchFailed { reason })
-                if reason.contains("masked packed view")
+                if reason.contains("not dense IncClaimReduction polynomials")
         ));
     }
 
@@ -3957,7 +3626,7 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
-        assert!(layout.family(&PackedFamilyId::IncSign).is_some());
+        assert!(layout.family(&PackedFamilyId::UnsignedIncMsb).is_some());
         assert!(layout.family(&PackedFamilyId::FieldRdIncSign).is_none());
         assert!(layout
             .family(&PackedFamilyId::FieldRdIncByte { index: 7 })
@@ -4045,9 +3714,9 @@ mod tests {
         assert_eq!(audit.cells_by_domain.bytecode_rows, 0);
         assert_eq!(audit.cells_by_domain.program_image_words, 0);
         assert!(audit.cells_by_domain.advice_bytes > 0);
-        assert!(layout.family(&PackedFamilyId::IncSign).is_some());
+        assert!(layout.family(&PackedFamilyId::UnsignedIncMsb).is_some());
         assert!(layout
-            .family(&PackedFamilyId::IncByte { index: 7 })
+            .family(&PackedFamilyId::UnsignedIncChunk { index: 7 })
             .is_some());
         assert!(layout
             .family(&PackedFamilyId::FieldRdIncByte { index: 0 })
