@@ -138,7 +138,8 @@ Field-inline:
 
 ```text
 FieldRdInc:
-  separate PackedWitness family from base IncByte/IncSign.
+  separate PackedWitness family from the base UnsignedIncChunk/UnsignedIncMsb
+  increment surface.
 
 FieldInlineAdvice:
   byte families if field-inline advice exists.
@@ -277,8 +278,8 @@ Stage 6b:
   run bytecode booleanity cycle phase.
   run BytecodeClaimReduction cycle phase when ProgramMode::Committed.
   run ProgramImageClaimReduction cycle phase when ProgramMode::Committed.
-  expose committed bytecode Store/RdPresent facts before fused increment
-  validity consumes them.
+  expose the committed bytecode Store selector before fused increment validity
+  consumes it.
 
 Stage 7:
   run BytecodeClaimReduction address/final phase when ProgramMode::Committed.
@@ -324,8 +325,8 @@ Stage 8:
 Proof-owned final logical claims are packed-view claims over one W_pack.
 TrustedAdvice, BytecodeChunk(i), and ProgramImageInit receive separate openings
 against their original commitments.
-Committed-bytecode source facts used by fused increments, such as StoreFlag and
-RdPresent, also resolve through separate BytecodeChunk(i) openings unless a
+Committed-bytecode source facts used by fused increments, such as the Store
+selector, also resolve through separate BytecodeChunk(i) openings unless a
 future bound precommitted packed view is specified.
 If a source fact is a linear view over committed bytecode lanes, the verifier
 checks the component-opening recombination before accepting the source claim.
@@ -437,7 +438,7 @@ field_element_encoding_is_canonical:
   non-canonical field byte representation rejects.
 
 field_rd_inc_uses_field_family:
-  FieldRdInc does not reuse base IncByte/IncSign families.
+  FieldRdInc does not reuse base UnsignedIncChunk/UnsignedIncMsb families.
 
 precommitted_program_openings_use_original_commitments:
   BytecodeChunk(i) and ProgramImageInit openings are checked against their
@@ -451,10 +452,9 @@ precommitted_program_not_in_w_pack:
   enabling ProgramMode::Committed does not add BytecodeChunk(i) or
   ProgramImageInit families to the proof-owned PackedWitness layout.
 
-fused_source_facts_not_in_w_pack:
-  StoreFlag and RdPresent source claims are checked through BytecodeChunk(i)
-  openings or a bound precommitted packed view, not proof-owned bytecode
-  families in W_pack.
+fused_store_selector_not_in_w_pack:
+  Store selector claims are checked through BytecodeChunk(i) openings or a
+  bound precommitted packed view, not proof-owned bytecode families in W_pack.
 
 zk_lattice_rejects:
   lattice family with zk feature fails before proof verification.

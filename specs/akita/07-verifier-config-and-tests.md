@@ -183,8 +183,8 @@ The packed-view proof covers only proof-owned W_pack claims.
 Precommitted opening proof material for TrustedAdvice, BytecodeChunk(i), and
 ProgramImageInit when those claims are present.
 Precommitted opening proof material for BytecodeChunk(i) source facts used by
-fused increment translation, such as StoreFlag and RdPresent, unless a future
-bound precommitted packed view is enabled.
+fused increment translation, such as the Store selector, unless a future bound
+precommitted packed view is enabled.
 For lane/chunk-derived source facts, the payload contains the component opening
 proofs needed to check the claimed source value against the original
 BytecodeChunk commitments.
@@ -251,7 +251,7 @@ Dispatch:
 4. partition proof-owned W_pack claims from precommitted claims.
 5. build a packed BatchOpeningStatement for W_pack claims.
    This statement must not contain TrustedAdvice, BytecodeChunk(i),
-   ProgramImageInit, StoreFlag, or RdPresent source components.
+   ProgramImageInit, or bytecode-derived Store selector components.
 6. build separate precommitted opening statements for TrustedAdvice,
    BytecodeChunk(i), and ProgramImageInit.
    These statements target the original precommitted commitments, not the
@@ -264,9 +264,9 @@ Dispatch:
    equivalence to the original precommitment.
    The verifier records these statements in a deterministic manifest and
    requires a separate proof entry for each manifest entry.
-   Fused-increment StoreFlag/RdPresent source claims use the same
-   precommitted BytecodeChunk opening path, including component-opening
-   recombination checks when the source is a committed-bytecode linear view.
+   The fused-increment Store selector uses the same precommitted BytecodeChunk
+   opening path. The current unsigned-offset PIOP binds that selector in Stage
+   6 before later increment reductions rely on it.
 7. prover-side Akita helpers receive one precommitted polynomial/hint input per
    separate precommitted statement and attach the resulting proofs to
    `lattice_precommitted_opening_proofs` in the same order.
@@ -402,13 +402,14 @@ fn build_batch_statement<F, C>(
 - Trusted advice cannot bypass its precommitted opening path.
 - Trusted advice, BytecodeChunk(i), and ProgramImageInit commitments cannot
   alias the PackedWitness commitment in Akita mode.
-- TrustedAdvice, BytecodeChunk(i), ProgramImageInit, StoreFlag, and RdPresent
-  source components cannot be emitted as PackedWitness packed-view claims.
-- Fused-increment StoreFlag/RdPresent source claims cannot bypass the
-  precommitted BytecodeChunk opening path unless a bound precommitted packed
-  view is specified.
+- TrustedAdvice, BytecodeChunk(i), ProgramImageInit, and bytecode-derived
+  Store selector components cannot be emitted as PackedWitness packed-view
+  claims.
+- Fused-increment Store selector claims cannot bypass the precommitted
+  BytecodeChunk opening path unless a bound precommitted packed view is
+  specified.
 - Component openings for precommitted linear views must recombine to the source
-  claim used by the surrounding PIOP relation.
+  claim used by the surrounding PIOP relation when such views are used.
 - Akita payload contains exactly one PackedWitness commitment.
 - Akita payload carries separate precommitted opening proof material when
   precommitted claims are present.
@@ -497,8 +498,8 @@ akita_precommitted_proof_count_is_exact:
 
 akita_w_pack_statement_excludes_precommitted_claims:
   the Stage 8 lattice statement builder partitions TrustedAdvice,
-  BytecodeChunk(i), ProgramImageInit, StoreFlag, and RdPresent source components
-  into precommitted statements, not the W_pack packed-view statement.
+  BytecodeChunk(i), ProgramImageInit, and bytecode-derived Store selector
+  components into precommitted statements, not the W_pack packed-view statement.
 
 akita_backend_program_committed_does_not_replace_precommitments:
   Akita backend Program::Committed material without explicit Jolt
@@ -510,13 +511,13 @@ akita_precommitted_direct_opening_uses_commitment_digest:
   rejects when the direct statement digest differs from the opened commitment
   digest.
 
-akita_fused_source_precommitted_opening_missing_rejects:
-  fused-increment StoreFlag/RdPresent source claims that only open W_pack
-  bytecode lanes fail.
+akita_fused_store_precommitted_opening_missing_rejects:
+  fused-increment Store selector claims that only open W_pack bytecode lanes
+  fail.
 
-akita_fused_source_component_recombination_tamper_rejects:
-  changing a BytecodeChunk component opening or the recombined StoreFlag/
-  RdPresent source claim fails before the final W_pack batch proof is accepted.
+akita_fused_store_component_recombination_tamper_rejects:
+  changing a BytecodeChunk component opening or the recombined Store selector
+  claim fails before the final W_pack batch proof is accepted.
 
 akita_single_packed_witness_payload:
   Akita payload with extra packed commitments rejects.

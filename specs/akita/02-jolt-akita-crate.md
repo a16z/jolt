@@ -430,11 +430,11 @@ step F:
   mismatches.
 
 step G:
-  fused-increment Stage 6 helper derives packed Inc byte/sign and BytecodeRa
-  claims from PackedWitness, but receives StoreFlag/RdPresent bytecode
-  component claims from the committed-bytecode source path. It recombines those
-  components into the aggregate StoreFlag/RdPresent source claims used by the
-  masked translation.
+  fused-increment verifier helpers use the current unsigned-offset PIOP from
+  `08-fused-increment-piop.md`: Stage 5i produces `Inc` and `Store`, Stage 6
+  binds `Store` through committed bytecode and reduces `Inc + 2^64` to
+  `UnsignedInc`, and Stage 8 opens packed `UnsignedIncChunk(j)` plus the
+  trace-domain `UnsignedIncMsb`.
 ```
 
 ## Invariants
@@ -456,8 +456,8 @@ step G:
   precommitted object. Jolt supplies explicit original commitment handles for
   TrustedAdvice, BytecodeChunk(i), and ProgramImageInit.
 - The crate must reject a statement/proof bundle where TrustedAdvice,
-  BytecodeChunk(i), ProgramImageInit, StoreFlag, or RdPresent source claims are
-  satisfied only by the PackedWitness proof or by an Akita backend
+  BytecodeChunk(i), ProgramImageInit, or bytecode-derived Store selector claims
+  are satisfied only by the PackedWitness proof or by an Akita backend
   Program::Committed handle.
 - Any future optimization that packs precommitted values with proof-owned
   witness values must include an explicit binding proof to the original Jolt

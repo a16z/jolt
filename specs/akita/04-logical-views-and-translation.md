@@ -207,6 +207,11 @@ masked decoded view:
 
 Masked translation relation:
 
+This byte/sign masked translation was the earlier base-increment design. For
+base Jolt increments it is superseded by `08-fused-increment-piop.md`, where
+Stage 5i proves `IncVirtualization` and Stage 6 binds the `Store` selector
+through committed bytecode.
+
 ```text
 Input claim:
   claimed RamInc(r)
@@ -215,7 +220,7 @@ Prove:
   RamInc(r) = sum_x eq(r, x) * StoreFlag(x) * DecodeInc(x)
 
 Output claims:
-  proof-owned W_pack openings of Inc byte/sign facts at the translation
+  proof-owned W_pack openings of packed increment facts at the translation
   sumcheck point rho.
   separate precommitted BytecodeChunk openings for StoreFlag/RdPresent at the
   translation sumcheck point rho.
@@ -299,8 +304,9 @@ Stage 8:
   final Akita packed-view opening over W_pack for proof-owned packed claims.
   separate precommitted openings for TrustedAdvice, BytecodeChunk(i), and
   ProgramImageInit.
-  separate component openings and recombination checks for precommitted linear
-  views such as fused-increment StoreFlag/RdPresent source claims.
+  separate direct/native openings for precommitted linear views. For current
+  base increments, `08-fused-increment-piop.md` binds the Store selector in
+  Stage 6 and opens unsigned increment chunk/MSB facts in Stage 8.
 ```
 
 Stage 8 statement construction:
@@ -533,13 +539,13 @@ precommitted_program_view_uses_original_commitment:
   not PackedWitness families.
 
 precommitted_views_are_absent_from_w_pack_statement:
-  TrustedAdvice, BytecodeChunk(i), ProgramImageInit, StoreFlag, and RdPresent
-  source components are not emitted as W_pack packed-view claims.
+  TrustedAdvice, BytecodeChunk(i), ProgramImageInit, and bytecode-derived
+  Store selector components are not emitted as W_pack packed-view claims.
 
-fused_increment_sources_use_precommitted_bytecode_openings:
-  StoreFlag and RdPresent source claims resolve through BytecodeChunk openings,
-  not W_pack families. Tampering with either component openings or the
-  recombined source claim rejects.
+fused_increment_store_uses_precommitted_bytecode_openings:
+  Store selector claims resolve through BytecodeChunk openings, not W_pack
+  families. Tampering with either component openings or the recombined source
+  claim rejects.
 
 precommitted_opening_manifest_is_exact:
   missing, extra, or reordered precommitted proofs reject before the W_pack
@@ -571,7 +577,7 @@ Rejected:
   coefficients needed by Jolt/BlindFold.
 - treating byte-limb decode as a point opening unless Akita proves the packed
   linear view relation.
-- satisfying StoreFlag or RdPresent source claims from proof-owned W_pack
+- satisfying bytecode-derived Store selector claims from proof-owned W_pack
   bytecode lanes without a binding to the BytecodeChunk commitment.
 ```
 

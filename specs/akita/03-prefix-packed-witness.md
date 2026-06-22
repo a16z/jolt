@@ -247,8 +247,13 @@ RA one-hot facts:
   RamRa(d)
 
 fused base increment facts:
-  IncMagnitudeByte(j), j in [0, 8)
-  IncSign
+  UnsignedIncChunk(j)
+  UnsignedIncMsb
+
+`08-fused-increment-piop.md` supersedes the older byte/sign base-increment
+surface. `UnsignedIncChunk(j)` uses the configured chunk width, and
+`UnsignedIncMsb` is a trace-domain bit family rather than a full address-chunk
+one-hot family.
 
 field-inline facts:
   FieldRdInc bytes or field-specific canonical limbs.
@@ -278,9 +283,9 @@ BytecodeChunk(i):
 ProgramImageInit:
   direct opening against the committed program-image commitment.
 
-Fused-increment source facts:
-  StoreFlag and RdPresent are derived from BytecodeChunk(i) component openings.
-  They do not add bytecode selector families to W_pack.
+Fused-increment selector facts:
+  Store is derived from BytecodeChunk(i) component openings. It does not add
+  bytecode selector families to W_pack.
 ```
 
 Layout:
@@ -515,7 +520,7 @@ precommitted_program_families_are_excluded:
 
 precommitted_values_cannot_enter_packed_source:
   PackedWitnessSource rejects or cannot construct families for TrustedAdvice,
-  BytecodeChunk(i), ProgramImageInit, StoreFlag, or RdPresent source lanes.
+  BytecodeChunk(i), ProgramImageInit, or bytecode-derived Store selector lanes.
 
 planner_audit_fields_are_reported:
   layout tests expose fact_count_by_alphabet, cells_by_domain,

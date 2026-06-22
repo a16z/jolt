@@ -1,5 +1,11 @@
 # Spec: Akita One-Hot Increments
 
+> Superseded for base Jolt increments by `08-fused-increment-piop.md`.
+> This file records the earlier byte/sign design. The current modular Akita
+> base-increment surface is `UnsignedIncChunk(j)` plus trace-domain
+> `UnsignedIncMsb`; `FieldRdIncByte` and `FieldRdIncSign` remain only as
+> field-inline auxiliary families.
+
 | Field | Value |
 |-------|-------|
 | Component | fused one-hot increments |
@@ -7,7 +13,7 @@
 | Unlocks | verifier config, advice/field-inline packing |
 | Author(s) | Markos Georghiades, Codex |
 | Created | 2026-06-08 |
-| Status | implemented (transparent verifier/protocol target) |
+| Status | superseded by 08-fused-increment-piop.md |
 
 ## Scope
 

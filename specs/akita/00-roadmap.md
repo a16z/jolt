@@ -110,7 +110,7 @@ Precommitted opening contract:
   direct-opening API that preserves every original commitment handle.
 - A proof for W_pack, or a backend Program::Committed bytecode handle, is never
   accepted as the proof for TrustedAdvice, BytecodeChunk(i), ProgramImageInit,
-  StoreFlag, or RdPresent source openings.
+  or bytecode-derived Store selector openings.
 ```
 
 In scope:
@@ -400,6 +400,8 @@ Milestone details:
   Proposed replacement for the earlier byte/sign fused increment surface in 05.
   Akita uses UnsignedIncChunk(j) plus a size-T UnsignedIncMsb, adds an
   Akita-only Stage 5i/Stage 5 increment proof, and leaves Dory unchanged.
+  This is the current base-increment plan; the byte/sign design in 05 is
+  superseded.
 ```
 
 ## Implementation Evidence
@@ -420,13 +422,14 @@ jolt-akita:
   separate direct/native openings for precommitted objects.
 
 jolt-claims:
-  lattice formulas, packed fact IDs, validity requirements, and fused-increment
-  translation/source-link formulas.
+  lattice formulas, packed fact IDs, validity requirements, unsigned-offset
+  increment virtualization, and chunk/MSB reconstruction formulas.
 
 jolt-verifier:
   PCS-family config and payload dispatch.
   PackedWitness layout derivation and validation.
-  Stage 6 fused-increment claim plumbing.
+  Stage 5i increment virtualization, Stage 6 store/unsigned reduction plumbing,
+  Stage 7 chunk reconstruction, and Stage 8 unsigned chunk/MSB openings.
   Stage 8 logical-to-physical partitioning into one W_pack packed-view batch
   plus separate precommitted direct-opening statements.
 ```
@@ -462,17 +465,18 @@ ZK hiding. Those remain separate integration work.
 - TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are precommitted
   objects; lattice verification must open them against their original
   commitments, not only through W_pack or a backend bytecode-commit mode.
-- StoreFlag/RdPresent source facts used by fused increments are
-  precommitted-bytecode facts, so they follow the BytecodeChunk opening path
+- The Store selector used by the fused increment virtualization relation is a
+  precommitted-bytecode fact, so it follows the BytecodeChunk opening path
   unless an explicit bound precommitted packed view is added.
 - Any one-hot committed logical value has an explicit decode relation and an
   explicit validity relation.
 - Base increment source is canonical:
     Ram = committed Store flag.
-    Rd = committed rd one-hot presence.
-    Store * rd_present = 0.
-- Zero increments use canonical sign:
-    magnitude = 0 implies sign = 0.
+    Rd = one minus committed Store flag.
+- Base increment encoding is canonical:
+    UnsignedInc = Inc + 2^64.
+    lower chunks reconstruct the low 64 bits.
+    UnsignedIncMsb is the size-T top bit.
 - Packing never silently hides a power-of-two dimension increase.
 ```
 

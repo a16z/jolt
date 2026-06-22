@@ -321,21 +321,22 @@ Use `Stage 5i` only as a compact stage label and avoid `5.5` in code identifiers
 In the modular proof model, add this as optional lattice-only proof and claim data, following the existing optional lattice proof-field pattern.
 Curve/Dory configs require the field to be absent or `None`; lattice configs require it to be present.
 
-### Existing Code Anchors
+### Code Anchors
 
-The current modular implementation is concentrated in:
+The final modular implementation is concentrated in:
 
 - `specs/akita/05-onehot-increments.md`, which defines the byte/sign fused increment design superseded by this spec.
-- `crates/jolt-claims/src/protocols/jolt/formulas/lattice.rs`, which currently names `IncByte { index }`, `IncSign`, `FUSED_INCREMENT_BYTE_LIMBS`, signed-magnitude decode, canonical-zero validity, fused translation, source-link, inactive-zero, and inactive-source-link formulas.
-- `crates/jolt-claims/src/protocols/jolt/ids.rs`, which currently names the fused-increment relation IDs and challenge IDs consumed by Stage 6.
+- `crates/jolt-claims/src/protocols/jolt/formulas/lattice.rs`, which names `UnsignedIncChunk { index }`, `UnsignedIncMsb`, unsigned-offset validity requirements, `IncVirtualization`, `UnsignedIncClaimReduction`, and `UnsignedIncChunkReconstruction`.
+- `crates/jolt-claims/src/protocols/jolt/ids.rs`, which names the lattice increment virtualization and unsigned-increment relation/challenge IDs.
 - `crates/jolt-verifier/src/config.rs`, where lattice mode requires `IncrementCommitmentMode::FusedOneHot`.
-  The enum may keep that name, but its lattice meaning changes to the unsigned-offset PIOP.
-- `crates/jolt-verifier/src/proof.rs`, where `JoltStageProofs` has no increment virtualization proof and `ClearProofClaims` has no increment virtualization claim payload.
-- `crates/jolt-verifier/src/stages/stage6/inputs.rs` and `inputs_b.rs`, where current fused-increment output claims live under Stage 6.
-- `crates/jolt-verifier/src/stages/stage6/verify.rs`, where the current fused translation, source-link, inactive-zero, and inactive-source-link checks are wired.
-- `crates/jolt-verifier/src/stages/stage7/**`, where lower increment chunk hamming/value reconstruction must be added.
-- `crates/jolt-verifier/src/stages/stage8/verify.rs`, where `akita_fused_increment_entries` currently opens magnitude/sign and bytecode source-link material.
-- `crates/jolt-akita/src/layout.rs` and `crates/jolt-akita/src/views.rs`, where packed physical family IDs and view encodings currently include `IncByte` and `IncSign`.
+  The enum keeps that name, but its lattice meaning is the unsigned-offset PIOP.
+- `crates/jolt-verifier/src/proof.rs`, where `JoltStageProofs` carries the optional lattice-only increment virtualization proof and `ClearProofClaims` carries the matching claim payload.
+- `crates/jolt-verifier/src/stages/stage5_increment.rs`, which verifies lattice-only `RamRaClaimReduction + IncVirtualization`.
+- `crates/jolt-verifier/src/stages/stage6/inputs.rs` and `inputs_b.rs`, where unsigned-increment and MSB output claims live under Stage 6.
+- `crates/jolt-verifier/src/stages/stage6/verify.rs`, where Store binding, unsigned increment reduction, lower chunk booleanity, and MSB booleanity are wired.
+- `crates/jolt-verifier/src/stages/stage7/**`, where lower increment chunk hamming/value reconstruction is wired.
+- `crates/jolt-verifier/src/stages/stage8/verify.rs`, where lower `UnsignedIncChunk(j)` and trace-domain `UnsignedIncMsb` openings are collected.
+- `crates/jolt-akita/src/layout.rs` and `crates/jolt-akita/src/views.rs`, where packed physical family IDs and view encodings include `UnsignedIncChunk { index }` and `UnsignedIncMsb`.
 - `crates/jolt-openings/src/packed_linear.rs` and `crates/jolt-openings/src/schemes.rs`, which should remain reusable without adding a new batching trait.
 
 ### Logical And Packed Surface
