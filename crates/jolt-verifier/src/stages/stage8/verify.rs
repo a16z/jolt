@@ -419,7 +419,7 @@ where
                 clear_claims,
                 true,
                 |polynomial| {
-                    if akita_requires_precommitted_opening(polynomial) {
+                    if lattice_requires_precommitted_opening(polynomial) {
                         precommitted_final_commitment(
                             preprocessing,
                             trusted_advice_commitment,
@@ -432,7 +432,7 @@ where
                 #[cfg(feature = "field-inline")]
                 &payload.packed_witness,
             )?;
-            final_entries.extend(akita_unsigned_inc_batch_entries(
+            final_entries.extend(lattice_unsigned_inc_batch_entries(
                 proof.one_hot_config.committed_chunk_bits(),
                 &opening_point,
                 unsigned_inc_finals.as_ref(),
@@ -440,7 +440,7 @@ where
             )?);
             let (entries, precommitted_entries): (Vec<_>, Vec<_>) = final_entries
                 .into_iter()
-                .partition(|entry| !akita_precommitted_stage8_opening(entry.id));
+                .partition(|entry| !lattice_precommitted_stage8_opening(entry.id));
             (entries, precommitted_entries)
         }
     };
@@ -461,7 +461,7 @@ where
         CommitmentPayload::Lattice(_) => {
             let packed_logical_manifest =
                 stage8_logical_manifest(&entries, pcs_opening_point.clone());
-            let (mut packed_manifest, layout_digest) = akita_stage8_physical_manifest(
+            let (mut packed_manifest, layout_digest) = lattice_stage8_physical_manifest(
                 &proof.protocol,
                 checked,
                 proof,
@@ -781,7 +781,7 @@ where
     Ok(entries)
 }
 
-fn akita_unsigned_inc_batch_entries<'a, F, C>(
+fn lattice_unsigned_inc_batch_entries<'a, F, C>(
     log_k_chunk: usize,
     opening_point: &[F],
     sources: Option<&LatticeUnsignedIncFinalOpenings<'_, F>>,
@@ -904,7 +904,7 @@ where
     }
 }
 
-fn akita_requires_precommitted_opening(polynomial: JoltCommittedPolynomial) -> bool {
+fn lattice_requires_precommitted_opening(polynomial: JoltCommittedPolynomial) -> bool {
     matches!(
         polynomial,
         JoltCommittedPolynomial::TrustedAdvice
@@ -913,7 +913,7 @@ fn akita_requires_precommitted_opening(polynomial: JoltCommittedPolynomial) -> b
     )
 }
 
-fn akita_precommitted_stage8_opening(id: Stage8OpeningId) -> bool {
+fn lattice_precommitted_stage8_opening(id: Stage8OpeningId) -> bool {
     matches!(
         id,
         Stage8OpeningId::Jolt(
@@ -931,7 +931,7 @@ fn akita_precommitted_stage8_opening(id: Stage8OpeningId) -> bool {
 }
 
 #[cfg(feature = "akita")]
-fn akita_stage8_physical_manifest<F, PCS, VC, ZkProof>(
+fn lattice_stage8_physical_manifest<F, PCS, VC, ZkProof>(
     config: &crate::config::JoltProtocolConfig,
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -944,21 +944,21 @@ where
     VC: VectorCommitment<Field = F>,
 {
     let log_t = checked.trace_length.ilog2() as usize;
-    let packed_layout = super::derive_akita_packed_witness_layout(
+    let packed_layout = super::derive_lattice_packed_witness_layout(
         config,
         log_t,
         proof.one_hot_config.committed_chunk_bits(),
         layout,
         &checked.precommitted,
     )?;
-    super::validate_akita_packed_witness_layout_config(config, &packed_layout)?;
+    super::validate_lattice_packed_witness_layout_config(config, &packed_layout)?;
     let log_k_chunk = proof.one_hot_config.committed_chunk_bits();
-    let validity_requirements = super::derive_akita_packed_validity_requirements(
+    let validity_requirements = super::derive_lattice_packed_validity_requirements(
         config,
         log_k_chunk,
         &checked.precommitted,
     )?;
-    super::validate_akita_packed_witness_validity_config(
+    super::validate_lattice_packed_witness_validity_config(
         config,
         log_k_chunk,
         &checked.precommitted,
@@ -974,7 +974,7 @@ where
 }
 
 #[cfg(not(feature = "akita"))]
-fn akita_stage8_physical_manifest<F, PCS, VC, ZkProof>(
+fn lattice_stage8_physical_manifest<F, PCS, VC, ZkProof>(
     config: &crate::config::JoltProtocolConfig,
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -1287,7 +1287,7 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn precommitted_statements_use_akita_commitment_layout_digest() {
+    fn precommitted_statements_use_lattice_commitment_layout_digest() {
         let digest = [23; 32];
         let default_digest = [17; 32];
         let commitment = jolt_akita::AkitaCommitment {
@@ -1384,12 +1384,13 @@ mod tests {
     }
 
     #[test]
-    fn akita_unsigned_increment_entries_require_sources_and_chunk_count() {
+    fn lattice_unsigned_increment_entries_require_sources_and_chunk_count() {
         let commitment = 9_u64;
         let opening_point = vec![Fr::from_u64(1), Fr::from_u64(2)];
-        let error = akita_unsigned_inc_batch_entries::<Fr, _>(8, &opening_point, None, &commitment)
-            .err()
-            .expect("lattice unsigned increment openings require stage sources");
+        let error =
+            lattice_unsigned_inc_batch_entries::<Fr, _>(8, &opening_point, None, &commitment)
+                .err()
+                .expect("lattice unsigned increment openings require stage sources");
         assert!(matches!(
             error,
             VerifierError::MissingOpeningClaim { id }
@@ -1403,7 +1404,7 @@ mod tests {
             msb_point: &opening_point,
             msb_claim: Some(Fr::from_u64(0)),
         };
-        let error = akita_unsigned_inc_batch_entries::<Fr, _>(
+        let error = lattice_unsigned_inc_batch_entries::<Fr, _>(
             8,
             &opening_point,
             Some(&sources),
@@ -1419,7 +1420,7 @@ mod tests {
     }
 
     #[test]
-    fn akita_unsigned_increment_entries_use_chunk_and_msb_points() {
+    fn lattice_unsigned_increment_entries_use_chunk_and_msb_points() {
         let commitment = 9_u64;
         let opening_point = vec![
             Fr::from_u64(1),
@@ -1438,7 +1439,7 @@ mod tests {
             msb_claim: Some(Fr::from_u64(1)),
         };
 
-        let entries = akita_unsigned_inc_batch_entries::<Fr, _>(
+        let entries = lattice_unsigned_inc_batch_entries::<Fr, _>(
             8,
             &opening_point,
             Some(&sources),

@@ -15,13 +15,14 @@ use crate::{
     stages::{
         stage7::inputs::LatticePackedValidityOutputClaims,
         stage8::{
-            akita_packed_family_id, build_lattice_packed_validity_batch,
-            derive_akita_packed_validity_requirements, derive_akita_packed_validity_statements,
-            field_element_canonical_factors, field_element_canonical_value_from_openings,
-            lattice_packed_validity_claims, lattice_packed_validity_opening_count,
-            sample_lattice_packed_validity_eq_points, validate_akita_packed_witness_layout_config,
-            FieldCanonicalFactor, LatticePackedValidityStatement,
-            LatticePackedValidityStatementKind, Stage8BatchStatement, Stage8OpeningId,
+            build_lattice_packed_validity_batch, derive_lattice_packed_validity_requirements,
+            derive_lattice_packed_validity_statements, field_element_canonical_factors,
+            field_element_canonical_value_from_openings, lattice_packed_validity_claims,
+            lattice_packed_validity_opening_count, lattice_packing_family_id,
+            sample_lattice_packed_validity_eq_points,
+            validate_lattice_packed_witness_layout_config, FieldCanonicalFactor,
+            LatticePackedValidityStatement, LatticePackedValidityStatementKind,
+            Stage8BatchStatement, Stage8OpeningId,
         },
         PrecommittedSchedule,
     },
@@ -108,7 +109,7 @@ pub fn build_akita_packed_jolt_witness(
 ) -> Result<SparsePackedWitness<AkitaField>, VerifierError> {
     validate_akita_jolt_packed_witness_layout(&input.layout)?;
     let protocol = akita_lattice_protocol_config_for_layout(&input.layout);
-    validate_akita_packed_witness_layout_config(&protocol, &input.layout)?;
+    validate_lattice_packed_witness_layout_config(&protocol, &input.layout)?;
 
     if input.instruction_lookup_indices.len() != input.trace_rows.len() {
         return Err(akita_witness_error(format!(
@@ -350,7 +351,7 @@ where
     S: PackedWitnessSource<AkitaField>,
 {
     let layout = source.layout().clone();
-    validate_akita_packed_witness_layout_config(&protocol, &layout)?;
+    validate_lattice_packed_witness_layout_config(&protocol, &layout)?;
     let (commitment, hint) =
         AkitaPackedScheme::commit_packed_source(setup, source).map_err(|error| {
             VerifierError::AkitaCommitmentFailed {
@@ -395,7 +396,7 @@ where
     let payload = artifacts
         .payload()
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packed opening artifacts do not carry an Akita payload".to_string(),
+            reason: "Akita packed opening artifacts do not carry a lattice payload".to_string(),
         })?;
     for claim in &statement.claims {
         if claim.commitment != payload.packed_witness {
@@ -460,7 +461,7 @@ where
     let payload = artifacts
         .payload()
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packed opening artifacts do not carry an Akita payload".to_string(),
+            reason: "Akita packed opening artifacts do not carry a lattice payload".to_string(),
         })?;
     validate_akita_precommitted_opening_inputs(
         &payload.packed_witness,
@@ -613,9 +614,12 @@ where
         );
     }
 
-    let requirements =
-        derive_akita_packed_validity_requirements(&artifacts.protocol, log_k_chunk, precommitted)?;
-    let statements = derive_akita_packed_validity_statements(&artifacts.layout, &requirements)?;
+    let requirements = derive_lattice_packed_validity_requirements(
+        &artifacts.protocol,
+        log_k_chunk,
+        precommitted,
+    )?;
+    let statements = derive_lattice_packed_validity_statements(&artifacts.layout, &requirements)?;
     let eq_points =
         sample_lattice_packed_validity_eq_points(transcript, &artifacts.layout, &statements);
     let sumcheck_claims = lattice_packed_validity_claims::<AkitaField>(&statements);
@@ -665,7 +669,7 @@ where
             .payload()
             .ok_or_else(
                 || VerifierError::LatticePackedValidityOpeningVerificationFailed {
-                    reason: "Akita packed validity artifacts do not carry an Akita payload"
+                    reason: "Akita packed validity artifacts do not carry a lattice payload"
                         .to_string(),
                 },
             )?
@@ -958,7 +962,7 @@ fn validate_akita_artifacts_for_proof(
     artifacts: &AkitaPackedWitnessArtifacts,
 ) -> Result<(), VerifierError> {
     validate_akita_verifier_setup_layout(setup, &artifacts.layout)?;
-    validate_akita_packed_witness_layout_config(&artifacts.protocol, &artifacts.layout)?;
+    validate_lattice_packed_witness_layout_config(&artifacts.protocol, &artifacts.layout)?;
     if proof_protocol != &artifacts.protocol {
         return Err(VerifierError::ProtocolConfigMismatch {
             expected: artifacts.protocol,
@@ -1633,7 +1637,7 @@ fn validity_opening_value<S>(
 where
     S: PackedWitnessSource<AkitaField>,
 {
-    let family_id = akita_packed_family_id(&statement.requirement.family);
+    let family_id = lattice_packing_family_id(&statement.requirement.family);
     let shape = validity_statement_shape(source.layout(), statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
     let row_weights = EqPolynomial::<AkitaField>::evals(point_parts.row, None);
@@ -3020,7 +3024,7 @@ mod tests {
                 config.lattice.packed_witness.field_rd_inc_family = true;
             }
 
-            let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+            let layout = crate::stages::stage8::derive_lattice_packed_witness_layout(
                 &config,
                 log_t,
                 log_k_chunk,
@@ -3031,7 +3035,7 @@ mod tests {
             config.lattice.packed_witness.layout_digest = Some(layout.digest);
             config.lattice.packed_witness.d_pack = Some(layout.dimension);
             let requirements =
-                derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
                     .expect("validity requirements should derive");
             config.lattice.packed_witness.validity_digest =
                 Some(lattice_packed_validity_digest(&requirements));
@@ -3114,7 +3118,7 @@ mod tests {
             config.lattice.packed_witness.d_pack = Some(0);
             config.lattice.packed_witness.validity_digest = Some([0; 32]);
 
-            let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+            let layout = crate::stages::stage8::derive_lattice_packed_witness_layout(
                 &config,
                 log_t,
                 log_k_chunk,
@@ -3125,7 +3129,7 @@ mod tests {
             config.lattice.packed_witness.layout_digest = Some(layout.digest);
             config.lattice.packed_witness.d_pack = Some(layout.dimension);
             let requirements =
-                derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
                     .expect("validity requirements should derive");
             config.lattice.packed_witness.validity_digest =
                 Some(lattice_packed_validity_digest(&requirements));
@@ -3196,7 +3200,7 @@ mod tests {
         config.lattice.packed_witness.d_pack = Some(0);
         config.lattice.packed_witness.validity_digest = Some([0; 32]);
 
-        let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+        let layout = crate::stages::stage8::derive_lattice_packed_witness_layout(
             &config,
             log_t,
             log_k_chunk,
@@ -3205,9 +3209,9 @@ mod tests {
         )
         .expect("layout should derive");
         let requirements =
-            derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+            derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
                 .expect("validity requirements should derive");
-        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+        let statements = derive_lattice_packed_validity_statements(&layout, &requirements)
             .expect("validity statements should derive");
         let source = validity_source_with_field_rd_inc_bytes(
             &layout,
@@ -3398,7 +3402,7 @@ mod tests {
             config.lattice.packed_witness.field_rd_inc_family = true;
         }
 
-        let layout = crate::stages::stage8::derive_akita_packed_witness_layout(
+        let layout = crate::stages::stage8::derive_lattice_packed_witness_layout(
             &config,
             log_t,
             log_k_chunk,
@@ -3407,9 +3411,9 @@ mod tests {
         )
         .expect("layout should derive");
         let requirements =
-            derive_akita_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+            derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
                 .expect("validity requirements should derive");
-        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+        let statements = derive_lattice_packed_validity_statements(&layout, &requirements)
             .expect("validity statements should derive");
         (layout, statements)
     }
@@ -3479,7 +3483,7 @@ mod tests {
             AkitaField::NUM_BYTES,
             AKITA_FIELD_MODULUS,
         ));
-        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+        let statements = derive_lattice_packed_validity_statements(&layout, &requirements)
             .expect("manual bytecode validity statements should derive");
         (layout, statements, requirements)
     }
@@ -3533,7 +3537,7 @@ mod tests {
     ) -> SparsePackedWitness<AkitaField> {
         let mut cells = Vec::new();
         for requirement in requirements {
-            let family_id = akita_packed_family_id(&requirement.family);
+            let family_id = lattice_packing_family_id(&requirement.family);
             let family = layout
                 .family(&family_id)
                 .expect("validity family should exist");

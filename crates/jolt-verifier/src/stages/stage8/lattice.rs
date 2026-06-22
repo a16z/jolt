@@ -81,7 +81,7 @@ pub struct LatticePackedValidityBatch<F: Field, C> {
     pub expected_final_claim: F,
 }
 
-pub fn derive_akita_packed_witness_layout(
+pub fn derive_lattice_packed_witness_layout(
     config: &JoltProtocolConfig,
     log_t: usize,
     log_k_chunk: usize,
@@ -146,7 +146,7 @@ pub fn derive_akita_packed_witness_layout(
     PackedWitnessLayout::new(specs).map_err(|error| invalid_lattice_config(error.to_string()))
 }
 
-pub fn derive_akita_packed_validity_requirements(
+pub fn derive_lattice_packed_validity_requirements(
     config: &JoltProtocolConfig,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
@@ -185,7 +185,7 @@ pub fn derive_akita_packed_validity_requirements(
     Ok(requirements)
 }
 
-pub fn derive_akita_packed_validity_statements(
+pub fn derive_lattice_packed_validity_statements(
     layout: &PackedWitnessLayout,
     requirements: &[LatticePackedValidityRequirement],
 ) -> Result<Vec<LatticePackedValidityStatement>, VerifierError> {
@@ -205,7 +205,7 @@ pub fn derive_akita_packed_validity_statements(
             continue;
         }
 
-        let family_id = akita_packed_family_id(&requirement.family);
+        let family_id = lattice_packing_family_id(&requirement.family);
         let family = layout.family(&family_id).ok_or_else(|| {
             invalid_lattice_config(format!(
                 "packed validity requirement references missing family {family_id:?}"
@@ -681,8 +681,8 @@ where
     T: Transcript<Challenge = F>,
 {
     let requirements =
-        derive_akita_packed_validity_requirements(config, log_k_chunk, precommitted)?;
-    let statements = derive_akita_packed_validity_statements(layout, &requirements)?;
+        derive_lattice_packed_validity_requirements(config, log_k_chunk, precommitted)?;
+    let statements = derive_lattice_packed_validity_statements(layout, &requirements)?;
     let expected_opening_claims = lattice_packed_validity_opening_count(&statements);
     if opening_claims.len() != expected_opening_claims {
         return Err(VerifierError::LatticePackedValidityClaimCountMismatch {
@@ -752,7 +752,7 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
         statements.len() as u64,
     ));
     for (index, statement) in statements.iter().enumerate() {
-        let family = akita_packed_family_id(&statement.requirement.family).physical_ref();
+        let family = lattice_packing_family_id(&statement.requirement.family).physical_ref();
         transcript.append(&U64Word(index as u64));
         transcript.append(&U64Word(family.namespace));
         transcript.append(&U64Word(family.id));
@@ -909,7 +909,7 @@ where
             statement.kind
         )));
     }
-    let family_id = akita_packed_family_id(&statement.requirement.family);
+    let family_id = lattice_packing_family_id(&statement.requirement.family);
     let shape = validity_statement_shape(layout, statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
     let limb_weights = EqPolynomial::<F>::evals(point_parts.limb, None);
@@ -1204,13 +1204,13 @@ where
     })
 }
 
-pub fn validate_akita_packed_witness_validity_config(
+pub fn validate_lattice_packed_witness_validity_config(
     config: &JoltProtocolConfig,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
 ) -> Result<(), VerifierError> {
     let requirements =
-        derive_akita_packed_validity_requirements(config, log_k_chunk, precommitted)?;
+        derive_lattice_packed_validity_requirements(config, log_k_chunk, precommitted)?;
     let digest = lattice_packed_validity_digest(&requirements);
     if config.lattice.packed_witness.validity_digest != Some(digest) {
         return Err(invalid_lattice_config(
@@ -1220,7 +1220,7 @@ pub fn validate_akita_packed_witness_validity_config(
     Ok(())
 }
 
-pub fn validate_akita_packed_witness_layout_config(
+pub fn validate_lattice_packed_witness_layout_config(
     config: &JoltProtocolConfig,
     layout: &PackedWitnessLayout,
 ) -> Result<(), VerifierError> {
@@ -1671,7 +1671,7 @@ where
     }
 }
 
-pub fn akita_packed_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId {
+pub fn lattice_packing_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId {
     match family {
         LatticePackedFamilyId::InstructionRa { index } => {
             PackedFamilyId::InstructionRa { index: *index }
@@ -1687,7 +1687,7 @@ pub fn akita_packed_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId 
         }
         LatticePackedFamilyId::FieldRdIncSign => PackedFamilyId::FieldRdIncSign,
         LatticePackedFamilyId::AdviceBytes { kind, index } => PackedFamilyId::AdviceBytes {
-            kind: akita_advice_kind(*kind),
+            kind: lattice_packing_advice_kind(*kind),
             index: *index,
         },
         LatticePackedFamilyId::BytecodeChunk { index } => {
@@ -1870,7 +1870,7 @@ where
     ))
 }
 
-pub fn akita_packed_view_formula<F>(
+pub fn lattice_packing_view_formula<F>(
     formula: &LatticePackedViewFormula<F>,
 ) -> Result<PackedViewFormula<F>, PackedViewError>
 where
@@ -1882,7 +1882,7 @@ where
             limb,
             symbol,
         } => Ok(PackedViewFormula::direct(
-            akita_packed_family_id(family),
+            lattice_packing_family_id(family),
             *limb,
             *symbol,
         )),
@@ -1892,7 +1892,7 @@ where
                 .map(|term| {
                     PackedViewTerm::new(
                         term.coefficient,
-                        akita_packed_family_id(&term.family),
+                        lattice_packing_family_id(&term.family),
                         term.limb,
                         term.symbol,
                     )
@@ -1906,7 +1906,7 @@ where
                     .map(|term| {
                         PackedViewTerm::new(
                             term.coefficient,
-                            akita_packed_family_id(&term.family),
+                            lattice_packing_family_id(&term.family),
                             term.limb,
                             term.symbol,
                         )
@@ -1920,7 +1920,7 @@ where
     }
 }
 
-fn akita_advice_kind(kind: JoltAdviceKind) -> PackedAdviceKind {
+fn lattice_packing_advice_kind(kind: JoltAdviceKind) -> PackedAdviceKind {
     match kind {
         JoltAdviceKind::Trusted => PackedAdviceKind::Trusted,
         JoltAdviceKind::Untrusted => PackedAdviceKind::Untrusted,
@@ -1931,10 +1931,10 @@ fn advice_family(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
 ) -> Result<PackedFamilySpec, VerifierError> {
-    let packed_kind = akita_advice_kind(kind);
+    let packed_kind = lattice_packing_advice_kind(kind);
     let requirement = advice_bytes_validity_requirement(kind);
     Ok(PackedFamilySpec::direct(
-        akita_packed_family_id(&requirement.family),
+        lattice_packing_family_id(&requirement.family),
         PackedFactDomain::AdviceBytes {
             kind: packed_kind,
             log_bytes: layout.advice_shape().total_vars() + 3,
@@ -1958,7 +1958,7 @@ fn extend_validity_requirement_families(
             continue;
         }
         specs.push(PackedFamilySpec::direct(
-            akita_packed_family_id(&requirement.family),
+            lattice_packing_family_id(&requirement.family),
             domain,
             requirement.limbs,
             packed_alphabet_with_size(requirement.alphabet_size)?,
@@ -2230,7 +2230,7 @@ mod tests {
                 let alphabet = packed_alphabet_with_size(index.alphabet_size)
                     .unwrap_or_else(|error| panic!("packed alphabet should derive: {error}"));
                 PackedFamilySpec::direct(
-                    akita_packed_family_id(&index.family),
+                    lattice_packing_family_id(&index.family),
                     trace,
                     index.limbs,
                     alphabet,
@@ -2268,7 +2268,7 @@ mod tests {
     #[test]
     fn derive_layout_includes_base_lattice_families() {
         let config = lattice_config();
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &config,
             2,
             8,
@@ -2313,7 +2313,7 @@ mod tests {
         matching_config.lattice.packed_witness.layout_digest = Some(layout.digest);
         matching_config.lattice.packed_witness.d_pack = Some(layout.dimension);
 
-        validate_akita_packed_witness_layout_config(&matching_config, &layout)
+        validate_lattice_packed_witness_layout_config(&matching_config, &layout)
             .unwrap_or_else(|error| panic!("layout config should validate: {error}"));
     }
 
@@ -2321,12 +2321,12 @@ mod tests {
     fn validate_validity_config_rejects_mismatched_digest() {
         let mut config = lattice_config();
         let schedule = precommitted_schedule(None);
-        let requirements = derive_akita_packed_validity_requirements(&config, 8, &schedule)
+        let requirements = derive_lattice_packed_validity_requirements(&config, 8, &schedule)
             .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         let digest = lattice_packed_validity_digest(&requirements);
         config.lattice.packed_witness.validity_digest = Some(digest);
 
-        validate_akita_packed_witness_validity_config(&config, 8, &schedule).unwrap_or_else(
+        validate_lattice_packed_witness_validity_config(&config, 8, &schedule).unwrap_or_else(
             |error| panic!("validity config should match derived requirements: {error}"),
         );
 
@@ -2335,7 +2335,7 @@ mod tests {
         config.lattice.packed_witness.validity_digest = Some(wrong_digest);
 
         assert!(matches!(
-            validate_akita_packed_witness_validity_config(&config, 8, &schedule),
+            validate_lattice_packed_witness_validity_config(&config, 8, &schedule),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("validity digest")
         ));
@@ -2383,7 +2383,7 @@ mod tests {
             ),
         ];
 
-        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+        let statements = derive_lattice_packed_validity_statements(&layout, &requirements)
             .unwrap_or_else(|error| panic!("validity statements should derive: {error}"));
 
         assert_eq!(statements.len(), 5);
@@ -2421,7 +2421,7 @@ mod tests {
         let requirements = unsigned_inc_validity_requirements(4)
             .unwrap_or_else(|| panic!("unsigned increment requirements should derive"));
 
-        let statements = derive_akita_packed_validity_statements(&layout, &requirements)
+        let statements = derive_lattice_packed_validity_statements(&layout, &requirements)
             .unwrap_or_else(|error| {
                 panic!("unsigned increment validity statements should derive: {error}")
             });
@@ -2452,7 +2452,7 @@ mod tests {
         let requirement = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk);
 
         let statements =
-            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
+            derive_lattice_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
                 .unwrap_or_else(|error| {
                     panic!("Store/Rd disjointness validity statement should derive: {error}")
                 });
@@ -2486,7 +2486,7 @@ mod tests {
         );
 
         let statements =
-            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
+            derive_lattice_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
                 .unwrap_or_else(|error| {
                     panic!("field canonical-byte validity statement should derive: {error}")
                 });
@@ -2515,7 +2515,7 @@ mod tests {
         let requirement = bytecode_imm_canonical_bytes_requirement(chunk, 2, 257);
 
         let statements =
-            derive_akita_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
+            derive_lattice_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
                 .unwrap_or_else(|error| {
                     panic!("bytecode imm canonical-byte validity statement should derive: {error}")
                 });
@@ -2862,7 +2862,7 @@ mod tests {
         )];
 
         assert!(matches!(
-            derive_akita_packed_validity_statements(&layout, &requirements),
+            derive_lattice_packed_validity_statements(&layout, &requirements),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("limb count mismatch")
         ));
@@ -3055,7 +3055,7 @@ mod tests {
     fn derive_layout_uses_unsigned_increment_validity_requirements() {
         let config = lattice_config();
         let log_t = 3;
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &config,
             log_t,
             8,
@@ -3067,7 +3067,7 @@ mod tests {
         for requirement in unsigned_inc_validity_requirements(8)
             .unwrap_or_else(|| panic!("unsigned increment requirements should derive"))
         {
-            let family_id = akita_packed_family_id(&requirement.family);
+            let family_id = lattice_packing_family_id(&requirement.family);
             let family = layout
                 .family(&family_id)
                 .unwrap_or_else(|| panic!("validity family {family_id:?} should be present"));
@@ -3082,14 +3082,15 @@ mod tests {
     fn derive_layout_excludes_committed_bytecode_source_requirements() {
         let config = lattice_config();
         let precommitted = precommitted_schedule(Some(8));
-        let layout = derive_akita_packed_witness_layout(&config, 2, 8, ra_layout(), &precommitted)
-            .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
+        let layout =
+            derive_lattice_packed_witness_layout(&config, 2, 8, ra_layout(), &precommitted)
+                .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
         let validity_requirements =
-            derive_akita_packed_validity_requirements(&config, 8, &precommitted)
+            derive_lattice_packed_validity_requirements(&config, 8, &precommitted)
                 .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
 
         for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
-            let family_id = akita_packed_family_id(&requirement.family);
+            let family_id = lattice_packing_family_id(&requirement.family);
             assert!(layout.family(&family_id).is_none());
             assert!(!validity_requirements.contains(&requirement));
         }
@@ -3103,9 +3104,9 @@ mod tests {
     }
 
     #[test]
-    fn lattice_family_ids_convert_to_akita_family_ids() {
+    fn lattice_family_ids_convert_to_packing_family_ids() {
         assert_eq!(
-            akita_packed_family_id(&LatticePackedFamilyId::AdviceBytes {
+            lattice_packing_family_id(&LatticePackedFamilyId::AdviceBytes {
                 kind: JoltAdviceKind::Trusted,
                 index: 3,
             }),
@@ -3115,7 +3116,7 @@ mod tests {
             }
         );
         assert_eq!(
-            akita_packed_family_id(&LatticePackedFamilyId::Custom {
+            lattice_packing_family_id(&LatticePackedFamilyId::Custom {
                 namespace: 17,
                 index: 5,
             }),
@@ -3125,7 +3126,7 @@ mod tests {
             }
         );
         assert_eq!(
-            akita_packed_family_id(&LatticePackedFamilyId::BytecodeRegisterSelector {
+            lattice_packing_family_id(&LatticePackedFamilyId::BytecodeRegisterSelector {
                 chunk: 2,
                 selector: 1,
             }),
@@ -3135,31 +3136,31 @@ mod tests {
             }
         );
         assert_eq!(
-            akita_packed_family_id(&LatticePackedFamilyId::BytecodeImmBytes { chunk: 2 }),
+            lattice_packing_family_id(&LatticePackedFamilyId::BytecodeImmBytes { chunk: 2 }),
             PackedFamilyId::BytecodeImmBytes { chunk: 2 }
         );
     }
 
     #[test]
-    fn lattice_direct_view_converts_to_akita_view_formula() {
+    fn lattice_direct_view_converts_to_packing_view_formula() {
         let formula =
             LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1);
 
         assert_eq!(
-            akita_packed_view_formula(&formula)
+            lattice_packing_view_formula(&formula)
                 .unwrap_or_else(|error| panic!("direct view should convert: {error}")),
             PackedViewFormula::direct(PackedFamilyId::UnsignedIncMsb, 0, 1)
         );
     }
 
     #[test]
-    fn lattice_linear_view_converts_terms_to_akita_view_formula() {
+    fn lattice_linear_view_converts_terms_to_packing_view_formula() {
         let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
             LatticePackedFamilyId::BytecodeChunk { index: 2 },
             4,
         ));
 
-        let converted = akita_packed_view_formula(&formula)
+        let converted = lattice_packing_view_formula(&formula)
             .unwrap_or_else(|error| panic!("linear view should convert: {error}"));
 
         assert!(matches!(
@@ -3176,7 +3177,7 @@ mod tests {
     #[test]
     fn lattice_masked_views_require_prior_translation() {
         assert!(matches!(
-            akita_packed_view_formula::<Fr>(&LatticePackedViewFormula::masked_decoded(
+            lattice_packing_view_formula::<Fr>(&LatticePackedViewFormula::masked_decoded(
                 JoltRelationId::UnsignedIncClaimReduction,
             )),
             Err(PackedViewError::MaskedViewRequiresTranslation)
@@ -3184,7 +3185,7 @@ mod tests {
     }
 
     #[test]
-    fn lattice_reduced_masked_view_converts_terms_to_akita_formula() {
+    fn lattice_reduced_masked_view_converts_terms_to_packing_formula() {
         let formula = LatticePackedViewFormula::reduced_masked(
             JoltRelationId::UnsignedIncClaimReduction,
             vec![jolt_claims::protocols::jolt::LatticePackedViewTerm::new(
@@ -3195,7 +3196,7 @@ mod tests {
             )],
         );
         assert!(matches!(
-            akita_packed_view_formula::<Fr>(&formula),
+            lattice_packing_view_formula::<Fr>(&formula),
             Ok(PackedViewFormula::ReducedMasked { terms })
                 if terms.len() == 1
                     && terms[0].coefficient == Fr::from_u64(9)
@@ -3423,7 +3424,7 @@ mod tests {
     fn jolt_lattice_physical_manifest_rejects_bytecode_chunk_packed_view() {
         let schedule = precommitted_schedule(None);
         let layout =
-            derive_akita_packed_witness_layout(&lattice_config(), 2, 8, ra_layout(), &schedule)
+            derive_lattice_packed_witness_layout(&lattice_config(), 2, 8, ra_layout(), &schedule)
                 .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
         let id = JoltOpeningId::committed(
             JoltCommittedPolynomial::BytecodeChunk(0),
@@ -3471,7 +3472,7 @@ mod tests {
         let mut config = lattice_config();
         config.lattice.field_inline.enabled = true;
         config.lattice.packed_witness.field_rd_inc_family = true;
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &config,
             2,
             8,
@@ -3500,7 +3501,7 @@ mod tests {
 
     #[test]
     fn layout_config_mismatch_rejects() {
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &lattice_config(),
             2,
             8,
@@ -3510,7 +3511,7 @@ mod tests {
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
         assert!(matches!(
-            validate_akita_packed_witness_layout_config(&lattice_config(), &layout),
+            validate_lattice_packed_witness_layout_config(&lattice_config(), &layout),
             Err(VerifierError::InvalidProtocolConfig { .. })
         ));
     }
@@ -3572,7 +3573,7 @@ mod tests {
             config.lattice.packed_witness.d_pack = Some(layout.dimension);
 
             assert!(matches!(
-                validate_akita_packed_witness_layout_config(&config, &layout),
+                validate_lattice_packed_witness_layout_config(&config, &layout),
                 Err(VerifierError::InvalidProtocolConfig { reason })
                     if reason.contains("cannot be included in the Akita packed witness layout")
             ));
@@ -3586,7 +3587,7 @@ mod tests {
         config.lattice.packed_witness.untrusted_advice_family = true;
 
         assert!(matches!(
-            derive_akita_packed_witness_layout(
+            derive_lattice_packed_witness_layout(
                 &config,
                 2,
                 8,
@@ -3596,7 +3597,7 @@ mod tests {
             Err(VerifierError::InvalidPrecommittedSchedule { .. })
         ));
 
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &config,
             2,
             8,
@@ -3619,7 +3620,7 @@ mod tests {
         config.lattice.field_inline.enabled = true;
         config.lattice.packed_witness.field_rd_inc_family = true;
 
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &config,
             2,
             8,
@@ -3646,7 +3647,7 @@ mod tests {
         config.lattice.advice.untrusted = true;
         config.lattice.packed_witness.untrusted_advice_family = true;
 
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &config,
             2,
             8,
@@ -3701,7 +3702,7 @@ mod tests {
         config.lattice.packed_witness.field_rd_inc_family = true;
         config.lattice.packed_witness.untrusted_advice_family = true;
 
-        let layout = derive_akita_packed_witness_layout(
+        let layout = derive_lattice_packed_witness_layout(
             &config,
             2,
             8,

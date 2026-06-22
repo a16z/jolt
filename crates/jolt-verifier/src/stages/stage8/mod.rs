@@ -7,16 +7,16 @@ mod verify;
 pub use inputs::{deps, Deps};
 #[cfg(feature = "akita")]
 pub use lattice::{
-    akita_packed_family_id, akita_packed_view_formula, build_lattice_packed_validity_batch,
-    derive_akita_packed_validity_requirements, derive_akita_packed_validity_statements,
-    derive_akita_packed_witness_layout, jolt_lattice_physical_manifest,
-    jolt_lattice_physical_manifest_with_validity, jolt_lattice_view_formula,
-    jolt_lattice_view_formulas, lattice_packed_validity_claims,
-    lattice_packed_validity_opening_count, sample_lattice_packed_validity_eq_points,
-    validate_akita_packed_witness_layout_config, validate_akita_packed_witness_validity_config,
-    verify_lattice_packed_validity_proof, JoltLatticeViewFormulaWithRowPoint,
-    LatticePackedValidityBatch, LatticePackedValidityBatchStatement,
-    LatticePackedValidityStatement, LatticePackedValidityStatementKind,
+    build_lattice_packed_validity_batch, derive_lattice_packed_validity_requirements,
+    derive_lattice_packed_validity_statements, derive_lattice_packed_witness_layout,
+    jolt_lattice_physical_manifest, jolt_lattice_physical_manifest_with_validity,
+    jolt_lattice_view_formula, jolt_lattice_view_formulas, lattice_packed_validity_claims,
+    lattice_packed_validity_opening_count, lattice_packing_family_id, lattice_packing_view_formula,
+    sample_lattice_packed_validity_eq_points, validate_lattice_packed_witness_layout_config,
+    validate_lattice_packed_witness_validity_config, verify_lattice_packed_validity_proof,
+    JoltLatticeViewFormulaWithRowPoint, LatticePackedValidityBatch,
+    LatticePackedValidityBatchStatement, LatticePackedValidityStatement,
+    LatticePackedValidityStatementKind,
 };
 #[cfg(feature = "akita")]
 pub(crate) use lattice::{

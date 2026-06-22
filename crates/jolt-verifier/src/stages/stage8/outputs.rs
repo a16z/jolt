@@ -132,7 +132,7 @@ impl<F: Field> Stage8PhysicalManifest<F> {
                 Ok((
                     id,
                     id,
-                    super::lattice::akita_packed_view_formula(&formula)?,
+                    super::lattice::lattice_packing_view_formula(&formula)?,
                     row_point,
                 ))
             })
@@ -280,7 +280,7 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn physical_manifest_resolves_akita_packed_views_from_catalog() {
+    fn physical_manifest_resolves_lattice_packing_views_from_catalog() {
         use jolt_openings::{
             PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedViewCatalog,
             PackedViewEntry, PackedViewFormula, PackedWitnessLayout,

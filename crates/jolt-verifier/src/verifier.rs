@@ -620,7 +620,7 @@ where
         .map_err(|error| VerifierError::InvalidProtocolConfig {
             reason: format!("invalid lattice formula dimensions: {error}"),
         })?;
-        let layout = stage8::derive_akita_packed_witness_layout(
+        let layout = stage8::derive_lattice_packed_witness_layout(
             config,
             log_t,
             proof.one_hot_config.committed_chunk_bits(),
@@ -826,15 +826,15 @@ where
         .map_err(|error| VerifierError::InvalidProtocolConfig {
             reason: format!("invalid lattice formula dimensions: {error}"),
         })?;
-        let layout = stage8::derive_akita_packed_witness_layout(
+        let layout = stage8::derive_lattice_packed_witness_layout(
             config,
             log_t,
             proof.one_hot_config.committed_chunk_bits(),
             formula_dimensions.ra_layout,
             &checked.precommitted,
         )?;
-        stage8::validate_akita_packed_witness_layout_config(config, &layout)?;
-        stage8::validate_akita_packed_witness_validity_config(
+        stage8::validate_lattice_packed_witness_layout_config(config, &layout)?;
+        stage8::validate_lattice_packed_witness_validity_config(
             config,
             proof.one_hot_config.committed_chunk_bits(),
             &checked.precommitted,
@@ -954,19 +954,19 @@ where
         .map_err(|error| VerifierError::InvalidProtocolConfig {
             reason: format!("invalid lattice formula dimensions: {error}"),
         })?;
-        let layout = stage8::derive_akita_packed_witness_layout(
+        let layout = stage8::derive_lattice_packed_witness_layout(
             config,
             log_t,
             proof.one_hot_config.committed_chunk_bits(),
             formula_dimensions.ra_layout,
             &checked.precommitted,
         )?;
-        let requirements = stage8::derive_akita_packed_validity_requirements(
+        let requirements = stage8::derive_lattice_packed_validity_requirements(
             config,
             proof.one_hot_config.committed_chunk_bits(),
             &checked.precommitted,
         )?;
-        let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)?;
+        let statements = stage8::derive_lattice_packed_validity_statements(&layout, &requirements)?;
         let expected_opening_claims = stage8::lattice_packed_validity_opening_count(&statements);
         if validity_claims.opening_claims.len() != expected_opening_claims {
             return Err(VerifierError::LatticePackedValidityClaimCountMismatch {
@@ -1968,9 +1968,9 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_rejects_missing_committed_program_final_openings() {
+    fn lattice_stage8_rejects_missing_committed_program_final_openings() {
         let (preprocessing, checked, proof, stage6, stage7) =
-            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
 
         for missing in [
             JoltCommittedPolynomial::BytecodeChunk(0),
@@ -2002,8 +2002,8 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_rejects_missing_trusted_advice_final_opening() {
-        let (preprocessing, checked, proof, stage6, stage7) = akita_stage8_statement_fixture(
+    fn lattice_stage8_rejects_missing_trusted_advice_final_opening() {
+        let (preprocessing, checked, proof, stage6, stage7) = lattice_stage8_statement_fixture(
             committed_test_preprocessing_with_advice(64, 0),
             true,
             |config| {
@@ -2081,7 +2081,7 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_batch_statement_uses_precommitted_bytecode_source_components() {
+    fn lattice_stage8_batch_statement_uses_precommitted_bytecode_source_components() {
         let preprocessing = committed_test_preprocessing();
         let public_io = public_io_for_preprocessing(&preprocessing);
         let placeholder_config = lattice_config([0; 32], 0);
@@ -2223,9 +2223,9 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_rejects_missing_unsigned_increment_final_sources() {
+    fn lattice_stage8_rejects_missing_unsigned_increment_final_sources() {
         let (preprocessing, checked, proof, stage6, stage7) =
-            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
 
         let assert_missing_unsigned_source =
             |stage6: stage6::Stage6ClearOutput<Fr>, stage7: stage7::Stage7ClearOutput<Fr>| {
@@ -2269,9 +2269,9 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_rejects_wrong_unsigned_increment_final_chunk_count() {
+    fn lattice_stage8_rejects_wrong_unsigned_increment_final_chunk_count() {
         let (preprocessing, checked, proof, stage6, mut stage7) =
-            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
         let _ = stage7
             .output_claims
             .unsigned_inc_chunk_reconstruction
@@ -2300,9 +2300,9 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_verify_rejects_missing_precommitted_bytecode_source_proofs() {
+    fn lattice_stage8_verify_rejects_missing_precommitted_bytecode_source_proofs() {
         let (preprocessing, checked, proof, stage6, stage7) =
-            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
         let mut transcript = jolt_transcript::Blake2bTranscript::new(b"akita-stage8-test");
 
         let result = stage8::verify_clear::<
@@ -2332,9 +2332,9 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
-    fn akita_stage8_verify_rejects_missing_committed_program_precommitted_proofs() {
+    fn lattice_stage8_verify_rejects_missing_committed_program_precommitted_proofs() {
         let (preprocessing, checked, mut proof, stage6, stage7) =
-            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
         let statement = stage8::batch_statement(
             &checked,
             &preprocessing,
@@ -3029,7 +3029,7 @@ mod tests {
     ) -> JoltProtocolConfig {
         let mut config = lattice_config(layout_digest, d_pack);
         let requirements =
-            stage8::derive_akita_packed_validity_requirements(&config, 8, precommitted)
+            stage8::derive_lattice_packed_validity_requirements(&config, 8, precommitted)
                 .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
         config.lattice.packed_witness.validity_digest =
             Some(lattice_packed_validity_digest(&requirements));
@@ -3070,7 +3070,7 @@ mod tests {
             proof.ram_K,
         ))
         .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
-        let layout = stage8::derive_akita_packed_witness_layout(
+        let layout = stage8::derive_lattice_packed_witness_layout(
             config,
             log_t,
             proof.one_hot_config.committed_chunk_bits(),
@@ -3078,13 +3078,13 @@ mod tests {
             &precommitted,
         )
         .unwrap_or_else(|error| panic!("packed witness layout should derive: {error}"));
-        let requirements = stage8::derive_akita_packed_validity_requirements(
+        let requirements = stage8::derive_lattice_packed_validity_requirements(
             config,
             proof.one_hot_config.committed_chunk_bits(),
             &precommitted,
         )
         .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
-        let statements = stage8::derive_akita_packed_validity_statements(&layout, &requirements)
+        let statements = stage8::derive_lattice_packed_validity_statements(&layout, &requirements)
             .unwrap_or_else(|error| panic!("validity statements should derive: {error}"));
 
         proof.stages.lattice_packed_validity_sumcheck_proof = Some(sumcheck_proof(false));
@@ -3149,7 +3149,7 @@ mod tests {
     }
 
     #[cfg(feature = "akita")]
-    fn akita_stage8_statement_fixture(
+    fn lattice_stage8_statement_fixture(
         preprocessing: JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
         trusted_advice_commitment_present: bool,
         configure_lattice: impl FnOnce(&mut JoltProtocolConfig),
@@ -3173,7 +3173,7 @@ mod tests {
         let layout = expected_lattice_layout(&config, &preprocessing, &proof, &checked);
         config.lattice.packed_witness.layout_digest = Some(layout.digest);
         config.lattice.packed_witness.d_pack = Some(layout.dimension);
-        let requirements = stage8::derive_akita_packed_validity_requirements(
+        let requirements = stage8::derive_lattice_packed_validity_requirements(
             &config,
             proof.one_hot_config.committed_chunk_bits(),
             &checked.precommitted,
@@ -3513,7 +3513,7 @@ mod tests {
             checked.ram_K,
         ))
         .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
-        stage8::derive_akita_packed_witness_layout(
+        stage8::derive_lattice_packed_witness_layout(
             config,
             log_t,
             proof.one_hot_config.committed_chunk_bits(),
