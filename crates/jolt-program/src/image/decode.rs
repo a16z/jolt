@@ -383,7 +383,7 @@ fn uses_r_format(instruction_kind: SourceInstructionKind) -> bool {
             | SourceInstructionKind::MULW
             | SourceInstructionKind::DIVUW
             | SourceInstructionKind::REMW
-            | SourceInstructionKind::REMUW //| SourceInstructionKind::VirtualRev8W(jolt_riscv::instructions::VirtualRev8W(()))
+            | SourceInstructionKind::REMUW
     )
 }
 
