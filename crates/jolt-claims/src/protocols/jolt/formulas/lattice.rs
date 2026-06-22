@@ -1049,6 +1049,34 @@ mod tests {
             ram_rw + gamma * ram_val + gamma_2 * rd_rw + gamma_2 * gamma * rd_val
         );
         assert_eq!(output, inc * gamma_2 * (eq_rd_rw + gamma * eq_rd_val));
+
+        let store_output = claims.output.expression().evaluate(
+            |id| match *id {
+                id if id == inc_virtualization_inc_opening() => inc,
+                id if id == inc_virtualization_store_opening() => Fr::from_u64(1),
+                _ => zero,
+            },
+            |id| match id {
+                JoltChallengeId::IncVirtualization(IncVirtualizationChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltPublicId::IncVirtualization(IncVirtualizationPublic::EqRamReadWrite) => {
+                    eq_ram_rw
+                }
+                JoltPublicId::IncVirtualization(IncVirtualizationPublic::EqRamValCheck) => {
+                    eq_ram_val
+                }
+                JoltPublicId::IncVirtualization(IncVirtualizationPublic::EqRegistersReadWrite) => {
+                    eq_rd_rw
+                }
+                JoltPublicId::IncVirtualization(
+                    IncVirtualizationPublic::EqRegistersValEvaluation,
+                ) => eq_rd_val,
+                _ => zero,
+            },
+        );
+        assert_eq!(store_output, inc * (eq_ram_rw + gamma * eq_ram_val));
     }
 
     #[test]

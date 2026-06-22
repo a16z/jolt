@@ -2200,6 +2200,83 @@ mod tests {
 
     #[cfg(feature = "akita")]
     #[test]
+    fn akita_stage8_rejects_missing_unsigned_increment_final_sources() {
+        let (preprocessing, checked, proof, stage6, stage7) =
+            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+
+        let assert_missing_unsigned_source =
+            |stage6: stage6::Stage6ClearOutput<Fr>, stage7: stage7::Stage7ClearOutput<Fr>| {
+                let result = stage8::batch_statement(
+                    &checked,
+                    &preprocessing,
+                    &proof,
+                    None,
+                    stage8::Deps::Clear {
+                        stage6: &stage6,
+                        stage7: &stage7,
+                    },
+                );
+                assert!(matches!(
+                    result,
+                    Err(VerifierError::MissingOpeningClaim { id })
+                        if id == jolt_claims::protocols::jolt::unsigned_inc_chunk_opening(0)
+                ));
+            };
+
+        let mut missing_msb_sumcheck = stage6.clone();
+        missing_msb_sumcheck.batch.unsigned_inc_msb_booleanity = None;
+        assert_missing_unsigned_source(missing_msb_sumcheck, stage7.clone());
+
+        let mut missing_msb_claim = stage6.clone();
+        missing_msb_claim.output_claims.unsigned_inc_claim_reduction = None;
+        assert_missing_unsigned_source(missing_msb_claim, stage7.clone());
+
+        let mut missing_chunk_sumcheck = stage7.clone();
+        missing_chunk_sumcheck
+            .batch
+            .unsigned_inc_chunk_reconstruction = None;
+        assert_missing_unsigned_source(stage6.clone(), missing_chunk_sumcheck);
+
+        let mut missing_chunk_claims = stage7;
+        missing_chunk_claims
+            .output_claims
+            .unsigned_inc_chunk_reconstruction = None;
+        assert_missing_unsigned_source(stage6, missing_chunk_claims);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn akita_stage8_rejects_wrong_unsigned_increment_final_chunk_count() {
+        let (preprocessing, checked, proof, stage6, mut stage7) =
+            akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+        let _ = stage7
+            .output_claims
+            .unsigned_inc_chunk_reconstruction
+            .as_mut()
+            .unwrap_or_else(|| panic!("test fixture should include unsigned increment chunks"))
+            .chunks
+            .pop();
+
+        let result = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("unsigned increment final chunk opening count mismatch")
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
     fn akita_stage8_verify_rejects_missing_precommitted_bytecode_source_proofs() {
         let (preprocessing, checked, proof, stage6, stage7) =
             akita_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});

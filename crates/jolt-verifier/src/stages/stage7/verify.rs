@@ -1959,4 +1959,44 @@ mod tests {
 
         assert_ne!(base, tampered);
     }
+
+    #[test]
+    fn unsigned_inc_reconstruction_input_depends_on_unsigned_value_and_msb() {
+        let claim = lattice::unsigned_inc_chunk_reconstruction_claim::<Fr>(8)
+            .expect("8-bit chunks should be valid");
+        let output_claims = unsigned_output_claims();
+        let gamma = Fr::from_u64(7);
+        let chunks = vec![Fr::from_u64(0); 8];
+
+        let base = unsigned_inc_chunk_reconstruction_input_from_parts(
+            &claim,
+            &output_claims,
+            &chunks,
+            gamma,
+        )
+        .expect("complete chunk claims should evaluate");
+
+        let mut tampered_unsigned = output_claims.clone();
+        tampered_unsigned.unsigned_inc += Fr::from_u64(1);
+        let unsigned_tampered = unsigned_inc_chunk_reconstruction_input_from_parts(
+            &claim,
+            &tampered_unsigned,
+            &chunks,
+            gamma,
+        )
+        .expect("complete chunk claims should evaluate");
+
+        let mut tampered_msb = output_claims;
+        tampered_msb.unsigned_inc_msb += Fr::from_u64(1);
+        let msb_tampered = unsigned_inc_chunk_reconstruction_input_from_parts(
+            &claim,
+            &tampered_msb,
+            &chunks,
+            gamma,
+        )
+        .expect("complete chunk claims should evaluate");
+
+        assert_ne!(base, unsigned_tampered);
+        assert_ne!(base, msb_tampered);
+    }
 }
