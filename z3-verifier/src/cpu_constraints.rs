@@ -512,7 +512,7 @@ test_instruction_constraints!(VirtualPow2, FormatI);
 test_instruction_constraints!(VirtualPow2I, FormatJ);
 test_instruction_constraints!(VirtualPow2IW, FormatJ);
 test_instruction_constraints!(VirtualPow2W, FormatI);
-test_instruction_constraints!(VirtualRev8W, FormatI);
+test_instruction_constraints!(VirtualRev8W, FormatR);
 test_instruction_constraints!(VirtualROTRIW, FormatVirtualRightShiftI);
 test_instruction_constraints!(VirtualShiftRightBitmask, FormatI);
 test_instruction_constraints!(VirtualShiftRightBitmaskI, FormatJ);

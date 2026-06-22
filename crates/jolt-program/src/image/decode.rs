@@ -180,20 +180,22 @@ fn decode_system(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 }
 
 fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
-    match funct3(word) {
-        0b000 => Ok(SourceInstructionKind::VirtualRev8W(
+    let funct3 = funct3(word);
+    let funct7 = funct7(word);
+    match (funct3, funct7) {
+        (0b000, 0x00) => Ok(SourceInstructionKind::AdviceLB),
+        (0b000, 0x01) => Ok(SourceInstructionKind::AdviceLH),
+        (0b000, 0x02) => Ok(SourceInstructionKind::AdviceLW),
+        (0b000, 0x03) => Ok(SourceInstructionKind::AdviceLD),
+        (0b000, 0x04) => Ok(SourceInstructionKind::VirtualAdviceLen(
+            jolt_riscv::instructions::VirtualAdviceLen(()),
+        )),
+        (0b000, 0x05) => Ok(SourceInstructionKind::VirtualRev8W(
             jolt_riscv::instructions::VirtualRev8W(()),
         )),
-        0b001 => Ok(SourceInstructionKind::VirtualAssertEQ),
-        0b010 => Ok(SourceInstructionKind::VirtualHostIO(
+        (0b001, _) => Ok(SourceInstructionKind::VirtualAssertEQ),
+        (0b010, _) => Ok(SourceInstructionKind::VirtualHostIO(
             jolt_riscv::instructions::VirtualHostIO(()),
-        )),
-        0b011 => Ok(SourceInstructionKind::AdviceLB),
-        0b100 => Ok(SourceInstructionKind::AdviceLH),
-        0b101 => Ok(SourceInstructionKind::AdviceLW),
-        0b110 => Ok(SourceInstructionKind::AdviceLD),
-        0b111 => Ok(SourceInstructionKind::VirtualAdviceLen(
-            jolt_riscv::instructions::VirtualAdviceLen(()),
         )),
         _ => invalid("invalid custom instruction"),
     }
