@@ -1154,7 +1154,11 @@ fn absorb_akita_protocol_header<T: Transcript>(transcript: &mut T, protocol: &Jo
         b"akita_increment_mode",
         increment_mode_tag(protocol.lattice.increment_mode),
     );
-    absorb_labeled_u64(transcript, b"akita_lattice_zk", protocol.lattice.zk as u64);
+    absorb_labeled_u64(
+        transcript,
+        b"akita_lattice_zk",
+        (protocol.zk == ZkConfig::BlindFold) as u64,
+    );
     absorb_labeled_u64(
         transcript,
         b"akita_field_inline",

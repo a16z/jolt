@@ -200,7 +200,6 @@ pub fn akita_lattice_protocol_config_for_layout(
             trusted: false,
             untrusted: layout_has_advice(layout, PackedAdviceKind::Untrusted),
         },
-        zk: false,
     };
     config
 }

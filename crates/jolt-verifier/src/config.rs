@@ -79,7 +79,6 @@ pub struct LatticeConfig {
     pub packed_witness: PackedWitnessConfig,
     pub field_inline: FieldInlineLatticeConfig,
     pub advice: AdviceLatticeConfig,
-    pub zk: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,7 +114,6 @@ impl JoltProtocolConfig {
                     trusted: false,
                     untrusted: false,
                 },
-                zk,
             },
         }
     }
@@ -158,7 +156,6 @@ pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
             trusted: false,
             untrusted: false,
         },
-        zk: cfg!(feature = "zk"),
     },
 };
 
@@ -173,7 +170,7 @@ pub fn validate_protocol_config(config: &JoltProtocolConfig) -> Result<PcsFamily
 }
 
 fn validate_lattice_config(config: &JoltProtocolConfig) -> Result<(), VerifierError> {
-    if config.zk != ZkConfig::Transparent || config.lattice.zk {
+    if config.zk != ZkConfig::Transparent {
         return Err(invalid_config(
             "lattice PCS mode is transparent-only until Akita ZK openings are specified",
         ));
@@ -338,11 +335,6 @@ mod tests {
         config.zk = ZkConfig::BlindFold;
 
         assert!(invalid(&config));
-
-        let mut lattice_zk = valid_lattice_config();
-        lattice_zk.lattice.zk = true;
-
-        assert!(invalid(&lattice_zk));
     }
 
     #[test]
