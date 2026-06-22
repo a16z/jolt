@@ -27,7 +27,7 @@ pub use akita::{
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
     IncrementCommitmentMode, JoltProtocolConfig, LatticeConfig, PackedWitnessConfig, PcsFamily,
-    PcsFamilyFlags, ProgramMode, ZkConfig, JOLT_VERIFIER_CONFIG, SELECTED_FIELD_INLINE_CONFIG,
+    ProgramMode, ZkConfig, JOLT_VERIFIER_CONFIG, SELECTED_FIELD_INLINE_CONFIG,
 };
 pub use error::VerifierError;
 pub use preprocessing::{

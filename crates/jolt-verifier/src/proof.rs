@@ -450,9 +450,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        IncrementCommitmentMode, PackedWitnessConfig, PcsFamilyFlags, ProgramMode,
-    };
+    use crate::config::{IncrementCommitmentMode, PackedWitnessConfig, ProgramMode};
 
     fn dory_payload() -> CommitmentPayload<u64> {
         CommitmentPayload::Dory(JoltCommitments::new(
@@ -469,11 +467,7 @@ mod tests {
     }
 
     fn lattice_config() -> JoltProtocolConfig {
-        let mut config = JoltProtocolConfig::for_zk(false);
-        config.pcs = PcsFamilyFlags {
-            curve: false,
-            lattice: true,
-        };
+        let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
         config.lattice.program_mode = ProgramMode::Committed;
         config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
         config.lattice.packed_witness = PackedWitnessConfig {

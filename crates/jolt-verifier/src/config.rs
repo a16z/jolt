@@ -24,26 +24,11 @@ impl ZkConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PcsFamily {
+    #[default]
     Curve,
     Lattice,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PcsFamilyFlags {
-    pub curve: bool,
-    pub lattice: bool,
-}
-
-impl Default for PcsFamilyFlags {
-    fn default() -> Self {
-        Self {
-            curve: true,
-            lattice: false,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,7 +88,7 @@ pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub field_inline: FieldInlineConfig,
     #[serde(default)]
-    pub pcs: PcsFamilyFlags,
+    pub pcs: PcsFamily,
     #[serde(default)]
     pub lattice: LatticeConfig,
 }
@@ -113,10 +98,7 @@ impl JoltProtocolConfig {
         Self {
             zk: ZkConfig::from_bool(zk),
             field_inline: SELECTED_FIELD_INLINE_CONFIG,
-            pcs: PcsFamilyFlags {
-                curve: true,
-                lattice: false,
-            },
+            pcs: PcsFamily::Curve,
             lattice: LatticeConfig {
                 program_mode: ProgramMode::Full,
                 increment_mode: IncrementCommitmentMode::Dense,
@@ -139,16 +121,7 @@ impl JoltProtocolConfig {
     }
 
     pub const fn with_pcs_family(mut self, family: PcsFamily) -> Self {
-        self.pcs = match family {
-            PcsFamily::Curve => PcsFamilyFlags {
-                curve: true,
-                lattice: false,
-            },
-            PcsFamily::Lattice => PcsFamilyFlags {
-                curve: false,
-                lattice: true,
-            },
-        };
+        self.pcs = family;
         self
     }
 }
@@ -168,10 +141,7 @@ pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::Transparent;
 pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     zk: SELECTED_ZK_CONFIG,
     field_inline: SELECTED_FIELD_INLINE_CONFIG,
-    pcs: PcsFamilyFlags {
-        curve: true,
-        lattice: false,
-    },
+    pcs: PcsFamily::Curve,
     lattice: LatticeConfig {
         program_mode: ProgramMode::Full,
         increment_mode: IncrementCommitmentMode::Dense,
@@ -193,20 +163,7 @@ pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
 };
 
 pub fn validate_protocol_config(config: &JoltProtocolConfig) -> Result<PcsFamily, VerifierError> {
-    let family = match (config.pcs.curve, config.pcs.lattice) {
-        (true, false) => PcsFamily::Curve,
-        (false, true) => PcsFamily::Lattice,
-        (true, true) => {
-            return Err(invalid_config(
-                "PCS family flags are mutually exclusive; choose curve or lattice",
-            ));
-        }
-        (false, false) => {
-            return Err(invalid_config(
-                "at least one PCS family flag must be selected",
-            ));
-        }
-    };
+    let family = config.pcs;
 
     if family == PcsFamily::Lattice {
         validate_lattice_config(config)?;
@@ -337,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn pcs_family_flags_default_to_curve() {
+    fn pcs_family_defaults_to_curve() {
         let config = JoltProtocolConfig::for_zk(false);
 
         assert_eq!(
@@ -347,20 +304,13 @@ mod tests {
     }
 
     #[test]
-    fn pcs_family_flags_are_mutually_exclusive() {
-        let mut both = JoltProtocolConfig::for_zk(false);
-        both.pcs = PcsFamilyFlags {
-            curve: true,
-            lattice: true,
-        };
-        let mut neither = JoltProtocolConfig::for_zk(false);
-        neither.pcs = PcsFamilyFlags {
-            curve: false,
-            lattice: false,
-        };
+    fn pcs_family_selects_lattice() {
+        let config = valid_lattice_config();
 
-        assert!(invalid(&both));
-        assert!(invalid(&neither));
+        assert_eq!(
+            validate_protocol_config(&config).ok(),
+            Some(PcsFamily::Lattice)
+        );
     }
 
     #[test]
@@ -507,7 +457,6 @@ mod tests {
 
         for (path, field) in [
             (&[][..], "extra_root"),
-            (&["pcs"][..], "extra_pcs_family"),
             (&["lattice"][..], "extra_lattice_mode"),
             (&["lattice", "packed_witness"][..], "extra_packed_witness"),
             (&["lattice", "field_inline"][..], "extra_field_inline"),

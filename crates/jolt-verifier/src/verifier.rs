@@ -1133,11 +1133,15 @@ where
 
 fn absorb_akita_protocol_header<T: Transcript>(transcript: &mut T, protocol: &JoltProtocolConfig) {
     transcript.append(&Label(b"akita_protocol_header"));
-    absorb_labeled_u64(transcript, b"akita_pcs_curve", protocol.pcs.curve as u64);
+    absorb_labeled_u64(
+        transcript,
+        b"akita_pcs_curve",
+        (protocol.pcs == PcsFamily::Curve) as u64,
+    );
     absorb_labeled_u64(
         transcript,
         b"akita_pcs_lattice",
-        protocol.pcs.lattice as u64,
+        (protocol.pcs == PcsFamily::Lattice) as u64,
     );
     absorb_labeled_u64(transcript, b"akita_zk", zk_config_tag(protocol.zk));
     absorb_labeled_u64(
