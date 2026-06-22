@@ -34,8 +34,8 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
-    BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-    EvaluationClaim, PhysicalView, VerifierOpeningClaim, ZkBatchOpeningScheme,
+    BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentLayoutDigest,
+    CommitmentScheme, EvaluationClaim, PhysicalView, VerifierOpeningClaim, ZkBatchOpeningScheme,
 };
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_transcript::Transcript;
@@ -91,7 +91,7 @@ where
     PCS: CommitmentScheme<Field = F>
         + BatchOpeningScheme
         + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: Clone,
+    PCS::Output: Clone + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -168,7 +168,7 @@ pub fn verify_clear<F, PCS, VC, T, ZkProof>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone,
+    PCS::Output: Clone + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -256,7 +256,7 @@ pub fn batch_statement<F, PCS, VC, ZkProof>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone,
+    PCS::Output: Clone + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
 {
     match (checked.zk, deps) {
@@ -593,7 +593,7 @@ fn precommitted_clear_statements<F, C>(
 ) -> Result<Stage8PrecommittedStatementBuild<F, C>, VerifierError>
 where
     F: Field,
-    C: Clone + 'static,
+    C: Clone + CommitmentLayoutDigest,
 {
     let mut opening_claims = Vec::with_capacity(entries.len());
     let mut statements = Vec::with_capacity(entries.len());
@@ -620,19 +620,11 @@ where
     Ok((opening_claims, statements))
 }
 
-fn direct_statement_layout_digest<C: 'static>(
+fn direct_statement_layout_digest<C: CommitmentLayoutDigest>(
     commitment: &C,
     default_layout_digest: [u8; 32],
 ) -> [u8; 32] {
-    #[cfg(feature = "akita")]
-    if let Some(commitment) =
-        (commitment as &dyn std::any::Any).downcast_ref::<jolt_akita::AkitaCommitment>()
-    {
-        return commitment.layout_digest;
-    }
-    #[cfg(not(feature = "akita"))]
-    let _ = commitment;
-    default_layout_digest
+    commitment.layout_digest().unwrap_or(default_layout_digest)
 }
 
 /// Builds the final PCS batch in the canonical order from

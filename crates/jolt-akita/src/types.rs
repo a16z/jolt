@@ -8,7 +8,8 @@ use akita_types::{
     RingCommitment as NativeRingCommitment,
 };
 use jolt_openings::{
-    BatchOpeningStatement, PackedLinearBatchProof, PackedLinearReductionProof, PhysicalView,
+    BatchOpeningStatement, CommitmentLayoutDigest, PackedLinearBatchProof,
+    PackedLinearReductionProof, PhysicalView,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -108,6 +109,12 @@ impl AppendToTranscript for AkitaCommitment {
             self.native.len() as u64,
         ));
         transcript.append_bytes(&self.native);
+    }
+}
+
+impl CommitmentLayoutDigest for AkitaCommitment {
+    fn layout_digest(&self) -> Option<[u8; 32]> {
+        Some(self.layout_digest)
     }
 }
 

@@ -3,6 +3,7 @@
 //! All types are generic over `P: PairingGroup` — no arkworks leakage.
 
 use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
+use jolt_openings::CommitmentLayoutDigest;
 use serde::{Deserialize, Serialize};
 
 /// Commitment to a multilinear polynomial: a single G1 element.
@@ -64,6 +65,12 @@ impl<P: PairingGroup> Default for HyperKZGCommitment<P> {
         Self {
             point: <P::G1 as JoltGroup>::identity(),
         }
+    }
+}
+
+impl<P: PairingGroup> CommitmentLayoutDigest for HyperKZGCommitment<P> {
+    fn layout_digest(&self) -> Option<[u8; 32]> {
+        None
     }
 }
 

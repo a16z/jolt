@@ -11,7 +11,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use jolt_crypto::HomomorphicCommitment;
 
 use crate::error::OpeningsError;
-use crate::schemes::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use crate::schemes::{
+    AdditivelyHomomorphic, CommitmentLayoutDigest, CommitmentScheme, ZkOpeningScheme,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -29,6 +31,12 @@ impl<F: Field> Default for MockCommitment<F> {
         Self {
             evaluations: Vec::new(),
         }
+    }
+}
+
+impl<F: Field> CommitmentLayoutDigest for MockCommitment<F> {
+    fn layout_digest(&self) -> Option<[u8; 32]> {
+        None
     }
 }
 

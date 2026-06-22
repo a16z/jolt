@@ -7,7 +7,9 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 #[cfg(feature = "akita")]
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
-use jolt_openings::{BatchOpeningScheme, CommitmentScheme, ZkBatchOpeningScheme};
+use jolt_openings::{
+    BatchOpeningScheme, CommitmentLayoutDigest, CommitmentScheme, ZkBatchOpeningScheme,
+};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -39,7 +41,7 @@ where
     PCS: CommitmentScheme<Field = F>
         + BatchOpeningScheme
         + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -63,7 +65,7 @@ pub fn verify_clear<F, PCS, VC, T>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
@@ -89,7 +91,7 @@ where
     PCS: CommitmentScheme<Field = F>
         + BatchOpeningScheme
         + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript,
+    PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -231,7 +233,7 @@ pub fn verify_clear_with_config<F, PCS, VC, T>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
@@ -342,7 +344,7 @@ pub fn stage8_batch_statement<F, PCS, VC, T, ZkProof>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -365,7 +367,7 @@ pub fn stage8_batch_statement_with_config<F, PCS, VC, T, ZkProof>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -389,7 +391,7 @@ pub fn stage8_batch_statement_with_config_and_transcript<F, PCS, VC, T, ZkProof>
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -1343,8 +1345,8 @@ mod tests {
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_openings::{
-        BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-        OpeningsError,
+        BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentLayoutDigest,
+        CommitmentScheme, OpeningsError,
     };
     use jolt_poly::{MultilinearPoly, Polynomial};
     use jolt_program::preprocess::{
@@ -1361,6 +1363,12 @@ mod tests {
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestCommitment;
+
+    impl CommitmentLayoutDigest for TestCommitment {
+        fn layout_digest(&self) -> Option<[u8; 32]> {
+            None
+        }
+    }
 
     impl Commitment for TestPcs {
         type Output = TestCommitment;

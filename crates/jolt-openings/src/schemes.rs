@@ -15,7 +15,32 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::OpeningsError;
 
+/// Optional metadata exposed by commitment backends that bind a layout digest
+/// into the commitment.
+pub trait CommitmentLayoutDigest {
+    fn layout_digest(&self) -> Option<[u8; 32]>;
+}
+
+impl CommitmentLayoutDigest for u64 {
+    fn layout_digest(&self) -> Option<[u8; 32]> {
+        None
+    }
+}
+
 /// Verifier statement for a same-point batch opening.
+///
+/// `logical_point` is the protocol point where the listed claims originated.
+/// `pcs_point` is the single point opened by the backend after any embedding or
+/// packed-view reduction. For direct views these are normally equal; packed
+/// reductions may keep a logical point for transcript binding while opening the
+/// packed commitment at the reduced PCS point.
+///
+/// `layout_digest` domain-separates the physical statement. Direct statements
+/// should use the commitment's own layout digest when the backend exposes one;
+/// packed statements should use the canonical packing layout digest that also
+/// appears on every packed physical view. The digest binds metadata only: the
+/// packed-view relation is proven by the packing reduction, not by this field
+/// alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchOpeningStatement<F, C, OpeningId = (), RelationId = (), Claim = F> {
     pub logical_point: Vec<F>,
@@ -32,6 +57,8 @@ pub struct BatchOpeningClaim<F, C, OpeningId = (), RelationId = (), Claim = F> {
     pub commitment: C,
     pub claim: Claim,
     pub view: PhysicalView<F>,
+    /// Multiplier applied when embedding this claim into the batch PCS point.
+    /// The verifier checks `claim * scale` against the physical opening.
     pub scale: F,
 }
 
