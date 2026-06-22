@@ -1578,10 +1578,10 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
                     committed_instruction_ra: vec![zero],
                 },
-            inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: Some(stage6::inputs::IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
-            },
+            }),
             unsigned_inc_claim_reduction: None,
             #[cfg(feature = "field-inline")]
             field_inline: stage6::inputs::FieldInlineStage6Claims {

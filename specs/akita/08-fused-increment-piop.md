@@ -198,6 +198,7 @@ Unchecked items are still required before the full verifier/protocol side of thi
 - [x] In lattice mode, `RamRaClaimReduction` moves from Stage 5 into the new increment virtualization stage.
 - [x] The new modular increment stage proves `IncVirtualization` and outputs claims for `Inc(r_cycle_inc)` and `Store(r_cycle_inc)`.
 - [x] Stage 6 bytecode read-RAF validates `Store(r_cycle_inc)` against the committed bytecode row's `CircuitFlags::Store` value before later stages rely on it.
+- [x] Lattice Stage 6 no longer carries dense `IncClaimReduction` output claims for logical `RamInc`/`RdInc`; dense increment reduction remains curve/Dory-only.
 - [x] Stage 6b reduces `Inc(r_cycle_inc) + 2^64` to `UnsignedInc(r_cycle_6)`.
 - [x] Stage 6a/6b booleanity includes lower `UnsignedIncChunk(j)` and size-`T` `UnsignedIncMsb`.
 - [x] Stage 7 reconstructs `UnsignedInc(r_cycle_6)` from lower `UnsignedIncChunk(j)` openings and the size-`T` `UnsignedIncMsb(r_cycle_6)` opening.

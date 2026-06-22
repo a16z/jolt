@@ -471,10 +471,10 @@ fn stage6_claims_from_native<F: Field>(
         instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
             committed_instruction_ra,
         },
-        inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+        inc_claim_reduction: Some(IncClaimReductionOutputOpeningClaims {
             ram_inc: claims.require(ram_inc)?,
             rd_inc: claims.require(rd_inc)?,
-        },
+        }),
         unsigned_inc_claim_reduction: None,
         #[cfg(feature = "field-inline")]
         field_inline: FieldInlineStage6Claims {
@@ -819,10 +819,10 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
                 committed_instruction_ra: vec![zero],
             },
-            inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: Some(IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
-            },
+            }),
             unsigned_inc_claim_reduction: None,
             #[cfg(feature = "field-inline")]
             field_inline: FieldInlineStage6Claims {
@@ -1582,8 +1582,14 @@ fn claim_from_stage6_outputs<F: Field>(
         id if id == booleanity::booleanity_address_phase_opening() => {
             Some(claims.address_phase.booleanity)
         }
-        id if id == ram_inc => Some(claims.inc_claim_reduction.ram_inc),
-        id if id == rd_inc => Some(claims.inc_claim_reduction.rd_inc),
+        id if id == ram_inc => claims
+            .inc_claim_reduction
+            .as_ref()
+            .map(|claims| claims.ram_inc),
+        id if id == rd_inc => claims
+            .inc_claim_reduction
+            .as_ref()
+            .map(|claims| claims.rd_inc),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -1678,8 +1684,14 @@ fn claim_mut_from_stage6_outputs<F: Field>(
         id if id == booleanity::booleanity_address_phase_opening() => {
             Some(&mut claims.address_phase.booleanity)
         }
-        id if id == ram_inc => Some(&mut claims.inc_claim_reduction.ram_inc),
-        id if id == rd_inc => Some(&mut claims.inc_claim_reduction.rd_inc),
+        id if id == ram_inc => claims
+            .inc_claim_reduction
+            .as_mut()
+            .map(|claims| &mut claims.ram_inc),
+        id if id == rd_inc => claims
+            .inc_claim_reduction
+            .as_mut()
+            .map(|claims| &mut claims.rd_inc),
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {

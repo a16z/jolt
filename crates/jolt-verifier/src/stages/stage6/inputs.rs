@@ -84,8 +84,11 @@ pub struct Stage6Claims<F: Field> {
     pub ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims<F>,
     pub ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims<F>,
-    pub inc_claim_reduction: IncClaimReductionOutputOpeningClaims<F>,
-    /// Lattice PCS mode only, once Stage 5 increment virtualization is present.
+    /// Curve PCS mode only. Lattice mode uses Stage 5 increment virtualization
+    /// plus unsigned increment claim reduction instead of dense RamInc/RdInc.
+    #[serde(default)]
+    pub inc_claim_reduction: Option<IncClaimReductionOutputOpeningClaims<F>>,
+    /// Lattice PCS mode only.
     #[serde(default)]
     pub unsigned_inc_claim_reduction: Option<UnsignedIncClaimReductionOutputOpeningClaims<F>>,
     #[cfg(feature = "field-inline")]
@@ -148,10 +151,10 @@ mod tests {
             instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
                 committed_instruction_ra: vec![zero],
             },
-            inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: Some(IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
-            },
+            }),
             unsigned_inc_claim_reduction: None,
             #[cfg(feature = "field-inline")]
             field_inline: FieldInlineStage6Claims {

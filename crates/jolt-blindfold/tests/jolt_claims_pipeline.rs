@@ -251,6 +251,7 @@ fn jolt_claims_pipeline_lowers_booleanity_relation() {
         layout,
         log_t: 1,
         log_k_chunk: 1,
+        unsigned_inc_chunk_count: 0,
     });
     let statement = SumcheckStatement::new(jolt_stage.sumcheck.rounds, jolt_stage.sumcheck.degree);
     let generated = generate_zero_stage(&setup, statement.num_vars);

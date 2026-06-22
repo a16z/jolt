@@ -458,8 +458,10 @@ pub(super) fn append_opening_claims<F, T>(
     {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.ram_inc);
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.rd_inc);
+    if let Some(output_claims) = &claims.inc_claim_reduction {
+        transcript.append_labeled(b"opening_claim", &output_claims.ram_inc);
+        transcript.append_labeled(b"opening_claim", &output_claims.rd_inc);
+    }
     if let Some(output_claims) = &claims.unsigned_inc_claim_reduction {
         transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc);
         transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc_msb);

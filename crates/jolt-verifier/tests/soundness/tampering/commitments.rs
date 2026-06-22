@@ -1,6 +1,9 @@
-#![expect(
-    clippy::panic,
-    reason = "tamper tests fail loudly when fixture assumptions are violated"
+#![cfg_attr(
+    all(feature = "core-fixtures", not(feature = "zk")),
+    expect(
+        clippy::panic,
+        reason = "tamper tests fail loudly when fixture assumptions are violated"
+    )
 )]
 
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]

@@ -103,7 +103,7 @@ pub struct VerifiedStage6Batch<F: Field> {
     pub ram_hamming_booleanity: VerifiedStage6Sumcheck<F>,
     pub ram_ra_virtualization: VerifiedRamRaVirtualizationSumcheck<F>,
     pub instruction_ra_virtualization: VerifiedInstructionRaVirtualizationSumcheck<F>,
-    pub inc_claim_reduction: VerifiedStage6Sumcheck<F>,
+    pub inc_claim_reduction: Option<VerifiedStage6Sumcheck<F>>,
     pub unsigned_inc_claim_reduction: Option<VerifiedStage6Sumcheck<F>>,
     pub unsigned_inc_msb_booleanity: Option<VerifiedStage6Sumcheck<F>>,
     #[cfg(feature = "field-inline")]

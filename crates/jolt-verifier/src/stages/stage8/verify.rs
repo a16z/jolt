@@ -288,6 +288,14 @@ where
         unsigned_inc_finals,
     ) = match deps {
         Deps::Clear { stage6, stage7 } => {
+            let inc_anchor = stage6
+                .batch
+                .inc_claim_reduction
+                .as_ref()
+                .or(stage6.batch.unsigned_inc_claim_reduction.as_ref())
+                .ok_or(VerifierError::MissingOpeningClaim {
+                    id: lattice_formulas::unsigned_inc_opening(),
+                })?;
             let unsigned_inc_finals = stage6
                 .batch
                 .unsigned_inc_msb_booleanity
@@ -315,7 +323,7 @@ where
                     .hamming_weight_claim_reduction
                     .opening_point
                     .as_slice(),
-                stage6.batch.inc_claim_reduction.opening_point.as_slice(),
+                inc_anchor.opening_point.as_slice(),
                 stage7.precommitted_final_openings.as_slice(),
                 Some((&stage6.output_claims, &stage7.output_claims)),
                 unsigned_inc_finals,
@@ -677,11 +685,21 @@ where
             let (own_point, opening_claim): (&[F], Option<F>) = match polynomial {
                 JoltCommittedPolynomial::RamInc => (
                     inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.ram_inc),
+                    clear_claims.and_then(|(stage6, _)| {
+                        stage6
+                            .inc_claim_reduction
+                            .as_ref()
+                            .map(|claims| claims.ram_inc)
+                    }),
                 ),
                 JoltCommittedPolynomial::RdInc => (
                     inc_opening_point,
-                    clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
+                    clear_claims.and_then(|(stage6, _)| {
+                        stage6
+                            .inc_claim_reduction
+                            .as_ref()
+                            .map(|claims| claims.rd_inc)
+                    }),
                 ),
                 JoltCommittedPolynomial::InstructionRa(index) => (
                     hamming_opening_point,
