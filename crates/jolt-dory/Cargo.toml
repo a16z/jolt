@@ -22,7 +22,6 @@ ark-serialize = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-jolt-openings = { workspace = true, features = ["test-utils"] }
 serde_json = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }

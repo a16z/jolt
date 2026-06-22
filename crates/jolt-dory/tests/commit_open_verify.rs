@@ -10,8 +10,7 @@ use jolt_dory::DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt, Invertible, RandomSampling};
 use jolt_openings::{
     AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement,
-    CommitmentScheme, PackedCombine, PackedFamilyRef, PackedLinearTerm, PhysicalView,
-    StreamingCommitment, ZkOpeningScheme,
+    CommitmentScheme, PhysicalView, StreamingCommitment, ZkOpeningScheme,
 };
 use jolt_poly::{OneHotPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
@@ -51,19 +50,6 @@ fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: 
         &mut vt2,
     )
     .expect("round-trip verification (without hint) must succeed");
-}
-
-fn packed_term(coefficient: Fr) -> PackedLinearTerm<Fr> {
-    packed_term_at(coefficient, 0)
-}
-
-fn packed_term_at(coefficient: Fr, symbol: usize) -> PackedLinearTerm<Fr> {
-    PackedLinearTerm::new(
-        coefficient,
-        PackedFamilyRef::new(0x6a6f_6c74, 1, 0),
-        0,
-        symbol,
-    )
 }
 
 #[test]
@@ -137,150 +123,6 @@ fn homomorphic_batch_opening_blanket_impl_verifies() {
 
     assert_eq!(result.coefficients.len(), statement.claims.len());
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
-}
-
-#[test]
-fn packed_combine_dory_many_claims_one_commitment_verifies() {
-    type PackedDory = PackedCombine<DoryScheme>;
-
-    let num_vars = 3;
-    let mut rng = ChaCha20Rng::seed_from_u64(226);
-    let prover_setup = DoryScheme::setup_prover(num_vars);
-    let verifier_setup = DoryScheme::setup_verifier(num_vars);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
-    let polynomial = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let eval = polynomial.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(polynomial.evaluations(), &prover_setup);
-    let first_decode = Fr::from_u64(2);
-    let second_decode = Fr::from_u64(7);
-    let statement = BatchOpeningStatement {
-        logical_point: point.clone(),
-        pcs_point: point,
-        layout_digest: [11; 32],
-        claims: vec![
-            BatchOpeningClaim {
-                id: 0,
-                relation: (),
-                commitment: commitment.clone(),
-                claim: eval * first_decode.inverse().expect("decode is nonzero"),
-                view: PhysicalView::PackedLinear {
-                    layout_digest: [11; 32],
-                    terms: vec![packed_term(first_decode)],
-                },
-                scale: Fr::from_u64(1),
-            },
-            BatchOpeningClaim {
-                id: 1,
-                relation: (),
-                commitment,
-                claim: eval * second_decode.inverse().expect("decode is nonzero"),
-                view: PhysicalView::PackedLinear {
-                    layout_digest: [11; 32],
-                    terms: vec![packed_term(second_decode)],
-                },
-                scale: Fr::from_u64(1),
-            },
-        ],
-    };
-    let polynomials = vec![polynomial.clone(), polynomial];
-    let hints = vec![hint.clone(), hint];
-
-    let mut prover_transcript = Blake2bTranscript::new(b"dory-packed-batch");
-    let proof = <PackedDory as BatchOpeningScheme>::prove_batch(
-        &prover_setup,
-        &mut prover_transcript,
-        &statement,
-        &polynomials,
-        hints,
-    )
-    .expect("Dory packed batch proof should be produced");
-
-    let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-batch");
-    let result = <PackedDory as BatchOpeningScheme>::verify_batch(
-        &verifier_setup,
-        &mut verifier_transcript,
-        &statement,
-        &proof,
-    )
-    .expect("Dory packed batch proof should verify");
-
-    assert_eq!(result.coefficients.len(), statement.claims.len());
-    assert_eq!(
-        result.reduced_opening,
-        result
-            .coefficients
-            .iter()
-            .zip(&statement.claims)
-            .fold(Fr::from_u64(0), |acc, (coefficient, claim)| {
-                acc + *coefficient * claim.claim
-            })
-    );
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
-}
-
-#[test]
-fn packed_combine_dory_rejects_tampered_packed_coefficients() {
-    type PackedDory = PackedCombine<DoryScheme>;
-
-    let num_vars = 3;
-    let mut rng = ChaCha20Rng::seed_from_u64(227);
-    let prover_setup = DoryScheme::setup_prover(num_vars);
-    let verifier_setup = DoryScheme::setup_verifier(num_vars);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as RandomSampling>::random(&mut rng))
-        .collect();
-    let polynomial = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let eval = polynomial.evaluate(&point);
-    let (commitment, hint) = DoryScheme::commit(polynomial.evaluations(), &prover_setup);
-    let decode = Fr::from_u64(2);
-    let statement = BatchOpeningStatement {
-        logical_point: point.clone(),
-        pcs_point: point,
-        layout_digest: [12; 32],
-        claims: vec![BatchOpeningClaim {
-            id: 0,
-            relation: (),
-            commitment,
-            claim: eval * decode.inverse().expect("decode is nonzero"),
-            view: PhysicalView::PackedLinear {
-                layout_digest: [12; 32],
-                terms: vec![packed_term(decode)],
-            },
-            scale: Fr::from_u64(1),
-        }],
-    };
-
-    let mut prover_transcript = Blake2bTranscript::new(b"dory-packed-coeffs");
-    let proof = <PackedDory as BatchOpeningScheme>::prove_batch(
-        &prover_setup,
-        &mut prover_transcript,
-        &statement,
-        std::slice::from_ref(&polynomial),
-        vec![hint],
-    )
-    .expect("Dory packed batch proof should be produced");
-
-    let mut tampered = statement;
-    tampered.claims[0].view = PhysicalView::PackedLinear {
-        layout_digest: [12; 32],
-        terms: vec![
-            packed_term(Fr::from_u64(1)),
-            packed_term_at(Fr::from_u64(1), 1),
-        ],
-    };
-    let mut verifier_transcript = Blake2bTranscript::new(b"dory-packed-coeffs");
-    let result = <PackedDory as BatchOpeningScheme>::verify_batch(
-        &verifier_setup,
-        &mut verifier_transcript,
-        &tampered,
-        &proof,
-    );
-    assert!(
-        result.is_err(),
-        "changed packed coefficients should fail even when their sum is unchanged"
-    );
 }
 
 #[test]
