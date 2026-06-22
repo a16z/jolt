@@ -6,7 +6,6 @@
 mod backend;
 mod packed;
 mod types;
-mod views;
 
 pub use backend::AkitaScheme;
 pub use packed::AkitaPackedScheme;
@@ -15,8 +14,4 @@ pub use types::{
     AkitaHidingCommitment, AkitaLayoutDigest, AkitaPackedBatchProof, AkitaPackedReductionProof,
     AkitaPackedViewStatement, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
     AkitaVerifierSetup, AkitaViewFormula, AKITA_D, AKITA_FIELD_MODULUS,
-};
-pub use views::{
-    PackedViewCatalog, PackedViewEntry, PackedViewError, PackedViewFormula, PackedViewTerm,
-    PackedViewValidity,
 };

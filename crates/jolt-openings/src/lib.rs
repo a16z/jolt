@@ -37,6 +37,7 @@ pub mod mock;
 #[cfg(any(test, feature = "test-utils"))]
 mod packed_combine;
 mod packed_linear;
+mod packed_view;
 mod packing_layout;
 mod reduction;
 mod schemes;
@@ -51,6 +52,10 @@ pub use packed_linear::{
     PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof, PackedLinearFamily,
     PackedLinearLayout, PackedLinearProverReduction, PackedLinearReductionProof,
     PackedLinearVerifierReduction, PackedLinearWitnessSource,
+};
+pub use packed_view::{
+    PackedViewCatalog, PackedViewDigest, PackedViewEntry, PackedViewError, PackedViewFormula,
+    PackedViewTerm, PackedViewValidity,
 };
 pub use packing_layout::{
     PackedAdviceKind, PackedAlphabet, PackedAlphabetCounts, PackedCellAddress,
