@@ -1372,4 +1372,83 @@ mod tests {
                 if id == final_opening_id(JoltCommittedPolynomial::ProgramImageInit)
         ));
     }
+
+    #[test]
+    fn akita_unsigned_increment_entries_require_sources_and_chunk_count() {
+        let commitment = 9_u64;
+        let opening_point = vec![Fr::from_u64(1), Fr::from_u64(2)];
+        let error = akita_unsigned_inc_batch_entries::<Fr, _>(8, &opening_point, None, &commitment)
+            .err()
+            .expect("lattice unsigned increment openings require stage sources");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == lattice_formulas::unsigned_inc_chunk_opening(0)
+        ));
+
+        let short_chunks = vec![Fr::from_u64(0); 7];
+        let sources = LatticeUnsignedIncFinalOpenings {
+            chunk_point: &opening_point,
+            chunk_claims: Some(&short_chunks),
+            msb_point: &opening_point,
+            msb_claim: Some(Fr::from_u64(0)),
+        };
+        let error = akita_unsigned_inc_batch_entries::<Fr, _>(
+            8,
+            &opening_point,
+            Some(&sources),
+            &commitment,
+        )
+        .err()
+        .expect("lattice unsigned increment openings require every lower chunk");
+        assert!(matches!(
+            error,
+            VerifierError::FinalOpeningBatchFailed { reason }
+                if reason.contains("unsigned increment final chunk opening count mismatch")
+        ));
+    }
+
+    #[test]
+    fn akita_unsigned_increment_entries_use_chunk_and_msb_points() {
+        let commitment = 9_u64;
+        let opening_point = vec![
+            Fr::from_u64(1),
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(4),
+            Fr::from_u64(5),
+        ];
+        let chunk_point = vec![Fr::from_u64(3), Fr::from_u64(4)];
+        let msb_point = vec![Fr::from_u64(5)];
+        let chunks = vec![Fr::from_u64(0); 8];
+        let sources = LatticeUnsignedIncFinalOpenings {
+            chunk_point: &chunk_point,
+            chunk_claims: Some(&chunks),
+            msb_point: &msb_point,
+            msb_claim: Some(Fr::from_u64(1)),
+        };
+
+        let entries = akita_unsigned_inc_batch_entries::<Fr, _>(
+            8,
+            &opening_point,
+            Some(&sources),
+            &commitment,
+        )
+        .expect("complete lattice unsigned increment sources should produce entries");
+
+        assert_eq!(entries.len(), 9);
+        for (index, entry) in entries.iter().take(8).enumerate() {
+            assert_eq!(
+                entry.id,
+                Stage8OpeningId::from(lattice_formulas::unsigned_inc_chunk_opening(index))
+            );
+            assert_eq!(entry.own_point, chunk_point);
+        }
+        let msb_entry = entries.last().expect("MSB entry should be last");
+        assert_eq!(
+            msb_entry.id,
+            Stage8OpeningId::from(lattice_formulas::unsigned_inc_msb_opening())
+        );
+        assert_eq!(msb_entry.own_point, msb_point);
+    }
 }

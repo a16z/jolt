@@ -2565,6 +2565,45 @@ mod tests {
     }
 
     #[test]
+    fn lattice_stage6_rejects_missing_unsigned_increment_output_claims() {
+        let claims =
+            unsigned_inc_claims_for_protocol::<Fr>(&lattice_config(), trace_dimensions(), true)
+                .expect("lattice mode with unsigned claim should build stage claims");
+        let booleanity_claims = super::super::inputs::BooleanityOutputOpeningClaims {
+            instruction_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            ram_ra: Vec::new(),
+            unsigned_inc_chunks: vec![Fr::zero(); 8],
+        };
+
+        let error =
+            validate_lattice_increment_claim_shape(claims.as_ref(), None, &booleanity_claims, 8)
+                .expect_err("lattice unsigned increment output claims are required");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id } if id == lattice::unsigned_inc_opening()
+        ));
+    }
+
+    #[test]
+    fn curve_stage6_rejects_unsigned_increment_chunk_claims() {
+        let booleanity_claims = super::super::inputs::BooleanityOutputOpeningClaims {
+            instruction_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            ram_ra: Vec::new(),
+            unsigned_inc_chunks: vec![Fr::zero()],
+        };
+
+        let error = validate_lattice_increment_claim_shape(None, None, &booleanity_claims, 8)
+            .expect_err("curve mode must not accept lattice unsigned increment chunk claims");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedOpeningClaim { id }
+                if id == lattice::unsigned_inc_chunk_opening(0)
+        ));
+    }
+
+    #[test]
     fn curve_stage6_rejects_unsigned_increment_claims() {
         let error =
             unsigned_inc_claims_for_protocol::<Fr>(&curve_config(), trace_dimensions(), true)

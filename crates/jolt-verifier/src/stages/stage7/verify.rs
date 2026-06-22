@@ -47,7 +47,9 @@ use crate::{
     stages::{
         stage4::Stage4ClearOutput,
         stage6::{
-            inputs::BytecodeCyclePhaseOutputClaims,
+            inputs::{
+                BytecodeCyclePhaseOutputClaims, UnsignedIncClaimReductionOutputOpeningClaims,
+            },
             outputs::{AdviceCyclePhasePublicOutput, VerifiedAdviceCyclePhaseSumcheck},
             Stage6ClearOutput, Stage6ZkOutput,
         },
@@ -1272,6 +1274,20 @@ fn unsigned_inc_chunk_reconstruction_input<F: Field>(
             id: lattice::unsigned_inc_opening(),
         })?;
     let chunk_claims = &stage6.output_claims.booleanity.unsigned_inc_chunks;
+    unsigned_inc_chunk_reconstruction_input_from_parts(
+        claim,
+        unsigned_output_claims,
+        chunk_claims,
+        gamma,
+    )
+}
+
+fn unsigned_inc_chunk_reconstruction_input_from_parts<F: Field>(
+    claim: &JoltRelationClaims<F>,
+    unsigned_output_claims: &UnsignedIncClaimReductionOutputOpeningClaims<F>,
+    chunk_claims: &[F],
+    gamma: F,
+) -> Result<F, VerifierError> {
     let expected_chunks = claim.output.required_openings.len();
     if chunk_claims.len() != expected_chunks {
         return Err(VerifierError::StageClaimPublicInputFailed {
@@ -1876,4 +1892,71 @@ fn program_image_final_opening<F: Field>(
         point: source.point.to_vec(),
         opening_claim: source.opening_claim,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "test setup should fail loudly when helper contracts change"
+    )]
+
+    use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn unsigned_output_claims() -> UnsignedIncClaimReductionOutputOpeningClaims<Fr> {
+        UnsignedIncClaimReductionOutputOpeningClaims {
+            unsigned_inc: Fr::from_u64(19),
+            unsigned_inc_msb: Fr::from_u64(1),
+        }
+    }
+
+    #[test]
+    fn unsigned_inc_reconstruction_input_rejects_missing_booleanity_chunks() {
+        let claim = lattice::unsigned_inc_chunk_reconstruction_claim::<Fr>(8)
+            .expect("8-bit chunks should be valid");
+
+        let error = unsigned_inc_chunk_reconstruction_input_from_parts(
+            &claim,
+            &unsigned_output_claims(),
+            &[],
+            Fr::from_u64(7),
+        )
+        .expect_err("lattice reconstruction requires all Booleanity chunk claims");
+
+        assert!(matches!(
+            error,
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::UnsignedIncChunkReconstruction,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unsigned_inc_reconstruction_input_depends_on_booleanity_chunks() {
+        let claim = lattice::unsigned_inc_chunk_reconstruction_claim::<Fr>(8)
+            .expect("8-bit chunks should be valid");
+        let output_claims = unsigned_output_claims();
+        let gamma = Fr::from_u64(7);
+        let mut chunks = vec![Fr::from_u64(0); 8];
+
+        let base = unsigned_inc_chunk_reconstruction_input_from_parts(
+            &claim,
+            &output_claims,
+            &chunks,
+            gamma,
+        )
+        .expect("complete chunk claims should evaluate");
+        chunks[3] = Fr::from_u64(1);
+        let tampered = unsigned_inc_chunk_reconstruction_input_from_parts(
+            &claim,
+            &output_claims,
+            &chunks,
+            gamma,
+        )
+        .expect("complete chunk claims should evaluate");
+
+        assert_ne!(base, tampered);
+    }
 }
