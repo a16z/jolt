@@ -46,7 +46,8 @@ Assumptions:
 ```text
 - Committed bytecode/program-image support is already ported.
 - jolt-claims lattice extension defines PackedWitness families and views.
-- jolt-akita verifies one proof-owned PackedWitness packed-view proof.
+- the verifier invokes the generic opening/packing layer with Akita as the
+  native PCS backend for one proof-owned PackedWitness opening proof.
 - TrustedAdvice, BytecodeChunk(i), and ProgramImageInit use separate openings
   against their original commitments.
 - Dory remains the default curve PCS.
@@ -55,36 +56,21 @@ Assumptions:
 
 ## Config
 
-PCS family flags:
+PCS family selection:
 
 ```rust
 pub enum PcsFamily {
     Curve,
     Lattice,
 }
-
-pub struct PcsFamilyFlags {
-    pub curve: bool,
-    pub lattice: bool,
-}
-
-impl Default for PcsFamilyFlags {
-    fn default() -> Self {
-        Self {
-            curve: true,
-            lattice: false,
-        }
-    }
-}
 ```
 
 Selection:
 
 ```text
-curve=true,  lattice=false -> Curve
-curve=false, lattice=true  -> Lattice
-curve=true,  lattice=true  -> reject
-curve=false, lattice=false -> reject, except omitted [pcs] defaults to Curve
+pcs omitted -> Curve
+pcs = Curve -> curve PCS path
+pcs = Lattice -> lattice/Akita-compatible opening path
 ```
 
 TOML default:
@@ -315,9 +301,7 @@ Transcript:
 
 ```text
 Add:
-  PcsFamilyFlags.
   PcsFamily.
-  SelectedPcs.
   LatticeConfig.
   PackedWitnessConfig.
   validate_protocol_config().

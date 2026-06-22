@@ -567,15 +567,17 @@ resolved:
   first supported Akita field mode is LayerZero proof_optimized fp128
   (`D64Full`) through akita-field with jolt-compat.
 
-  verifier setup payload binds the backend identifier, LayerZero revision,
-  AKITA_D, exact setup dimension, maximum polynomials per commitment group,
-  default layout digest, optional PackedWitness layout digest/dimension/cells,
-  and serialized native verifier setup material.
+  verifier setup payload binds the backend identifier, AKITA_D, exact setup
+  dimension, maximum polynomials per commitment group, default layout digest,
+  and serialized native verifier setup material. The exact upstream Akita git
+  revision is pinned in Cargo metadata and must not appear in Rust APIs,
+  transcript payloads, or public adapter abstractions.
 
   current setup verification is exact-D: setup D must equal D_pack.
 
-  jolt-akita reduces packed-linear view statements to backend-supported native
-  openings through its packed-view reduction adapter.
+  generic packing reductions live outside jolt-akita. Packed-view statements
+  are lowered by the modular opening/verifier layer to native Akita openings;
+  jolt-akita remains the native Akita PCS adapter.
 
   precommitted objects do not enter the W_pack packed-view statement. They are
   verified through separate direct/native opening statements against their
