@@ -283,6 +283,9 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         | SourceInstructionKind::AdviceLH
         | SourceInstructionKind::AdviceLW
         | SourceInstructionKind::AdviceLD => format_advice_load_operands(word),
+        SourceInstructionKind::VirtualRev8W(jolt_riscv::instructions::VirtualRev8W(())) => {
+            format_t_operands(word)
+        }
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_ADD
         | SourceInstructionKind::FIELD_SUB
@@ -380,8 +383,7 @@ fn uses_r_format(instruction_kind: SourceInstructionKind) -> bool {
             | SourceInstructionKind::MULW
             | SourceInstructionKind::DIVUW
             | SourceInstructionKind::REMW
-            | SourceInstructionKind::REMUW
-            | SourceInstructionKind::VirtualRev8W(jolt_riscv::instructions::VirtualRev8W(()))
+            | SourceInstructionKind::REMUW //| SourceInstructionKind::VirtualRev8W(jolt_riscv::instructions::VirtualRev8W(()))
     )
 }
 
@@ -418,6 +420,15 @@ fn format_advice_load_operands(word: u32) -> NormalizedOperands {
         rs1: None,
         rs2: None,
         imm: (word as i32 as i64 as u64) as i128,
+    }
+}
+
+fn format_t_operands(word: u32) -> NormalizedOperands {
+    NormalizedOperands {
+        rd: Some(rd(word)),
+        rs1: Some(rs1(word)),
+        rs2: None,
+        imm: 0,
     }
 }
 

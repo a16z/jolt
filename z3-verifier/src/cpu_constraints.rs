@@ -30,7 +30,7 @@ use tracer::instruction::{
     format::{
         format_assert_align::FormatAssert, format_b::FormatB, format_fence::FormatFence,
         format_i::FormatI, format_j::FormatJ, format_load::FormatLoad, format_r::FormatR,
-        format_s::FormatS, format_u::FormatU,
+        format_s::FormatS, format_t::FormatT, format_u::FormatU,
         format_virtual_right_shift_i::FormatVirtualRightShiftI,
         format_virtual_right_shift_r::FormatVirtualRightShiftR,
     },
@@ -512,7 +512,7 @@ test_instruction_constraints!(VirtualPow2, FormatI);
 test_instruction_constraints!(VirtualPow2I, FormatJ);
 test_instruction_constraints!(VirtualPow2IW, FormatJ);
 test_instruction_constraints!(VirtualPow2W, FormatI);
-test_instruction_constraints!(VirtualRev8W, FormatR);
+test_instruction_constraints!(VirtualRev8W, FormatT);
 test_instruction_constraints!(VirtualROTRIW, FormatVirtualRightShiftI);
 test_instruction_constraints!(VirtualShiftRightBitmask, FormatI);
 test_instruction_constraints!(VirtualShiftRightBitmaskI, FormatJ);

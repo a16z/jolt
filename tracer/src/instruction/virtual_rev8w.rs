@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
+use super::{format::format_t::FormatT, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name = VirtualRev8W,
     mask = 0,
     match = 0,
-    format = FormatR,
+    format = FormatT,
     ram = ()
 );
 
