@@ -363,7 +363,8 @@ mod tests {
     use jolt_akita::{PackedAlphabet, PackedFamilySpec, PackedWitnessSource};
     use jolt_field::FixedByteSize;
     use jolt_riscv::{
-        CapturedState, JoltInstructionKind, JoltInstructionRow, NormalizedOperands, StoreState,
+        CapturedState, JoltInstructionKind, JoltInstructionRow, LoadState, NormalizedOperands,
+        StoreState,
     };
 
     fn trace_domain() -> PackedFactDomain {
@@ -594,6 +595,110 @@ mod tests {
     }
 
     #[test]
+    fn store_zero_delta_uses_ram_increment_source() {
+        let layout = increment_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::SD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: None,
+                    imm: 8,
+                },
+                CapturedState::Store(StoreState {
+                    rs1_value: 1,
+                    rs2_value: 17,
+                    ram_read_value: 17,
+                    ram_address: 0x34,
+                }),
+                9,
+            ),
+            JoltTraceRow::no_op(),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |index, _| [Some(0x34), None][index])
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        for index in 0..8 {
+            assert_eq!(
+                get(
+                    &witness,
+                    PackedFamilyId::UnsignedIncChunk { index },
+                    0,
+                    0,
+                    0
+                ),
+                AkitaField::one()
+            );
+        }
+        assert_eq!(
+            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            AkitaField::one()
+        );
+    }
+
+    #[test]
+    fn load_row_uses_rd_increment_source_not_ram_delta() {
+        let layout = increment_layout();
+        let rows = [
+            trace_row(
+                JoltInstructionKind::LD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: None,
+                    rd: Some(3),
+                    imm: 8,
+                },
+                CapturedState::Load(LoadState {
+                    rs1_value: 1,
+                    ram_address: 0x34,
+                    rd_pre_value: 10,
+                    rd_write_value: 13,
+                }),
+                9,
+            ),
+            JoltTraceRow::no_op(),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 8, |_, _| 0, |index, _| [Some(0x34), None][index])
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        assert_eq!(
+            get(
+                &witness,
+                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                0,
+                0,
+                3
+            ),
+            AkitaField::one()
+        );
+        for index in 1..8 {
+            assert_eq!(
+                get(
+                    &witness,
+                    PackedFamilyId::UnsignedIncChunk { index },
+                    0,
+                    0,
+                    0
+                ),
+                AkitaField::one()
+            );
+        }
+        assert_eq!(
+            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            AkitaField::one()
+        );
+    }
+
+    #[test]
     fn unsigned_increment_ignores_rd_slots_without_rd_destination() {
         let layout = increment_layout();
         let rows = [
@@ -741,6 +846,66 @@ mod tests {
             );
         }
         assert!(get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
+    }
+
+    #[test]
+    fn unsigned_increment_supports_four_bit_lower_chunks() {
+        let layout = increment_layout_with_chunk_bits(4);
+        let rows = [
+            trace_row(
+                JoltInstructionKind::ADD,
+                NormalizedOperands {
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    rd: Some(3),
+                    imm: 0,
+                },
+                CapturedState::NonMemory(jolt_riscv::NonMemoryState {
+                    rs1_value: 1,
+                    rs2_value: 2,
+                    rd_pre_value: 0,
+                    rd_write_value: 0x1234,
+                }),
+                9,
+            ),
+            JoltTraceRow::no_op(),
+        ];
+
+        let mut builder = JoltPackedWitnessBuilder::new(layout);
+        let _ = builder
+            .pack_trace_rows(&rows, 4, |_, _| 0, |_, _| None)
+            .expect("trace packing should succeed");
+        let witness = builder.finish().expect("source should build");
+
+        let expected = [4, 3, 2, 1];
+        for (index, symbol) in expected.into_iter().enumerate() {
+            assert_eq!(
+                get(
+                    &witness,
+                    PackedFamilyId::UnsignedIncChunk { index },
+                    0,
+                    0,
+                    symbol
+                ),
+                AkitaField::one()
+            );
+        }
+        for index in expected.len()..16 {
+            assert_eq!(
+                get(
+                    &witness,
+                    PackedFamilyId::UnsignedIncChunk { index },
+                    0,
+                    0,
+                    0
+                ),
+                AkitaField::one()
+            );
+        }
+        assert_eq!(
+            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            AkitaField::one()
+        );
     }
 
     #[test]
@@ -895,13 +1060,22 @@ mod tests {
     }
 
     fn increment_layout() -> PackedWitnessLayout {
-        let mut specs = (0..8)
+        increment_layout_with_chunk_bits(8)
+    }
+
+    fn increment_layout_with_chunk_bits(log_k_chunk: usize) -> PackedWitnessLayout {
+        let chunk_count =
+            unsigned_inc_lower_chunk_count(log_k_chunk).expect("valid test chunk size");
+        let alphabet = PackedAlphabet::Fixed {
+            size: 1 << log_k_chunk,
+        };
+        let mut specs = (0..chunk_count)
             .map(|index| {
                 PackedFamilySpec::direct(
                     PackedFamilyId::UnsignedIncChunk { index },
                     trace_domain(),
                     1,
-                    PackedAlphabet::Byte,
+                    alphabet,
                 )
             })
             .collect::<Vec<_>>();
