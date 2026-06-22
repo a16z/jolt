@@ -886,16 +886,21 @@ where
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
+                stage_cycle_points: &[
+                    stage1_cycle.as_slice(),
+                    stage2_cycle.as_slice(),
+                    stage3_cycle.as_slice(),
                     stage4_cycle,
                     stage5_cycle,
                 ],
                 entry_bytecode_index,
+                bind_store: false,
             },
-        );
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
         for (index, stage_cycle_eq) in committed_public_values.stage_cycle_eqs.iter().enumerate() {
             values.public(
                 JoltPublicId::from(BytecodeReadRafPublic::StageCycleEq(index)),
@@ -1183,6 +1188,7 @@ where
             register_val_evaluation_point: &input.stage5.registers_val_evaluation.opening_point
                 [..REGISTER_ADDRESS_BITS],
             bytecode_r_address: &input.stage6.bytecode_read_raf_address.opening_point,
+            bind_store: false,
         },
     )
 }

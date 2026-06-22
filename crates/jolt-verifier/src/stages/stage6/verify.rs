@@ -47,8 +47,12 @@ use super::{
     verify_a, verify_b,
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
+    config::{validate_protocol_config, PcsFamily},
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::zk::committed,
+    verifier::CheckedInputs,
+    VerifierError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,11 +133,25 @@ where
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
     let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
     let committed_program = bytecode_reduction_layout.is_some();
+    let bind_store_bytecode = validate_protocol_config(&proof.protocol)? == PcsFamily::Lattice;
 
-    let bytecode_address_claims =
-        bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
+    let bytecode_address_claims = if bind_store_bytecode {
+        bytecode::read_raf_address_phase_with_store_binding::<PCS::Field>(
+            formula_dimensions.bytecode_read_raf,
+        )
+    } else {
+        bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+    };
     let bytecode_claims = if committed_program {
-        bytecode::read_raf_cycle_phase_committed::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+        if bind_store_bytecode {
+            bytecode::read_raf_cycle_phase_committed_with_store_binding::<PCS::Field>(
+                formula_dimensions.bytecode_read_raf,
+            )
+        } else {
+            bytecode::read_raf_cycle_phase_committed::<PCS::Field>(
+                formula_dimensions.bytecode_read_raf,
+            )
+        }
     } else {
         bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf)
     };
@@ -165,7 +183,14 @@ where
         advice::cycle_phase::<PCS::Field>(JoltAdviceKind::Untrusted, layout.dimensions())
     });
     let bytecode_reduction_claims = bytecode_reduction_layout.map(|layout| {
-        bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
+        if bind_store_bytecode {
+            bytecode_reduction::cycle_phase_with_store_binding::<PCS::Field>(
+                layout.dimensions(),
+                layout.chunk_count(),
+            )
+        } else {
+            bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
+        }
     });
     let program_image_reduction_claims = program_image_reduction_layout
         .map(|layout| program_image::cycle_phase::<PCS::Field>(layout.dimensions()));
@@ -679,15 +704,11 @@ where
         return Err(VerifierError::ExpectedClearProof { field: "stage5" });
     };
     let claims = &proof.clear_claims()?.stage6;
-    if committed_program != claims.address_phase.bytecode_val_stages.is_some() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: format!(
-                "bytecode Val-stage claims presence ({}) does not match committed program mode ({committed_program})",
-                claims.address_phase.bytecode_val_stages.is_some()
-            ),
-        });
-    }
+    validate_bytecode_val_stage_claim_count(
+        committed_program,
+        bind_store_bytecode,
+        claims.address_phase.bytecode_val_stages.as_deref(),
+    )?;
 
     let bytecode_input_openings = bytecode::read_raf_input_openings();
     let [(spartan_shift_unexpanded_pc, instruction_input_unexpanded_pc)] =
@@ -701,6 +722,13 @@ where
             right: instruction_input_unexpanded_pc,
         });
     }
+    let store_binding_increment = if bind_store_bytecode {
+        Some(stage5_increment.ok_or(VerifierError::MissingOpeningClaim {
+            id: lattice::inc_virtualization_store_opening(),
+        })?)
+    } else {
+        None
+    };
 
     let [ram_ra_reduced] = ram::ra_virtualization_input_openings();
     let instruction_ra_input_openings = instruction::ra_virtualization_input_openings(
@@ -837,6 +865,11 @@ where
             }
             if *id == bytecode_input_openings.spartan_shift_pc {
                 return Ok(stage3.output_claims.shift.pc);
+            }
+            if *id == lattice::inc_virtualization_store_opening() {
+                return store_binding_increment
+                    .map(|stage5_increment| stage5_increment.output_claims.inc_virtualization.store)
+                    .ok_or(VerifierError::MissingOpeningClaim { id: *id });
             }
             Err(VerifierError::MissingOpeningClaim { id: *id })
         },
@@ -1341,20 +1374,29 @@ where
         Err(VerifierError::MissingOpeningClaim { id: *id })
     };
     let bytecode_output = if committed_program {
+        let mut stage_cycle_points = vec![
+            stage1_cycle.as_slice(),
+            stage2_cycle.as_slice(),
+            stage3_cycle.as_slice(),
+            stage4_cycle,
+            stage5_cycle,
+        ];
+        if let Some(stage5_increment) = store_binding_increment {
+            stage_cycle_points.push(stage5_increment.batch.opening_point.as_slice());
+        }
         let bytecode_public_values = bytecode::read_raf_committed_public_values::<PCS::Field>(
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
-                    stage4_cycle,
-                    stage5_cycle,
-                ],
+                stage_cycle_points: &stage_cycle_points,
                 entry_bytecode_index,
+                bind_store: bind_store_bytecode,
             },
-        );
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
         let stage_claims = claims.address_phase.bytecode_val_stages.as_ref().ok_or(
             VerifierError::MissingOpeningClaim {
                 id: bytecode_reduction::bytecode_val_stage_opening(0),
@@ -2016,6 +2058,7 @@ where
                     register_read_write_point: stage4_register_address,
                     register_val_evaluation_point: stage5_register_address,
                     bytecode_r_address: &bytecode_r_address,
+                    bind_store: bind_store_bytecode,
                 },
             )?;
             let input_claim = input_claims.bytecode_claim_reduction.ok_or(
@@ -2274,6 +2317,35 @@ fn unsigned_inc_claims_for_protocol<F: Field>(
     })
 }
 
+fn validate_bytecode_val_stage_claim_count<F: Field>(
+    committed_program: bool,
+    bind_store_bytecode: bool,
+    stage_claims: Option<&[F]>,
+) -> Result<(), VerifierError> {
+    if committed_program != stage_claims.is_some() {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: format!(
+                "bytecode Val-stage claims presence ({}) does not match committed program mode ({committed_program})",
+                stage_claims.is_some()
+            ),
+        });
+    }
+    if let Some(stage_claims) = stage_claims {
+        let expected = bytecode_reduction::bytecode_val_stage_count(bind_store_bytecode);
+        if stage_claims.len() != expected {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: format!(
+                    "bytecode Val-stage claim count mismatch: expected {expected}, got {}",
+                    stage_claims.len()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -2338,6 +2410,27 @@ mod tests {
         assert!(matches!(
             error,
             VerifierError::UnexpectedOpeningClaim { id } if id == lattice::unsigned_inc_opening()
+        ));
+    }
+
+    #[test]
+    fn bytecode_val_stage_count_keeps_curve_and_lattice_shapes_distinct() {
+        let five = vec![Fr::zero(); bytecode_reduction::NUM_BYTECODE_VAL_STAGES];
+        let six = vec![Fr::zero(); bytecode_reduction::LATTICE_BYTECODE_VAL_STAGES];
+
+        validate_bytecode_val_stage_claim_count(true, false, Some(&five))
+            .expect("curve committed bytecode keeps five staged values");
+        validate_bytecode_val_stage_claim_count(true, true, Some(&six))
+            .expect("lattice committed bytecode requires Store binding stage");
+
+        let error = validate_bytecode_val_stage_claim_count(true, true, Some(&five))
+            .expect_err("lattice committed bytecode must reject five staged values");
+        assert!(matches!(
+            error,
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                ..
+            }
         ));
     }
 }

@@ -80,10 +80,6 @@ pub struct Stage6ZkOutput<F: Field, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Stage outputs are short-lived verifier artifacts; boxing would churn stage APIs."
-)]
 pub enum Stage6Output<F: Field, C> {
     Clear(Stage6ClearOutput<F>),
     Zk(Stage6ZkOutput<F, C>),

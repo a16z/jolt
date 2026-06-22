@@ -13,7 +13,7 @@ use super::super::{
     JoltConsistencyClaim, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
     JoltRelationId, JoltVirtualPolynomial,
 };
-use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use super::claim_reductions::bytecode::{bytecode_val_stage_count, NUM_BYTECODE_VAL_STAGES};
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::error::require_len;
 
@@ -93,21 +93,10 @@ pub fn read_raf<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<
 where
     F: RingCore,
 {
-    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
-
-    let input = gamma.clone().pow(7)
-        + stage1_claim()
-        + gamma.clone() * stage2_claim()
-        + gamma.clone().pow(2) * stage3_claim()
-        + gamma.clone().pow(3) * stage4_claim()
-        + gamma.clone().pow(4) * stage5_claim::<F>()
-        + gamma.clone().pow(5) * opening(pc_spartan_outer())
-        + gamma.pow(6) * opening(pc_spartan_shift());
-
     JoltRelationClaims::new(
         JoltRelationId::BytecodeReadRaf,
         dimensions.sumcheck(),
-        input,
+        read_raf_input(false),
         read_raf_cycle_output(dimensions),
     )
     .with_input_challenges([
@@ -128,21 +117,29 @@ pub fn read_raf_address_phase<F>(dimensions: BytecodeReadRafDimensions) -> JoltR
 where
     F: RingCore,
 {
-    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
+    read_raf_address_phase_for_store_binding(dimensions, false)
+}
 
-    let input = gamma.clone().pow(7)
-        + stage1_claim()
-        + gamma.clone() * stage2_claim()
-        + gamma.clone().pow(2) * stage3_claim()
-        + gamma.clone().pow(3) * stage4_claim()
-        + gamma.clone().pow(4) * stage5_claim::<F>()
-        + gamma.clone().pow(5) * opening(pc_spartan_outer())
-        + gamma.pow(6) * opening(pc_spartan_shift());
+pub fn read_raf_address_phase_with_store_binding<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    read_raf_address_phase_for_store_binding(dimensions, true)
+}
 
+fn read_raf_address_phase_for_store_binding<F>(
+    dimensions: BytecodeReadRafDimensions,
+    bind_store: bool,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
     JoltRelationClaims::new(
         JoltRelationId::BytecodeReadRaf,
         dimensions.address_sumcheck(),
-        input,
+        read_raf_input(bind_store),
         opening(bytecode_read_raf_address_phase_opening()),
     )
     .with_input_challenges([
@@ -180,12 +177,53 @@ pub fn read_raf_cycle_phase_committed<F>(
 where
     F: RingCore,
 {
+    read_raf_cycle_phase_committed_for_store_binding(dimensions, false)
+}
+
+pub fn read_raf_cycle_phase_committed_with_store_binding<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    read_raf_cycle_phase_committed_for_store_binding(dimensions, true)
+}
+
+fn read_raf_cycle_phase_committed_for_store_binding<F>(
+    dimensions: BytecodeReadRafDimensions,
+    bind_store: bool,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
     JoltRelationClaims::new(
         JoltRelationId::BytecodeReadRaf,
         dimensions.cycle_sumcheck(),
         opening(bytecode_read_raf_address_phase_opening()),
-        read_raf_cycle_output_committed(dimensions),
+        read_raf_cycle_output_committed(dimensions, bind_store),
     )
+}
+
+fn read_raf_input<F>(bind_store: bool) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
+    let store_stage_count = bytecode_val_stage_count(bind_store);
+    let mut input = gamma.clone().pow(store_stage_count + 2)
+        + stage1_claim()
+        + gamma.clone() * stage2_claim()
+        + gamma.clone().pow(2) * stage3_claim()
+        + gamma.clone().pow(3) * stage4_claim()
+        + gamma.clone().pow(4) * stage5_claim::<F>();
+    if bind_store {
+        input = input
+            + gamma.clone().pow(NUM_BYTECODE_VAL_STAGES)
+                * opening(super::lattice::inc_virtualization_store_opening());
+    }
+    input
+        + gamma.clone().pow(store_stage_count) * opening(pc_spartan_outer())
+        + gamma.pow(store_stage_count + 1) * opening(pc_spartan_shift())
 }
 
 fn read_raf_cycle_output<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
@@ -205,26 +243,30 @@ where
     output_coeff * bytecode_ra_product(dimensions)
 }
 
-fn read_raf_cycle_output_committed<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
+fn read_raf_cycle_output_committed<F>(
+    dimensions: BytecodeReadRafDimensions,
+    bind_store: bool,
+) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    const STAGES: usize = NUM_BYTECODE_VAL_STAGES;
     let gamma = bytecode_challenge::<F>(BytecodeReadRafChallenge::Gamma);
     // The staged Val factor multiplies after the RA product so the lowered
     // R1CS auxiliary chain matches core's `[ra..., val_stage]` factor order.
     let mut output = JoltExpr::zero();
-    for stage in 0..STAGES {
+    let stage_count = bytecode_val_stage_count(bind_store);
+    for stage in 0..stage_count {
         output = output
             + gamma.clone().pow(stage)
                 * bytecode_public(BytecodeReadRafPublic::StageCycleEq(stage))
                 * bytecode_ra_product(dimensions)
                 * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(stage));
     }
-    let raf_coeff = gamma.clone().pow(STAGES)
+    let raf_coeff = gamma.clone().pow(stage_count)
         * bytecode_public(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(STAGES + 1) * bytecode_public(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(STAGES + 2) * bytecode_public(BytecodeReadRafPublic::Entry);
+        + gamma.clone().pow(stage_count + 1)
+            * bytecode_public(BytecodeReadRafPublic::SpartanShiftRaf)
+        + gamma.pow(stage_count + 2) * bytecode_public(BytecodeReadRafPublic::Entry);
 
     output + raf_coeff * bytecode_ra_product(dimensions)
 }
@@ -328,7 +370,7 @@ impl<F: Field> BytecodeReadRafPublicValues<F> {
 /// factors are openings; their cycle-eq coefficients are public.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeReadRafCommittedPublicValues<F: Field> {
-    pub stage_cycle_eqs: [F; NUM_BYTECODE_VAL_STAGES],
+    pub stage_cycle_eqs: Vec<F>,
     pub spartan_outer_raf: F,
     pub spartan_shift_raf: F,
     pub entry: F,
@@ -352,19 +394,29 @@ impl<F: Field> BytecodeReadRafCommittedPublicValues<F> {
 pub struct BytecodeReadRafCommittedEvaluationInputs<'a, F> {
     pub r_address: &'a [F],
     pub r_cycle: &'a [F],
-    pub stage_cycle_points: [&'a [F]; NUM_BYTECODE_VAL_STAGES],
+    pub stage_cycle_points: &'a [&'a [F]],
     pub entry_bytecode_index: usize,
+    pub bind_store: bool,
 }
 
 pub fn read_raf_committed_public_values<F>(
     inputs: BytecodeReadRafCommittedEvaluationInputs<'_, F>,
-) -> BytecodeReadRafCommittedPublicValues<F>
+) -> Result<BytecodeReadRafCommittedPublicValues<F>, JoltFormulaPointError>
 where
     F: Field,
 {
+    let expected_stages = bytecode_val_stage_count(inputs.bind_store);
+    if inputs.stage_cycle_points.len() != expected_stages {
+        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            expected: expected_stages,
+            got: inputs.stage_cycle_points.len(),
+        });
+    }
     let stage_cycle_eqs = inputs
         .stage_cycle_points
-        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle));
+        .iter()
+        .map(|stage_cycle_point| EqPolynomial::<F>::mle(stage_cycle_point, inputs.r_cycle))
+        .collect::<Vec<_>>();
     let (spartan_outer_raf, spartan_shift_raf, entry) = read_raf_raf_entry_publics(
         inputs.r_address,
         inputs.r_cycle,
@@ -373,12 +425,12 @@ where
         inputs.entry_bytecode_index,
     );
 
-    BytecodeReadRafCommittedPublicValues {
+    Ok(BytecodeReadRafCommittedPublicValues {
         stage_cycle_eqs,
         spartan_outer_raf,
         spartan_shift_raf,
         entry,
-    }
+    })
 }
 
 /// Table-independent read-RAF publics shared by the full and committed
@@ -881,6 +933,7 @@ fn bytecode_ra(index: usize) -> JoltOpeningId {
 #[cfg(test)]
 #[expect(clippy::panic)]
 mod tests {
+    use super::super::{claim_reductions::bytecode as bytecode_reduction, lattice};
     use super::*;
     use crate::protocols::jolt::{JoltCommittedPolynomial, JoltConsistencyClaim, JoltPolynomialId};
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -1107,6 +1160,28 @@ mod tests {
             )]
         );
         assert_eq!(claims.num_challenges(), 6);
+    }
+
+    #[test]
+    fn store_binding_read_raf_adds_lattice_store_stage() {
+        let dimensions = dimensions(2);
+        let address_claims = read_raf_address_phase_with_store_binding::<Fr>(dimensions);
+        assert!(address_claims
+            .input
+            .required_openings
+            .contains(&lattice::inc_virtualization_store_opening()));
+
+        let cycle_claims = read_raf_cycle_phase_committed_with_store_binding::<Fr>(dimensions);
+        assert!(cycle_claims.output.required_openings.contains(
+            &bytecode_reduction::bytecode_val_stage_opening(
+                bytecode_reduction::LATTICE_STORE_BYTECODE_VAL_STAGE,
+            )
+        ));
+        assert!(cycle_claims
+            .required_publics()
+            .contains(&JoltPublicId::from(BytecodeReadRafPublic::StageCycleEq(
+                bytecode_reduction::LATTICE_STORE_BYTECODE_VAL_STAGE
+            ))));
     }
 
     #[test]

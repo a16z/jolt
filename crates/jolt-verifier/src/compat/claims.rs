@@ -506,18 +506,16 @@ fn advice_cycle_phase_claim_from_native<F: Field>(
 
 fn bytecode_val_stage_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Option<[F; bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES]>, VerifierError> {
+) -> Result<Option<Vec<F>>, VerifierError> {
     if claims
         .get(bytecode_claim_reduction::bytecode_val_stage_opening(0))
         .is_none()
     {
         return Ok(None);
     }
-    let mut stage_claims = [F::zero(); bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES];
-    for (stage, stage_claim) in stage_claims.iter_mut().enumerate() {
-        *stage_claim =
-            claims.require(bytecode_claim_reduction::bytecode_val_stage_opening(stage))?;
-    }
+    let stage_claims = (0..bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES)
+        .map(|stage| claims.require(bytecode_claim_reduction::bytecode_val_stage_opening(stage)))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(stage_claims))
 }
 

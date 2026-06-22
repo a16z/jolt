@@ -3,7 +3,7 @@
 //!
 //! In committed program mode the bytecode value columns are committed as dense
 //! chunk polynomials instead of being evaluated directly by the verifier. The
-//! address phase of bytecode read-RAF stages five `BytecodeValStage(i)` claims;
+//! address phase of bytecode read-RAF stages the core `BytecodeValStage(i)` claims;
 //! this reduction batches them with powers of `eta` and reduces the batch into
 //! openings of `BytecodeChunk(i)` over the shared precommitted schedule.
 //! Mirrors `jolt-core`'s `zkvm/claim_reductions/bytecode.rs` and the
@@ -30,8 +30,25 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Number of staged `BytecodeValStage(i)` claims batched into the reduction.
-pub const NUM_BYTECODE_VAL_STAGES: usize = 5;
+/// Number of core staged `BytecodeValStage(i)` claims batched into the reduction.
+pub const CORE_BYTECODE_VAL_STAGES: usize = 5;
+
+/// Additional lattice-only stage binding `IncVirtualization`'s Store selector
+/// to `CircuitFlags::Store` in committed bytecode.
+pub const LATTICE_STORE_BYTECODE_VAL_STAGE: usize = CORE_BYTECODE_VAL_STAGES;
+
+pub const LATTICE_BYTECODE_VAL_STAGES: usize = CORE_BYTECODE_VAL_STAGES + 1;
+
+/// Curve/core committed-bytecode stage count.
+pub const NUM_BYTECODE_VAL_STAGES: usize = CORE_BYTECODE_VAL_STAGES;
+
+pub const fn bytecode_val_stage_count(bind_store: bool) -> usize {
+    if bind_store {
+        LATTICE_BYTECODE_VAL_STAGES
+    } else {
+        CORE_BYTECODE_VAL_STAGES
+    }
+}
 
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
@@ -378,11 +395,25 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
     pub register_val_evaluation_point: &'a [F],
 }
 
-/// Fold the five staged bytecode read-RAF combinations into one weight per
+/// Fold the core staged bytecode read-RAF combinations into one weight per
 /// committed lane, so `sum_lane weights[lane] * lane_value(row, lane)` equals
 /// `sum_stage eta^stage * stage_value(row)` for every bytecode row.
 pub fn lane_weights<F: Field>(
     inputs: BytecodeLaneWeightInputs<'_, F>,
+) -> Result<Vec<F>, JoltFormulaPointError> {
+    lane_weights_for_store_binding(inputs, false)
+}
+
+/// Lattice/Akita variant that also binds `CircuitFlags::Store`.
+pub fn lane_weights_with_store_binding<F: Field>(
+    inputs: BytecodeLaneWeightInputs<'_, F>,
+) -> Result<Vec<F>, JoltFormulaPointError> {
+    lane_weights_for_store_binding(inputs, true)
+}
+
+fn lane_weights_for_store_binding<F: Field>(
+    inputs: BytecodeLaneWeightInputs<'_, F>,
+    bind_store: bool,
 ) -> Result<Vec<F>, JoltFormulaPointError> {
     require_len(inputs.stage1_gammas, 2 + NUM_CIRCUIT_FLAGS)?;
     require_len(inputs.stage2_gammas, 4)?;
@@ -392,8 +423,9 @@ pub fn lane_weights<F: Field>(
     require_opening_point_len(inputs.register_read_write_point, REGISTER_ADDRESS_BITS)?;
     require_opening_point_len(inputs.register_val_evaluation_point, REGISTER_ADDRESS_BITS)?;
 
-    let mut eta_powers = [F::one(); NUM_BYTECODE_VAL_STAGES];
-    for stage in 1..NUM_BYTECODE_VAL_STAGES {
+    let stage_count = bytecode_val_stage_count(bind_store);
+    let mut eta_powers = vec![F::one(); stage_count];
+    for stage in 1..stage_count {
         eta_powers[stage] = eta_powers[stage - 1] * inputs.eta;
     }
 
@@ -465,6 +497,10 @@ pub fn lane_weights<F: Field>(
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
     }
+    if bind_store {
+        let coeff = eta_powers[LATTICE_STORE_BYTECODE_VAL_STAGE];
+        weights[layout.circuit_start + (CircuitFlags::Store as usize)] += coeff;
+    }
 
     Ok(weights)
 }
@@ -476,10 +512,31 @@ pub fn cycle_phase<F>(
 where
     F: RingCore,
 {
+    cycle_phase_for_store_binding(dimensions, chunk_count, false)
+}
+
+pub fn cycle_phase_with_store_binding<F>(
+    dimensions: PrecommittedReductionDimensions,
+    chunk_count: usize,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
+    cycle_phase_for_store_binding(dimensions, chunk_count, true)
+}
+
+fn cycle_phase_for_store_binding<F>(
+    dimensions: PrecommittedReductionDimensions,
+    chunk_count: usize,
+    bind_store: bool,
+) -> JoltRelationClaims<F>
+where
+    F: RingCore,
+{
     assert_valid_chunk_count(chunk_count);
     let eta = bytecode_challenge(BytecodeClaimReductionChallenge::Eta);
     let mut input = JoltExpr::zero();
-    for stage in 0..NUM_BYTECODE_VAL_STAGES {
+    for stage in 0..bytecode_val_stage_count(bind_store) {
         input = input + eta.clone().pow(stage) * opening(bytecode_val_stage_opening(stage));
     }
 
@@ -967,6 +1024,43 @@ mod tests {
             cycle_phase_output_openings(dimensions, 2),
             vec![cycle_phase_intermediate_opening()]
         );
+    }
+
+    #[test]
+    fn store_binding_cycle_phase_exposes_sixth_stage() {
+        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
+        let claims = cycle_phase_with_store_binding::<Fr>(dimensions, 2);
+
+        assert_eq!(
+            claims.input.required_openings,
+            (0..LATTICE_BYTECODE_VAL_STAGES)
+                .map(bytecode_val_stage_opening)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn store_binding_lane_weights_select_store_flag_lane() {
+        let eta = fr(7);
+        let zero = fr(0);
+        let register_point: Vec<Fr> = (0..REGISTER_ADDRESS_BITS as u64).map(fr).collect();
+
+        let weights = lane_weights_with_store_binding::<Fr>(BytecodeLaneWeightInputs {
+            eta,
+            stage1_gammas: &vec![zero; 2 + NUM_CIRCUIT_FLAGS],
+            stage2_gammas: &[zero; 4],
+            stage3_gammas: &[zero; 9],
+            stage4_gammas: &[zero; 3],
+            stage5_gammas: &vec![zero; 2 + LookupTableKind::<XLEN>::COUNT],
+            register_read_write_point: &register_point,
+            register_val_evaluation_point: &register_point,
+        })
+        .unwrap_or_else(|error| panic!("store-binding lane weights should evaluate: {error}"));
+
+        let mut expected = vec![zero; committed_lanes()];
+        expected[BYTECODE_LANE_LAYOUT.circuit_start + (CircuitFlags::Store as usize)] =
+            gamma_powers(7, LATTICE_STORE_BYTECODE_VAL_STAGE + 1)[LATTICE_STORE_BYTECODE_VAL_STAGE];
+        assert_eq!(weights, expected);
     }
 
     #[test]

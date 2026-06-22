@@ -1,3 +1,8 @@
+#![expect(
+    clippy::panic,
+    reason = "tamper tests fail loudly when fixture assumptions are violated"
+)]
+
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 use crate::support::{core_fixtures, tamper_manifest};
 

@@ -177,6 +177,7 @@ pub(crate) struct BytecodeReductionWeightInputs<'a, F: Field> {
     pub register_val_evaluation_point: &'a [F],
     /// Full bytecode address point (the `BytecodeReadRafAddrClaim` opening).
     pub bytecode_r_address: &'a [F],
+    pub bind_store: bool,
 }
 
 pub(crate) fn bytecode_reduction_weights<F: Field>(
@@ -189,7 +190,7 @@ pub(crate) fn bytecode_reduction_weights<F: Field>(
             stage: JoltRelationId::BytecodeClaimReductionCyclePhase,
             reason: error.to_string(),
         })?;
-    let lane_weights = bytecode_reduction::lane_weights(BytecodeLaneWeightInputs {
+    let lane_weight_inputs = BytecodeLaneWeightInputs {
         eta: inputs.eta,
         stage1_gammas: inputs.stage1_gammas,
         stage2_gammas: inputs.stage2_gammas,
@@ -198,6 +199,11 @@ pub(crate) fn bytecode_reduction_weights<F: Field>(
         stage5_gammas: inputs.stage5_gammas,
         register_read_write_point: inputs.register_read_write_point,
         register_val_evaluation_point: inputs.register_val_evaluation_point,
+    };
+    let lane_weights = (if inputs.bind_store {
+        bytecode_reduction::lane_weights_with_store_binding(lane_weight_inputs)
+    } else {
+        bytecode_reduction::lane_weights(lane_weight_inputs)
     })
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::BytecodeClaimReductionCyclePhase,

@@ -1541,7 +1541,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
             address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
-                bytecode_val_stages: Some([zero; 5]),
+                bytecode_val_stages: Some(vec![zero; 5]),
             },
             bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
                 bytecode_ra: vec![zero],

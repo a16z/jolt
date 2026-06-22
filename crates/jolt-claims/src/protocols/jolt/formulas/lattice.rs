@@ -485,7 +485,7 @@ pub fn unsigned_inc_chunk_opening(index: usize) -> JoltOpeningId {
 }
 
 pub fn unsigned_inc_lower_chunk_count(log_k_chunk: usize) -> Option<usize> {
-    (log_k_chunk != 0 && UNSIGNED_INC_BITS % log_k_chunk == 0)
+    (log_k_chunk != 0 && UNSIGNED_INC_BITS.is_multiple_of(log_k_chunk))
         .then_some(UNSIGNED_INC_BITS / log_k_chunk)
 }
 
@@ -905,6 +905,7 @@ fn byte_limb_weights<F: Field>(lane_weight: F, limb_count: usize) -> Vec<(usize,
 #[cfg(test)]
 mod tests {
     #![expect(
+        clippy::expect_used,
         clippy::panic,
         clippy::unwrap_used,
         reason = "tests fail loudly on unexpected errors"
