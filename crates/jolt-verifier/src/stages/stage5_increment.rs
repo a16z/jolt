@@ -107,23 +107,14 @@ where
         .and_then(|claims| claims.stage5_increment.as_ref());
     let proof_payload = proof.stages.stage5_increment_sumcheck_proof.as_ref();
 
+    validate_stage5_increment_shape(
+        lattice,
+        checked.zk,
+        claims.is_some(),
+        proof_payload.is_some(),
+    )?;
     if !lattice {
-        if claims.is_some() {
-            return Err(VerifierError::UnexpectedOpeningClaim {
-                id: lattice::inc_virtualization_inc_opening(),
-            });
-        }
-        if proof_payload.is_some() {
-            return Err(VerifierError::UnexpectedStageProof {
-                field: "stage5_increment_sumcheck_proof",
-            });
-        }
         return Ok(None);
-    }
-    if checked.zk {
-        return Err(VerifierError::ExpectedClearProof {
-            field: "stage5_increment",
-        });
     }
 
     let Deps::Clear {
@@ -274,6 +265,43 @@ where
     }))
 }
 
+fn validate_stage5_increment_shape(
+    lattice: bool,
+    zk: bool,
+    has_claims: bool,
+    has_proof_payload: bool,
+) -> Result<(), VerifierError> {
+    if !lattice {
+        if has_claims {
+            return Err(VerifierError::UnexpectedOpeningClaim {
+                id: lattice::inc_virtualization_inc_opening(),
+            });
+        }
+        if has_proof_payload {
+            return Err(VerifierError::UnexpectedStageProof {
+                field: "stage5_increment_sumcheck_proof",
+            });
+        }
+        return Ok(());
+    }
+    if zk {
+        return Err(VerifierError::ExpectedClearProof {
+            field: "stage5_increment",
+        });
+    }
+    if !has_claims {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: lattice::inc_virtualization_inc_opening(),
+        });
+    }
+    if !has_proof_payload {
+        return Err(VerifierError::MissingStageProof {
+            field: "stage5_increment_sumcheck_proof",
+        });
+    }
+    Ok(())
+}
+
 fn eq_cycle<F: Field>(left: &[F], right: &[F]) -> Result<F, VerifierError> {
     try_eq_mle(left, right).map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::IncVirtualization,
@@ -297,4 +325,72 @@ fn validate_compressed_stage_claim<F: Field>(
         return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage: claim.id });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "test setup should fail loudly when helper contracts change"
+    )]
+
+    use super::*;
+
+    #[test]
+    fn curve_stage5_increment_rejects_lattice_claims() {
+        let error = validate_stage5_increment_shape(false, false, true, false)
+            .expect_err("curve mode must reject lattice increment claims");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedOpeningClaim { id }
+                if id == lattice::inc_virtualization_inc_opening()
+        ));
+    }
+
+    #[test]
+    fn curve_stage5_increment_rejects_lattice_proof_payload() {
+        let error = validate_stage5_increment_shape(false, false, false, true)
+            .expect_err("curve mode must reject lattice increment proof payload");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedStageProof {
+                field: "stage5_increment_sumcheck_proof"
+            }
+        ));
+    }
+
+    #[test]
+    fn lattice_stage5_increment_requires_claims_and_proof_payload() {
+        let error = validate_stage5_increment_shape(true, false, false, true)
+            .expect_err("lattice mode must require increment claims");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == lattice::inc_virtualization_inc_opening()
+        ));
+
+        let error = validate_stage5_increment_shape(true, false, true, false)
+            .expect_err("lattice mode must require increment proof payload");
+        assert!(matches!(
+            error,
+            VerifierError::MissingStageProof {
+                field: "stage5_increment_sumcheck_proof"
+            }
+        ));
+
+        validate_stage5_increment_shape(true, false, true, true)
+            .expect("lattice clear mode accepts complete increment payload");
+    }
+
+    #[test]
+    fn lattice_stage5_increment_rejects_zk_mode() {
+        let error = validate_stage5_increment_shape(true, true, true, true)
+            .expect_err("lattice increment virtualization is clear-only");
+        assert!(matches!(
+            error,
+            VerifierError::ExpectedClearProof {
+                field: "stage5_increment"
+            }
+        ));
+    }
 }
