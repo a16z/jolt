@@ -30,10 +30,15 @@ impl CommitmentLayoutDigest for u64 {
 /// Verifier statement for a same-point batch opening.
 ///
 /// `logical_point` is the protocol point where the listed claims originated.
-/// `pcs_point` is the single point opened by the backend after any embedding or
-/// packed-view reduction. For direct views these are normally equal; packed
-/// reductions may keep a logical point for transcript binding while opening the
-/// packed commitment at the reduced PCS point.
+/// This point is transcript-bound even when the physical PCS proof opens a
+/// different point.
+///
+/// `pcs_point` is the point used by direct/native batch openings. It is usually
+/// equal to `logical_point`, but may differ when a protocol embeds a logical
+/// claim into a different PCS coordinate system. Packed reductions derive their
+/// final native PCS point from the packing reduction proof; for those statements
+/// `pcs_point` is retained as statement metadata rather than the final opened
+/// point.
 ///
 /// `layout_digest` domain-separates the physical statement. Direct statements
 /// should use the commitment's own layout digest when the backend exposes one;
@@ -41,10 +46,27 @@ impl CommitmentLayoutDigest for u64 {
 /// appears on every packed physical view. The digest binds metadata only: the
 /// packed-view relation is proven by the packing reduction, not by this field
 /// alone.
+///
+/// Each claim carries a `scale`. The batch reduction samples RLC coefficients
+/// from the transcript and uses `gamma_i * scale_i` as the effective logical
+/// coefficient for claim `i`; packed views then multiply that value by each
+/// view term coefficient. In other words, `claim` is checked after applying
+/// `scale`, while packed term coefficients describe how that scaled logical
+/// claim is read from the packed witness.
+///
+/// Direct/native batch statements may contain claims against different
+/// commitments when the backend supports that reduction. A packed-linear
+/// statement is stricter: all claims must be `PhysicalView::PackedLinear`, all
+/// packed view digests must equal `layout_digest`, and all claims must refer to
+/// one packed witness commitment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchOpeningStatement<F, C, OpeningId = (), RelationId = (), Claim = F> {
+    /// Protocol point for the logical claims and transcript binding.
     pub logical_point: Vec<F>,
+    /// Direct/native PCS opening point. Packed reductions derive their native
+    /// opening point separately.
     pub pcs_point: Vec<F>,
+    /// Digest for the physical layout used by this statement.
     pub layout_digest: [u8; 32],
     pub claims: Vec<BatchOpeningClaim<F, C, OpeningId, RelationId, Claim>>,
 }
@@ -57,8 +79,9 @@ pub struct BatchOpeningClaim<F, C, OpeningId = (), RelationId = (), Claim = F> {
     pub commitment: C,
     pub claim: Claim,
     pub view: PhysicalView<F>,
-    /// Multiplier applied when embedding this claim into the batch PCS point.
-    /// The verifier checks `claim * scale` against the physical opening.
+    /// Multiplier applied before batching. The effective RLC coefficient is
+    /// `gamma_i * scale`, and packed view terms multiply this value by their
+    /// own coefficients.
     pub scale: F,
 }
 
