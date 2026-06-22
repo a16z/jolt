@@ -2,22 +2,20 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+use crate::{
+    OpeningsError, PackedFamilyRef, PackedLinearAddress, PackedLinearFamily, PackedLinearLayout,
+};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
-use jolt_openings::{
-    OpeningsError, PackedFamilyRef, PackedLinearAddress, PackedLinearFamily, PackedLinearLayout,
-};
 use serde::{Deserialize, Serialize};
-
-use crate::types::{AkitaLayoutDigest, AkitaSetupParams};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackedWitnessLayout {
     pub families: Vec<PackedFamily>,
     pub cells: usize,
     pub dimension: usize,
-    pub digest: AkitaLayoutDigest,
+    pub digest: [u8; 32],
 }
 
 impl PackedWitnessLayout {
@@ -294,20 +292,6 @@ impl PackedLinearLayout for PackedWitnessLayout {
 
 fn layout_error(error: impl ToString) -> OpeningsError {
     OpeningsError::InvalidBatch(error.to_string())
-}
-
-impl AkitaSetupParams {
-    pub fn from_packed_layout(
-        layout: &PackedWitnessLayout,
-        max_num_polys_per_commitment_group: usize,
-    ) -> Self {
-        Self::new(
-            layout.dimension,
-            max_num_polys_per_commitment_group,
-            layout.digest,
-        )
-        .with_packed_layout(layout.clone())
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -762,9 +746,9 @@ fn ceil_log2(value: usize) -> usize {
     }
 }
 
-fn layout_digest(families: &[PackedFamily], cells: usize, dimension: usize) -> AkitaLayoutDigest {
+fn layout_digest(families: &[PackedFamily], cells: usize, dimension: usize) -> [u8; 32] {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"jolt-akita/packed-witness-layout/v1");
+    bytes.extend_from_slice(b"jolt-openings/packing-layout/v1");
     write_usize(&mut bytes, families.len());
     write_usize(&mut bytes, cells);
     write_usize(&mut bytes, dimension);
@@ -899,7 +883,7 @@ mod tests {
     )]
 
     use super::*;
-    use crate::AkitaField;
+    use jolt_field::{Fr, FromPrimitiveInt};
 
     fn trace(log_t: usize) -> PackedFactDomain {
         PackedFactDomain::TraceRows { log_t }
@@ -1097,7 +1081,7 @@ mod tests {
         assert_eq!(layout.dummy_cell_count(), 1);
         assert!(layout.unrank(layout.cells).is_none());
 
-        let source = SparsePackedWitness::<AkitaField>::try_new(layout.clone(), Vec::new())
+        let source = SparsePackedWitness::<Fr>::try_new(layout.clone(), Vec::new())
             .expect("empty source should build");
         let zero_address = PackedCellAddress {
             family: PackedFamilyId::Custom {
@@ -1112,7 +1096,7 @@ mod tests {
             source
                 .eval_direct_fact(&zero_address)
                 .expect("address is in range"),
-            AkitaField::zero()
+            Fr::from_u64(0)
         );
     }
 
@@ -1221,8 +1205,8 @@ mod tests {
         let source = SparsePackedWitness::try_from_cells(
             layout.clone(),
             [
-                (one_address.clone(), AkitaField::from_u64(11)),
-                (sign_address.clone(), AkitaField::one()),
+                (one_address.clone(), Fr::from_u64(11)),
+                (sign_address.clone(), Fr::from_u64(1)),
             ],
         )
         .expect("source should build");
@@ -1237,13 +1221,13 @@ mod tests {
             source
                 .eval_direct_fact(&one_address)
                 .expect("address is in range"),
-            AkitaField::from_u64(11)
+            Fr::from_u64(11)
         );
         assert_eq!(
             source
                 .eval_direct_fact(&sign_address)
                 .expect("address is in range"),
-            AkitaField::one()
+            Fr::from_u64(1)
         );
     }
 
@@ -1262,22 +1246,12 @@ mod tests {
     }
 
     #[test]
-    fn setup_params_report_packed_dimension_and_digest() {
-        let layout = PackedWitnessLayout::new([byte_family(PackedFamilyId::RamRa { index: 0 }, 2)])
-            .expect("layout should build");
-        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
-
-        assert_eq!(params.max_num_vars, layout.dimension);
-        assert_eq!(params.default_layout_digest, layout.digest);
-    }
-
-    #[test]
     fn sparse_source_rejects_out_of_layout_ranks() {
         let layout = PackedWitnessLayout::new([bit_family(PackedFamilyId::UnsignedIncMsb, 0)])
             .expect("layout should build");
 
         assert!(matches!(
-            SparsePackedWitness::try_new(layout.clone(), vec![(layout.cells, AkitaField::one())]),
+            SparsePackedWitness::try_new(layout.clone(), vec![(layout.cells, Fr::from_u64(1))]),
             Err(PackedLayoutError::RankOutOfRange { .. })
         ));
     }

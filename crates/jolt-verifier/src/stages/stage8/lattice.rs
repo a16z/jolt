@@ -5,10 +5,7 @@ use crate::{
 };
 #[cfg(feature = "field-inline")]
 use jolt_akita::AKITA_FIELD_MODULUS;
-use jolt_akita::{
-    AkitaField, PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId,
-    PackedFamilySpec, PackedViewError, PackedViewFormula, PackedViewTerm, PackedWitnessLayout,
-};
+use jolt_akita::{AkitaField, PackedViewError, PackedViewFormula, PackedViewTerm};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
     formulas::{claim_reductions::increments as field_increments, lattice as field_lattice},
@@ -26,7 +23,8 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::{Field, FixedByteSize};
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-    PackedLinearTerm, PhysicalView,
+    PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec,
+    PackedLinearTerm, PackedWitnessLayout, PhysicalView,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial};
 use jolt_riscv::CircuitFlags;

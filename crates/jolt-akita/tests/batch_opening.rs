@@ -2,13 +2,13 @@
 
 use jolt_akita::{
     AkitaCommitInput, AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaScheme,
-    AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilyId,
-    PackedFamilySpec, PackedLayoutError, PackedWitnessLayout, PackedWitnessSource,
-    SparsePackedWitness, AKITA_FIELD_MODULUS,
+    AkitaSetupParams, AKITA_FIELD_MODULUS,
 };
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackedCombine, PackedLinearTerm, PhysicalView, ZkOpeningScheme,
+    PackedAlphabet, PackedCellAddress, PackedCombine, PackedFactDomain, PackedFamilyId,
+    PackedFamilySpec, PackedLayoutError, PackedLinearTerm, PackedWitnessLayout,
+    PackedWitnessSource, PhysicalView, SparsePackedWitness, ZkOpeningScheme,
 };
 use jolt_poly::{EqPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -356,6 +356,15 @@ fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn test thread")
         .join()
         .expect("test thread panicked");
+}
+
+#[test]
+fn setup_params_report_packed_dimension_and_digest() {
+    let layout = packed_layout();
+    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    assert_eq!(params.max_num_vars, layout.dimension);
+    assert_eq!(params.default_layout_digest, layout.digest);
+    assert_eq!(params.packed_layout.as_ref(), Some(&layout));
 }
 
 #[test]

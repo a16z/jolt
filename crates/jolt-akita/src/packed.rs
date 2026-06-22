@@ -2,8 +2,8 @@ use jolt_crypto::Commitment;
 use jolt_openings::{
     has_packed_linear_view, prove_sparse_packed_linear_reduction, validate_packed_linear_statement,
     BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackedLinearBatch, PackedLinearBatchBackend, PackedLinearWitnessSource, ZkBatchOpeningScheme,
-    ZkOpeningScheme,
+    PackedLinearBatch, PackedLinearBatchBackend, PackedLinearWitnessSource, PackedWitnessLayout,
+    PackedWitnessSource, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
@@ -13,7 +13,6 @@ use crate::backend::{
     bind_verifier_setup_key, packed_source_polynomial, packed_source_sparse_polynomial,
     prove_batch_with_native_polynomials,
 };
-use crate::layout::{PackedWitnessLayout, PackedWitnessSource};
 use crate::types::{
     append_field_slice, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaHidingCommitment,
     AkitaPackedBatchProof, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,

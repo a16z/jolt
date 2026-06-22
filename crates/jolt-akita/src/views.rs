@@ -2,17 +2,15 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+use crate::types::AkitaLayoutDigest;
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
-use jolt_openings::{PackedLinearTerm, PhysicalView};
-use jolt_poly::EqPolynomial;
-
-use crate::layout::{
-    PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedLayoutError, PackedWitnessLayout,
-    PackedWitnessSource,
+use jolt_openings::{
+    PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedLayoutError,
+    PackedLinearTerm, PackedWitnessLayout, PackedWitnessSource, PhysicalView,
 };
-use crate::types::AkitaLayoutDigest;
+use jolt_poly::EqPolynomial;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackedViewCatalog<OpeningId, RelationId, F> {
@@ -440,7 +438,7 @@ fn validate_term_shape(
     family_id: &PackedFamilyId,
     limb: usize,
     symbol: usize,
-) -> Result<crate::PackedFactDomain, PackedViewError> {
+) -> Result<PackedFactDomain, PackedViewError> {
     let family = layout
         .family(family_id)
         .ok_or_else(|| PackedLayoutError::MissingFamily {
@@ -555,8 +553,8 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
         PackedFamilyId::AdviceBytes { kind, index } => {
             bytes.push(11);
             bytes.push(match kind {
-                crate::PackedAdviceKind::Trusted => 0,
-                crate::PackedAdviceKind::Untrusted => 1,
+                PackedAdviceKind::Trusted => 0,
+                PackedAdviceKind::Untrusted => 1,
             });
             write_usize(bytes, *index);
         }
@@ -622,8 +620,9 @@ mod tests {
     )]
 
     use super::*;
-    use crate::{
-        AkitaField, PackedAlphabet, PackedFactDomain, PackedFamilySpec, PackedWitnessLayout,
+    use crate::AkitaField;
+    use jolt_openings::{
+        PackedAlphabet, PackedFactDomain, PackedFamilySpec, PackedWitnessLayout,
         SparsePackedWitness,
     };
 

@@ -96,7 +96,7 @@ impl<F: Field> Stage8PhysicalManifest<F> {
     #[cfg(feature = "akita")]
     pub fn from_packed_view_catalog(
         logical: &Stage8LogicalManifest<F>,
-        layout: &jolt_akita::PackedWitnessLayout,
+        layout: &jolt_openings::PackedWitnessLayout,
         catalog: &jolt_akita::PackedViewCatalog<Stage8OpeningId, Stage8OpeningId, F>,
     ) -> Result<Self, jolt_akita::PackedViewError> {
         let openings = logical
@@ -121,7 +121,7 @@ impl<F: Field> Stage8PhysicalManifest<F> {
     #[cfg(feature = "akita")]
     pub fn from_jolt_lattice_view_formulas(
         logical: &Stage8LogicalManifest<F>,
-        layout: &jolt_akita::PackedWitnessLayout,
+        layout: &jolt_openings::PackedWitnessLayout,
         formulas: impl IntoIterator<Item = super::JoltLatticeViewFormulaWithRowPoint<F>>,
     ) -> Result<Self, jolt_akita::PackedViewError> {
         let entries = formulas
@@ -279,9 +279,9 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn physical_manifest_resolves_akita_packed_views_from_catalog() {
-        use jolt_akita::{
-            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedViewCatalog,
-            PackedViewEntry, PackedViewFormula, PackedWitnessLayout,
+        use jolt_akita::{PackedViewCatalog, PackedViewEntry, PackedViewFormula};
+        use jolt_openings::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedWitnessLayout,
         };
 
         let id = Stage8OpeningId::from(JoltOpeningId::committed(
@@ -337,11 +337,11 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn physical_manifest_resolves_jolt_lattice_view_formulas() {
-        use jolt_akita::{
-            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedWitnessLayout,
-        };
         use jolt_claims::protocols::jolt::{
             byte_decode_terms, LatticePackedFamilyId, LatticePackedViewFormula,
+        };
+        use jolt_openings::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedWitnessLayout,
         };
 
         let jolt_id = JoltOpeningId::committed(
@@ -401,11 +401,11 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn physical_manifest_rejects_missing_jolt_lattice_formula() {
-        use jolt_akita::{
-            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedViewError,
-            PackedWitnessLayout,
-        };
+        use jolt_akita::PackedViewError;
         use jolt_claims::protocols::jolt::{LatticePackedFamilyId, LatticePackedViewFormula};
+        use jolt_openings::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedWitnessLayout,
+        };
 
         let expected_id = JoltOpeningId::committed(
             JoltCommittedPolynomial::RamInc,
@@ -453,11 +453,11 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn physical_manifest_rejects_masked_jolt_lattice_formula() {
-        use jolt_akita::{
-            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedViewError,
-            PackedWitnessLayout,
-        };
+        use jolt_akita::PackedViewError;
         use jolt_claims::protocols::jolt::LatticePackedViewFormula;
+        use jolt_openings::{
+            PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec, PackedWitnessLayout,
+        };
 
         let jolt_id = JoltOpeningId::committed(
             JoltCommittedPolynomial::RamInc,

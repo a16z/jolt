@@ -1,12 +1,12 @@
+use jolt_akita::AkitaField;
+use jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count;
 use jolt_field::{CanonicalBytes, FromPrimitiveInt};
+use jolt_openings::{
+    PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedLayoutError,
+    PackedWitnessLayout, SparsePackedWitness,
+};
 use jolt_riscv::JoltTraceRow;
 use thiserror::Error;
-
-use jolt_akita::{
-    AkitaField, PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId,
-    PackedLayoutError, PackedWitnessLayout, SparsePackedWitness,
-};
-use jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count;
 
 #[derive(Clone, Debug)]
 pub struct JoltPackedWitnessBuilder {
@@ -360,8 +360,8 @@ mod tests {
     )]
 
     use super::*;
-    use jolt_akita::{PackedAlphabet, PackedFamilySpec, PackedWitnessSource};
     use jolt_field::FixedByteSize;
+    use jolt_openings::{PackedAlphabet, PackedFamilySpec, PackedWitnessSource};
     use jolt_riscv::{
         CapturedState, JoltInstructionKind, JoltInstructionRow, LoadState, NormalizedOperands,
         StoreState,

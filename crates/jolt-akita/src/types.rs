@@ -9,13 +9,11 @@ use akita_types::{
 };
 use jolt_openings::{
     BatchOpeningStatement, CommitmentLayoutDigest, PackedLinearBatchProof,
-    PackedLinearReductionProof, PhysicalView,
+    PackedLinearReductionProof, PackedWitnessLayout, PhysicalView,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
-
-use crate::layout::PackedWitnessLayout;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub type AkitaConfig = akita_config::proof_optimized::fp128::D64Full;
@@ -64,6 +62,18 @@ impl AkitaSetupParams {
     pub fn with_packed_layout(mut self, layout: PackedWitnessLayout) -> Self {
         self.packed_layout = Some(layout);
         self
+    }
+
+    pub fn from_packed_layout(
+        layout: &PackedWitnessLayout,
+        max_num_polys_per_commitment_group: usize,
+    ) -> Self {
+        Self::new(
+            layout.dimension,
+            max_num_polys_per_commitment_group,
+            layout.digest,
+        )
+        .with_packed_layout(layout.clone())
     }
 }
 

@@ -9,6 +9,7 @@ description = "Polynomial commitment scheme traits and opening reduction for the
 workspace = true
 
 [dependencies]
+blake2.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true

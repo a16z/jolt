@@ -30,15 +30,17 @@ use crate::{
 use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
-    AkitaProverSetup, AkitaVerifierSetup, PackedAdviceKind, PackedFactDomain, PackedFamilyId,
-    PackedWitnessLayout, PackedWitnessSource, SparsePackedWitness,
+    AkitaProverSetup, AkitaVerifierSetup,
 };
 use jolt_claims::protocols::jolt::{
     lattice_packed_validity_digest, JoltAdviceKind, LatticePackedFamilyId,
     LatticePackedValidityKind, LatticePackedValidityRequirement,
 };
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
-use jolt_openings::{BatchOpeningScheme, BatchOpeningStatement, PhysicalView};
+use jolt_openings::{
+    BatchOpeningScheme, BatchOpeningStatement, PackedAdviceKind, PackedFactDomain, PackedFamilyId,
+    PackedWitnessLayout, PackedWitnessSource, PhysicalView, SparsePackedWitness,
+};
 use jolt_poly::{try_eq_mle, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
 use jolt_sumcheck::{
@@ -2172,10 +2174,7 @@ mod tests {
         Stage8PhysicalManifest,
     };
     use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
-    use jolt_akita::{
-        AkitaScheme, AkitaSetupParams, PackedAlphabet, PackedCellAddress, PackedFactDomain,
-        PackedFamilySpec, SparsePackedWitness, AKITA_FIELD_MODULUS,
-    };
+    use jolt_akita::{AkitaScheme, AkitaSetupParams, AKITA_FIELD_MODULUS};
     use jolt_claims::protocols::jolt::{
         bytecode_imm_canonical_bytes_requirement,
         formulas::{
@@ -2187,7 +2186,8 @@ mod tests {
     use jolt_field::FixedByteSize;
     use jolt_openings::{
         BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-        PackedLinearTerm, PhysicalView,
+        PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec, PackedLinearTerm,
+        PhysicalView, SparsePackedWitness,
     };
     use jolt_poly::Point;
     use jolt_riscv::{

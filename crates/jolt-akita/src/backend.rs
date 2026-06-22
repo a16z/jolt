@@ -14,13 +14,12 @@ use jolt_crypto::Commitment;
 use jolt_field::{CanonicalBytes, FixedByteSize};
 use jolt_openings::{
     BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
+    PackedWitnessSource, PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
-use crate::layout::PackedWitnessSource;
 use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,

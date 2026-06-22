@@ -4,18 +4,11 @@
 //! `CommitmentScheme` and same-point `BatchOpeningScheme` traits.
 
 mod backend;
-mod layout;
 mod packed;
 mod types;
 mod views;
 
 pub use backend::AkitaScheme;
-pub use layout::{
-    PackedAdviceKind, PackedAlphabet, PackedAlphabetCounts, PackedCellAddress,
-    PackedDomainCellCounts, PackedFactDomain, PackedFamily, PackedFamilyId, PackedFamilySpec,
-    PackedLayoutAudit, PackedLayoutError, PackedViewKind, PackedWitnessLayout, PackedWitnessSource,
-    SparsePackedWitness,
-};
 pub use packed::AkitaPackedScheme;
 pub use types::{
     AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaConfig, AkitaField,
