@@ -1,4 +1,3 @@
-
 #![expect(
     clippy::expect_used,
     reason = "tests assert successful artifact construction"
@@ -22,8 +21,8 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::FixedByteSize;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackedAlphabet,
-    PackedCellAddress, PackedFactDomain, PackedFamilySpec, PackedLinearTerm, PhysicalView,
-    SparsePackedWitness,
+    PackedCellAddress, PackedFactDomain, PackedFamilySpec, PackedLinearReductionProof,
+    PackedLinearTerm, PhysicalView, SparsePackedWitness,
 };
 use jolt_poly::Point;
 use jolt_riscv::{
@@ -733,7 +732,7 @@ fn stage8_clear_openings_prove_separate_precommitted_batches() {
     ));
 
     let mut packed_reduction_precommitted_proof = proofs.precommitted[0].clone();
-    packed_reduction_precommitted_proof.reduction = Some(jolt_akita::AkitaPackedReductionProof {
+    packed_reduction_precommitted_proof.reduction = Some(PackedLinearReductionProof {
         rounds: Vec::new(),
         opening_eval: vec![0; AkitaField::NUM_BYTES],
     });

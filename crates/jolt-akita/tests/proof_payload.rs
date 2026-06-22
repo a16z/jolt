@@ -1,9 +1,11 @@
 #![expect(clippy::expect_used, reason = "tests assert serialization shape")]
 
-use jolt_akita::{
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedReductionProof,
-};
+use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField};
 use jolt_field::FixedByteSize;
+use jolt_openings::{PackedLinearBatchProof, PackedLinearReductionProof};
+
+type PackedBatchProof = PackedLinearBatchProof<AkitaBatchProof>;
+type PackedReductionProof = PackedLinearReductionProof;
 
 fn layout(byte: u8) -> [u8; 32] {
     [byte; 32]
@@ -11,8 +13,8 @@ fn layout(byte: u8) -> [u8; 32] {
 
 #[test]
 fn akita_proof_payloads_reject_unknown_serialized_fields() {
-    let proof = AkitaPackedBatchProof {
-        reduction: Some(AkitaPackedReductionProof {
+    let proof = PackedBatchProof {
+        reduction: Some(PackedReductionProof {
             rounds: Vec::new(),
             opening_eval: vec![0; AkitaField::NUM_BYTES],
         }),
@@ -35,8 +37,8 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
         .expect("proof should serialize as an object")
         .insert("extra_payload".to_string(), serde_json::Value::Bool(true));
     assert!(
-        serde_json::from_value::<AkitaPackedBatchProof>(root).is_err(),
-        "Akita packed proof must reject unknown root fields"
+        serde_json::from_value::<PackedBatchProof>(root).is_err(),
+        "packed proof must reject unknown root fields"
     );
 
     let mut native = serde_json::to_value(&proof).expect("proof should serialize");
@@ -49,7 +51,7 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
         .expect("native proof should serialize as an object")
         .insert("extra_native".to_string(), serde_json::Value::Bool(true));
     assert!(
-        serde_json::from_value::<AkitaPackedBatchProof>(native).is_err(),
+        serde_json::from_value::<PackedBatchProof>(native).is_err(),
         "Akita native proof must reject unknown nested fields"
     );
 
@@ -70,7 +72,7 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
             serde_json::Value::Bool(true),
         );
     assert!(
-        serde_json::from_value::<AkitaPackedBatchProof>(commitment).is_err(),
+        serde_json::from_value::<PackedBatchProof>(commitment).is_err(),
         "Akita commitment payload must reject unknown nested fields"
     );
 }

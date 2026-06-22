@@ -30,7 +30,7 @@ use crate::{
 };
 use common::jolt_device::JoltDevice;
 use jolt_akita::{
-    AkitaCommitment, AkitaField, AkitaPackedBatchProof, AkitaPackedScheme, AkitaProverHint,
+    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaProverHint,
     AkitaProverSetup, AkitaVerifierSetup,
 };
 use jolt_claims::protocols::jolt::{
@@ -40,7 +40,8 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
 use jolt_openings::{
     BatchOpeningScheme, BatchOpeningStatement, PackedAdviceKind, PackedFactDomain, PackedFamilyId,
-    PackedWitnessLayout, PackedWitnessSource, PhysicalView, SparsePackedWitness,
+    PackedLinearBatchProof, PackedWitnessLayout, PackedWitnessSource, PhysicalView,
+    SparsePackedWitness,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
@@ -52,6 +53,7 @@ use jolt_sumcheck::{
 use jolt_transcript::Transcript;
 
 pub type AkitaClearVectorCommitment = ClearOnlyVectorCommitment<AkitaField>;
+pub type AkitaPackedBatchProof = PackedLinearBatchProof<AkitaBatchProof>;
 pub type AkitaVerifierPreprocessing =
     JoltVerifierPreprocessing<AkitaPackedScheme, AkitaClearVectorCommitment>;
 pub type AkitaJoltProof = JoltProof<AkitaPackedScheme, AkitaClearVectorCommitment>;

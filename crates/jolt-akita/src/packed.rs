@@ -2,8 +2,8 @@ use jolt_crypto::Commitment;
 use jolt_openings::{
     has_packed_linear_view, prove_sparse_packed_linear_reduction, validate_packed_linear_statement,
     BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackedLinearBatch, PackedLinearBatchBackend, PackedLinearWitnessSource, PackedWitnessLayout,
-    PackedWitnessSource, ZkBatchOpeningScheme, ZkOpeningScheme,
+    PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof, PackedLinearWitnessSource,
+    PackedWitnessLayout, PackedWitnessSource, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
@@ -14,8 +14,8 @@ use crate::backend::{
     prove_batch_with_native_polynomials,
 };
 use crate::types::{
-    append_field_slice, AkitaCommitInput, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaPackedBatchProof, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
+    append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
+    AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
 };
 use crate::AkitaScheme;
 
@@ -48,7 +48,7 @@ impl AkitaPackedScheme {
         statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
         source: &S,
         hint: AkitaProverHint,
-    ) -> Result<AkitaPackedBatchProof, OpeningsError>
+    ) -> Result<PackedLinearBatchProof<AkitaBatchProof>, OpeningsError>
     where
         T: Transcript<Challenge = AkitaField>,
         S: PackedWitnessSource<AkitaField>,
@@ -62,7 +62,7 @@ impl AkitaPackedScheme {
                     &[&sparse_polynomial],
                     vec![hint],
                 )?;
-                return Ok(AkitaPackedBatchProof {
+                return Ok(PackedLinearBatchProof {
                     reduction: None,
                     native,
                 });
@@ -85,7 +85,7 @@ impl AkitaPackedScheme {
                 &[&sparse_polynomial],
                 vec![hint],
             )?;
-            return Ok(AkitaPackedBatchProof {
+            return Ok(PackedLinearBatchProof {
                 reduction: Some(reduction.proof),
                 native,
             });
@@ -108,7 +108,7 @@ impl Commitment for AkitaPackedScheme {
 
 impl CommitmentScheme for AkitaPackedScheme {
     type Field = AkitaField;
-    type Proof = AkitaPackedBatchProof;
+    type Proof = PackedLinearBatchProof<AkitaBatchProof>;
     type ProverSetup = AkitaProverSetup;
     type VerifierSetup = AkitaVerifierSetup;
     type Polynomial = Polynomial<AkitaField>;
