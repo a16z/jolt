@@ -31,6 +31,7 @@
 
 mod claims;
 mod error;
+mod homomorphic_batch;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
 mod packed_combine;
