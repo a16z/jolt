@@ -48,7 +48,7 @@ pub struct VerifiedStage5Batch<F: Field> {
     pub sumcheck_final_claim: F,
     pub expected_final_claim: F,
     pub instruction_read_raf: VerifiedInstructionReadRafSumcheck<F>,
-    pub ram_ra_claim_reduction: VerifiedStage5Sumcheck<F>,
+    pub ram_ra_claim_reduction: Option<VerifiedStage5Sumcheck<F>>,
     pub registers_val_evaluation: VerifiedStage5Sumcheck<F>,
     #[cfg(feature = "field-inline")]
     pub field_registers_val_evaluation: VerifiedStage5Sumcheck<F>,

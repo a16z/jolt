@@ -2707,9 +2707,9 @@ mod tests {
                     instruction_ra: Vec::new(),
                     instruction_raf_flag: zero,
                 },
-                ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
-                    ram_ra: zero,
-                },
+                ram_ra_claim_reduction: Some(
+                    stage5::inputs::RamRaClaimReductionOutputOpeningClaims { ram_ra: zero },
+                ),
                 registers_val_evaluation:
                     stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
                         rd_inc: zero,

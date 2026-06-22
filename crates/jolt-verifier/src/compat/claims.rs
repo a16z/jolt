@@ -334,9 +334,9 @@ fn stage5_claims_from_native<F: Field>(
             instruction_raf_flag: claims
                 .require(instruction::read_raf_instruction_raf_flag_opening())?,
         },
-        ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims {
+        ram_ra_claim_reduction: Some(RamRaClaimReductionOutputOpeningClaims {
             ram_ra: claims.require(ram_ra)?,
-        },
+        }),
         registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
@@ -783,7 +783,7 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 instruction_ra: vec![zero],
                 instruction_raf_flag: zero,
             },
-            ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims { ram_ra: zero },
+            ram_ra_claim_reduction: Some(RamRaClaimReductionOutputOpeningClaims { ram_ra: zero }),
             registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
                 rd_inc: zero,
                 rd_wa: zero,
@@ -1466,7 +1466,10 @@ fn claim_from_stage5_outputs<F: Field>(
         id if id == instruction::read_raf_instruction_raf_flag_opening() => {
             Some(claims.instruction_read_raf.instruction_raf_flag)
         }
-        id if id == ram_ra => Some(claims.ram_ra_claim_reduction.ram_ra),
+        id if id == ram_ra => claims
+            .ram_ra_claim_reduction
+            .as_ref()
+            .map(|claims| claims.ram_ra),
         id if id == rd_inc => Some(claims.registers_val_evaluation.rd_inc),
         id if id == rd_wa => Some(claims.registers_val_evaluation.rd_wa),
         _ => None,
@@ -1503,7 +1506,10 @@ fn claim_mut_from_stage5_outputs<F: Field>(
         id if id == instruction::read_raf_instruction_raf_flag_opening() => {
             Some(&mut claims.instruction_read_raf.instruction_raf_flag)
         }
-        id if id == ram_ra => Some(&mut claims.ram_ra_claim_reduction.ram_ra),
+        id if id == ram_ra => claims
+            .ram_ra_claim_reduction
+            .as_mut()
+            .map(|claims| &mut claims.ram_ra),
         id if id == rd_inc => Some(&mut claims.registers_val_evaluation.rd_inc),
         id if id == rd_wa => Some(&mut claims.registers_val_evaluation.rd_wa),
         _ => None,

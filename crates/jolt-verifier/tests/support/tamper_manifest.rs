@@ -769,7 +769,31 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "lattice fixture with Stage 5 increment virtualization needed to actively cover optional Inc/Store claims",
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the optional fused claim object",
+    ),
+    checked_standard(
+        "stage5.increment.claims.ram_ra_claim_reduction",
+        "claims.stage5_increment.ram_ra_claim_reduction.ram_ra",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the moved RAM RA claim-reduction output claim",
+    ),
+    checked_standard(
+        "stage5.increment.claims.inc_virtualization.inc",
+        "claims.stage5_increment.inc_virtualization.inc",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the packed increment output claim",
+    ),
+    checked_standard(
+        "stage5.increment.claims.inc_virtualization.store",
+        "claims.stage5_increment.inc_virtualization.store",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the packed store output claim",
     ),
 ];
 
@@ -1536,9 +1560,9 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 instruction_ra: vec![zero],
                 instruction_raf_flag: zero,
             },
-            ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
+            ram_ra_claim_reduction: Some(stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
                 ram_ra: zero,
-            },
+            }),
             registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
                 rd_inc: zero,
                 rd_wa: zero,

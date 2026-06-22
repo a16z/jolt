@@ -752,6 +752,29 @@ where
     };
 
     let [ram_ra_reduced] = ram::ra_virtualization_input_openings();
+    let (ram_ra_reduced_claim, ram_ra_reduced_opening_point) = if bind_store_bytecode {
+        let stage5_increment = store_binding_increment
+            .ok_or(VerifierError::MissingOpeningClaim { id: ram_ra_reduced })?;
+        (
+            stage5_increment.output_claims.ram_ra_claim_reduction.ram_ra,
+            stage5_increment
+                .ram_ra_claim_reduction
+                .opening_point
+                .as_slice(),
+        )
+    } else {
+        let output_claims = stage5
+            .output_claims
+            .ram_ra_claim_reduction
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim { id: ram_ra_reduced })?;
+        let batch = stage5
+            .batch
+            .ram_ra_claim_reduction
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim { id: ram_ra_reduced })?;
+        (output_claims.ram_ra, batch.opening_point.as_slice())
+    };
     let instruction_ra_input_openings = instruction::ra_virtualization_input_openings(
         formula_dimensions.instruction_ra_virtualization,
     );
@@ -1075,9 +1098,7 @@ where
         ram_hamming_booleanity: PCS::Field::zero(),
         ram_ra_virtualization: ram_ra_claims.input.expression().try_evaluate(
             |id| match *id {
-                id if id == ram_ra_reduced => {
-                    Ok(stage5.output_claims.ram_ra_claim_reduction.ram_ra)
-                }
+                id if id == ram_ra_reduced => Ok(ram_ra_reduced_claim),
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
             |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
@@ -1738,18 +1759,17 @@ where
             ),
         });
     }
-    let ram_reduced_opening_point = &stage5.batch.ram_ra_claim_reduction.opening_point;
-    if ram_reduced_opening_point.len() != log_k + log_t {
+    if ram_ra_reduced_opening_point.len() != log_k + log_t {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamRaVirtualization,
             reason: format!(
                 "RAM RA reduction opening point length mismatch: expected {}, got {}",
                 log_k + log_t,
-                ram_reduced_opening_point.len()
+                ram_ra_reduced_opening_point.len()
             ),
         });
     }
-    let (ram_reduced_address, ram_reduced_cycle) = ram_reduced_opening_point.split_at(log_k);
+    let (ram_reduced_address, ram_reduced_cycle) = ram_ra_reduced_opening_point.split_at(log_k);
     let eq_ram_ra_cycle = try_eq_mle(ram_reduced_cycle, &ram_ra_cycle).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamRaVirtualization,

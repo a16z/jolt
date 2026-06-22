@@ -3,10 +3,10 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
         dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
-        lattice,
+        lattice, ram,
     },
     IncVirtualizationChallenge, IncVirtualizationPublic, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId,
+    JoltRelationClaims, JoltRelationId, RamRaClaimReductionChallenge,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -22,7 +22,7 @@ use crate::{
     stages::{
         stage2::{Stage2ClearOutput, Stage2Output},
         stage4::{Stage4ClearOutput, Stage4Output},
-        stage5::{Stage5ClearOutput, Stage5Output},
+        stage5::{self, Stage5ClearOutput, Stage5Output},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -61,6 +61,7 @@ pub fn deps<'a, F: Field, C>(
 #[serde(deny_unknown_fields)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage5IncrementClaims<F: Field> {
+    pub ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims<F>,
     pub inc_virtualization: IncVirtualizationOutputClaims<F>,
 }
 
@@ -74,9 +75,19 @@ pub struct IncVirtualizationOutputClaims<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage5IncrementClearOutput<F: Field> {
-    pub gamma: F,
+    pub ram_gamma: F,
+    pub inc_gamma: F,
     pub output_claims: Stage5IncrementClaims<F>,
+    pub ram_ra_claim_reduction: VerifiedRamRaClaimReductionSumcheck<F>,
     pub batch: VerifiedIncVirtualizationSumcheck<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedRamRaClaimReductionSumcheck<F: Field> {
+    pub input_claim: F,
+    pub sumcheck_point: Vec<F>,
+    pub opening_point: Vec<F>,
+    pub expected_output_claim: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,10 +148,30 @@ where
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);
+    let ram_relation_claim = ram::ra_claim_reduction::<PCS::Field>(trace_dimensions);
     let relation_claim = lattice::inc_virtualization_claim::<PCS::Field>(trace_dimensions);
+    validate_compressed_stage_claim(&ram_relation_claim)?;
     validate_compressed_stage_claim(&relation_claim)?;
 
-    let gamma = transcript.challenge_scalar();
+    let ram_gamma = transcript.challenge_scalar();
+    let inc_gamma = transcript.challenge_scalar();
+    let [ram_ra_raf, ram_ra_read_write, ram_ra_val_check] =
+        ram::ra_claim_reduction_input_openings();
+    let ram_input_claim = ram_relation_claim.input.expression().try_evaluate(
+        |id| match *id {
+            id if id == ram_ra_raf => Ok(stage2.output_claims.ram_raf_evaluation),
+            id if id == ram_ra_read_write => Ok(stage2.output_claims.ram_read_write.ra),
+            id if id == ram_ra_val_check => Ok(stage4.output_claims.ram_val_check.ram_ra),
+            id => Err(VerifierError::MissingOpeningClaim { id }),
+        },
+        |id| match id {
+            JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => {
+                Ok(ram_gamma)
+            }
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+    )?;
     let [ram_read_write, ram_val_check, rd_read_write, rd_val_evaluation] =
         lattice::inc_virtualization_input_openings();
     let input_claim = relation_claim.input.expression().try_evaluate(
@@ -154,18 +185,25 @@ where
             id => Err(VerifierError::MissingOpeningClaim { id }),
         },
         |id| match id {
-            JoltChallengeId::IncVirtualization(IncVirtualizationChallenge::Gamma) => Ok(gamma),
+            JoltChallengeId::IncVirtualization(IncVirtualizationChallenge::Gamma) => Ok(inc_gamma),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         },
         |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
     )?;
 
     let batch = BatchedSumcheckVerifier::verify_compressed_boolean(
-        &[SumcheckClaim::new(
-            relation_claim.sumcheck.rounds,
-            relation_claim.sumcheck.degree,
-            input_claim,
-        )],
+        &[
+            SumcheckClaim::new(
+                ram_relation_claim.sumcheck.rounds,
+                ram_relation_claim.sumcheck.degree,
+                ram_input_claim,
+            ),
+            SumcheckClaim::new(
+                relation_claim.sumcheck.rounds,
+                relation_claim.sumcheck.degree,
+                input_claim,
+            ),
+        ],
         proof_payload,
         transcript,
     )
@@ -173,6 +211,91 @@ where
         stage: JoltRelationId::IncVirtualization,
         reason: error.to_string(),
     })?;
+    let ram_point = batch
+        .try_instance_point(ram_relation_claim.sumcheck.rounds)
+        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::RamRaClaimReduction,
+            reason: error.to_string(),
+        })?;
+    let ram_cycle = trace_dimensions
+        .cycle_opening_point(ram_point)
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamRaClaimReduction,
+            reason: error.to_string(),
+        })?;
+    let ram_raf_opening_point = &stage2.batch.ram_raf_evaluation.opening_point;
+    let ram_read_write_opening_point = &stage2.batch.ram_read_write.opening_point;
+    let ram_val_check_opening_point = &stage4.batch.ram_val_check.opening_point;
+    for (label, opening_point) in [
+        ("RAM RAF evaluation", ram_raf_opening_point),
+        ("RAM read-write", ram_read_write_opening_point),
+        ("RAM value check", ram_val_check_opening_point),
+    ] {
+        if opening_point.len() != log_k + log_t {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::RamRaClaimReduction,
+                reason: format!(
+                    "{label} opening point length mismatch: expected {}, got {}",
+                    log_k + log_t,
+                    opening_point.len()
+                ),
+            });
+        }
+    }
+    let (ram_raf_address, ram_raf_cycle) = ram_raf_opening_point.split_at(log_k);
+    let (ram_read_write_address, ram_read_write_cycle) =
+        ram_read_write_opening_point.split_at(log_k);
+    let (ram_val_check_address, ram_val_check_cycle) = ram_val_check_opening_point.split_at(log_k);
+    if ram_raf_address != ram_read_write_address {
+        return Err(VerifierError::StageClaimOpeningMismatch {
+            stage: JoltRelationId::RamRaClaimReduction,
+            left: ram_ra_raf,
+            right: ram_ra_read_write,
+        });
+    }
+    if ram_val_check_address != ram_read_write_address {
+        return Err(VerifierError::StageClaimOpeningMismatch {
+            stage: JoltRelationId::RamRaClaimReduction,
+            left: ram_ra_val_check,
+            right: ram_ra_read_write,
+        });
+    }
+    let ram_public_values = ram::RamRaClaimReductionPublicValues {
+        eq_cycle_raf: eq_cycle(
+            JoltRelationId::RamRaClaimReduction,
+            &ram_cycle,
+            ram_raf_cycle,
+        )?,
+        eq_cycle_read_write: eq_cycle(
+            JoltRelationId::RamRaClaimReduction,
+            &ram_cycle,
+            ram_read_write_cycle,
+        )?,
+        eq_cycle_val_check: eq_cycle(
+            JoltRelationId::RamRaClaimReduction,
+            &ram_cycle,
+            ram_val_check_cycle,
+        )?,
+    };
+    let [ram_ra_reduced] = ram::ra_claim_reduction_output_openings();
+    let ram_expected_output_claim = ram_relation_claim.output.expression().try_evaluate(
+        |id| match *id {
+            id if id == ram_ra_reduced => Ok(claims.ram_ra_claim_reduction.ram_ra),
+            id => Err(VerifierError::MissingOpeningClaim { id }),
+        },
+        |id| match id {
+            JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => {
+                Ok(ram_gamma)
+            }
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |id| match id {
+            JoltPublicId::RamRaClaimReduction(public_id) => Ok(ram_public_values.value(*public_id)),
+            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        },
+    )?;
+    let ram_opening_point = [ram_read_write_address, ram_cycle.as_slice()].concat();
+
     let point = batch
         .try_instance_point(relation_claim.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
@@ -199,10 +322,26 @@ where
         .opening_point
         .split_at(REGISTER_ADDRESS_BITS);
 
-    let eq_ram_read_write = eq_cycle(&opening_point, ram_read_write_cycle)?;
-    let eq_ram_val_check = eq_cycle(&opening_point, ram_val_check_cycle)?;
-    let eq_registers_read_write = eq_cycle(&opening_point, registers_read_write_cycle)?;
-    let eq_registers_val_evaluation = eq_cycle(&opening_point, registers_val_evaluation_cycle)?;
+    let eq_ram_read_write = eq_cycle(
+        JoltRelationId::IncVirtualization,
+        &opening_point,
+        ram_read_write_cycle,
+    )?;
+    let eq_ram_val_check = eq_cycle(
+        JoltRelationId::IncVirtualization,
+        &opening_point,
+        ram_val_check_cycle,
+    )?;
+    let eq_registers_read_write = eq_cycle(
+        JoltRelationId::IncVirtualization,
+        &opening_point,
+        registers_read_write_cycle,
+    )?;
+    let eq_registers_val_evaluation = eq_cycle(
+        JoltRelationId::IncVirtualization,
+        &opening_point,
+        registers_val_evaluation_cycle,
+    )?;
 
     let expected_output_claim = relation_claim.output.expression().try_evaluate(
         |id| match *id {
@@ -215,7 +354,7 @@ where
             id => Err(VerifierError::MissingOpeningClaim { id }),
         },
         |id| match id {
-            JoltChallengeId::IncVirtualization(IncVirtualizationChallenge::Gamma) => Ok(gamma),
+            JoltChallengeId::IncVirtualization(IncVirtualizationChallenge::Gamma) => Ok(inc_gamma),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
         },
         |id| match id {
@@ -235,27 +374,37 @@ where
         },
     )?;
 
-    let [coefficient] = batch.batching_coefficients.as_slice() else {
+    let [ram_coefficient, inc_coefficient] = batch.batching_coefficients.as_slice() else {
         return Err(VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::IncVirtualization,
             reason: format!(
-                "Stage 5 increment batch verifier returned {} coefficients for one instance",
+                "Stage 5 increment batch verifier returned {} coefficients for two instances",
                 batch.batching_coefficients.len()
             ),
         });
     };
-    if batch.reduction.value != *coefficient * expected_output_claim {
+    let expected_final_claim =
+        *ram_coefficient * ram_expected_output_claim + *inc_coefficient * expected_output_claim;
+    if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: JoltRelationId::IncVirtualization,
         });
     }
 
+    transcript.append_labeled(b"opening_claim", &claims.ram_ra_claim_reduction.ram_ra);
     transcript.append_labeled(b"opening_claim", &claims.inc_virtualization.inc);
     transcript.append_labeled(b"opening_claim", &claims.inc_virtualization.store);
 
     Ok(Some(Stage5IncrementClearOutput {
-        gamma,
+        ram_gamma,
+        inc_gamma,
         output_claims: claims.clone(),
+        ram_ra_claim_reduction: VerifiedRamRaClaimReductionSumcheck {
+            input_claim: ram_input_claim,
+            sumcheck_point: ram_point.to_vec(),
+            opening_point: ram_opening_point,
+            expected_output_claim: ram_expected_output_claim,
+        },
         batch: VerifiedIncVirtualizationSumcheck {
             input_claim,
             sumcheck_point: point.to_vec(),
@@ -302,9 +451,9 @@ fn validate_stage5_increment_shape(
     Ok(())
 }
 
-fn eq_cycle<F: Field>(left: &[F], right: &[F]) -> Result<F, VerifierError> {
+fn eq_cycle<F: Field>(stage: JoltRelationId, left: &[F], right: &[F]) -> Result<F, VerifierError> {
     try_eq_mle(left, right).map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::IncVirtualization,
+        stage,
         reason: error.to_string(),
     })
 }

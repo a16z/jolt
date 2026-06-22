@@ -43,7 +43,8 @@ pub fn deps<'a, F: Field, C>(
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage5Claims<F: Field> {
     pub instruction_read_raf: InstructionReadRafOutputOpeningClaims<F>,
-    pub ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims<F>,
+    #[serde(default)]
+    pub ram_ra_claim_reduction: Option<RamRaClaimReductionOutputOpeningClaims<F>>,
     pub registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims<F>,
     #[cfg(feature = "field-inline")]
     pub field_inline: FieldInlineStage5Claims<F>,
