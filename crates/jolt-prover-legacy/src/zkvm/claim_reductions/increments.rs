@@ -56,6 +56,8 @@ use tracer::instruction::{Cycle, RAMAccess};
 use crate::field::{BarrettReduce, FMAdd, JoltField};
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::poly::opening_proof::LatticeOpening;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
@@ -74,6 +76,8 @@ use crate::utils::thread::unsafe_allocate_zero_vec;
 use crate::zkvm::witness::CommittedPolynomial;
 
 const DEGREE_BOUND: usize = 2;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+const INC_VIRTUALIZATION_DEGREE_BOUND: usize = 3;
 
 #[derive(Allocative, Clone)]
 pub struct IncClaimReductionSumcheckParams<F: JoltField> {
@@ -735,5 +739,391 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
             SumcheckId::IncClaimReduction,
             opening_point.r,
         );
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative, Clone)]
+pub struct IncVirtualizationSumcheckParams<F: JoltField> {
+    pub gamma_powers: [F; 3],
+    pub n_cycle_vars: usize,
+    pub r_cycle_stage2: OpeningPoint<BIG_ENDIAN, F>,
+    pub r_cycle_stage4: OpeningPoint<BIG_ENDIAN, F>,
+    pub s_cycle_stage4: OpeningPoint<BIG_ENDIAN, F>,
+    pub s_cycle_stage5: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> IncVirtualizationSumcheckParams<F> {
+    pub fn new(
+        trace_len: usize,
+        accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let gamma: F = transcript.challenge_scalar();
+        let gamma_sqr = gamma.square();
+        let gamma_cub = gamma_sqr * gamma;
+
+        let (r_cycle_stage2, _) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (r_cycle_stage4, _) = accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValCheck);
+        let (s_cycle_stage4, _) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (s_cycle_stage5, _) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersValEvaluation,
+        );
+
+        Self {
+            gamma_powers: [gamma, gamma_sqr, gamma_cub],
+            n_cycle_vars: trace_len.log_2(),
+            r_cycle_stage2,
+            r_cycle_stage4,
+            s_cycle_stage4,
+            s_cycle_stage5,
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> SumcheckInstanceParams<F> for IncVirtualizationSumcheckParams<F> {
+    fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
+        let [gamma, gamma_sqr, gamma_cub] = self.gamma_powers;
+
+        let (_, ram_read_write) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+        );
+        let (_, ram_val_check) = accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValCheck);
+        let (_, rd_read_write) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+        );
+        let (_, rd_val_evaluation) = accumulator.get_committed_polynomial_opening(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersValEvaluation,
+        );
+
+        ram_read_write
+            + gamma * ram_val_check
+            + gamma_sqr * rd_read_write
+            + gamma_cub * rd_val_evaluation
+    }
+
+    fn degree(&self) -> usize {
+        INC_VIRTUALIZATION_DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.n_cycle_vars
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative)]
+pub struct IncVirtualizationSumcheckProver<F: JoltField> {
+    pub params: IncVirtualizationSumcheckParams<F>,
+    inc: MultilinearPolynomial<F>,
+    store: MultilinearPolynomial<F>,
+    eq_ram: MultilinearPolynomial<F>,
+    eq_rd: MultilinearPolynomial<F>,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> IncVirtualizationSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "IncVirtualizationSumcheckProver::initialize")]
+    pub fn initialize(params: IncVirtualizationSumcheckParams<F>, trace: Arc<Vec<Cycle>>) -> Self {
+        let gamma = params.gamma_powers[0];
+
+        let (eq_ram, eq_rd) = rayon::join(
+            || {
+                let (eq_r2, eq_r4) = rayon::join(
+                    || EqPolynomial::evals(&params.r_cycle_stage2.r),
+                    || EqPolynomial::evals(&params.r_cycle_stage4.r),
+                );
+                eq_r2
+                    .into_par_iter()
+                    .zip(eq_r4)
+                    .map(|(r2, r4)| r2 + gamma * r4)
+                    .collect::<Vec<F>>()
+            },
+            || {
+                let (eq_s4, eq_s5) = rayon::join(
+                    || EqPolynomial::evals(&params.s_cycle_stage4.r),
+                    || EqPolynomial::evals(&params.s_cycle_stage5.r),
+                );
+                eq_s4
+                    .into_par_iter()
+                    .zip(eq_s5)
+                    .map(|(s4, s5)| s4 + gamma * s5)
+                    .collect::<Vec<F>>()
+            },
+        );
+
+        let (inc, store) = trace
+            .par_iter()
+            .map(|cycle| {
+                let store = matches!(cycle.ram_access(), RAMAccess::Write(_));
+                let inc = if store {
+                    ram_inc_i128(cycle)
+                } else {
+                    rd_inc_i128(cycle)
+                };
+                (F::from_i128(inc), F::from_bool(store))
+            })
+            .unzip::<_, _, Vec<_>, Vec<_>>();
+
+        Self {
+            params,
+            inc: inc.into(),
+            store: store.into(),
+            eq_ram: eq_ram.into(),
+            eq_rd: eq_rd.into(),
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for IncVirtualizationSumcheckProver<F>
+{
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    #[tracing::instrument(skip_all, name = "IncVirtualizationSumcheckProver::compute_message")]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        let gamma_sqr = self.params.gamma_powers[1];
+        let half_n = self.inc.len() / 2;
+
+        let evals = (0..half_n)
+            .into_par_iter()
+            .fold(
+                || [F::zero(); INC_VIRTUALIZATION_DEGREE_BOUND],
+                |mut acc, j| {
+                    let inc = self
+                        .inc
+                        .sumcheck_evals_array::<INC_VIRTUALIZATION_DEGREE_BOUND>(
+                            j,
+                            BindingOrder::LowToHigh,
+                        );
+                    let store = self
+                        .store
+                        .sumcheck_evals_array::<INC_VIRTUALIZATION_DEGREE_BOUND>(
+                            j,
+                            BindingOrder::LowToHigh,
+                        );
+                    let eq_ram = self
+                        .eq_ram
+                        .sumcheck_evals_array::<INC_VIRTUALIZATION_DEGREE_BOUND>(
+                            j,
+                            BindingOrder::LowToHigh,
+                        );
+                    let eq_rd = self
+                        .eq_rd
+                        .sumcheck_evals_array::<INC_VIRTUALIZATION_DEGREE_BOUND>(
+                            j,
+                            BindingOrder::LowToHigh,
+                        );
+
+                    for k in 0..INC_VIRTUALIZATION_DEGREE_BOUND {
+                        let store_coeff = eq_ram[k] * store[k];
+                        let non_store_coeff = gamma_sqr * eq_rd[k] * (F::one() - store[k]);
+                        acc[k] += inc[k] * (store_coeff + non_store_coeff);
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [F::zero(); INC_VIRTUALIZATION_DEGREE_BOUND],
+                |mut a, b| {
+                    for k in 0..INC_VIRTUALIZATION_DEGREE_BOUND {
+                        a[k] += b[k];
+                    }
+                    a
+                },
+            );
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
+    }
+
+    #[tracing::instrument(skip_all, name = "IncVirtualizationSumcheckProver::ingest_challenge")]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        self.inc.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.store.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.eq_ram.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.eq_rd.bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
+        accumulator.append_lattice(
+            LatticeOpening::IncVirtualizationInc,
+            opening_point.clone(),
+            self.inc.final_sumcheck_claim(),
+        );
+        accumulator.append_lattice(
+            LatticeOpening::IncVirtualizationStore,
+            opening_point,
+            self.store.final_sumcheck_claim(),
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn ram_inc_i128(cycle: &Cycle) -> i128 {
+    match cycle.ram_access() {
+        RAMAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
+        _ => 0,
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn rd_inc_i128(cycle: &Cycle) -> i128 {
+    let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
+    post_value as i128 - pre_value as i128
+}
+
+#[cfg(all(test, feature = "host", feature = "akita", not(feature = "zk")))]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "tests construct prover inputs and assert successful sumcheck execution"
+    )]
+
+    use ark_bn254::Fr;
+
+    use super::*;
+    use crate::{
+        host,
+        poly::{multilinear_polynomial::PolynomialEvaluation, opening_proof::OpeningId},
+        subprotocols::sumcheck::BatchedSumcheck,
+        transcripts::Blake2bTranscript,
+    };
+
+    #[test]
+    fn inc_virtualization_sumcheck_matches_cached_lattice_openings() {
+        let mut program = host::Program::new("muldiv-guest");
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, mut trace, _, _) = program.trace(&inputs, &[], &[]);
+        trace.resize(trace.len().next_power_of_two(), Cycle::NoOp);
+
+        let trace = Arc::new(trace);
+        let log_t = trace.len().log_2();
+        let ram_inc = MultilinearPolynomial::from(
+            trace
+                .iter()
+                .map(|cycle| Fr::from_i128(ram_inc_i128(cycle)))
+                .collect::<Vec<_>>(),
+        );
+        let rd_inc = MultilinearPolynomial::from(
+            trace
+                .iter()
+                .map(|cycle| Fr::from_i128(rd_inc_i128(cycle)))
+                .collect::<Vec<_>>(),
+        );
+
+        let r_cycle_stage2 = challenge_point(3, log_t);
+        let r_cycle_stage4 = challenge_point(7, log_t);
+        let s_cycle_stage4 = challenge_point(11, log_t);
+        let s_cycle_stage5 = challenge_point(17, log_t);
+
+        let mut transcript = Blake2bTranscript::new(b"inc_virtualization_test");
+        let mut accumulator = ProverOpeningAccumulator::new(log_t);
+        accumulator.append_dense(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamReadWriteChecking,
+            r_cycle_stage2.r.clone(),
+            ram_inc.evaluate(&r_cycle_stage2.r),
+        );
+        accumulator.append_dense(
+            CommittedPolynomial::RamInc,
+            SumcheckId::RamValCheck,
+            r_cycle_stage4.r.clone(),
+            ram_inc.evaluate(&r_cycle_stage4.r),
+        );
+        accumulator.append_dense(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersReadWriteChecking,
+            s_cycle_stage4.r.clone(),
+            rd_inc.evaluate(&s_cycle_stage4.r),
+        );
+        accumulator.append_dense(
+            CommittedPolynomial::RdInc,
+            SumcheckId::RegistersValEvaluation,
+            s_cycle_stage5.r.clone(),
+            rd_inc.evaluate(&s_cycle_stage5.r),
+        );
+        accumulator.flush_to_transcript(&mut transcript);
+
+        let params =
+            IncVirtualizationSumcheckParams::new(trace.len(), &accumulator, &mut transcript);
+        let gamma_sqr = params.gamma_powers[1];
+        let mut prover = IncVirtualizationSumcheckProver::initialize(params, Arc::clone(&trace));
+        let input_claim = prover.params.input_claim(&accumulator);
+
+        let (proof, r_sumcheck, initial_claim) =
+            BatchedSumcheck::prove(vec![&mut prover], &mut accumulator, &mut transcript);
+
+        let batch_coeff = initial_claim * input_claim.inverse().unwrap();
+        let final_claim = proof
+            .compressed_polys
+            .iter()
+            .zip(&r_sumcheck)
+            .fold(initial_claim, |claim, (poly, r_j)| {
+                poly.decompress(&claim).evaluate(r_j)
+            });
+
+        let (opening_point, inc_claim) = accumulator
+            .openings
+            .get(&OpeningId::Lattice(LatticeOpening::IncVirtualizationInc))
+            .cloned()
+            .expect("inc virtualization should cache inc opening");
+        let store_claim =
+            accumulator.get_opening(OpeningId::Lattice(LatticeOpening::IncVirtualizationStore));
+
+        let eq_r2 = EqPolynomial::<Fr>::mle(&opening_point.r, &r_cycle_stage2.r);
+        let eq_r4 = EqPolynomial::<Fr>::mle(&opening_point.r, &r_cycle_stage4.r);
+        let eq_s4 = EqPolynomial::<Fr>::mle(&opening_point.r, &s_cycle_stage4.r);
+        let eq_s5 = EqPolynomial::<Fr>::mle(&opening_point.r, &s_cycle_stage5.r);
+        let gamma = prover.params.gamma_powers[0];
+        let ram_coeff = eq_r2 + gamma * eq_r4;
+        let rd_coeff = eq_s4 + gamma * eq_s5;
+        let expected = inc_claim
+            * (ram_coeff * store_claim + gamma_sqr * rd_coeff * (Fr::from_u64(1) - store_claim));
+
+        assert_eq!(final_claim, batch_coeff * expected);
+    }
+
+    fn challenge_point(seed: u64, log_t: usize) -> OpeningPoint<BIG_ENDIAN, Fr> {
+        OpeningPoint::new(
+            (0..log_t)
+                .map(|index| <Fr as JoltField>::Challenge::from(seed as u128 + index as u128))
+                .collect(),
+        )
     }
 }

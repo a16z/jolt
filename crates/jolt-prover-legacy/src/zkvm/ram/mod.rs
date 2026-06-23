@@ -455,7 +455,7 @@ pub fn reconstruct_full_eval<F: JoltField>(
                 .get_advice_opening(AdviceKind::Trusted, *sid)
                 .map(|(_, eval)| eval)
                 .unwrap_or(F::zero()),
-            OpeningId::Polynomial(..) => {
+            OpeningId::Polynomial(..) | OpeningId::Lattice(_) => {
                 unreachable!("advice contributions should only contain advice OpeningIds")
             }
         };

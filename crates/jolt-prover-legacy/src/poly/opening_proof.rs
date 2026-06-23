@@ -165,6 +165,7 @@ pub enum SumcheckId {
     ProgramImageClaimReductionCyclePhase,
     ProgramImageClaimReduction,
     IncClaimReduction,
+    IncVirtualization,
     HammingWeightClaimReduction,
 }
 
@@ -175,12 +176,22 @@ pub enum PolynomialId {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
+pub enum LatticeOpening {
+    IncVirtualizationInc,
+    IncVirtualizationStore,
+    UnsignedInc,
+    UnsignedIncMsb,
+    UnsignedIncChunk(usize),
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
 pub enum OpeningId {
     Polynomial(PolynomialId, SumcheckId),
     /// Untrusted advice opened at r_address derived from the given sumcheck.
     UntrustedAdvice(SumcheckId),
     /// Trusted advice opened at r_address derived from the given sumcheck.
     TrustedAdvice(SumcheckId),
+    Lattice(LatticeOpening),
 }
 
 impl OpeningId {
@@ -205,6 +216,9 @@ fn underlying_polynomial_id(opening_id: OpeningId) -> PolynomialId {
         }
         OpeningId::UntrustedAdvice(_sumcheck_id) => {
             PolynomialId::Committed(CommittedPolynomial::UntrustedAdvice)
+        }
+        OpeningId::Lattice(opening) => {
+            panic!("lattice opening {opening:?} does not have a Dory polynomial id")
         }
     }
 }
@@ -604,6 +618,22 @@ where
     ) {
         let key = OpeningId::UntrustedAdvice(sumcheck_id);
         self.insert_or_alias_opening(key, opening_point, claim);
+    }
+
+    pub fn append_lattice(
+        &mut self,
+        opening: LatticeOpening,
+        opening_point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
+        let key = OpeningId::Lattice(opening);
+        assert!(
+            !self.openings.contains_key(&key),
+            "Key {key:?} is already in opening map"
+        );
+        self.pending_claims.push(claim);
+        self.pending_claim_ids.push(key);
+        self.openings.insert(key, (opening_point, claim));
     }
 
     pub fn append_trusted_advice(

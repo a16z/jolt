@@ -17,7 +17,7 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::{commitment_scheme::CommitmentScheme, dory::DoryLayout},
-        opening_proof::{OpeningId, PolynomialId, SumcheckId},
+        opening_proof::{LatticeOpening, OpeningId, PolynomialId, SumcheckId},
     },
 };
 use crate::{
@@ -155,11 +155,13 @@ impl CanonicalDeserialize for DoryLayout {
 // - [NUM_SUMCHECKS, 2*NUM_SUMCHECKS) = TrustedAdvice(sumcheck_id)
 // - [2*NUM_SUMCHECKS, 3*NUM_SUMCHECKS) + poly_index = Committed(poly, sumcheck_id)
 // - [3*NUM_SUMCHECKS, 4*NUM_SUMCHECKS) + poly_index = Virtual(poly, sumcheck_id)
+// - [4*NUM_SUMCHECKS] + lattice_opening
 const OPENING_ID_UNTRUSTED_ADVICE_BASE: u8 = 0;
 const OPENING_ID_TRUSTED_ADVICE_BASE: u8 =
     OPENING_ID_UNTRUSTED_ADVICE_BASE + SumcheckId::COUNT as u8;
 const OPENING_ID_COMMITTED_BASE: u8 = OPENING_ID_TRUSTED_ADVICE_BASE + SumcheckId::COUNT as u8;
 const OPENING_ID_VIRTUAL_BASE: u8 = OPENING_ID_COMMITTED_BASE + SumcheckId::COUNT as u8;
+const OPENING_ID_LATTICE_BASE: u8 = OPENING_ID_VIRTUAL_BASE + SumcheckId::COUNT as u8;
 
 impl CanonicalSerialize for OpeningId {
     fn serialize_with_mode<W: Write>(
@@ -186,6 +188,10 @@ impl CanonicalSerialize for OpeningId {
                 fused.serialize_with_mode(&mut writer, compress)?;
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
             }
+            OpeningId::Lattice(opening) => {
+                OPENING_ID_LATTICE_BASE.serialize_with_mode(&mut writer, compress)?;
+                opening.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -198,6 +204,7 @@ impl CanonicalSerialize for OpeningId {
             OpeningId::Polynomial(PolynomialId::Virtual(virtual_polynomial), _) => {
                 1 + virtual_polynomial.serialized_size(compress)
             }
+            OpeningId::Lattice(opening) => 1 + opening.serialized_size(compress),
         }
     }
 }
@@ -237,7 +244,7 @@ impl CanonicalDeserialize for OpeningId {
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
-            _ => {
+            _ if fused < OPENING_ID_LATTICE_BASE => {
                 let sumcheck_id = fused - OPENING_ID_VIRTUAL_BASE;
                 let polynomial =
                     VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
@@ -246,6 +253,68 @@ impl CanonicalDeserialize for OpeningId {
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
+            _ if fused == OPENING_ID_LATTICE_BASE => Ok(OpeningId::Lattice(
+                LatticeOpening::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            _ => Err(SerializationError::InvalidData),
+        }
+    }
+}
+
+impl CanonicalSerialize for LatticeOpening {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::IncVirtualizationInc => 0u8.serialize_with_mode(writer, compress),
+            Self::IncVirtualizationStore => 1u8.serialize_with_mode(writer, compress),
+            Self::UnsignedInc => 2u8.serialize_with_mode(writer, compress),
+            Self::UnsignedIncMsb => 3u8.serialize_with_mode(writer, compress),
+            Self::UnsignedIncChunk(index) => {
+                4u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*index).unwrap()).serialize_with_mode(writer, compress)
+            }
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Self::UnsignedIncChunk(index) => {
+                1 + u8::try_from(*index).unwrap().serialized_size(compress)
+            }
+            Self::IncVirtualizationInc
+            | Self::IncVirtualizationStore
+            | Self::UnsignedInc
+            | Self::UnsignedIncMsb => 1,
+        }
+    }
+}
+
+impl Valid for LatticeOpening {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for LatticeOpening {
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+    ) -> Result<Self, SerializationError> {
+        match u8::deserialize_with_mode(&mut reader, compress, validate)? {
+            0 => Ok(Self::IncVirtualizationInc),
+            1 => Ok(Self::IncVirtualizationStore),
+            2 => Ok(Self::UnsignedInc),
+            3 => Ok(Self::UnsignedIncMsb),
+            4 => Ok(Self::UnsignedIncChunk(u8::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+            )? as usize)),
+            _ => Err(SerializationError::InvalidData),
         }
     }
 }

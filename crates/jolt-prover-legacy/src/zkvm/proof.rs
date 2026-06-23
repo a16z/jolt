@@ -766,6 +766,28 @@ fn convert_opening_id(id: prover_opening::OpeningId) -> JoltOpeningId {
         prover_opening::OpeningId::TrustedAdvice(sumcheck) => {
             JoltOpeningId::trusted_advice(convert_sumcheck_id(sumcheck))
         }
+        prover_opening::OpeningId::Lattice(opening) => convert_lattice_opening(opening),
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+fn convert_lattice_opening(opening: prover_opening::LatticeOpening) -> JoltOpeningId {
+    match opening {
+        prover_opening::LatticeOpening::IncVirtualizationInc => {
+            jolt_claims::protocols::jolt::formulas::lattice::inc_virtualization_inc_opening()
+        }
+        prover_opening::LatticeOpening::IncVirtualizationStore => {
+            jolt_claims::protocols::jolt::formulas::lattice::inc_virtualization_store_opening()
+        }
+        prover_opening::LatticeOpening::UnsignedInc => {
+            jolt_claims::protocols::jolt::formulas::lattice::unsigned_inc_opening()
+        }
+        prover_opening::LatticeOpening::UnsignedIncMsb => {
+            jolt_claims::protocols::jolt::formulas::lattice::unsigned_inc_msb_opening()
+        }
+        prover_opening::LatticeOpening::UnsignedIncChunk(index) => {
+            jolt_claims::protocols::jolt::formulas::lattice::unsigned_inc_chunk_opening(index)
+        }
     }
 }
 
@@ -836,6 +858,7 @@ fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelationId {
             JoltRelationId::ProgramImageClaimReduction
         }
         prover_opening::SumcheckId::IncClaimReduction => JoltRelationId::IncClaimReduction,
+        prover_opening::SumcheckId::IncVirtualization => JoltRelationId::IncVirtualization,
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }

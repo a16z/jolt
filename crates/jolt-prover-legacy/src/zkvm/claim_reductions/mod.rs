@@ -22,6 +22,8 @@ pub use increments::{
     IncClaimReductionSumcheckParams, IncClaimReductionSumcheckProver,
     IncClaimReductionSumcheckVerifier,
 };
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub use increments::{IncVirtualizationSumcheckParams, IncVirtualizationSumcheckProver};
 pub use instruction_lookups::{
     InstructionLookupsClaimReductionSumcheckParams, InstructionLookupsClaimReductionSumcheckProver,
     InstructionLookupsClaimReductionSumcheckVerifier,
