@@ -4,6 +4,7 @@
 //! The linear term is recoverable from the sumcheck claim `f(0) + f(1)`.
 
 use jolt_field::Field;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::univariate::{UnivariatePoly, UnivariatePolynomial};
@@ -17,7 +18,7 @@ use crate::univariate::{UnivariatePoly, UnivariatePolynomial};
 /// This saves one field element per sumcheck round polynomial in proof
 /// serialization (32 bytes for BN254).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
 pub struct CompressedPoly<F: Field> {
     coeffs_except_linear_term: Vec<F>,
 }

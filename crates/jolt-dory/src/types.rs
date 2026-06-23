@@ -8,6 +8,7 @@ use dory::backends::arkworks::{
 };
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
 use jolt_field::Fr;
+use jolt_openings::CommitmentLayoutDigest;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -24,6 +25,12 @@ impl Default for DoryCommitment {
     #[inline]
     fn default() -> Self {
         Self(Bn254GT::default())
+    }
+}
+
+impl CommitmentLayoutDigest for DoryCommitment {
+    fn layout_digest(&self) -> Option<[u8; 32]> {
+        None
     }
 }
 

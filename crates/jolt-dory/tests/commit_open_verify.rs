@@ -7,9 +7,10 @@
 
 use dory::backends::arkworks::ArkG1;
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+use jolt_field::{Fr, FromPrimitiveInt, Invertible, RandomSampling};
 use jolt_openings::{
-    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
+    AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement,
+    CommitmentScheme, PhysicalView, StreamingCommitment, ZkOpeningScheme,
 };
 use jolt_poly::{OneHotPolynomial, Polynomial};
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
@@ -63,6 +64,65 @@ fn commit_open_verify_both_transcripts() {
     let num_vars = 4;
     round_trip::<Blake2bTranscript>(num_vars, 200, b"blake2b-rt");
     round_trip::<KeccakTranscript>(num_vars, 200, b"keccak-rt");
+}
+
+#[test]
+fn homomorphic_batch_opening_blanket_impl_verifies() {
+    let num_vars = 3;
+    let mut rng = ChaCha20Rng::seed_from_u64(225);
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as RandomSampling>::random(&mut rng))
+        .collect();
+    let polynomials = vec![
+        Polynomial::<Fr>::random(num_vars, &mut rng),
+        Polynomial::<Fr>::random(num_vars, &mut rng),
+    ];
+
+    let mut hints = Vec::with_capacity(polynomials.len());
+    let mut claims = Vec::with_capacity(polynomials.len());
+    for (index, polynomial) in polynomials.iter().enumerate() {
+        let (commitment, hint) = DoryScheme::commit(polynomial.evaluations(), &prover_setup);
+        let scale = Fr::from_u64(index as u64 + 2);
+        hints.push(hint);
+        claims.push(BatchOpeningClaim {
+            id: index,
+            relation: (),
+            commitment,
+            claim: polynomial.evaluate(&point) * scale.inverse().expect("scale is nonzero"),
+            view: PhysicalView::Direct,
+            scale,
+        });
+    }
+    let statement = BatchOpeningStatement {
+        logical_point: point.clone(),
+        pcs_point: point,
+        layout_digest: [0; 32],
+        claims,
+    };
+
+    let mut prover_transcript = Blake2bTranscript::new(b"dory-batch");
+    let proof = <DoryScheme as BatchOpeningScheme>::prove_batch(
+        &prover_setup,
+        &mut prover_transcript,
+        &statement,
+        &polynomials,
+        hints,
+    )
+    .expect("Dory batch proof should be produced");
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"dory-batch");
+    let result = <DoryScheme as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        &mut verifier_transcript,
+        &statement,
+        &proof,
+    )
+    .expect("Dory batch proof should verify");
+
+    assert_eq!(result.coefficients.len(), statement.claims.len());
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
 #[test]

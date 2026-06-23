@@ -9,6 +9,7 @@ description = "Polynomial commitment scheme traits and opening reduction for the
 workspace = true
 
 [dependencies]
+blake2.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true
@@ -30,6 +31,3 @@ harness = false
 
 [package.metadata.cargo-machete]
 ignored = ["rand", "jolt-crypto"]
-
-[features]
-test-utils = []

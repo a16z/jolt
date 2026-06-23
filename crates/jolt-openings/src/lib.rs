@@ -12,8 +12,9 @@
 //! - **Reduction is separate from proving.** [`reduce_prover`] /
 //!   [`reduce_verifier`] transform claims (many → fewer) via RLC.
 //!   The PCS opens the reduced claims.
-//! - **No batching in PCS traits.** Batching is a reduction concern, not a
-//!   PCS property.
+//! - **Same-point batch openings are an extension trait.**
+//!   [`BatchOpeningScheme`] lets a PCS own its physical batching strategy while
+//!   preserving the ordinary single-opening API.
 //!
 //! # Trait Hierarchy
 //!
@@ -21,23 +22,45 @@
 //!                 Commitment              (jolt-crypto: Output type)
 //!                     │
 //!             CommitmentScheme            (+ Field, Proof, commit/open/verify)
-//!                ╱        ╲
-//! AdditivelyHomomorphic   ZkOpeningScheme
-//!       (+ combine)        (+ commit_zk/open_zk/verify_zk)
-//!             │
+//!        ╱         │         ╲
+//! Additively   BatchOpening   ZkOpeningScheme
+//! Homomorphic      Scheme          │
+//!       │            │        ZkBatchOpeningScheme
 //!   StreamingCommitment
-//!     (+ begin/feed/finish)
 //! ```
 
 mod claims;
 mod error;
-#[cfg(any(test, feature = "test-utils"))]
-pub mod mock;
+mod homomorphic_batch;
+mod packing;
+mod packing_layout;
+mod packing_view;
 mod reduction;
 mod schemes;
 
 pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
+pub use packing::{
+    has_packing_view, prove_packing_reduction, prove_sparse_packing_reduction,
+    validate_packing_statement, verify_packing_reduction, PackingAddress, PackingBatch,
+    PackingBatchProof, PackingFamily, PackingLayout, PackingProverReduction, PackingProverSetup,
+    PackingReductionProof, PackingSetupParams, PackingSource, PackingVerifierReduction,
+    PackingVerifierSetup,
+};
+pub use packing_layout::{
+    packing_witness_source_polynomial, PackingAdviceKind, PackingAlphabet, PackingAlphabetCounts,
+    PackingCellAddress, PackingDomainCellCounts, PackingFactDomain, PackingFamilyId,
+    PackingFamilySpec, PackingLayoutAudit, PackingLayoutError, PackingLayoutFamily,
+    PackingViewKind, PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness,
+};
+pub use packing_view::{
+    PackingViewCatalog, PackingViewDigest, PackingViewEntry, PackingViewError, PackingViewFormula,
+    PackingViewTerm, PackingViewValidity,
+};
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 
-pub use schemes::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
+pub use schemes::{
+    AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme,
+    BatchOpeningStatement, CommitmentLayoutDigest, CommitmentScheme, PackingFamilyRef, PackingTerm,
+    PhysicalView, StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme,
+};

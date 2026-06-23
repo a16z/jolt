@@ -3,10 +3,7 @@
 //! These tests exercise the public API only — no internal imports.
 //! They verify that the full reduce → open → verify pipeline works
 //! end-to-end with MockCommitmentScheme across both transcript backends.
-//!
-//! Requires: `cargo nextest run -p jolt-openings --features test-utils`
 
-#![cfg(feature = "test-utils")]
 #![expect(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -14,7 +11,6 @@
 )]
 
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
-use jolt_openings::mock::MockCommitmentScheme;
 use jolt_openings::{
     reduce_prover, reduce_verifier, CommitmentScheme, EvaluationClaim, ProverOpeningClaim,
     VerifierOpeningClaim,
@@ -23,6 +19,10 @@ use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+
+mod support;
+
+use support::mock::MockCommitmentScheme;
 
 type MockPCS = MockCommitmentScheme<Fr>;
 
