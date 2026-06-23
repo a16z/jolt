@@ -7,6 +7,10 @@ use crate::{
     types::{append_field_slice, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaVerifierSetup},
 };
 
+/// Bind native Akita setup metadata before any statement-specific challenge.
+///
+/// Transcript order: adapter domain, Akita parameter tag, native shape,
+/// default layout digest, then serialized native verifier setup bytes.
 pub(crate) fn bind_verifier_setup_key<T>(setup: &AkitaVerifierSetup, transcript: &mut T)
 where
     T: Transcript<Challenge = AkitaField>,
@@ -24,6 +28,12 @@ where
     transcript.append_bytes(&setup.native);
 }
 
+/// Bind a native Akita direct batch statement before bridging into the native
+/// Akita transcript.
+///
+/// Transcript order: domain label, grouped commitment, statement layout digest,
+/// commitment layout digest, logical point, PCS point, ordered direct claims,
+/// normalized coefficients, and reduced opening.
 pub(crate) fn bind_batch_statement<OpeningId, RelationId, T>(
     statement: &jolt_openings::BatchOpeningStatement<
         AkitaField,
@@ -58,6 +68,8 @@ pub(crate) fn bind_batch_statement<OpeningId, RelationId, T>(
     reduced_opening.append_to_transcript(transcript);
 }
 
+/// Sample one Jolt transcript challenge and append it to the native Akita
+/// transcript, binding the native proof to the already-bound Jolt statement.
 pub(crate) fn bind_jolt_transcript_bridge<T>(
     jolt_transcript: &mut T,
     akita_transcript: &mut AkitaTranscript<AkitaField>,
@@ -70,6 +82,7 @@ where
     field_bytes(bridge)
 }
 
+/// Bind serialized native Akita proof bytes after native proving or verifying.
 pub(crate) fn bind_proof_bytes<T>(proof: &AkitaBatchProof, transcript: &mut T)
 where
     T: Transcript<Challenge = AkitaField>,

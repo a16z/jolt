@@ -608,6 +608,19 @@ where
         .map(|_| ())
 }
 
+/// Bind the validity subprotocol shape before sampling per-statement eq points.
+///
+/// Transcript order:
+/// 1. domain label;
+/// 2. canonical packing layout digest, dimension, and cell count;
+/// 3. ordered validity statements;
+/// 4. for each statement: statement index, physical family reference, limb
+///    count, alphabet size, sumcheck dimensions, statement kind, and
+///    kind-specific parameter.
+///
+/// The opening batch binds the packed witness commitment later. This metadata
+/// binding fixes which validity checks the sumcheck and opening claims must
+/// satisfy.
 fn absorb_lattice_packed_validity_metadata<F, T>(
     transcript: &mut T,
     layout: &PackingWitnessLayout,
