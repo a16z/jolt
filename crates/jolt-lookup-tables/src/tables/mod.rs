@@ -239,6 +239,10 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
         dispatch!(self, t => PrefixSuffixDecomposition::suffixes(t))
     }
 
+    pub fn prefixes(&self) -> &'static [Prefixes] {
+        dispatch!(self, t => PrefixSuffixDecomposition::prefixes(t))
+    }
+
     pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         dispatch!(self, t => PrefixSuffixDecomposition::combine(t, prefixes, suffixes))
     }
@@ -254,6 +258,9 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
 /// where the sum is over a small number of prefix-suffix pairs.
 /// This enables the sumcheck prover to avoid materializing the entire table.
 pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Default {
+    /// The prefix types used in this table's decomposition.
+    fn prefixes(&self) -> &'static [Prefixes];
+
     /// The suffix types used in this table's decomposition.
     fn suffixes(&self) -> &'static [Suffixes];
 

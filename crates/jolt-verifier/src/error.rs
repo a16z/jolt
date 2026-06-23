@@ -1,7 +1,5 @@
 //! Verifier error types.
 
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineOpeningId;
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
@@ -36,10 +34,6 @@ pub enum VerifierError {
 
     #[error("missing opening claim scalar {id:?}")]
     MissingOpeningClaim { id: JoltOpeningId },
-
-    #[cfg(feature = "field-inline")]
-    #[error("missing field-inline opening claim scalar {id:?}")]
-    MissingFieldInlineOpeningClaim { id: FieldInlineOpeningId },
 
     #[error("unexpected opening claim scalar {id:?}")]
     UnexpectedOpeningClaim { id: JoltOpeningId },

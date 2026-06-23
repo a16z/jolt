@@ -9,23 +9,23 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
         &self,
         oracle: OracleRef<JoltVmNamespace>,
     ) -> Result<OracleDescriptor<JoltVmNamespace>, WitnessError> {
-        let dimensions = match oracle.kind {
-            OracleKind::Committed(
+        let dimensions = match oracle {
+            OracleRef::Committed(
                 JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc,
             ) => self.trace_dimensions()?,
-            OracleKind::Committed(JoltCommittedPolynomial::InstructionRa(index)) => {
+            OracleRef::Committed(JoltCommittedPolynomial::InstructionRa(index)) => {
                 require_index(index, self.ra_layout()?.instruction())?;
                 self.one_hot_dimensions()?
             }
-            OracleKind::Committed(JoltCommittedPolynomial::BytecodeRa(index)) => {
+            OracleRef::Committed(JoltCommittedPolynomial::BytecodeRa(index)) => {
                 require_index(index, self.ra_layout()?.bytecode())?;
                 self.one_hot_dimensions()?
             }
-            OracleKind::Committed(JoltCommittedPolynomial::RamRa(index)) => {
+            OracleRef::Committed(JoltCommittedPolynomial::RamRa(index)) => {
                 require_index(index, self.ra_layout()?.ram())?;
                 self.one_hot_dimensions()?
             }
-            OracleKind::Committed(JoltCommittedPolynomial::TrustedAdvice) => {
+            OracleRef::Committed(JoltCommittedPolynomial::TrustedAdvice) => {
                 if !self.config.include_trusted_advice {
                     return Err(WitnessError::UnknownOracle {
                         namespace: JOLT_VM_NAMESPACE.name,
@@ -35,7 +35,7 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
                     self.preprocessing.memory_layout.max_trusted_advice_size as usize / 8,
                 )
             }
-            OracleKind::Committed(JoltCommittedPolynomial::UntrustedAdvice) => {
+            OracleRef::Committed(JoltCommittedPolynomial::UntrustedAdvice) => {
                 if !self.config.include_untrusted_advice {
                     return Err(WitnessError::UnknownOracle {
                         namespace: JOLT_VM_NAMESPACE.name,
@@ -45,7 +45,7 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
                     self.preprocessing.memory_layout.max_untrusted_advice_size as usize / 8,
                 )
             }
-            OracleKind::Committed(
+            OracleRef::Committed(
                 JoltCommittedPolynomial::BytecodeChunk(_)
                 | JoltCommittedPolynomial::ProgramImageInit,
             ) => {
@@ -53,31 +53,31 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
                     namespace: JOLT_VM_NAMESPACE.name,
                 });
             }
-            OracleKind::Virtual(JoltVirtualPolynomial::RamVal | JoltVirtualPolynomial::RamRa) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::RamVal | JoltVirtualPolynomial::RamRa) => {
                 self.ram_read_write_dimensions()?
             }
-            OracleKind::Virtual(
+            OracleRef::Virtual(
                 JoltVirtualPolynomial::RegistersVal
                 | JoltVirtualPolynomial::Rs1Ra
                 | JoltVirtualPolynomial::Rs2Ra
                 | JoltVirtualPolynomial::RdWa,
             ) => self.register_read_write_dimensions()?,
-            OracleKind::Virtual(JoltVirtualPolynomial::RamValFinal) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::RamValFinal) => {
                 self.ram_final_dimensions()?
             }
-            OracleKind::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
                 require_index(index, self.instruction_virtual_ra_count()?)?;
                 self.instruction_virtual_ra_dimensions()?
             }
-            OracleKind::Virtual(JoltVirtualPolynomial::LookupTableFlag(index)) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::LookupTableFlag(index)) => {
                 require_index(index, LookupTableKind::<RV64_XLEN>::COUNT)?;
                 self.trace_dimensions()?
             }
-            OracleKind::Virtual(JoltVirtualPolynomial::InstructionRafFlag) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::InstructionRafFlag) => {
                 self.trace_dimensions()?
             }
-            OracleKind::Virtual(id) if supported_trace_virtual(id) => self.trace_dimensions()?,
-            OracleKind::Virtual(_) => {
+            OracleRef::Virtual(id) if supported_trace_virtual(id) => self.trace_dimensions()?,
+            OracleRef::Virtual(_) => {
                 return Err(WitnessError::UnknownOracle {
                     namespace: JOLT_VM_NAMESPACE.name,
                 });
@@ -86,7 +86,7 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
         Ok(OracleDescriptor::new(
             oracle,
             dimensions,
-            oracle_encoding(oracle.kind),
+            oracle_encoding(oracle),
         ))
     }
 
@@ -96,8 +96,8 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
     ) -> Result<Vec<ViewRequirement<JoltVmNamespace>>, WitnessError> {
         let descriptor =
             <Self as crate::WitnessProvider<F, JoltVmNamespace>>::describe_oracle(self, oracle)?;
-        let retention = match oracle.kind {
-            OracleKind::Committed(
+        let retention = match oracle {
+            OracleRef::Committed(
                 JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice,
             ) => RetentionHint::ThroughBlindFold,
             _ => RetentionHint::ThroughStage8,
@@ -118,8 +118,8 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
             self,
             requirement.oracle,
         )?;
-        let values = match requirement.oracle.kind {
-            OracleKind::Virtual(id)
+        let values = match requirement.oracle {
+            OracleRef::Virtual(id)
                 if matches!(
                     id,
                     JoltVirtualPolynomial::RamVal | JoltVirtualPolynomial::RamRa
@@ -127,7 +127,7 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
             {
                 self.materialize_ram_read_write_virtual(id)?
             }
-            OracleKind::Virtual(id)
+            OracleRef::Virtual(id)
                 if matches!(
                     id,
                     JoltVirtualPolynomial::RegistersVal
@@ -138,14 +138,14 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
             {
                 self.materialize_register_read_write_virtual(id)?
             }
-            OracleKind::Virtual(JoltVirtualPolynomial::RamValFinal) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::RamValFinal) => {
                 self.materialize_ram_val_final()?
             }
-            OracleKind::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
                 self.materialize_instruction_ra(index)?
             }
-            OracleKind::Virtual(id) => self.materialize_trace_virtual(id)?,
-            OracleKind::Committed(id) => self.materialize_compact_committed(id)?,
+            OracleRef::Virtual(id) => self.materialize_trace_virtual(id)?,
+            OracleRef::Committed(id) => self.materialize_compact_committed(id)?,
         };
         Ok(PolynomialView::owned(descriptor, values))
     }
@@ -156,8 +156,8 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
         point: &[F],
     ) -> Result<Option<F>, WitnessError> {
         let directly_evaluates_committed = matches!(
-            requirement.oracle.kind,
-            OracleKind::Committed(
+            requirement.oracle,
+            OracleRef::Committed(
                 JoltCommittedPolynomial::RdInc
                     | JoltCommittedPolynomial::RamInc
                     | JoltCommittedPolynomial::InstructionRa(_)
@@ -169,25 +169,25 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
             return Ok(None);
         }
 
-        match requirement.oracle.kind {
-            OracleKind::Committed(
+        match requirement.oracle {
+            OracleRef::Committed(
                 id @ (JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc),
             ) => self.evaluate_committed_trace_dense(id, point).map(Some),
-            OracleKind::Committed(
+            OracleRef::Committed(
                 id @ (JoltCommittedPolynomial::InstructionRa(_)
                 | JoltCommittedPolynomial::BytecodeRa(_)
                 | JoltCommittedPolynomial::RamRa(_)),
             ) => self.evaluate_committed_ra(id, point).map(Some),
-            OracleKind::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::InstructionRa(index)) => {
                 self.evaluate_instruction_ra(index, point).map(Some)
             }
-            OracleKind::Virtual(
+            OracleRef::Virtual(
                 id @ (JoltVirtualPolynomial::RamVal | JoltVirtualPolynomial::RamRa),
             ) => self.evaluate_ram_read_write_virtual(id, point).map(Some),
-            OracleKind::Virtual(JoltVirtualPolynomial::RamValFinal) => {
+            OracleRef::Virtual(JoltVirtualPolynomial::RamValFinal) => {
                 self.evaluate_ram_val_final(point).map(Some)
             }
-            OracleKind::Virtual(
+            OracleRef::Virtual(
                 id @ (JoltVirtualPolynomial::RegistersVal
                 | JoltVirtualPolynomial::Rs1Ra
                 | JoltVirtualPolynomial::Rs2Ra
@@ -195,7 +195,7 @@ impl<F: Field, T: TraceSource + Clone> crate::WitnessProvider<F, JoltVmNamespace
             ) => self
                 .evaluate_register_read_write_virtual(id, point)
                 .map(Some),
-            OracleKind::Virtual(
+            OracleRef::Virtual(
                 id @ (JoltVirtualPolynomial::InstructionRafFlag
                 | JoltVirtualPolynomial::LookupTableFlag(_)
                 | JoltVirtualPolynomial::RamHammingWeight),
@@ -242,16 +242,14 @@ impl<F: Field, T: TraceSource + Clone> crate::CommittedWitnessProvider<F, JoltVm
     }
 }
 
-pub(crate) const fn oracle_encoding(
-    kind: OracleKind<JoltCommittedPolynomial, JoltVirtualPolynomial>,
-) -> PolynomialEncoding {
+pub(crate) const fn oracle_encoding(kind: OracleRef<JoltVmNamespace>) -> PolynomialEncoding {
     match kind {
-        OracleKind::Committed(
+        OracleRef::Committed(
             JoltCommittedPolynomial::InstructionRa(_)
             | JoltCommittedPolynomial::BytecodeRa(_)
             | JoltCommittedPolynomial::RamRa(_),
         ) => PolynomialEncoding::OneHot,
-        OracleKind::Committed(_) => PolynomialEncoding::Compact,
-        OracleKind::Virtual(_) => PolynomialEncoding::Dense,
+        OracleRef::Committed(_) => PolynomialEncoding::Compact,
+        OracleRef::Virtual(_) => PolynomialEncoding::Dense,
     }
 }

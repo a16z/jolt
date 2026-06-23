@@ -31,6 +31,10 @@ impl<const XLEN: usize> LookupTable for MulUNoOverflowTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for MulUNoOverflowTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::OverflowBitsZero]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::OverflowBitsZero]
     }

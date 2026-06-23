@@ -118,9 +118,5 @@ fn stage1_spartan_outer_opening_id(opening_id: Stage1SpartanOuterOpening) -> Ver
         Stage1SpartanOuterOpening::Jolt(variable) => {
             VerifierOpeningId::Jolt(outer_opening(variable))
         }
-        #[cfg(feature = "field-inline")]
-        Stage1SpartanOuterOpening::FieldInline(variable) => {
-            VerifierOpeningId::FieldInline(field_spartan::outer_opening(variable))
-        }
     }
 }

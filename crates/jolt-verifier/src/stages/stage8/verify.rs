@@ -1,19 +1,18 @@
-use super::{
-    inputs::Deps,
-    outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput},
-};
+use super::outputs::{Stage8ClearOutput, Stage8OpeningId, Stage8Output, Stage8ZkOutput};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltCommitments, JoltProof},
     stages::{
-        stage6::inputs::Stage6Claims,
-        stage7::{inputs::Stage7Claims, outputs::PrecommittedFinalOpening},
+        relations::OpeningClaim,
+        stage6::{outputs::Stage6OutputClaims, Stage6Output},
+        stage7::{
+            outputs::{PrecommittedFinalOpening, Stage7OutputClaims},
+            Stage7Output,
+        },
     },
     verifier::CheckedInputs,
     VerifierError,
 };
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::formulas::claim_reductions::increments as field_increments;
 use jolt_claims::protocols::jolt::{
     formulas::{
         committed_openings::{
@@ -27,7 +26,6 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim, ZkOpeningScheme,
 };
@@ -44,23 +42,19 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     scale: F,
 }
 
-#[cfg(feature = "field-inline")]
-const fn field_inline_final_opening_count() -> usize {
-    1
-}
-
-#[cfg(not(feature = "field-inline"))]
-const fn field_inline_final_opening_count() -> usize {
-    0
-}
-
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
+)]
 pub fn verify<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
+    formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-    deps: Deps<'_, F, VC::Output>,
+    stage6: &Stage6Output<F, VC::Output>,
+    stage7: &Stage7Output<F, VC::Output>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: Field,
@@ -71,49 +65,30 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    match (checked.zk, deps) {
-        (true, Deps::Clear { .. }) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage8" });
-        }
-        (false, Deps::Zk { .. }) => {
-            return Err(VerifierError::ExpectedClearProof { field: "stage8" });
-        }
-        _ => {}
-    }
-
-    let log_t = checked.trace_length.ilog2() as usize;
-    let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
-        log_t,
-        2 * RISCV_XLEN,
-        preprocessing.program.bytecode_len(),
-        checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-        reason: error.to_string(),
-    })?;
+    let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
-    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) = match deps {
-        Deps::Clear { stage6, stage7 } => (
-            stage7
-                .batch
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
-            stage6.batch.inc_claim_reduction.opening_point.as_slice(),
-            stage7.precommitted_final_openings.as_slice(),
-            Some((&stage6.output_claims, &stage7.output_claims)),
-        ),
-        Deps::Zk { stage6, stage7 } => (
-            stage7
-                .hamming_weight_claim_reduction
-                .opening_point
-                .as_slice(),
-            stage6.inc_claim_reduction.opening_point.as_slice(),
-            stage7.precommitted_final_openings.as_slice(),
-            None,
-        ),
-    };
+    let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) =
+        match (stage6, stage7) {
+            (Stage6Output::Clear(stage6), Stage7Output::Clear(stage7)) => (
+                stage7.hamming_weight_opening_point.as_slice(),
+                stage6.output_points.inc_opening_point(),
+                stage7.precommitted_final_openings.as_slice(),
+                Some((&stage6.output_claims, &stage7.output_claims)),
+            ),
+            (Stage6Output::Zk(stage6), Stage7Output::Zk(stage7)) => (
+                stage7.hamming_weight_opening_point.as_slice(),
+                stage6.output_points.inc_opening_point(),
+                stage7.precommitted_final_openings.as_slice(),
+                None,
+            ),
+            (Stage6Output::Clear(_), Stage7Output::Zk(_)) => {
+                return Err(VerifierError::ExpectedClearProof { field: "stage7" });
+            }
+            (Stage6Output::Zk(_), Stage7Output::Clear(_)) => {
+                return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
+            }
+        };
     require_commitment_layout(&proof.commitments, layout)?;
 
     let anchor_points: Vec<&[F]> = precommitted_finals
@@ -265,7 +240,7 @@ fn batch_entries<'a, F, PCS, VC, ZkProof>(
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
-    clear_claims: Option<(&Stage6Claims<F>, &Stage7Claims<F>)>,
+    clear_claims: Option<(&Stage6OutputClaims<F>, &Stage7OutputClaims<OpeningClaim<F>>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
 where
     F: Field,
@@ -287,7 +262,7 @@ where
         committed_program.map(|committed| committed.bytecode_chunk_count()),
     );
 
-    let mut entries = Vec::with_capacity(order.len() + field_inline_final_opening_count());
+    let mut entries = Vec::with_capacity(order.len());
     // Core's final PCS batch order intentionally differs from proof payload order.
     for polynomial in order {
         let id = final_opening_id(polynomial);
@@ -313,10 +288,11 @@ where
                     hamming_opening_point,
                     match clear_claims {
                         Some((_, stage7)) => Some(
-                            *stage7
+                            stage7
                                 .hamming_weight_claim_reduction
                                 .instruction_ra
                                 .get(index)
+                                .map(|claim| claim.value)
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
@@ -332,10 +308,11 @@ where
                     hamming_opening_point,
                     match clear_claims {
                         Some((_, stage7)) => Some(
-                            *stage7
+                            stage7
                                 .hamming_weight_claim_reduction
                                 .bytecode_ra
                                 .get(index)
+                                .map(|claim| claim.value)
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
@@ -351,10 +328,11 @@ where
                     hamming_opening_point,
                     match clear_claims {
                         Some((_, stage7)) => Some(
-                            *stage7
+                            stage7
                                 .hamming_weight_claim_reduction
                                 .ram_ra
                                 .get(index)
+                                .map(|claim| claim.value)
                                 .ok_or(VerifierError::MissingOpeningClaim { id })?,
                         ),
                         None => None,
@@ -399,20 +377,6 @@ where
             opening_claim,
             scale: commitment_embedding_scale(opening_point, own_point),
         });
-        #[cfg(feature = "field-inline")]
-        if polynomial == JoltCommittedPolynomial::RdInc {
-            entries.push(Stage8BatchEntry {
-                id: field_increments::field_rd_inc_reduced_opening().into(),
-                commitment: &proof.commitments.field_inline.field_registers.rd_inc,
-                opening_claim: clear_claims.map(|(stage6, _)| {
-                    stage6
-                        .field_inline
-                        .field_registers_inc_claim_reduction
-                        .field_rd_inc
-                }),
-                scale: commitment_embedding_scale(opening_point, inc_opening_point),
-            });
-        }
     }
     Ok(entries)
 }

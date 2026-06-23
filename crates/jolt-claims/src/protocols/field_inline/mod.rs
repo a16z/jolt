@@ -13,8 +13,9 @@ pub use ids::{
     FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineOpFlag,
     FieldInlineOpeningId, FieldInlinePolynomialId, FieldInlinePublicId, FieldInlineRelationId,
     FieldInlineVirtualPolynomial, FieldRegistersClaimReductionChallenge,
-    FieldRegistersIncClaimReductionChallenge, FieldRegistersIncClaimReductionPublic,
-    FieldRegistersReadWriteChallenge, FieldRegistersValEvaluationChallenge,
+    FieldRegistersClaimReductionPublic, FieldRegistersIncClaimReductionChallenge,
+    FieldRegistersIncClaimReductionPublic, FieldRegistersReadWriteChallenge,
+    FieldRegistersReadWritePublic, FieldRegistersValEvaluationPublic,
 };
 pub use relation::{
     FieldInlineConsistencyClaim, FieldInlineExpr, FieldInlineInputClaimExpression,

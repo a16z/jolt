@@ -18,7 +18,7 @@ pub mod protocols;
 pub use dimensions::WitnessDimensions;
 pub use encoding::PolynomialEncoding;
 pub use error::WitnessError;
-pub use namespace::{NamespaceId, OracleKind, OracleRef, WitnessNamespace};
+pub use namespace::{NamespaceId, OracleRef, WitnessNamespace};
 pub use opening::OpeningWitness;
 pub use polynomial::{
     MaterializationPolicy, OracleDescriptor, PolynomialView, RetentionHint, ViewRequirement,

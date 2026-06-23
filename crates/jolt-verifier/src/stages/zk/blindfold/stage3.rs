@@ -19,17 +19,19 @@ where
             PCS::Field,
         >(dimensions);
 
-    values.challenge(
-        JoltChallengeId::from(SpartanShiftChallenge::Gamma),
-        input.stage3.public.shift_gamma,
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(SpartanShiftChallenge::Gamma)),
+        input.stage3.challenges.shift_gamma,
     )?;
-    values.challenge(
-        JoltChallengeId::from(InstructionInputChallenge::Gamma),
-        input.stage3.public.instruction_gamma,
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(InstructionInputChallenge::Gamma)),
+        input.stage3.challenges.instruction_gamma,
     )?;
-    values.challenge(
-        JoltChallengeId::from(RegistersClaimReductionChallenge::Gamma),
-        input.stage3.public.registers_gamma,
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(
+            RegistersClaimReductionChallenge::Gamma,
+        )),
+        input.stage3.challenges.registers_gamma,
     )?;
 
     let shift_point = input
@@ -71,8 +73,8 @@ where
             stage_sumcheck_error(JoltRelationId::InstructionInputVirtualization, error)
         })?;
     let instruction_opening_point = instruction_point.iter().rev().copied().collect::<Vec<_>>();
-    values.challenge(
-        JoltChallengeId::from(InstructionInputChallenge::EqProduct),
+    values.public(
+        JoltPublicId::from(InstructionInputPublic::EqProduct),
         try_eq_mle(&instruction_opening_point, &product_opening_point)
             .map_err(|error| public_error(JoltRelationId::InstructionInputVirtualization, error))?,
     )?;
@@ -83,8 +85,8 @@ where
         .try_instance_point(registers_reduction.sumcheck.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
-    values.challenge(
-        JoltChallengeId::from(RegistersClaimReductionChallenge::EqSpartan),
+    values.public(
+        JoltPublicId::from(RegistersClaimReductionPublic::EqSpartan),
         try_eq_mle(
             &registers_opening_point,
             &input.stage2.public.product_tau_low,

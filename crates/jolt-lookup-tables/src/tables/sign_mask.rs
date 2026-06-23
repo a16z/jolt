@@ -35,6 +35,10 @@ impl<const XLEN: usize> LookupTable for SignMaskTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignMaskTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::LeftOperandMsb]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One]
     }

@@ -222,6 +222,68 @@ impl<F: Field> EqPolynomial<F> {
         }
     }
 
+    /// Computes `eq(r, k)` over an aligned power-of-two block of Boolean indices.
+    ///
+    /// Returns values for `k = start_index..start_index + block_size` using the
+    /// same big-endian index convention as [`Self::evals`], but only
+    /// materializes the suffix table needed for the aligned block.
+    pub fn evals_for_aligned_block<C>(r: &[C], start_index: usize, block_size: usize) -> Vec<F>
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        assert!(block_size.is_power_of_two());
+        assert_ne!(block_size, 0);
+        assert_eq!(start_index % block_size, 0);
+
+        let total_vars = r.len();
+        let block_vars = block_size.log_2();
+        assert!(block_vars <= total_vars);
+
+        let prefix_len = total_vars - block_vars;
+        let prefix_value = start_index >> block_vars;
+        let mut prefix_scale = F::one();
+        for (index, r_i) in r.iter().take(prefix_len).enumerate() {
+            let bit = (prefix_value >> (prefix_len - 1 - index)) & 1;
+            let r_i = (*r_i).into();
+            prefix_scale *= if bit == 1 { r_i } else { F::one() - r_i };
+        }
+
+        Self::evals(&r[prefix_len..], Some(prefix_scale))
+    }
+
+    /// Chooses the largest aligned power-of-two block fitting the remaining range.
+    ///
+    /// Returns the block length and its eq table. This covers contiguous ranges
+    /// with a small sequence of aligned-block tables without building the full
+    /// domain table.
+    pub fn evals_for_max_aligned_block<C>(
+        r: &[C],
+        start_index: usize,
+        remaining_len: usize,
+    ) -> (usize, Vec<F>)
+    where
+        C: Copy + Send + Sync + Into<F>,
+        F: Mul<C, Output = F> + SubAssign<F>,
+    {
+        assert!(remaining_len > 0);
+        let max_len_pow = if remaining_len.is_power_of_two() {
+            remaining_len
+        } else {
+            remaining_len.next_power_of_two() >> 1
+        };
+        let align_pow = if start_index == 0 {
+            1usize << r.len()
+        } else {
+            1usize << start_index.trailing_zeros()
+        };
+        let block_size = max_len_pow.min(align_pow);
+        (
+            block_size,
+            Self::evals_for_aligned_block(r, start_index, block_size),
+        )
+    }
+
     /// Serial eq table construction with optional scaling.
     #[inline]
     pub(crate) fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>

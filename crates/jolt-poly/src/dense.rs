@@ -23,6 +23,10 @@ const PAR_THRESHOLD: usize = 1024;
 ///   [`evaluate`](Polynomial::evaluate), and arithmetic operators.
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
 ///   [`bind_to_field`](Polynomial::bind_to_field) for on-demand field promotion.
+#[expect(
+    clippy::unsafe_derive_deserialize,
+    reason = "deserialization goes through PolynomialRaw and validates the polynomial dimensions"
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>"),
@@ -255,6 +259,46 @@ impl<F: Field> Polynomial<F> {
             self.evals.truncate(half);
         }
 
+        self.num_vars -= 1;
+    }
+
+    /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
+    ///
+    /// This has the same semantics as `bind_with_order(scalar, BindingOrder::LowToHigh)`,
+    /// but avoids allocating a fresh output vector on every large parallel bind.
+    #[inline]
+    pub fn bind_low_to_high_reusing_scratch(&mut self, scalar: F, scratch: &mut Vec<F>) {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
+        let half = self.evals.len() / 2;
+        scratch.clear();
+        if scratch.capacity() < half {
+            scratch.reserve(half - scratch.capacity());
+        }
+
+        #[cfg(feature = "parallel")]
+        {
+            if half >= PAR_THRESHOLD {
+                use rayon::prelude::*;
+                let coeffs = &self.evals;
+                let spare = &mut scratch.spare_capacity_mut()[..half];
+                (spare, coeffs.par_chunks_exact(2))
+                    .into_par_iter()
+                    .with_min_len(PAR_THRESHOLD)
+                    .for_each(|(dest, pair)| {
+                        let _ = dest.write(pair[0] + scalar * (pair[1] - pair[0]));
+                    });
+                // SAFETY: every spare slot in `0..half` is written exactly once above.
+                unsafe { scratch.set_len(half) };
+                std::mem::swap(&mut self.evals, scratch);
+                self.num_vars -= 1;
+                return;
+            }
+        }
+
+        for pair in self.evals.chunks_exact(2) {
+            scratch.push(pair[0] + scalar * (pair[1] - pair[0]));
+        }
+        std::mem::swap(&mut self.evals, scratch);
         self.num_vars -= 1;
     }
 

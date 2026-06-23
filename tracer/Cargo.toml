@@ -40,6 +40,7 @@ field-inline = [
 ]
 
 [dependencies]
+thiserror.workspace = true
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true, optional = true }
@@ -55,7 +56,6 @@ serde.workspace = true
 serde_json.workspace = true
 strum_macros.workspace = true
 strum.workspace = true
-thiserror.workspace = true
 rand = { workspace = true, optional = true }
 inventory.workspace = true
 paste.workspace = true

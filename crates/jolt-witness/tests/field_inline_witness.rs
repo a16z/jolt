@@ -192,27 +192,15 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
 }
 
 fn owned_view(
-    provider: &jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<
-        '_,
-        '_,
-        OwnedTrace,
-    >,
+    provider: &jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_>,
     oracle: OracleRef<FieldInlineNamespace>,
 ) -> Vec<Fr> {
     let requirement =
-        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<
-            '_,
-            '_,
-            OwnedTrace,
-        > as WitnessProvider<Fr, FieldInlineNamespace>>::view_requirements(provider, oracle)
+        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_> as WitnessProvider<Fr, FieldInlineNamespace>>::view_requirements(provider, oracle)
         .unwrap()
         .remove(0);
     let view: PolynomialView<'_, Fr, FieldInlineNamespace> =
-        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<
-            '_,
-            '_,
-            OwnedTrace,
-        > as WitnessProvider<Fr, FieldInlineNamespace>>::oracle_view(provider, requirement)
+        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_> as WitnessProvider<Fr, FieldInlineNamespace>>::oracle_view(provider, requirement)
         .unwrap();
     match view {
         PolynomialView::Owned { values, .. } => values,
@@ -230,11 +218,7 @@ fn field_inline_public_provider_streams_and_materializes_views() {
     let provider = witness.field_inline_witness().unwrap();
 
     let order: Vec<FieldInlineCommittedPolynomial> =
-        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<
-            '_,
-            '_,
-            OwnedTrace,
-        > as CommittedWitnessProvider<Fr, FieldInlineNamespace>>::committed_oracle_order(
+        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_> as CommittedWitnessProvider<Fr, FieldInlineNamespace>>::committed_oracle_order(
             &provider
         )
         .unwrap();
@@ -271,11 +255,7 @@ fn field_inline_public_provider_streams_and_materializes_views() {
     assert_eq!(&mul_flags[..4], &[fr(0), fr(0), fr(1), fr(0)]);
 
     let requirement =
-        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<
-            '_,
-            '_,
-            OwnedTrace,
-        > as WitnessProvider<Fr, FieldInlineNamespace>>::view_requirements(
+        <jolt_witness::protocols::jolt_vm::field_inline::TraceBackedFieldInlineWitness<'_> as WitnessProvider<Fr, FieldInlineNamespace>>::view_requirements(
             &provider,
             OracleRef::virtual_polynomial(FieldInlineVirtualPolynomial::FieldRegistersVal),
         )

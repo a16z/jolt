@@ -85,6 +85,59 @@ pub enum RelaxedError {
 }
 
 #[derive(Debug, ThisError)]
+pub enum ProverError<F: FieldCore> {
+    #[error(transparent)]
+    Relaxed(#[from] RelaxedError),
+    #[error(transparent)]
+    R1csMatrix(#[from] ConstraintMatrixEvalError),
+    #[error(transparent)]
+    VectorOpening(#[from] VectorOpeningError),
+    #[error("{name} length mismatch: expected {expected}, got {actual}")]
+    LengthMismatch {
+        name: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("witness row {row} length mismatch: expected {expected}, got {actual}")]
+    WitnessRowLengthMismatch {
+        row: usize,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("{name} row length {row_len} exceeds vector commitment capacity {capacity}")]
+    CommitmentCapacityExceeded {
+        name: &'static str,
+        capacity: usize,
+        row_len: usize,
+    },
+    #[error("{name} row commitment backend failed: {reason}")]
+    RowCommitmentBackend { name: &'static str, reason: String },
+    #[error("{name} backend kernel failed: {reason}")]
+    BackendKernel { name: &'static str, reason: String },
+    #[error("{name} must be a non-zero power of two, got {value}")]
+    InvalidPowerOfTwo { name: &'static str, value: usize },
+    #[error("{name} dimension {value} cannot be represented")]
+    DimensionOverflow { name: &'static str, value: usize },
+    #[error("folded eval commitment {index} does not match opened value and blinding")]
+    EvalCommitmentMismatch { index: usize },
+    #[error("folded eval witness {kind} {index} does not match opened witness coordinate: expected {expected}, got {actual}")]
+    EvalWitnessMismatch {
+        kind: &'static str,
+        index: usize,
+        expected: F,
+        actual: F,
+    },
+    #[error("interpolation denominator is zero for degree {degree} at point {point}")]
+    ZeroInterpolationDenominator { degree: usize, point: usize },
+    #[error("sumcheck round claim mismatch: expected {expected}, got {actual}")]
+    SumcheckRoundClaimMismatch { expected: F, actual: F },
+    #[error("multilinear evaluation length mismatch: expected {expected}, got {actual}")]
+    MultilinearLengthMismatch { expected: usize, actual: usize },
+    #[error("{name} must have at least one sumcheck round")]
+    DegenerateSumcheck { name: &'static str },
+}
+
+#[derive(Debug, ThisError)]
 pub enum VerificationError<F: FieldCore> {
     #[error("claims have {claim_stages} stages but proof has {proof_stages}")]
     StageCountMismatch {

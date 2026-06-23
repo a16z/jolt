@@ -43,6 +43,10 @@ impl<const XLEN: usize> LookupTable for ValidDiv0Table<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::LeftOperandIsZero, Prefixes::DivByZero]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,

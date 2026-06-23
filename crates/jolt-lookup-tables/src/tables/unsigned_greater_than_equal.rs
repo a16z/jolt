@@ -28,6 +28,10 @@ impl<const XLEN: usize> LookupTable for UnsignedGreaterThanEqualTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for UnsignedGreaterThanEqualTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::LessThan, Prefixes::Eq]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LessThan]
     }

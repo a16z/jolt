@@ -1,11 +1,11 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening};
+use crate::{challenge, opening, public};
 
 use super::super::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltRelationClaims,
-    JoltRelationId, JoltVirtualPolynomial, RegistersReadWriteChallenge,
-    RegistersValEvaluationChallenge,
+    JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId,
+    JoltRelationClaims, JoltRelationId, JoltVirtualPolynomial, RegistersReadWriteChallenge,
+    RegistersReadWritePublic, RegistersValEvaluationPublic,
 };
 use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions, TraceDimensions};
 
@@ -18,7 +18,7 @@ where
     F: RingCore,
 {
     let gamma = read_write_challenge(RegistersReadWriteChallenge::Gamma);
-    let eq_cycle = read_write_challenge(RegistersReadWriteChallenge::EqCycle);
+    let eq_cycle = read_write_public(RegistersReadWritePublic::EqCycle);
 
     let input = opening(rd_write_value_claim())
         + gamma.clone() * opening(rs1_value_claim())
@@ -48,7 +48,7 @@ where
     F: RingCore,
 {
     let input = opening(registers_val_read_write());
-    let output = val_evaluation_challenge(RegistersValEvaluationChallenge::LtCycle)
+    let output = val_evaluation_public(RegistersValEvaluationPublic::LtCycle)
         * opening(rd_inc_val_evaluation())
         * opening(rd_wa_val_evaluation());
 
@@ -89,11 +89,18 @@ where
     challenge(JoltChallengeId::from(id))
 }
 
-fn val_evaluation_challenge<F>(id: RegistersValEvaluationChallenge) -> JoltExpr<F>
+fn read_write_public<F>(id: RegistersReadWritePublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
-    challenge(JoltChallengeId::from(id))
+    public(JoltPublicId::from(id))
+}
+
+fn val_evaluation_public<F>(id: RegistersValEvaluationPublic) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    public(JoltPublicId::from(id))
 }
 
 fn rd_write_value_claim() -> JoltOpeningId {
@@ -218,24 +225,17 @@ mod tests {
         );
         assert_eq!(
             claims.output.required_challenges,
-            vec![
-                JoltChallengeId::from(RegistersReadWriteChallenge::EqCycle),
-                JoltChallengeId::from(RegistersReadWriteChallenge::Gamma),
-            ]
+            vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
         );
         assert_eq!(
             claims.required_challenges(),
-            vec![
-                JoltChallengeId::from(RegistersReadWriteChallenge::Gamma),
-                JoltChallengeId::from(RegistersReadWriteChallenge::EqCycle),
-            ]
+            vec![JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)]
         );
         assert_eq!(
-            claims.challenge_index(JoltChallengeId::from(RegistersReadWriteChallenge::EqCycle)),
-            Some(1)
+            claims.required_publics(),
+            vec![JoltPublicId::from(RegistersReadWritePublic::EqCycle)]
         );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(claims.num_challenges(), 2);
+        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -263,13 +263,9 @@ mod tests {
             },
             |id| match *id {
                 JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => gamma,
-                JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::EqCycle)
-                | JoltChallengeId::RamReadWrite(_)
+                JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RamRaVirtualization(_)
-                | JoltChallengeId::RamHammingBooleanity(_)
-                | JoltChallengeId::RegistersValEvaluation(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
                 | JoltChallengeId::InstructionInput(_)
@@ -295,17 +291,11 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::EqCycle) => {
-                    eq_cycle
-                }
                 JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => gamma,
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RamRaVirtualization(_)
-                | JoltChallengeId::RamHammingBooleanity(_)
-                | JoltChallengeId::RegistersValEvaluation(_) => zero,
-                JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
                 | JoltChallengeId::InstructionInput(_)
                 | JoltChallengeId::InstructionReadRaf(_)
@@ -317,7 +307,10 @@ mod tests {
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltPublicId::RegistersReadWrite(RegistersReadWritePublic::EqCycle) => eq_cycle,
+                _ => zero,
+            },
         );
 
         assert_eq!(
@@ -344,20 +337,13 @@ mod tests {
             claims.output.required_openings,
             val_evaluation_output_openings().to_vec()
         );
+        assert!(claims.output.required_challenges.is_empty());
+        assert!(claims.required_challenges().is_empty());
         assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(
-                RegistersValEvaluationChallenge::LtCycle
-            )]
+            claims.required_publics(),
+            vec![JoltPublicId::from(RegistersValEvaluationPublic::LtCycle)]
         );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                RegistersValEvaluationChallenge::LtCycle
-            )]
-        );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(claims.num_challenges(), 1);
+        assert_eq!(claims.num_challenges(), 0);
     }
 
     #[test]
@@ -386,14 +372,9 @@ mod tests {
                 _ => zero,
             },
             |id| match *id {
-                JoltChallengeId::RegistersValEvaluation(
-                    RegistersValEvaluationChallenge::LtCycle,
-                ) => lt_cycle,
                 JoltChallengeId::RamReadWrite(_)
                 | JoltChallengeId::RamValCheck(_)
                 | JoltChallengeId::RamRaClaimReduction(_)
-                | JoltChallengeId::RamRaVirtualization(_)
-                | JoltChallengeId::RamHammingBooleanity(_)
                 | JoltChallengeId::RegistersReadWrite(_)
                 | JoltChallengeId::RegistersClaimReduction(_)
                 | JoltChallengeId::InstructionClaimReduction(_)
@@ -407,7 +388,12 @@ mod tests {
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
+                    lt_cycle
+                }
+                _ => zero,
+            },
         );
 
         assert_eq!(input, val);

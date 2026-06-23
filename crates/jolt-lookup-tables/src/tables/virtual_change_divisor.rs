@@ -57,6 +57,10 @@ impl<const XLEN: usize> LookupTable for VirtualChangeDivisorTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisorTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::RightOperand, Prefixes::ChangeDivisor]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,
