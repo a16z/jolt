@@ -34,8 +34,6 @@ mod error;
 mod homomorphic_batch;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
-#[cfg(test)]
-mod packed_combine;
 mod packed_view;
 mod packing;
 mod packing_layout;
