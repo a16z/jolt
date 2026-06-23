@@ -382,9 +382,9 @@ fn validate_akita_verifier_setup_shape(
                     .to_string(),
         });
     }
-    if setup.pcs.max_num_vars != expected_dimension {
+    if setup.pcs.max_num_vars < expected_dimension {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "lattice packing verifier setup max_num_vars does not match packed witness dimension"
+            reason: "lattice packing verifier setup max_num_vars is smaller than packed witness dimension"
                 .to_string(),
         });
     }

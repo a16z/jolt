@@ -413,12 +413,6 @@ fn validate_packed_setup_shape(
             setup_max: max_num_vars,
         });
     }
-    if commitment.num_vars != max_num_vars {
-        return Err(invalid_batch(format!(
-            "Akita packing commitment dimension {} does not match exact setup dimension {}",
-            commitment.num_vars, max_num_vars
-        )));
-    }
     if commitment.layout_digest != default_layout_digest {
         return Err(invalid_batch(
             "Akita packing commitment layout digest does not match setup",

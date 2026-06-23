@@ -128,12 +128,6 @@ fn validate_native_commit_shape(
             setup_max: setup.max_num_vars,
         });
     }
-    if num_vars != setup.max_num_vars {
-        return Err(invalid_batch(format!(
-            "Akita commitment dimension {num_vars} does not match exact setup dimension {}",
-            setup.max_num_vars
-        )));
-    }
     if poly_count > setup.max_num_polys_per_commitment_group {
         return Err(invalid_batch(format!(
             "Akita commitment group has {poly_count} polynomials but setup supports {}",

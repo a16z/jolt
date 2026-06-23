@@ -300,12 +300,6 @@ fn validate_setup_shape(
             setup_max: max_num_vars,
         });
     }
-    if commitment.num_vars != max_num_vars {
-        return Err(invalid_batch(format!(
-            "Akita commitment dimension {} does not match exact setup dimension {max_num_vars}",
-            commitment.num_vars
-        )));
-    }
     if commitment.poly_count > max_num_polys_per_commitment_group {
         return Err(invalid_batch(format!(
             "Akita commitment covers {} polynomials but setup supports {}",
