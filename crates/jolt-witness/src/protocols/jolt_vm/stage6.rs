@@ -39,14 +39,9 @@ impl<T: TraceSource + Clone> JoltVmStage6Rows for TraceBackedJoltVmWitness<'_, T
                 .unwrap_or(0);
             let ram_address = ram_access_address(row.ram_access);
             let remapped_ram_address = ram_address
-                .and_then(|address| {
-                    self.preprocessing
-                        .memory_layout
-                        .remap_word_address(address)
-                        .ok()
-                })
-                .flatten()
-                .map(|address| address as usize);
+                .map(|address| self.remapped_ram_address(address))
+                .transpose()?
+                .flatten();
             values.push(JoltVmStage6Row {
                 instruction_lookup_index,
                 bytecode_index,
