@@ -52,7 +52,10 @@ jobs:
       - name: cargo clippy --features allocative,host,zk
         run: cargo clippy --all --all-targets --features allocative,host,zk
       - name: cargo clippy --no-default-features
-        run: cargo clippy --all --all-targets --no-default-features
+        # jolt-backends is not standalone no-default-features-clean: cpu-gated code
+        # is the only consumer of a few pub(crate) helpers. jolt-prover (next PR in
+        # the stack) depends on it with default features and restores full coverage.
+        run: cargo clippy --all --all-targets --no-default-features --exclude jolt-backends
       # jolt-verifier's prover-fixtures feature gates live prover artifact
       # generation for verifier tests. It is not enabled by the workspace-wide
       # invocations above, so build it explicitly in both modes.
