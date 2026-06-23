@@ -48,15 +48,18 @@ mod validity;
 pub use validity::{
     build_lattice_packed_validity_batch, derive_lattice_packed_validity_statements,
     lattice_packed_validity_claims, lattice_packed_validity_opening_count,
-    sample_lattice_packed_validity_eq_points, validate_lattice_view_validity_coverage,
-    verify_lattice_packed_validity_proof, LatticePackedValidityBatch,
-    LatticePackedValidityBatchStatement, LatticePackedValidityStatement,
-    LatticePackedValidityStatementKind,
+    sample_lattice_packed_validity_eq_points, verify_lattice_packed_validity_proof,
+    LatticePackedValidityBatch, LatticePackedValidityBatchStatement,
+    LatticePackedValidityStatement, LatticePackedValidityStatementKind,
 };
 pub(crate) use validity::{
     field_element_canonical_factors, field_element_canonical_value_from_openings,
     FieldCanonicalFactor,
 };
+
+#[path = "lattice_validity_coverage.rs"]
+mod validity_coverage;
+pub use validity_coverage::validate_lattice_view_validity_coverage;
 
 pub type JoltLatticeViewFormulaWithRowPoint<F> =
     (Stage8OpeningId, LatticePackedViewFormula<F>, Vec<F>);
