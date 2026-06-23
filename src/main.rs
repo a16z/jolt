@@ -535,6 +535,9 @@ edition = "2021"
 [workspace]
 members = ["guest"]
 
+[features]
+field-inline = ["jolt-sdk/field-inline", "guest/field-inline"]
+
 [profile.release]
 debug = 1
 codegen-units = 1
@@ -588,6 +591,9 @@ edition = "2021"
 
 [workspace]
 members = ["guest"]
+
+[features]
+field-inline = ["jolt-sdk/field-inline", "guest/field-inline"]
 
 [profile.release]
 debug = 1

@@ -1,11 +1,12 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening};
+use crate::{challenge, opening, public};
 
 use super::super::{
     FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlineRelationClaims, FieldInlineRelationId, FieldInlineVirtualPolynomial,
-    FieldRegistersReadWriteChallenge, FieldRegistersValEvaluationChallenge,
+    FieldInlinePublicId, FieldInlineRelationClaims, FieldInlineRelationId,
+    FieldInlineVirtualPolynomial, FieldRegistersReadWriteChallenge, FieldRegistersReadWritePublic,
+    FieldRegistersValEvaluationPublic,
 };
 use super::dimensions::{
     FieldInlineSumcheckSpec, FieldRegistersReadWriteDimensions, FieldRegistersTraceDimensions,
@@ -24,7 +25,7 @@ where
     F: RingCore,
 {
     let gamma = read_write_challenge(FieldRegistersReadWriteChallenge::Gamma);
-    let eq_cycle = read_write_challenge(FieldRegistersReadWriteChallenge::EqCycle);
+    let eq_cycle = read_write_public(FieldRegistersReadWritePublic::EqCycle);
 
     let input = opening(field_rd_value_claim())
         + gamma.clone() * opening(field_rs1_value_claim())
@@ -57,7 +58,7 @@ where
     F: RingCore,
 {
     let input = opening(field_registers_val_read_write());
-    let output = val_evaluation_challenge(FieldRegistersValEvaluationChallenge::LtCycle)
+    let output = val_evaluation_public(FieldRegistersValEvaluationPublic::LtCycle)
         * opening(field_rd_inc_val_evaluation())
         * opening(field_rd_wa_val_evaluation());
 
@@ -102,11 +103,18 @@ where
     challenge(FieldInlineChallengeId::from(id))
 }
 
-fn val_evaluation_challenge<F>(id: FieldRegistersValEvaluationChallenge) -> FieldInlineExpr<F>
+fn read_write_public<F>(id: FieldRegistersReadWritePublic) -> FieldInlineExpr<F>
 where
     F: RingCore,
 {
-    challenge(FieldInlineChallengeId::from(id))
+    public(FieldInlinePublicId::from(id))
+}
+
+fn val_evaluation_public<F>(id: FieldRegistersValEvaluationPublic) -> FieldInlineExpr<F>
+where
+    F: RingCore,
+{
+    public(FieldInlinePublicId::from(id))
 }
 
 fn field_rd_value_claim() -> FieldInlineOpeningId {
@@ -236,26 +244,29 @@ mod tests {
         );
         assert_eq!(
             claims.output.required_challenges,
-            vec![
-                FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::EqCycle),
-                FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::Gamma),
-            ]
+            vec![FieldInlineChallengeId::from(
+                FieldRegistersReadWriteChallenge::Gamma
+            )]
         );
         assert_eq!(
             claims.required_challenges(),
-            vec![
-                FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::Gamma),
-                FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::EqCycle),
-            ]
+            vec![FieldInlineChallengeId::from(
+                FieldRegistersReadWriteChallenge::Gamma
+            )]
         );
         assert_eq!(
-            claims.challenge_index(FieldInlineChallengeId::from(
-                FieldRegistersReadWriteChallenge::EqCycle
-            )),
-            Some(1)
+            claims.output.required_publics,
+            vec![FieldInlinePublicId::from(
+                FieldRegistersReadWritePublic::EqCycle
+            )]
         );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(claims.num_challenges(), 2);
+        assert_eq!(
+            claims.required_publics(),
+            vec![FieldInlinePublicId::from(
+                FieldRegistersReadWritePublic::EqCycle
+            )]
+        );
+        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -301,14 +312,16 @@ mod tests {
             },
             |id| match *id {
                 FieldInlineChallengeId::FieldRegistersReadWrite(
-                    FieldRegistersReadWriteChallenge::EqCycle,
-                ) => eq_cycle,
-                FieldInlineChallengeId::FieldRegistersReadWrite(
                     FieldRegistersReadWriteChallenge::Gamma,
                 ) => gamma,
                 _ => zero,
             },
-            |_| zero,
+            |id| match *id {
+                FieldInlinePublicId::FieldRegistersReadWrite(
+                    FieldRegistersReadWritePublic::EqCycle,
+                ) => eq_cycle,
+                _ => zero,
+            },
         );
 
         assert_eq!(
@@ -338,20 +351,21 @@ mod tests {
             claims.output.required_openings,
             val_evaluation_output_openings().to_vec()
         );
+        assert!(claims.output.required_challenges.is_empty());
+        assert!(claims.required_challenges().is_empty());
         assert_eq!(
-            claims.output.required_challenges,
-            vec![FieldInlineChallengeId::from(
-                FieldRegistersValEvaluationChallenge::LtCycle
+            claims.output.required_publics,
+            vec![FieldInlinePublicId::from(
+                FieldRegistersValEvaluationPublic::LtCycle
             )]
         );
         assert_eq!(
-            claims.required_challenges(),
-            vec![FieldInlineChallengeId::from(
-                FieldRegistersValEvaluationChallenge::LtCycle
+            claims.required_publics(),
+            vec![FieldInlinePublicId::from(
+                FieldRegistersValEvaluationPublic::LtCycle
             )]
         );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(claims.num_challenges(), 1);
+        assert_eq!(claims.num_challenges(), 0);
     }
 
     #[test]
@@ -379,13 +393,13 @@ mod tests {
                 id if id == field_rd_wa_val_evaluation() => wa,
                 _ => zero,
             },
+            |_| zero,
             |id| match *id {
-                FieldInlineChallengeId::FieldRegistersValEvaluation(
-                    FieldRegistersValEvaluationChallenge::LtCycle,
+                FieldInlinePublicId::FieldRegistersValEvaluation(
+                    FieldRegistersValEvaluationPublic::LtCycle,
                 ) => lt_cycle,
                 _ => zero,
             },
-            |_| zero,
         );
 
         assert_eq!(input, val);

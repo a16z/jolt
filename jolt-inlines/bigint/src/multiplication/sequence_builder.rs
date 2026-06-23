@@ -10,9 +10,9 @@ use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 /// Layout:
 /// - a0..a3: First operand (4 u64 limbs)
 /// - a4..a7: Second operand (4 u64 limbs)
-/// - s0..s7: Result accumulator (8 u64 limbs)
-/// - t0..t3: Temporary registers for multiplication and carry
-pub(crate) const NEEDED_REGISTERS: usize = 20;
+/// - s0..s1: Result limbs (2 u64 limbs, accumulator and carry)
+/// - t0    : Temporary for handling carry propagation
+pub(crate) const NEEDED_REGISTERS: usize = 11;
 
 /// Builds assembly sequence for 256-bit × 256-bit multiplication
 /// Expects first operand (4 u64 words) in RAM at location rs1
@@ -45,11 +45,11 @@ impl BigIntMulSequenceBuilder {
     }
     // Results
     fn s(&self, i: usize) -> u8 {
-        *self.vr[INPUT_LIMBS + INPUT_LIMBS + i]
+        *self.vr[INPUT_LIMBS + INPUT_LIMBS + (i % 2)]
     }
-    // Temporaries
-    fn t(&self, i: usize) -> u8 {
-        *self.vr[INPUT_LIMBS + INPUT_LIMBS + OUTPUT_LIMBS + i]
+    // Temporary for carry propagation
+    fn t(&self) -> u8 {
+        *self.vr[INPUT_LIMBS + INPUT_LIMBS + 2]
     }
 
     /// Builds the complete multiplication sequence
@@ -64,81 +64,62 @@ impl BigIntMulSequenceBuilder {
                 .emit_ld::<LD>(self.b(i), self.operands.rs2, i as i64 * 8);
         }
 
-        // Inline finalization clears released inline registers, so the result
-        // accumulator starts at zero without eight explicit ADD rows.
-        for i in 0..INPUT_LIMBS {
-            for j in 0..INPUT_LIMBS {
-                self.mul_and_accumulate(i, j); // A[i] × B[j] → R[i+j]
-            }
-        }
+        // Inline finalization ensures that s0 and s1 start at zero
+        // Thus no explicit initialization is needed
 
-        // Store result (8 u64 words) back to the memory rs3 points to
-        for i in 0..OUTPUT_LIMBS {
+        // 0th limb is just a multiplication with no carry
+        self.asm.emit_r::<MUL>(self.s(0), self.a(0), self.b(0));
+        self.asm.emit_s::<SD>(self.operands.rs3, self.s(0), 0); // Store 0th limb immediately
+
+        // 1st limb is 0 and doesn't receive a carry from the 0th limb
+        // so initialize it with the upper half of A[0] * B[0]
+        self.asm.emit_r::<MULHU>(self.s(1), self.a(0), self.b(0));
+
+        // For each output limb R[k]
+        for k in 1..OUTPUT_LIMBS {
+            // alternate between s0 and s1 for accumulating results and carries to minimize register usage
+            // overwrite carry register on first addition, then accumulate into it for subsequent additions
+            let mut overwrite_carry = true;
+
+            for i in 0..INPUT_LIMBS {
+                for j in 0..INPUT_LIMBS {
+                    if i == 0 && j == 0 {
+                        continue; // skip the A[0] * B[0] term which is already handled
+                    }
+                    // add all lower(A[i] * B[j]) where i+j = k
+                    if i + j == k {
+                        // t = low part of A[i] * B[j]
+                        self.asm.emit_r::<MUL>(self.t(), self.a(i), self.b(j));
+                    // add all upper(A[i] * B[j]) where i+j = k-1
+                    } else if i + j == k - 1 {
+                        // t = high part of A[i] * B[j]
+                        self.asm.emit_r::<MULHU>(self.t(), self.a(i), self.b(j));
+                    }
+                    // handle carry propagation
+                    if i + j == k || i + j == k - 1 {
+                        // add product to accumulator
+                        self.asm.emit_r::<ADD>(self.s(k), self.s(k), self.t());
+                        // test for a carry and either set or accumulate it
+                        if overwrite_carry {
+                            self.asm.emit_r::<SLTU>(self.s(k + 1), self.s(k), self.t());
+                        } else {
+                            self.asm.emit_r::<SLTU>(self.t(), self.s(k), self.t());
+                            self.asm
+                                .emit_r::<ADD>(self.s(k + 1), self.t(), self.s(k + 1));
+                        }
+                        // after the first addition, we need to accumulate carries instead of overwriting them
+                        overwrite_carry = false;
+                    }
+                }
+            }
+
+            // store the accumulated result limb
             self.asm
-                .emit_s::<SD>(self.operands.rs3, self.s(i), i as i64 * 8);
+                .emit_s::<SD>(self.operands.rs3, self.s(k), k as i64 * 8);
         }
 
         self.asm.release_many(self.vr);
         self.asm.finalize()
-    }
-
-    /// Implements the MUL-ACC pattern: A[i] × B[j] → R[k] where k = i+j
-    /// This multiplies A[i] by B[j] and accumulates the 128-bit result
-    /// into R[k], R[k+1], R[k+2] with carry propagation
-    fn mul_and_accumulate(&mut self, i: usize, j: usize) {
-        let k = i + j;
-
-        // Get register indices
-        let ai = self.a(i);
-        let bj = self.b(j);
-        let sk = self.s(k);
-        let t0 = self.t(0);
-        let t1 = self.t(1);
-        let t2 = self.t(2);
-
-        // mulhu t1, ai, bj     # High 64 bits of product (do this first)
-        self.asm.emit_r::<MULHU>(t1, ai, bj);
-
-        // mul t0, ai, bj       # Low 64 bits of product
-        self.asm.emit_r::<MUL>(t0, ai, bj);
-
-        // add sk, sk, t0       # Add low bits to R[k]
-        self.asm.emit_r::<ADD>(sk, sk, t0);
-
-        let sk1 = self.s(k + 1);
-
-        // No overflow at this case
-        if k == 0 {
-            // add sk1, sk1, t1     # Add high to R[k+1]
-            self.asm.emit_r::<ADD>(sk1, sk1, t1);
-            return;
-        }
-
-        // sltu t2, sk, t0      # Check for carry (sk < t0 means overflow)
-        self.asm.emit_r::<SLTU>(t2, sk, t0);
-
-        // add t1, t1, t2       # Add carry from low part to high part
-        self.asm.emit_r::<ADD>(t1, t1, t2);
-
-        // add sk1, sk1, t1     # Add (high + carry) to R[k+1]
-        self.asm.emit_r::<ADD>(sk1, sk1, t1);
-
-        // Propagate carry through higher limbs if needed
-        if k + 2 < OUTPUT_LIMBS {
-            // sltu t2, sk1, t1     # Check for carry from adding high part into R[k+1]
-            self.asm.emit_r::<SLTU>(t2, sk1, t1);
-
-            // Ripple-carry add into R[k+2..]
-            for m in (k + 2)..OUTPUT_LIMBS {
-                let sm = self.s(m);
-                // add s[m], s[m], t2
-                self.asm.emit_r::<ADD>(sm, sm, t2);
-                // sltu t2, s[m], t2  # carry out
-                if m + 1 < OUTPUT_LIMBS {
-                    self.asm.emit_r::<SLTU>(t2, sm, t2);
-                }
-            }
-        }
     }
 }
 

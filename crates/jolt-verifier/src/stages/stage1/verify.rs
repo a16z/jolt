@@ -14,19 +14,14 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::Transcript;
 
-use super::inputs::spartan_outer_opening_order;
 use super::outputs::{
-    Stage1ClearOutput, Stage1Output, Stage1PublicOutput, Stage1ZkOutput,
-    VerifiedSpartanOuterSumcheck,
+    spartan_outer_opening_order, Stage1ClearOutput, Stage1Output, Stage1PublicOutput,
+    Stage1ZkOutput, VerifiedSpartanOuterSumcheck,
 };
-use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
-};
+use crate::{proof::JoltProof, stages::zk::committed, verifier::CheckedInputs, VerifierError};
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
 ) -> Result<Stage1Output<PCS::Field, VC::Output>, VerifierError>
@@ -298,7 +293,5 @@ where
         uniskip,
         remainder,
         outer: claims.outer.clone(),
-        #[cfg(feature = "field-inline")]
-        field_inline: claims.field_inline.clone(),
     }))
 }

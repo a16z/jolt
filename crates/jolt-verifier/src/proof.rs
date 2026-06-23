@@ -99,8 +99,6 @@ pub struct JoltCommitments<C> {
     pub rd_inc: C,
     pub ram_inc: C,
     pub ra: JoltRaCommitments<C>,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineCommitments<C>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,54 +118,12 @@ impl<C> JoltRaCommitments<C> {
     }
 }
 
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FieldInlineCommitments<C> {
-    pub field_registers: FieldRegistersCommitments<C>,
-}
-
-#[cfg(feature = "field-inline")]
-impl<C> FieldInlineCommitments<C> {
-    pub fn new(field_registers: FieldRegistersCommitments<C>) -> Self {
-        Self { field_registers }
-    }
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FieldRegistersCommitments<C> {
-    pub rd_inc: C,
-}
-
-#[cfg(feature = "field-inline")]
-impl<C> FieldRegistersCommitments<C> {
-    pub fn new(rd_inc: C) -> Self {
-        Self { rd_inc }
-    }
-}
-
 impl<C> JoltCommitments<C> {
-    #[cfg(not(feature = "field-inline"))]
     pub fn new(rd_inc: C, ram_inc: C, ra: JoltRaCommitments<C>) -> Self {
         Self {
             rd_inc,
             ram_inc,
             ra,
-        }
-    }
-
-    #[cfg(feature = "field-inline")]
-    pub fn new(
-        rd_inc: C,
-        ram_inc: C,
-        ra: JoltRaCommitments<C>,
-        field_inline: FieldInlineCommitments<C>,
-    ) -> Self {
-        Self {
-            rd_inc,
-            ram_inc,
-            ra,
-            field_inline,
         }
     }
 }
@@ -198,13 +154,13 @@ where
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct ClearProofClaims<F: Field> {
-    pub stage1: stage1::inputs::Stage1Claims<F>,
-    pub stage2: stage2::inputs::Stage2Claims<F>,
-    pub stage3: stage3::inputs::Stage3Claims<F>,
-    pub stage4: stage4::inputs::Stage4Claims<F>,
-    pub stage5: stage5::inputs::Stage5Claims<F>,
-    pub stage6: stage6::inputs::Stage6Claims<F>,
-    pub stage7: stage7::inputs::Stage7Claims<F>,
+    pub stage1: stage1::outputs::Stage1OutputClaims<F>,
+    pub stage2: stage2::outputs::Stage2OutputClaims<F>,
+    pub stage3: stage3::outputs::Stage3OutputClaims<F>,
+    pub stage4: stage4::outputs::Stage4OutputClaims<F>,
+    pub stage5: stage5::outputs::Stage5OutputClaims<F>,
+    pub stage6: stage6::outputs::Stage6OutputClaims<F>,
+    pub stage7: stage7::outputs::Stage7OutputClaims<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

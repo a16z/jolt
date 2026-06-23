@@ -18,13 +18,10 @@ where
         instruction::read_raf::<PCS::Field>(formula_dimensions.instruction_read_raf);
     let ram_claims = ram::ra_claim_reduction::<PCS::Field>(trace_dimensions);
     let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
-    #[cfg(feature = "field-inline")]
-    let field_registers_claims =
-        field_registers::val_evaluation::<PCS::Field>(FieldRegistersTraceDimensions::new(log_t));
 
-    values.challenge(
-        JoltChallengeId::from(InstructionReadRafChallenge::Gamma),
-        input.stage5.public.instruction_gamma,
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(InstructionReadRafChallenge::Gamma)),
+        input.stage5.challenges.instruction_gamma,
     )?;
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
@@ -60,31 +57,31 @@ where
     let identity_eval =
         IdentityPolynomial::new(2 * RISCV_XLEN).evaluate(&instruction_opening.r_address);
     let instruction_gamma_squared =
-        input.stage5.public.instruction_gamma * input.stage5.public.instruction_gamma;
+        input.stage5.challenges.instruction_gamma * input.stage5.challenges.instruction_gamma;
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
-        values.challenge(
-            JoltChallengeId::from(InstructionReadRafChallenge::EqTableValue(table.index())),
+        values.public(
+            JoltPublicId::from(InstructionReadRafPublic::EqTableValue(table.index())),
             eq_reduction
                 * table.evaluate_mle::<PCS::Field, PCS::Field>(&instruction_opening.r_address),
         )?;
     }
-    values.challenge(
-        JoltChallengeId::from(InstructionReadRafChallenge::EqRafConstant),
+    values.public(
+        JoltPublicId::from(InstructionReadRafPublic::EqRafConstant),
         eq_reduction
-            * (input.stage5.public.instruction_gamma * left_operand_eval
+            * (input.stage5.challenges.instruction_gamma * left_operand_eval
                 + instruction_gamma_squared * right_operand_eval),
     )?;
-    values.challenge(
-        JoltChallengeId::from(InstructionReadRafChallenge::EqRafFlag),
+    values.public(
+        JoltPublicId::from(InstructionReadRafPublic::EqRafFlag),
         eq_reduction
             * (instruction_gamma_squared * identity_eval
-                - input.stage5.public.instruction_gamma * left_operand_eval
+                - input.stage5.challenges.instruction_gamma * left_operand_eval
                 - instruction_gamma_squared * right_operand_eval),
     )?;
 
-    values.challenge(
-        JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma),
-        input.stage5.public.ram_gamma,
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)),
+        input.stage5.challenges.ram_gamma,
     )?;
     let ram_point = input
         .stage5
@@ -94,15 +91,9 @@ where
     let ram_cycle = trace_dimensions
         .cycle_opening_point(&ram_point)
         .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?;
-    let ram_raf_cycle = &input
-        .stage2
-        .ram_ra_claim_reduction_inputs
-        .ram_raf_evaluation_opening_point[log_k..];
-    let ram_read_write_cycle = &input
-        .stage2
-        .ram_ra_claim_reduction_inputs
-        .ram_read_write_opening_point[log_k..];
-    let ram_val_cycle = &input.stage4.ram_val_check_opening_point[log_k..];
+    let ram_raf_cycle = &input.stage2.output_points.ram_raf_evaluation_point()[log_k..];
+    let ram_read_write_cycle = &input.stage2.output_points.ram_read_write_point()[log_k..];
+    let ram_val_cycle = &input.stage4.output_points.ram_val_check_point()[log_k..];
     values.public(
         JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
         try_eq_mle(&ram_cycle, ram_raf_cycle)
@@ -128,39 +119,11 @@ where
         .cycle_opening_point(&registers_point)
         .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
     let registers_read_write_cycle =
-        &input.stage4.registers_read_write_opening_point[REGISTER_ADDRESS_BITS..];
-    values.challenge(
-        JoltChallengeId::from(RegistersValEvaluationChallenge::LtCycle),
+        &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
+    values.public(
+        JoltPublicId::from(RegistersValEvaluationPublic::LtCycle),
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
-
-    #[cfg(feature = "field-inline")]
-    {
-        let field_registers_point = input
-            .stage5
-            .batch_consistency
-            .try_instance_point(field_registers_claims.sumcheck.rounds)
-            .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersValEvaluation, error))?;
-        let field_registers_cycle = trace_dimensions
-            .cycle_opening_point(&field_registers_point)
-            .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
-        let field_log_k = input.proof.protocol.field_inline.field_register_log_k;
-        let field_registers_read_write_cycle = input
-            .stage4
-            .field_registers_read_write_opening_point
-            .get(field_log_k..)
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RegistersValEvaluation,
-                reason: format!(
-                    "field-register read-write opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
-                    input.stage4.field_registers_read_write_opening_point.len()
-                ),
-            })?;
-        values.challenge(
-            FieldInlineChallengeId::from(FieldRegistersValEvaluationChallenge::LtCycle),
-            LtPolynomial::evaluate(&field_registers_cycle, field_registers_read_write_cycle),
-        )?;
-    }
 
     let mut output_ids = Vec::new();
     output_ids.extend(map_jolt_opening_ids(
@@ -177,10 +140,6 @@ where
     ));
     output_ids.extend(map_jolt_opening_ids(
         registers::val_evaluation_output_openings().to_vec(),
-    ));
-    #[cfg(feature = "field-inline")]
-    output_ids.extend(map_field_inline_opening_ids(
-        field_registers::val_evaluation_output_openings().to_vec(),
     ));
 
     let batch_claims = [
@@ -200,15 +159,6 @@ where
             map_jolt_expr(registers_claims.output.expression().clone()),
         ),
     ];
-    #[cfg(feature = "field-inline")]
-    let mut batch_claims = batch_claims.to_vec();
-    #[cfg(feature = "field-inline")]
-    batch_claims.push((
-        field_registers_claims.sumcheck.rounds,
-        map_field_inline_expr(field_registers_claims.input.expression().clone()),
-        map_field_inline_expr(field_registers_claims.output.expression().clone()),
-    ));
-
     let coefficients = &input.stage5.batch_consistency.batching_coefficients;
     if batch_claims.len() != coefficients.len() {
         return Err(VerifierError::BlindFoldConstructionFailed {

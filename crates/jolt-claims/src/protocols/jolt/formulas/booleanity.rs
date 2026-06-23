@@ -1,4 +1,5 @@
 use jolt_field::{Field, RingCore};
+use jolt_poly::{EqPolynomial, Polynomial};
 
 use crate::{challenge, opening, public};
 
@@ -7,7 +8,7 @@ use super::super::{
     JoltRelationClaims, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
-use super::ra::JoltRaPolynomialLayout;
+use super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BooleanityDimensions {
@@ -151,12 +152,58 @@ pub fn booleanity_address_phase_opening() -> JoltOpeningId {
     )
 }
 
+pub fn eq_address_cycle_polynomial<F>(
+    reference_address: &[F],
+    reference_cycle: &[F],
+) -> Polynomial<F>
+where
+    F: Field,
+{
+    let eq_point = reference_address
+        .iter()
+        .rev()
+        .chain(reference_cycle.iter().rev())
+        .copied()
+        .collect::<Vec<_>>();
+    Polynomial::new(EqPolynomial::<F>::evals(&eq_point, None))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BooleanityOutputOpeningGroups {
+    pub instruction_ra: Vec<JoltOpeningId>,
+    pub bytecode_ra: Vec<JoltOpeningId>,
+    pub ram_ra: Vec<JoltOpeningId>,
+}
+
+impl BooleanityOutputOpeningGroups {
+    pub fn total_len(&self) -> usize {
+        self.instruction_ra.len() + self.bytecode_ra.len() + self.ram_ra.len()
+    }
+}
+
+pub fn booleanity_output_opening_groups(
+    layout: JoltRaPolynomialLayout,
+) -> BooleanityOutputOpeningGroups {
+    BooleanityOutputOpeningGroups {
+        instruction_ra: (0..layout.instruction())
+            .map(|index| JoltRaPolynomial::Instruction(index).opening(JoltRelationId::Booleanity))
+            .collect(),
+        bytecode_ra: (0..layout.bytecode())
+            .map(|index| JoltRaPolynomial::Bytecode(index).opening(JoltRelationId::Booleanity))
+            .collect(),
+        ram_ra: (0..layout.ram())
+            .map(|index| JoltRaPolynomial::Ram(index).opening(JoltRelationId::Booleanity))
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::super::JoltCommittedPolynomial;
     use super::super::dimensions::JoltFormulaDimensionsError;
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_poly::EqPolynomial;
 
     fn layout(
         instruction: usize,
@@ -200,6 +247,46 @@ mod tests {
         );
         assert_eq!(claims.num_challenges(), 1);
         Ok(())
+    }
+
+    #[test]
+    fn booleanity_groups_output_openings_by_ra_family() -> Result<(), JoltFormulaDimensionsError> {
+        let layout = layout(2, 1, 2)?;
+        let groups = booleanity_output_opening_groups(layout);
+
+        assert_eq!(groups.instruction_ra.len(), 2);
+        assert_eq!(groups.bytecode_ra.len(), 1);
+        assert_eq!(groups.ram_ra.len(), 2);
+        assert_eq!(groups.total_len(), 5);
+        assert_eq!(
+            groups
+                .instruction_ra
+                .iter()
+                .chain(&groups.bytecode_ra)
+                .chain(&groups.ram_ra)
+                .copied()
+                .collect::<Vec<_>>(),
+            booleanity_output_openings(layout)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn eq_address_cycle_polynomial_reverses_address_then_cycle() {
+        let address = vec![Fr::from_u64(2), Fr::from_u64(3)];
+        let cycle = vec![Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(11)];
+        let eq_point = vec![
+            Fr::from_u64(3),
+            Fr::from_u64(2),
+            Fr::from_u64(11),
+            Fr::from_u64(7),
+            Fr::from_u64(5),
+        ];
+
+        assert_eq!(
+            eq_address_cycle_polynomial(&address, &cycle).evals(),
+            EqPolynomial::<Fr>::evals(&eq_point, None)
+        );
     }
 
     #[test]

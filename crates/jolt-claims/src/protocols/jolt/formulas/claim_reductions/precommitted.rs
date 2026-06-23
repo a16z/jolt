@@ -406,6 +406,45 @@ impl PrecommittedClaimReduction {
             .collect()
     }
 
+    /// [`cycle_phase_permuted_opening_point`] recovered from the produced
+    /// `cycle_phase_opening_point` (the reverse-ordered active cycle challenges)
+    /// instead of the full sumcheck challenges. The cycle-phase opening point
+    /// holds exactly this polynomial's active cycle challenges, and the Dory
+    /// permutation only references active cycle rounds (see
+    /// `active_rounds_from_poly_permutation`), so the permuted point is fully
+    /// recoverable without the rounds this polynomial skips. Lets a relation
+    /// object's `resolve_public` derive the cycle-phase `FinalScale` from the
+    /// opening point it produced, mirroring the address-phase
+    /// `*_at_opening_point` helpers.
+    ///
+    /// [`cycle_phase_permuted_opening_point`]: Self::cycle_phase_permuted_opening_point
+    pub fn cycle_phase_permuted_from_opening_point<F: Field>(
+        &self,
+        opening_point: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        if opening_point.len() != self.cycle_phase_rounds.len() {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected: self.cycle_phase_rounds.len(),
+                got: opening_point.len(),
+            });
+        }
+        let mut cycle_var_challenges = opening_point.to_vec();
+        cycle_var_challenges.reverse();
+        let cycle_round_limit = self.cycle_alignment_rounds();
+        self.poly_opening_round_permutation_be
+            .iter()
+            .map(|&global_round| {
+                if global_round < cycle_round_limit {
+                    self.cycle_challenge_for_round(&cycle_var_challenges, global_round)
+                } else {
+                    Err(JoltFormulaPointError::CyclePhaseNotFinal {
+                        active_address_rounds: self.num_address_phase_rounds(),
+                    })
+                }
+            })
+            .collect()
+    }
+
     /// Big-endian final opening point in Dory opening-round order, assembled
     /// from the recorded cycle-phase challenges and the address-phase
     /// sumcheck challenges.
@@ -551,5 +590,41 @@ mod tests {
         );
         assert_eq!(precommitted.cycle_phase_rounds(), &[0, 1, 2, 3]);
         assert_eq!(precommitted.address_phase_rounds(), &[0, 1]);
+    }
+
+    #[test]
+    fn cycle_phase_permuted_recovers_from_opening_point() {
+        // A precommitted-dominant, cycle-completed schedule: the Dory permutation
+        // reorders the cycle rounds, so the permuted opening point differs from
+        // the produced (reverse-ordered) cycle opening point — exercising the
+        // recovery rather than a trivial reverse.
+        let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(2, &[5], 0);
+        let precommitted = PrecommittedClaimReduction::new(
+            2,
+            3,
+            scheduling_reference,
+            TracePolynomialOrder::CycleMajor,
+            2,
+        )
+        .unwrap_or_else(|error| panic!("schedule should build: {error}"));
+        assert_eq!(precommitted.num_address_phase_rounds(), 0);
+
+        let challenges: Vec<Fr> = (0..precommitted.cycle_phase_total_rounds())
+            .map(|index| Fr::from_u64(10 + index as u64))
+            .collect();
+        let opening_point = precommitted
+            .cycle_phase_opening_point(&challenges)
+            .unwrap_or_else(|error| panic!("cycle opening point: {error}"));
+        let from_challenges = precommitted
+            .cycle_phase_permuted_opening_point(&challenges)
+            .unwrap_or_else(|error| panic!("permuted from challenges: {error}"));
+        // Guard against a vacuous test: the permutation is not just the reverse.
+        assert_ne!(from_challenges, opening_point);
+        assert_eq!(
+            precommitted
+                .cycle_phase_permuted_from_opening_point(&opening_point)
+                .unwrap_or_else(|error| panic!("permuted from opening point: {error}")),
+            from_challenges,
+        );
     }
 }

@@ -2,6 +2,7 @@
 //!
 //! Low-level field arithmetic (Montgomery/Barrett reduction, scalar multiplication,
 //! precomputed lookup tables).
+use crate::Limbs;
 use ark_bn254::FrConfig;
 use ark_ff::{BigInt, Fp, MontConfig};
 use num_traits::Zero;
@@ -331,6 +332,14 @@ fn bigint4_mul_u64(a: &BigInt<N>, b: u64) -> BigInt<5> {
     res
 }
 
+#[inline(always)]
+pub(crate) fn mul_u64_unreduced(a: Fr, b: u64) -> Limbs<5> {
+    if b == 0 || Zero::is_zero(&a) {
+        return Limbs::zero();
+    }
+    bigint4_mul_u64(&a.0, b).into()
+}
+
 /// Multiply BigInt<4> by u128, producing BigInt<6>.
 #[inline(always)]
 fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
@@ -364,6 +373,11 @@ fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
 fn from_unchecked_nplus1(element: BigInt<5>) -> Fr {
     let r = barrett_reduce_5_to_4(element);
     Fp::new_unchecked(r)
+}
+
+#[inline(always)]
+pub(crate) fn reduce_nplus1(element: Limbs<5>) -> Fr {
+    from_unchecked_nplus1(element.into())
 }
 
 /// Barrett reduce BigInt<6> → Fr via two rounds

@@ -1,15 +1,57 @@
 //! Stage 6 verifier entry point.
 
-pub mod inputs;
-pub mod inputs_a;
-pub mod inputs_b;
+pub mod batch;
+pub mod booleanity;
+pub mod bytecode_read_raf;
+pub mod committed_reduction_cycle_phase;
+pub mod inc_claim_reduction;
+pub mod instruction_ra_virtualization;
 pub mod outputs;
-pub mod outputs_a;
-pub mod outputs_b;
+pub mod ram_hamming_booleanity;
+pub mod ram_ra_virtualization;
 pub mod verify;
-mod verify_a;
-pub(crate) mod verify_b;
 
-pub use inputs::{deps, Deps};
+pub use booleanity::{
+    Booleanity, BooleanityAddressPhase, BooleanityAddressPhaseInputClaims,
+    BooleanityAddressPhaseOutputClaims, BooleanityInputClaims, BooleanityOutputClaims,
+};
+pub use bytecode_read_raf::{
+    BytecodeReadRaf, BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
+    BytecodeReadRafAddressPhaseOutputClaims, BytecodeReadRafCommitted,
+    BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
+    BytecodeReadRafOutputClaims,
+};
+pub use committed_reduction_cycle_phase::{
+    AdviceCyclePhase, AdviceCyclePhaseInputClaims, AdviceCyclePhaseOutputClaims,
+    BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseInputClaims,
+    BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhase,
+    ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
+};
+pub use inc_claim_reduction::{
+    IncClaimReduction, IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
+};
+pub use instruction_ra_virtualization::{
+    InstructionRaVirtualization, InstructionRaVirtualizationInputClaims,
+    InstructionRaVirtualizationOutputClaims,
+};
 pub use outputs::{Stage6ClearOutput, Stage6Output, Stage6ZkOutput};
-pub use verify::verify;
+pub use ram_hamming_booleanity::{
+    RamHammingBooleanity, RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
+};
+pub use ram_ra_virtualization::{
+    RamRaVirtualization, RamRaVirtualizationInputClaims, RamRaVirtualizationOutputClaims,
+};
+pub use verify::{
+    stage6_advice_cycle_phase_reference, stage6_bytecode_cycle_points,
+    stage6_bytecode_read_raf_expected_output, stage6_bytecode_register_points,
+    stage6_expected_final_claim, stage6_expected_output_claim_values,
+    stage6_inc_claim_reduction_cycle_points, stage6_input_claim_values,
+    stage6_instruction_read_raf_point, stage6_output_claim_values,
+    stage6_post_address_transcript_challenges, stage6_pre_address_transcript_challenges,
+    stage6_public_output, stage6_stage1_cycle_binding, stage6_stage5_ram_reduced_opening_point,
+    verify, Stage6AdviceCyclePhaseReference, Stage6BatchExpectedOutputClaims,
+    Stage6BatchInputClaims, Stage6BytecodeReadRafExpectedOutputInputs,
+    Stage6BytecodeRegisterPoints, Stage6IncClaimReductionCyclePoints,
+    Stage6InstructionReadRafPoint, Stage6PostAddressChallenges, Stage6PreAddressChallenges,
+    Stage6RamReducedOpeningPoint, Stage6TranscriptChallenges,
+};

@@ -25,8 +25,8 @@
 //! AdditivelyHomomorphic   ZkOpeningScheme
 //!       (+ combine)        (+ commit_zk/open_zk/verify_zk)
 //!             │
-//!   StreamingCommitment
-//!     (+ begin/feed/finish)
+//!   StreamingCommitment ── ZkStreamingCommitment
+//!     (+ begin/feed/finish) (+ one-hot/feed_*/finish_zk)
 //! ```
 
 mod claims;
@@ -40,4 +40,7 @@ pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 
-pub use schemes::{AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
+pub use schemes::{
+    AdditivelyHomomorphic, CommitmentScheme, StreamingCommitment, ZkOpeningScheme,
+    ZkStreamingCommitment,
+};

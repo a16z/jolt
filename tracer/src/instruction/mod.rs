@@ -5,14 +5,17 @@ pub const CUSTOM_OPCODE: u8 = 0x5B; // Custom instructions (virtual sequences, a
 pub const INLINE_OPCODE: u8 = 0x2B; // Inline instructions
 
 // funct3 values for CUSTOM_OPCODE (0x5B)
-pub const FUNCT3_VIRTUAL_REV8W: u8 = 0b000;
+pub const FUNCT3_VIRTUAL_R: u8 = 0b000; // funct3 for format R virtual instructions
 pub const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001;
 pub const FUNCT3_VIRTUAL_HOST_IO: u8 = 0b010;
-pub const FUNCT3_ADVICE_LB: u8 = 0b011; // Load byte from advice tape
-pub const FUNCT3_ADVICE_LH: u8 = 0b100; // Load halfword from advice tape
-pub const FUNCT3_ADVICE_LW: u8 = 0b101; // Load word from advice tape
-pub const FUNCT3_ADVICE_LD: u8 = 0b110; // Load doubleword from advice tape
-pub const FUNCT3_ADVICE_LEN: u8 = 0b111; // Get remaining bytes in advice tape
+
+// funct7 values for format R virtual instructions (funct3 = 0b000)
+pub const FUNCT7_ADVICE_LB: u32 = 0x00; // Load byte from advice tape
+pub const FUNCT7_ADVICE_LH: u32 = 0x01; // Load halfword from advice tape
+pub const FUNCT7_ADVICE_LW: u32 = 0x02; // Load word from advice tape
+pub const FUNCT7_ADVICE_LD: u32 = 0x03; // Load doubleword from advice tape
+pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get remaining bytes in advice tape
+pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05; // Reverse bytes in a word
 
 use add::ADD;
 use addi::ADDI;
@@ -1269,25 +1272,36 @@ impl Instruction {
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x5B is reserved for custom/virtual instructions.
             0b1011011 => {
-                let funct3 = (instr >> 12) & 0x7;
-                match funct3 as u8 {
-                    FUNCT3_VIRTUAL_REV8W => {
-                        Ok(VirtualRev8W::new(instr, address, true, compressed).into())
+                let funct3 = ((instr >> 12) & 0x7) as u8;
+                if funct3 == FUNCT3_VIRTUAL_R {
+                    let funct7 = (instr >> 25) & 0x7f;
+                    match funct7 {
+                        FUNCT7_ADVICE_LB => {
+                            Ok(AdviceLB::new(instr, address, true, compressed).into())
+                        }
+                        FUNCT7_ADVICE_LH => {
+                            Ok(AdviceLH::new(instr, address, true, compressed).into())
+                        }
+                        FUNCT7_ADVICE_LW => {
+                            Ok(AdviceLW::new(instr, address, true, compressed).into())
+                        }
+                        FUNCT7_ADVICE_LD => {
+                            Ok(AdviceLD::new(instr, address, true, compressed).into())
+                        }
+                        FUNCT7_ADVICE_LEN => {
+                            Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
+                        }
+                        FUNCT7_VIRTUAL_REV8W => {
+                            Ok(VirtualRev8W::new(instr, address, true, compressed).into())
+                        }
+                        _ => Err("Invalid funct7 for virtual R-type instruction"),
                     }
-                    FUNCT3_VIRTUAL_ASSERT_EQ => {
-                        Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
-                    }
-                    FUNCT3_VIRTUAL_HOST_IO => {
-                        Ok(VirtualHostIO::new(instr, address, true, compressed).into())
-                    }
-                    FUNCT3_ADVICE_LB => Ok(AdviceLB::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_LH => Ok(AdviceLH::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_LW => Ok(AdviceLW::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_LD => Ok(AdviceLD::new(instr, address, true, compressed).into()),
-                    FUNCT3_ADVICE_LEN => {
-                        Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
-                    }
-                    _ => Err("Invalid custom/virtual instruction"),
+                } else if funct3 == FUNCT3_VIRTUAL_ASSERT_EQ {
+                    Ok(VirtualAssertEQ::new(instr, address, true, compressed).into())
+                } else if funct3 == FUNCT3_VIRTUAL_HOST_IO {
+                    Ok(VirtualHostIO::new(instr, address, true, compressed).into())
+                } else {
+                    Err("Invalid custom/virtual instruction")
                 }
             }
             #[cfg(feature = "field-inline")]

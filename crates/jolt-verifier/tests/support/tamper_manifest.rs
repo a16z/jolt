@@ -522,7 +522,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
-        "claims.stage2.batch_outputs.ram_raf_evaluation",
+        "claims.stage2.batch_outputs.ram_raf_evaluation.ram_ra",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -530,7 +530,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_output_check",
-        "claims.stage2.batch_outputs.ram_output_check",
+        "claims.stage2.batch_outputs.ram_output_check.val_final",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -953,7 +953,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage7.claims.advice_address_phase.trusted.opening_claim",
-        "claims.stage7.advice_address_phase.trusted.opening_claim",
+        "claims.stage7.advice_address_phase.trusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -961,7 +961,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage7.claims.advice_address_phase.untrusted.opening_claim",
-        "claims.stage7.advice_address_phase.untrusted.opening_claim",
+        "claims.stage7.advice_address_phase.untrusted",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -977,7 +977,7 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
     ),
     checked_standard(
         "stage7.claims.program_image_address_phase",
-        "claims.stage7.program_image_address_phase.opening_claim",
+        "claims.stage7.program_image_address_phase.program_image",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
@@ -1252,9 +1252,9 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
     let zero = Fr::from_u64(0);
 
     ClearProofClaims {
-        stage1: stage1::inputs::Stage1Claims {
+        stage1: stage1::outputs::Stage1OutputClaims {
             uniskip_output_claim: zero,
-            outer: stage1::inputs::SpartanOuterClaims {
+            outer: stage1::outputs::SpartanOuterClaims {
                 left_instruction_input: zero,
                 right_instruction_input: zero,
                 product: zero,
@@ -1276,7 +1276,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 next_is_first_in_sequence: zero,
                 lookup_output: zero,
                 should_jump: zero,
-                flags: stage1::inputs::SpartanOuterFlagClaims {
+                flags: stage1::outputs::SpartanOuterFlagClaims {
                     add_operands: zero,
                     subtract_operands: zero,
                     multiply_operands: zero,
@@ -1294,15 +1294,15 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 },
             },
         },
-        stage2: stage2::inputs::Stage2Claims {
+        stage2: stage2::outputs::Stage2OutputClaims {
             product_uniskip_output_claim: zero,
-            batch_outputs: stage2::inputs::Stage2BatchOutputOpeningClaims {
-                ram_read_write: stage2::inputs::RamReadWriteOutputOpeningClaims {
+            batch_outputs: stage2::outputs::Stage2BatchOutputClaims {
+                ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                     val: zero,
                     ra: zero,
                     inc: zero,
                 },
-                product_remainder: stage2::inputs::ProductRemainderOutputOpeningClaims {
+                product_remainder: stage2::outputs::ProductRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
                     jump_flag: zero,
@@ -1313,26 +1313,26 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     virtual_instruction: zero,
                 },
                 instruction_claim_reduction:
-                    stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
+                    stage2::outputs::InstructionClaimReductionOutputClaims {
                         lookup_output: Some(zero),
                         left_lookup_operand: zero,
                         right_lookup_operand: zero,
                         left_instruction_input: Some(zero),
                         right_instruction_input: Some(zero),
                     },
-                ram_raf_evaluation: zero,
-                ram_output_check: zero,
+                ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims { ram_ra: zero },
+                ram_output_check: stage2::outputs::RamOutputCheckOutputClaims { val_final: zero },
             },
         },
-        stage3: stage3::inputs::Stage3Claims {
-            shift: stage3::inputs::SpartanShiftOutputOpeningClaims {
+        stage3: stage3::outputs::Stage3OutputClaims {
+            shift: stage3::outputs::SpartanShiftOutputClaims {
                 unexpanded_pc: zero,
                 pc: zero,
                 is_virtual: zero,
                 is_first_in_sequence: zero,
                 is_noop: zero,
             },
-            instruction_input: stage3::inputs::InstructionInputOutputOpeningClaims {
+            instruction_input: stage3::outputs::InstructionInputOutputClaims {
                 left_operand_is_rs1: zero,
                 rs1_value: zero,
                 left_operand_is_pc: zero,
@@ -1342,110 +1342,107 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 right_operand_is_imm: zero,
                 imm: zero,
             },
-            registers_claim_reduction: stage3::inputs::RegistersClaimReductionOutputOpeningClaims {
+            registers_claim_reduction: stage3::outputs::RegistersClaimReductionOutputClaims {
                 rd_write_value: zero,
                 rs1_value: zero,
                 rs2_value: zero,
             },
         },
-        stage4: stage4::inputs::Stage4Claims {
-            advice: stage4::inputs::RamValCheckAdviceOpeningClaims {
+        stage4: stage4::outputs::Stage4OutputClaims {
+            advice: stage4::RamValCheckAdviceClaims {
                 untrusted: Some(zero),
                 trusted: Some(zero),
             },
             program_image_contribution: None,
-            registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
+            registers_read_write: stage4::RegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
                 rs2_ra: zero,
                 rd_wa: zero,
                 rd_inc: zero,
             },
-            ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
+            ram_val_check: stage4::RamValCheckOutputClaims {
                 ram_ra: zero,
                 ram_inc: zero,
             },
         },
-        stage5: stage5::inputs::Stage5Claims {
-            instruction_read_raf: stage5::inputs::InstructionReadRafOutputOpeningClaims {
+        stage5: stage5::outputs::Stage5OutputClaims {
+            instruction_read_raf: stage5::InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![zero],
                 instruction_ra: vec![zero],
                 instruction_raf_flag: zero,
             },
-            ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
-                ram_ra: zero,
-            },
-            registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
+            ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims { ram_ra: zero },
+            registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
                 rd_inc: zero,
                 rd_wa: zero,
             },
         },
-        stage6: stage6::inputs::Stage6Claims {
-            address_phase: stage6::inputs::Stage6AddressPhaseClaims {
+        stage6: stage6::outputs::Stage6OutputClaims {
+            address_phase: stage6::outputs::Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
                 bytecode_val_stages: Some([zero; 5]),
             },
-            bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
+            bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![zero],
             },
-            booleanity: stage6::inputs::BooleanityOutputOpeningClaims {
+            booleanity: stage6::outputs::BooleanityOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
+            ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
-            ram_ra_virtualization: stage6::inputs::RamRaVirtualizationOutputOpeningClaims {
+            ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
                 ram_ra: vec![zero],
             },
             instruction_ra_virtualization:
-                stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
+                stage6::outputs::InstructionRaVirtualizationOutputClaims {
                     committed_instruction_ra: vec![zero],
                 },
-            inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
                 ram_inc: zero,
                 rd_inc: zero,
             },
-            advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
-                trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
+            advice_cycle_phase: stage6::outputs::Stage6AdviceCyclePhaseClaims {
+                trusted: Some(stage6::outputs::AdviceCyclePhaseOutputClaim {
                     opening_claim: zero,
                 }),
-                untrusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
+                untrusted: Some(stage6::outputs::AdviceCyclePhaseOutputClaim {
                     opening_claim: zero,
                 }),
             },
             bytecode_claim_reduction: Some(
-                stage6::inputs::BytecodeCyclePhaseOutputClaims::Intermediate(zero),
+                stage6::outputs::BytecodeCyclePhaseOutputClaims::Intermediate(zero),
             ),
             program_image_claim_reduction: Some(
-                stage6::inputs::ProgramImageCyclePhaseOutputClaim {
+                stage6::outputs::ProgramImageCyclePhaseOutputClaim {
                     opening_claim: zero,
                 },
             ),
         },
-        stage7: stage7::inputs::Stage7Claims {
+        stage7: stage7::outputs::Stage7OutputClaims {
             hamming_weight_claim_reduction:
-                stage7::inputs::HammingWeightClaimReductionOutputOpeningClaims {
+                stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                 },
-            advice_address_phase: stage7::inputs::Stage7AdviceAddressPhaseClaims {
-                trusted: Some(stage7::inputs::AdviceAddressPhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-                untrusted: Some(stage7::inputs::AdviceAddressPhaseOutputClaim {
-                    opening_claim: zero,
-                }),
-            },
-            bytecode_address_phase: Some(stage7::inputs::BytecodeAddressPhaseOutputClaims {
-                chunks: vec![zero],
-            }),
+            advice_address_phase:
+                stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
+                    trusted: Some(zero),
+                    untrusted: Some(zero),
+                },
+            bytecode_address_phase: Some(
+                stage7::committed_reduction_address_phase::BytecodeReductionAddressPhaseOutputClaims {
+                    chunks: vec![zero],
+                },
+            ),
             program_image_address_phase: Some(
-                stage7::inputs::ProgramImageAddressPhaseOutputClaim {
-                    opening_claim: zero,
+                stage7::committed_reduction_address_phase::ProgramImageReductionAddressPhaseOutputClaims {
+                    program_image: zero,
                 },
             ),
         },

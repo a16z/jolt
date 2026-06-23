@@ -121,6 +121,10 @@ impl DoryHint {
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
     pub row_commitments: Vec<Bn254G1>,
+    /// Affine SRS bases cached lazily for the primitive-typed feed paths
+    /// (`feed_u64`/`feed_i128`), which call arkworks `msm_u64`/`msm_i128`
+    /// against affine bases. Grown on demand to the widest fed row.
+    pub(crate) scalar_affine_bases: Option<Vec<ark_bn254::G1Affine>>,
 }
 
 fn canonical_serialize<T: CanonicalSerialize, S: Serializer>(

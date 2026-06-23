@@ -43,6 +43,15 @@ impl<const XLEN: usize> LookupTable for SignedLessThanTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignedLessThanTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[
+            Prefixes::LeftOperandMsb,
+            Prefixes::RightOperandMsb,
+            Prefixes::LessThan,
+            Prefixes::Eq,
+        ]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::LessThan]
     }

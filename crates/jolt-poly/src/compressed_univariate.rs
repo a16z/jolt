@@ -68,12 +68,19 @@ impl<F: Field> CompressedPoly<F> {
     /// in O(d) multiplications.
     #[inline]
     pub fn evaluate_with_hint(&self, hint: F, point: F) -> F {
-        let linear_term = self.recover_linear_term(hint);
+        self.eval_from_hint(&hint, &point)
+    }
 
-        let mut x_pow = point;
-        let mut sum = self.coeffs_except_linear_term[0] + point * linear_term;
+    /// Like [`evaluate_with_hint`](Self::evaluate_with_hint) but takes hint and
+    /// point by reference, avoiding a copy at call sites that already hold references.
+    #[inline]
+    pub fn eval_from_hint(&self, hint: &F, point: &F) -> F {
+        let linear_term = self.recover_linear_term(*hint);
+
+        let mut x_pow = *point;
+        let mut sum = self.coeffs_except_linear_term[0] + *point * linear_term;
         for &c in &self.coeffs_except_linear_term[1..] {
-            x_pow *= point;
+            x_pow *= *point;
             sum += c * x_pow;
         }
         sum

@@ -61,6 +61,14 @@ impl<const XLEN: usize> LookupTable for VirtualROTRTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualROTRTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[
+            Prefixes::RightShift,
+            Prefixes::LeftShiftHelper,
+            Prefixes::LeftShift,
+        ]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::RightShiftHelper,

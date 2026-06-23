@@ -46,6 +46,10 @@ impl<const XLEN: usize> LookupTable for VirtualSRLTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRLTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::RightShift]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::RightShift, Suffixes::RightShiftHelper]
     }

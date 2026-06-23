@@ -501,7 +501,15 @@ impl<S: MultilinearPoly<Fr>> DoryPolynomial<ArkFr> for DorySourceAdapter<'_, S> 
     }
 
     fn evaluate(&self, point: &[ArkFr]) -> ArkFr {
-        let native_point: Vec<Fr> = point.iter().map(ark_to_jolt_fr).collect();
+        // Dory orders multilinear variables opposite to jolt's `MultilinearPoly`
+        // (its `multilinear_lagrange_basis` is the bit-reverse of jolt's), which
+        // is the order the VMV commitment and the non-ZK opening already use.
+        // Reverse the dory point back to jolt order so this evaluation agrees
+        // with the VMV. dory only calls this to compute the ZK `y_com` value;
+        // without the reversal `y_com` commits to `source.evaluate(rev(point))`
+        // instead of the opening claim, and the BlindFold eval-commitment check
+        // (`y_com == claim·g + blind·h`) fails.
+        let native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt_fr).collect();
         jolt_fr_to_ark(&self.source.evaluate(&native_point))
     }
 

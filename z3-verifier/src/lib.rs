@@ -47,6 +47,9 @@ macro_rules! template_format {
     (FormatAssert) => {
         FormatAssert { rs1: 2, imm: 1234 }
     };
+    (FormatT) => {
+        FormatT { rd: 1, rs1: 2 }
+    };
     (FormatVirtualRightShiftI) => {
         FormatVirtualRightShiftI {
             rd: 1,

@@ -14,17 +14,25 @@ pub enum FieldInlineRelationId {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldRegistersClaimReductionChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FieldRegistersClaimReductionPublic {
     EqSpartan,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldRegistersReadWriteChallenge {
     Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FieldRegistersReadWritePublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FieldRegistersValEvaluationChallenge {
+pub enum FieldRegistersValEvaluationPublic {
     LtCycle,
 }
 
@@ -39,7 +47,6 @@ pub enum FieldRegistersIncClaimReductionChallenge {
 pub enum FieldInlineChallengeId {
     FieldRegistersClaimReduction(FieldRegistersClaimReductionChallenge),
     FieldRegistersReadWrite(FieldRegistersReadWriteChallenge),
-    FieldRegistersValEvaluation(FieldRegistersValEvaluationChallenge),
     FieldRegistersIncClaimReduction(FieldRegistersIncClaimReductionChallenge),
 }
 
@@ -49,15 +56,29 @@ pub enum FieldInlineCommittedPolynomial {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum FieldInlineOpFlag {
+    Add,
+    Sub,
+    Mul,
+    Inv,
+    AssertEq,
+    LoadFromX,
+    StoreToX,
+    LoadImm,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineVirtualPolynomial {
     FieldRs1Value,
     FieldRs2Value,
     FieldRdValue,
     FieldProduct,
+    FieldInvProduct,
     FieldRs1Ra,
     FieldRs2Ra,
     FieldRdWa,
     FieldRegistersVal,
+    FieldOpFlag(FieldInlineOpFlag),
 }
 
 #[derive(
@@ -112,5 +133,8 @@ pub enum FieldRegistersIncClaimReductionPublic {
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
 pub enum FieldInlinePublicId {
+    FieldRegistersClaimReduction(FieldRegistersClaimReductionPublic),
+    FieldRegistersReadWrite(FieldRegistersReadWritePublic),
+    FieldRegistersValEvaluation(FieldRegistersValEvaluationPublic),
     FieldRegistersIncClaimReduction(FieldRegistersIncClaimReductionPublic),
 }

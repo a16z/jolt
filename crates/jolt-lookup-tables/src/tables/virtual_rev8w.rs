@@ -52,6 +52,10 @@ impl<const XLEN: usize> LookupTable for VirtualRev8WTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRev8WTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::Rev8W]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Rev8W]
     }
