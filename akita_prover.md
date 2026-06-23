@@ -1,5 +1,12 @@
 # Akita Prover Integration Goal
 
+## Goal Mode Prompt
+
+Follow this file as the source of truth. Finish bringing Akita protocol and
+verifier support into the stripped modular prover branch, then make
+`crates/jolt-prover-legacy` produce verifier-native Akita proofs while preserving
+the existing Dory path. Stay local: make milestone commits, but do not push.
+
 ## Mission
 
 Finish bringing Akita protocol support into the stripped modular Jolt stack, then make
