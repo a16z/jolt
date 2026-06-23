@@ -684,7 +684,7 @@ where
         artifacts,
     )?;
     let (statement, mut transcript) =
-        crate::verifier::stage8_batch_statement_with_config_and_transcript::<
+        crate::prover_support::stage8_batch_statement_with_config_and_transcript::<
             AkitaField,
             AkitaPackedScheme,
             AkitaClearVectorCommitment,
@@ -725,7 +725,7 @@ where
         artifacts,
     )?;
     let (statement, mut transcript) =
-        crate::verifier::stage8_batch_statement_with_config_and_transcript::<
+        crate::prover_support::stage8_batch_statement_with_config_and_transcript::<
             AkitaField,
             AkitaPackedScheme,
             AkitaClearVectorCommitment,

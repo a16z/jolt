@@ -334,7 +334,7 @@ where
     Ok(())
 }
 
-pub fn stage8_batch_statement<F, PCS, VC, T, ZkProof>(
+pub(crate) fn stage8_batch_statement<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -357,7 +357,7 @@ where
     )
 }
 
-pub fn stage8_batch_statement_with_config<F, PCS, VC, T, ZkProof>(
+pub(crate) fn stage8_batch_statement_with_config<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -381,7 +381,7 @@ where
     .map(|(statement, _transcript)| statement)
 }
 
-pub fn stage8_batch_statement_with_config_and_transcript<F, PCS, VC, T, ZkProof>(
+pub(crate) fn stage8_batch_statement_with_config_and_transcript<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -415,7 +415,7 @@ where
     Ok((statement, transcript))
 }
 
-pub fn lattice_packed_validity_transcript_with_config<F, PCS, VC, T, ZkProof>(
+pub(crate) fn lattice_packed_validity_transcript_with_config<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -660,7 +660,7 @@ pub struct CheckedInputs {
     pub precommitted: PrecommittedSchedule,
 }
 
-pub fn validate_inputs<PCS, VC, ZkProof>(
+pub(crate) fn validate_inputs<PCS, VC, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -1227,7 +1227,7 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     transcript.append(&U64Word(value));
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
+pub(crate) fn validate_proof_consistency<PCS, VC, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     zk: bool,
 ) -> Result<(), VerifierError>

@@ -15,6 +15,7 @@ pub mod config;
 pub mod error;
 pub mod preprocessing;
 pub mod proof;
+pub mod prover_support;
 pub mod stages;
 pub mod verifier;
 
@@ -48,7 +49,5 @@ pub use proof::{
 #[cfg(feature = "field-inline")]
 pub use proof::{FieldInlineCommitments, FieldRegistersCommitments};
 pub use verifier::{
-    stage8_batch_statement, stage8_batch_statement_with_config,
-    stage8_batch_statement_with_config_and_transcript, verify, verify_clear,
-    verify_clear_with_config, verify_with_config, CheckedInputs,
+    verify, verify_clear, verify_clear_with_config, verify_with_config, CheckedInputs,
 };

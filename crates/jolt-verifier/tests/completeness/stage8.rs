@@ -35,20 +35,22 @@ use crate::support::core_fixtures::CoreVerifierCase;
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn stage8_clear_batch_statement_matches_dory_direct_manifest() {
     let case = crate::support::core_fixtures::standard_muldiv_case();
-    let Stage8BatchStatement::Clear(batch) = jolt_verifier::stage8_batch_statement::<
-        Fr,
-        DoryScheme,
-        Pedersen<Bn254G1>,
-        Blake2bTranscript,
-        _,
-    >(
-        &case.preprocessing,
-        &case.public_io,
-        &case.proof,
-        case.trusted_advice_commitment.as_ref(),
-        false,
-    )
-    .expect("build Stage 8 batch statement") else {
+    let Stage8BatchStatement::Clear(batch) =
+        jolt_verifier::prover_support::stage8_batch_statement::<
+            Fr,
+            DoryScheme,
+            Pedersen<Bn254G1>,
+            Blake2bTranscript,
+            _,
+        >(
+            &case.preprocessing,
+            &case.public_io,
+            &case.proof,
+            case.trusted_advice_commitment.as_ref(),
+            false,
+        )
+        .expect("build Stage 8 batch statement")
+    else {
         panic!("standard proof should build clear Stage 8 statement");
     };
 
@@ -59,20 +61,22 @@ fn stage8_clear_batch_statement_matches_dory_direct_manifest() {
 #[cfg(all(feature = "core-fixtures", not(feature = "zk")))]
 fn stage8_clear_batch_statement_includes_committed_program_layout() {
     let case = crate::support::core_fixtures::standard_committed_muldiv_case();
-    let Stage8BatchStatement::Clear(batch) = jolt_verifier::stage8_batch_statement::<
-        Fr,
-        DoryScheme,
-        Pedersen<Bn254G1>,
-        Blake2bTranscript,
-        _,
-    >(
-        &case.preprocessing,
-        &case.public_io,
-        &case.proof,
-        case.trusted_advice_commitment.as_ref(),
-        false,
-    )
-    .expect("build committed-program Stage 8 batch statement") else {
+    let Stage8BatchStatement::Clear(batch) =
+        jolt_verifier::prover_support::stage8_batch_statement::<
+            Fr,
+            DoryScheme,
+            Pedersen<Bn254G1>,
+            Blake2bTranscript,
+            _,
+        >(
+            &case.preprocessing,
+            &case.public_io,
+            &case.proof,
+            case.trusted_advice_commitment.as_ref(),
+            false,
+        )
+        .expect("build committed-program Stage 8 batch statement")
+    else {
         panic!("standard proof should build clear Stage 8 statement");
     };
 
@@ -87,7 +91,7 @@ fn stage8_clear_batch_statement_includes_committed_program_layout() {
 #[cfg(all(feature = "core-fixtures", feature = "zk"))]
 fn stage8_zk_batch_statement_matches_hidden_claim_manifest() {
     let case = crate::support::core_fixtures::zk_muldiv_case();
-    let Stage8BatchStatement::Zk(batch) = jolt_verifier::stage8_batch_statement::<
+    let Stage8BatchStatement::Zk(batch) = jolt_verifier::prover_support::stage8_batch_statement::<
         Fr,
         DoryScheme,
         Pedersen<Bn254G1>,
