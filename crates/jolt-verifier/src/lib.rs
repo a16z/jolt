@@ -7,6 +7,8 @@ mod akita_packed;
 #[cfg(feature = "akita")]
 mod akita_validation;
 #[cfg(feature = "akita")]
+mod akita_validity;
+#[cfg(feature = "akita")]
 mod akita_witness;
 pub mod compat;
 pub mod config;
