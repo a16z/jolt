@@ -17,6 +17,19 @@ where
     }
 }
 
+/// Bind a packed-linear batch statement before sampling reduction challenges.
+///
+/// Transcript order:
+/// 1. domain label, canonical packing layout digest, dimension, and cell count;
+/// 2. logical protocol point, then direct/native PCS point;
+/// 3. ordered claims: commitment, claimed value, and claim scale;
+/// 4. physical view tag;
+/// 5. for packed-linear views, view layout digest and ordered terms;
+/// 6. for each term: family reference, limb, symbol, row point, coefficient.
+///
+/// The view relation is proven by the packed-linear reduction. This binding
+/// makes the statement, layout metadata, and term addresses non-malleable before
+/// the reduction challenges are drawn.
 pub(super) fn bind_packed_statement<F, C, OpeningId, RelationId, L, T>(
     layout: &L,
     statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
