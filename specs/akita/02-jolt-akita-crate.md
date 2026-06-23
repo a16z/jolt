@@ -91,7 +91,7 @@ AkitaPackingViewStatement:
 
 AkitaCommitInput:
   PackedWitness layout digest.
-  PackedWitnessSource handle.
+  PackingWitnessSource handle.
   D_pack.
 
 AkitaProverHint:
@@ -109,7 +109,7 @@ Precommitted objects:
   TrustedAdvice, BytecodeChunk(i), and ProgramImageInit keep their original
   commitments and opening proofs outside the W_pack packed-view statement.
   Their prover inputs are original polynomials plus backend hints for those
-  commitments, not PackedWitnessSource entries.
+  commitments, not PackingWitnessSource entries.
 
 Backend program mode caveat:
   an Akita backend may have a Program::Committed option that commits program
@@ -155,10 +155,10 @@ Jolt-specific source construction is split by commitment class.
 Proof-owned packed-source construction, such as trace rows, untrusted advice
 bytes, field-inline auxiliary facts, and fused-increment facts, lives in the
 verifier/protocol layer or prover-side PIOP code. `jolt-akita` consumes the
-resulting generic PackedWitnessSource plus view formulas and layout metadata.
+resulting generic PackingWitnessSource plus view formulas and layout metadata.
 
 TrustedAdvice, BytecodeChunk(i), and ProgramImageInit are not
-PackedWitnessSource entries in the target protocol. They are supplied only to
+PackingWitnessSource entries in the target protocol. They are supplied only to
 the separate precommitted opening path as original polynomials plus backend
 hints for those original commitments.
 
@@ -256,7 +256,7 @@ commit_packed_witness:
   output = AkitaCommitment, AkitaProverHint.
 
 prove_batch:
-  input = BatchOpeningStatement, AkitaProverHint, PackedWitnessSource.
+  input = BatchOpeningStatement, AkitaProverHint, PackingWitnessSource.
   output = AkitaBatchProof, logical coefficients.
 
 verify_batch:
@@ -347,8 +347,8 @@ backend.rs:
 
 layout.rs:
   AkitaLayoutDigest
-  PackedWitnessLayout
-  PackedFamily
+  PackingWitnessLayout
+  PackingLayoutFamily
   D_pack
   global padding
 
@@ -523,7 +523,7 @@ akita_hint_layout_mismatch_rejects:
   prover hint generated for one PackedWitness layout cannot prove another.
 
 akita_commit_source_streams_nonzero_facts:
-  commit adapter consumes PackedWitnessSource without dense W_pack
+  commit adapter consumes PackingWitnessSource without dense W_pack
   materialization.
 
 akita_linear_decode_requires_backend_support_or_adapter:

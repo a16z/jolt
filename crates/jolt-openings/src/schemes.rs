@@ -98,14 +98,14 @@ pub enum PhysicalView<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackingTerm<F> {
     pub coefficient: F,
-    pub family: PackedFamilyRef,
+    pub family: PackingFamilyRef,
     pub limb: usize,
     pub symbol: usize,
     pub row_point: Vec<F>,
 }
 
 impl<F> PackingTerm<F> {
-    pub fn new(coefficient: F, family: PackedFamilyRef, limb: usize, symbol: usize) -> Self {
+    pub fn new(coefficient: F, family: PackingFamilyRef, limb: usize, symbol: usize) -> Self {
         Self {
             coefficient,
             family,
@@ -122,13 +122,13 @@ impl<F> PackingTerm<F> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PackedFamilyRef {
+pub struct PackingFamilyRef {
     pub namespace: u64,
     pub id: u64,
     pub index: u64,
 }
 
-impl PackedFamilyRef {
+impl PackingFamilyRef {
     pub const fn new(namespace: u64, id: u64, index: u64) -> Self {
         Self {
             namespace,
@@ -351,13 +351,13 @@ mod tests {
     }
 
     fn packed_term<F>(coefficient: F) -> PackingTerm<F> {
-        PackingTerm::new(coefficient, PackedFamilyRef::new(0x6a6f_6c74, 1, 0), 0, 0)
+        PackingTerm::new(coefficient, PackingFamilyRef::new(0x6a6f_6c74, 1, 0), 0, 0)
     }
 
     fn packed_term_at<F>(coefficient: F, symbol: usize) -> PackingTerm<F> {
         PackingTerm::new(
             coefficient,
-            PackedFamilyRef::new(0x6a6f_6c74, 1, 0),
+            PackingFamilyRef::new(0x6a6f_6c74, 1, 0),
             0,
             symbol,
         )

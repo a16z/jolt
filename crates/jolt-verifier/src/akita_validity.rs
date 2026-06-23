@@ -26,7 +26,7 @@ use jolt_akita::{AkitaCommitment, AkitaField};
 use jolt_claims::protocols::jolt::{
     LatticePackedFamilyId, LatticePackedValidityKind, LatticePackedValidityRequirement,
 };
-use jolt_openings::{PackedFamilyId, PackedWitnessLayout, PackedWitnessSource};
+use jolt_openings::{PackingFamilyId, PackingWitnessLayout, PackingWitnessSource};
 use jolt_poly::{try_eq_mle, EqPolynomial, UnivariatePoly};
 use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{
@@ -53,7 +53,7 @@ pub fn prove_akita_packing_validity<T, S>(
 ) -> Result<AkitaPackingValidityProofArtifacts, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     if source.layout() != &artifacts.layout {
         return Err(
@@ -166,7 +166,7 @@ pub fn prove_akita_jolt_packed_validity<T, S>(
 ) -> Result<AkitaPackingValidityProofArtifacts, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     validate_akita_artifacts_for_proof(
         &preprocessing.pcs_setup,
@@ -215,7 +215,7 @@ fn prove_combined_validity_sumcheck<T, S>(
 >
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let mut challenges = Vec::with_capacity(max_num_vars);
     let mut round_polynomials = Vec::with_capacity(max_num_vars);
@@ -278,7 +278,7 @@ fn sum_combined_validity_over_suffix<S>(
     remaining: usize,
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let suffix_count = checked_power_of_two(remaining, "packed validity suffix")?;
     let mut sum = AkitaField::zero();
@@ -306,7 +306,7 @@ fn combined_validity_value<S>(
     point: &[AkitaField],
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let mut value = AkitaField::zero();
     for ((statement, eq_point), coefficient) in
@@ -335,7 +335,7 @@ pub(crate) fn validity_value<S>(
     point: &[AkitaField],
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let eq_mask = try_eq_mle(point, eq_point).map_err(|error| {
         VerifierError::LatticePackedValiditySumcheckFailed {
@@ -365,7 +365,7 @@ fn validity_opening_values<S>(
     point: &[AkitaField],
 ) -> Result<Vec<AkitaField>, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     if statement.kind == LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint {
         return Ok(vec![
@@ -389,7 +389,7 @@ fn validity_opening_value<S>(
     point: &[AkitaField],
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let family_id = lattice_packing_family_id(&statement.requirement.family);
     let shape = validity_statement_shape(source.layout(), statement, &family_id)?;
@@ -463,25 +463,25 @@ fn validity_violation(kind: LatticePackedValidityStatementKind, opening: AkitaFi
 
 fn weighted_direct_symbol_value<S>(
     source: &S,
-    family_id: &PackedFamilyId,
+    family_id: &PackingFamilyId,
     row_weights: &[AkitaField],
     symbol: usize,
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     weighted_direct_limb_symbol_value(source, family_id, row_weights, 0, symbol)
 }
 
 fn weighted_direct_limb_symbol_value<S>(
     source: &S,
-    family_id: &PackedFamilyId,
+    family_id: &PackingFamilyId,
     row_weights: &[AkitaField],
     limb: usize,
     symbol: usize,
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let mut value = AkitaField::zero();
     let mut error = None;
@@ -522,7 +522,7 @@ fn field_element_canonical_factor_value<S>(
     factor: FieldCanonicalFactor,
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let (family, limb, symbol_filter) = match factor {
         FieldCanonicalFactor::Eq {
@@ -551,12 +551,12 @@ where
 fn weighted_field_canonical_symbol_value<S>(
     source: &S,
     point: &[AkitaField],
-    family_id: &PackedFamilyId,
+    family_id: &PackingFamilyId,
     limb: usize,
     symbol: usize,
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let family =
         source
@@ -600,10 +600,10 @@ fn bytecode_store_rd_disjoint_factor_value<S>(
     factor: usize,
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let chunk = bytecode_store_rd_disjoint_chunk(&statement.requirement)?;
-    let store_id = PackedFamilyId::BytecodeCircuitFlag {
+    let store_id = PackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
     };
@@ -633,7 +633,7 @@ where
     match factor {
         0 => weighted_direct_symbol_value(source, &store_id, &row_weights, 1),
         1 => {
-            let rd_id = PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+            let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
             let rd = source.layout().family(&rd_id).ok_or_else(|| {
                 VerifierError::InvalidProtocolConfig {
                     reason: format!("bytecode Store/Rd disjointness requires {rd_id:?}"),
@@ -696,9 +696,9 @@ struct ValidityPointParts<'a> {
 }
 
 fn validity_statement_shape(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statement: &LatticePackedValidityStatement,
-    family_id: &PackedFamilyId,
+    family_id: &PackingFamilyId,
 ) -> Result<ValidityStatementShape, VerifierError> {
     let family = layout
         .family(family_id)
@@ -782,13 +782,13 @@ enum SymbolWeights<'a> {
 
 fn weighted_family_value<S>(
     source: &S,
-    family_id: &PackedFamilyId,
+    family_id: &PackingFamilyId,
     row_weights: &[AkitaField],
     limb_weights: &[AkitaField],
     symbol_weights: SymbolWeights<'_>,
 ) -> Result<AkitaField, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let mut value = AkitaField::zero();
     let mut error = None;

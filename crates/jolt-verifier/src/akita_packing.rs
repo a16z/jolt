@@ -7,17 +7,17 @@ use jolt_akita::{
 };
 use jolt_crypto::Commitment;
 use jolt_openings::{
-    has_packing_view, packed_witness_source_polynomial, prove_sparse_packing_reduction,
+    has_packing_view, packing_witness_source_polynomial, prove_sparse_packing_reduction,
     validate_packing_statement, BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement,
-    CommitmentScheme, OpeningsError, PackedWitnessLayout, PackedWitnessSource, PackingBatch,
-    PackingBatchProof, PackingProverSetup, PackingSetupParams, PackingVerifierSetup,
+    CommitmentScheme, OpeningsError, PackingBatch, PackingBatchProof, PackingProverSetup,
+    PackingSetupParams, PackingSource, PackingVerifierSetup, PackingWitnessLayout,
     PackingWitnessSource, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 use serde::{Deserialize, Serialize};
 
-type AkitaPackingAdapter = PackingBatch<AkitaScheme, PackedWitnessLayout>;
+type AkitaPackingAdapter = PackingBatch<AkitaScheme, PackingWitnessLayout>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaPackingScheme;
@@ -28,7 +28,7 @@ impl AkitaPackingScheme {
         source: &S,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
     where
-        S: PackedWitnessSource<AkitaField>,
+        S: PackingWitnessSource<AkitaField>,
     {
         validate_source_fits_setup(setup.pcs.max_num_vars, source.layout())?;
         if let Some(polynomial) = packed_source_sparse_polynomial(source)? {
@@ -38,7 +38,7 @@ impl AkitaPackingScheme {
                 &polynomial,
             );
         }
-        let polynomial = packed_witness_source_polynomial(source)?;
+        let polynomial = packing_witness_source_polynomial(source)?;
         AkitaScheme::commit_group(&setup.pcs, source.layout().digest, &[polynomial])
     }
 
@@ -51,7 +51,7 @@ impl AkitaPackingScheme {
     ) -> Result<PackingBatchProof<AkitaBatchProof>, OpeningsError>
     where
         T: Transcript<Challenge = AkitaField>,
-        S: PackedWitnessSource<AkitaField>,
+        S: PackingWitnessSource<AkitaField>,
     {
         validate_source_fits_setup(setup.pcs.max_num_vars, source.layout())?;
         if let Some(sparse_polynomial) = packed_source_sparse_polynomial(source)? {
@@ -91,7 +91,7 @@ impl AkitaPackingScheme {
             });
         }
 
-        let polynomial = packed_witness_source_polynomial(source)?;
+        let polynomial = packing_witness_source_polynomial(source)?;
         <Self as BatchOpeningScheme>::prove_batch(
             setup,
             transcript,
@@ -109,11 +109,11 @@ impl Commitment for AkitaPackingScheme {
 impl CommitmentScheme for AkitaPackingScheme {
     type Field = AkitaField;
     type Proof = PackingBatchProof<AkitaBatchProof>;
-    type ProverSetup = PackingProverSetup<AkitaProverSetup, PackedWitnessLayout>;
-    type VerifierSetup = PackingVerifierSetup<AkitaVerifierSetup, PackedWitnessLayout>;
+    type ProverSetup = PackingProverSetup<AkitaProverSetup, PackingWitnessLayout>;
+    type VerifierSetup = PackingVerifierSetup<AkitaVerifierSetup, PackingWitnessLayout>;
     type Polynomial = Polynomial<AkitaField>;
     type OpeningHint = AkitaProverHint;
-    type SetupParams = PackingSetupParams<AkitaSetupParams, PackedWitnessLayout>;
+    type SetupParams = PackingSetupParams<AkitaSetupParams, PackingWitnessLayout>;
 
     fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
         <AkitaPackingAdapter as CommitmentScheme>::setup(params)
@@ -277,11 +277,11 @@ impl ZkBatchOpeningScheme for AkitaPackingScheme {
 
 struct AkitaPackingSource<'a, S>(&'a S);
 
-impl<S> PackingWitnessSource<AkitaField> for AkitaPackingSource<'_, S>
+impl<S> PackingSource<AkitaField> for AkitaPackingSource<'_, S>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
-    type Layout = PackedWitnessLayout;
+    type Layout = PackingWitnessLayout;
 
     fn layout(&self) -> &Self::Layout {
         self.0.layout()
@@ -292,8 +292,8 @@ where
     }
 }
 
-struct PackedBatchShape<'a> {
-    layout: &'a PackedWitnessLayout,
+struct PackingBatchShape<'a> {
+    layout: &'a PackingWitnessLayout,
     commitment: AkitaCommitment,
 }
 
@@ -334,9 +334,9 @@ fn validate_packed_adapter_verifier_inputs<OpeningId, RelationId>(
 
 fn validate_packed_adapter_statement<'a, Setup, OpeningId, RelationId>(
     setup: &Setup,
-    layout: &'a PackedWitnessLayout,
+    layout: &'a PackingWitnessLayout,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-) -> Result<PackedBatchShape<'a>, OpeningsError>
+) -> Result<PackingBatchShape<'a>, OpeningsError>
 where
     Setup: AkitaPackingSetupShape,
 {
@@ -347,7 +347,7 @@ where
         layout,
         &commitment,
     )?;
-    Ok(PackedBatchShape { layout, commitment })
+    Ok(PackingBatchShape { layout, commitment })
 }
 
 fn validate_packed_source_prover_inputs<'a, OpeningId, RelationId, S>(
@@ -355,9 +355,9 @@ fn validate_packed_source_prover_inputs<'a, OpeningId, RelationId, S>(
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
     source: &S,
     hint: &AkitaProverHint,
-) -> Result<PackedBatchShape<'a>, OpeningsError>
+) -> Result<PackingBatchShape<'a>, OpeningsError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let shape = validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement)?;
     let source_layout = source.layout();
@@ -404,7 +404,7 @@ impl AkitaPackingSetupShape for AkitaVerifierSetup {
 fn validate_packed_setup_shape(
     max_num_vars: usize,
     default_layout_digest: [u8; 32],
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     commitment: &AkitaCommitment,
 ) -> Result<(), OpeningsError> {
     if commitment.num_vars > max_num_vars {
@@ -448,7 +448,7 @@ fn packed_source_sparse_polynomial<S>(
     source: &S,
 ) -> Result<Option<AkitaSparsePolynomial>, OpeningsError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let layout = source.layout();
     if layout.cells == 0 {
@@ -508,7 +508,7 @@ where
 
 fn validate_source_fits_setup(
     max_num_vars: usize,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
 ) -> Result<(), OpeningsError> {
     if layout.dimension > max_num_vars {
         return Err(OpeningsError::PolynomialTooLarge {

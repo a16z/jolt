@@ -34,35 +34,35 @@ mod error;
 mod homomorphic_batch;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
-mod packed_view;
 mod packing;
 mod packing_layout;
+mod packing_view;
 mod reduction;
 mod schemes;
 
 pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
-pub use packed_view::{
-    PackedViewCatalog, PackedViewDigest, PackedViewEntry, PackedViewError, PackedViewFormula,
-    PackedViewTerm, PackedViewValidity,
-};
 pub use packing::{
     has_packing_view, prove_packing_reduction, prove_sparse_packing_reduction,
     validate_packing_statement, verify_packing_reduction, PackingAddress, PackingBatch,
     PackingBatchProof, PackingFamily, PackingLayout, PackingProverReduction, PackingProverSetup,
-    PackingReductionProof, PackingSetupParams, PackingVerifierReduction, PackingVerifierSetup,
-    PackingWitnessSource,
+    PackingReductionProof, PackingSetupParams, PackingSource, PackingVerifierReduction,
+    PackingVerifierSetup,
 };
 pub use packing_layout::{
-    packed_witness_source_polynomial, PackedAdviceKind, PackedAlphabet, PackedAlphabetCounts,
-    PackedCellAddress, PackedDomainCellCounts, PackedFactDomain, PackedFamily, PackedFamilyId,
-    PackedFamilySpec, PackedLayoutAudit, PackedLayoutError, PackedViewKind, PackedWitnessLayout,
-    PackedWitnessSource, SparsePackedWitness,
+    packing_witness_source_polynomial, PackingAdviceKind, PackingAlphabet, PackingAlphabetCounts,
+    PackingCellAddress, PackingDomainCellCounts, PackingFactDomain, PackingFamilyId,
+    PackingFamilySpec, PackingLayoutAudit, PackingLayoutError, PackingLayoutFamily,
+    PackingViewKind, PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness,
+};
+pub use packing_view::{
+    PackingViewCatalog, PackingViewDigest, PackingViewEntry, PackingViewError, PackingViewFormula,
+    PackingViewTerm, PackingViewValidity,
 };
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme,
-    BatchOpeningStatement, CommitmentLayoutDigest, CommitmentScheme, PackedFamilyRef, PackingTerm,
+    BatchOpeningStatement, CommitmentLayoutDigest, CommitmentScheme, PackingFamilyRef, PackingTerm,
     PhysicalView, StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme,
 };

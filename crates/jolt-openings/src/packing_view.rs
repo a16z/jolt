@@ -3,32 +3,32 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedLayoutError,
-    PackedWitnessLayout, PackedWitnessSource, PackingTerm, PhysicalView,
+    PackingAdviceKind, PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingLayoutError,
+    PackingTerm, PackingWitnessLayout, PackingWitnessSource, PhysicalView,
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
 
-pub type PackedViewDigest = [u8; 32];
+pub type PackingViewDigest = [u8; 32];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PackedViewCatalog<OpeningId, RelationId, F> {
-    pub entries: Vec<PackedViewEntry<OpeningId, RelationId, F>>,
-    pub digest: PackedViewDigest,
+pub struct PackingViewCatalog<OpeningId, RelationId, F> {
+    pub entries: Vec<PackingViewEntry<OpeningId, RelationId, F>>,
+    pub digest: PackingViewDigest,
 }
 
-impl<OpeningId, RelationId, F> PackedViewCatalog<OpeningId, RelationId, F>
+impl<OpeningId, RelationId, F> PackingViewCatalog<OpeningId, RelationId, F>
 where
     OpeningId: Clone + Ord,
     RelationId: Clone + Ord,
     F: Field,
 {
     pub fn new(
-        layout: &PackedWitnessLayout,
-        entries: impl IntoIterator<Item = PackedViewEntry<OpeningId, RelationId, F>>,
-    ) -> Result<Self, PackedViewError> {
+        layout: &PackingWitnessLayout,
+        entries: impl IntoIterator<Item = PackingViewEntry<OpeningId, RelationId, F>>,
+    ) -> Result<Self, PackingViewError> {
         let mut entries = entries.into_iter().collect::<Vec<_>>();
         entries.sort_by(|left, right| {
             left.id
@@ -36,14 +36,14 @@ where
                 .then_with(|| left.relation.cmp(&right.relation))
         });
         if entries.is_empty() {
-            return Err(PackedViewError::EmptyCatalog);
+            return Err(PackingViewError::EmptyCatalog);
         }
 
         let mut previous_key = None;
         for entry in &entries {
             let key = (&entry.id, &entry.relation);
             if previous_key == Some(key) {
-                return Err(PackedViewError::DuplicateView);
+                return Err(PackingViewError::DuplicateView);
             }
             entry.formula.validate(layout)?;
             previous_key = Some(key);
@@ -57,19 +57,19 @@ where
         &self,
         id: &OpeningId,
         relation: &RelationId,
-    ) -> Result<&PackedViewFormula<F>, PackedViewError> {
+    ) -> Result<&PackingViewFormula<F>, PackingViewError> {
         self.entries
             .iter()
             .find(|entry| entry.id == *id && entry.relation == *relation)
             .map(|entry| &entry.formula)
-            .ok_or(PackedViewError::MissingView)
+            .ok_or(PackingViewError::MissingView)
     }
 
-    pub fn verify_digest(&self, expected: &PackedViewDigest) -> Result<(), PackedViewError> {
+    pub fn verify_digest(&self, expected: &PackingViewDigest) -> Result<(), PackingViewError> {
         if &self.digest == expected {
             Ok(())
         } else {
-            Err(PackedViewError::CatalogDigestMismatch {
+            Err(PackingViewError::CatalogDigestMismatch {
                 expected: *expected,
                 actual: self.digest,
             })
@@ -78,14 +78,14 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PackedViewEntry<OpeningId, RelationId, F> {
+pub struct PackingViewEntry<OpeningId, RelationId, F> {
     pub id: OpeningId,
     pub relation: RelationId,
-    pub formula: PackedViewFormula<F>,
+    pub formula: PackingViewFormula<F>,
 }
 
-impl<OpeningId, RelationId, F> PackedViewEntry<OpeningId, RelationId, F> {
-    pub fn new(id: OpeningId, relation: RelationId, formula: PackedViewFormula<F>) -> Self {
+impl<OpeningId, RelationId, F> PackingViewEntry<OpeningId, RelationId, F> {
+    pub fn new(id: OpeningId, relation: RelationId, formula: PackingViewFormula<F>) -> Self {
         Self {
             id,
             relation,
@@ -95,24 +95,24 @@ impl<OpeningId, RelationId, F> PackedViewEntry<OpeningId, RelationId, F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PackedViewFormula<F> {
+pub enum PackingViewFormula<F> {
     Direct {
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         limb: usize,
         symbol: usize,
     },
     LinearDecoded {
-        terms: Vec<PackedViewTerm<F>>,
-        validity: PackedViewValidity,
+        terms: Vec<PackingViewTerm<F>>,
+        validity: PackingViewValidity,
     },
     ReducedMasked {
-        terms: Vec<PackedViewTerm<F>>,
+        terms: Vec<PackingViewTerm<F>>,
     },
     MaskedDecoded,
 }
 
-impl<F: Field> PackedViewFormula<F> {
-    pub fn direct(family: PackedFamilyId, limb: usize, symbol: usize) -> Self {
+impl<F: Field> PackingViewFormula<F> {
+    pub fn direct(family: PackingFamilyId, limb: usize, symbol: usize) -> Self {
         Self::Direct {
             family,
             limb,
@@ -120,25 +120,25 @@ impl<F: Field> PackedViewFormula<F> {
         }
     }
 
-    pub fn linear_decoded(terms: Vec<PackedViewTerm<F>>) -> Self {
+    pub fn linear_decoded(terms: Vec<PackingViewTerm<F>>) -> Self {
         Self::LinearDecoded {
             terms,
-            validity: PackedViewValidity::Proven,
+            validity: PackingViewValidity::Proven,
         }
     }
 
-    pub fn unchecked_linear_decoded(terms: Vec<PackedViewTerm<F>>) -> Self {
+    pub fn unchecked_linear_decoded(terms: Vec<PackingViewTerm<F>>) -> Self {
         Self::LinearDecoded {
             terms,
-            validity: PackedViewValidity::Unchecked,
+            validity: PackingViewValidity::Unchecked,
         }
     }
 
-    pub fn reduced_masked(terms: Vec<PackedViewTerm<F>>) -> Self {
+    pub fn reduced_masked(terms: Vec<PackingViewTerm<F>>) -> Self {
         Self::ReducedMasked { terms }
     }
 
-    pub fn validate(&self, layout: &PackedWitnessLayout) -> Result<(), PackedViewError> {
+    pub fn validate(&self, layout: &PackingWitnessLayout) -> Result<(), PackingViewError> {
         match self {
             Self::Direct {
                 family,
@@ -146,28 +146,28 @@ impl<F: Field> PackedViewFormula<F> {
                 symbol,
             } => validate_term_shape(layout, family, *limb, *symbol).map(|_| ()),
             Self::LinearDecoded { terms, validity } => {
-                if *validity != PackedViewValidity::Proven {
-                    return Err(PackedViewError::DecodedViewNeedsValidity);
+                if *validity != PackingViewValidity::Proven {
+                    return Err(PackingViewError::DecodedViewNeedsValidity);
                 }
                 validate_linear_terms(layout, terms)
             }
             Self::ReducedMasked { terms } => validate_linear_terms(layout, terms),
-            Self::MaskedDecoded => Err(PackedViewError::MaskedViewRequiresTranslation),
+            Self::MaskedDecoded => Err(PackingViewError::MaskedViewRequiresTranslation),
         }
     }
 
     pub fn physical_view(
         &self,
-        layout: &PackedWitnessLayout,
-    ) -> Result<PhysicalView<F>, PackedViewError> {
+        layout: &PackingWitnessLayout,
+    ) -> Result<PhysicalView<F>, PackingViewError> {
         self.physical_view_at(layout, &[])
     }
 
     pub fn physical_view_at(
         &self,
-        layout: &PackedWitnessLayout,
+        layout: &PackingWitnessLayout,
         row_point: &[F],
-    ) -> Result<PhysicalView<F>, PackedViewError> {
+    ) -> Result<PhysicalView<F>, PackingViewError> {
         self.validate(layout)?;
         let terms = match self {
             Self::Direct {
@@ -190,7 +190,7 @@ impl<F: Field> PackedViewFormula<F> {
                     .with_row_point(row_point.to_vec())
                 })
                 .collect::<Vec<_>>(),
-            Self::MaskedDecoded => return Err(PackedViewError::MaskedViewRequiresTranslation),
+            Self::MaskedDecoded => return Err(PackingViewError::MaskedViewRequiresTranslation),
         };
         Ok(PhysicalView::Packing {
             layout_digest: layout.digest,
@@ -198,9 +198,9 @@ impl<F: Field> PackedViewFormula<F> {
         })
     }
 
-    pub fn eval_row<S>(&self, source: &S, row: usize) -> Result<F, PackedViewError>
+    pub fn eval_row<S>(&self, source: &S, row: usize) -> Result<F, PackingViewError>
     where
-        S: PackedWitnessSource<F>,
+        S: PackingWitnessSource<F>,
     {
         let layout = source.layout();
         self.validate(layout)?;
@@ -211,7 +211,7 @@ impl<F: Field> PackedViewFormula<F> {
                 limb,
                 symbol,
             } => {
-                let address = PackedCellAddress {
+                let address = PackingCellAddress {
                     family: family.clone(),
                     row,
                     limb: *limb,
@@ -221,7 +221,7 @@ impl<F: Field> PackedViewFormula<F> {
             }
             Self::LinearDecoded { terms, .. } | Self::ReducedMasked { terms } => {
                 for term in terms {
-                    let address = PackedCellAddress {
+                    let address = PackingCellAddress {
                         family: term.family.clone(),
                         row,
                         limb: term.limb,
@@ -230,21 +230,21 @@ impl<F: Field> PackedViewFormula<F> {
                     result += term.coefficient * source.eval_direct_fact(&address)?;
                 }
             }
-            Self::MaskedDecoded => return Err(PackedViewError::MaskedViewRequiresTranslation),
+            Self::MaskedDecoded => return Err(PackingViewError::MaskedViewRequiresTranslation),
         }
         Ok(result)
     }
 
-    pub fn eval_row_point<S>(&self, source: &S, row_point: &[F]) -> Result<F, PackedViewError>
+    pub fn eval_row_point<S>(&self, source: &S, row_point: &[F]) -> Result<F, PackingViewError>
     where
-        S: PackedWitnessSource<F>,
+        S: PackingWitnessSource<F>,
     {
         let layout = source.layout();
         self.validate(layout)?;
         let domain = self.row_domain(layout)?;
         let expected = log_rows(domain)?;
         if row_point.len() != expected {
-            return Err(PackedViewError::InvalidRowPointDimension {
+            return Err(PackingViewError::InvalidRowPointDimension {
                 expected,
                 actual: row_point.len(),
             });
@@ -259,10 +259,12 @@ impl<F: Field> PackedViewFormula<F> {
                 return;
             }
             let Some(address) = layout.unrank(rank) else {
-                error = Some(PackedViewError::Layout(PackedLayoutError::RankOutOfRange {
-                    rank,
-                    cells: layout.cells,
-                }));
+                error = Some(PackingViewError::Layout(
+                    PackingLayoutError::RankOutOfRange {
+                        rank,
+                        cells: layout.cells,
+                    },
+                ));
                 return;
             };
             let row = address.row;
@@ -279,33 +281,35 @@ impl<F: Field> PackedViewFormula<F> {
 
     fn row_domain(
         &self,
-        layout: &PackedWitnessLayout,
-    ) -> Result<PackedFactDomain, PackedViewError> {
+        layout: &PackingWitnessLayout,
+    ) -> Result<PackingFactDomain, PackingViewError> {
         match self {
             Self::Direct { family, .. } => layout
                 .family(family)
                 .map(|family| family.domain)
                 .ok_or_else(|| {
-                    PackedViewError::Layout(PackedLayoutError::MissingFamily { id: family.clone() })
+                    PackingViewError::Layout(PackingLayoutError::MissingFamily {
+                        id: family.clone(),
+                    })
                 }),
             Self::LinearDecoded { terms, .. } | Self::ReducedMasked { terms } => {
                 let Some(term) = terms.first() else {
-                    return Err(PackedViewError::EmptyLinearView);
+                    return Err(PackingViewError::EmptyLinearView);
                 };
                 layout
                     .family(&term.family)
                     .map(|family| family.domain)
                     .ok_or_else(|| {
-                        PackedViewError::Layout(PackedLayoutError::MissingFamily {
+                        PackingViewError::Layout(PackingLayoutError::MissingFamily {
                             id: term.family.clone(),
                         })
                     })
             }
-            Self::MaskedDecoded => Err(PackedViewError::MaskedViewRequiresTranslation),
+            Self::MaskedDecoded => Err(PackingViewError::MaskedViewRequiresTranslation),
         }
     }
 
-    fn term_coefficients(&self) -> BTreeMap<(PackedFamilyId, usize, usize), F> {
+    fn term_coefficients(&self) -> BTreeMap<(PackingFamilyId, usize, usize), F> {
         let mut coefficients = BTreeMap::new();
         match self {
             Self::Direct {
@@ -329,21 +333,21 @@ impl<F: Field> PackedViewFormula<F> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PackedViewValidity {
+pub enum PackingViewValidity {
     Proven,
     Unchecked,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PackedViewTerm<F> {
+pub struct PackingViewTerm<F> {
     pub coefficient: F,
-    pub family: PackedFamilyId,
+    pub family: PackingFamilyId,
     pub limb: usize,
     pub symbol: usize,
 }
 
-impl<F> PackedViewTerm<F> {
-    pub fn new(coefficient: F, family: PackedFamilyId, limb: usize, symbol: usize) -> Self {
+impl<F> PackingViewTerm<F> {
+    pub fn new(coefficient: F, family: PackingFamilyId, limb: usize, symbol: usize) -> Self {
         Self {
             coefficient,
             family,
@@ -354,7 +358,7 @@ impl<F> PackedViewTerm<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PackedViewError {
+pub enum PackingViewError {
     EmptyCatalog,
     DuplicateView,
     MissingView,
@@ -367,13 +371,13 @@ pub enum PackedViewError {
         actual: usize,
     },
     CatalogDigestMismatch {
-        expected: PackedViewDigest,
-        actual: PackedViewDigest,
+        expected: PackingViewDigest,
+        actual: PackingViewDigest,
     },
-    Layout(PackedLayoutError),
+    Layout(PackingLayoutError),
 }
 
-impl Display for PackedViewError {
+impl Display for PackingViewError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyCatalog => f.write_str("packed view catalog must contain a view"),
@@ -403,27 +407,27 @@ impl Display for PackedViewError {
     }
 }
 
-impl Error for PackedViewError {}
+impl Error for PackingViewError {}
 
-impl From<PackedLayoutError> for PackedViewError {
-    fn from(error: PackedLayoutError) -> Self {
+impl From<PackingLayoutError> for PackingViewError {
+    fn from(error: PackingLayoutError) -> Self {
         Self::Layout(error)
     }
 }
 
 fn validate_linear_terms<F: Field>(
-    layout: &PackedWitnessLayout,
-    terms: &[PackedViewTerm<F>],
-) -> Result<(), PackedViewError> {
+    layout: &PackingWitnessLayout,
+    terms: &[PackingViewTerm<F>],
+) -> Result<(), PackingViewError> {
     if terms.is_empty() {
-        return Err(PackedViewError::EmptyLinearView);
+        return Err(PackingViewError::EmptyLinearView);
     }
     let mut domain = None;
     for term in terms {
         let term_domain = validate_term_shape(layout, &term.family, term.limb, term.symbol)?;
         if let Some(domain) = domain {
             if domain != term_domain {
-                return Err(PackedViewError::MixedDomains);
+                return Err(PackingViewError::MixedDomains);
             }
         } else {
             domain = Some(term_domain);
@@ -433,18 +437,18 @@ fn validate_linear_terms<F: Field>(
 }
 
 fn validate_term_shape(
-    layout: &PackedWitnessLayout,
-    family_id: &PackedFamilyId,
+    layout: &PackingWitnessLayout,
+    family_id: &PackingFamilyId,
     limb: usize,
     symbol: usize,
-) -> Result<PackedFactDomain, PackedViewError> {
+) -> Result<PackingFactDomain, PackingViewError> {
     let family = layout
         .family(family_id)
-        .ok_or_else(|| PackedLayoutError::MissingFamily {
+        .ok_or_else(|| PackingLayoutError::MissingFamily {
             id: family_id.clone(),
         })?;
     if limb >= family.limbs || symbol >= family.alphabet.size() {
-        return Err(PackedLayoutError::AddressOutOfRange {
+        return Err(PackingLayoutError::AddressOutOfRange {
             family: family_id.clone(),
             row: 0,
             limb,
@@ -455,15 +459,15 @@ fn validate_term_shape(
     Ok(family.domain)
 }
 
-fn log_rows(domain: PackedFactDomain) -> Result<usize, PackedViewError> {
+fn log_rows(domain: PackingFactDomain) -> Result<usize, PackingViewError> {
     let rows = domain.rows()?;
     Ok(rows.trailing_zeros() as usize)
 }
 
 fn catalog_digest<OpeningId, RelationId, F>(
     layout_digest: [u8; 32],
-    entries: &[PackedViewEntry<OpeningId, RelationId, F>],
-) -> PackedViewDigest
+    entries: &[PackingViewEntry<OpeningId, RelationId, F>],
+) -> PackingViewDigest
 where
     F: Field,
 {
@@ -483,9 +487,9 @@ where
     digest
 }
 
-fn write_formula<F: Field>(bytes: &mut Vec<u8>, formula: &PackedViewFormula<F>) {
+fn write_formula<F: Field>(bytes: &mut Vec<u8>, formula: &PackingViewFormula<F>) {
     match formula {
-        PackedViewFormula::Direct {
+        PackingViewFormula::Direct {
             family,
             limb,
             symbol,
@@ -495,20 +499,20 @@ fn write_formula<F: Field>(bytes: &mut Vec<u8>, formula: &PackedViewFormula<F>) 
             write_usize(bytes, *limb);
             write_usize(bytes, *symbol);
         }
-        PackedViewFormula::LinearDecoded { terms, validity } => {
+        PackingViewFormula::LinearDecoded { terms, validity } => {
             bytes.push(1);
             write_validity(bytes, *validity);
             write_terms(bytes, terms);
         }
-        PackedViewFormula::ReducedMasked { terms } => {
+        PackingViewFormula::ReducedMasked { terms } => {
             bytes.push(2);
             write_terms(bytes, terms);
         }
-        PackedViewFormula::MaskedDecoded => bytes.push(3),
+        PackingViewFormula::MaskedDecoded => bytes.push(3),
     }
 }
 
-fn write_terms<F: Field>(bytes: &mut Vec<u8>, terms: &[PackedViewTerm<F>]) {
+fn write_terms<F: Field>(bytes: &mut Vec<u8>, terms: &[PackingViewTerm<F>]) {
     write_usize(bytes, terms.len());
     for term in terms {
         write_field(bytes, term.coefficient);
@@ -518,82 +522,82 @@ fn write_terms<F: Field>(bytes: &mut Vec<u8>, terms: &[PackedViewTerm<F>]) {
     }
 }
 
-fn write_validity(bytes: &mut Vec<u8>, validity: PackedViewValidity) {
+fn write_validity(bytes: &mut Vec<u8>, validity: PackingViewValidity) {
     bytes.push(match validity {
-        PackedViewValidity::Proven => 0,
-        PackedViewValidity::Unchecked => 1,
+        PackingViewValidity::Proven => 0,
+        PackingViewValidity::Unchecked => 1,
     });
 }
 
-fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
+fn write_family_id(bytes: &mut Vec<u8>, id: &PackingFamilyId) {
     match id {
-        PackedFamilyId::InstructionRa { index } => {
+        PackingFamilyId::InstructionRa { index } => {
             bytes.push(0);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::BytecodeRa { index } => {
+        PackingFamilyId::BytecodeRa { index } => {
             bytes.push(1);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::RamRa { index } => {
+        PackingFamilyId::RamRa { index } => {
             bytes.push(2);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::UnsignedIncChunk { index } => {
+        PackingFamilyId::UnsignedIncChunk { index } => {
             bytes.push(3);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::UnsignedIncMsb => bytes.push(4),
-        PackedFamilyId::FieldRdIncByte { index } => {
+        PackingFamilyId::UnsignedIncMsb => bytes.push(4),
+        PackingFamilyId::FieldRdIncByte { index } => {
             bytes.push(9);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::FieldRdIncSign => bytes.push(10),
-        PackedFamilyId::AdviceBytes { kind, index } => {
+        PackingFamilyId::FieldRdIncSign => bytes.push(10),
+        PackingFamilyId::AdviceBytes { kind, index } => {
             bytes.push(11);
             bytes.push(match kind {
-                PackedAdviceKind::Trusted => 0,
-                PackedAdviceKind::Untrusted => 1,
+                PackingAdviceKind::Trusted => 0,
+                PackingAdviceKind::Untrusted => 1,
             });
             write_usize(bytes, *index);
         }
-        PackedFamilyId::BytecodeChunk { index } => {
+        PackingFamilyId::BytecodeChunk { index } => {
             bytes.push(12);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::ProgramImageInit => bytes.push(13),
-        PackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+        PackingFamilyId::ProgramImageInit => bytes.push(13),
+        PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
             bytes.push(15);
             write_usize(bytes, *chunk);
             write_usize(bytes, *selector);
         }
-        PackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+        PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
             bytes.push(16);
             write_usize(bytes, *chunk);
             write_usize(bytes, *flag);
         }
-        PackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+        PackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
             bytes.push(17);
             write_usize(bytes, *chunk);
             write_usize(bytes, *flag);
         }
-        PackedFamilyId::BytecodeLookupSelector { chunk } => {
+        PackingFamilyId::BytecodeLookupSelector { chunk } => {
             bytes.push(18);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::BytecodeRafFlag { chunk } => {
+        PackingFamilyId::BytecodeRafFlag { chunk } => {
             bytes.push(19);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+        PackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
             bytes.push(20);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::BytecodeImmBytes { chunk } => {
+        PackingFamilyId::BytecodeImmBytes { chunk } => {
             bytes.push(21);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::Custom { namespace, index } => {
+        PackingFamilyId::Custom { namespace, index } => {
             bytes.push(14);
             bytes.extend_from_slice(&namespace.to_le_bytes());
             write_usize(bytes, *index);
@@ -620,8 +624,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        PackedAlphabet, PackedFactDomain, PackedFamilySpec, PackedWitnessLayout,
-        SparsePackedWitness,
+        PackingAlphabet, PackingFactDomain, PackingFamilySpec, PackingWitnessLayout,
+        SparsePackingWitness,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -640,42 +644,42 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn byte_layout() -> PackedWitnessLayout {
-        PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
-                PackedFamilyId::RamRa { index: 0 },
-                PackedFactDomain::TraceRows { log_t: 1 },
+    fn byte_layout() -> PackingWitnessLayout {
+        PackingWitnessLayout::new([
+            PackingFamilySpec::direct(
+                PackingFamilyId::RamRa { index: 0 },
+                PackingFactDomain::TraceRows { log_t: 1 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::UnsignedIncMsb,
-                PackedFactDomain::TraceRows { log_t: 1 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::UnsignedIncMsb,
+                PackingFactDomain::TraceRows { log_t: 1 },
                 1,
-                PackedAlphabet::Bit,
+                PackingAlphabet::Bit,
             ),
         ])
         .expect("layout should build")
     }
 
-    fn byte_decode_terms(family: PackedFamilyId) -> Vec<PackedViewTerm<Fr>> {
+    fn byte_decode_terms(family: PackingFamilyId) -> Vec<PackingViewTerm<Fr>> {
         (0..256)
-            .map(|symbol| PackedViewTerm::new(f(symbol as u64), family.clone(), 0, symbol))
+            .map(|symbol| PackingViewTerm::new(f(symbol as u64), family.clone(), 0, symbol))
             .collect()
     }
 
     #[test]
     fn direct_view_translation_matches_packed_eval() {
         let layout = byte_layout();
-        let address = PackedCellAddress {
-            family: PackedFamilyId::UnsignedIncMsb,
+        let address = PackingCellAddress {
+            family: PackingFamilyId::UnsignedIncMsb,
             row: 1,
             limb: 0,
             symbol: 1,
         };
-        let source = SparsePackedWitness::try_from_cells(layout.clone(), [(address, f(1))])
+        let source = SparsePackingWitness::try_from_cells(layout.clone(), [(address, f(1))])
             .expect("source should build");
-        let formula = PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1);
+        let formula = PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1);
 
         assert_eq!(
             formula.eval_row(&source, 1).expect("view should evaluate"),
@@ -688,7 +692,7 @@ mod tests {
             PhysicalView::Packing { terms, .. }
                 if terms.len() == 1
                     && terms[0].coefficient == f(1)
-                    && terms[0].family == PackedFamilyId::UnsignedIncMsb.physical_ref()
+                    && terms[0].family == PackingFamilyId::UnsignedIncMsb.physical_ref()
                     && terms[0].symbol == 1
         ));
     }
@@ -696,17 +700,18 @@ mod tests {
     #[test]
     fn linear_decode_translation_matches_direct_sum() {
         let layout = byte_layout();
-        let address = PackedCellAddress {
-            family: PackedFamilyId::RamRa { index: 0 },
+        let address = PackingCellAddress {
+            family: PackingFamilyId::RamRa { index: 0 },
             row: 0,
             limb: 0,
             symbol: 7,
         };
-        let source = SparsePackedWitness::try_from_cells(layout.clone(), [(address, f(1))])
+        let source = SparsePackingWitness::try_from_cells(layout.clone(), [(address, f(1))])
             .expect("source should build");
-        let formula = PackedViewFormula::linear_decoded(byte_decode_terms(PackedFamilyId::RamRa {
-            index: 0,
-        }));
+        let formula =
+            PackingViewFormula::linear_decoded(byte_decode_terms(PackingFamilyId::RamRa {
+                index: 0,
+            }));
 
         assert_eq!(
             formula.eval_row(&source, 0).expect("view should evaluate"),
@@ -720,7 +725,7 @@ mod tests {
                 if layout_digest == layout.digest
                     && terms.len() == 256
                     && terms[7].coefficient == f(7)
-                    && terms[7].family == (PackedFamilyId::RamRa { index: 0 }).physical_ref()
+                    && terms[7].family == (PackingFamilyId::RamRa { index: 0 }).physical_ref()
                     && terms[7].symbol == 7
         ));
     }
@@ -728,15 +733,15 @@ mod tests {
     #[test]
     fn direct_view_point_eval_interpolates_rows() {
         let layout = byte_layout();
-        let address = PackedCellAddress {
-            family: PackedFamilyId::UnsignedIncMsb,
+        let address = PackingCellAddress {
+            family: PackingFamilyId::UnsignedIncMsb,
             row: 1,
             limb: 0,
             symbol: 1,
         };
-        let source = SparsePackedWitness::try_from_cells(layout, [(address, f(1))])
+        let source = SparsePackingWitness::try_from_cells(layout, [(address, f(1))])
             .expect("source should build");
-        let formula = PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1);
+        let formula = PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1);
         let point = [f(3)];
 
         assert_eq!(
@@ -750,12 +755,12 @@ mod tests {
     #[test]
     fn linear_decode_point_eval_interpolates_rows() {
         let layout = byte_layout();
-        let source = SparsePackedWitness::try_from_cells(
+        let source = SparsePackingWitness::try_from_cells(
             layout,
             [
                 (
-                    PackedCellAddress {
-                        family: PackedFamilyId::RamRa { index: 0 },
+                    PackingCellAddress {
+                        family: PackingFamilyId::RamRa { index: 0 },
                         row: 0,
                         limb: 0,
                         symbol: 7,
@@ -763,8 +768,8 @@ mod tests {
                     f(1),
                 ),
                 (
-                    PackedCellAddress {
-                        family: PackedFamilyId::RamRa { index: 0 },
+                    PackingCellAddress {
+                        family: PackingFamilyId::RamRa { index: 0 },
                         row: 1,
                         limb: 0,
                         symbol: 11,
@@ -774,9 +779,10 @@ mod tests {
             ],
         )
         .expect("source should build");
-        let formula = PackedViewFormula::linear_decoded(byte_decode_terms(PackedFamilyId::RamRa {
-            index: 0,
-        }));
+        let formula =
+            PackingViewFormula::linear_decoded(byte_decode_terms(PackingFamilyId::RamRa {
+                index: 0,
+            }));
         let point = [f(5)];
         let expected = (f(1) - point[0]) * f(7) + point[0] * f(11);
 
@@ -791,11 +797,11 @@ mod tests {
     #[test]
     fn row_point_dimension_mismatch_rejects() {
         let layout = byte_layout();
-        let source = SparsePackedWitness::try_from_cells(
+        let source = SparsePackingWitness::try_from_cells(
             layout,
             [(
-                PackedCellAddress {
-                    family: PackedFamilyId::UnsignedIncMsb,
+                PackingCellAddress {
+                    family: PackingFamilyId::UnsignedIncMsb,
                     row: 1,
                     limb: 0,
                     symbol: 1,
@@ -804,11 +810,11 @@ mod tests {
             )],
         )
         .expect("source should build");
-        let formula = PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1);
+        let formula = PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1);
 
         assert!(matches!(
             formula.eval_row_point(&source, &[]),
-            Err(PackedViewError::InvalidRowPointDimension {
+            Err(PackingViewError::InvalidRowPointDimension {
                 expected: 1,
                 actual: 0
             })
@@ -818,32 +824,32 @@ mod tests {
     #[test]
     fn masked_view_requires_translation_sumcheck() {
         let layout = byte_layout();
-        let formula = PackedViewFormula::<Fr>::MaskedDecoded;
+        let formula = PackingViewFormula::<Fr>::MaskedDecoded;
 
         assert!(matches!(
             formula.physical_view(&layout),
-            Err(PackedViewError::MaskedViewRequiresTranslation)
+            Err(PackingViewError::MaskedViewRequiresTranslation)
         ));
     }
 
     #[test]
     fn translation_layout_digest_mismatch_rejects() {
         let layout = byte_layout();
-        let catalog_a = PackedViewCatalog::new(
+        let catalog_a = PackingViewCatalog::new(
             &layout,
-            [PackedViewEntry::new(
+            [PackingViewEntry::new(
                 OpeningId::A,
                 RelationId::First,
-                PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1),
+                PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1),
             )],
         )
         .expect("catalog should build");
-        let catalog_b = PackedViewCatalog::new(
+        let catalog_b = PackingViewCatalog::new(
             &layout,
-            [PackedViewEntry::new(
+            [PackingViewEntry::new(
                 OpeningId::A,
                 RelationId::First,
-                PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 0),
+                PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 0),
             )],
         )
         .expect("catalog should build");
@@ -851,39 +857,38 @@ mod tests {
         assert_ne!(catalog_a.digest, catalog_b.digest);
         assert!(matches!(
             catalog_a.verify_digest(&catalog_b.digest),
-            Err(PackedViewError::CatalogDigestMismatch { .. })
+            Err(PackingViewError::CatalogDigestMismatch { .. })
         ));
     }
 
     #[test]
     fn decoded_view_without_validity_rejects_or_is_not_enabled() {
         let layout = byte_layout();
-        let formula =
-            PackedViewFormula::unchecked_linear_decoded(byte_decode_terms(PackedFamilyId::RamRa {
-                index: 0,
-            }));
+        let formula = PackingViewFormula::unchecked_linear_decoded(byte_decode_terms(
+            PackingFamilyId::RamRa { index: 0 },
+        ));
 
         assert!(matches!(
             formula.physical_view(&layout),
-            Err(PackedViewError::DecodedViewNeedsValidity)
+            Err(PackingViewError::DecodedViewNeedsValidity)
         ));
     }
 
     #[test]
     fn same_polynomial_different_relation_ids_distinct() {
         let layout = byte_layout();
-        let catalog = PackedViewCatalog::new(
+        let catalog = PackingViewCatalog::new(
             &layout,
             [
-                PackedViewEntry::new(
+                PackingViewEntry::new(
                     OpeningId::A,
                     RelationId::Second,
-                    PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 0),
+                    PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 0),
                 ),
-                PackedViewEntry::new(
+                PackingViewEntry::new(
                     OpeningId::A,
                     RelationId::First,
-                    PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1),
+                    PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1),
                 ),
             ],
         )
@@ -893,35 +898,36 @@ mod tests {
             catalog
                 .lookup(&OpeningId::A, &RelationId::First)
                 .expect("first relation should exist"),
-            &PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 1)
+            &PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 1)
         );
         assert_eq!(
             catalog
                 .lookup(&OpeningId::A, &RelationId::Second)
                 .expect("second relation should exist"),
-            &PackedViewFormula::<Fr>::direct(PackedFamilyId::UnsignedIncMsb, 0, 0)
+            &PackingViewFormula::<Fr>::direct(PackingFamilyId::UnsignedIncMsb, 0, 0)
         );
     }
 
     #[test]
     fn bound_precommitted_program_view_formula_validates_against_supplied_layout() {
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::ProgramImageInit,
-            PackedFactDomain::ProgramImageWords { log_words: 2 },
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::ProgramImageInit,
+            PackingFactDomain::ProgramImageWords { log_words: 2 },
             8,
-            PackedAlphabet::Byte,
+            PackingAlphabet::Byte,
         )])
         .expect("layout should build");
-        let formula =
-            PackedViewFormula::linear_decoded(byte_decode_terms(PackedFamilyId::ProgramImageInit));
+        let formula = PackingViewFormula::linear_decoded(byte_decode_terms(
+            PackingFamilyId::ProgramImageInit,
+        ));
 
         formula.validate(&layout).expect("formula should validate");
         assert_eq!(
             layout
-                .family(&PackedFamilyId::ProgramImageInit)
+                .family(&PackingFamilyId::ProgramImageInit)
                 .expect("program family should exist")
                 .domain,
-            PackedFactDomain::ProgramImageWords { log_words: 2 }
+            PackingFactDomain::ProgramImageWords { log_words: 2 }
         );
     }
 }

@@ -5,8 +5,8 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_openings::{
-    BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackedFamilyId,
-    PackedWitnessLayout, PackingTerm, PhysicalView,
+    BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
+    PackingFamilyId, PackingTerm, PackingWitnessLayout, PhysicalView,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial};
 use jolt_riscv::CircuitFlags;
@@ -45,13 +45,13 @@ pub enum LatticePackedValidityStatementKind {
 pub(crate) enum FieldCanonicalFactor {
     Range {
         byte_index: usize,
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         limb: usize,
         start_symbol: usize,
     },
     Eq {
         byte_index: usize,
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         limb: usize,
         symbol: usize,
     },
@@ -64,7 +64,7 @@ pub struct LatticePackedValidityBatch<F: Field, C> {
 }
 
 pub fn derive_lattice_packed_validity_statements(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     requirements: &[LatticePackedValidityRequirement],
 ) -> Result<Vec<LatticePackedValidityStatement>, VerifierError> {
     let mut statements = Vec::new();
@@ -174,11 +174,11 @@ pub fn derive_lattice_packed_validity_statements(
 }
 
 fn validate_bytecode_store_rd_disjoint_layout(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     requirement: &LatticePackedValidityRequirement,
 ) -> Result<usize, VerifierError> {
     let chunk = bytecode_store_rd_disjoint_chunk(requirement)?;
-    let store_id = PackedFamilyId::BytecodeCircuitFlag {
+    let store_id = PackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
     };
@@ -193,7 +193,7 @@ fn validate_bytecode_store_rd_disjoint_layout(
         ));
     }
 
-    let rd_id = PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+    let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
     let rd = layout.family(&rd_id).ok_or_else(|| {
         invalid_lattice_config(format!("bytecode Store/Rd disjointness requires {rd_id:?}"))
     })?;
@@ -234,7 +234,7 @@ fn bytecode_store_rd_disjoint_chunk(
 }
 
 fn validate_field_element_canonical_bytes_layout(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     requirement: &LatticePackedValidityRequirement,
 ) -> Result<usize, VerifierError> {
     let byte_width = canonical_field_byte_width(requirement)?;
@@ -246,7 +246,7 @@ fn validate_field_element_canonical_bytes_layout(
 
     match &requirement.family {
         LatticePackedFamilyId::FieldRdIncByte { index: 0 } => {
-            let first_id = PackedFamilyId::FieldRdIncByte { index: 0 };
+            let first_id = PackingFamilyId::FieldRdIncByte { index: 0 };
             let first = layout.family(&first_id).ok_or_else(|| {
                 invalid_lattice_config(
                     "field-element canonical-byte validity requires FieldRdIncByte[0]",
@@ -264,7 +264,7 @@ fn validate_field_element_canonical_bytes_layout(
             })?;
             let row_vars = power_of_two_log(rows, "field-element canonical-byte row count")?;
             for index in 1..byte_width {
-                let family_id = PackedFamilyId::FieldRdIncByte { index };
+                let family_id = PackingFamilyId::FieldRdIncByte { index };
                 let family = layout.family(&family_id).ok_or_else(|| {
                     invalid_lattice_config(format!(
                         "field-element canonical-byte validity requires {family_id:?}"
@@ -282,7 +282,7 @@ fn validate_field_element_canonical_bytes_layout(
             Ok(row_vars)
         }
         LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
-            let family_id = PackedFamilyId::BytecodeImmBytes { chunk: *chunk };
+            let family_id = PackingFamilyId::BytecodeImmBytes { chunk: *chunk };
             let family = layout.family(&family_id).ok_or_else(|| {
                 invalid_lattice_config(format!(
                     "field-element canonical-byte validity requires {family_id:?}"
@@ -335,7 +335,7 @@ fn canonical_field_byte_width(
 fn canonical_field_byte_location(
     requirement: &LatticePackedValidityRequirement,
     byte_index: usize,
-) -> Result<(PackedFamilyId, usize), VerifierError> {
+) -> Result<(PackingFamilyId, usize), VerifierError> {
     let byte_width = canonical_field_byte_width(requirement)?;
     if byte_index >= byte_width {
         return Err(invalid_lattice_config(format!(
@@ -344,10 +344,10 @@ fn canonical_field_byte_location(
     }
     match &requirement.family {
         LatticePackedFamilyId::FieldRdIncByte { index: 0 } => {
-            Ok((PackedFamilyId::FieldRdIncByte { index: byte_index }, 0))
+            Ok((PackingFamilyId::FieldRdIncByte { index: byte_index }, 0))
         }
         LatticePackedFamilyId::BytecodeImmBytes { chunk } => Ok((
-            PackedFamilyId::BytecodeImmBytes { chunk: *chunk },
+            PackingFamilyId::BytecodeImmBytes { chunk: *chunk },
             byte_index,
         )),
         _ => Err(invalid_lattice_config(format!(
@@ -441,7 +441,7 @@ fn validity_statement_opening_count(statement: &LatticePackedValidityStatement) 
 
 pub fn sample_lattice_packed_validity_eq_points<F, T>(
     transcript: &mut T,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statements: &[LatticePackedValidityStatement],
 ) -> Vec<Vec<F>>
 where
@@ -456,7 +456,7 @@ where
 }
 
 pub fn build_lattice_packed_validity_batch<F, C>(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statements: &[LatticePackedValidityStatement],
     commitment: C,
     eq_points: &[Vec<F>],
@@ -546,7 +546,7 @@ pub fn verify_lattice_packed_validity_proof<F, PCS, T, RoundCommitment>(
     config: &JoltProtocolConfig,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     commitment: PCS::Output,
     sumcheck_proof: &SumcheckProof<F, RoundCommitment>,
     opening_claims: &[F],
@@ -611,7 +611,7 @@ where
 
 fn absorb_lattice_packed_validity_metadata<F, T>(
     transcript: &mut T,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statements: &[LatticePackedValidityStatement],
 ) where
     F: Field,
@@ -767,7 +767,7 @@ where
 }
 
 fn validity_factor_physical_view<F>(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statement: &LatticePackedValidityStatement,
     point: &[F],
     factor: usize,
@@ -850,7 +850,7 @@ where
 }
 
 fn field_element_canonical_physical_view<F>(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statement: &LatticePackedValidityStatement,
     point: &[F],
     factor: usize,
@@ -915,7 +915,7 @@ where
 }
 
 fn bytecode_store_rd_disjoint_physical_view<F>(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statement: &LatticePackedValidityStatement,
     point: &[F],
     factor: usize,
@@ -924,7 +924,7 @@ where
     F: Field,
 {
     let chunk = bytecode_store_rd_disjoint_chunk(&statement.requirement)?;
-    let store_id = PackedFamilyId::BytecodeCircuitFlag {
+    let store_id = PackingFamilyId::BytecodeCircuitFlag {
         chunk,
         flag: CircuitFlags::Store as usize,
     };
@@ -952,7 +952,7 @@ where
         0 => vec![PackingTerm::new(F::one(), store_id.physical_ref(), 0, 1)
             .with_row_point(point.to_vec())],
         1 => {
-            let rd_id = PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
+            let rd_id = PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
             let rd = layout.family(&rd_id).ok_or_else(|| {
                 invalid_lattice_config(format!("bytecode Store/Rd disjointness requires {rd_id:?}"))
             })?;
@@ -997,9 +997,9 @@ struct ValidityPointParts<'a, F> {
 }
 
 fn validity_statement_shape(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     statement: &LatticePackedValidityStatement,
-    family_id: &PackedFamilyId,
+    family_id: &PackingFamilyId,
 ) -> Result<ValidityStatementShape, VerifierError> {
     let family = layout.family(family_id).ok_or_else(|| {
         invalid_lattice_config(format!(

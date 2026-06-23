@@ -218,7 +218,7 @@ Layout construction:
 
 ```text
 1. collect enabled fact families from verifier config.
-2. sort by stable PackedFamilyId.
+2. sort by stable PackingFamilyId.
 3. assign offset by cumulative cell count.
 4. compute cells and D_pack.
 5. transcript-bind layout digest before commitment-opening challenges.
@@ -312,7 +312,7 @@ Implementation plan:
 
 ```text
 jolt-claims:
-  define stable PackedFamilyId values in the lattice extension.
+  define stable PackingFamilyId values in the lattice extension.
   expose RA fact counts through existing one-hot dimensions.
   expose fused base increment fact families through lattice increment mode.
   expose field-inline/proof-owned-advice families through lattice policy.
@@ -320,14 +320,14 @@ jolt-claims:
   PackedWitness families.
 
 jolt-akita:
-  implement PackedWitnessLayout and PackedFamily.
+  implement PackingWitnessLayout and PackingLayoutFamily.
   implement rank/unrank.
   compute cells and D_pack.
   compute layout digest.
-  expose a streaming PackedWitnessSource.
+  expose a streaming PackingWitnessSource.
 
 jolt-verifier:
-  derives expected PackedWitnessLayout from protocol config.
+  derives expected PackingWitnessLayout from protocol config.
   stores/binds layout digest in proof/preprocessing path.
   rejects proof layout mismatch.
 ```
@@ -335,7 +335,7 @@ jolt-verifier:
 Proposed Rust data model:
 
 ```rust
-pub struct PackedWitnessLayout {
+pub struct PackingWitnessLayout {
     pub families: Vec<FactFamily>,
     pub cells: usize,
     pub dimension: usize,
@@ -367,7 +367,7 @@ pub enum FactDomain {
 Planner algorithm:
 
 ```text
-fn build_packed_witness_layout(config, dimensions) -> PackedWitnessLayout:
+fn build_packed_witness_layout(config, dimensions) -> PackingWitnessLayout:
   families = []
   append RA families from OneHotConfig dimensions
   append fused base increment magnitude/sign families
@@ -409,10 +409,10 @@ D_pack:
 Commit-facing planner output:
 
 ```text
-PackedWitnessLayout:
+PackingWitnessLayout:
   public layout object or verifier-derived equivalent.
 
-PackedWitnessSource:
+PackingWitnessSource:
   prover-owned stream of nonzero packed cells.
 
 AkitaLayoutDigest:
@@ -428,8 +428,8 @@ defined by `jolt-claims` and emits the physical layout consumed by `jolt-akita`.
 Streaming witness source:
 
 ```text
-trait PackedWitnessSource<F> {
-    fn layout(&self) -> &PackedWitnessLayout;
+trait PackingWitnessSource<F> {
+    fn layout(&self) -> &PackingWitnessLayout;
     fn for_each_nonzero(&self, f: impl FnMut(usize, F));
     fn eval_direct_fact(&self, fact: FactId, row: usize, limb: usize, symbol: usize) -> F;
 }
@@ -448,7 +448,7 @@ rank representation:
   reject dimensions/cell counts that overflow platform usize.
 
 dummy cells:
-  not emitted by PackedWitnessSource.
+  not emitted by PackingWitnessSource.
   backend receives cells/D and zero convention.
 
 FactId ordering:
@@ -476,7 +476,7 @@ FactId ordering:
   precommitted opening requirement.
 - Any logical opening whose commitment class is precommitted resolves to a
   separate opening statement keyed by the original commitment handle.
-- PackedWitnessSource emits only cells owned by PackedWitnessLayout.
+- PackingWitnessSource emits only cells owned by PackingWitnessLayout.
 - ViewCatalog entries reference existing fact families and cannot create new
   cells.
 ```
@@ -519,7 +519,7 @@ precommitted_program_families_are_excluded:
   unless an explicit bound-precommitted packed-view protocol is enabled.
 
 precommitted_values_cannot_enter_packed_source:
-  PackedWitnessSource rejects or cannot construct families for TrustedAdvice,
+  PackingWitnessSource rejects or cannot construct families for TrustedAdvice,
   BytecodeChunk(i), ProgramImageInit, or bytecode-derived Store selector lanes.
 
 planner_audit_fields_are_reported:
@@ -574,7 +574,7 @@ Rejected:
 
 ```text
 resolved:
-  the canonical layout encoding is the jolt-akita PackedWitnessLayout digest.
+  the canonical layout encoding is the jolt-akita PackingWitnessLayout digest.
   family order and offsets are deterministically derived from sorted family
   specs, domains, limbs, and alphabets.
   fact family offsets are derived from config/preprocessing, not supplied as

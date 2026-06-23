@@ -2,27 +2,27 @@ use jolt_akita::AkitaField;
 use jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count;
 use jolt_field::{CanonicalBytes, FromPrimitiveInt};
 use jolt_openings::{
-    PackedAdviceKind, PackedCellAddress, PackedFactDomain, PackedFamilyId, PackedLayoutError,
-    PackedWitnessLayout, SparsePackedWitness,
+    PackingAdviceKind, PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingLayoutError,
+    PackingWitnessLayout, SparsePackingWitness,
 };
 use jolt_riscv::JoltTraceRow;
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
 pub struct JoltPackedWitnessBuilder {
-    layout: PackedWitnessLayout,
+    layout: PackingWitnessLayout,
     entries: Vec<(usize, AkitaField)>,
 }
 
 impl JoltPackedWitnessBuilder {
-    pub fn new(layout: PackedWitnessLayout) -> Self {
+    pub fn new(layout: PackingWitnessLayout) -> Self {
         Self {
             layout,
             entries: Vec::new(),
         }
     }
 
-    pub fn layout(&self) -> &PackedWitnessLayout {
+    pub fn layout(&self) -> &PackingWitnessLayout {
         &self.layout
     }
 
@@ -46,19 +46,19 @@ impl JoltPackedWitnessBuilder {
             });
         }
         let instruction_chunks = self.max_trace_family_index(|family| {
-            matches!(family, PackedFamilyId::InstructionRa { .. })
+            matches!(family, PackingFamilyId::InstructionRa { .. })
         });
         let bytecode_chunks = self
-            .max_trace_family_index(|family| matches!(family, PackedFamilyId::BytecodeRa { .. }));
+            .max_trace_family_index(|family| matches!(family, PackingFamilyId::BytecodeRa { .. }));
         let ram_chunks =
-            self.max_trace_family_index(|family| matches!(family, PackedFamilyId::RamRa { .. }));
+            self.max_trace_family_index(|family| matches!(family, PackingFamilyId::RamRa { .. }));
 
         for (row_index, row) in rows.iter().enumerate() {
             let lookup_index = lookup_index(row_index, row);
             for index in 0..instruction_chunks {
                 let symbol = chunk(lookup_index, index, instruction_chunks, log_k_chunk)?;
                 self.emit_one(
-                    PackedFamilyId::InstructionRa { index },
+                    PackingFamilyId::InstructionRa { index },
                     row_index,
                     0,
                     symbol,
@@ -68,13 +68,13 @@ impl JoltPackedWitnessBuilder {
             let pc = row.pc() as u128;
             for index in 0..bytecode_chunks {
                 let symbol = chunk(pc, index, bytecode_chunks, log_k_chunk)?;
-                self.emit_one(PackedFamilyId::BytecodeRa { index }, row_index, 0, symbol)?;
+                self.emit_one(PackingFamilyId::BytecodeRa { index }, row_index, 0, symbol)?;
             }
 
             if let Some(address) = ram_address(row_index, row) {
                 for index in 0..ram_chunks {
                     let symbol = chunk(address as u128, index, ram_chunks, log_k_chunk)?;
-                    self.emit_one(PackedFamilyId::RamRa { index }, row_index, 0, symbol)?;
+                    self.emit_one(PackingFamilyId::RamRa { index }, row_index, 0, symbol)?;
                 }
             }
 
@@ -87,7 +87,7 @@ impl JoltPackedWitnessBuilder {
         &mut self,
         bytes: &[u8],
     ) -> Result<&mut Self, JoltPackedWitnessError> {
-        let kind = PackedAdviceKind::Untrusted;
+        let kind = PackingAdviceKind::Untrusted;
         let domain = "untrusted advice bytes";
         let expected = self
             .advice_byte_count(kind)?
@@ -100,13 +100,18 @@ impl JoltPackedWitnessBuilder {
             });
         }
         for (row, byte) in bytes.iter().copied().enumerate() {
-            self.emit_byte(PackedFamilyId::AdviceBytes { kind, index: 0 }, row, 0, byte)?;
+            self.emit_byte(
+                PackingFamilyId::AdviceBytes { kind, index: 0 },
+                row,
+                0,
+                byte,
+            )?;
         }
         Ok(self)
     }
 
-    pub fn finish(self) -> Result<SparsePackedWitness<AkitaField>, JoltPackedWitnessError> {
-        SparsePackedWitness::try_new(self.layout, self.entries).map_err(Into::into)
+    pub fn finish(self) -> Result<SparsePackingWitness<AkitaField>, JoltPackedWitnessError> {
+        SparsePackingWitness::try_new(self.layout, self.entries).map_err(Into::into)
     }
 
     fn pack_increment_row(
@@ -132,7 +137,7 @@ impl JoltPackedWitnessBuilder {
 
         if self
             .layout
-            .family(&PackedFamilyId::FieldRdIncByte { index: 0 })
+            .family(&PackingFamilyId::FieldRdIncByte { index: 0 })
             .is_some()
         {
             let rd_delta = if row.rd_index().is_some() {
@@ -142,7 +147,12 @@ impl JoltPackedWitnessBuilder {
             };
             let encoded = AkitaField::from_i128(rd_delta).to_bytes_le_vec();
             for (index, byte) in encoded.into_iter().enumerate() {
-                self.emit_byte(PackedFamilyId::FieldRdIncByte { index }, row_index, 0, byte)?;
+                self.emit_byte(
+                    PackingFamilyId::FieldRdIncByte { index },
+                    row_index,
+                    0,
+                    byte,
+                )?;
             }
         }
         Ok(())
@@ -169,21 +179,21 @@ impl JoltPackedWitnessBuilder {
         let msb = shifted >> 64;
         for index in 0..chunk_count {
             self.emit_one(
-                PackedFamilyId::UnsignedIncChunk { index },
+                PackingFamilyId::UnsignedIncChunk { index },
                 row,
                 0,
                 little_endian_chunk(lower, index, log_k_chunk)?,
             )?;
         }
         if msb == 1 {
-            self.emit_one(PackedFamilyId::UnsignedIncMsb, row, 0, 1)?;
+            self.emit_one(PackingFamilyId::UnsignedIncMsb, row, 0, 1)?;
         }
         Ok(())
     }
 
     fn emit_byte(
         &mut self,
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         row: usize,
         limb: usize,
         byte: u8,
@@ -193,7 +203,7 @@ impl JoltPackedWitnessBuilder {
 
     fn emit_one(
         &mut self,
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         row: usize,
         limb: usize,
         symbol: usize,
@@ -201,7 +211,7 @@ impl JoltPackedWitnessBuilder {
         if self.layout.family(&family).is_none() {
             return Ok(());
         }
-        let rank = self.layout.rank(&PackedCellAddress {
+        let rank = self.layout.rank(&PackingCellAddress {
             family,
             row,
             limb,
@@ -214,7 +224,7 @@ impl JoltPackedWitnessBuilder {
     fn trace_row_count(&self) -> Result<Option<usize>, JoltPackedWitnessError> {
         let mut rows = None;
         for family in &self.layout.families {
-            if matches!(family.domain, PackedFactDomain::TraceRows { .. }) {
+            if matches!(family.domain, PackingFactDomain::TraceRows { .. }) {
                 merge_domain_rows(&mut rows, family.domain, "trace rows")?;
             }
         }
@@ -223,27 +233,27 @@ impl JoltPackedWitnessBuilder {
 
     fn advice_byte_count(
         &self,
-        kind: PackedAdviceKind,
+        kind: PackingAdviceKind,
     ) -> Result<Option<usize>, JoltPackedWitnessError> {
         let mut rows = None;
         for family in &self.layout.families {
-            if family.id == (PackedFamilyId::AdviceBytes { kind, index: 0 }) {
+            if family.id == (PackingFamilyId::AdviceBytes { kind, index: 0 }) {
                 merge_domain_rows(&mut rows, family.domain, "untrusted advice bytes")?;
             }
         }
         Ok(rows)
     }
 
-    fn max_trace_family_index(&self, is_family: impl Fn(&PackedFamilyId) -> bool) -> usize {
+    fn max_trace_family_index(&self, is_family: impl Fn(&PackingFamilyId) -> bool) -> usize {
         self.layout
             .families
             .iter()
-            .filter(|family| matches!(family.domain, PackedFactDomain::TraceRows { .. }))
+            .filter(|family| matches!(family.domain, PackingFactDomain::TraceRows { .. }))
             .filter(|family| is_family(&family.id))
             .filter_map(|family| match family.id {
-                PackedFamilyId::InstructionRa { index }
-                | PackedFamilyId::BytecodeRa { index }
-                | PackedFamilyId::RamRa { index } => Some(index + 1),
+                PackingFamilyId::InstructionRa { index }
+                | PackingFamilyId::BytecodeRa { index }
+                | PackingFamilyId::RamRa { index } => Some(index + 1),
                 _ => None,
             })
             .max()
@@ -278,12 +288,12 @@ pub enum JoltPackedWitnessError {
     #[error("increment row {row} exposes both store and rd-present sources")]
     IncrementSourceConflict { row: usize },
     #[error(transparent)]
-    Layout(#[from] PackedLayoutError),
+    Layout(#[from] PackingLayoutError),
 }
 
 fn merge_domain_rows(
     rows: &mut Option<usize>,
-    domain: PackedFactDomain,
+    domain: PackingFactDomain,
     name: &'static str,
 ) -> Result<(), JoltPackedWitnessError> {
     let got = domain_rows(domain)?;
@@ -301,12 +311,12 @@ fn merge_domain_rows(
     }
 }
 
-fn domain_rows(domain: PackedFactDomain) -> Result<usize, JoltPackedWitnessError> {
+fn domain_rows(domain: PackingFactDomain) -> Result<usize, JoltPackedWitnessError> {
     let log_rows = match domain {
-        PackedFactDomain::TraceRows { log_t } => log_t,
-        PackedFactDomain::BytecodeRows { log_bytecode } => log_bytecode,
-        PackedFactDomain::ProgramImageWords { log_words } => log_words,
-        PackedFactDomain::AdviceBytes { log_bytes, .. } => log_bytes,
+        PackingFactDomain::TraceRows { log_t } => log_t,
+        PackingFactDomain::BytecodeRows { log_bytecode } => log_bytecode,
+        PackingFactDomain::ProgramImageWords { log_words } => log_words,
+        PackingFactDomain::AdviceBytes { log_bytes, .. } => log_bytes,
     };
     1usize
         .checked_shl(log_rows as u32)
@@ -361,14 +371,14 @@ mod tests {
 
     use super::*;
     use jolt_field::FixedByteSize;
-    use jolt_openings::{PackedAlphabet, PackedFamilySpec, PackedWitnessSource};
+    use jolt_openings::{PackingAlphabet, PackingFamilySpec, PackingWitnessSource};
     use jolt_riscv::{
         CapturedState, JoltInstructionKind, JoltInstructionRow, LoadState, NormalizedOperands,
         StoreState,
     };
 
-    fn trace_domain() -> PackedFactDomain {
-        PackedFactDomain::TraceRows { log_t: 1 }
+    fn trace_domain() -> PackingFactDomain {
+        PackingFactDomain::TraceRows { log_t: 1 }
     }
 
     fn trace_row(
@@ -390,14 +400,14 @@ mod tests {
     }
 
     fn get(
-        witness: &SparsePackedWitness<AkitaField>,
-        family: PackedFamilyId,
+        witness: &SparsePackingWitness<AkitaField>,
+        family: PackingFamilyId,
         row: usize,
         limb: usize,
         symbol: usize,
     ) -> AkitaField {
         witness
-            .eval_direct_fact(&PackedCellAddress {
+            .eval_direct_fact(&PackingCellAddress {
                 family,
                 row,
                 limb,
@@ -408,36 +418,36 @@ mod tests {
 
     #[test]
     fn packs_trace_ra_and_unsigned_increment_facts() {
-        let layout = PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
-                PackedFamilyId::InstructionRa { index: 0 },
+        let layout = PackingWitnessLayout::new([
+            PackingFamilySpec::direct(
+                PackingFamilyId::InstructionRa { index: 0 },
                 trace_domain(),
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRa { index: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeRa { index: 0 },
                 trace_domain(),
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::RamRa { index: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::RamRa { index: 0 },
                 trace_domain(),
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::UnsignedIncChunk { index: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::UnsignedIncChunk { index: 0 },
                 trace_domain(),
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::UnsignedIncMsb,
+            PackingFamilySpec::direct(
+                PackingFamilyId::UnsignedIncMsb,
                 trace_domain(),
                 1,
-                PackedAlphabet::Bit,
+                PackingAlphabet::Bit,
             ),
         ])
         .expect("layout should build");
@@ -490,7 +500,7 @@ mod tests {
         assert_eq!(
             get(
                 &witness,
-                PackedFamilyId::InstructionRa { index: 0 },
+                PackingFamilyId::InstructionRa { index: 0 },
                 0,
                 0,
                 0x7f
@@ -498,28 +508,28 @@ mod tests {
             AkitaField::one()
         );
         assert_eq!(
-            get(&witness, PackedFamilyId::BytecodeRa { index: 0 }, 1, 0, 11),
+            get(&witness, PackingFamilyId::BytecodeRa { index: 0 }, 1, 0, 11),
             AkitaField::one()
         );
         assert_eq!(
-            get(&witness, PackedFamilyId::RamRa { index: 0 }, 1, 0, 0x42),
+            get(&witness, PackingFamilyId::RamRa { index: 0 }, 1, 0, 0x42),
             AkitaField::one()
         );
         assert_eq!(
             get(
                 &witness,
-                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                PackingFamilyId::UnsignedIncChunk { index: 0 },
                 0,
                 0,
                 249
             ),
             AkitaField::one()
         );
-        assert!(get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
+        assert!(get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
         assert_eq!(
             get(
                 &witness,
-                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                PackingFamilyId::UnsignedIncChunk { index: 0 },
                 1,
                 0,
                 20
@@ -527,7 +537,7 @@ mod tests {
             AkitaField::one()
         );
         assert_eq!(
-            get(&witness, PackedFamilyId::UnsignedIncMsb, 1, 0, 1),
+            get(&witness, PackingFamilyId::UnsignedIncMsb, 1, 0, 1),
             AkitaField::one()
         );
     }
@@ -580,7 +590,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::UnsignedIncChunk { index },
+                    PackingFamilyId::UnsignedIncChunk { index },
                     0,
                     0,
                     0
@@ -589,7 +599,7 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
             AkitaField::one()
         );
     }
@@ -627,7 +637,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::UnsignedIncChunk { index },
+                    PackingFamilyId::UnsignedIncChunk { index },
                     0,
                     0,
                     0
@@ -636,7 +646,7 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
             AkitaField::one()
         );
     }
@@ -673,7 +683,7 @@ mod tests {
         assert_eq!(
             get(
                 &witness,
-                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                PackingFamilyId::UnsignedIncChunk { index: 0 },
                 0,
                 0,
                 3
@@ -684,7 +694,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::UnsignedIncChunk { index },
+                    PackingFamilyId::UnsignedIncChunk { index },
                     0,
                     0,
                     0
@@ -693,7 +703,7 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
             AkitaField::one()
         );
     }
@@ -731,7 +741,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::UnsignedIncChunk { index },
+                    PackingFamilyId::UnsignedIncChunk { index },
                     0,
                     0,
                     0
@@ -740,7 +750,7 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
             AkitaField::one()
         );
     }
@@ -826,7 +836,7 @@ mod tests {
         assert_eq!(
             get(
                 &witness,
-                PackedFamilyId::UnsignedIncChunk { index: 0 },
+                PackingFamilyId::UnsignedIncChunk { index: 0 },
                 0,
                 0,
                 249
@@ -837,7 +847,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::UnsignedIncChunk { index },
+                    PackingFamilyId::UnsignedIncChunk { index },
                     0,
                     0,
                     255
@@ -845,7 +855,7 @@ mod tests {
                 AkitaField::one()
             );
         }
-        assert!(get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
+        assert!(get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1).is_zero());
     }
 
     #[test]
@@ -882,7 +892,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::UnsignedIncChunk { index },
+                    PackingFamilyId::UnsignedIncChunk { index },
                     0,
                     0,
                     symbol
@@ -894,7 +904,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::UnsignedIncChunk { index },
+                    PackingFamilyId::UnsignedIncChunk { index },
                     0,
                     0,
                     0
@@ -903,7 +913,7 @@ mod tests {
             );
         }
         assert_eq!(
-            get(&witness, PackedFamilyId::UnsignedIncMsb, 0, 0, 1),
+            get(&witness, PackingFamilyId::UnsignedIncMsb, 0, 0, 1),
             AkitaField::one()
         );
     }
@@ -958,7 +968,7 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::FieldRdIncByte { index },
+                    PackingFamilyId::FieldRdIncByte { index },
                     0,
                     0,
                     byte as usize
@@ -968,7 +978,7 @@ mod tests {
         }
         assert!(witness
             .layout()
-            .family(&PackedFamilyId::FieldRdIncSign)
+            .family(&PackingFamilyId::FieldRdIncSign)
             .is_none());
     }
 
@@ -1003,7 +1013,7 @@ mod tests {
 
         for index in 0..AkitaField::NUM_BYTES {
             assert_eq!(
-                get(&witness, PackedFamilyId::FieldRdIncByte { index }, 0, 0, 0),
+                get(&witness, PackingFamilyId::FieldRdIncByte { index }, 0, 0, 0),
                 AkitaField::one()
             );
         }
@@ -1012,7 +1022,7 @@ mod tests {
     #[test]
     fn untrusted_advice_encoding_roundtrip() {
         let bytes = [255, 0, 7, 8];
-        let layout = advice_layout(PackedAdviceKind::Untrusted);
+        let layout = advice_layout(PackingAdviceKind::Untrusted);
 
         let mut builder = JoltPackedWitnessBuilder::new(layout);
         let _ = builder
@@ -1024,8 +1034,8 @@ mod tests {
             assert_eq!(
                 get(
                     &witness,
-                    PackedFamilyId::AdviceBytes {
-                        kind: PackedAdviceKind::Untrusted,
+                    PackingFamilyId::AdviceBytes {
+                        kind: PackingAdviceKind::Untrusted,
                         index: 0,
                     },
                     row,
@@ -1037,54 +1047,54 @@ mod tests {
         }
     }
 
-    fn advice_layout(kind: PackedAdviceKind) -> PackedWitnessLayout {
-        PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::AdviceBytes { kind, index: 0 },
-            PackedFactDomain::AdviceBytes { kind, log_bytes: 2 },
+    fn advice_layout(kind: PackingAdviceKind) -> PackingWitnessLayout {
+        PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::AdviceBytes { kind, index: 0 },
+            PackingFactDomain::AdviceBytes { kind, log_bytes: 2 },
             1,
-            PackedAlphabet::Byte,
+            PackingAlphabet::Byte,
         )])
         .expect("layout should build")
     }
 
-    fn field_rd_inc_layout() -> PackedWitnessLayout {
-        PackedWitnessLayout::new((0..AkitaField::NUM_BYTES).map(|index| {
-            PackedFamilySpec::direct(
-                PackedFamilyId::FieldRdIncByte { index },
+    fn field_rd_inc_layout() -> PackingWitnessLayout {
+        PackingWitnessLayout::new((0..AkitaField::NUM_BYTES).map(|index| {
+            PackingFamilySpec::direct(
+                PackingFamilyId::FieldRdIncByte { index },
                 trace_domain(),
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             )
         }))
         .expect("layout should build")
     }
 
-    fn increment_layout() -> PackedWitnessLayout {
+    fn increment_layout() -> PackingWitnessLayout {
         increment_layout_with_chunk_bits(8)
     }
 
-    fn increment_layout_with_chunk_bits(log_k_chunk: usize) -> PackedWitnessLayout {
+    fn increment_layout_with_chunk_bits(log_k_chunk: usize) -> PackingWitnessLayout {
         let chunk_count =
             unsigned_inc_lower_chunk_count(log_k_chunk).expect("valid test chunk size");
-        let alphabet = PackedAlphabet::Fixed {
+        let alphabet = PackingAlphabet::Fixed {
             size: 1 << log_k_chunk,
         };
         let mut specs = (0..chunk_count)
             .map(|index| {
-                PackedFamilySpec::direct(
-                    PackedFamilyId::UnsignedIncChunk { index },
+                PackingFamilySpec::direct(
+                    PackingFamilyId::UnsignedIncChunk { index },
                     trace_domain(),
                     1,
                     alphabet,
                 )
             })
             .collect::<Vec<_>>();
-        specs.push(PackedFamilySpec::direct(
-            PackedFamilyId::UnsignedIncMsb,
+        specs.push(PackingFamilySpec::direct(
+            PackingFamilyId::UnsignedIncMsb,
             trace_domain(),
             1,
-            PackedAlphabet::Bit,
+            PackingAlphabet::Bit,
         ));
-        PackedWitnessLayout::new(specs).expect("layout should build")
+        PackingWitnessLayout::new(specs).expect("layout should build")
     }
 }

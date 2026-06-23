@@ -29,9 +29,9 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::{
-    BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackedAdviceKind,
-    PackedFactDomain, PackedFamilyId, PackedWitnessLayout, PackedWitnessSource, PackingBatchProof,
-    PhysicalView, SparsePackedWitness,
+    BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackingAdviceKind,
+    PackingBatchProof, PackingFactDomain, PackingFamilyId, PackingWitnessLayout,
+    PackingWitnessSource, PhysicalView, SparsePackingWitness,
 };
 use jolt_poly::Polynomial;
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
@@ -70,14 +70,14 @@ pub type AkitaJoltProof = JoltProof<AkitaPackingScheme, AkitaClearVectorCommitme
 #[derive(Clone, Debug)]
 pub struct AkitaPackingWitnessArtifacts {
     pub protocol: JoltProtocolConfig,
-    pub layout: PackedWitnessLayout,
+    pub layout: PackingWitnessLayout,
     pub commitments: CommitmentPayload<AkitaCommitment>,
     pub hint: AkitaProverHint,
 }
 
 #[derive(Clone, Debug)]
 pub struct AkitaPackingJoltWitnessInput<'a> {
-    pub layout: PackedWitnessLayout,
+    pub layout: PackingWitnessLayout,
     pub trace_rows: &'a [JoltTraceRow],
     pub log_k_chunk: usize,
     pub instruction_lookup_indices: &'a [u128],
@@ -87,7 +87,7 @@ pub struct AkitaPackingJoltWitnessInput<'a> {
 #[derive(Clone, Debug)]
 pub struct AkitaCommittedPackedJoltWitness {
     pub artifacts: AkitaPackingWitnessArtifacts,
-    pub witness: SparsePackedWitness<AkitaField>,
+    pub witness: SparsePackingWitness<AkitaField>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -110,7 +110,7 @@ impl AkitaPackingWitnessArtifacts {
 
 pub fn build_akita_packing_jolt_witness(
     input: AkitaPackingJoltWitnessInput<'_>,
-) -> Result<SparsePackedWitness<AkitaField>, VerifierError> {
+) -> Result<SparsePackingWitness<AkitaField>, VerifierError> {
     validate_akita_jolt_packed_witness_layout(&input.layout)?;
     let protocol = akita_lattice_protocol_config_for_layout(&input.layout);
     validate_lattice_packed_witness_layout_config(&protocol, &input.layout)?;
@@ -149,7 +149,7 @@ pub fn commit_akita_packing_jolt_witness(
 }
 
 fn validate_akita_jolt_packed_witness_layout(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
 ) -> Result<(), VerifierError> {
     for family in &layout.families {
         if jolt_packed_witness_family_is_precommitted(&family.id) {
@@ -164,26 +164,26 @@ fn validate_akita_jolt_packed_witness_layout(
     Ok(())
 }
 
-fn jolt_packed_witness_family_is_precommitted(family: &PackedFamilyId) -> bool {
+fn jolt_packed_witness_family_is_precommitted(family: &PackingFamilyId) -> bool {
     matches!(
         family,
-        PackedFamilyId::AdviceBytes {
-            kind: PackedAdviceKind::Trusted,
+        PackingFamilyId::AdviceBytes {
+            kind: PackingAdviceKind::Trusted,
             ..
-        } | PackedFamilyId::BytecodeChunk { .. }
-            | PackedFamilyId::BytecodeRegisterSelector { .. }
-            | PackedFamilyId::BytecodeCircuitFlag { .. }
-            | PackedFamilyId::BytecodeInstructionFlag { .. }
-            | PackedFamilyId::BytecodeLookupSelector { .. }
-            | PackedFamilyId::BytecodeRafFlag { .. }
-            | PackedFamilyId::BytecodeUnexpandedPcBytes { .. }
-            | PackedFamilyId::BytecodeImmBytes { .. }
-            | PackedFamilyId::ProgramImageInit
+        } | PackingFamilyId::BytecodeChunk { .. }
+            | PackingFamilyId::BytecodeRegisterSelector { .. }
+            | PackingFamilyId::BytecodeCircuitFlag { .. }
+            | PackingFamilyId::BytecodeInstructionFlag { .. }
+            | PackingFamilyId::BytecodeLookupSelector { .. }
+            | PackingFamilyId::BytecodeRafFlag { .. }
+            | PackingFamilyId::BytecodeUnexpandedPcBytes { .. }
+            | PackingFamilyId::BytecodeImmBytes { .. }
+            | PackingFamilyId::ProgramImageInit
     )
 }
 
 pub fn akita_lattice_protocol_config_for_layout(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
 ) -> JoltProtocolConfig {
     let validity_requirements = akita_lattice_validity_requirements_for_layout(layout);
     let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
@@ -200,14 +200,14 @@ pub fn akita_lattice_protocol_config_for_layout(
         },
         advice: AdviceLatticeConfig {
             trusted: false,
-            untrusted: layout_has_advice(layout, PackedAdviceKind::Untrusted),
+            untrusted: layout_has_advice(layout, PackingAdviceKind::Untrusted),
         },
     };
     config
 }
 
 pub fn akita_lattice_validity_requirements_for_layout(
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
 ) -> Vec<LatticePackedValidityRequirement> {
     let mut requirements = layout
         .families
@@ -216,14 +216,14 @@ pub fn akita_lattice_validity_requirements_for_layout(
             let limbs = family.limbs;
             let alphabet_size = family.alphabet.size();
             match family.id {
-                PackedFamilyId::UnsignedIncChunk { index } => {
+                PackingFamilyId::UnsignedIncChunk { index } => {
                     Some(LatticePackedValidityRequirement::exact_one_hot(
                         LatticePackedFamilyId::UnsignedIncChunk { index },
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::UnsignedIncMsb => {
+                PackingFamilyId::UnsignedIncMsb => {
                     Some(LatticePackedValidityRequirement::boolean_indicator(
                         LatticePackedFamilyId::UnsignedIncMsb,
                         limbs,
@@ -231,14 +231,14 @@ pub fn akita_lattice_validity_requirements_for_layout(
                         1,
                     ))
                 }
-                PackedFamilyId::FieldRdIncByte { index } => {
+                PackingFamilyId::FieldRdIncByte { index } => {
                     Some(LatticePackedValidityRequirement::exact_one_hot(
                         LatticePackedFamilyId::FieldRdIncByte { index },
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::AdviceBytes { kind, index } => {
+                PackingFamilyId::AdviceBytes { kind, index } => {
                     Some(LatticePackedValidityRequirement::exact_one_hot(
                         LatticePackedFamilyId::AdviceBytes {
                             kind: jolt_advice_kind(kind),
@@ -248,14 +248,14 @@ pub fn akita_lattice_validity_requirements_for_layout(
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+                PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
                     Some(LatticePackedValidityRequirement::optional_one_hot(
                         LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector },
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+                PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
                     Some(LatticePackedValidityRequirement::boolean_indicator(
                         LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag },
                         limbs,
@@ -263,7 +263,7 @@ pub fn akita_lattice_validity_requirements_for_layout(
                         1,
                     ))
                 }
-                PackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+                PackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
                     Some(LatticePackedValidityRequirement::boolean_indicator(
                         LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag },
                         limbs,
@@ -271,14 +271,14 @@ pub fn akita_lattice_validity_requirements_for_layout(
                         1,
                     ))
                 }
-                PackedFamilyId::BytecodeLookupSelector { chunk } => {
+                PackingFamilyId::BytecodeLookupSelector { chunk } => {
                     Some(LatticePackedValidityRequirement::optional_one_hot(
                         LatticePackedFamilyId::BytecodeLookupSelector { chunk },
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::BytecodeRafFlag { chunk } => {
+                PackingFamilyId::BytecodeRafFlag { chunk } => {
                     Some(LatticePackedValidityRequirement::boolean_indicator(
                         LatticePackedFamilyId::BytecodeRafFlag { chunk },
                         limbs,
@@ -286,44 +286,44 @@ pub fn akita_lattice_validity_requirements_for_layout(
                         1,
                     ))
                 }
-                PackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+                PackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
                     Some(LatticePackedValidityRequirement::exact_one_hot(
                         LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::BytecodeImmBytes { chunk } => {
+                PackingFamilyId::BytecodeImmBytes { chunk } => {
                     Some(LatticePackedValidityRequirement::exact_one_hot(
                         LatticePackedFamilyId::BytecodeImmBytes { chunk },
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::ProgramImageInit => {
+                PackingFamilyId::ProgramImageInit => {
                     Some(LatticePackedValidityRequirement::exact_one_hot(
                         LatticePackedFamilyId::ProgramImageInit,
                         limbs,
                         alphabet_size,
                     ))
                 }
-                PackedFamilyId::InstructionRa { .. }
-                | PackedFamilyId::BytecodeRa { .. }
-                | PackedFamilyId::RamRa { .. }
-                | PackedFamilyId::FieldRdIncSign
-                | PackedFamilyId::BytecodeChunk { .. }
-                | PackedFamilyId::Custom { .. } => None,
+                PackingFamilyId::InstructionRa { .. }
+                | PackingFamilyId::BytecodeRa { .. }
+                | PackingFamilyId::RamRa { .. }
+                | PackingFamilyId::FieldRdIncSign
+                | PackingFamilyId::BytecodeChunk { .. }
+                | PackingFamilyId::Custom { .. } => None,
             }
         })
         .collect::<Vec<_>>();
     for family in &layout.families {
-        let PackedFamilyId::BytecodeCircuitFlag { chunk, flag } = &family.id else {
+        let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &family.id else {
             continue;
         };
         let chunk = *chunk;
         if *flag == CircuitFlags::Store as usize
             && layout
-                .family(&PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 })
+                .family(&PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 })
                 .is_some()
         {
             requirements.push(LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk));
@@ -337,7 +337,7 @@ pub fn commit_akita_packing_witness<S>(
     source: &S,
 ) -> Result<AkitaPackingWitnessArtifacts, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let protocol = akita_lattice_protocol_config_for_layout(source.layout());
     commit_akita_packing_witness_with_config(protocol, setup, source)
@@ -349,7 +349,7 @@ pub fn commit_akita_packing_witness_with_config<S>(
     source: &S,
 ) -> Result<AkitaPackingWitnessArtifacts, VerifierError>
 where
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let layout = source.layout().clone();
     validate_lattice_packed_witness_layout_config(&protocol, &layout)?;
@@ -379,7 +379,7 @@ pub fn prove_akita_packing_openings<T, OpeningId, RelationId, S>(
 ) -> Result<AkitaPackingBatchProof, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     if source.layout() != &artifacts.layout {
         return Err(VerifierError::FinalOpeningBatchFailed {
@@ -429,7 +429,7 @@ pub fn prove_akita_stage8_clear_openings<T, S>(
 ) -> Result<AkitaPackingBatchProof, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     prove_akita_stage8_clear_openings_with_precommitted(
         setup,
@@ -452,7 +452,7 @@ pub fn prove_akita_stage8_clear_openings_with_precommitted<T, S>(
 ) -> Result<AkitaStage8ClearOpeningProofs, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let Stage8BatchStatement::Clear(statement) = statement else {
         return Err(VerifierError::FinalOpeningBatchFailed {
@@ -605,7 +605,7 @@ pub fn prove_and_attach_akita_opening_proofs<T, S>(
 ) -> Result<(), VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     prove_and_attach_akita_opening_proofs_with_precommitted::<T, S>(
         setup,
@@ -635,7 +635,7 @@ pub fn prove_and_attach_akita_opening_proofs_with_precommitted<T, S>(
 ) -> Result<(), VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     let mut candidate = proof.clone();
     let validity = prove_akita_jolt_packed_validity::<T, S>(
@@ -675,7 +675,7 @@ pub fn prove_akita_jolt_final_openings<T, S>(
 ) -> Result<AkitaPackingBatchProof, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     validate_akita_artifacts_for_proof(
         &preprocessing.pcs_setup,
@@ -716,7 +716,7 @@ pub fn prove_akita_jolt_final_openings_with_precommitted<T, S>(
 ) -> Result<AkitaStage8ClearOpeningProofs, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
-    S: PackedWitnessSource<AkitaField>,
+    S: PackingWitnessSource<AkitaField>,
 {
     validate_akita_artifacts_for_proof(
         &preprocessing.pcs_setup,
@@ -810,8 +810,8 @@ fn pack_untrusted_advice_bytes(
         |id| {
             matches!(
                 id,
-                PackedFamilyId::AdviceBytes {
-                    kind: PackedAdviceKind::Untrusted,
+                PackingFamilyId::AdviceBytes {
+                    kind: PackingAdviceKind::Untrusted,
                     index: 0,
                 }
             )
@@ -839,8 +839,8 @@ fn pack_untrusted_advice_bytes(
 }
 
 fn expected_rows_for_family(
-    layout: &PackedWitnessLayout,
-    mut matches_family: impl FnMut(&PackedFamilyId) -> bool,
+    layout: &PackingWitnessLayout,
+    mut matches_family: impl FnMut(&PackingFamilyId) -> bool,
     domain: &'static str,
 ) -> Result<Option<usize>, VerifierError> {
     let mut rows = None;
@@ -862,12 +862,12 @@ fn expected_rows_for_family(
     Ok(rows)
 }
 
-fn packed_domain_rows(domain: PackedFactDomain) -> Result<usize, VerifierError> {
+fn packed_domain_rows(domain: PackingFactDomain) -> Result<usize, VerifierError> {
     let log_rows = match domain {
-        PackedFactDomain::TraceRows { log_t } => log_t,
-        PackedFactDomain::BytecodeRows { log_bytecode } => log_bytecode,
-        PackedFactDomain::ProgramImageWords { log_words } => log_words,
-        PackedFactDomain::AdviceBytes { log_bytes, .. } => log_bytes,
+        PackingFactDomain::TraceRows { log_t } => log_t,
+        PackingFactDomain::BytecodeRows { log_bytecode } => log_bytecode,
+        PackingFactDomain::ProgramImageWords { log_words } => log_words,
+        PackingFactDomain::AdviceBytes { log_bytes, .. } => log_bytes,
     };
     1usize
         .checked_shl(log_rows as u32)
@@ -899,25 +899,25 @@ fn akita_witness_error(reason: impl ToString) -> VerifierError {
     }
 }
 
-fn jolt_advice_kind(kind: PackedAdviceKind) -> JoltAdviceKind {
+fn jolt_advice_kind(kind: PackingAdviceKind) -> JoltAdviceKind {
     match kind {
-        PackedAdviceKind::Trusted => JoltAdviceKind::Trusted,
-        PackedAdviceKind::Untrusted => JoltAdviceKind::Untrusted,
+        PackingAdviceKind::Trusted => JoltAdviceKind::Trusted,
+        PackingAdviceKind::Untrusted => JoltAdviceKind::Untrusted,
     }
 }
 
-fn layout_has_field_rd_inc(layout: &PackedWitnessLayout) -> bool {
+fn layout_has_field_rd_inc(layout: &PackingWitnessLayout) -> bool {
     layout
         .families
         .iter()
-        .any(|family| matches!(family.id, PackedFamilyId::FieldRdIncByte { .. }))
+        .any(|family| matches!(family.id, PackingFamilyId::FieldRdIncByte { .. }))
 }
 
-fn layout_has_advice(layout: &PackedWitnessLayout, kind: PackedAdviceKind) -> bool {
+fn layout_has_advice(layout: &PackingWitnessLayout, kind: PackingAdviceKind) -> bool {
     layout.families.iter().any(|family| {
         matches!(
             family.id,
-            PackedFamilyId::AdviceBytes {
+            PackingFamilyId::AdviceBytes {
                 kind: family_kind,
                 ..
             } if family_kind == kind
@@ -950,8 +950,8 @@ mod tests {
     use jolt_field::FixedByteSize;
     use jolt_openings::{
         BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-        PackedAlphabet, PackedCellAddress, PackedFactDomain, PackedFamilySpec,
-        PackingReductionProof, PackingSetupParams, PackingTerm, PhysicalView, SparsePackedWitness,
+        PackingAlphabet, PackingCellAddress, PackingFactDomain, PackingFamilySpec,
+        PackingReductionProof, PackingSetupParams, PackingTerm, PhysicalView, SparsePackingWitness,
     };
     use jolt_poly::Point;
     use jolt_riscv::{
@@ -960,48 +960,48 @@ mod tests {
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
-    fn tiny_layout() -> PackedWitnessLayout {
+    fn tiny_layout() -> PackingWitnessLayout {
         let specs = vec![
-            PackedFamilySpec::direct(
-                PackedFamilyId::InstructionRa { index: 0 },
-                PackedFactDomain::TraceRows { log_t: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::InstructionRa { index: 0 },
+                PackingFactDomain::TraceRows { log_t: 0 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::UnsignedIncMsb,
-                PackedFactDomain::TraceRows { log_t: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::UnsignedIncMsb,
+                PackingFactDomain::TraceRows { log_t: 0 },
                 1,
-                PackedAlphabet::Bit,
+                PackingAlphabet::Bit,
             ),
         ];
         #[cfg(feature = "field-inline")]
         let specs = {
             let mut specs = specs;
             specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
-                PackedFamilySpec::direct(
-                    PackedFamilyId::FieldRdIncByte { index },
-                    PackedFactDomain::TraceRows { log_t: 0 },
+                PackingFamilySpec::direct(
+                    PackingFamilyId::FieldRdIncByte { index },
+                    PackingFactDomain::TraceRows { log_t: 0 },
                     1,
-                    PackedAlphabet::Byte,
+                    PackingAlphabet::Byte,
                 )
             }));
             specs
         };
-        PackedWitnessLayout::new(specs).expect("layout should build")
+        PackingWitnessLayout::new(specs).expect("layout should build")
     }
 
-    fn packed_cell(family: PackedFamilyId, symbol: usize) -> PackedCellAddress {
+    fn packed_cell(family: PackingFamilyId, symbol: usize) -> PackingCellAddress {
         packed_cell_at(family, 0, 0, symbol)
     }
 
     fn packed_cell_at(
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         row: usize,
         limb: usize,
         symbol: usize,
-    ) -> PackedCellAddress {
-        PackedCellAddress {
+    ) -> PackingCellAddress {
+        PackingCellAddress {
             family,
             row,
             limb,
@@ -1052,9 +1052,9 @@ mod tests {
     }
 
     fn akita_packing_params(
-        layout: &PackedWitnessLayout,
+        layout: &PackingWitnessLayout,
         max_num_polys_per_commitment_group: usize,
-    ) -> PackingSetupParams<AkitaSetupParams, PackedWitnessLayout> {
+    ) -> PackingSetupParams<AkitaSetupParams, PackingWitnessLayout> {
         PackingSetupParams {
             pcs: AkitaSetupParams::new(
                 layout.dimension,
@@ -1094,7 +1094,7 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, _) = AkitaPackingScheme::setup(params);
-        let source = SparsePackedWitness::try_new(
+        let source = SparsePackingWitness::try_new(
             layout.clone(),
             vec![(0, AkitaField::from_u64(1)), (256, AkitaField::from_u64(1))],
         )
@@ -1120,57 +1120,57 @@ mod tests {
     #[test]
     fn commits_jolt_packed_witness_inputs_with_padding() {
         let specs = vec![
-            PackedFamilySpec::direct(
-                PackedFamilyId::InstructionRa { index: 0 },
-                PackedFactDomain::TraceRows { log_t: 1 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::InstructionRa { index: 0 },
+                PackingFactDomain::TraceRows { log_t: 1 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRa { index: 0 },
-                PackedFactDomain::TraceRows { log_t: 1 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeRa { index: 0 },
+                PackingFactDomain::TraceRows { log_t: 1 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::RamRa { index: 0 },
-                PackedFactDomain::TraceRows { log_t: 1 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::RamRa { index: 0 },
+                PackingFactDomain::TraceRows { log_t: 1 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::UnsignedIncChunk { index: 0 },
-                PackedFactDomain::TraceRows { log_t: 1 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::UnsignedIncChunk { index: 0 },
+                PackingFactDomain::TraceRows { log_t: 1 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::AdviceBytes {
-                    kind: PackedAdviceKind::Untrusted,
+            PackingFamilySpec::direct(
+                PackingFamilyId::AdviceBytes {
+                    kind: PackingAdviceKind::Untrusted,
                     index: 0,
                 },
-                PackedFactDomain::AdviceBytes {
-                    kind: PackedAdviceKind::Untrusted,
+                PackingFactDomain::AdviceBytes {
+                    kind: PackingAdviceKind::Untrusted,
                     log_bytes: 2,
                 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
         ];
         #[cfg(feature = "field-inline")]
         let specs = {
             let mut specs = specs;
             specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
-                PackedFamilySpec::direct(
-                    PackedFamilyId::FieldRdIncByte { index },
-                    PackedFactDomain::TraceRows { log_t: 1 },
+                PackingFamilySpec::direct(
+                    PackingFamilyId::FieldRdIncByte { index },
+                    PackingFactDomain::TraceRows { log_t: 1 },
                     1,
-                    PackedAlphabet::Byte,
+                    PackingAlphabet::Byte,
                 )
             }));
             specs
         };
-        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
+        let layout = PackingWitnessLayout::new(specs).expect("layout should build");
         let rows = [
             trace_row(
                 JoltInstructionKind::ADD,
@@ -1231,7 +1231,7 @@ mod tests {
         assert_eq!(
             witness
                 .eval_direct_fact(&packed_cell_at(
-                    PackedFamilyId::InstructionRa { index: 0 },
+                    PackingFamilyId::InstructionRa { index: 0 },
                     0,
                     0,
                     0xaa,
@@ -1242,7 +1242,7 @@ mod tests {
         assert_eq!(
             witness
                 .eval_direct_fact(&packed_cell_at(
-                    PackedFamilyId::BytecodeRa { index: 0 },
+                    PackingFamilyId::BytecodeRa { index: 0 },
                     1,
                     0,
                     1,
@@ -1253,7 +1253,7 @@ mod tests {
         assert_eq!(
             witness
                 .eval_direct_fact(&packed_cell_at(
-                    PackedFamilyId::RamRa { index: 0 },
+                    PackingFamilyId::RamRa { index: 0 },
                     1,
                     0,
                     0x34
@@ -1264,7 +1264,7 @@ mod tests {
         assert_eq!(
             witness
                 .eval_direct_fact(&packed_cell_at(
-                    PackedFamilyId::UnsignedIncChunk { index: 0 },
+                    PackingFamilyId::UnsignedIncChunk { index: 0 },
                     0,
                     0,
                     3
@@ -1275,8 +1275,8 @@ mod tests {
         assert_eq!(
             witness
                 .eval_direct_fact(&packed_cell_at(
-                    PackedFamilyId::AdviceBytes {
-                        kind: PackedAdviceKind::Untrusted,
+                    PackingFamilyId::AdviceBytes {
+                        kind: PackingAdviceKind::Untrusted,
                         index: 0,
                     },
                     2,
@@ -1291,46 +1291,46 @@ mod tests {
     #[test]
     fn build_jolt_packed_witness_rejects_precommitted_layout_families() {
         let forbidden_specs = [
-            PackedFamilySpec::direct(
-                PackedFamilyId::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+            PackingFamilySpec::direct(
+                PackingFamilyId::AdviceBytes {
+                    kind: PackingAdviceKind::Trusted,
                     index: 0,
                 },
-                PackedFactDomain::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+                PackingFactDomain::AdviceBytes {
+                    kind: PackingAdviceKind::Trusted,
                     log_bytes: 0,
                 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeChunk { index: 0 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeChunk { index: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeRegisterSelector {
                     chunk: 0,
                     selector: 2,
                 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
-                PackedAlphabet::Fixed {
+                PackingAlphabet::Fixed {
                     size: 1 << REGISTER_ADDRESS_BITS,
                 },
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::ProgramImageInit,
-                PackedFactDomain::ProgramImageWords { log_words: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::ProgramImageInit,
+                PackingFactDomain::ProgramImageWords { log_words: 0 },
                 8,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
         ];
 
         for spec in forbidden_specs {
             let layout =
-                PackedWitnessLayout::new([spec]).expect("forbidden layout should still parse");
+                PackingWitnessLayout::new([spec]).expect("forbidden layout should still parse");
 
             let error = build_akita_packing_jolt_witness(AkitaPackingJoltWitnessInput {
                 layout,
@@ -1357,9 +1357,9 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
-        let instruction_family = PackedFamilyId::InstructionRa { index: 0 };
-        let sign_family = PackedFamilyId::UnsignedIncMsb;
-        let source = SparsePackedWitness::try_from_cells(
+        let instruction_family = PackingFamilyId::InstructionRa { index: 0 };
+        let sign_family = PackingFamilyId::UnsignedIncMsb;
+        let source = SparsePackingWitness::try_from_cells(
             layout.clone(),
             [
                 (
@@ -1558,8 +1558,8 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
-        let sign_family = PackedFamilyId::UnsignedIncMsb;
-        let source = SparsePackedWitness::try_from_cells(
+        let sign_family = PackingFamilyId::UnsignedIncMsb;
+        let source = SparsePackingWitness::try_from_cells(
             layout.clone(),
             [(packed_cell(sign_family.clone(), 1), AkitaField::one())],
         )
@@ -2036,11 +2036,11 @@ mod tests {
     #[test]
     fn packed_validity_value_detects_malformed_advice_byte_onehot() {
         let (layout, statements) = small_validity_context();
-        let family = PackedFamilyId::AdviceBytes {
-            kind: PackedAdviceKind::Untrusted,
+        let family = PackingFamilyId::AdviceBytes {
+            kind: PackingAdviceKind::Untrusted,
             index: 0,
         };
-        let source = SparsePackedWitness::try_from_cells(
+        let source = SparsePackingWitness::try_from_cells(
             layout,
             [
                 (packed_cell_at(family.clone(), 0, 0, 7), AkitaField::one()),
@@ -2066,11 +2066,11 @@ mod tests {
     #[test]
     fn packed_validity_value_detects_malformed_bytecode_optional_selector() {
         let (layout, statements, _) = small_bytecode_validity_context();
-        let family = PackedFamilyId::BytecodeRegisterSelector {
+        let family = PackingFamilyId::BytecodeRegisterSelector {
             chunk: 0,
             selector: 0,
         };
-        let source = SparsePackedWitness::try_from_cells(
+        let source = SparsePackingWitness::try_from_cells(
             layout,
             [
                 (packed_cell_at(family.clone(), 0, 0, 3), AkitaField::one()),
@@ -2097,10 +2097,12 @@ mod tests {
     fn packed_validity_value_detects_malformed_bytecode_boolean_flag() {
         let (layout, statements, _) = small_bytecode_validity_context();
         let flag = CircuitFlags::Store as usize;
-        let family = PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag };
-        let source =
-            SparsePackedWitness::try_from_cells(layout, [(packed_cell_at(family, 0, 0, 1), af(2))])
-                .expect("malformed bytecode flag source should build");
+        let family = PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag };
+        let source = SparsePackingWitness::try_from_cells(
+            layout,
+            [(packed_cell_at(family, 0, 0, 1), af(2))],
+        )
+        .expect("malformed bytecode flag source should build");
         let statement = validity_statement(
             &statements,
             LatticePackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag },
@@ -2138,13 +2140,13 @@ mod tests {
     }
 
     fn validity_default_source(
-        layout: &PackedWitnessLayout,
+        layout: &PackingWitnessLayout,
         requirements: &[LatticePackedValidityRequirement],
-    ) -> SparsePackedWitness<AkitaField> {
+    ) -> SparsePackingWitness<AkitaField> {
         validity_source_with_symbols(layout, requirements, |_, _| 0)
     }
 
-    fn small_validity_context() -> (PackedWitnessLayout, Vec<LatticePackedValidityStatement>) {
+    fn small_validity_context() -> (PackingWitnessLayout, Vec<LatticePackedValidityStatement>) {
         let log_t = 0;
         let log_k_chunk = 1;
         let precommitted = PrecommittedSchedule::new(
@@ -2190,64 +2192,64 @@ mod tests {
     }
 
     fn small_bytecode_validity_context() -> (
-        PackedWitnessLayout,
+        PackingWitnessLayout,
         Vec<LatticePackedValidityStatement>,
         Vec<LatticePackedValidityRequirement>,
     ) {
         let specs = vec![
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeRegisterSelector {
                     chunk: 0,
                     selector: 0,
                 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
-                PackedAlphabet::Fixed {
+                PackingAlphabet::Fixed {
                     size: 1 << REGISTER_ADDRESS_BITS,
                 },
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeRegisterSelector {
                     chunk: 0,
                     selector: 2,
                 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
-                PackedAlphabet::Fixed {
+                PackingAlphabet::Fixed {
                     size: 1 << REGISTER_ADDRESS_BITS,
                 },
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeCircuitFlag {
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeCircuitFlag {
                     chunk: 0,
                     flag: CircuitFlags::Store as usize,
                 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 1,
-                PackedAlphabet::Bit,
+                PackingAlphabet::Bit,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeImmBytes { chunk: 0 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 0 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeImmBytes { chunk: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 0 },
                 AkitaField::NUM_BYTES,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
         ];
         #[cfg(feature = "field-inline")]
         let specs = {
             let mut specs = specs;
             specs.extend((0..AkitaField::NUM_BYTES).map(|index| {
-                PackedFamilySpec::direct(
-                    PackedFamilyId::FieldRdIncByte { index },
-                    PackedFactDomain::TraceRows { log_t: 0 },
+                PackingFamilySpec::direct(
+                    PackingFamilyId::FieldRdIncByte { index },
+                    PackingFactDomain::TraceRows { log_t: 0 },
                     1,
-                    PackedAlphabet::Byte,
+                    PackingAlphabet::Byte,
                 )
             }));
             specs
         };
         let layout =
-            PackedWitnessLayout::new(specs).expect("manual bytecode validity layout should build");
+            PackingWitnessLayout::new(specs).expect("manual bytecode validity layout should build");
         let mut requirements = akita_lattice_validity_requirements_for_layout(&layout);
         requirements.push(bytecode_imm_canonical_bytes_requirement(
             0,
@@ -2271,7 +2273,7 @@ mod tests {
     }
 
     fn validity_value_at_zero(
-        source: &SparsePackedWitness<AkitaField>,
+        source: &SparsePackingWitness<AkitaField>,
         statement: &LatticePackedValidityStatement,
     ) -> AkitaField {
         let point = vec![AkitaField::zero(); statement.num_vars];
@@ -2280,10 +2282,10 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     fn validity_source_with_field_rd_inc_bytes(
-        layout: &PackedWitnessLayout,
+        layout: &PackingWitnessLayout,
         requirements: &[LatticePackedValidityRequirement],
         bytes: &[u8],
-    ) -> SparsePackedWitness<AkitaField> {
+    ) -> SparsePackingWitness<AkitaField> {
         validity_source_with_symbols(layout, requirements, |family, _| match family {
             LatticePackedFamilyId::FieldRdIncByte { index } => bytes[*index] as usize,
             _ => 0,
@@ -2291,10 +2293,10 @@ mod tests {
     }
 
     fn validity_source_with_bytecode_imm_bytes(
-        layout: &PackedWitnessLayout,
+        layout: &PackingWitnessLayout,
         requirements: &[LatticePackedValidityRequirement],
         bytes: &[u8],
-    ) -> SparsePackedWitness<AkitaField> {
+    ) -> SparsePackingWitness<AkitaField> {
         validity_source_with_symbols(layout, requirements, |family, limb| match family {
             LatticePackedFamilyId::BytecodeImmBytes { .. } => bytes[limb] as usize,
             _ => 0,
@@ -2302,10 +2304,10 @@ mod tests {
     }
 
     fn validity_source_with_symbols(
-        layout: &PackedWitnessLayout,
+        layout: &PackingWitnessLayout,
         requirements: &[LatticePackedValidityRequirement],
         mut symbol_for: impl FnMut(&LatticePackedFamilyId, usize) -> usize,
-    ) -> SparsePackedWitness<AkitaField> {
+    ) -> SparsePackingWitness<AkitaField> {
         let mut cells = Vec::new();
         for requirement in requirements {
             let family_id = lattice_packing_family_id(&requirement.family);
@@ -2320,7 +2322,7 @@ mod tests {
                 for limb in 0..requirement.limbs {
                     let symbol = symbol_for(&requirement.family, limb);
                     cells.push((
-                        PackedCellAddress {
+                        PackingCellAddress {
                             family: family_id.clone(),
                             row,
                             limb,
@@ -2331,7 +2333,7 @@ mod tests {
                 }
             }
         }
-        SparsePackedWitness::try_from_cells(layout.clone(), cells)
+        SparsePackingWitness::try_from_cells(layout.clone(), cells)
             .expect("validity source should build")
     }
 
@@ -2387,10 +2389,10 @@ mod tests {
             &AkitaJoltProof,
             Option<&AkitaCommitment>,
             &AkitaPackingWitnessArtifacts,
-            &SparsePackedWitness<AkitaField>,
+            &SparsePackingWitness<AkitaField>,
         ) -> Result<AkitaPackingBatchProof, VerifierError>;
         let _prove: ProveFn =
-            prove_akita_jolt_final_openings::<TestTranscript, SparsePackedWitness<AkitaField>>;
+            prove_akita_jolt_final_openings::<TestTranscript, SparsePackingWitness<AkitaField>>;
         type ProveValidityFn = fn(
             &AkitaPackingProverSetup,
             &AkitaVerifierPreprocessing,
@@ -2398,11 +2400,11 @@ mod tests {
             &AkitaJoltProof,
             Option<&AkitaCommitment>,
             &AkitaPackingWitnessArtifacts,
-            &SparsePackedWitness<AkitaField>,
+            &SparsePackingWitness<AkitaField>,
         )
             -> Result<AkitaPackingValidityProofArtifacts, VerifierError>;
         let _prove_validity: ProveValidityFn =
-            prove_akita_jolt_packed_validity::<TestTranscript, SparsePackedWitness<AkitaField>>;
+            prove_akita_jolt_packed_validity::<TestTranscript, SparsePackingWitness<AkitaField>>;
         type AttachOpeningsFn = fn(
             &AkitaPackingProverSetup,
             &AkitaVerifierPreprocessing,
@@ -2410,11 +2412,11 @@ mod tests {
             &mut AkitaJoltProof,
             Option<&AkitaCommitment>,
             &AkitaPackingWitnessArtifacts,
-            &SparsePackedWitness<AkitaField>,
+            &SparsePackingWitness<AkitaField>,
         ) -> Result<(), VerifierError>;
         let _attach_openings: AttachOpeningsFn = prove_and_attach_akita_opening_proofs::<
             TestTranscript,
-            SparsePackedWitness<AkitaField>,
+            SparsePackingWitness<AkitaField>,
         >;
     }
 
@@ -2469,11 +2471,11 @@ mod tests {
         validate_akita_verifier_setup_layout(&verifier_setup, &layout)
             .expect("setup should match generated Akita packing layout");
 
-        let other_layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::InstructionRa { index: 1 },
-            PackedFactDomain::TraceRows { log_t: 0 },
+        let other_layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::InstructionRa { index: 1 },
+            PackingFactDomain::TraceRows { log_t: 0 },
             1,
-            PackedAlphabet::Byte,
+            PackingAlphabet::Byte,
         )])
         .expect("layout should build");
         assert!(matches!(
@@ -2494,7 +2496,7 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
-        let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
+        let source = SparsePackingWitness::try_new(layout.clone(), Vec::new())
             .expect("empty sparse source should build");
         let artifacts = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
@@ -2555,7 +2557,7 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, _) = AkitaPackingScheme::setup(params);
-        let source = SparsePackedWitness::try_new(layout, Vec::new())
+        let source = SparsePackingWitness::try_new(layout, Vec::new())
             .expect("empty sparse source should build");
         let artifacts = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
@@ -2606,7 +2608,7 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, _) = AkitaPackingScheme::setup(params);
-        let source = SparsePackedWitness::try_new(layout, Vec::new())
+        let source = SparsePackingWitness::try_new(layout, Vec::new())
             .expect("empty sparse source should build");
         let artifacts = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
@@ -2641,7 +2643,7 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, _) = AkitaPackingScheme::setup(params);
-        let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
+        let source = SparsePackingWitness::try_new(layout.clone(), Vec::new())
             .expect("empty sparse source should build");
         let mut config = akita_lattice_protocol_config_for_layout(&layout);
         config.lattice.packed_witness.layout_digest = Some([9; 32]);
@@ -2657,29 +2659,29 @@ mod tests {
         let layout = tiny_layout();
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
-        let source = SparsePackedWitness::try_from_cells(
+        let source = SparsePackingWitness::try_from_cells(
             layout.clone(),
             [
                 (
-                    packed_cell(PackedFamilyId::InstructionRa { index: 0 }, 7),
+                    packed_cell(PackingFamilyId::InstructionRa { index: 0 }, 7),
                     AkitaField::one(),
                 ),
                 (
-                    packed_cell(PackedFamilyId::UnsignedIncMsb, 1),
+                    packed_cell(PackingFamilyId::UnsignedIncMsb, 1),
                     AkitaField::one(),
                 ),
             ],
         )
         .expect("source should build");
-        let other_source = SparsePackedWitness::try_from_cells(
+        let other_source = SparsePackingWitness::try_from_cells(
             layout.clone(),
             [
                 (
-                    packed_cell(PackedFamilyId::InstructionRa { index: 0 }, 8),
+                    packed_cell(PackingFamilyId::InstructionRa { index: 0 }, 8),
                     AkitaField::one(),
                 ),
                 (
-                    packed_cell(PackedFamilyId::UnsignedIncMsb, 0),
+                    packed_cell(PackingFamilyId::UnsignedIncMsb, 0),
                     AkitaField::one(),
                 ),
             ],

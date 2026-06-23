@@ -16,8 +16,8 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::FixedByteSize;
 use jolt_openings::{
-    PackedAdviceKind, PackedAlphabet, PackedFactDomain, PackedFamilyId, PackedFamilySpec,
-    PackedWitnessLayout,
+    PackingAdviceKind, PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
+    PackingWitnessLayout,
 };
 
 use super::{
@@ -31,29 +31,29 @@ pub fn derive_lattice_packed_witness_layout(
     log_k_chunk: usize,
     ra_layout: JoltRaPolynomialLayout,
     precommitted: &PrecommittedSchedule,
-) -> Result<PackedWitnessLayout, VerifierError> {
+) -> Result<PackingWitnessLayout, VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
         return Err(invalid_lattice_config(
             "Akita packing witness layout derivation requires lattice PCS mode",
         ));
     }
 
-    let trace = PackedFactDomain::TraceRows { log_t };
+    let trace = PackingFactDomain::TraceRows { log_t };
     let ra_alphabet = one_hot_alphabet(log_k_chunk)?;
     let mut specs = Vec::new();
     specs.extend((0..ra_layout.instruction()).map(|index| {
-        PackedFamilySpec::direct(
-            PackedFamilyId::InstructionRa { index },
+        PackingFamilySpec::direct(
+            PackingFamilyId::InstructionRa { index },
             trace,
             1,
             ra_alphabet,
         )
     }));
     specs.extend((0..ra_layout.bytecode()).map(|index| {
-        PackedFamilySpec::direct(PackedFamilyId::BytecodeRa { index }, trace, 1, ra_alphabet)
+        PackingFamilySpec::direct(PackingFamilyId::BytecodeRa { index }, trace, 1, ra_alphabet)
     }));
     specs.extend((0..ra_layout.ram()).map(|index| {
-        PackedFamilySpec::direct(PackedFamilyId::RamRa { index }, trace, 1, ra_alphabet)
+        PackingFamilySpec::direct(PackingFamilyId::RamRa { index }, trace, 1, ra_alphabet)
     }));
 
     let unsigned_inc_requirements =
@@ -87,7 +87,7 @@ pub fn derive_lattice_packed_witness_layout(
         )
     })?;
 
-    PackedWitnessLayout::new(specs).map_err(|error| invalid_lattice_config(error.to_string()))
+    PackingWitnessLayout::new(specs).map_err(|error| invalid_lattice_config(error.to_string()))
 }
 
 pub fn derive_lattice_packed_validity_requirements(
@@ -147,7 +147,7 @@ pub fn validate_lattice_packed_witness_validity_config(
 
 pub fn validate_lattice_packed_witness_layout_config(
     config: &JoltProtocolConfig,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
 ) -> Result<(), VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
         return Err(invalid_lattice_config(
@@ -175,33 +175,33 @@ pub fn validate_lattice_packed_witness_layout_config(
     Ok(())
 }
 
-fn packed_family_is_precommitted(family: &PackedFamilyId) -> bool {
+fn packed_family_is_precommitted(family: &PackingFamilyId) -> bool {
     matches!(
         family,
-        PackedFamilyId::AdviceBytes {
-            kind: PackedAdviceKind::Trusted,
+        PackingFamilyId::AdviceBytes {
+            kind: PackingAdviceKind::Trusted,
             ..
-        } | PackedFamilyId::BytecodeChunk { .. }
-            | PackedFamilyId::BytecodeRegisterSelector { .. }
-            | PackedFamilyId::BytecodeCircuitFlag { .. }
-            | PackedFamilyId::BytecodeInstructionFlag { .. }
-            | PackedFamilyId::BytecodeLookupSelector { .. }
-            | PackedFamilyId::BytecodeRafFlag { .. }
-            | PackedFamilyId::BytecodeUnexpandedPcBytes { .. }
-            | PackedFamilyId::BytecodeImmBytes { .. }
-            | PackedFamilyId::ProgramImageInit
+        } | PackingFamilyId::BytecodeChunk { .. }
+            | PackingFamilyId::BytecodeRegisterSelector { .. }
+            | PackingFamilyId::BytecodeCircuitFlag { .. }
+            | PackingFamilyId::BytecodeInstructionFlag { .. }
+            | PackingFamilyId::BytecodeLookupSelector { .. }
+            | PackingFamilyId::BytecodeRafFlag { .. }
+            | PackingFamilyId::BytecodeUnexpandedPcBytes { .. }
+            | PackingFamilyId::BytecodeImmBytes { .. }
+            | PackingFamilyId::ProgramImageInit
     )
 }
 
 fn advice_family(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
-) -> Result<PackedFamilySpec, VerifierError> {
+) -> Result<PackingFamilySpec, VerifierError> {
     let packed_kind = lattice_packing_advice_kind(kind);
     let requirement = advice_bytes_validity_requirement(kind);
-    Ok(PackedFamilySpec::direct(
+    Ok(PackingFamilySpec::direct(
         lattice_packing_family_id(&requirement.family),
-        PackedFactDomain::AdviceBytes {
+        PackingFactDomain::AdviceBytes {
             kind: packed_kind,
             log_bytes: layout.advice_shape().total_vars() + 3,
         },
@@ -211,9 +211,9 @@ fn advice_family(
 }
 
 fn extend_validity_requirement_families(
-    specs: &mut Vec<PackedFamilySpec>,
+    specs: &mut Vec<PackingFamilySpec>,
     requirements: &[LatticePackedValidityRequirement],
-    domain: PackedFactDomain,
+    domain: PackingFactDomain,
 ) -> Result<(), VerifierError> {
     for requirement in requirements {
         if matches!(
@@ -223,7 +223,7 @@ fn extend_validity_requirement_families(
         ) {
             continue;
         }
-        specs.push(PackedFamilySpec::direct(
+        specs.push(PackingFamilySpec::direct(
             lattice_packing_family_id(&requirement.family),
             domain,
             requirement.limbs,
@@ -258,16 +258,16 @@ fn field_rd_inc_validity_requirements() -> Vec<LatticePackedValidityRequirement>
 
 #[cfg(feature = "field-inline")]
 fn extend_field_rd_inc_families(
-    specs: &mut Vec<PackedFamilySpec>,
-    domain: PackedFactDomain,
+    specs: &mut Vec<PackingFamilySpec>,
+    domain: PackingFactDomain,
 ) -> Result<(), VerifierError> {
     extend_validity_requirement_families(specs, &field_rd_inc_validity_requirements(), domain)
 }
 
 #[cfg(not(feature = "field-inline"))]
 fn extend_field_rd_inc_families(
-    specs: &mut Vec<PackedFamilySpec>,
-    domain: PackedFactDomain,
+    specs: &mut Vec<PackingFamilySpec>,
+    domain: PackingFactDomain,
 ) -> Result<(), VerifierError> {
     extend_validity_requirement_families(specs, &field_rd_inc_validity_requirements(), domain)
 }
@@ -283,14 +283,14 @@ fn require_advice_layout(
     })
 }
 
-fn one_hot_alphabet(log_k_chunk: usize) -> Result<PackedAlphabet, VerifierError> {
+fn one_hot_alphabet(log_k_chunk: usize) -> Result<PackingAlphabet, VerifierError> {
     match log_k_chunk {
         0 => Err(invalid_lattice_config(
             "lattice one-hot chunk size must be nonzero",
         )),
-        1 => Ok(PackedAlphabet::Bit),
-        8 => Ok(PackedAlphabet::Byte),
-        bits if bits < usize::BITS as usize => Ok(PackedAlphabet::Fixed {
+        1 => Ok(PackingAlphabet::Bit),
+        8 => Ok(PackingAlphabet::Byte),
+        bits if bits < usize::BITS as usize => Ok(PackingAlphabet::Fixed {
             size: 1usize << bits,
         }),
         _ => Err(invalid_lattice_config(
@@ -299,13 +299,13 @@ fn one_hot_alphabet(log_k_chunk: usize) -> Result<PackedAlphabet, VerifierError>
     }
 }
 
-pub(super) fn packed_alphabet_with_size(size: usize) -> Result<PackedAlphabet, VerifierError> {
+pub(super) fn packed_alphabet_with_size(size: usize) -> Result<PackingAlphabet, VerifierError> {
     match size {
         0 => Err(invalid_lattice_config(
             "packed validity requirement alphabet size must be nonzero",
         )),
-        2 => Ok(PackedAlphabet::Bit),
-        256 => Ok(PackedAlphabet::Byte),
-        size => Ok(PackedAlphabet::Fixed { size }),
+        2 => Ok(PackingAlphabet::Bit),
+        256 => Ok(PackingAlphabet::Byte),
+        size => Ok(PackingAlphabet::Fixed { size }),
     }
 }

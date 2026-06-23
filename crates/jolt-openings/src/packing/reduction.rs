@@ -10,8 +10,8 @@ use super::selector::{
 };
 use super::transcript::{append_round, bind_packed_statement};
 use super::types::{
-    PackingLayout, PackingProverReduction, PackingReductionProof, PackingVerifierReduction,
-    PackingWitnessSource,
+    PackingLayout, PackingProverReduction, PackingReductionProof, PackingSource,
+    PackingVerifierReduction,
 };
 use super::util::{checked_domain_size, invalid_batch};
 
@@ -109,7 +109,7 @@ where
     F: Field,
     C: Clone + Eq + AppendToTranscript,
     L: PackingLayout,
-    S: PackingWitnessSource<F>,
+    S: PackingSource<F>,
     T: Transcript<Challenge = F>,
 {
     let _ = validate_packing_statement(layout, statement)?;
@@ -243,7 +243,7 @@ fn prove_sparse_product_sumcheck<F, C, OpeningId, RelationId, L, S, T>(
 where
     F: Field,
     L: PackingLayout,
-    S: PackingWitnessSource<F>,
+    S: PackingSource<F>,
     T: Transcript<Challenge = F>,
 {
     let mut right = sparse_product_input(source)?;
@@ -287,7 +287,7 @@ where
 fn sparse_product_input<F, S>(source: &S) -> Result<Vec<(usize, F)>, OpeningsError>
 where
     F: Field,
-    S: PackingWitnessSource<F>,
+    S: PackingSource<F>,
 {
     let layout = source.layout();
     let domain_size = checked_domain_size(layout.dimension())?;

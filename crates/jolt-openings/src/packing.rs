@@ -13,7 +13,7 @@ pub use reduction::{
 pub use types::{
     PackingAddress, PackingBatch, PackingBatchProof, PackingFamily, PackingLayout,
     PackingProverReduction, PackingProverSetup, PackingReductionProof, PackingSetupParams,
-    PackingVerifierReduction, PackingVerifierSetup, PackingWitnessSource,
+    PackingSource, PackingVerifierReduction, PackingVerifierSetup,
 };
 
 #[cfg(test)]
@@ -30,21 +30,21 @@ mod tests {
     use crate::mock::{MockCommitment, MockCommitmentScheme, MockProof};
     use crate::{
         BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement,
-        CommitmentScheme, OpeningsError, PackedFamilyRef, PackingTerm, PhysicalView,
+        CommitmentScheme, OpeningsError, PackingFamilyRef, PackingTerm, PhysicalView,
     };
     use jolt_crypto::Commitment;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::{EqPolynomial, MultilinearPoly, Polynomial};
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
-    const FAMILY: PackedFamilyRef = PackedFamilyRef {
+    const FAMILY: PackingFamilyRef = PackingFamilyRef {
         namespace: 0x6a6f_6c74,
         id: 7,
         index: 0,
     };
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-    struct TestPackedPcs;
+    struct TestPackingPcs;
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     struct TestLayout {
@@ -64,7 +64,7 @@ mod tests {
             8
         }
 
-        fn family(&self, family: PackedFamilyRef) -> Result<Option<PackingFamily>, OpeningsError> {
+        fn family(&self, family: PackingFamilyRef) -> Result<Option<PackingFamily>, OpeningsError> {
             Ok((family == FAMILY).then_some(PackingFamily {
                 id: FAMILY,
                 offset: 0,
@@ -88,11 +88,11 @@ mod tests {
         }
     }
 
-    impl Commitment for TestPackedPcs {
+    impl Commitment for TestPackingPcs {
         type Output = MockCommitment<Fr>;
     }
 
-    impl CommitmentScheme for TestPackedPcs {
+    impl CommitmentScheme for TestPackingPcs {
         type Field = Fr;
         type Proof = MockProof<Fr>;
         type ProverSetup = TestLayout;
@@ -147,7 +147,7 @@ mod tests {
         }
     }
 
-    impl BatchOpeningScheme for TestPackedPcs {
+    impl BatchOpeningScheme for TestPackingPcs {
         fn prove_batch<T, OpeningId, RelationId>(
             _setup: &Self::ProverSetup,
             _transcript: &mut T,
@@ -268,12 +268,12 @@ mod tests {
 
     #[test]
     fn packing_batch_roundtrip_many_views_one_commitment() {
-        type PackedTestPcs = PackingBatch<TestPackedPcs, TestLayout>;
+        type PackedTestPcs = PackingBatch<TestPackingPcs, TestLayout>;
 
         let layout = layout();
         let (prover_setup, verifier_setup) = packed_setup(layout.clone());
         let poly = packed_polynomial();
-        let (commitment, hint) = TestPackedPcs::commit(&poly, &layout);
+        let (commitment, hint) = TestPackingPcs::commit(&poly, &layout);
         let row_point = vec![fr(2), fr(5)];
         let statement = statement(commitment.clone(), &poly, &row_point);
 
@@ -314,12 +314,12 @@ mod tests {
 
     #[test]
     fn packing_batch_rejects_tampered_view_address() {
-        type PackedTestPcs = PackingBatch<TestPackedPcs, TestLayout>;
+        type PackedTestPcs = PackingBatch<TestPackingPcs, TestLayout>;
 
         let layout = layout();
         let (prover_setup, verifier_setup) = packed_setup(layout.clone());
         let poly = packed_polynomial();
-        let (commitment, hint) = TestPackedPcs::commit(&poly, &layout);
+        let (commitment, hint) = TestPackingPcs::commit(&poly, &layout);
         let row_point = vec![fr(2), fr(5)];
         let statement = statement(commitment, &poly, &row_point);
         let mut prover_transcript = Blake2bTranscript::new(b"generic-packing-tamper");

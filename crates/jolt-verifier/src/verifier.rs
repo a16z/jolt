@@ -3203,7 +3203,7 @@ mod tests {
         preprocessing: &JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
         proof: &TestProof,
         checked: &CheckedInputs,
-    ) -> jolt_openings::PackedWitnessLayout {
+    ) -> jolt_openings::PackingWitnessLayout {
         let log_t = checked.trace_length.ilog2() as usize;
         let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
             log_t,

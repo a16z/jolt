@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use crate::{OpeningsError, PackedFamilyRef, PackingAddress, PackingFamily, PackingLayout};
+use crate::{OpeningsError, PackingAddress, PackingFamily, PackingFamilyRef, PackingLayout};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
@@ -10,20 +10,20 @@ use jolt_poly::Polynomial;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackedWitnessLayout {
-    pub families: Vec<PackedFamily>,
+pub struct PackingWitnessLayout {
+    pub families: Vec<PackingLayoutFamily>,
     pub cells: usize,
     pub dimension: usize,
     pub digest: [u8; 32],
 }
 
-impl PackedWitnessLayout {
+impl PackingWitnessLayout {
     pub fn new(
-        specs: impl IntoIterator<Item = PackedFamilySpec>,
-    ) -> Result<Self, PackedLayoutError> {
+        specs: impl IntoIterator<Item = PackingFamilySpec>,
+    ) -> Result<Self, PackingLayoutError> {
         let mut specs = specs.into_iter().collect::<Vec<_>>();
         if specs.is_empty() {
-            return Err(PackedLayoutError::EmptyLayout);
+            return Err(PackingLayoutError::EmptyLayout);
         }
         specs.sort_by(|left, right| left.id.cmp(&right.id));
 
@@ -32,32 +32,32 @@ impl PackedWitnessLayout {
         let mut previous_id = None;
         for spec in specs {
             if previous_id.as_ref() == Some(&spec.id) {
-                return Err(PackedLayoutError::DuplicateFamily { id: spec.id });
+                return Err(PackingLayoutError::DuplicateFamily { id: spec.id });
             }
             previous_id = Some(spec.id.clone());
 
             if spec.limbs == 0 {
-                return Err(PackedLayoutError::ZeroLimbs { id: spec.id });
+                return Err(PackingLayoutError::ZeroLimbs { id: spec.id });
             }
             let rows = spec.domain.rows()?;
             let alphabet_size = spec.alphabet.size();
             if alphabet_size == 0 {
-                return Err(PackedLayoutError::ZeroAlphabet { id: spec.id });
+                return Err(PackingLayoutError::ZeroAlphabet { id: spec.id });
             }
             let row_cells = rows
                 .checked_mul(spec.limbs)
                 .and_then(|value| value.checked_mul(alphabet_size))
-                .ok_or_else(|| PackedLayoutError::CellCountOverflow {
+                .ok_or_else(|| PackingLayoutError::CellCountOverflow {
                     id: spec.id.clone(),
                 })?;
             let cell_count = row_cells;
             let next_offset = offset.checked_add(cell_count).ok_or_else(|| {
-                PackedLayoutError::CellCountOverflow {
+                PackingLayoutError::CellCountOverflow {
                     id: spec.id.clone(),
                 }
             })?;
 
-            families.push(PackedFamily {
+            families.push(PackingLayoutFamily {
                 id: spec.id,
                 domain: spec.domain,
                 limbs: spec.limbs,
@@ -72,7 +72,7 @@ impl PackedWitnessLayout {
         let cells = offset;
         let dimension = ceil_log2(cells);
         if dimension >= usize::BITS as usize {
-            return Err(PackedLayoutError::HypercubeTooLarge { dimension });
+            return Err(PackingLayoutError::HypercubeTooLarge { dimension });
         }
         let digest = layout_digest(&families, cells, dimension);
 
@@ -84,20 +84,20 @@ impl PackedWitnessLayout {
         })
     }
 
-    pub fn family(&self, id: &PackedFamilyId) -> Option<&PackedFamily> {
+    pub fn family(&self, id: &PackingFamilyId) -> Option<&PackingLayoutFamily> {
         self.families.iter().find(|family| family.id == *id)
     }
 
-    pub fn rank(&self, address: &PackedCellAddress) -> Result<usize, PackedLayoutError> {
+    pub fn rank(&self, address: &PackingCellAddress) -> Result<usize, PackingLayoutError> {
         let family =
             self.family(&address.family)
-                .ok_or_else(|| PackedLayoutError::MissingFamily {
+                .ok_or_else(|| PackingLayoutError::MissingFamily {
                     id: address.family.clone(),
                 })?;
         let rows = family.domain.rows()?;
         let alphabet_size = family.alphabet.size();
         if address.row >= rows || address.limb >= family.limbs || address.symbol >= alphabet_size {
-            return Err(PackedLayoutError::AddressOutOfRange {
+            return Err(PackingLayoutError::AddressOutOfRange {
                 family: address.family.clone(),
                 row: address.row,
                 limb: address.limb,
@@ -111,18 +111,18 @@ impl PackedWitnessLayout {
             .and_then(|value| value.checked_add(address.limb))
             .and_then(|value| value.checked_mul(alphabet_size))
             .and_then(|value| value.checked_add(address.symbol))
-            .ok_or_else(|| PackedLayoutError::CellCountOverflow {
+            .ok_or_else(|| PackingLayoutError::CellCountOverflow {
                 id: address.family.clone(),
             })?;
         family
             .offset
             .checked_add(local)
-            .ok_or_else(|| PackedLayoutError::CellCountOverflow {
+            .ok_or_else(|| PackingLayoutError::CellCountOverflow {
                 id: address.family.clone(),
             })
     }
 
-    pub fn unrank(&self, rank: usize) -> Option<PackedCellAddress> {
+    pub fn unrank(&self, rank: usize) -> Option<PackingCellAddress> {
         if rank >= self.cells {
             return None;
         }
@@ -141,7 +141,7 @@ impl PackedWitnessLayout {
             let row_limb = local / alphabet_size;
             let limb = row_limb % family.limbs;
             let row = row_limb / family.limbs;
-            Some(PackedCellAddress {
+            Some(PackingCellAddress {
                 family: family.id.clone(),
                 row,
                 limb,
@@ -154,37 +154,37 @@ impl PackedWitnessLayout {
         (1usize << self.dimension) - self.cells
     }
 
-    pub fn audit(&self) -> PackedLayoutAudit {
-        let mut alphabet_counts = PackedAlphabetCounts::default();
-        let mut cells_by_domain = PackedDomainCellCounts::default();
+    pub fn audit(&self) -> PackingLayoutAudit {
+        let mut alphabet_counts = PackingAlphabetCounts::default();
+        let mut cells_by_domain = PackingDomainCellCounts::default();
         let mut trace_cells_by_log_t = BTreeMap::<usize, usize>::new();
         let mut rectangular_lane_equivalent = 0usize;
 
         for family in &self.families {
             match family.alphabet {
-                PackedAlphabet::Bit => alphabet_counts.bit += 1,
-                PackedAlphabet::Byte => alphabet_counts.byte += 1,
-                PackedAlphabet::Fixed { .. } => alphabet_counts.fixed += 1,
+                PackingAlphabet::Bit => alphabet_counts.bit += 1,
+                PackingAlphabet::Byte => alphabet_counts.byte += 1,
+                PackingAlphabet::Fixed { .. } => alphabet_counts.fixed += 1,
             }
 
             match family.domain {
-                PackedFactDomain::TraceRows { log_t } => {
+                PackingFactDomain::TraceRows { log_t } => {
                     cells_by_domain.trace_rows =
                         cells_by_domain.trace_rows.saturating_add(family.cell_count);
                     let entry = trace_cells_by_log_t.entry(log_t).or_default();
                     *entry = entry.saturating_add(family.cell_count);
                 }
-                PackedFactDomain::BytecodeRows { .. } => {
+                PackingFactDomain::BytecodeRows { .. } => {
                     cells_by_domain.bytecode_rows = cells_by_domain
                         .bytecode_rows
                         .saturating_add(family.cell_count);
                 }
-                PackedFactDomain::ProgramImageWords { .. } => {
+                PackingFactDomain::ProgramImageWords { .. } => {
                     cells_by_domain.program_image_words = cells_by_domain
                         .program_image_words
                         .saturating_add(family.cell_count);
                 }
-                PackedFactDomain::AdviceBytes { .. } => {
+                PackingFactDomain::AdviceBytes { .. } => {
                     cells_by_domain.advice_bytes = cells_by_domain
                         .advice_bytes
                         .saturating_add(family.cell_count);
@@ -217,7 +217,7 @@ impl PackedWitnessLayout {
             None
         };
 
-        PackedLayoutAudit {
+        PackingLayoutAudit {
             fact_count_by_alphabet: alphabet_counts,
             cells_by_domain,
             trace_cells_per_row,
@@ -228,18 +228,18 @@ impl PackedWitnessLayout {
 
     pub fn validate_view_families(
         &self,
-        families: &[PackedFamilyId],
-    ) -> Result<(), PackedLayoutError> {
+        families: &[PackingFamilyId],
+    ) -> Result<(), PackingLayoutError> {
         for id in families {
             if self.family(id).is_none() {
-                return Err(PackedLayoutError::MissingViewFamily { id: id.clone() });
+                return Err(PackingLayoutError::MissingViewFamily { id: id.clone() });
             }
         }
         Ok(())
     }
 }
 
-impl PackingLayout for PackedWitnessLayout {
+impl PackingLayout for PackingWitnessLayout {
     fn digest(&self) -> [u8; 32] {
         self.digest
     }
@@ -252,7 +252,7 @@ impl PackingLayout for PackedWitnessLayout {
         self.cells
     }
 
-    fn family(&self, family: PackedFamilyRef) -> Result<Option<PackingFamily>, OpeningsError> {
+    fn family(&self, family: PackingFamilyRef) -> Result<Option<PackingFamily>, OpeningsError> {
         self.families
             .iter()
             .find(|candidate| candidate.id.physical_ref() == family)
@@ -277,7 +277,7 @@ impl PackingLayout for PackedWitnessLayout {
             .ok_or_else(|| {
                 OpeningsError::InvalidBatch("packing term references an unknown family".to_string())
             })?;
-        self.rank(&PackedCellAddress {
+        self.rank(&PackingCellAddress {
             family: family.id.clone(),
             row: address.row,
             limb: address.limb,
@@ -292,32 +292,32 @@ fn layout_error(error: impl ToString) -> OpeningsError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackedFamily {
-    pub id: PackedFamilyId,
-    pub domain: PackedFactDomain,
+pub struct PackingLayoutFamily {
+    pub id: PackingFamilyId,
+    pub domain: PackingFactDomain,
     pub limbs: usize,
-    pub alphabet: PackedAlphabet,
+    pub alphabet: PackingAlphabet,
     pub offset: usize,
     pub cell_count: usize,
-    pub view_kind: PackedViewKind,
+    pub view_kind: PackingViewKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackedFamilySpec {
-    pub id: PackedFamilyId,
-    pub domain: PackedFactDomain,
+pub struct PackingFamilySpec {
+    pub id: PackingFamilyId,
+    pub domain: PackingFactDomain,
     pub limbs: usize,
-    pub alphabet: PackedAlphabet,
-    pub view_kind: PackedViewKind,
+    pub alphabet: PackingAlphabet,
+    pub view_kind: PackingViewKind,
 }
 
-impl PackedFamilySpec {
+impl PackingFamilySpec {
     pub fn new(
-        id: PackedFamilyId,
-        domain: PackedFactDomain,
+        id: PackingFamilyId,
+        domain: PackingFactDomain,
         limbs: usize,
-        alphabet: PackedAlphabet,
-        view_kind: PackedViewKind,
+        alphabet: PackingAlphabet,
+        view_kind: PackingViewKind,
     ) -> Self {
         Self {
             id,
@@ -329,17 +329,17 @@ impl PackedFamilySpec {
     }
 
     pub fn direct(
-        id: PackedFamilyId,
-        domain: PackedFactDomain,
+        id: PackingFamilyId,
+        domain: PackingFactDomain,
         limbs: usize,
-        alphabet: PackedAlphabet,
+        alphabet: PackingAlphabet,
     ) -> Self {
-        Self::new(id, domain, limbs, alphabet, PackedViewKind::Direct)
+        Self::new(id, domain, limbs, alphabet, PackingViewKind::Direct)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum PackedFamilyId {
+pub enum PackingFamilyId {
     InstructionRa {
         index: usize,
     },
@@ -358,7 +358,7 @@ pub enum PackedFamilyId {
     },
     FieldRdIncSign,
     AdviceBytes {
-        kind: PackedAdviceKind,
+        kind: PackingAdviceKind,
         index: usize,
     },
     BytecodeChunk {
@@ -395,10 +395,10 @@ pub enum PackedFamilyId {
     },
 }
 
-const JOLT_PACKED_FAMILY_NAMESPACE: u64 = 0x6a6f_6c74_7063_7301;
+const JOLT_PACKING_FAMILY_NAMESPACE: u64 = 0x6a6f_6c74_7063_7301;
 
-impl PackedFamilyId {
-    pub fn physical_ref(&self) -> PackedFamilyRef {
+impl PackingFamilyId {
+    pub fn physical_ref(&self) -> PackingFamilyRef {
         let (id, index): (u64, u64) = match self {
             Self::InstructionRa { index } => (0, *index as u64),
             Self::BytecodeRa { index } => (1, *index as u64),
@@ -408,8 +408,8 @@ impl PackedFamilyId {
             Self::FieldRdIncByte { index } => (9, *index as u64),
             Self::FieldRdIncSign => (10, 0),
             Self::AdviceBytes { kind, index } => match kind {
-                PackedAdviceKind::Trusted => (11, *index as u64),
-                PackedAdviceKind::Untrusted => (12, *index as u64),
+                PackingAdviceKind::Trusted => (11, *index as u64),
+                PackingAdviceKind::Untrusted => (12, *index as u64),
             },
             Self::BytecodeChunk { index } => (13, *index as u64),
             Self::ProgramImageInit => (14, 0),
@@ -425,10 +425,10 @@ impl PackedFamilyId {
             Self::BytecodeUnexpandedPcBytes { chunk } => (20, *chunk as u64),
             Self::BytecodeImmBytes { chunk } => (21, *chunk as u64),
             Self::Custom { namespace, index } => {
-                return PackedFamilyRef::new(u64::from(*namespace), 0, *index as u64);
+                return PackingFamilyRef::new(u64::from(*namespace), 0, *index as u64);
             }
         };
-        PackedFamilyRef::new(JOLT_PACKED_FAMILY_NAMESPACE, id, index)
+        PackingFamilyRef::new(JOLT_PACKING_FAMILY_NAMESPACE, id, index)
     }
 }
 
@@ -437,13 +437,13 @@ fn combine_two_indices(left: usize, right: usize) -> u64 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum PackedAdviceKind {
+pub enum PackingAdviceKind {
     Trusted,
     Untrusted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PackedFactDomain {
+pub enum PackingFactDomain {
     TraceRows {
         log_t: usize,
     },
@@ -454,13 +454,13 @@ pub enum PackedFactDomain {
         log_words: usize,
     },
     AdviceBytes {
-        kind: PackedAdviceKind,
+        kind: PackingAdviceKind,
         log_bytes: usize,
     },
 }
 
-impl PackedFactDomain {
-    pub fn rows(&self) -> Result<usize, PackedLayoutError> {
+impl PackingFactDomain {
+    pub fn rows(&self) -> Result<usize, PackingLayoutError> {
         let log_rows = match *self {
             Self::TraceRows { log_t } => log_t,
             Self::BytecodeRows { log_bytecode } => log_bytecode,
@@ -468,7 +468,7 @@ impl PackedFactDomain {
             Self::AdviceBytes { log_bytes, .. } => log_bytes,
         };
         if log_rows >= usize::BITS as usize {
-            return Err(PackedLayoutError::DomainTooLarge { log_rows });
+            return Err(PackingLayoutError::DomainTooLarge { log_rows });
         }
         Ok(1usize << log_rows)
     }
@@ -484,13 +484,13 @@ impl PackedFactDomain {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PackedAlphabet {
+pub enum PackingAlphabet {
     Bit,
     Byte,
     Fixed { size: usize },
 }
 
-impl PackedAlphabet {
+impl PackingAlphabet {
     pub fn size(self) -> usize {
         match self {
             Self::Bit => 2,
@@ -517,13 +517,13 @@ impl PackedAlphabet {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PackedViewKind {
+pub enum PackingViewKind {
     Direct,
     LinearDecode,
     MaskedReduction,
 }
 
-impl PackedViewKind {
+impl PackingViewKind {
     fn digest_tag(self) -> u8 {
         match self {
             Self::Direct => 0,
@@ -534,22 +534,22 @@ impl PackedViewKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackedCellAddress {
-    pub family: PackedFamilyId,
+pub struct PackingCellAddress {
+    pub family: PackingFamilyId,
     pub row: usize,
     pub limb: usize,
     pub symbol: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackedAlphabetCounts {
+pub struct PackingAlphabetCounts {
     pub bit: usize,
     pub byte: usize,
     pub fixed: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackedDomainCellCounts {
+pub struct PackingDomainCellCounts {
     pub trace_rows: usize,
     pub bytecode_rows: usize,
     pub program_image_words: usize,
@@ -557,40 +557,40 @@ pub struct PackedDomainCellCounts {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackedLayoutAudit {
-    pub fact_count_by_alphabet: PackedAlphabetCounts,
-    pub cells_by_domain: PackedDomainCellCounts,
+pub struct PackingLayoutAudit {
+    pub fact_count_by_alphabet: PackingAlphabetCounts,
+    pub cells_by_domain: PackingDomainCellCounts,
     pub trace_cells_per_row: Option<usize>,
     pub rectangular_lane_equivalent: usize,
     pub d_pack: usize,
 }
 
-pub trait PackedWitnessSource<F: Field> {
-    fn layout(&self) -> &PackedWitnessLayout;
+pub trait PackingWitnessSource<F: Field> {
+    fn layout(&self) -> &PackingWitnessLayout;
     fn for_each_nonzero(&self, f: impl FnMut(usize, F));
-    fn eval_direct_fact(&self, address: &PackedCellAddress) -> Result<F, PackedLayoutError>;
+    fn eval_direct_fact(&self, address: &PackingCellAddress) -> Result<F, PackingLayoutError>;
 }
 
-pub fn packed_witness_source_polynomial<F, S>(source: &S) -> Result<Polynomial<F>, OpeningsError>
+pub fn packing_witness_source_polynomial<F, S>(source: &S) -> Result<Polynomial<F>, OpeningsError>
 where
     F: Field,
-    S: PackedWitnessSource<F>,
+    S: PackingWitnessSource<F>,
 {
     let layout = source.layout();
     if layout.cells == 0 {
-        return Err(invalid_packed_source(
+        return Err(invalid_packing_source(
             "packed witness layout must contain at least one cell",
         ));
     }
     if layout.dimension >= usize::BITS as usize {
-        return Err(invalid_packed_source(format!(
+        return Err(invalid_packing_source(format!(
             "packed witness dimension {} exceeds usize bit width",
             layout.dimension
         )));
     }
     let domain_size = 1usize << layout.dimension;
     if layout.cells > domain_size {
-        return Err(invalid_packed_source(format!(
+        return Err(invalid_packing_source(format!(
             "packed witness has {} cells but dimension {} supports {domain_size}",
             layout.cells, layout.dimension
         )));
@@ -604,20 +604,20 @@ where
             return;
         }
         if rank >= layout.cells {
-            result = Err(invalid_packed_source(format!(
+            result = Err(invalid_packing_source(format!(
                 "packed witness source emitted rank {rank} outside {} real cells",
                 layout.cells
             )));
             return;
         }
         if seen[rank] {
-            result = Err(invalid_packed_source(format!(
+            result = Err(invalid_packing_source(format!(
                 "packed witness source emitted rank {rank} more than once"
             )));
             return;
         }
         if value.is_zero() {
-            result = Err(invalid_packed_source(format!(
+            result = Err(invalid_packing_source(format!(
                 "packed witness source emitted zero at rank {rank}"
             )));
             return;
@@ -632,34 +632,34 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SparsePackedWitness<F> {
-    layout: PackedWitnessLayout,
+pub struct SparsePackingWitness<F> {
+    layout: PackingWitnessLayout,
     entries: Vec<(usize, F)>,
 }
 
-fn invalid_packed_source(reason: impl Into<String>) -> OpeningsError {
+fn invalid_packing_source(reason: impl Into<String>) -> OpeningsError {
     OpeningsError::InvalidBatch(reason.into())
 }
 
-impl<F: Field> SparsePackedWitness<F> {
+impl<F: Field> SparsePackingWitness<F> {
     pub fn try_new(
-        layout: PackedWitnessLayout,
+        layout: PackingWitnessLayout,
         mut entries: Vec<(usize, F)>,
-    ) -> Result<Self, PackedLayoutError> {
+    ) -> Result<Self, PackingLayoutError> {
         entries.sort_by_key(|(rank, _)| *rank);
         let mut previous_rank = None;
         for (rank, value) in &entries {
             if *rank >= layout.cells {
-                return Err(PackedLayoutError::RankOutOfRange {
+                return Err(PackingLayoutError::RankOutOfRange {
                     rank: *rank,
                     cells: layout.cells,
                 });
             }
             if previous_rank == Some(*rank) {
-                return Err(PackedLayoutError::DuplicateSourceRank { rank: *rank });
+                return Err(PackingLayoutError::DuplicateSourceRank { rank: *rank });
             }
             if value.is_zero() {
-                return Err(PackedLayoutError::ZeroSourceEntry { rank: *rank });
+                return Err(PackingLayoutError::ZeroSourceEntry { rank: *rank });
             }
             previous_rank = Some(*rank);
         }
@@ -667,9 +667,9 @@ impl<F: Field> SparsePackedWitness<F> {
     }
 
     pub fn try_from_cells(
-        layout: PackedWitnessLayout,
-        cells: impl IntoIterator<Item = (PackedCellAddress, F)>,
-    ) -> Result<Self, PackedLayoutError> {
+        layout: PackingWitnessLayout,
+        cells: impl IntoIterator<Item = (PackingCellAddress, F)>,
+    ) -> Result<Self, PackingLayoutError> {
         let entries = cells
             .into_iter()
             .map(|(address, value)| layout.rank(&address).map(|rank| (rank, value)))
@@ -682,8 +682,8 @@ impl<F: Field> SparsePackedWitness<F> {
     }
 }
 
-impl<F: Field> PackedWitnessSource<F> for SparsePackedWitness<F> {
-    fn layout(&self) -> &PackedWitnessLayout {
+impl<F: Field> PackingWitnessSource<F> for SparsePackingWitness<F> {
+    fn layout(&self) -> &PackingWitnessLayout {
         &self.layout
     }
 
@@ -693,7 +693,7 @@ impl<F: Field> PackedWitnessSource<F> for SparsePackedWitness<F> {
         }
     }
 
-    fn eval_direct_fact(&self, address: &PackedCellAddress) -> Result<F, PackedLayoutError> {
+    fn eval_direct_fact(&self, address: &PackingCellAddress) -> Result<F, PackingLayoutError> {
         let rank = self.layout.rank(address)?;
         match self.entries.binary_search_by_key(&rank, |(rank, _)| *rank) {
             Ok(index) => Ok(self.entries[index].1),
@@ -703,31 +703,31 @@ impl<F: Field> PackedWitnessSource<F> for SparsePackedWitness<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PackedLayoutError {
+pub enum PackingLayoutError {
     EmptyLayout,
     DuplicateFamily {
-        id: PackedFamilyId,
+        id: PackingFamilyId,
     },
     ZeroLimbs {
-        id: PackedFamilyId,
+        id: PackingFamilyId,
     },
     ZeroAlphabet {
-        id: PackedFamilyId,
+        id: PackingFamilyId,
     },
     DomainTooLarge {
         log_rows: usize,
     },
     CellCountOverflow {
-        id: PackedFamilyId,
+        id: PackingFamilyId,
     },
     HypercubeTooLarge {
         dimension: usize,
     },
     MissingFamily {
-        id: PackedFamilyId,
+        id: PackingFamilyId,
     },
     AddressOutOfRange {
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         row: usize,
         limb: usize,
         symbol: usize,
@@ -743,11 +743,11 @@ pub enum PackedLayoutError {
         rank: usize,
     },
     MissingViewFamily {
-        id: PackedFamilyId,
+        id: PackingFamilyId,
     },
 }
 
-impl Display for PackedLayoutError {
+impl Display for PackingLayoutError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyLayout => f.write_str("packed witness layout must contain a family"),
@@ -797,7 +797,7 @@ impl Display for PackedLayoutError {
     }
 }
 
-impl Error for PackedLayoutError {}
+impl Error for PackingLayoutError {}
 
 fn ceil_log2(value: usize) -> usize {
     if value <= 1 {
@@ -807,7 +807,7 @@ fn ceil_log2(value: usize) -> usize {
     }
 }
 
-fn layout_digest(families: &[PackedFamily], cells: usize, dimension: usize) -> [u8; 32] {
+fn layout_digest(families: &[PackingLayoutFamily], cells: usize, dimension: usize) -> [u8; 32] {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"jolt-openings/packing-layout/v1");
     write_usize(&mut bytes, families.len());
@@ -831,72 +831,72 @@ fn layout_digest(families: &[PackedFamily], cells: usize, dimension: usize) -> [
     digest
 }
 
-fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
+fn write_family_id(bytes: &mut Vec<u8>, id: &PackingFamilyId) {
     match id {
-        PackedFamilyId::InstructionRa { index } => {
+        PackingFamilyId::InstructionRa { index } => {
             bytes.push(0);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::BytecodeRa { index } => {
+        PackingFamilyId::BytecodeRa { index } => {
             bytes.push(1);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::RamRa { index } => {
+        PackingFamilyId::RamRa { index } => {
             bytes.push(2);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::UnsignedIncChunk { index } => {
+        PackingFamilyId::UnsignedIncChunk { index } => {
             bytes.push(3);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::UnsignedIncMsb => bytes.push(4),
-        PackedFamilyId::FieldRdIncByte { index } => {
+        PackingFamilyId::UnsignedIncMsb => bytes.push(4),
+        PackingFamilyId::FieldRdIncByte { index } => {
             bytes.push(9);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::FieldRdIncSign => bytes.push(10),
-        PackedFamilyId::AdviceBytes { kind, index } => {
+        PackingFamilyId::FieldRdIncSign => bytes.push(10),
+        PackingFamilyId::AdviceBytes { kind, index } => {
             bytes.push(11);
             bytes.push(advice_kind_tag(*kind));
             write_usize(bytes, *index);
         }
-        PackedFamilyId::BytecodeChunk { index } => {
+        PackingFamilyId::BytecodeChunk { index } => {
             bytes.push(12);
             write_usize(bytes, *index);
         }
-        PackedFamilyId::ProgramImageInit => bytes.push(13),
-        PackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+        PackingFamilyId::ProgramImageInit => bytes.push(13),
+        PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
             bytes.push(15);
             write_usize(bytes, *chunk);
             write_usize(bytes, *selector);
         }
-        PackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+        PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
             bytes.push(16);
             write_usize(bytes, *chunk);
             write_usize(bytes, *flag);
         }
-        PackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+        PackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
             bytes.push(17);
             write_usize(bytes, *chunk);
             write_usize(bytes, *flag);
         }
-        PackedFamilyId::BytecodeLookupSelector { chunk } => {
+        PackingFamilyId::BytecodeLookupSelector { chunk } => {
             bytes.push(18);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::BytecodeRafFlag { chunk } => {
+        PackingFamilyId::BytecodeRafFlag { chunk } => {
             bytes.push(19);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+        PackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
             bytes.push(20);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::BytecodeImmBytes { chunk } => {
+        PackingFamilyId::BytecodeImmBytes { chunk } => {
             bytes.push(21);
             write_usize(bytes, *chunk);
         }
-        PackedFamilyId::Custom { namespace, index } => {
+        PackingFamilyId::Custom { namespace, index } => {
             bytes.push(14);
             bytes.extend_from_slice(&namespace.to_le_bytes());
             write_usize(bytes, *index);
@@ -904,24 +904,24 @@ fn write_family_id(bytes: &mut Vec<u8>, id: &PackedFamilyId) {
     }
 }
 
-fn write_domain(bytes: &mut Vec<u8>, domain: PackedFactDomain) {
+fn write_domain(bytes: &mut Vec<u8>, domain: PackingFactDomain) {
     bytes.push(domain.digest_tag());
     match domain {
-        PackedFactDomain::TraceRows { log_t } => write_usize(bytes, log_t),
-        PackedFactDomain::BytecodeRows { log_bytecode } => write_usize(bytes, log_bytecode),
-        PackedFactDomain::ProgramImageWords { log_words } => write_usize(bytes, log_words),
-        PackedFactDomain::AdviceBytes { kind, log_bytes } => {
+        PackingFactDomain::TraceRows { log_t } => write_usize(bytes, log_t),
+        PackingFactDomain::BytecodeRows { log_bytecode } => write_usize(bytes, log_bytecode),
+        PackingFactDomain::ProgramImageWords { log_words } => write_usize(bytes, log_words),
+        PackingFactDomain::AdviceBytes { kind, log_bytes } => {
             bytes.push(advice_kind_tag(kind));
             write_usize(bytes, log_bytes);
         }
     }
 }
 
-fn write_alphabet(bytes: &mut Vec<u8>, alphabet: PackedAlphabet) {
+fn write_alphabet(bytes: &mut Vec<u8>, alphabet: PackingAlphabet) {
     bytes.push(alphabet.digest_tag());
     match alphabet {
-        PackedAlphabet::Bit | PackedAlphabet::Byte => {}
-        PackedAlphabet::Fixed { size } => write_usize(bytes, size),
+        PackingAlphabet::Bit | PackingAlphabet::Byte => {}
+        PackingAlphabet::Fixed { size } => write_usize(bytes, size),
     }
 }
 
@@ -929,10 +929,10 @@ fn write_usize(bytes: &mut Vec<u8>, value: usize) {
     bytes.extend_from_slice(&(value as u64).to_le_bytes());
 }
 
-fn advice_kind_tag(kind: PackedAdviceKind) -> u8 {
+fn advice_kind_tag(kind: PackingAdviceKind) -> u8 {
     match kind {
-        PackedAdviceKind::Trusted => 0,
-        PackedAdviceKind::Untrusted => 1,
+        PackingAdviceKind::Trusted => 0,
+        PackingAdviceKind::Untrusted => 1,
     }
 }
 
@@ -947,46 +947,46 @@ mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
 
-    fn trace(log_t: usize) -> PackedFactDomain {
-        PackedFactDomain::TraceRows { log_t }
+    fn trace(log_t: usize) -> PackingFactDomain {
+        PackingFactDomain::TraceRows { log_t }
     }
 
-    fn byte_family(id: PackedFamilyId, log_t: usize) -> PackedFamilySpec {
-        PackedFamilySpec::direct(id, trace(log_t), 1, PackedAlphabet::Byte)
+    fn byte_family(id: PackingFamilyId, log_t: usize) -> PackingFamilySpec {
+        PackingFamilySpec::direct(id, trace(log_t), 1, PackingAlphabet::Byte)
     }
 
-    fn bit_family(id: PackedFamilyId, log_t: usize) -> PackedFamilySpec {
-        PackedFamilySpec::direct(id, trace(log_t), 1, PackedAlphabet::Bit)
+    fn bit_family(id: PackingFamilyId, log_t: usize) -> PackingFamilySpec {
+        PackingFamilySpec::direct(id, trace(log_t), 1, PackingAlphabet::Bit)
     }
 
-    fn base_ra_specs(log_t: usize) -> Vec<PackedFamilySpec> {
+    fn base_ra_specs(log_t: usize) -> Vec<PackingFamilySpec> {
         let mut specs = Vec::new();
         specs.extend(
-            (0..16).map(|index| byte_family(PackedFamilyId::InstructionRa { index }, log_t)),
+            (0..16).map(|index| byte_family(PackingFamilyId::InstructionRa { index }, log_t)),
         );
-        specs.extend((0..3).map(|index| byte_family(PackedFamilyId::BytecodeRa { index }, log_t)));
-        specs.extend((0..4).map(|index| byte_family(PackedFamilyId::RamRa { index }, log_t)));
+        specs.extend((0..3).map(|index| byte_family(PackingFamilyId::BytecodeRa { index }, log_t)));
+        specs.extend((0..4).map(|index| byte_family(PackingFamilyId::RamRa { index }, log_t)));
         specs
     }
 
-    fn unsigned_increment_specs(log_t: usize) -> Vec<PackedFamilySpec> {
+    fn unsigned_increment_specs(log_t: usize) -> Vec<PackingFamilySpec> {
         let mut specs = (0..8)
-            .map(|index| byte_family(PackedFamilyId::UnsignedIncChunk { index }, log_t))
+            .map(|index| byte_family(PackingFamilyId::UnsignedIncChunk { index }, log_t))
             .collect::<Vec<_>>();
-        specs.push(bit_family(PackedFamilyId::UnsignedIncMsb, log_t));
+        specs.push(bit_family(PackingFamilyId::UnsignedIncMsb, log_t));
         specs
     }
 
     #[test]
     fn packed_witness_layout_digest_stable() {
         let mut specs = vec![
-            byte_family(PackedFamilyId::RamRa { index: 0 }, 4),
-            bit_family(PackedFamilyId::UnsignedIncMsb, 4),
-            byte_family(PackedFamilyId::InstructionRa { index: 0 }, 4),
+            byte_family(PackingFamilyId::RamRa { index: 0 }, 4),
+            bit_family(PackingFamilyId::UnsignedIncMsb, 4),
+            byte_family(PackingFamilyId::InstructionRa { index: 0 }, 4),
         ];
-        let layout_a = PackedWitnessLayout::new(specs.clone()).expect("layout should build");
+        let layout_a = PackingWitnessLayout::new(specs.clone()).expect("layout should build");
         specs.reverse();
-        let layout_b = PackedWitnessLayout::new(specs).expect("layout should build");
+        let layout_b = PackingWitnessLayout::new(specs).expect("layout should build");
 
         assert_eq!(layout_a.digest, layout_b.digest);
         assert_eq!(layout_a.families, layout_b.families);
@@ -995,18 +995,18 @@ mod tests {
     #[test]
     fn packed_witness_layout_rejects_duplicate_ranges() {
         let specs = vec![
-            byte_family(PackedFamilyId::RamRa { index: 0 }, 3),
-            byte_family(PackedFamilyId::RamRa { index: 0 }, 3),
+            byte_family(PackingFamilyId::RamRa { index: 0 }, 3),
+            byte_family(PackingFamilyId::RamRa { index: 0 }, 3),
         ];
         assert!(matches!(
-            PackedWitnessLayout::new(specs),
-            Err(PackedLayoutError::DuplicateFamily { .. })
+            PackingWitnessLayout::new(specs),
+            Err(PackingLayoutError::DuplicateFamily { .. })
         ));
     }
 
     #[test]
     fn large_trace_base_cells_are_5888_per_row() {
-        let layout = PackedWitnessLayout::new(base_ra_specs(20)).expect("layout should build");
+        let layout = PackingWitnessLayout::new(base_ra_specs(20)).expect("layout should build");
         let audit = layout.audit();
 
         assert_eq!(audit.trace_cells_per_row, Some(5_888));
@@ -1019,7 +1019,7 @@ mod tests {
         let mut specs = base_ra_specs(log_t);
         specs.extend(unsigned_increment_specs(log_t));
 
-        let layout = PackedWitnessLayout::new(specs).expect("layout should build");
+        let layout = PackingWitnessLayout::new(specs).expect("layout should build");
         let audit = layout.audit();
 
         assert_eq!(audit.trace_cells_per_row, Some(7_938));
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn bit_fact_costs_two_cells_per_row() {
-        let layout = PackedWitnessLayout::new([bit_family(PackedFamilyId::UnsignedIncMsb, 5)])
+        let layout = PackingWitnessLayout::new([bit_family(PackingFamilyId::UnsignedIncMsb, 5)])
             .expect("layout should build");
         let audit = layout.audit();
 
@@ -1039,14 +1039,14 @@ mod tests {
 
     #[test]
     fn rank_unrank_roundtrip() {
-        let layout = PackedWitnessLayout::new([
-            byte_family(PackedFamilyId::RamRa { index: 0 }, 1),
-            bit_family(PackedFamilyId::UnsignedIncMsb, 1),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeChunk { index: 0 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+        let layout = PackingWitnessLayout::new([
+            byte_family(PackingFamilyId::RamRa { index: 0 }, 1),
+            bit_family(PackingFamilyId::UnsignedIncMsb, 1),
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeChunk { index: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 1 },
                 2,
-                PackedAlphabet::Fixed { size: 3 },
+                PackingAlphabet::Fixed { size: 3 },
             ),
         ])
         .expect("layout should build");
@@ -1059,47 +1059,47 @@ mod tests {
 
     #[test]
     fn committed_bytecode_lane_families_are_distinct() {
-        let bytecode = PackedFactDomain::BytecodeRows { log_bytecode: 1 };
+        let bytecode = PackingFactDomain::BytecodeRows { log_bytecode: 1 };
         let families = [
-            PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 0,
             },
-            PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 1,
             },
-            PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 },
-            PackedFamilyId::BytecodeInstructionFlag { chunk: 0, flag: 0 },
-            PackedFamilyId::BytecodeLookupSelector { chunk: 0 },
-            PackedFamilyId::BytecodeRafFlag { chunk: 0 },
-            PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 },
-            PackedFamilyId::BytecodeImmBytes { chunk: 0 },
+            PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 },
+            PackingFamilyId::BytecodeInstructionFlag { chunk: 0, flag: 0 },
+            PackingFamilyId::BytecodeLookupSelector { chunk: 0 },
+            PackingFamilyId::BytecodeRafFlag { chunk: 0 },
+            PackingFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 },
+            PackingFamilyId::BytecodeImmBytes { chunk: 0 },
         ];
-        let layout = PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
+        let layout = PackingWitnessLayout::new([
+            PackingFamilySpec::direct(
                 families[0].clone(),
                 bytecode,
                 1,
-                PackedAlphabet::Fixed { size: 32 },
+                PackingAlphabet::Fixed { size: 32 },
             ),
-            PackedFamilySpec::direct(
+            PackingFamilySpec::direct(
                 families[1].clone(),
                 bytecode,
                 1,
-                PackedAlphabet::Fixed { size: 32 },
+                PackingAlphabet::Fixed { size: 32 },
             ),
-            PackedFamilySpec::direct(families[2].clone(), bytecode, 1, PackedAlphabet::Bit),
-            PackedFamilySpec::direct(families[3].clone(), bytecode, 1, PackedAlphabet::Bit),
-            PackedFamilySpec::direct(
+            PackingFamilySpec::direct(families[2].clone(), bytecode, 1, PackingAlphabet::Bit),
+            PackingFamilySpec::direct(families[3].clone(), bytecode, 1, PackingAlphabet::Bit),
+            PackingFamilySpec::direct(
                 families[4].clone(),
                 bytecode,
                 1,
-                PackedAlphabet::Fixed { size: 4 },
+                PackingAlphabet::Fixed { size: 4 },
             ),
-            PackedFamilySpec::direct(families[5].clone(), bytecode, 1, PackedAlphabet::Bit),
-            PackedFamilySpec::direct(families[6].clone(), bytecode, 8, PackedAlphabet::Byte),
-            PackedFamilySpec::direct(families[7].clone(), bytecode, 16, PackedAlphabet::Byte),
+            PackingFamilySpec::direct(families[5].clone(), bytecode, 1, PackingAlphabet::Bit),
+            PackingFamilySpec::direct(families[6].clone(), bytecode, 8, PackingAlphabet::Byte),
+            PackingFamilySpec::direct(families[7].clone(), bytecode, 16, PackingAlphabet::Byte),
         ])
         .expect("layout should build");
 
@@ -1115,8 +1115,8 @@ mod tests {
             }
         }
 
-        let address = PackedCellAddress {
-            family: PackedFamilyId::BytecodeImmBytes { chunk: 0 },
+        let address = PackingCellAddress {
+            family: PackingFamilyId::BytecodeImmBytes { chunk: 0 },
             row: 1,
             limb: 15,
             symbol: 7,
@@ -1127,14 +1127,14 @@ mod tests {
 
     #[test]
     fn dummy_cells_are_zero_and_unreferenced() {
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::Custom {
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::Custom {
                 namespace: 1,
                 index: 0,
             },
             trace(0),
             1,
-            PackedAlphabet::Fixed { size: 3 },
+            PackingAlphabet::Fixed { size: 3 },
         )])
         .expect("layout should build");
 
@@ -1143,10 +1143,10 @@ mod tests {
         assert_eq!(layout.dummy_cell_count(), 1);
         assert!(layout.unrank(layout.cells).is_none());
 
-        let source = SparsePackedWitness::<Fr>::try_new(layout.clone(), Vec::new())
+        let source = SparsePackingWitness::<Fr>::try_new(layout.clone(), Vec::new())
             .expect("empty source should build");
-        let zero_address = PackedCellAddress {
-            family: PackedFamilyId::Custom {
+        let zero_address = PackingCellAddress {
+            family: PackingFamilyId::Custom {
                 namespace: 1,
                 index: 0,
             },
@@ -1164,10 +1164,10 @@ mod tests {
 
     #[test]
     fn layout_sort_order_is_stable() {
-        let layout = PackedWitnessLayout::new([
-            byte_family(PackedFamilyId::RamRa { index: 3 }, 2),
-            byte_family(PackedFamilyId::InstructionRa { index: 1 }, 2),
-            byte_family(PackedFamilyId::BytecodeRa { index: 2 }, 2),
+        let layout = PackingWitnessLayout::new([
+            byte_family(PackingFamilyId::RamRa { index: 3 }, 2),
+            byte_family(PackingFamilyId::InstructionRa { index: 1 }, 2),
+            byte_family(PackingFamilyId::BytecodeRa { index: 2 }, 2),
         ])
         .expect("layout should build");
 
@@ -1178,27 +1178,27 @@ mod tests {
                 .map(|family| &family.id)
                 .collect::<Vec<_>>(),
             vec![
-                &PackedFamilyId::InstructionRa { index: 1 },
-                &PackedFamilyId::BytecodeRa { index: 2 },
-                &PackedFamilyId::RamRa { index: 3 },
+                &PackingFamilyId::InstructionRa { index: 1 },
+                &PackingFamilyId::BytecodeRa { index: 2 },
+                &PackingFamilyId::RamRa { index: 3 },
             ]
         );
     }
 
     #[test]
     fn committed_program_families_use_non_trace_domains() {
-        let layout = PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeChunk { index: 0 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 4 },
+        let layout = PackingWitnessLayout::new([
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeChunk { index: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 4 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::ProgramImageInit,
-                PackedFactDomain::ProgramImageWords { log_words: 3 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::ProgramImageInit,
+                PackingFactDomain::ProgramImageWords { log_words: 3 },
                 8,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
         ])
         .expect("layout should build");
@@ -1212,20 +1212,20 @@ mod tests {
 
     #[test]
     fn planner_audit_fields_are_reported() {
-        let layout = PackedWitnessLayout::new([
-            byte_family(PackedFamilyId::InstructionRa { index: 0 }, 2),
-            bit_family(PackedFamilyId::UnsignedIncMsb, 2),
-            PackedFamilySpec::direct(
-                PackedFamilyId::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+        let layout = PackingWitnessLayout::new([
+            byte_family(PackingFamilyId::InstructionRa { index: 0 }, 2),
+            bit_family(PackingFamilyId::UnsignedIncMsb, 2),
+            PackingFamilySpec::direct(
+                PackingFamilyId::AdviceBytes {
+                    kind: PackingAdviceKind::Trusted,
                     index: 0,
                 },
-                PackedFactDomain::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+                PackingFactDomain::AdviceBytes {
+                    kind: PackingAdviceKind::Trusted,
                     log_bytes: 1,
                 },
                 1,
-                PackedAlphabet::Fixed { size: 4 },
+                PackingAlphabet::Fixed { size: 4 },
             ),
         ])
         .expect("layout should build");
@@ -1233,7 +1233,7 @@ mod tests {
 
         assert_eq!(
             audit.fact_count_by_alphabet,
-            PackedAlphabetCounts {
+            PackingAlphabetCounts {
                 bit: 1,
                 byte: 1,
                 fixed: 1,
@@ -1247,24 +1247,24 @@ mod tests {
 
     #[test]
     fn packed_witness_source_respects_layout() {
-        let layout = PackedWitnessLayout::new([
-            byte_family(PackedFamilyId::RamRa { index: 0 }, 1),
-            bit_family(PackedFamilyId::UnsignedIncMsb, 1),
+        let layout = PackingWitnessLayout::new([
+            byte_family(PackingFamilyId::RamRa { index: 0 }, 1),
+            bit_family(PackingFamilyId::UnsignedIncMsb, 1),
         ])
         .expect("layout should build");
-        let one_address = PackedCellAddress {
-            family: PackedFamilyId::RamRa { index: 0 },
+        let one_address = PackingCellAddress {
+            family: PackingFamilyId::RamRa { index: 0 },
             row: 1,
             limb: 0,
             symbol: 17,
         };
-        let sign_address = PackedCellAddress {
-            family: PackedFamilyId::UnsignedIncMsb,
+        let sign_address = PackingCellAddress {
+            family: PackingFamilyId::UnsignedIncMsb,
             row: 0,
             limb: 0,
             symbol: 1,
         };
-        let source = SparsePackedWitness::try_from_cells(
+        let source = SparsePackingWitness::try_from_cells(
             layout.clone(),
             [
                 (one_address.clone(), Fr::from_u64(11)),
@@ -1293,7 +1293,7 @@ mod tests {
         );
 
         let polynomial =
-            packed_witness_source_polynomial(&source).expect("source should materialize densely");
+            packing_witness_source_polynomial(&source).expect("source should materialize densely");
         assert_eq!(polynomial.num_vars(), layout.dimension);
         assert_eq!(
             polynomial.evaluations()[layout.rank(&one_address).expect("address should rank")],
@@ -1313,26 +1313,27 @@ mod tests {
 
     #[test]
     fn view_catalog_references_existing_families() {
-        let layout = PackedWitnessLayout::new([byte_family(PackedFamilyId::RamRa { index: 0 }, 2)])
-            .expect("layout should build");
+        let layout =
+            PackingWitnessLayout::new([byte_family(PackingFamilyId::RamRa { index: 0 }, 2)])
+                .expect("layout should build");
 
         layout
-            .validate_view_families(&[PackedFamilyId::RamRa { index: 0 }])
+            .validate_view_families(&[PackingFamilyId::RamRa { index: 0 }])
             .expect("existing family should validate");
         assert!(matches!(
-            layout.validate_view_families(&[PackedFamilyId::UnsignedIncMsb]),
-            Err(PackedLayoutError::MissingViewFamily { .. })
+            layout.validate_view_families(&[PackingFamilyId::UnsignedIncMsb]),
+            Err(PackingLayoutError::MissingViewFamily { .. })
         ));
     }
 
     #[test]
     fn sparse_source_rejects_out_of_layout_ranks() {
-        let layout = PackedWitnessLayout::new([bit_family(PackedFamilyId::UnsignedIncMsb, 0)])
+        let layout = PackingWitnessLayout::new([bit_family(PackingFamilyId::UnsignedIncMsb, 0)])
             .expect("layout should build");
 
         assert!(matches!(
-            SparsePackedWitness::try_new(layout.clone(), vec![(layout.cells, Fr::from_u64(1))]),
-            Err(PackedLayoutError::RankOutOfRange { .. })
+            SparsePackingWitness::try_new(layout.clone(), vec![(layout.cells, Fr::from_u64(1))]),
+            Err(PackingLayoutError::RankOutOfRange { .. })
         ));
     }
 }

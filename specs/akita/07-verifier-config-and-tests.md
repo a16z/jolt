@@ -114,11 +114,11 @@ IncrementCommitmentMode::FusedOneHot:
 
 field-inline:
   allowed only when FieldRdInc and field-inline data families are present in
-  PackedWitnessLayout.
+  PackingWitnessLayout.
 
 advice:
   untrusted advice is allowed only when proof-owned advice byte families are
-  present in PackedWitnessLayout.
+  present in PackingWitnessLayout.
   trusted advice is allowed only when a trusted-advice precommitment and
   separate opening path are present.
 
@@ -232,7 +232,7 @@ Dispatch:
 
 ```text
 1. derive logical final-opening manifest from stage outputs and config.
-2. derive PackedWitnessLayout when PCS family is lattice.
+2. derive PackingWitnessLayout when PCS family is lattice.
 3. resolve logical openings to physical opening targets.
 4. partition proof-owned W_pack claims from precommitted claims.
 5. build a packed BatchOpeningStatement for W_pack claims.
@@ -334,7 +334,7 @@ Split Stage 8 into:
 ```text
 Include committed-program fields.
 Include Akita setup key/material when lattice family is selected.
-Include inputs needed to derive PackedWitnessLayout.
+Include inputs needed to derive PackingWitnessLayout.
 ```
 
 Proposed functions:
@@ -350,12 +350,12 @@ fn build_logical_final_manifest<F>(
 fn derive_packed_witness_layout(
     config: &JoltProtocolConfig,
     preprocessing: &VerifierPreprocessing,
-) -> Result<PackedWitnessLayout, VerifierError>;
+) -> Result<PackingWitnessLayout, VerifierError>;
 
 fn resolve_physical_views<F>(
     config: &JoltProtocolConfig,
     logical: &LogicalOpeningManifest<F>,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
 ) -> Result<Vec<PhysicalView>, VerifierError>;
 
 fn partition_opening_targets<F>(
@@ -381,8 +381,8 @@ fn build_batch_statement<F, C>(
 - Lattice mode requires fused one-hot base increments.
 - Lattice mode rejects dense and separate base increments.
 - Lattice mode rejects ZK.
-- Field-inline cannot bypass PackedWitnessLayout.
-- Untrusted advice cannot bypass PackedWitnessLayout.
+- Field-inline cannot bypass PackingWitnessLayout.
+- Untrusted advice cannot bypass PackingWitnessLayout.
 - Trusted advice cannot bypass its precommitted opening path.
 - Trusted advice, BytecodeChunk(i), and ProgramImageInit commitments cannot
   alias the PackedWitness commitment in Akita mode.
@@ -546,7 +546,7 @@ Rejected:
 - satisfying trusted advice or committed program objects only through W_pack.
 - config combinations that silently change setup dimension.
 - accepting unsupported features by falling back to Dory semantics.
-- running field-inline/untrusted-advice/zk outside PackedWitnessLayout.
+- running field-inline/untrusted-advice/zk outside PackingWitnessLayout.
 ```
 
 ## Resolved Decisions And Open Questions

@@ -3,9 +3,9 @@ use std::{fmt, marker::PhantomData};
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
-use crate::{BatchOpeningResult, OpeningsError, PackedFamilyRef};
+use crate::{BatchOpeningResult, OpeningsError, PackingFamilyRef};
 
-pub struct PackingBatch<PCS, L = crate::PackedWitnessLayout>(PhantomData<fn() -> (PCS, L)>);
+pub struct PackingBatch<PCS, L = crate::PackingWitnessLayout>(PhantomData<fn() -> (PCS, L)>);
 
 impl<PCS, L> PackingBatch<PCS, L> {
     pub fn new() -> Self {
@@ -43,20 +43,20 @@ impl<PCS, L> Eq for PackingBatch<PCS, L> {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PackingSetupParams<PCSParams, L = crate::PackedWitnessLayout> {
+pub struct PackingSetupParams<PCSParams, L = crate::PackingWitnessLayout> {
     pub pcs: PCSParams,
     pub layout: L,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PackingProverSetup<PCSSetup, L = crate::PackedWitnessLayout> {
+pub struct PackingProverSetup<PCSSetup, L = crate::PackingWitnessLayout> {
     pub pcs: PCSSetup,
     pub layout: L,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PackingVerifierSetup<PCSSetup, L = crate::PackedWitnessLayout> {
+pub struct PackingVerifierSetup<PCSSetup, L = crate::PackingWitnessLayout> {
     pub pcs: PCSSetup,
     pub layout: L,
 }
@@ -77,7 +77,7 @@ pub struct PackingBatchProof<NativeProof> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PackingFamily {
-    pub id: PackedFamilyRef,
+    pub id: PackingFamilyRef,
     pub offset: usize,
     pub rows: usize,
     pub limbs: usize,
@@ -86,7 +86,7 @@ pub struct PackingFamily {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PackingAddress {
-    pub family: PackedFamilyRef,
+    pub family: PackingFamilyRef,
     pub row: usize,
     pub limb: usize,
     pub symbol: usize,
@@ -96,11 +96,11 @@ pub trait PackingLayout {
     fn digest(&self) -> [u8; 32];
     fn dimension(&self) -> usize;
     fn cells(&self) -> usize;
-    fn family(&self, family: PackedFamilyRef) -> Result<Option<PackingFamily>, OpeningsError>;
+    fn family(&self, family: PackingFamilyRef) -> Result<Option<PackingFamily>, OpeningsError>;
     fn rank(&self, address: PackingAddress) -> Result<usize, OpeningsError>;
 }
 
-pub trait PackingWitnessSource<F>
+pub trait PackingSource<F>
 where
     F: Field,
 {

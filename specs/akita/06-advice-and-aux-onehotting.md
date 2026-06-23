@@ -370,13 +370,13 @@ When PCS family is lattice:
   require fused-increment source claims to use BytecodeChunk(i) openings or an
   explicit bound precommitted packed view.
   reject ZK.
-  derive all proof-owned families into one PackedWitnessLayout.
+  derive all proof-owned families into one PackingWitnessLayout.
 ```
 
 `jolt-akita`:
 
 ```text
-Accept PackedWitnessLayout with heterogeneous alphabets.
+Accept PackingWitnessLayout with heterogeneous alphabets.
 Reject dense proof-owned facts that bypass PackedWitness.
 Reject byte-decode views unless the backend or adapter proves the linear view.
 ```

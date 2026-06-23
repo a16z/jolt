@@ -282,7 +282,7 @@ and those commitments.
 ```text
 When PCS family is lattice:
   require IncrementCommitmentMode::FusedOneHot.
-  derive IncByte/IncSign families in PackedWitnessLayout.
+  derive IncByte/IncSign families in PackingWitnessLayout.
   require ProgramMode::Committed.
   reject dense or separate base increment modes.
   schedule fused increment translation after bytecode source data is available.

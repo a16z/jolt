@@ -23,11 +23,11 @@ use jolt_field::Field;
 #[cfg(any(feature = "field-inline", test))]
 use jolt_field::FixedByteSize;
 use jolt_openings::{
-    PackedAdviceKind, PackedFamilyId, PackedViewError, PackedViewFormula, PackedViewTerm,
-    PackedWitnessLayout,
+    PackingAdviceKind, PackingFamilyId, PackingViewError, PackingViewFormula, PackingViewTerm,
+    PackingWitnessLayout,
 };
 #[cfg(test)]
-use jolt_openings::{PackedAlphabet, PackedFactDomain, PackedFamilySpec};
+use jolt_openings::{PackingAlphabet, PackingFactDomain, PackingFamilySpec};
 #[cfg(test)]
 use jolt_poly::try_eq_mle;
 use jolt_poly::EqPolynomial;
@@ -104,7 +104,7 @@ where
 
 pub fn jolt_lattice_physical_manifest<F>(
     logical: &Stage8LogicalManifest<F>,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
 ) -> Result<Stage8PhysicalManifest<F>, VerifierError>
@@ -118,7 +118,7 @@ where
 
 pub fn jolt_lattice_physical_manifest_with_validity<F>(
     logical: &Stage8LogicalManifest<F>,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
     validity_requirements: &[LatticePackedValidityRequirement],
@@ -288,60 +288,62 @@ where
     }
 }
 
-pub fn lattice_packing_family_id(family: &LatticePackedFamilyId) -> PackedFamilyId {
+pub fn lattice_packing_family_id(family: &LatticePackedFamilyId) -> PackingFamilyId {
     match family {
         LatticePackedFamilyId::InstructionRa { index } => {
-            PackedFamilyId::InstructionRa { index: *index }
+            PackingFamilyId::InstructionRa { index: *index }
         }
-        LatticePackedFamilyId::BytecodeRa { index } => PackedFamilyId::BytecodeRa { index: *index },
-        LatticePackedFamilyId::RamRa { index } => PackedFamilyId::RamRa { index: *index },
+        LatticePackedFamilyId::BytecodeRa { index } => {
+            PackingFamilyId::BytecodeRa { index: *index }
+        }
+        LatticePackedFamilyId::RamRa { index } => PackingFamilyId::RamRa { index: *index },
         LatticePackedFamilyId::UnsignedIncChunk { index } => {
-            PackedFamilyId::UnsignedIncChunk { index: *index }
+            PackingFamilyId::UnsignedIncChunk { index: *index }
         }
-        LatticePackedFamilyId::UnsignedIncMsb => PackedFamilyId::UnsignedIncMsb,
+        LatticePackedFamilyId::UnsignedIncMsb => PackingFamilyId::UnsignedIncMsb,
         LatticePackedFamilyId::FieldRdIncByte { index } => {
-            PackedFamilyId::FieldRdIncByte { index: *index }
+            PackingFamilyId::FieldRdIncByte { index: *index }
         }
-        LatticePackedFamilyId::FieldRdIncSign => PackedFamilyId::FieldRdIncSign,
-        LatticePackedFamilyId::AdviceBytes { kind, index } => PackedFamilyId::AdviceBytes {
+        LatticePackedFamilyId::FieldRdIncSign => PackingFamilyId::FieldRdIncSign,
+        LatticePackedFamilyId::AdviceBytes { kind, index } => PackingFamilyId::AdviceBytes {
             kind: lattice_packing_advice_kind(*kind),
             index: *index,
         },
         LatticePackedFamilyId::BytecodeChunk { index } => {
-            PackedFamilyId::BytecodeChunk { index: *index }
+            PackingFamilyId::BytecodeChunk { index: *index }
         }
         LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-            PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilyId::BytecodeRegisterSelector {
                 chunk: *chunk,
                 selector: *selector,
             }
         }
         LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-            PackedFamilyId::BytecodeCircuitFlag {
+            PackingFamilyId::BytecodeCircuitFlag {
                 chunk: *chunk,
                 flag: *flag,
             }
         }
         LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
-            PackedFamilyId::BytecodeInstructionFlag {
+            PackingFamilyId::BytecodeInstructionFlag {
                 chunk: *chunk,
                 flag: *flag,
             }
         }
         LatticePackedFamilyId::BytecodeLookupSelector { chunk } => {
-            PackedFamilyId::BytecodeLookupSelector { chunk: *chunk }
+            PackingFamilyId::BytecodeLookupSelector { chunk: *chunk }
         }
         LatticePackedFamilyId::BytecodeRafFlag { chunk } => {
-            PackedFamilyId::BytecodeRafFlag { chunk: *chunk }
+            PackingFamilyId::BytecodeRafFlag { chunk: *chunk }
         }
         LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
-            PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: *chunk }
+            PackingFamilyId::BytecodeUnexpandedPcBytes { chunk: *chunk }
         }
         LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
-            PackedFamilyId::BytecodeImmBytes { chunk: *chunk }
+            PackingFamilyId::BytecodeImmBytes { chunk: *chunk }
         }
-        LatticePackedFamilyId::ProgramImageInit => PackedFamilyId::ProgramImageInit,
-        LatticePackedFamilyId::Custom { namespace, index } => PackedFamilyId::Custom {
+        LatticePackedFamilyId::ProgramImageInit => PackingFamilyId::ProgramImageInit,
+        LatticePackedFamilyId::Custom { namespace, index } => PackingFamilyId::Custom {
             namespace: *namespace,
             index: *index,
         },
@@ -489,7 +491,7 @@ where
 
 pub fn lattice_packing_view_formula<F>(
     formula: &LatticePackedViewFormula<F>,
-) -> Result<PackedViewFormula<F>, PackedViewError>
+) -> Result<PackingViewFormula<F>, PackingViewError>
 where
     F: Field,
 {
@@ -498,30 +500,32 @@ where
             family,
             limb,
             symbol,
-        } => Ok(PackedViewFormula::direct(
+        } => Ok(PackingViewFormula::direct(
             lattice_packing_family_id(family),
             *limb,
             *symbol,
         )),
-        LatticePackedViewFormula::LinearDecoded { terms } => Ok(PackedViewFormula::linear_decoded(
-            terms
-                .iter()
-                .map(|term| {
-                    PackedViewTerm::new(
-                        term.coefficient,
-                        lattice_packing_family_id(&term.family),
-                        term.limb,
-                        term.symbol,
-                    )
-                })
-                .collect(),
-        )),
-        LatticePackedViewFormula::ReducedMasked { terms, .. } => {
-            Ok(PackedViewFormula::reduced_masked(
+        LatticePackedViewFormula::LinearDecoded { terms } => {
+            Ok(PackingViewFormula::linear_decoded(
                 terms
                     .iter()
                     .map(|term| {
-                        PackedViewTerm::new(
+                        PackingViewTerm::new(
+                            term.coefficient,
+                            lattice_packing_family_id(&term.family),
+                            term.limb,
+                            term.symbol,
+                        )
+                    })
+                    .collect(),
+            ))
+        }
+        LatticePackedViewFormula::ReducedMasked { terms, .. } => {
+            Ok(PackingViewFormula::reduced_masked(
+                terms
+                    .iter()
+                    .map(|term| {
+                        PackingViewTerm::new(
                             term.coefficient,
                             lattice_packing_family_id(&term.family),
                             term.limb,
@@ -532,15 +536,15 @@ where
             ))
         }
         LatticePackedViewFormula::MaskedDecoded { .. } => {
-            Err(PackedViewError::MaskedViewRequiresTranslation)
+            Err(PackingViewError::MaskedViewRequiresTranslation)
         }
     }
 }
 
-fn lattice_packing_advice_kind(kind: JoltAdviceKind) -> PackedAdviceKind {
+fn lattice_packing_advice_kind(kind: JoltAdviceKind) -> PackingAdviceKind {
     match kind {
-        JoltAdviceKind::Trusted => PackedAdviceKind::Trusted,
-        JoltAdviceKind::Untrusted => PackedAdviceKind::Untrusted,
+        JoltAdviceKind::Trusted => PackingAdviceKind::Trusted,
+        JoltAdviceKind::Untrusted => PackingAdviceKind::Untrusted,
     }
 }
 
@@ -572,7 +576,7 @@ fn unsupported_lattice_view(reason: impl Into<String>) -> VerifierError {
     }
 }
 
-fn lattice_view_resolution_error(error: PackedViewError) -> VerifierError {
+fn lattice_view_resolution_error(error: PackingViewError) -> VerifierError {
     VerifierError::FinalOpeningBatchFailed {
         reason: format!("lattice packed view resolution failed: {error}"),
     }
@@ -706,7 +710,7 @@ mod tests {
 
     fn find_physical_term(
         terms: &[PackingTerm<Fr>],
-        family: PackedFamilyId,
+        family: PackingFamilyId,
         limb: usize,
         symbol: usize,
     ) -> &PackingTerm<Fr> {
@@ -717,8 +721,11 @@ mod tests {
             .unwrap_or_else(|| panic!("missing physical term"))
     }
 
-    fn unsigned_increment_validity_layout(log_t: usize, log_k_chunk: usize) -> PackedWitnessLayout {
-        let trace = PackedFactDomain::TraceRows { log_t };
+    fn unsigned_increment_validity_layout(
+        log_t: usize,
+        log_k_chunk: usize,
+    ) -> PackingWitnessLayout {
+        let trace = PackingFactDomain::TraceRows { log_t };
         let requirements = unsigned_inc_validity_requirements(log_k_chunk)
             .unwrap_or_else(|| panic!("unsigned increment requirements should derive"));
         let specs = requirements
@@ -726,7 +733,7 @@ mod tests {
             .map(|index| {
                 let alphabet = packed_alphabet_with_size(index.alphabet_size)
                     .unwrap_or_else(|error| panic!("packed alphabet should derive: {error}"));
-                PackedFamilySpec::direct(
+                PackingFamilySpec::direct(
                     lattice_packing_family_id(&index.family),
                     trace,
                     index.limbs,
@@ -734,27 +741,27 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        PackedWitnessLayout::new(specs)
+        PackingWitnessLayout::new(specs)
             .unwrap_or_else(|error| panic!("unsigned increment layout should build: {error}"))
     }
 
-    fn bytecode_source_validity_layout(chunk: usize, log_bytecode: usize) -> PackedWitnessLayout {
-        let domain = PackedFactDomain::BytecodeRows { log_bytecode };
-        PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeCircuitFlag {
+    fn bytecode_source_validity_layout(chunk: usize, log_bytecode: usize) -> PackingWitnessLayout {
+        let domain = PackingFactDomain::BytecodeRows { log_bytecode };
+        PackingWitnessLayout::new([
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeCircuitFlag {
                     chunk,
                     flag: CircuitFlags::Store as usize,
                 },
                 domain,
                 1,
-                PackedAlphabet::Bit,
+                PackingAlphabet::Bit,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
                 domain,
                 1,
-                PackedAlphabet::Fixed {
+                PackingAlphabet::Fixed {
                     size: 1 << REGISTER_ADDRESS_BITS,
                 },
             ),
@@ -775,35 +782,37 @@ mod tests {
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
         assert!(layout
-            .family(&PackedFamilyId::InstructionRa { index: 0 })
+            .family(&PackingFamilyId::InstructionRa { index: 0 })
             .is_some());
-        assert!(layout.family(&PackedFamilyId::RamRa { index: 0 }).is_some());
         assert!(layout
-            .family(&PackedFamilyId::UnsignedIncChunk { index: 7 })
+            .family(&PackingFamilyId::RamRa { index: 0 })
             .is_some());
-        assert!(layout.family(&PackedFamilyId::UnsignedIncMsb).is_some());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeRegisterSelector {
+            .family(&PackingFamilyId::UnsignedIncChunk { index: 7 })
+            .is_some());
+        assert!(layout.family(&PackingFamilyId::UnsignedIncMsb).is_some());
+        assert!(layout
+            .family(&PackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 0,
             })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
+            .family(&PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
+            .family(&PackingFamilyId::BytecodeLookupSelector { chunk: 0 })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 })
+            .family(&PackingFamilyId::BytecodeUnexpandedPcBytes { chunk: 0 })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
+            .family(&PackingFamilyId::BytecodeImmBytes { chunk: 0 })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeChunk { index: 0 })
+            .family(&PackingFamilyId::BytecodeChunk { index: 0 })
             .is_none());
-        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
+        assert!(layout.family(&PackingFamilyId::ProgramImageInit).is_none());
         assert_eq!(layout.audit().d_pack, layout.dimension);
 
         let mut matching_config = lattice_config();
@@ -840,24 +849,24 @@ mod tests {
 
     #[test]
     fn derive_validity_statements_matches_requirement_semantics() {
-        let layout = PackedWitnessLayout::new([
-            PackedFamilySpec::direct(
-                PackedFamilyId::ProgramImageInit,
-                PackedFactDomain::ProgramImageWords { log_words: 2 },
+        let layout = PackingWitnessLayout::new([
+            PackingFamilySpec::direct(
+                PackingFamilyId::ProgramImageInit,
+                PackingFactDomain::ProgramImageWords { log_words: 2 },
                 8,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeLookupSelector { chunk: 0 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 3 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeLookupSelector { chunk: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 3 },
                 1,
-                PackedAlphabet::Fixed { size: 8 },
+                PackingAlphabet::Fixed { size: 8 },
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::UnsignedIncMsb,
-                PackedFactDomain::TraceRows { log_t: 4 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::UnsignedIncMsb,
+                PackingFactDomain::TraceRows { log_t: 4 },
                 1,
-                PackedAlphabet::Bit,
+                PackingAlphabet::Bit,
             ),
         ])
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
@@ -967,12 +976,12 @@ mod tests {
 
     #[test]
     fn derive_validity_statements_adds_field_element_canonical_bytes() {
-        let layout = PackedWitnessLayout::new((0..2).map(|index| {
-            PackedFamilySpec::direct(
-                PackedFamilyId::FieldRdIncByte { index },
-                PackedFactDomain::TraceRows { log_t: 3 },
+        let layout = PackingWitnessLayout::new((0..2).map(|index| {
+            PackingFamilySpec::direct(
+                PackingFamilyId::FieldRdIncByte { index },
+                PackingFactDomain::TraceRows { log_t: 3 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             )
         }))
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
@@ -1002,11 +1011,11 @@ mod tests {
     #[test]
     fn derive_validity_statements_adds_bytecode_imm_canonical_bytes() {
         let chunk = 2;
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::BytecodeImmBytes { chunk },
-            PackedFactDomain::BytecodeRows { log_bytecode: 3 },
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::BytecodeImmBytes { chunk },
+            PackingFactDomain::BytecodeRows { log_bytecode: 3 },
             2,
-            PackedAlphabet::Byte,
+            PackingAlphabet::Byte,
         )])
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
         let requirement = bytecode_imm_canonical_bytes_requirement(chunk, 2, 257);
@@ -1030,11 +1039,11 @@ mod tests {
 
     #[test]
     fn validity_batch_builder_lowers_cell_booleanity_to_packed_terms() {
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::ProgramImageInit,
-            PackedFactDomain::ProgramImageWords { log_words: 1 },
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::ProgramImageInit,
+            PackingFactDomain::ProgramImageWords { log_words: 1 },
             2,
-            PackedAlphabet::Fixed { size: 4 },
+            PackingAlphabet::Fixed { size: 4 },
         )])
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
         let requirement = LatticePackedValidityRequirement::exact_one_hot(
@@ -1100,7 +1109,7 @@ mod tests {
         assert_eq!(terms.len(), 8);
         let limb_weights = EqPolynomial::<Fr>::evals(&point[1..2], None);
         let symbol_weights = EqPolynomial::<Fr>::evals(&point[2..], None);
-        let term = find_physical_term(terms, PackedFamilyId::ProgramImageInit, 1, 3);
+        let term = find_physical_term(terms, PackingFamilyId::ProgramImageInit, 1, 3);
         assert_eq!(term.row_point, vec![Fr::from_u64(2)]);
         assert_eq!(term.coefficient, limb_weights[1] * symbol_weights[3]);
     }
@@ -1150,7 +1159,7 @@ mod tests {
         assert_eq!(terms.len(), 1);
         assert_eq!(
             terms[0].family,
-            PackedFamilyId::BytecodeCircuitFlag {
+            PackingFamilyId::BytecodeCircuitFlag {
                 chunk,
                 flag: CircuitFlags::Store as usize
             }
@@ -1165,7 +1174,7 @@ mod tests {
         assert_eq!(terms.len(), 1 << REGISTER_ADDRESS_BITS);
         let term = find_physical_term(
             terms,
-            PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
+            PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 },
             0,
             (1 << REGISTER_ADDRESS_BITS) - 1,
         );
@@ -1175,12 +1184,12 @@ mod tests {
 
     #[test]
     fn validity_batch_builder_lowers_field_element_canonical_byte_factors() {
-        let layout = PackedWitnessLayout::new((0..2).map(|index| {
-            PackedFamilySpec::direct(
-                PackedFamilyId::FieldRdIncByte { index },
-                PackedFactDomain::TraceRows { log_t: 2 },
+        let layout = PackingWitnessLayout::new((0..2).map(|index| {
+            PackingFamilySpec::direct(
+                PackingFamilyId::FieldRdIncByte { index },
+                PackingFactDomain::TraceRows { log_t: 2 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             )
         }))
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
@@ -1231,7 +1240,7 @@ mod tests {
         assert_eq!(terms.len(), 254);
         assert_eq!(
             terms[0].family,
-            PackedFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
+            PackingFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
         );
         assert_eq!(terms[0].symbol, 2);
         assert_eq!(terms[253].symbol, 255);
@@ -1242,7 +1251,7 @@ mod tests {
         assert_eq!(terms.len(), 1);
         assert_eq!(
             terms[0].family,
-            PackedFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
+            PackingFamilyId::FieldRdIncByte { index: 1 }.physical_ref()
         );
         assert_eq!(terms[0].symbol, 1);
 
@@ -1252,7 +1261,7 @@ mod tests {
         assert_eq!(terms.len(), 255);
         assert_eq!(
             terms[0].family,
-            PackedFamilyId::FieldRdIncByte { index: 0 }.physical_ref()
+            PackingFamilyId::FieldRdIncByte { index: 0 }.physical_ref()
         );
         assert_eq!(terms[0].symbol, 1);
         assert_eq!(terms[254].symbol, 255);
@@ -1261,11 +1270,11 @@ mod tests {
     #[test]
     fn validity_batch_builder_lowers_bytecode_imm_canonical_byte_factors() {
         let chunk = 2;
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::BytecodeImmBytes { chunk },
-            PackedFactDomain::BytecodeRows { log_bytecode: 2 },
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::BytecodeImmBytes { chunk },
+            PackingFactDomain::BytecodeRows { log_bytecode: 2 },
             2,
-            PackedAlphabet::Byte,
+            PackingAlphabet::Byte,
         )])
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
         let requirement = bytecode_imm_canonical_bytes_requirement(chunk, 2, 257);
@@ -1311,7 +1320,7 @@ mod tests {
         assert_eq!(terms.len(), 254);
         assert_eq!(
             terms[0].family,
-            PackedFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+            PackingFamilyId::BytecodeImmBytes { chunk }.physical_ref()
         );
         assert_eq!(terms[0].limb, 1);
         assert_eq!(terms[0].symbol, 2);
@@ -1324,7 +1333,7 @@ mod tests {
         assert_eq!(terms.len(), 1);
         assert_eq!(
             terms[0].family,
-            PackedFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+            PackingFamilyId::BytecodeImmBytes { chunk }.physical_ref()
         );
         assert_eq!(terms[0].limb, 1);
         assert_eq!(terms[0].symbol, 1);
@@ -1335,7 +1344,7 @@ mod tests {
         assert_eq!(terms.len(), 255);
         assert_eq!(
             terms[0].family,
-            PackedFamilyId::BytecodeImmBytes { chunk }.physical_ref()
+            PackingFamilyId::BytecodeImmBytes { chunk }.physical_ref()
         );
         assert_eq!(terms[0].limb, 0);
         assert_eq!(terms[0].symbol, 1);
@@ -1345,11 +1354,11 @@ mod tests {
 
     #[test]
     fn derive_validity_statements_rejects_layout_requirement_mismatch() {
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::UnsignedIncMsb,
-            PackedFactDomain::TraceRows { log_t: 4 },
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::UnsignedIncMsb,
+            PackingFactDomain::TraceRows { log_t: 4 },
             1,
-            PackedAlphabet::Bit,
+            PackingAlphabet::Bit,
         )])
         .unwrap_or_else(|error| panic!("layout should build: {error}"));
         let requirements = [LatticePackedValidityRequirement::exact_one_hot(
@@ -1569,7 +1578,7 @@ mod tests {
                 .family(&family_id)
                 .unwrap_or_else(|| panic!("validity family {family_id:?} should be present"));
 
-            assert_eq!(family.domain, PackedFactDomain::TraceRows { log_t });
+            assert_eq!(family.domain, PackingFactDomain::TraceRows { log_t });
             assert_eq!(family.limbs, requirement.limbs);
             assert_eq!(family.alphabet.size(), requirement.alphabet_size);
         }
@@ -1607,8 +1616,8 @@ mod tests {
                 kind: JoltAdviceKind::Trusted,
                 index: 3,
             }),
-            PackedFamilyId::AdviceBytes {
-                kind: PackedAdviceKind::Trusted,
+            PackingFamilyId::AdviceBytes {
+                kind: PackingAdviceKind::Trusted,
                 index: 3,
             }
         );
@@ -1617,7 +1626,7 @@ mod tests {
                 namespace: 17,
                 index: 5,
             }),
-            PackedFamilyId::Custom {
+            PackingFamilyId::Custom {
                 namespace: 17,
                 index: 5,
             }
@@ -1627,14 +1636,14 @@ mod tests {
                 chunk: 2,
                 selector: 1,
             }),
-            PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilyId::BytecodeRegisterSelector {
                 chunk: 2,
                 selector: 1,
             }
         );
         assert_eq!(
             lattice_packing_family_id(&LatticePackedFamilyId::BytecodeImmBytes { chunk: 2 }),
-            PackedFamilyId::BytecodeImmBytes { chunk: 2 }
+            PackingFamilyId::BytecodeImmBytes { chunk: 2 }
         );
     }
 
@@ -1646,7 +1655,7 @@ mod tests {
         assert_eq!(
             lattice_packing_view_formula(&formula)
                 .unwrap_or_else(|error| panic!("direct view should convert: {error}")),
-            PackedViewFormula::direct(PackedFamilyId::UnsignedIncMsb, 0, 1)
+            PackingViewFormula::direct(PackingFamilyId::UnsignedIncMsb, 0, 1)
         );
     }
 
@@ -1662,10 +1671,10 @@ mod tests {
 
         assert!(matches!(
             converted,
-            PackedViewFormula::LinearDecoded { terms, .. }
+            PackingViewFormula::LinearDecoded { terms, .. }
                 if terms.len() == 256
                     && terms[7].coefficient == Fr::from_u64(7)
-                    && terms[7].family == (PackedFamilyId::BytecodeChunk { index: 2 })
+                    && terms[7].family == (PackingFamilyId::BytecodeChunk { index: 2 })
                     && terms[7].limb == 4
                     && terms[7].symbol == 7
         ));
@@ -1677,7 +1686,7 @@ mod tests {
             lattice_packing_view_formula::<Fr>(&LatticePackedViewFormula::masked_decoded(
                 JoltRelationId::UnsignedIncClaimReduction,
             )),
-            Err(PackedViewError::MaskedViewRequiresTranslation)
+            Err(PackingViewError::MaskedViewRequiresTranslation)
         ));
     }
 
@@ -1694,10 +1703,10 @@ mod tests {
         );
         assert!(matches!(
             lattice_packing_view_formula::<Fr>(&formula),
-            Ok(PackedViewFormula::ReducedMasked { terms })
+            Ok(PackingViewFormula::ReducedMasked { terms })
                 if terms.len() == 1
                     && terms[0].coefficient == Fr::from_u64(9)
-                    && terms[0].family == PackedFamilyId::UnsignedIncMsb
+                    && terms[0].family == PackingFamilyId::UnsignedIncMsb
                     && terms[0].limb == 0
                     && terms[0].symbol == 1
         ));
@@ -1889,11 +1898,11 @@ mod tests {
         let point = vec![Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
         let expected_weights = EqPolynomial::<Fr>::evals(&point[..2], None);
         let logical = logical_manifest(id, point);
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::InstructionRa { index: 1 },
-            PackedFactDomain::TraceRows { log_t: 1 },
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::InstructionRa { index: 1 },
+            PackingFactDomain::TraceRows { log_t: 1 },
             1,
-            PackedAlphabet::Fixed { size: 4 },
+            PackingAlphabet::Fixed { size: 4 },
         )])
         .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
 
@@ -1911,7 +1920,7 @@ mod tests {
             } if *layout_digest == layout.digest
                 && terms.len() == 4
                 && terms[2].coefficient == expected_weights[2]
-                && terms[2].family == (PackedFamilyId::InstructionRa { index: 1 }).physical_ref()
+                && terms[2].family == (PackingFamilyId::InstructionRa { index: 1 }).physical_ref()
                 && terms[2].limb == 0
                 && terms[2].symbol == 2
         ));
@@ -1943,11 +1952,11 @@ mod tests {
             JoltCommittedPolynomial::RamInc,
             JoltRelationId::IncClaimReduction,
         );
-        let layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
-            PackedFamilyId::UnsignedIncMsb,
-            PackedFactDomain::TraceRows { log_t: 0 },
+        let layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::UnsignedIncMsb,
+            PackingFactDomain::TraceRows { log_t: 0 },
             1,
-            PackedAlphabet::Bit,
+            PackingAlphabet::Bit,
         )])
         .unwrap_or_else(|error| panic!("test layout should be valid: {error}"));
 
@@ -1990,7 +1999,7 @@ mod tests {
         let PhysicalView::Packing { terms, .. } = &manifest.openings[0].view else {
             panic!("field rd inc should lower to a packing view");
         };
-        let term = find_physical_term(terms, PackedFamilyId::FieldRdIncByte { index: 1 }, 0, 3);
+        let term = find_physical_term(terms, PackingFamilyId::FieldRdIncByte { index: 1 }, 0, 3);
         assert_eq!(term.coefficient, Fr::from_u64(3 * 256));
         assert_eq!(term.row_point, row_point);
     }
@@ -2015,54 +2024,54 @@ mod tests {
     #[test]
     fn layout_config_rejects_precommitted_packed_families() {
         let precommitted_specs = [
-            PackedFamilySpec::direct(
-                PackedFamilyId::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+            PackingFamilySpec::direct(
+                PackingFamilyId::AdviceBytes {
+                    kind: PackingAdviceKind::Trusted,
                     index: 0,
                 },
-                PackedFactDomain::AdviceBytes {
-                    kind: PackedAdviceKind::Trusted,
+                PackingFactDomain::AdviceBytes {
+                    kind: PackingAdviceKind::Trusted,
                     log_bytes: 1,
                 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeChunk { index: 0 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeChunk { index: 0 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 1 },
                 1,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeCircuitFlag {
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeCircuitFlag {
                     chunk: 0,
                     flag: CircuitFlags::Store as usize,
                 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 1 },
                 1,
-                PackedAlphabet::Bit,
+                PackingAlphabet::Bit,
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilySpec::direct(
+                PackingFamilyId::BytecodeRegisterSelector {
                     chunk: 0,
                     selector: 2,
                 },
-                PackedFactDomain::BytecodeRows { log_bytecode: 1 },
+                PackingFactDomain::BytecodeRows { log_bytecode: 1 },
                 1,
-                PackedAlphabet::Fixed {
+                PackingAlphabet::Fixed {
                     size: 1 << REGISTER_ADDRESS_BITS,
                 },
             ),
-            PackedFamilySpec::direct(
-                PackedFamilyId::ProgramImageInit,
-                PackedFactDomain::ProgramImageWords { log_words: 1 },
+            PackingFamilySpec::direct(
+                PackingFamilyId::ProgramImageInit,
+                PackingFactDomain::ProgramImageWords { log_words: 1 },
                 8,
-                PackedAlphabet::Byte,
+                PackingAlphabet::Byte,
             ),
         ];
 
         for spec in precommitted_specs {
-            let layout = PackedWitnessLayout::new([spec])
+            let layout = PackingWitnessLayout::new([spec])
                 .unwrap_or_else(|error| panic!("layout should build: {error}"));
             let mut config = lattice_config();
             config.lattice.packed_witness.layout_digest = Some(layout.digest);
@@ -2101,8 +2110,8 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
         assert!(layout
-            .family(&PackedFamilyId::AdviceBytes {
-                kind: PackedAdviceKind::Untrusted,
+            .family(&PackingFamilyId::AdviceBytes {
+                kind: PackingAdviceKind::Untrusted,
                 index: 0,
             })
             .is_some());
@@ -2123,13 +2132,13 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
-        assert!(layout.family(&PackedFamilyId::UnsignedIncMsb).is_some());
-        assert!(layout.family(&PackedFamilyId::FieldRdIncSign).is_none());
+        assert!(layout.family(&PackingFamilyId::UnsignedIncMsb).is_some());
+        assert!(layout.family(&PackingFamilyId::FieldRdIncSign).is_none());
         assert!(layout
-            .family(&PackedFamilyId::FieldRdIncByte { index: 7 })
+            .family(&PackingFamilyId::FieldRdIncByte { index: 7 })
             .is_some());
         assert!(layout
-            .family(&PackedFamilyId::FieldRdIncByte {
+            .family(&PackingFamilyId::FieldRdIncByte {
                 index: AkitaField::NUM_BYTES - 1
             })
             .is_some());
@@ -2150,39 +2159,39 @@ mod tests {
         .unwrap_or_else(|error| panic!("layout derivation should succeed: {error}"));
 
         assert!(layout
-            .family(&PackedFamilyId::AdviceBytes {
-                kind: PackedAdviceKind::Trusted,
+            .family(&PackingFamilyId::AdviceBytes {
+                kind: PackingAdviceKind::Trusted,
                 index: 0,
             })
             .is_none());
 
         let untrusted = layout
-            .family(&PackedFamilyId::AdviceBytes {
-                kind: PackedAdviceKind::Untrusted,
+            .family(&PackingFamilyId::AdviceBytes {
+                kind: PackingAdviceKind::Untrusted,
                 index: 0,
             })
             .unwrap_or_else(|| panic!("untrusted advice family should be present"));
         assert!(matches!(
             untrusted.domain,
-            PackedFactDomain::AdviceBytes {
-                kind: PackedAdviceKind::Untrusted,
+            PackingFactDomain::AdviceBytes {
+                kind: PackingAdviceKind::Untrusted,
                 ..
             }
         ));
 
         assert!(layout
-            .family(&PackedFamilyId::BytecodeRegisterSelector {
+            .family(&PackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 0,
             })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
+            .family(&PackingFamilyId::BytecodeLookupSelector { chunk: 0 })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
+            .family(&PackingFamilyId::BytecodeImmBytes { chunk: 0 })
             .is_none());
-        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
+        assert!(layout.family(&PackingFamilyId::ProgramImageInit).is_none());
     }
 
     #[cfg(feature = "field-inline")]
@@ -2208,45 +2217,45 @@ mod tests {
         assert_eq!(audit.cells_by_domain.bytecode_rows, 0);
         assert_eq!(audit.cells_by_domain.program_image_words, 0);
         assert!(audit.cells_by_domain.advice_bytes > 0);
-        assert!(layout.family(&PackedFamilyId::UnsignedIncMsb).is_some());
+        assert!(layout.family(&PackingFamilyId::UnsignedIncMsb).is_some());
         assert!(layout
-            .family(&PackedFamilyId::UnsignedIncChunk { index: 7 })
+            .family(&PackingFamilyId::UnsignedIncChunk { index: 7 })
             .is_some());
         assert!(layout
-            .family(&PackedFamilyId::FieldRdIncByte { index: 0 })
+            .family(&PackingFamilyId::FieldRdIncByte { index: 0 })
             .is_some());
         assert!(layout
-            .family(&PackedFamilyId::FieldRdIncByte {
+            .family(&PackingFamilyId::FieldRdIncByte {
                 index: AkitaField::NUM_BYTES - 1,
             })
             .is_some());
         assert!(layout
-            .family(&PackedFamilyId::AdviceBytes {
-                kind: PackedAdviceKind::Trusted,
+            .family(&PackingFamilyId::AdviceBytes {
+                kind: PackingAdviceKind::Trusted,
                 index: 0,
             })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::AdviceBytes {
-                kind: PackedAdviceKind::Untrusted,
+            .family(&PackingFamilyId::AdviceBytes {
+                kind: PackingAdviceKind::Untrusted,
                 index: 0,
             })
             .is_some());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeRegisterSelector {
+            .family(&PackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 2,
             })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
+            .family(&PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag: 0 })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeLookupSelector { chunk: 0 })
+            .family(&PackingFamilyId::BytecodeLookupSelector { chunk: 0 })
             .is_none());
         assert!(layout
-            .family(&PackedFamilyId::BytecodeImmBytes { chunk: 0 })
+            .family(&PackingFamilyId::BytecodeImmBytes { chunk: 0 })
             .is_none());
-        assert!(layout.family(&PackedFamilyId::ProgramImageInit).is_none());
+        assert!(layout.family(&PackingFamilyId::ProgramImageInit).is_none());
     }
 }

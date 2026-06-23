@@ -10,7 +10,7 @@ use crate::{
 };
 use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AKITA_FIELD_MODULUS};
 use jolt_field::FixedByteSize;
-use jolt_openings::PackedWitnessLayout;
+use jolt_openings::PackingWitnessLayout;
 
 pub(crate) fn validate_akita_artifacts_for_proof(
     setup: &AkitaPackingVerifierSetup,
@@ -353,7 +353,7 @@ pub(crate) fn validate_akita_precommitted_commitment_is_separate(
 
 pub(crate) fn validate_akita_verifier_setup_layout(
     setup: &AkitaPackingVerifierSetup,
-    layout: &PackedWitnessLayout,
+    layout: &PackingWitnessLayout,
 ) -> Result<(), VerifierError> {
     validate_akita_verifier_setup_shape(setup, layout.digest, layout.dimension)?;
     if setup.layout != *layout {

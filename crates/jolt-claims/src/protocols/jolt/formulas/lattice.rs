@@ -703,7 +703,7 @@ fn byte_validity_requirement(
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LatticeFinalOpeningRequirement {
-    PackedFamily {
+    PackingLayoutFamily {
         family: LatticePackedFamilyId,
         relation: JoltRelationId,
     },
@@ -758,7 +758,7 @@ fn packed_family_requirement(
     family: LatticePackedFamilyId,
     relation: JoltRelationId,
 ) -> LatticeFinalOpeningRequirement {
-    LatticeFinalOpeningRequirement::PackedFamily { family, relation }
+    LatticeFinalOpeningRequirement::PackingLayoutFamily { family, relation }
 }
 
 pub fn byte_decode_terms<F: Field>(
@@ -943,14 +943,14 @@ mod tests {
     fn final_opening_lattice_requirement_names_packed_families() {
         assert_eq!(
             final_opening_lattice_requirement(JoltCommittedPolynomial::InstructionRa(2)),
-            LatticeFinalOpeningRequirement::PackedFamily {
+            LatticeFinalOpeningRequirement::PackingLayoutFamily {
                 family: LatticePackedFamilyId::InstructionRa { index: 2 },
                 relation: JoltRelationId::HammingWeightClaimReduction,
             }
         );
         assert_eq!(
             final_opening_lattice_requirement(JoltCommittedPolynomial::ProgramImageInit),
-            LatticeFinalOpeningRequirement::PackedFamily {
+            LatticeFinalOpeningRequirement::PackingLayoutFamily {
                 family: LatticePackedFamilyId::ProgramImageInit,
                 relation: JoltRelationId::ProgramImageClaimReduction,
             }
