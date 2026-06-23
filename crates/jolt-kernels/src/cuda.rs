@@ -1228,6 +1228,17 @@ impl CudaKernelContext {
         Ok(())
     }
 
+    #[expect(clippy::todo, unused_variables)]
+    pub fn batched_bind(
+        &self,
+        values: &mut DeviceFrVec,
+        scratch: &mut DeviceFrVec,
+        num_buffers: usize,
+        challenge: Fr,
+    ) -> Result<(), CudaError> {
+        todo!()
+    }
+
     pub fn bind(
         &self,
         values: &mut DeviceFrVec,
@@ -2091,6 +2102,40 @@ mod tests {
                 )
                 .unwrap();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::batched_bind is todo!()"]
+        fn batched_bind_matches_cpu(
+            log_half in 0usize..10,
+            num_buffers in 1usize..6,
+            challenge in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            let half = 1usize << log_half;
+            let buf_len = half * 2;
+            let buffers: Vec<Vec<Fr>> = (0..num_buffers)
+                .map(|b| {
+                    (0..buf_len)
+                        .map(|i| seed + Fr::from_u64((b * buf_len + i) as u64))
+                        .collect()
+                })
+                .collect();
+
+            let mut expected = Vec::with_capacity(num_buffers * half);
+            for buffer in &buffers {
+                let mut values = buffer.clone();
+                let mut scratch = Vec::new();
+                crate::dense::bind_dense_evals_reuse(&mut values, &mut scratch, challenge);
+                expected.extend(values);
+            }
+
+            let packed: Vec<Fr> = buffers.into_iter().flatten().collect();
+            let c = ctx();
+            let mut values = c.upload(&packed).unwrap();
+            let mut scratch = c.upload(&[]).unwrap();
+            c.batched_bind(&mut values, &mut scratch, num_buffers, challenge).unwrap();
+            prop_assert_eq!(values.to_host().unwrap(), expected);
         }
     }
 
