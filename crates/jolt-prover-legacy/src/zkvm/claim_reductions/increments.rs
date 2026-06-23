@@ -1298,7 +1298,7 @@ fn rd_inc_i128(cycle: &Cycle) -> i128 {
 }
 
 #[cfg(all(feature = "akita", not(feature = "zk")))]
-fn selected_inc_i128(cycle: &Cycle) -> i128 {
+pub(crate) fn selected_inc_i128(cycle: &Cycle) -> i128 {
     if matches!(cycle.ram_access(), RAMAccess::Write(_)) {
         ram_inc_i128(cycle)
     } else {
@@ -1307,13 +1307,28 @@ fn selected_inc_i128(cycle: &Cycle) -> i128 {
 }
 
 #[cfg(all(feature = "akita", not(feature = "zk")))]
-fn unsigned_inc_u128(cycle: &Cycle) -> u128 {
+pub(crate) fn unsigned_inc_u128(cycle: &Cycle) -> u128 {
     (UNSIGNED_INC_SHIFT as i128 + selected_inc_i128(cycle)) as u128
 }
 
 #[cfg(all(feature = "akita", not(feature = "zk")))]
-fn unsigned_inc_msb(cycle: &Cycle) -> bool {
+pub(crate) fn unsigned_inc_msb(cycle: &Cycle) -> bool {
     (unsigned_inc_u128(cycle) >> 64) != 0
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub(crate) fn unsigned_inc_lower_chunk_count(log_k_chunk: usize) -> Option<usize> {
+    (log_k_chunk != 0 && 64_usize.is_multiple_of(log_k_chunk)).then_some(64 / log_k_chunk)
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub(crate) fn unsigned_inc_chunk_index(
+    cycle: &Cycle,
+    chunk_index: usize,
+    log_k_chunk: usize,
+) -> usize {
+    let mask = (1_u128 << log_k_chunk) - 1;
+    ((unsigned_inc_u128(cycle) >> (chunk_index * log_k_chunk)) & mask) as usize
 }
 
 #[cfg(all(test, feature = "host", feature = "akita", not(feature = "zk")))]

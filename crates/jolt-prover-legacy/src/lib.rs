@@ -9,12 +9,9 @@
     non_snake_case,
     type_alias_bounds
 )]
-#![cfg_attr(
-    feature = "akita",
-    expect(
-        clippy::result_large_err,
-        reason = "Akita verifier errors include lattice payload variants, and prover APIs intentionally return the verifier error type directly"
-    )
+#![expect(
+    clippy::result_large_err,
+    reason = "Verifier errors include large protocol payload variants, and prover APIs intentionally return the verifier error type directly"
 )]
 #[cfg(feature = "host")]
 pub mod host;

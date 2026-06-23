@@ -57,6 +57,14 @@ use crate::{
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::{
+    poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding},
+    poly::opening_proof::LatticeOpening,
+    zkvm::claim_reductions::increments::{
+        unsigned_inc_chunk_index, unsigned_inc_lower_chunk_count,
+    },
+};
 
 /// Degree bound of the sumcheck round polynomials.
 const DEGREE_BOUND: usize = 3;
@@ -79,6 +87,8 @@ pub struct BooleanitySumcheckParams<F: JoltField> {
     pub r_cycle: Vec<F::Challenge>,
     /// Polynomial types for all families
     pub polynomial_types: Vec<CommittedPolynomial>,
+    /// Extra Akita unsigned-increment chunk polynomials batched after RA families.
+    pub unsigned_inc_chunk_count: usize,
     /// OneHotParams for SharedRaPolynomials
     pub one_hot_params: OneHotParams,
 }
@@ -95,11 +105,40 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
+        Self::new_with_chunk_count(log_t, one_hot_params, accumulator, transcript, 0)
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    pub fn new_with_unsigned_inc_chunks(
+        log_t: usize,
+        one_hot_params: &OneHotParams,
+        accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let unsigned_inc_chunk_count = unsigned_inc_lower_chunk_count(one_hot_params.log_k_chunk)
+            .expect("unsigned increment chunk size must evenly divide 64 bits");
+        Self::new_with_chunk_count(
+            log_t,
+            one_hot_params,
+            accumulator,
+            transcript,
+            unsigned_inc_chunk_count,
+        )
+    }
+
+    fn new_with_chunk_count(
+        log_t: usize,
+        one_hot_params: &OneHotParams,
+        accumulator: &dyn OpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+        unsigned_inc_chunk_count: usize,
+    ) -> Self {
         let log_k_chunk = one_hot_params.log_k_chunk;
         let instruction_d = one_hot_params.instruction_d;
         let bytecode_d = one_hot_params.bytecode_d;
         let ram_d = one_hot_params.ram_d;
         let total_d = instruction_d + bytecode_d + ram_d;
+        let total_polys = total_d + unsigned_inc_chunk_count;
         let log_k_instruction = one_hot_params.lookups_ra_virtual_log_k_chunk;
 
         // Get Stage 5 opening point: order is address (LOG_K_INSTRUCTION) => cycle (log_t)
@@ -156,9 +195,9 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
 
         // Compute gamma_powers_square (verifier needs these for expected_output_claim)
         let gamma_sq = gamma_f.square();
-        let mut gamma_powers_square = Vec::with_capacity(total_d);
+        let mut gamma_powers_square = Vec::with_capacity(total_polys);
         let mut gamma2_i = F::one();
-        for _ in 0..total_d {
+        for _ in 0..total_polys {
             gamma_powers_square.push(gamma2_i);
             gamma2_i *= gamma_sq;
         }
@@ -171,6 +210,7 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             r_address,
             r_cycle,
             polynomial_types,
+            unsigned_inc_chunk_count,
             one_hot_params: one_hot_params.clone(),
         }
     }
@@ -198,6 +238,10 @@ impl<F: JoltField> BooleanitySumcheckParams<F> {
             .chain(self.r_cycle.iter().cloned().rev())
             .collect()
     }
+
+    fn total_polynomial_count(&self) -> usize {
+        self.polynomial_types.len() + self.unsigned_inc_chunk_count
+    }
 }
 
 fn compute_gamma_powers<F: JoltField>(gamma: F::Challenge, count: usize) -> (Vec<F>, Vec<F>) {
@@ -213,10 +257,111 @@ fn compute_gamma_powers<F: JoltField>(gamma: F::Challenge, count: usize) -> (Vec
     (powers, powers_inv)
 }
 
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn compute_unsigned_inc_chunk_indices(
+    trace: &[Cycle],
+    chunk_count: usize,
+    log_k_chunk: usize,
+) -> Vec<Vec<usize>> {
+    (0..chunk_count)
+        .into_par_iter()
+        .map(|chunk_index| {
+            trace
+                .par_iter()
+                .map(|cycle| unsigned_inc_chunk_index(cycle, chunk_index, log_k_chunk))
+                .collect()
+        })
+        .collect()
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn compute_unsigned_inc_chunk_g<F: JoltField>(
+    chunk_indices: &[Vec<usize>],
+    k_chunk: usize,
+    r_cycle: &[F::Challenge],
+) -> Vec<Vec<F>> {
+    if chunk_indices.is_empty() {
+        return Vec::new();
+    }
+
+    let chunk_count = chunk_indices.len();
+    let trace_len = chunk_indices[0].len();
+    let log_T = r_cycle.len();
+    let lo_bits = log_T / 2;
+    let hi_bits = log_T - lo_bits;
+    let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
+
+    let (E_hi, E_lo) = rayon::join(
+        || EqPolynomial::<F>::evals(r_hi),
+        || EqPolynomial::<F>::evals(r_lo),
+    );
+
+    let in_len = E_lo.len();
+    let num_threads = rayon::current_num_threads();
+    let out_len = E_hi.len();
+    let chunk_size = out_len.div_ceil(num_threads).max(1);
+
+    E_hi.par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_idx, chunk)| {
+            let mut partial: Vec<Vec<F>> =
+                (0..chunk_count).map(|_| vec![F::zero(); k_chunk]).collect();
+            let mut local: Vec<Vec<F::UnreducedMulU64>> = (0..chunk_count)
+                .map(|_| vec![F::UnreducedMulU64::zero(); k_chunk])
+                .collect();
+
+            let chunk_start = chunk_idx * chunk_size;
+            for (local_idx, &e_hi) in chunk.iter().enumerate() {
+                for values in &mut local {
+                    values.fill(F::UnreducedMulU64::zero());
+                }
+
+                let c_hi = chunk_start + local_idx;
+                let c_hi_base = c_hi * in_len;
+                for (c_lo, e_lo) in E_lo.iter().enumerate() {
+                    let cycle_index = c_hi_base + c_lo;
+                    if cycle_index >= trace_len {
+                        break;
+                    }
+
+                    let add = e_lo.to_unreduced();
+                    for chunk_index in 0..chunk_count {
+                        let k = chunk_indices[chunk_index][cycle_index];
+                        local[chunk_index][k] += add;
+                    }
+                }
+
+                for chunk_index in 0..chunk_count {
+                    for k in 0..k_chunk {
+                        let reduced = F::reduce_mul_u64(local[chunk_index][k]);
+                        if !reduced.is_zero() {
+                            partial[chunk_index][k] += e_hi * reduced;
+                        }
+                    }
+                }
+            }
+            partial
+        })
+        .reduce(
+            || (0..chunk_count).map(|_| vec![F::zero(); k_chunk]).collect(),
+            |mut a, b| {
+                for (a_poly, b_poly) in a.iter_mut().zip(b.iter()) {
+                    a_poly
+                        .par_iter_mut()
+                        .zip(b_poly.par_iter())
+                        .for_each(|(a_val, b_val)| *a_val += *b_val);
+                }
+                a
+            },
+        )
+}
+
 #[derive(Allocative)]
 pub struct BooleanityCycleInput<F: JoltField> {
     params: BooleanitySumcheckParams<F>,
     ra_indices: Vec<RaIndices>,
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    unsigned_inc_chunk_indices: Vec<Vec<usize>>,
 }
 
 /// Booleanity address-phase prover.
@@ -228,6 +373,9 @@ pub struct BooleanityAddressSumcheckProver<F: JoltField> {
     G: Vec<Vec<F>>,
     /// RA indices computed alongside `G`, reused by the cycle phase.
     ra_indices: Vec<RaIndices>,
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    /// Unsigned-increment chunk indices, reused by the cycle phase.
+    unsigned_inc_chunk_indices: Vec<Vec<usize>>,
     /// F: Expanding table over address bits for phase 1.
     F: ExpandingTable<F>,
     /// Most recent round polynomial, used to cache the address-phase output claim.
@@ -251,13 +399,31 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         bytecode: &BytecodePreprocessing,
         memory_layout: &MemoryLayout,
     ) -> Self {
-        let (G, ra_indices) = compute_all_G_and_ra_indices::<F>(
+        let (base_G, ra_indices) = compute_all_G_and_ra_indices::<F>(
             trace,
             bytecode,
             memory_layout,
             &params.one_hot_params,
             &params.r_cycle,
         );
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let (G, unsigned_inc_chunk_indices) = {
+            let mut G = base_G;
+            let unsigned_inc_chunk_indices = compute_unsigned_inc_chunk_indices(
+                trace,
+                params.unsigned_inc_chunk_count,
+                params.log_k_chunk,
+            );
+            G.extend(compute_unsigned_inc_chunk_g::<F>(
+                &unsigned_inc_chunk_indices,
+                params.one_hot_params.k_chunk,
+                &params.r_cycle,
+            ));
+            (G, unsigned_inc_chunk_indices)
+        };
+        #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+        let G = base_G;
+
         let B = GruenSplitEqPolynomial::new(&params.r_address, BindingOrder::LowToHigh);
         let k_chunk = 1 << params.log_k_chunk;
         let mut F_table = ExpandingTable::new(k_chunk, BindingOrder::LowToHigh);
@@ -267,6 +433,8 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
             B,
             G,
             ra_indices,
+            #[cfg(all(feature = "akita", not(feature = "zk")))]
+            unsigned_inc_chunk_indices,
             F: F_table,
             last_round_poly: None,
             address_claim: None,
@@ -278,6 +446,8 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         BooleanityCycleInput {
             params: self.params.into_inner(),
             ra_indices: self.ra_indices,
+            #[cfg(all(feature = "akita", not(feature = "zk")))]
+            unsigned_inc_chunk_indices: self.unsigned_inc_chunk_indices,
         }
     }
 }
@@ -291,7 +461,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     fn compute_message(&mut self, round: usize, previous_claim: F) -> UniPoly<F> {
         let m = round + 1;
-        let n = self.params.common.polynomial_types.len();
+        let n = self.G.len();
         // Compute quadratic coefficients via split-eq folding over the unbound address suffix.
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = self
             .B
@@ -388,6 +558,9 @@ pub struct BooleanityCycleSumcheckProver<F: JoltField> {
     D: GruenSplitEqPolynomial<F>,
     /// Shared RA polynomials, pre-scaled for batched cycle-phase accumulation.
     H: SharedRaPolynomials<F>,
+    /// Akita unsigned-increment chunk polynomials, pre-scaled like `H`.
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    unsigned_inc_chunks: Vec<MultilinearPolynomial<F>>,
     /// eq(r_address, r_address), carried from address-phase binding.
     eq_r_r: F,
     /// Per-polynomial powers γ^i used for pre-scaling.
@@ -407,12 +580,28 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
         let params = BooleanityCyclePhaseParams::new(input.params, opening_accumulator);
         let (eq_r_r, base_eq) = Self::compute_bound_address_eq_and_table(&params);
         let num_polys = params.common.polynomial_types.len();
-        let (gamma_powers, gamma_powers_inv) = compute_gamma_powers(params.common.gamma, num_polys);
+        let total_polys = params.common.total_polynomial_count();
+        let (gamma_powers, gamma_powers_inv) =
+            compute_gamma_powers(params.common.gamma, total_polys);
         let tables: Vec<Vec<F>> = (0..num_polys)
             .into_par_iter()
             .map(|i| {
                 let rho = gamma_powers[i];
                 base_eq.iter().map(|v| rho * *v).collect()
+            })
+            .collect();
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let unsigned_inc_chunks = input
+            .unsigned_inc_chunk_indices
+            .into_par_iter()
+            .enumerate()
+            .map(|(chunk_index, indices)| {
+                let rho = gamma_powers[num_polys + chunk_index];
+                indices
+                    .into_par_iter()
+                    .map(|index| rho * base_eq[index])
+                    .collect::<Vec<F>>()
+                    .into()
             })
             .collect();
 
@@ -423,6 +612,8 @@ impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
                 input.ra_indices,
                 params.common.one_hot_params.clone(),
             ),
+            #[cfg(all(feature = "akita", not(feature = "zk")))]
+            unsigned_inc_chunks,
             eq_r_r,
             gamma_powers,
             gamma_powers_inv,
@@ -451,7 +642,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     }
 
     fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
-        let num_polys = self.H.num_polys();
+        let num_polys = self.params.common.total_polynomial_count();
         let quadratic_coeffs: [F; DEGREE_BOUND - 1] = self
             .D
             .par_fold_out_in_unreduced::<{ DEGREE_BOUND - 1 }>(&|j_prime| {
@@ -459,8 +650,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 let mut acc_c = F::UnreducedProductAccum::zero();
                 let mut acc_e = F::UnreducedProductAccum::zero();
                 for i in 0..num_polys {
-                    let h_0 = self.H.get_bound_coeff(i, 2 * j_prime);
-                    let h_1 = self.H.get_bound_coeff(i, 2 * j_prime + 1);
+                    let h_0 = self.get_bound_coeff(i, 2 * j_prime);
+                    let h_1 = self.get_bound_coeff(i, 2 * j_prime + 1);
                     let b = h_1 - h_0;
                     // Phase-2 optimization: H is pre-scaled by rho_i = gamma^i, so gamma^{2i}
                     // factors are already accounted for:
@@ -486,6 +677,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
         self.D.bind(r_j);
         self.H.bind_in_place(r_j, BindingOrder::LowToHigh);
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        self.unsigned_inc_chunks
+            .par_iter_mut()
+            .for_each(|chunk| chunk.bind_parallel(r_j, BindingOrder::LowToHigh));
     }
 
     fn cache_openings(
@@ -505,11 +700,43 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
             opening_point.r[self.params.common.log_k_chunk..].to_vec(),
             claims,
         );
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        {
+            let num_ra_polys = self.H.num_polys();
+            for (chunk_index, chunk) in self.unsigned_inc_chunks.iter().enumerate() {
+                accumulator.append_lattice(
+                    LatticeOpening::UnsignedIncChunk(chunk_index),
+                    opening_point.clone(),
+                    chunk.final_sumcheck_claim()
+                        * self.gamma_powers_inv[num_ra_polys + chunk_index],
+                );
+            }
+        }
     }
 
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
+    }
+}
+
+impl<F: JoltField> BooleanityCycleSumcheckProver<F> {
+    #[inline]
+    fn get_bound_coeff(&self, poly_index: usize, coeff_index: usize) -> F {
+        let num_ra_polys = self.H.num_polys();
+        if poly_index < num_ra_polys {
+            return self.H.get_bound_coeff(poly_index, coeff_index);
+        }
+
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        {
+            self.unsigned_inc_chunks[poly_index - num_ra_polys].get_bound_coeff(coeff_index)
+        }
+
+        #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+        {
+            unreachable!("Booleanity has no non-RA polynomials without the akita feature")
+        }
     }
 }
 
@@ -766,5 +993,128 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BooleanityCyclePhaseParams<F> {
             challenges.push(-coeff);
         }
         challenges
+    }
+}
+
+#[cfg(all(test, feature = "host", feature = "akita", not(feature = "zk")))]
+mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        reason = "tests construct prover inputs and assert successful sumcheck execution"
+    )]
+
+    use ark_bn254::Fr;
+
+    use super::*;
+    use crate::{
+        host,
+        poly::opening_proof::{OpeningId, ProverOpeningAccumulator},
+        subprotocols::sumcheck::BatchedSumcheck,
+        transcripts::Blake2bTranscript,
+        utils::math::Math,
+        zkvm::{config::OneHotParams, program::FullProgramPreprocessing, ram::compute_max_ram_K},
+    };
+
+    #[test]
+    fn akita_booleanity_caches_unsigned_inc_chunks() {
+        let mut program = host::Program::new("muldiv-guest");
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (bytecode, init_memory_state, _, entry_address) = program.decode();
+        let (_, mut trace, _, io_device) = program.trace(&inputs, &[], &[]);
+        trace.resize(trace.len().next_power_of_two(), Cycle::NoOp);
+
+        let log_t = trace.len().log_2();
+        let preprocessing =
+            FullProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
+                .unwrap();
+        let one_hot_params = OneHotParams::new(
+            log_t,
+            preprocessing.bytecode_len(),
+            compute_max_ram_K(&io_device.memory_layout),
+        );
+
+        let mut transcript = Blake2bTranscript::new(b"akita_booleanity_chunks_test");
+        let mut accumulator = ProverOpeningAccumulator::new(log_t);
+        accumulator.append_virtual(
+            VirtualPolynomial::InstructionRa(0),
+            SumcheckId::InstructionReadRaf,
+            stage5_instruction_ra_point::<Fr>(&one_hot_params, log_t),
+            Fr::from_u64(1),
+        );
+        accumulator.flush_to_transcript(&mut transcript);
+
+        let params = BooleanitySumcheckParams::new_with_unsigned_inc_chunks(
+            log_t,
+            &one_hot_params,
+            &accumulator,
+            &mut transcript,
+        );
+        let chunk_count = params.unsigned_inc_chunk_count;
+        let num_ra_polys = params.polynomial_types.len();
+        let gamma_powers_square = params.gamma_powers_square.clone();
+
+        let mut address_prover = BooleanityAddressSumcheckProver::initialize(
+            params,
+            &trace,
+            &preprocessing.bytecode,
+            &io_device.memory_layout,
+        );
+        let (_address_proof, _r_address, _address_initial_claim) =
+            BatchedSumcheck::prove(vec![&mut address_prover], &mut accumulator, &mut transcript);
+        let cycle_input = address_prover.into_cycle_input();
+        let mut cycle_prover = BooleanityCycleSumcheckProver::initialize(cycle_input, &accumulator);
+        let input_claim = cycle_prover.params.input_claim(&accumulator);
+
+        let (proof, r_cycle, initial_claim) =
+            BatchedSumcheck::prove(vec![&mut cycle_prover], &mut accumulator, &mut transcript);
+        let final_claim = proof
+            .compressed_polys
+            .iter()
+            .zip(&r_cycle)
+            .fold(initial_claim, |claim, (poly, r_j)| {
+                poly.decompress(&claim).evaluate(r_j)
+            });
+
+        let full_challenges = cycle_prover.params.full_challenges(&r_cycle);
+        let eq_address_cycle = EqPolynomial::<Fr>::mle(
+            &full_challenges,
+            &cycle_prover.params.common.combined_r_big_endian(),
+        );
+        let mut expected_output = Fr::zero();
+        for (index, polynomial) in cycle_prover
+            .params
+            .common
+            .polynomial_types
+            .iter()
+            .enumerate()
+        {
+            let (_, claim) =
+                accumulator.get_committed_polynomial_opening(*polynomial, SumcheckId::Booleanity);
+            expected_output += gamma_powers_square[index] * (claim.square() - claim);
+        }
+        for chunk_index in 0..chunk_count {
+            let claim = accumulator.get_opening(OpeningId::Lattice(
+                LatticeOpening::UnsignedIncChunk(chunk_index),
+            ));
+            expected_output +=
+                gamma_powers_square[num_ra_polys + chunk_index] * (claim.square() - claim);
+        }
+
+        let batch_coeff = initial_claim * input_claim.inverse().unwrap();
+        assert_eq!(
+            final_claim,
+            batch_coeff * eq_address_cycle * expected_output
+        );
+    }
+
+    fn stage5_instruction_ra_point<F: JoltField>(
+        one_hot_params: &OneHotParams,
+        log_t: usize,
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::new(
+            (0..one_hot_params.lookups_ra_virtual_log_k_chunk + log_t)
+                .map(|index| F::Challenge::from(17_u128 + index as u128))
+                .collect(),
+        )
     }
 }
