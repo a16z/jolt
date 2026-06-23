@@ -11,17 +11,16 @@ use jolt_claims::protocols::jolt::{
             self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafEvaluationInputs,
         },
         claim_reductions::{advice, bytecode as bytecode_reduction, increments, program_image},
-        dimensions::{JoltFormulaDimensions, TraceDimensions, REGISTER_ADDRESS_BITS},
+        dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
         instruction, lattice, ram,
     },
     BooleanityChallenge, BooleanityPublic, BytecodeClaimReductionChallenge,
     BytecodeReadRafChallenge, IncClaimReductionChallenge, IncClaimReductionPublic,
     InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
-    PrecommittedReductionLayout, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
+    JoltRelationId, JoltVirtualPolynomial, PrecommittedReductionLayout,
+    RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
 #[cfg(not(feature = "field-inline"))]
 use jolt_lookup_tables::LookupTableKind;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
@@ -34,6 +33,12 @@ use jolt_transcript::Transcript;
 use num_traits::{One, Zero};
 
 use super::{
+    claim_shape::{
+        unsigned_inc_claims_for_protocol, validate_bytecode_val_stage_claim_count,
+        validate_compressed_stage_claim, validate_dense_increment_claim_shape,
+        validate_lattice_increment_claim_shape, Stage6BatchExpectedOutputClaims,
+        Stage6BatchInputClaims,
+    },
     inputs::Deps,
     outputs::{
         BooleanityPublicOutput, BytecodeReadRafPublicOutput,
@@ -54,46 +59,6 @@ use crate::{
     verifier::CheckedInputs,
     VerifierError,
 };
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage6BatchInputClaims<F: Field> {
-    bytecode_read_raf_address: F,
-    booleanity_address: F,
-    bytecode_read_raf: F,
-    booleanity: F,
-    ram_hamming_booleanity: F,
-    ram_ra_virtualization: F,
-    instruction_ra_virtualization: F,
-    inc_claim_reduction: Option<F>,
-    unsigned_inc_claim_reduction: Option<F>,
-    unsigned_inc_msb_booleanity: Option<F>,
-    #[cfg(feature = "field-inline")]
-    field_registers_inc_claim_reduction: F,
-    trusted_advice_cycle_phase: Option<F>,
-    untrusted_advice_cycle_phase: Option<F>,
-    bytecode_claim_reduction: Option<F>,
-    program_image_claim_reduction: Option<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage6BatchExpectedOutputClaims<F: Field> {
-    bytecode_read_raf_address: F,
-    booleanity_address: F,
-    bytecode_read_raf: F,
-    booleanity: F,
-    ram_hamming_booleanity: F,
-    ram_ra_virtualization: F,
-    instruction_ra_virtualization: F,
-    inc_claim_reduction: Option<F>,
-    unsigned_inc_claim_reduction: Option<F>,
-    unsigned_inc_msb_booleanity: Option<F>,
-    #[cfg(feature = "field-inline")]
-    field_registers_inc_claim_reduction: F,
-    trusted_advice_cycle_phase: Option<F>,
-    untrusted_advice_cycle_phase: Option<F>,
-    bytecode_claim_reduction: Option<F>,
-    program_image_claim_reduction: Option<F>,
-}
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
@@ -2436,130 +2401,6 @@ where
     }))
 }
 
-fn validate_compressed_stage_claim<F: Field>(
-    claim: &JoltRelationClaims<F>,
-) -> Result<(), VerifierError> {
-    if claim.sumcheck.degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage: claim.id,
-            degree: claim.sumcheck.degree,
-        });
-    }
-    if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage: claim.id });
-    }
-    Ok(())
-}
-
-fn unsigned_inc_claims_for_protocol<F: Field>(
-    protocol: &crate::config::JoltProtocolConfig,
-    trace_dimensions: TraceDimensions,
-    has_unsigned_inc_claims: bool,
-) -> Result<Option<JoltRelationClaims<F>>, VerifierError> {
-    let lattice =
-        crate::config::validate_protocol_config(protocol)? == crate::config::PcsFamily::Lattice;
-    if has_unsigned_inc_claims && !lattice {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: lattice::unsigned_inc_opening(),
-        });
-    }
-    if lattice && !has_unsigned_inc_claims {
-        return Err(VerifierError::MissingOpeningClaim {
-            id: lattice::unsigned_inc_opening(),
-        });
-    }
-
-    Ok(if lattice {
-        Some(lattice::unsigned_inc_claim_reduction_claim(
-            trace_dimensions,
-        ))
-    } else {
-        None
-    })
-}
-
-fn validate_lattice_increment_claim_shape<F: Field>(
-    claim: Option<&JoltRelationClaims<F>>,
-    output_claims: Option<&super::inputs::UnsignedIncClaimReductionOutputOpeningClaims<F>>,
-    booleanity_claims: &super::inputs::BooleanityOutputOpeningClaims<F>,
-    log_k_chunk: usize,
-) -> Result<(), VerifierError> {
-    let Some(_claim) = claim else {
-        if !booleanity_claims.unsigned_inc_chunks.is_empty() {
-            return Err(VerifierError::UnexpectedOpeningClaim {
-                id: lattice::unsigned_inc_chunk_opening(0),
-            });
-        }
-        return Ok(());
-    };
-    let _output_claims = output_claims.ok_or(VerifierError::MissingOpeningClaim {
-        id: lattice::unsigned_inc_opening(),
-    })?;
-    let expected_chunks =
-        lattice::unsigned_inc_lower_chunk_count(log_k_chunk).ok_or_else(|| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::UnsignedIncClaimReduction,
-                reason: format!(
-                    "unsigned increment chunk size must evenly divide 64 bits, got {log_k_chunk}"
-                ),
-            }
-        })?;
-    if booleanity_claims.unsigned_inc_chunks.len() != expected_chunks {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::Booleanity,
-            reason: format!(
-                "unsigned increment chunk booleanity claim count mismatch: expected {expected_chunks}, got {}",
-                booleanity_claims.unsigned_inc_chunks.len()
-            ),
-        });
-    }
-    Ok(())
-}
-
-fn validate_dense_increment_claim_shape<F: Field>(
-    lattice: bool,
-    output_claims: Option<&super::inputs::IncClaimReductionOutputOpeningClaims<F>>,
-) -> Result<(), VerifierError> {
-    match (lattice, output_claims.is_some()) {
-        (true, true) => Err(VerifierError::UnexpectedOpeningClaim {
-            id: increments::claim_reduction_output_openings()[0],
-        }),
-        (false, false) => Err(VerifierError::MissingOpeningClaim {
-            id: increments::claim_reduction_output_openings()[0],
-        }),
-        _ => Ok(()),
-    }
-}
-
-fn validate_bytecode_val_stage_claim_count<F: Field>(
-    committed_program: bool,
-    bind_store_bytecode: bool,
-    stage_claims: Option<&[F]>,
-) -> Result<(), VerifierError> {
-    if committed_program != stage_claims.is_some() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: format!(
-                "bytecode Val-stage claims presence ({}) does not match committed program mode ({committed_program})",
-                stage_claims.is_some()
-            ),
-        });
-    }
-    if let Some(stage_claims) = stage_claims {
-        let expected = bytecode_reduction::bytecode_val_stage_count(bind_store_bytecode);
-        if stage_claims.len() != expected {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: format!(
-                    "bytecode Val-stage claim count mismatch: expected {expected}, got {}",
-                    stage_claims.len()
-                ),
-            });
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -2570,6 +2411,7 @@ mod tests {
 
     use super::*;
     use crate::config::{IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode};
+    use jolt_claims::protocols::jolt::formulas::dimensions::TraceDimensions;
     use jolt_field::Fr;
 
     fn lattice_config() -> JoltProtocolConfig {
