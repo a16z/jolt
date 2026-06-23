@@ -291,7 +291,7 @@ impl Stage1OuterRemainingEvaluator<Fr> for Stage1OuterRv64Data<'_> {
     ) -> Option<Stage1RemainingRoundProof<Fr>> {
         #[cfg(feature = "cuda")]
         if context.backend == "cuda" {
-            if let Some(result) = crate::cuda_stage1::prove_remaining_rounds_cuda(
+            if let Some(result) = crate::stage1::cuda::prove_remaining_rounds_cuda(
                 &self.field_data,
                 context,
                 num_rounds,

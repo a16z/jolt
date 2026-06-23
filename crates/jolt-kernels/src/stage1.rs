@@ -13,6 +13,8 @@ use rayon::prelude::*;
 
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 
+#[cfg(feature = "cuda")]
+pub mod cuda;
 mod rv64_typed;
 pub use rv64_typed::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 
@@ -728,7 +730,7 @@ impl<F: Field> Stage1OuterRemainingEvaluator<F> for Stage1OuterR1csData<'_, F> {
     ) -> Option<Stage1RemainingRoundProof<F>> {
         #[cfg(feature = "cuda")]
         if context.backend == "cuda" {
-            if let Some(result) = crate::cuda_stage1::prove_remaining_rounds_cuda(
+            if let Some(result) = crate::stage1::cuda::prove_remaining_rounds_cuda(
                 self,
                 context,
                 num_rounds,
