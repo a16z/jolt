@@ -47,7 +47,10 @@ where
     transcript.append(&U64Word(layout.cells() as u64));
     append_field_slice(transcript, b"akpk_logical_point", &statement.logical_point);
     append_field_slice(transcript, b"akpk_pcs_point", &statement.pcs_point);
-    transcript.append(&LabelWithCount(b"akpk_claims", statement.claims.len() as u64));
+    transcript.append(&LabelWithCount(
+        b"akpk_claims",
+        statement.claims.len() as u64,
+    ));
     for claim in &statement.claims {
         claim.commitment.append_to_transcript(transcript);
         claim.claim.append_to_transcript(transcript);
