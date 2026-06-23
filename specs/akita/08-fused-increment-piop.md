@@ -337,7 +337,7 @@ The final modular implementation is concentrated in:
 - `crates/jolt-verifier/src/stages/stage7/**`, where lower increment chunk hamming/value reconstruction is wired.
 - `crates/jolt-verifier/src/stages/stage8/verify.rs`, where lower `UnsignedIncChunk(j)` and trace-domain `UnsignedIncMsb` openings are collected.
 - `crates/jolt-akita/src/layout.rs` and `crates/jolt-akita/src/views.rs`, where packed physical family IDs and view encodings include `UnsignedIncChunk { index }` and `UnsignedIncMsb`.
-- `crates/jolt-openings/src/packed_linear.rs` and `crates/jolt-openings/src/schemes.rs`, which should remain reusable without adding a new batching trait.
+- `crates/jolt-openings/src/packing.rs` and `crates/jolt-openings/src/schemes.rs`, which should remain reusable without adding a new batching trait.
 
 ### Logical And Packed Surface
 
@@ -691,7 +691,7 @@ Implement in this order:
    Verify with Stage 8 manifest tests and precommitted-opening rejection tests.
 
 10. `jolt-openings`: keep the packed batching abstraction unchanged unless Stage 8 exposes a concrete bug.
-    If a bug appears, fix it in the generic packed-linear path and verify with Dory blanket batching plus Akita packed-linear tests.
+    If a bug appears, fix it in the generic packing path and verify with Dory blanket batching plus Akita packing tests.
 
 11. Run the modular verifier and curve/Dory regression commands from the testing section.
     Only after those pass should the separate prover line wire `jolt-core` or another prover to emit this proof shape.
@@ -711,5 +711,5 @@ Implement in this order:
 - `crates/jolt-verifier/src/stages/stage8/verify.rs`: current Akita final-opening partitioning and packed/precommitted opening collection.
 - `crates/jolt-akita/src/layout.rs`: packed physical family layout, digest, and cell budget tests.
 - `crates/jolt-akita/src/views.rs`: packed physical view encoding.
-- `crates/jolt-openings/src/packed_linear.rs`: generic packed-linear batching path.
+- `crates/jolt-openings/src/packing.rs`: generic packing batching path.
 - `crates/jolt-riscv/src/flags.rs:24-34`: `CircuitFlags::Store`.

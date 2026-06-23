@@ -36,25 +36,24 @@ mod homomorphic_batch;
 pub mod mock;
 #[cfg(test)]
 mod packed_combine;
-mod packed_linear;
 mod packed_view;
+mod packing;
 mod packing_layout;
 mod reduction;
 mod schemes;
 
 pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
-pub use packed_linear::{
-    has_packed_linear_view, prove_packed_linear_reduction, prove_sparse_packed_linear_reduction,
-    validate_packed_linear_statement, verify_packed_linear_reduction, PackedLinearAddress,
-    PackedLinearBatch, PackedLinearBatchProof, PackedLinearFamily, PackedLinearLayout,
-    PackedLinearProverReduction, PackedLinearProverSetup, PackedLinearReductionProof,
-    PackedLinearSetupParams, PackedLinearVerifierReduction, PackedLinearVerifierSetup,
-    PackedLinearWitnessSource,
-};
 pub use packed_view::{
     PackedViewCatalog, PackedViewDigest, PackedViewEntry, PackedViewError, PackedViewFormula,
     PackedViewTerm, PackedViewValidity,
+};
+pub use packing::{
+    has_packing_view, prove_packing_reduction, prove_sparse_packing_reduction,
+    validate_packing_statement, verify_packing_reduction, PackingAddress, PackingBatch,
+    PackingBatchProof, PackingFamily, PackingLayout, PackingProverReduction, PackingProverSetup,
+    PackingReductionProof, PackingSetupParams, PackingVerifierReduction, PackingVerifierSetup,
+    PackingWitnessSource,
 };
 pub use packing_layout::{
     packed_witness_source_polynomial, PackedAdviceKind, PackedAlphabet, PackedAlphabetCounts,
@@ -66,6 +65,6 @@ pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_sca
 
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme,
-    BatchOpeningStatement, CommitmentLayoutDigest, CommitmentScheme, PackedFamilyRef,
-    PackedLinearTerm, PhysicalView, StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningStatement, CommitmentLayoutDigest, CommitmentScheme, PackedFamilyRef, PackingTerm,
+    PhysicalView, StreamingCommitment, ZkBatchOpeningScheme, ZkOpeningScheme,
 };

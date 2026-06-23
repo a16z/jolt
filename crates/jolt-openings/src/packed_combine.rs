@@ -16,7 +16,7 @@ use crate::{
 /// PCS can still use the blanket [`BatchOpeningScheme`] implementation while
 /// packed-view tests exercise a path that does not expose that bound to callers.
 ///
-/// Use [`crate::PackedLinearBatch`] for packed-linear views that require the
+/// Use [`crate::PackingBatch`] for packing views that require the
 /// selector/product-sumcheck reduction to a native packed-polynomial opening.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackedCombine<PCS>(PhantomData<PCS>);
@@ -249,7 +249,7 @@ fn bind_packed_batch_statement<F, C, OpeningId, RelationId, Claim, T>(
         claim.scale.append_to_transcript(transcript);
         match &claim.view {
             PhysicalView::Direct => transcript.append_bytes(&[0]),
-            PhysicalView::PackedLinear {
+            PhysicalView::Packing {
                 layout_digest,
                 terms,
             } => {
@@ -317,7 +317,7 @@ where
 {
     match view {
         PhysicalView::Direct => Ok(F::one()),
-        PhysicalView::PackedLinear {
+        PhysicalView::Packing {
             layout_digest,
             terms,
         } => {
@@ -328,7 +328,7 @@ where
             }
             if terms.is_empty() {
                 return Err(OpeningsError::InvalidBatch(
-                    "packed linear view requires at least one term".to_owned(),
+                    "packing view requires at least one term".to_owned(),
                 ));
             }
             Ok(terms
@@ -347,7 +347,7 @@ mod tests {
     use super::PackedCombine;
     use crate::{
         mock::MockCommitmentScheme, BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme,
-        BatchOpeningStatement, CommitmentScheme, OpeningsError, PackedFamilyRef, PackedLinearTerm,
+        BatchOpeningStatement, CommitmentScheme, OpeningsError, PackedFamilyRef, PackingTerm,
         PhysicalView,
     };
     use jolt_crypto::Commitment;
@@ -475,12 +475,12 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn packed_term(coefficient: Fr) -> PackedLinearTerm<Fr> {
+    fn packed_term(coefficient: Fr) -> PackingTerm<Fr> {
         packed_term_at(coefficient, 0)
     }
 
-    fn packed_term_at(coefficient: Fr, symbol: usize) -> PackedLinearTerm<Fr> {
-        PackedLinearTerm::new(
+    fn packed_term_at(coefficient: Fr, symbol: usize) -> PackingTerm<Fr> {
+        PackingTerm::new(
             coefficient,
             PackedFamilyRef::new(0x6a6f_6c74, 1, 0),
             0,
@@ -516,7 +516,7 @@ mod tests {
                     relation: RelationId::First,
                     commitment: commitment.clone(),
                     claim: eval * first_decode.inverse().expect("decode is nonzero"),
-                    view: PhysicalView::PackedLinear {
+                    view: PhysicalView::Packing {
                         layout_digest: [44; 32],
                         terms: vec![packed_term(first_decode)],
                     },
@@ -527,7 +527,7 @@ mod tests {
                     relation: RelationId::Second,
                     commitment,
                     claim: eval * second_decode.inverse().expect("decode is nonzero"),
-                    view: PhysicalView::PackedLinear {
+                    view: PhysicalView::Packing {
                         layout_digest: [44; 32],
                         terms: vec![packed_term(second_decode)],
                     },
@@ -582,7 +582,7 @@ mod tests {
     fn packed_combine_rejects_layout_digest_mismatch() {
         let (polynomials, point) = batch_polynomials();
         let mut statement = packed_batch_statement(&polynomials[0], &point);
-        statement.claims[0].view = PhysicalView::PackedLinear {
+        statement.claims[0].view = PhysicalView::Packing {
             layout_digest: [45; 32],
             terms: vec![packed_term(fr(2))],
         };
@@ -617,7 +617,7 @@ mod tests {
         let mut tampered = statement.clone();
         tampered.layout_digest = [46; 32];
         for claim in &mut tampered.claims {
-            if let PhysicalView::PackedLinear { layout_digest, .. } = &mut claim.view {
+            if let PhysicalView::Packing { layout_digest, .. } = &mut claim.view {
                 *layout_digest = [46; 32];
             }
         }
@@ -649,7 +649,7 @@ mod tests {
         .expect("packed batch proof should be produced");
 
         let mut tampered = statement;
-        tampered.claims[0].view = PhysicalView::PackedLinear {
+        tampered.claims[0].view = PhysicalView::Packing {
             layout_digest: [44; 32],
             terms: vec![packed_term(fr(1)), packed_term_at(fr(1), 1)],
         };
@@ -684,7 +684,7 @@ mod tests {
         .expect("packed batch proof should be produced");
 
         let mut tampered = statement;
-        tampered.claims[0].view = PhysicalView::PackedLinear {
+        tampered.claims[0].view = PhysicalView::Packing {
             layout_digest: [44; 32],
             terms: vec![packed_term_at(fr(2), 1)],
         };
@@ -707,7 +707,7 @@ mod tests {
         let (polynomials, point) = batch_polynomials();
         let polynomial = polynomials[0].clone();
         let mut statement = packed_batch_statement(&polynomial, &point);
-        statement.claims[0].view = PhysicalView::PackedLinear {
+        statement.claims[0].view = PhysicalView::Packing {
             layout_digest: [44; 32],
             terms: Vec::new(),
         };
@@ -738,7 +738,7 @@ mod tests {
                 relation: RelationId::First,
                 commitment: 11,
                 claim: fr(5),
-                view: PhysicalView::PackedLinear {
+                view: PhysicalView::Packing {
                     layout_digest: [47; 32],
                     terms: vec![packed_term(fr(7))],
                 },

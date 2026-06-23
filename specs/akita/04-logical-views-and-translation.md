@@ -594,7 +594,7 @@ resolved:
   translation layout is derived from verifier config and preprocessing, then
   bound through layout/statement digests; it is not an independent prover-chosen
   proof-header layout.
-  current byte-decode views are represented as packed-linear terms. A backend
+  current byte-decode views are represented as packing terms. A backend
   optimization may replace this only if it proves the same packed view relation.
 
 open:

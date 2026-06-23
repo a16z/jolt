@@ -6,7 +6,7 @@ use crate::OpeningsError;
 pub(super) fn checked_domain_size(num_vars: usize) -> Result<usize, OpeningsError> {
     if num_vars >= usize::BITS as usize {
         return Err(invalid_batch(format!(
-            "packed linear dimension {num_vars} exceeds usize bit width"
+            "packing dimension {num_vars} exceeds usize bit width"
         )));
     }
     Ok(1usize << num_vars)

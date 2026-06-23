@@ -15,7 +15,7 @@ where
 {
     if bytes.len() != F::NUM_BYTES {
         return Err(OpeningsError::InvalidBatch(format!(
-            "packed linear proof field encoding has {} bytes but expected {}",
+            "packing proof field encoding has {} bytes but expected {}",
             bytes.len(),
             F::NUM_BYTES
         )));
@@ -23,7 +23,7 @@ where
     let value = F::from_le_bytes_mod_order(bytes);
     if value.to_bytes_le_vec() != bytes {
         return Err(OpeningsError::InvalidBatch(
-            "packed linear proof field encoding is not canonical".to_string(),
+            "packing proof field encoding is not canonical".to_string(),
         ));
     }
     Ok(value)

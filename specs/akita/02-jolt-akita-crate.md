@@ -49,7 +49,7 @@ Assumptions:
 - Akita setup is parameterized by a maximum or exact packed dimension
   `D_setup`.
 - The current LayerZero Akita public API is point-opening shaped; jolt-akita
-  may need an adapter for packed linear views.
+  may need an adapter for packing views.
 ```
 
 ## Architecture
@@ -343,7 +343,7 @@ crate layout:
 backend.rs:
   thin wrapper around LayerZero-Labs/akita or local Akita dependency.
   isolates backend API churn from jolt-verifier.
-  exposes whether native packed linear views are supported.
+  exposes whether native packing views are supported.
 
 layout.rs:
   AkitaLayoutDigest
@@ -586,7 +586,7 @@ resolved:
 open:
   whether a future universal/up-to-D Akita setup should be accepted.
 
-  whether future Akita APIs can natively prove packed-linear or bound
+  whether future Akita APIs can natively prove packing or bound
   precommitted packed views more cheaply than the current adapter.
 ```
 

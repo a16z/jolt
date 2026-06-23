@@ -507,7 +507,7 @@ resolved:
   advice is precommitted and uses a separate opening path.
   field-inline FieldRdInc currently uses canonical field-byte one-hot families
   and a canonical-byte packed-validity check against the Akita fp128 modulus.
-  byte-decode views currently lower to verifier-facing packed-linear terms.
+  byte-decode views currently lower to verifier-facing packing terms.
 
 open:
   whether field-inline FieldRdInc can use a smaller structured encoding than

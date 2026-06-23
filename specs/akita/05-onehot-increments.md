@@ -294,7 +294,7 @@ When PCS family is lattice:
 Expose IncByte and IncSign as PackedWitness families.
 Support direct/linear views needed by the translation output.
 Reject treating byte-decode as a point opening unless the backend proves the
-packed linear view relation.
+packing view relation.
 ```
 
 Prover witness conversion:

@@ -1,51 +1,45 @@
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
 
-use crate::{BatchOpeningStatement, OpeningsError, PackedLinearTerm, PhysicalView};
+use crate::{BatchOpeningStatement, OpeningsError, PackingTerm, PhysicalView};
 
-use super::types::{PackedLinearAddress, PackedLinearFamily, PackedLinearLayout};
+use super::types::{PackingAddress, PackingFamily, PackingLayout};
 use super::util::{checked_domain_size, invalid_batch, log2_power_of_two, offset_bit};
 
-fn family_for_term<F, L>(
-    layout: &L,
-    term: &PackedLinearTerm<F>,
-) -> Result<PackedLinearFamily, OpeningsError>
+fn family_for_term<F, L>(layout: &L, term: &PackingTerm<F>) -> Result<PackingFamily, OpeningsError>
 where
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     layout
         .family(term.family)?
-        .ok_or_else(|| invalid_batch("packed linear term references an unknown family"))
+        .ok_or_else(|| invalid_batch("packing term references an unknown family"))
 }
 
-pub(super) fn validate_term<F, L>(
-    layout: &L,
-    term: &PackedLinearTerm<F>,
-) -> Result<(), OpeningsError>
+pub(super) fn validate_term<F, L>(layout: &L, term: &PackingTerm<F>) -> Result<(), OpeningsError>
 where
     F: Field,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     let family = family_for_term(layout, term)?;
     let row_vars = log2_power_of_two(family.rows, "packed family rows")?;
     if term.row_point.len() != row_vars {
         return Err(invalid_batch(format!(
-            "packed linear term row point has {} variables but family requires {row_vars}",
+            "packing term row point has {} variables but family requires {row_vars}",
             term.row_point.len()
         )));
     }
     if !family.alphabet_size.is_power_of_two() {
         return Err(invalid_batch(
-            "packed linear verifier currently requires power-of-two alphabets",
+            "packing verifier currently requires power-of-two alphabets",
         ));
     }
     if !family.limbs.is_power_of_two() {
         return Err(invalid_batch(
-            "packed linear verifier currently requires power-of-two limb counts",
+            "packing verifier currently requires power-of-two limb counts",
         ));
     }
     layout
-        .rank(PackedLinearAddress {
+        .rank(PackingAddress {
             family: term.family,
             row: 0,
             limb: term.limb,
@@ -92,15 +86,13 @@ pub(super) fn packed_selector_evals<F, C, OpeningId, RelationId, L>(
 ) -> Result<Vec<F>, OpeningsError>
 where
     F: Field,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     let domain_size = checked_domain_size(layout.dimension())?;
     let mut selector = vec![F::zero(); domain_size];
     for (claim, gamma) in statement.claims.iter().zip(gamma_powers) {
-        let PhysicalView::PackedLinear { terms, .. } = &claim.view else {
-            return Err(invalid_batch(
-                "packed linear selector requires PackedLinear views",
-            ));
+        let PhysicalView::Packing { terms, .. } = &claim.view else {
+            return Err(invalid_batch("packing selector requires Packing views"));
         };
         let claim_weight = *gamma * claim.scale;
         for term in terms {
@@ -108,7 +100,7 @@ where
             let row_weights = EqPolynomial::new(term.row_point.clone()).evaluations();
             if row_weights.len() != family.rows {
                 return Err(invalid_batch(
-                    "packed linear term row point does not match family row count",
+                    "packing term row point does not match family row count",
                 ));
             }
             let weight = claim_weight * term.coefficient;
@@ -116,7 +108,7 @@ where
                 if row_weight.is_zero() {
                     continue;
                 }
-                let rank = layout.rank(PackedLinearAddress {
+                let rank = layout.rank(PackingAddress {
                     family: term.family,
                     row,
                     limb: term.limb,
@@ -137,21 +129,19 @@ pub(super) fn packed_selector_eval<F, C, OpeningId, RelationId, L>(
 ) -> Result<F, OpeningsError>
 where
     F: Field,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     if point.len() != layout.dimension() {
         return Err(invalid_batch(format!(
-            "packed linear selector point has {} variables but layout has {}",
+            "packing selector point has {} variables but layout has {}",
             point.len(),
             layout.dimension()
         )));
     }
     let mut result = F::zero();
     for (claim, gamma) in statement.claims.iter().zip(gamma_powers) {
-        let PhysicalView::PackedLinear { terms, .. } = &claim.view else {
-            return Err(invalid_batch(
-                "packed linear selector requires PackedLinear views",
-            ));
+        let PhysicalView::Packing { terms, .. } = &claim.view else {
+            return Err(invalid_batch("packing selector requires Packing views"));
         };
         let claim_weight = *gamma * claim.scale;
         for term in terms {
@@ -163,18 +153,18 @@ where
 
 fn packed_term_selector_eval<F, L>(
     layout: &L,
-    term: &PackedLinearTerm<F>,
+    term: &PackingTerm<F>,
     point: &[F],
 ) -> Result<F, OpeningsError>
 where
     F: Field,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     let family = family_for_term(layout, term)?;
     let row_vars = log2_power_of_two(family.rows, "packed family rows")?;
     if term.row_point.len() != row_vars {
         return Err(invalid_batch(format!(
-            "packed linear term row point has {} variables but family requires {row_vars}",
+            "packing term row point has {} variables but family requires {row_vars}",
             term.row_point.len()
         )));
     }
@@ -281,7 +271,7 @@ where
     let total_bits = factors.iter().map(|factor| factor.bits()).sum::<usize>();
     if total_bits > point.len() {
         return Err(invalid_batch(format!(
-            "packed linear selector needs {total_bits} bits but point has {}",
+            "packing selector needs {total_bits} bits but point has {}",
             point.len()
         )));
     }

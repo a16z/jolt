@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(physical.openings[0].relation, id);
         assert!(matches!(
             &physical.openings[0].view,
-            PhysicalView::PackedLinear {
+            PhysicalView::Packing {
                 layout_digest,
                 terms
             } if *layout_digest == layout.digest
@@ -387,7 +387,7 @@ mod tests {
         assert_eq!(physical.openings[0].relation, id);
         assert!(matches!(
             &physical.openings[0].view,
-            PhysicalView::PackedLinear {
+            PhysicalView::Packing {
                 layout_digest,
                 terms
             } if *layout_digest == layout.digest

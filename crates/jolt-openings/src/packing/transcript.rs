@@ -4,7 +4,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use crate::{BatchOpeningStatement, OpeningsError, PhysicalView};
 
 use super::selector::validate_term;
-use super::types::PackedLinearLayout;
+use super::types::PackingLayout;
 
 pub(super) fn append_round<F, T>(transcript: &mut T, round: &[F; 3])
 where
@@ -17,17 +17,17 @@ where
     }
 }
 
-/// Bind a packed-linear batch statement before sampling reduction challenges.
+/// Bind a packing batch statement before sampling reduction challenges.
 ///
 /// Transcript order:
 /// 1. domain label, canonical packing layout digest, dimension, and cell count;
 /// 2. logical protocol point, then direct/native PCS point;
 /// 3. ordered claims: commitment, claimed value, and claim scale;
 /// 4. physical view tag;
-/// 5. for packed-linear views, view layout digest and ordered terms;
+/// 5. for packing views, view layout digest and ordered terms;
 /// 6. for each term: family reference, limb, symbol, row point, coefficient.
 ///
-/// The view relation is proven by the packed-linear reduction. This binding
+/// The view relation is proven by the packing reduction. This binding
 /// makes the statement, layout metadata, and term addresses non-malleable before
 /// the reduction challenges are drawn.
 pub(super) fn bind_packed_statement<F, C, OpeningId, RelationId, L, T>(
@@ -38,7 +38,7 @@ pub(super) fn bind_packed_statement<F, C, OpeningId, RelationId, L, T>(
 where
     F: Field,
     C: AppendToTranscript,
-    L: PackedLinearLayout,
+    L: PackingLayout,
     T: Transcript<Challenge = F>,
 {
     transcript.append(&Label(b"akpk_batch_stmt"));
@@ -57,7 +57,7 @@ where
         claim.scale.append_to_transcript(transcript);
         match &claim.view {
             PhysicalView::Direct => transcript.append_bytes(&[0]),
-            PhysicalView::PackedLinear {
+            PhysicalView::Packing {
                 layout_digest,
                 terms,
             } => {

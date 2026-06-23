@@ -10,17 +10,17 @@ use crate::{
 
 use super::{
     reduction::{
-        has_packed_linear_view, prove_packed_linear_reduction, validate_packed_linear_statement,
-        verify_packed_linear_reduction,
+        has_packing_view, prove_packing_reduction, validate_packing_statement,
+        verify_packing_reduction,
     },
     types::{
-        PackedLinearBatch, PackedLinearBatchProof, PackedLinearLayout, PackedLinearProverSetup,
-        PackedLinearSetupParams, PackedLinearVerifierSetup,
+        PackingBatch, PackingBatchProof, PackingLayout, PackingProverSetup, PackingSetupParams,
+        PackingVerifierSetup,
     },
     util::{invalid_batch, polynomial_evaluations},
 };
 
-impl<PCS, L> Commitment for PackedLinearBatch<PCS, L>
+impl<PCS, L> Commitment for PackingBatch<PCS, L>
 where
     PCS: CommitmentScheme,
     L: 'static,
@@ -28,27 +28,27 @@ where
     type Output = PCS::Output;
 }
 
-impl<PCS, L> CommitmentScheme for PackedLinearBatch<PCS, L>
+impl<PCS, L> CommitmentScheme for PackingBatch<PCS, L>
 where
     PCS: CommitmentScheme,
     L: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     type Field = PCS::Field;
-    type Proof = PackedLinearBatchProof<PCS::Proof>;
-    type ProverSetup = PackedLinearProverSetup<PCS::ProverSetup, L>;
-    type VerifierSetup = PackedLinearVerifierSetup<PCS::VerifierSetup, L>;
+    type Proof = PackingBatchProof<PCS::Proof>;
+    type ProverSetup = PackingProverSetup<PCS::ProverSetup, L>;
+    type VerifierSetup = PackingVerifierSetup<PCS::VerifierSetup, L>;
     type Polynomial = PCS::Polynomial;
     type OpeningHint = PCS::OpeningHint;
-    type SetupParams = PackedLinearSetupParams<PCS::SetupParams, L>;
+    type SetupParams = PackingSetupParams<PCS::SetupParams, L>;
 
     fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
         let (prover, verifier) = PCS::setup(params.pcs);
         (
-            PackedLinearProverSetup {
+            PackingProverSetup {
                 pcs: prover,
                 layout: params.layout.clone(),
             },
-            PackedLinearVerifierSetup {
+            PackingVerifierSetup {
                 pcs: verifier,
                 layout: params.layout,
             },
@@ -56,7 +56,7 @@ where
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        PackedLinearVerifierSetup {
+        PackingVerifierSetup {
             pcs: PCS::verifier_setup(&prover_setup.pcs),
             layout: prover_setup.layout.clone(),
         }
@@ -77,7 +77,7 @@ where
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Self::Proof {
-        PackedLinearBatchProof {
+        PackingBatchProof {
             reduction: None,
             native: PCS::open(poly, point, eval, &setup.pcs, hint, transcript),
         }
@@ -113,11 +113,11 @@ where
     }
 }
 
-impl<PCS, L> BatchOpeningScheme for PackedLinearBatch<PCS, L>
+impl<PCS, L> BatchOpeningScheme for PackingBatch<PCS, L>
 where
     PCS: BatchOpeningScheme,
     PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
-    L: PackedLinearLayout + Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    L: PackingLayout + Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     fn prove_batch<T, OpeningId, RelationId>(
         setup: &Self::ProverSetup,
@@ -129,23 +129,23 @@ where
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        if !has_packed_linear_view(statement) {
+        if !has_packing_view(statement) {
             let native = PCS::prove_batch(&setup.pcs, transcript, statement, polynomials, hints)?;
-            return Ok(PackedLinearBatchProof {
+            return Ok(PackingBatchProof {
                 reduction: None,
                 native,
             });
         }
 
         let layout = &setup.layout;
-        let commitment = validate_packed_linear_statement(layout, statement)?;
+        let commitment = validate_packing_statement(layout, statement)?;
         validate_packed_commitment_digest(layout, &commitment)?;
         validate_packed_prover_inputs::<PCS::Field, _, _, _>(layout, polynomials, &hints)?;
         let hint = hints
             .into_iter()
             .next()
-            .ok_or_else(|| invalid_batch("packed linear proof requires one opening hint"))?;
-        let reduction = prove_packed_linear_reduction(
+            .ok_or_else(|| invalid_batch("packing proof requires one opening hint"))?;
+        let reduction = prove_packing_reduction(
             layout,
             statement,
             polynomial_evaluations(&polynomials[0]),
@@ -159,7 +159,7 @@ where
             Some(hint),
             transcript,
         );
-        Ok(PackedLinearBatchProof {
+        Ok(PackingBatchProof {
             reduction: Some(reduction.proof),
             native,
         })
@@ -174,7 +174,7 @@ where
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        if !has_packed_linear_view(statement) {
+        if !has_packing_view(statement) {
             if proof.reduction.is_some() {
                 return Err(OpeningsError::VerificationFailed);
             }
@@ -186,10 +186,9 @@ where
             .as_ref()
             .ok_or(OpeningsError::VerificationFailed)?;
         let layout = &setup.layout;
-        let commitment = validate_packed_linear_statement(layout, statement)?;
+        let commitment = validate_packing_statement(layout, statement)?;
         validate_packed_commitment_digest(layout, &commitment)?;
-        let reduction =
-            verify_packed_linear_reduction(layout, statement, reduction_proof, transcript)?;
+        let reduction = verify_packing_reduction(layout, statement, reduction_proof, transcript)?;
         PCS::verify(
             &reduction.result.joint_commitment,
             &reduction.opening_point,
@@ -202,7 +201,7 @@ where
     }
 }
 
-impl<PCS, L> ZkOpeningScheme for PackedLinearBatch<PCS, L>
+impl<PCS, L> ZkOpeningScheme for PackingBatch<PCS, L>
 where
     PCS: ZkOpeningScheme,
     L: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
@@ -227,7 +226,7 @@ where
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
         let (native, hiding, blind) = PCS::open_zk(poly, point, eval, &setup.pcs, hint, transcript);
         (
-            PackedLinearBatchProof {
+            PackingBatchProof {
                 reduction: None,
                 native,
             },
@@ -258,11 +257,11 @@ where
     }
 }
 
-impl<PCS, L> ZkBatchOpeningScheme for PackedLinearBatch<PCS, L>
+impl<PCS, L> ZkBatchOpeningScheme for PackingBatch<PCS, L>
 where
     PCS: ZkBatchOpeningScheme,
     PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
-    L: PackedLinearLayout + Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
+    L: PackingLayout + Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     fn prove_batch_zk<T, OpeningId, RelationId>(
         setup: &Self::ProverSetup,
@@ -275,15 +274,15 @@ where
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        if has_packed_linear_view(statement) {
+        if has_packing_view(statement) {
             return Err(invalid_batch(
-                "packed linear batch openings do not support ZK mode yet",
+                "packing batch openings do not support ZK mode yet",
             ));
         }
         let (native, hiding, blind) =
             PCS::prove_batch_zk(&setup.pcs, transcript, statement, evals, polynomials, hints)?;
         Ok((
-            PackedLinearBatchProof {
+            PackingBatchProof {
                 reduction: None,
                 native,
             },
@@ -301,9 +300,9 @@ where
     where
         T: Transcript<Challenge = Self::Field>,
     {
-        if has_packed_linear_view(statement) {
+        if has_packing_view(statement) {
             return Err(invalid_batch(
-                "packed linear batch openings do not support ZK mode yet",
+                "packing batch openings do not support ZK mode yet",
             ));
         }
         if proof.reduction.is_some() {
@@ -316,12 +315,12 @@ where
 fn validate_packed_commitment_digest<C, L>(layout: &L, commitment: &C) -> Result<(), OpeningsError>
 where
     C: CommitmentLayoutDigest,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     if let Some(commitment_digest) = commitment.layout_digest() {
         if commitment_digest != layout.digest() {
             return Err(invalid_batch(
-                "packed linear commitment layout digest does not match setup layout",
+                "packing commitment layout digest does not match setup layout",
             ));
         }
     }
@@ -336,24 +335,24 @@ fn validate_packed_prover_inputs<F, P, H, L>(
 where
     F: jolt_field::Field,
     P: MultilinearPoly<F>,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     if polynomials.len() != 1 {
         return Err(invalid_batch(format!(
-            "packed linear proof expects one packed polynomial, got {}",
+            "packing proof expects one packed polynomial, got {}",
             polynomials.len()
         )));
     }
     if polynomials[0].num_vars() != layout.dimension() {
         return Err(invalid_batch(format!(
-            "packed linear polynomial has {} variables but layout has {}",
+            "packing polynomial has {} variables but layout has {}",
             polynomials[0].num_vars(),
             layout.dimension()
         )));
     }
     if hints.len() != 1 {
         return Err(invalid_batch(format!(
-            "packed linear proof expects one opening hint, got {}",
+            "packing proof expects one opening hint, got {}",
             hints.len()
         )));
     }

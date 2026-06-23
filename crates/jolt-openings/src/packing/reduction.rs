@@ -10,65 +10,61 @@ use super::selector::{
 };
 use super::transcript::{append_round, bind_packed_statement};
 use super::types::{
-    PackedLinearLayout, PackedLinearProverReduction, PackedLinearReductionProof,
-    PackedLinearVerifierReduction, PackedLinearWitnessSource,
+    PackingLayout, PackingProverReduction, PackingReductionProof, PackingVerifierReduction,
+    PackingWitnessSource,
 };
 use super::util::{checked_domain_size, invalid_batch};
 
-pub fn has_packed_linear_view<F, C, OpeningId, RelationId, Claim>(
+pub fn has_packing_view<F, C, OpeningId, RelationId, Claim>(
     statement: &BatchOpeningStatement<F, C, OpeningId, RelationId, Claim>,
 ) -> bool {
     statement
         .claims
         .iter()
-        .any(|claim| matches!(claim.view, PhysicalView::PackedLinear { .. }))
+        .any(|claim| matches!(claim.view, PhysicalView::Packing { .. }))
 }
 
-pub fn validate_packed_linear_statement<F, C, OpeningId, RelationId, L>(
+pub fn validate_packing_statement<F, C, OpeningId, RelationId, L>(
     layout: &L,
     statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
 ) -> Result<C, OpeningsError>
 where
     F: Field,
     C: Clone + Eq,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     let digest = layout.digest();
     if statement.claims.is_empty() {
-        return Err(invalid_batch(
-            "packed linear opening requires at least one claim",
-        ));
+        return Err(invalid_batch("packing opening requires at least one claim"));
     }
     if statement.layout_digest != digest {
         return Err(invalid_batch(
-            "packed linear statement layout digest does not match setup layout",
+            "packing statement layout digest does not match setup layout",
         ));
     }
     let commitment = statement.claims[0].commitment.clone();
     for claim in &statement.claims {
         if claim.commitment != commitment {
             return Err(invalid_batch(
-                "packed linear opening claims must use one packed commitment",
+                "packing opening claims must use one packed commitment",
             ));
         }
-        let PhysicalView::PackedLinear {
+        let PhysicalView::Packing {
             layout_digest,
             terms,
         } = &claim.view
         else {
             return Err(invalid_batch(
-                "packed linear opening requires PackedLinear physical views",
+                "packing opening requires Packing physical views",
             ));
         };
         if layout_digest != &digest {
             return Err(invalid_batch(
-                "packed linear view layout digest does not match statement layout",
+                "packing view layout digest does not match statement layout",
             ));
         }
         if terms.is_empty() {
-            return Err(invalid_batch(
-                "packed linear view requires at least one term",
-            ));
+            return Err(invalid_batch("packing view requires at least one term"));
         }
         for term in terms {
             validate_term(layout, term)?;
@@ -77,46 +73,46 @@ where
     Ok(commitment)
 }
 
-pub fn prove_packed_linear_reduction<F, C, OpeningId, RelationId, L, T>(
+pub fn prove_packing_reduction<F, C, OpeningId, RelationId, L, T>(
     layout: &L,
     statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
     packed_evals: Vec<F>,
     transcript: &mut T,
-) -> Result<PackedLinearProverReduction<F>, OpeningsError>
+) -> Result<PackingProverReduction<F>, OpeningsError>
 where
     F: Field,
     C: Clone + Eq + AppendToTranscript,
-    L: PackedLinearLayout,
+    L: PackingLayout,
     T: Transcript<Challenge = F>,
 {
-    let _ = validate_packed_linear_statement(layout, statement)?;
+    let _ = validate_packing_statement(layout, statement)?;
     bind_packed_statement(layout, statement, transcript)?;
     let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
     let claimed_sum = reduced_claim(statement, &gamma_powers);
     let selector = packed_selector_evals(layout, statement, &gamma_powers)?;
     let (proof, sumcheck_point_lsb, opening_eval) =
         prove_product_sumcheck(selector, packed_evals, claimed_sum, transcript)?;
-    Ok(PackedLinearProverReduction {
+    Ok(PackingProverReduction {
         proof,
         opening_point: native_opening_point(&sumcheck_point_lsb),
         opening_eval,
     })
 }
 
-pub fn prove_sparse_packed_linear_reduction<F, C, OpeningId, RelationId, L, S, T>(
+pub fn prove_sparse_packing_reduction<F, C, OpeningId, RelationId, L, S, T>(
     layout: &L,
     statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
     source: &S,
     transcript: &mut T,
-) -> Result<PackedLinearProverReduction<F>, OpeningsError>
+) -> Result<PackingProverReduction<F>, OpeningsError>
 where
     F: Field,
     C: Clone + Eq + AppendToTranscript,
-    L: PackedLinearLayout,
-    S: PackedLinearWitnessSource<F>,
+    L: PackingLayout,
+    S: PackingWitnessSource<F>,
     T: Transcript<Challenge = F>,
 {
-    let _ = validate_packed_linear_statement(layout, statement)?;
+    let _ = validate_packing_statement(layout, statement)?;
     validate_source_layout(layout, source.layout())?;
     bind_packed_statement(layout, statement, transcript)?;
     let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
@@ -129,26 +125,26 @@ where
         claimed_sum,
         transcript,
     )?;
-    Ok(PackedLinearProverReduction {
+    Ok(PackingProverReduction {
         proof,
         opening_point: native_opening_point(&sumcheck_point_lsb),
         opening_eval,
     })
 }
 
-pub fn verify_packed_linear_reduction<F, C, OpeningId, RelationId, L, T>(
+pub fn verify_packing_reduction<F, C, OpeningId, RelationId, L, T>(
     layout: &L,
     statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
-    proof: &PackedLinearReductionProof,
+    proof: &PackingReductionProof,
     transcript: &mut T,
-) -> Result<PackedLinearVerifierReduction<F, C>, OpeningsError>
+) -> Result<PackingVerifierReduction<F, C>, OpeningsError>
 where
     F: Field,
     C: Clone + Eq + AppendToTranscript,
-    L: PackedLinearLayout,
+    L: PackingLayout,
     T: Transcript<Challenge = F>,
 {
-    let commitment = validate_packed_linear_statement(layout, statement)?;
+    let commitment = validate_packing_statement(layout, statement)?;
     bind_packed_statement(layout, statement, transcript)?;
     let gamma_powers = transcript.challenge_scalar_powers(statement.claims.len());
     let coefficients = logical_coefficients(statement, &gamma_powers);
@@ -161,7 +157,7 @@ where
     if final_claim != selector_eval * opening_eval {
         return Err(OpeningsError::VerificationFailed);
     }
-    Ok(PackedLinearVerifierReduction {
+    Ok(PackingVerifierReduction {
         opening_point: native_opening_point(&sumcheck_point_lsb),
         opening_eval,
         result: BatchOpeningResult {
@@ -174,13 +170,13 @@ where
 
 fn validate_source_layout<L, S>(layout: &L, source_layout: &S) -> Result<(), OpeningsError>
 where
-    L: PackedLinearLayout,
-    S: PackedLinearLayout,
+    L: PackingLayout,
+    S: PackingLayout,
 {
     if source_layout.digest() != layout.digest() || source_layout.dimension() != layout.dimension()
     {
         return Err(invalid_batch(
-            "packed linear source layout does not match packed statement",
+            "packing source layout does not match packed statement",
         ));
     }
     Ok(())
@@ -191,14 +187,14 @@ fn prove_product_sumcheck<F, T>(
     mut right: Vec<F>,
     claimed_sum: F,
     transcript: &mut T,
-) -> Result<(PackedLinearReductionProof, Vec<F>, F), OpeningsError>
+) -> Result<(PackingReductionProof, Vec<F>, F), OpeningsError>
 where
     F: Field,
     T: Transcript<Challenge = F>,
 {
     if left.len() != right.len() || !left.len().is_power_of_two() {
         return Err(invalid_batch(
-            "packed linear sumcheck inputs must have equal power-of-two lengths",
+            "packing sumcheck inputs must have equal power-of-two lengths",
         ));
     }
     let rounds = left.len().trailing_zeros() as usize;
@@ -211,7 +207,7 @@ where
         let round = product_round(&left, &right);
         if round[0] + round[1] != current_claim {
             return Err(invalid_batch(
-                "packed linear claims do not match packed witness evaluations",
+                "packing claims do not match packed witness evaluations",
             ));
         }
         append_round(transcript, &round);
@@ -222,12 +218,12 @@ where
         proof_rounds.push(encode_round(round));
     }
     if left[0] * right[0] != current_claim {
-        return Err(invalid_batch("packed linear sumcheck final claim mismatch"));
+        return Err(invalid_batch("packing sumcheck final claim mismatch"));
     }
     let opening_eval = right[0];
     opening_eval.append_to_transcript(transcript);
     Ok((
-        PackedLinearReductionProof {
+        PackingReductionProof {
             rounds: proof_rounds,
             opening_eval: field_bytes(opening_eval),
         },
@@ -243,11 +239,11 @@ fn prove_sparse_product_sumcheck<F, C, OpeningId, RelationId, L, S, T>(
     source: &S,
     claimed_sum: F,
     transcript: &mut T,
-) -> Result<(PackedLinearReductionProof, Vec<F>, F), OpeningsError>
+) -> Result<(PackingReductionProof, Vec<F>, F), OpeningsError>
 where
     F: Field,
-    L: PackedLinearLayout,
-    S: PackedLinearWitnessSource<F>,
+    L: PackingLayout,
+    S: PackingWitnessSource<F>,
     T: Transcript<Challenge = F>,
 {
     let mut right = sparse_product_input(source)?;
@@ -261,7 +257,7 @@ where
         let round = sparse_product_round(layout, statement, gamma_powers, &point, &right)?;
         if round[0] + round[1] != current_claim {
             return Err(invalid_batch(
-                "packed linear claims do not match sparse packed witness evaluations",
+                "packing claims do not match sparse packed witness evaluations",
             ));
         }
         append_round(transcript, &round);
@@ -275,11 +271,11 @@ where
     let opening_eval = right.first().map_or_else(F::zero, |(_, eval)| *eval);
     let selector_eval = packed_selector_eval(layout, statement, gamma_powers, &point)?;
     if selector_eval * opening_eval != current_claim {
-        return Err(invalid_batch("packed linear sumcheck final claim mismatch"));
+        return Err(invalid_batch("packing sumcheck final claim mismatch"));
     }
     opening_eval.append_to_transcript(transcript);
     Ok((
-        PackedLinearReductionProof {
+        PackingReductionProof {
             rounds: proof_rounds,
             opening_eval: field_bytes(opening_eval),
         },
@@ -291,13 +287,13 @@ where
 fn sparse_product_input<F, S>(source: &S) -> Result<Vec<(usize, F)>, OpeningsError>
 where
     F: Field,
-    S: PackedLinearWitnessSource<F>,
+    S: PackingWitnessSource<F>,
 {
     let layout = source.layout();
     let domain_size = checked_domain_size(layout.dimension())?;
     if layout.cells() > domain_size {
         return Err(invalid_batch(format!(
-            "packed linear witness has {} cells but dimension {} supports {domain_size}",
+            "packing witness has {} cells but dimension {} supports {domain_size}",
             layout.cells(),
             layout.dimension()
         )));
@@ -311,14 +307,14 @@ where
         }
         if rank >= layout.cells() {
             error = Some(invalid_batch(format!(
-                "packed linear witness source emitted rank {rank} outside {} real cells",
+                "packing witness source emitted rank {rank} outside {} real cells",
                 layout.cells()
             )));
             return;
         }
         if value.is_zero() {
             error = Some(invalid_batch(format!(
-                "packed linear witness source emitted zero at rank {rank}"
+                "packing witness source emitted zero at rank {rank}"
             )));
             return;
         }
@@ -332,7 +328,7 @@ where
     for window in entries.windows(2) {
         if window[0].0 == window[1].0 {
             return Err(invalid_batch(format!(
-                "packed linear witness source emitted rank {} more than once",
+                "packing witness source emitted rank {} more than once",
                 window[0].0
             )));
         }
@@ -349,7 +345,7 @@ fn sparse_product_round<F, C, OpeningId, RelationId, L>(
 ) -> Result<[F; 3], OpeningsError>
 where
     F: Field,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     let mut evals = [F::zero(); 3];
     let mut cursor = 0usize;
@@ -397,17 +393,17 @@ fn packed_selector_eval_at_index<F, C, OpeningId, RelationId, L>(
 ) -> Result<F, OpeningsError>
 where
     F: Field,
-    L: PackedLinearLayout,
+    L: PackingLayout,
 {
     if fixed_point.len() > layout.dimension() {
         return Err(invalid_batch(
-            "packed linear selector fixed point exceeds layout dimension",
+            "packing selector fixed point exceeds layout dimension",
         ));
     }
     let remaining_bits = layout.dimension() - fixed_point.len();
     if index >= (1usize << remaining_bits) {
         return Err(invalid_batch(
-            "packed linear selector index exceeds folded domain",
+            "packing selector index exceeds folded domain",
         ));
     }
 
@@ -449,7 +445,7 @@ where
 }
 
 fn verify_product_sumcheck<F, T>(
-    proof: &PackedLinearReductionProof,
+    proof: &PackingReductionProof,
     claimed_sum: F,
     transcript: &mut T,
 ) -> Result<(Vec<F>, F), OpeningsError>

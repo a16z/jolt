@@ -6,7 +6,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::Field;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackedFamilyId,
-    PackedLinearTerm, PackedWitnessLayout, PhysicalView,
+    PackedWitnessLayout, PackingTerm, PhysicalView,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial};
 use jolt_riscv::CircuitFlags;
@@ -799,7 +799,7 @@ where
             for (limb, limb_weight) in limb_weights.iter().copied().enumerate() {
                 for (symbol, symbol_weight) in symbol_weights.iter().copied().enumerate() {
                     terms.push(
-                        PackedLinearTerm::new(limb_weight * symbol_weight, family, limb, symbol)
+                        PackingTerm::new(limb_weight * symbol_weight, family, limb, symbol)
                             .with_row_point(point_parts.row.to_vec()),
                     );
                 }
@@ -812,7 +812,7 @@ where
             for (limb, limb_weight) in limb_weights.iter().copied().enumerate() {
                 for symbol in 0..shape.alphabet_size {
                     terms.push(
-                        PackedLinearTerm::new(limb_weight, family, limb, symbol)
+                        PackingTerm::new(limb_weight, family, limb, symbol)
                             .with_row_point(point_parts.row.to_vec()),
                     );
                 }
@@ -829,7 +829,7 @@ where
             let mut terms = Vec::with_capacity(shape.limbs);
             for (limb, limb_weight) in limb_weights.iter().copied().enumerate() {
                 terms.push(
-                    PackedLinearTerm::new(limb_weight, family, limb, symbol)
+                    PackingTerm::new(limb_weight, family, limb, symbol)
                         .with_row_point(point_parts.row.to_vec()),
                 );
             }
@@ -843,7 +843,7 @@ where
         }
     };
 
-    Ok(PhysicalView::PackedLinear {
+    Ok(PhysicalView::Packing {
         layout_digest: layout.digest,
         terms,
     })
@@ -896,19 +896,19 @@ where
     let terms = match factor {
         FieldCanonicalFactor::Eq { symbol, .. } => {
             vec![
-                PackedLinearTerm::new(F::one(), family_id.physical_ref(), limb, symbol)
+                PackingTerm::new(F::one(), family_id.physical_ref(), limb, symbol)
                     .with_row_point(point.to_vec()),
             ]
         }
         FieldCanonicalFactor::Range { start_symbol, .. } => (start_symbol..256)
             .map(|symbol| {
-                PackedLinearTerm::new(F::one(), family_id.physical_ref(), limb, symbol)
+                PackingTerm::new(F::one(), family_id.physical_ref(), limb, symbol)
                     .with_row_point(point.to_vec())
             })
             .collect(),
     };
 
-    Ok(PhysicalView::PackedLinear {
+    Ok(PhysicalView::Packing {
         layout_digest: layout.digest,
         terms,
     })
@@ -949,10 +949,8 @@ where
     }
 
     let terms = match factor {
-        0 => vec![
-            PackedLinearTerm::new(F::one(), store_id.physical_ref(), 0, 1)
-                .with_row_point(point.to_vec()),
-        ],
+        0 => vec![PackingTerm::new(F::one(), store_id.physical_ref(), 0, 1)
+            .with_row_point(point.to_vec())],
         1 => {
             let rd_id = PackedFamilyId::BytecodeRegisterSelector { chunk, selector: 2 };
             let rd = layout.family(&rd_id).ok_or_else(|| {
@@ -965,7 +963,7 @@ where
             }
             (0..rd.alphabet.size())
                 .map(|symbol| {
-                    PackedLinearTerm::new(F::one(), rd_id.physical_ref(), 0, symbol)
+                    PackingTerm::new(F::one(), rd_id.physical_ref(), 0, symbol)
                         .with_row_point(point.to_vec())
                 })
                 .collect()
@@ -977,7 +975,7 @@ where
         }
     };
 
-    Ok(PhysicalView::PackedLinear {
+    Ok(PhysicalView::Packing {
         layout_digest: layout.digest,
         terms,
     })

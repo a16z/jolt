@@ -568,7 +568,7 @@ open:
   whether a future field-inline path can use a smaller structured encoding than
   canonical field bytes without changing the PackedWitness invariants.
   whether a future backend API can prove common byte-decode views more cheaply
-  than the current packed-linear adapter representation.
+  than the current packing adapter representation.
 ```
 
 ## References
