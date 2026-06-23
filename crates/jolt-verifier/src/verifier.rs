@@ -1,7 +1,9 @@
 //! Top-level verifier entry point.
 
 use common::jolt_device::JoltDevice;
-use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
+use jolt_claims::protocols::jolt::{
+    JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
+};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
@@ -83,16 +85,19 @@ where
         &mut transcript,
     );
 
-    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
-    let stage2 = stage2::verify(&checked, preprocessing, proof, &mut transcript, &stage1)?;
-    let stage3 = stage3::verify(
-        &checked,
-        preprocessing,
+    // Built once for the whole verification and shared by the stages that read the
+    // RA layout (5–8), instead of each rebuilding the same dimensions.
+    let formula_dimensions = crate::stages::build_formula_dimensions(
         proof,
-        &mut transcript,
-        &stage1,
-        &stage2,
+        preprocessing,
+        &checked,
+        checked.trace_length.ilog2() as usize,
+        JoltRelationId::InstructionReadRaf,
     )?;
+
+    let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
+    let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
+    let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
     let stage4 = stage4::verify(
         &checked,
         preprocessing,
@@ -103,8 +108,8 @@ where
     )?;
     let stage5 = stage5::verify(
         &checked,
-        preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
         &stage2,
         &stage4,
@@ -113,6 +118,7 @@ where
         &checked,
         preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
         &stage1,
         &stage2,
@@ -122,8 +128,8 @@ where
     )?;
     let stage7 = stage7::verify(
         &checked,
-        preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
         &stage4,
         &stage6,
@@ -132,6 +138,7 @@ where
         &checked,
         preprocessing,
         proof,
+        &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
         &stage6,

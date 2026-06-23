@@ -7,8 +7,7 @@ pub mod spartan_shift;
 mod verify;
 
 pub use instruction_input::{
-    check_instruction_input_consistency, InstructionInput, InstructionInputInputClaims,
-    InstructionInputOutputClaims,
+    InstructionInput, InstructionInputInputClaims, InstructionInputOutputClaims,
 };
 pub use outputs::{
     Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3OutputClaims, Stage3ZkOutput,

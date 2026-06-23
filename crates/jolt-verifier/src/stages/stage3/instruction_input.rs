@@ -9,8 +9,8 @@
 //! The reduced-vs-product input consistency guard — that stage 2's
 //! `instruction_claim_reduction` left/right openings (when present) agree with the
 //! product-remainder openings at the same point — lives in
-//! [`check_instruction_input_consistency`], a precondition the stage-3 verifier
-//! runs before wiring these inputs.
+//! [`Stage2BatchOutputClaims::validate`](crate::stages::stage2::Stage2BatchOutputClaims::validate),
+//! which the stage-2 verifier runs before any consumer wires these inputs.
 
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TraceDimensions, instruction},
@@ -93,63 +93,6 @@ impl<F: Field> InstructionInputInputClaims<OpeningClaim<F>> {
             ),
         }
     }
-}
-
-/// Precondition for using stage 2's product-remainder openings as this relation's
-/// inputs: the `instruction_claim_reduction` left/right openings (present only in
-/// some proof configurations) must share the product remainder's opening point and
-/// agree with its left/right instruction-input values.
-pub fn check_instruction_input_consistency<F: Field>(
-    stage2: &Stage2ClearOutput<F>,
-) -> Result<(), VerifierError> {
-    let [(left_reduced, left_product), (right_reduced, right_product)] =
-        instruction::input_virtualization_consistency_openings();
-    if stage2.output_claims.product_remainder_point()
-        != stage2.output_claims.instruction_claim_reduction_point()
-    {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            left: left_reduced,
-            right: left_product,
-        });
-    }
-    let product_left = stage2
-        .output_claims
-        .product_remainder
-        .left_instruction_input
-        .value;
-    let product_right = stage2
-        .output_claims
-        .product_remainder
-        .right_instruction_input
-        .value;
-    let reduced_left = stage2
-        .output_claims
-        .instruction_claim_reduction
-        .left_instruction_input
-        .as_ref()
-        .map_or(product_left, |claim| claim.value);
-    let reduced_right = stage2
-        .output_claims
-        .instruction_claim_reduction
-        .right_instruction_input
-        .as_ref()
-        .map_or(product_right, |claim| claim.value);
-    if reduced_left != product_left {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            left: left_reduced,
-            right: left_product,
-        });
-    }
-    if reduced_right != product_right {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionInputVirtualization,
-            left: right_reduced,
-            right: right_product,
-        });
-    }
-    Ok(())
 }
 
 pub struct InstructionInput<F: Field> {

@@ -13,7 +13,7 @@ use jolt_claims::protocols::jolt::{
     },
     AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
     BytecodeReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, JoltSumcheckDomain, PrecommittedClaimReduction, PrecommittedReductionLayout,
+    JoltRelationId, PrecommittedClaimReduction, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
@@ -56,7 +56,9 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{zip_openings, OpeningClaim, SumcheckInstance},
+        relations::{
+            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+        },
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},
         stage3::{Stage3ClearOutput, Stage3Output},
@@ -76,6 +78,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
+    formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
@@ -88,20 +91,9 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
+    let log_t = formula_dimensions.trace.log_t();
     let log_k = checked.ram_K.ilog2() as usize;
-    let trace_dimensions =
-        jolt_claims::protocols::jolt::formulas::dimensions::TraceDimensions::new(log_t);
-    let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
-        log_t,
-        2 * RISCV_XLEN,
-        preprocessing.program.bytecode_len(),
-        checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: error.to_string(),
-    })?;
+    let trace_dimensions = formula_dimensions.trace;
 
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
     let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
@@ -154,7 +146,7 @@ where
         &instruction_ra_claims,
         &inc_claims,
     ] {
-        validate_compressed_stage_claim(claim)?;
+        check_relation_boolean_hypercube(claim)?;
     }
     for claim in [
         &trusted_advice_claims,
@@ -165,7 +157,7 @@ where
     .into_iter()
     .flatten()
     {
-        validate_compressed_stage_claim(claim)?;
+        check_relation_boolean_hypercube(claim)?;
     }
 
     let bytecode_gamma_powers = transcript.challenge_scalar_powers(8);
@@ -1115,21 +1107,6 @@ where
         output_points,
         bytecode_reduction_weights: cycle_bytecode_reduction_weights,
     }))
-}
-
-fn validate_compressed_stage_claim<F: Field>(
-    claim: &JoltRelationClaims<F>,
-) -> Result<(), VerifierError> {
-    if claim.sumcheck.degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage: claim.id,
-            degree: claim.sumcheck.degree,
-        });
-    }
-    if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage: claim.id });
-    }
-    Ok(())
 }
 
 // ============================================================================

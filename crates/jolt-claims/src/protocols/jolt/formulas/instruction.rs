@@ -347,6 +347,15 @@ pub struct InstructionReadRafOutputOpenings {
     pub instruction_raf_flag: JoltOpeningId,
 }
 
+impl InstructionReadRafOutputOpenings {
+    /// Total produced openings: the lookup-table flags, the virtual instruction-RA
+    /// openings, and the single RAF flag. Single-sources the read-RAF output count
+    /// so callers don't re-add the `+ 1` flag literal.
+    pub fn opening_count(&self) -> usize {
+        self.lookup_table_flags.len() + self.instruction_ra.len() + 1
+    }
+}
+
 pub fn read_raf_input_openings() -> [JoltOpeningId; 3] {
     [
         lookup_output_reduced(),

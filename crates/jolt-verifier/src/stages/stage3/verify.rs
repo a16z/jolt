@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::registers as registers_claim_reduction, dimensions::TraceDimensions,
         instruction, spartan,
     },
-    JoltRelationId, JoltSumcheckDomain,
+    JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -14,9 +14,7 @@ use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 
 use super::{
-    instruction_input::{
-        check_instruction_input_consistency, InstructionInput, InstructionInputInputClaims,
-    },
+    instruction_input::{InstructionInput, InstructionInputInputClaims},
     outputs::{
         Stage3Challenges, Stage3ClearOutput, Stage3Output, Stage3OutputClaims, Stage3ZkOutput,
     },
@@ -24,10 +22,11 @@ use super::{
     spartan_shift::{SpartanShift, SpartanShiftInputClaims},
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{zip_openings, OpeningClaim, SumcheckInstance},
+        relations::{
+            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+        },
         stage1::Stage1Output,
         stage2::Stage2Output,
         zk::committed,
@@ -77,7 +76,6 @@ pub fn stage3_output_claims_with_points<F: Field>(
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
@@ -96,17 +94,7 @@ where
     let registers_spec = registers_claim_reduction::claim_reduction::<PCS::Field>(dimensions);
 
     for claim in [&shift_spec, &instruction_spec, &registers_spec] {
-        if claim.sumcheck.degree == 0 {
-            return Err(VerifierError::InvalidStageSumcheckDegree {
-                stage: claim.id,
-                degree: claim.sumcheck.degree,
-            });
-        }
-        if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
-            return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
-                stage: claim.id,
-            });
-        }
+        check_relation_boolean_hypercube(claim)?;
     }
 
     let shift_gamma = transcript.challenge_scalar();
@@ -159,8 +147,6 @@ where
     let stage1 = stage1.clear()?;
     let stage2 = stage2.clear()?;
     let claims = &proof.clear_claims()?.stage3;
-
-    check_instruction_input_consistency(stage2)?;
 
     let shift_relation = SpartanShift::new(
         dimensions,

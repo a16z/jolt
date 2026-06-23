@@ -1,13 +1,9 @@
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::{JoltFormulaDimensions, TraceDimensions},
-        instruction, ram, registers,
-    },
-    JoltRelationId, JoltSumcheckDomain,
+    formulas::{dimensions::JoltFormulaDimensions, instruction, ram, registers},
+    JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
@@ -21,10 +17,11 @@ use super::{
     registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationInputClaims},
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{zip_openings, OpeningClaim, SumcheckInstance},
+        relations::{
+            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+        },
         stage2::Stage2Output,
         stage4::Stage4Output,
         zk::committed,
@@ -79,8 +76,8 @@ pub fn stage5_output_claims_with_points<F: Field>(
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
+    formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
@@ -90,19 +87,8 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
-    let trace_dimensions = TraceDimensions::new(log_t);
-    let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
-        log_t,
-        2 * RISCV_XLEN,
-        preprocessing.program.bytecode_len(),
-        checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::InstructionReadRaf,
-        reason: error.to_string(),
-    })?;
+    let trace_dimensions = formula_dimensions.trace;
 
     let instruction_claims =
         instruction::read_raf::<PCS::Field>(formula_dimensions.instruction_read_raf);
@@ -110,17 +96,7 @@ where
     let registers_claims = registers::val_evaluation::<PCS::Field>(trace_dimensions);
 
     for claim in [&instruction_claims, &ram_claims, &registers_claims] {
-        if claim.sumcheck.degree == 0 {
-            return Err(VerifierError::InvalidStageSumcheckDegree {
-                stage: claim.id,
-                degree: claim.sumcheck.degree,
-            });
-        }
-        if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
-            return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
-                stage: claim.id,
-            });
-        }
+        check_relation_boolean_hypercube(claim)?;
     }
     let instruction_gamma = transcript.challenge_scalar();
     let ram_gamma = transcript.challenge_scalar();
@@ -136,11 +112,9 @@ where
 
     let instruction_output_openings =
         instruction::read_raf_output_openings(formula_dimensions.instruction_read_raf);
-    let committed_output_claims = instruction_output_openings.lookup_table_flags.len()
-        + instruction_output_openings.instruction_ra.len()
-        + 1
+    let committed_output_claims = instruction_output_openings.opening_count()
         + ram::ra_claim_reduction_output_openings().len()
-        + 2;
+        + registers::val_evaluation_output_openings().len();
 
     if checked.zk {
         let stage2 = stage2.zk()?;
@@ -257,35 +231,10 @@ where
         });
     }
 
-    // The reduced lookup output must alias the product remainder's lookup output
-    // (same opening point and value); the instruction read-RAF input wiring relies
-    // on this alias when it falls back to the product remainder.
-    let [(lookup_output_reduced, lookup_output_product)] =
-        instruction::read_raf_consistency_openings();
-    if stage2.output_claims.product_remainder_point()
-        != stage2.output_claims.instruction_claim_reduction_point()
-    {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionReadRaf,
-            left: lookup_output_reduced,
-            right: lookup_output_product,
-        });
-    }
-    let product_lookup_output = stage2.output_claims.product_remainder.lookup_output.value;
-    let reduced_lookup_output = stage2
-        .output_claims
-        .instruction_claim_reduction
-        .lookup_output
-        .as_ref()
-        .map_or(product_lookup_output, |claim| claim.value);
-    if reduced_lookup_output != product_lookup_output {
-        return Err(VerifierError::StageClaimOpeningMismatch {
-            stage: JoltRelationId::InstructionReadRaf,
-            left: lookup_output_reduced,
-            right: lookup_output_product,
-        });
-    }
-
+    // The reduced lookup output aliases the product remainder's lookup output
+    // (same opening point and value); stage 2 validates that alias, which the
+    // instruction read-RAF input wiring relies on when it falls back to the
+    // product remainder.
     let instruction_inputs = InstructionReadRafInputClaims::from_upstream(stage2);
     let ram_inputs = RamRaClaimReductionInputClaims::from_upstream(stage2, stage4);
     let registers_inputs = RegistersValEvaluationInputClaims::from_upstream(stage4);

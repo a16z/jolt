@@ -37,10 +37,11 @@ use super::{
     ram_read_write_checking::{RamReadWriteChecking, RamReadWriteInputClaims},
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{zip_openings, OpeningClaim, SumcheckInstance},
+        relations::{
+            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+        },
         stage1::Stage1Output,
         zk::committed,
     },
@@ -173,7 +174,6 @@ pub fn stage2_expected_final_claim<F: Field>(
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
-    _preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
     transcript: &mut T,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
@@ -424,17 +424,7 @@ where
         &ram_raf_evaluation_claims,
         &ram_output_check_claims,
     ] {
-        if claims.sumcheck.degree == 0 {
-            return Err(VerifierError::InvalidStageSumcheckDegree {
-                stage: claims.id,
-                degree: claims.sumcheck.degree,
-            });
-        }
-        if !matches!(claims.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
-            return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain {
-                stage: claims.id,
-            });
-        }
+        check_relation_boolean_hypercube(claims)?;
     }
 
     match (stage1, product_uniskip) {
@@ -591,6 +581,7 @@ where
             };
             let output_claims =
                 stage2_batch_output_claims_with_points(&claims.batch_outputs, &points);
+            output_claims.validate()?;
 
             let expected_final_claim = stage2_expected_final_claim(
                 &batch.batching_coefficients,

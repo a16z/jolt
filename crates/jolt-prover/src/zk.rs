@@ -84,23 +84,18 @@ where
         true,
     )?;
 
-    let stage1 =
-        jolt_verifier::stages::stage1::verify(&checked, preprocessing, &proof, &mut transcript)?;
-    let stage2 = jolt_verifier::stages::stage2::verify(
-        &checked,
-        preprocessing,
+    let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
         &proof,
-        &mut transcript,
-        &stage1,
-    )?;
-    let stage3 = jolt_verifier::stages::stage3::verify(
-        &checked,
         preprocessing,
-        &proof,
-        &mut transcript,
-        &stage1,
-        &stage2,
+        &checked,
+        checked.trace_length.ilog2() as usize,
+        jolt_claims::protocols::jolt::JoltRelationId::InstructionReadRaf,
     )?;
+
+    let stage1 = jolt_verifier::stages::stage1::verify(&checked, &proof, &mut transcript)?;
+    let stage2 = jolt_verifier::stages::stage2::verify(&checked, &proof, &mut transcript, &stage1)?;
+    let stage3 =
+        jolt_verifier::stages::stage3::verify(&checked, &proof, &mut transcript, &stage1, &stage2)?;
     let stage4 = jolt_verifier::stages::stage4::verify(
         &checked,
         preprocessing,
@@ -111,8 +106,8 @@ where
     )?;
     let stage5 = jolt_verifier::stages::stage5::verify(
         &checked,
-        preprocessing,
         &proof,
+        &formula_dimensions,
         &mut transcript,
         &stage2,
         &stage4,
@@ -121,6 +116,7 @@ where
         &checked,
         preprocessing,
         &proof,
+        &formula_dimensions,
         &mut transcript,
         &stage1,
         &stage2,
@@ -130,8 +126,8 @@ where
     )?;
     let stage7 = jolt_verifier::stages::stage7::verify(
         &checked,
-        preprocessing,
         &proof,
+        &formula_dimensions,
         &mut transcript,
         &stage4,
         &stage6,
@@ -140,6 +136,7 @@ where
         &checked,
         preprocessing,
         &proof,
+        &formula_dimensions,
         stage0.trusted_advice_commitment.as_ref(),
         &mut transcript,
         &stage6,

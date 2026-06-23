@@ -656,22 +656,9 @@ fn stage1_committed_proof_component_produces_native_verifier_output(
         vc_capacity: Some(Pedersen::<Bn254G1>::capacity(&vc_setup)),
         precommitted: empty_precommitted_schedule(trace_length),
     };
-    let preprocessing = jolt_verifier::JoltVerifierPreprocessing::<
-        jolt_openings::mock::MockCommitmentScheme<Fr>,
-        Pedersen<Bn254G1>,
-    >::new(
-        jolt_verifier::ProgramPreprocessing::Full(empty_program_preprocessing(trace_length)),
-        [0; 32],
-        (),
-        Some(vc_setup),
-    );
     let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage1-zk-test");
-    let native_output = jolt_verifier::stages::stage1::verify(
-        &checked,
-        &preprocessing,
-        &proof,
-        &mut verifier_transcript,
-    )?;
+    let native_output =
+        jolt_verifier::stages::stage1::verify(&checked, &proof, &mut verifier_transcript)?;
     let jolt_verifier::stages::stage1::Stage1Output::Zk(native_output) = native_output else {
         return Err("Stage 1 verifier did not return ZK output".into());
     };
@@ -691,18 +678,6 @@ fn stage1_committed_proof_component_produces_native_verifier_output(
     assert_eq!(verifier_transcript.state(), prover_transcript.state());
 
     Ok(())
-}
-
-#[cfg(feature = "zk")]
-fn empty_program_preprocessing(
-    trace_length: usize,
-) -> jolt_program::preprocess::JoltProgramPreprocessing {
-    jolt_program::preprocess::JoltProgramPreprocessing {
-        bytecode: Default::default(),
-        ram: Default::default(),
-        memory_layout: Default::default(),
-        max_padded_trace_length: trace_length,
-    }
 }
 
 /// A schedule with no committed program and no advice: every layout is `None`,

@@ -26,7 +26,6 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
-use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim, ZkOpeningScheme,
 };
@@ -43,10 +42,15 @@ struct Stage8BatchEntry<'a, F: Field, C> {
     scale: F,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
+)]
 pub fn verify<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
+    formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
     stage6: &Stage6Output<F, VC::Output>,
@@ -61,16 +65,7 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
-    let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
-        log_t,
-        2 * RISCV_XLEN,
-        preprocessing.program.bytecode_len(),
-        checked.ram_K,
-    ))
-    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-        reason: error.to_string(),
-    })?;
+    let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
     let (hamming_opening_point, inc_opening_point, precommitted_finals, clear_claims) =

@@ -88,17 +88,11 @@ fn stage2_committed_proof_component_produces_native_verifier_output(
         trace_length,
         ram_k,
     );
-    let preprocessing = verifier_preprocessing(public_io, trace_length, Some(vc_setup));
     let mut verifier_transcript = Blake2bTranscript::<Fr>::new(b"stage2-zk-test");
-    let stage1_native = jolt_verifier::stages::stage1::verify(
-        &checked,
-        &preprocessing,
-        &proof,
-        &mut verifier_transcript,
-    )?;
+    let stage1_native =
+        jolt_verifier::stages::stage1::verify(&checked, &proof, &mut verifier_transcript)?;
     let stage2_native = jolt_verifier::stages::stage2::verify(
         &checked,
-        &preprocessing,
         &proof,
         &mut verifier_transcript,
         &stage1_native,
@@ -202,30 +196,6 @@ fn checked_inputs(
         vc_capacity: Some(Pedersen::<Bn254G1>::capacity(vc_setup)),
         precommitted: empty_precommitted_schedule(trace_length),
     }
-}
-
-#[cfg(feature = "zk")]
-fn verifier_preprocessing(
-    public_io: JoltDevice,
-    trace_length: usize,
-    vc_setup: Option<PedersenSetup<Bn254G1>>,
-) -> jolt_verifier::JoltVerifierPreprocessing<
-    jolt_openings::mock::MockCommitmentScheme<Fr>,
-    Pedersen<Bn254G1>,
-> {
-    jolt_verifier::JoltVerifierPreprocessing::new(
-        jolt_verifier::ProgramPreprocessing::Full(
-            jolt_program::preprocess::JoltProgramPreprocessing {
-                bytecode: Default::default(),
-                ram: Default::default(),
-                memory_layout: public_io.memory_layout,
-                max_padded_trace_length: trace_length,
-            },
-        ),
-        [0; 32],
-        (),
-        vc_setup,
-    )
 }
 
 #[cfg(feature = "zk")]

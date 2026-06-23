@@ -1,6 +1,6 @@
 //! Typed inputs consumed and outputs produced by stage 2 verification.
 
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::{formulas::instruction, JoltRelationId};
 use jolt_field::Field;
 use jolt_poly::{Point, HIGH_TO_LOW};
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
@@ -168,6 +168,81 @@ macro_rules! stage2_batch_point_accessors {
 
 stage2_batch_point_accessors!(OpeningClaim);
 stage2_batch_point_accessors!(Vec);
+
+impl<F: Field> Stage2BatchOutputClaims<OpeningClaim<F>> {
+    /// Enforce the cross-relation aliases between the product-remainder openings and
+    /// the reduced instruction-claim openings: when a reduced opening is present it
+    /// must share the product-remainder opening's point and value. Downstream
+    /// consumers rely on these aliases when they fall back to the product remainder —
+    /// the stage-5 instruction read-RAF wiring (`lookup_output`) and the stage-3
+    /// instruction-input virtualization (`left`/`right_instruction_input`) — so the
+    /// stage-2 verifier checks them here (mirroring
+    /// [`Stage3OutputClaims::validate`](crate::stages::stage3::Stage3OutputClaims::validate))
+    /// rather than each consumer re-checking. Errors preserve the opening and
+    /// relation ids those consumers reported.
+    pub fn validate(&self) -> Result<(), VerifierError> {
+        let [(lookup_output_reduced, lookup_output_product)] =
+            instruction::read_raf_consistency_openings();
+        let [(left_reduced, left_product), (right_reduced, right_product)] =
+            instruction::input_virtualization_consistency_openings();
+
+        // Every reduced instruction opening shares the product-remainder opening
+        // point; if the points disagree the reduced openings cannot alias the
+        // product ones.
+        if self.product_remainder_point() != self.instruction_claim_reduction_point() {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: JoltRelationId::InstructionReadRaf,
+                left: lookup_output_reduced,
+                right: lookup_output_product,
+            });
+        }
+
+        // `lookup_output`: stage-5 instruction read-RAF fallback to the product remainder.
+        let product_lookup_output = self.product_remainder.lookup_output.value;
+        let reduced_lookup_output = self
+            .instruction_claim_reduction
+            .lookup_output
+            .as_ref()
+            .map_or(product_lookup_output, |claim| claim.value);
+        if reduced_lookup_output != product_lookup_output {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: JoltRelationId::InstructionReadRaf,
+                left: lookup_output_reduced,
+                right: lookup_output_product,
+            });
+        }
+
+        // `left`/`right_instruction_input`: stage-3 instruction-input virtualization
+        // fallback to the product remainder.
+        let product_left = self.product_remainder.left_instruction_input.value;
+        let product_right = self.product_remainder.right_instruction_input.value;
+        let reduced_left = self
+            .instruction_claim_reduction
+            .left_instruction_input
+            .as_ref()
+            .map_or(product_left, |claim| claim.value);
+        let reduced_right = self
+            .instruction_claim_reduction
+            .right_instruction_input
+            .as_ref()
+            .map_or(product_right, |claim| claim.value);
+        if reduced_left != product_left {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: JoltRelationId::InstructionInputVirtualization,
+                left: left_reduced,
+                right: left_product,
+            });
+        }
+        if reduced_right != product_right {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: JoltRelationId::InstructionInputVirtualization,
+                left: right_reduced,
+                right: right_product,
+            });
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2PublicOutput<F: Field> {

@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::{
         ram::RamValCheckInit,
         registers,
     },
-    JoltAdviceKind, JoltRelationId, JoltSumcheckDomain,
+    JoltAdviceKind, JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -31,7 +31,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        relations::{OpeningClaim, SumcheckInstance},
+        relations::{check_relation_boolean_hypercube, OpeningClaim, SumcheckInstance},
         stage2::Stage2Output,
         stage3::Stage3Output,
         zk::committed,
@@ -79,12 +79,8 @@ where
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
 
-    let registers_spec = registers::read_write_checking_sumcheck(register_dimensions);
-    check_boolean_hypercube(
-        JoltRelationId::RegistersReadWriteChecking,
-        registers_spec.degree,
-        &registers_spec.domain,
-    )?;
+    let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
+    check_relation_boolean_hypercube(&registers_claims)?;
     let registers_gamma = transcript.challenge_scalar();
     let registers_relation = RegistersReadWriteChecking::new(register_dimensions, registers_gamma);
 
@@ -124,12 +120,14 @@ where
     append_ram_val_check_gamma_domain_separator(transcript);
     let ram_val_check_gamma = transcript.challenge_scalar();
 
-    let ram_val_check_spec = ram::val_check_sumcheck(trace_dimensions);
-    check_boolean_hypercube(
-        JoltRelationId::RamValCheck,
-        ram_val_check_spec.degree,
-        &ram_val_check_spec.domain,
-    )?;
+    // Only the sumcheck shape (rounds/degree/domain) is read from these claims, and
+    // that shape is init-independent, so the public-eval init suffices here; the
+    // relation object below rebuilds with the per-mode init for the claim math.
+    let ram_val_check_claims = ram::val_check::<PCS::Field>(
+        trace_dimensions,
+        RamValCheckInit::full(ram_val_check_public_eval),
+    );
+    check_relation_boolean_hypercube(&ram_val_check_claims)?;
 
     let challenges = Stage4Challenges {
         registers_gamma,
@@ -138,8 +136,14 @@ where
 
     if checked.zk {
         let statements = [
-            SumcheckStatement::new(registers_spec.rounds, registers_spec.degree),
-            SumcheckStatement::new(ram_val_check_spec.rounds, ram_val_check_spec.degree),
+            SumcheckStatement::new(
+                registers_claims.sumcheck.rounds,
+                registers_claims.sumcheck.degree,
+            ),
+            SumcheckStatement::new(
+                ram_val_check_claims.sumcheck.rounds,
+                ram_val_check_claims.sumcheck.degree,
+            ),
         ];
         let consistency = BatchedSumcheckVerifier::verify_committed_consistency(
             &statements,
@@ -160,13 +164,13 @@ where
             })?;
 
         let registers_point = consistency
-            .try_instance_point(registers_spec.rounds)
+            .try_instance_point(registers_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RegistersReadWriteChecking,
                 reason: error.to_string(),
             })?;
         let ram_val_point = consistency
-            .try_instance_point(ram_val_check_spec.rounds)
+            .try_instance_point(ram_val_check_claims.sumcheck.rounds)
             .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::RamValCheck,
                 reason: error.to_string(),
@@ -235,13 +239,13 @@ where
 
     let sumcheck_claims = [
         SumcheckClaim::new(
-            registers_spec.rounds,
-            registers_spec.degree,
+            registers_claims.sumcheck.rounds,
+            registers_claims.sumcheck.degree,
             registers_input_claim,
         ),
         SumcheckClaim::new(
-            ram_val_check_spec.rounds,
-            ram_val_check_spec.degree,
+            ram_val_check_claims.sumcheck.rounds,
+            ram_val_check_claims.sumcheck.degree,
             ram_input_claim,
         ),
     ];
@@ -256,13 +260,13 @@ where
     })?;
 
     let registers_point = batch
-        .try_instance_point(registers_spec.rounds)
+        .try_instance_point(registers_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
     let ram_val_point = batch
-        .try_instance_point(ram_val_check_spec.rounds)
+        .try_instance_point(ram_val_check_claims.sumcheck.rounds)
         .map_err(|error| VerifierError::StageClaimSumcheckFailed {
             stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
@@ -417,20 +421,6 @@ where
         + usize::from(proof.untrusted_advice_commitment.is_some())
         + usize::from(checked.trusted_advice_commitment_present)
         + usize::from(checked.precommitted.program_image.is_some())
-}
-
-fn check_boolean_hypercube(
-    stage: JoltRelationId,
-    degree: usize,
-    domain: &JoltSumcheckDomain,
-) -> Result<(), VerifierError> {
-    if degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree { stage, degree });
-    }
-    if !matches!(domain, JoltSumcheckDomain::BooleanHypercube) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage });
-    }
-    Ok(())
 }
 
 /// Absorb jolt-core's Fiat-Shamir domain separator for the RAM value-check gamma:

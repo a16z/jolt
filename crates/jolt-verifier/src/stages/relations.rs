@@ -9,11 +9,32 @@
 
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltSumcheckDomain,
 };
 use jolt_field::Field;
 use jolt_transcript::Transcript;
 
 use crate::VerifierError;
+
+/// Reject a relation's sumcheck spec that isn't a positive-degree
+/// Boolean-hypercube sumcheck. Every stage that runs a compressed-Boolean batched
+/// sumcheck applies this guard to its relation specs before trusting them; sharing
+/// it keeps the two error conditions identical across stages.
+pub fn check_relation_boolean_hypercube<F: Field>(
+    claim: &JoltRelationClaims<F>,
+) -> Result<(), VerifierError> {
+    let stage = claim.id;
+    if claim.sumcheck.degree == 0 {
+        return Err(VerifierError::InvalidStageSumcheckDegree {
+            stage,
+            degree: claim.sumcheck.degree,
+        });
+    }
+    if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
+        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage });
+    }
+    Ok(())
+}
 
 /// Canonical encoders and the output-formula resolver for a relation's
 /// *produced* opening-claim struct.
