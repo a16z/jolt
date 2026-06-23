@@ -349,6 +349,24 @@ fn packed_witness_source_respects_layout() {
             .expect("address is in range"),
         Fr::from_u64(1)
     );
+
+    let polynomial =
+        packed_witness_source_polynomial(&source).expect("source should materialize densely");
+    assert_eq!(polynomial.num_vars(), layout.dimension);
+    assert_eq!(
+        polynomial.evaluations()[layout.rank(&one_address).expect("address should rank")],
+        Fr::from_u64(11)
+    );
+    assert_eq!(
+        polynomial.evaluations()[layout.rank(&sign_address).expect("address should rank")],
+        Fr::from_u64(1)
+    );
+    assert!(
+        polynomial.evaluations()[layout.cells..]
+            .iter()
+            .all(|value| value == &Fr::from_u64(0)),
+        "dummy cells should materialize as zero"
+    );
 }
 
 #[test]

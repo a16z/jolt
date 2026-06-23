@@ -1,14 +1,15 @@
+use std::collections::BTreeSet;
+
 use akita_config::CommitmentConfig;
 use akita_field::PseudoMersenneField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{CpuPreparedSetup, DensePoly, SparseRingPoly};
+use akita_prover::{AkitaPolyOps, CpuPreparedSetup, DensePoly, SparseRingPoly};
 use akita_types::{
     AkitaBatchedProof as NativeBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as NativeCommitmentHint, AkitaVerifierSetup as NativeVerifierSetup,
     RingCommitment as NativeRingCommitment,
 };
-use jolt_openings::CommitmentLayoutDigest;
-use jolt_poly::Polynomial;
+use jolt_openings::{CommitmentLayoutDigest, OpeningsError};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +30,69 @@ pub(crate) type NativeSparsePoly = SparseRingPoly<AkitaField, AKITA_D>;
 pub(crate) type NativePreparedSetup = CpuPreparedSetup<AkitaField, AKITA_D>;
 
 pub type AkitaLayoutDigest = [u8; 32];
+
+pub struct AkitaSparsePolynomial {
+    pub(crate) native: NativeSparsePoly,
+}
+
+impl AkitaSparsePolynomial {
+    pub fn from_jolt_unit_indices(
+        num_vars: usize,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> Result<Self, OpeningsError> {
+        if num_vars >= usize::BITS as usize {
+            return Err(invalid_sparse_polynomial(format!(
+                "Akita sparse polynomial dimension {num_vars} exceeds usize bit width"
+            )));
+        }
+        let domain_size = 1usize << num_vars;
+        if domain_size < AKITA_D {
+            return Err(invalid_sparse_polynomial(format!(
+                "Akita sparse polynomial domain {domain_size} is smaller than ring dimension {AKITA_D}"
+            )));
+        }
+
+        let mut seen = BTreeSet::new();
+        let mut coeffs = Vec::new();
+        for index in indices {
+            if index >= domain_size {
+                return Err(invalid_sparse_polynomial(format!(
+                    "Akita sparse polynomial index {index} outside domain size {domain_size}"
+                )));
+            }
+            if !seen.insert(index) {
+                return Err(invalid_sparse_polynomial(format!(
+                    "Akita sparse polynomial index {index} appears more than once"
+                )));
+            }
+            let akita_index = jolt_to_akita_index(num_vars, index);
+            coeffs.push((akita_index / AKITA_D, akita_index % AKITA_D, 1i8));
+        }
+
+        NativeSparsePoly::from_signed_coeffs(num_vars, domain_size / AKITA_D, coeffs)
+            .map(|native| Self { native })
+            .map_err(|error| {
+                invalid_sparse_polynomial(format!(
+                    "Akita sparse polynomial construction failed: {error}"
+                ))
+            })
+    }
+
+    pub fn num_vars(&self) -> usize {
+        self.native.num_vars()
+    }
+}
+
+pub(crate) fn jolt_to_akita_index(num_vars: usize, index: usize) -> usize {
+    if num_vars == 0 {
+        return index;
+    }
+    index.reverse_bits() >> (usize::BITS as usize - num_vars)
+}
+
+fn invalid_sparse_polynomial(reason: impl Into<String>) -> OpeningsError {
+    OpeningsError::InvalidBatch(reason.into())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,12 +188,6 @@ impl AppendToTranscript for AkitaHidingCommitment {
         ));
         transcript.append_bytes(&self.eval);
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AkitaCommitInput {
-    pub layout_digest: AkitaLayoutDigest,
-    pub polynomial: Polynomial<AkitaField>,
 }
 
 #[derive(Clone, Debug, Default)]

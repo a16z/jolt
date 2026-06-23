@@ -4,13 +4,11 @@
 //! `CommitmentScheme` and same-point `BatchOpeningScheme` traits.
 
 mod backend;
-mod packed;
 mod types;
 
 pub use backend::AkitaScheme;
-pub use packed::AkitaPackedScheme;
 pub use types::{
-    AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaConfig, AkitaField,
-    AkitaHidingCommitment, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
+    AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHidingCommitment,
+    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaSparsePolynomial,
     AkitaVerifierSetup, AKITA_D, AKITA_FIELD_MODULUS,
 };

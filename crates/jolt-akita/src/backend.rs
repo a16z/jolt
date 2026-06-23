@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use akita_pcs::{
@@ -14,17 +13,17 @@ use jolt_crypto::Commitment;
 use jolt_field::{CanonicalBytes, FixedByteSize};
 use jolt_openings::{
     BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    PackedWitnessSource, PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
+    PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    append_field_slice, AkitaBatchProof, AkitaCommitInput, AkitaCommitment, AkitaField,
-    AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
-    NativeCommitment, NativeDensePoly, NativeHint, NativeProof, NativeProofShape, NativeScheme,
-    NativeSparsePoly, NativeVerifier, AKITA_D,
+    append_field_slice, jolt_to_akita_index, AkitaBatchProof, AkitaCommitment, AkitaField,
+    AkitaHidingCommitment, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
+    AkitaSparsePolynomial, AkitaVerifierSetup, NativeCommitment, NativeDensePoly, NativeHint,
+    NativeProof, NativeProofShape, NativeScheme, NativeVerifier, AKITA_D,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,61 +47,37 @@ impl AkitaScheme {
         )
     }
 
-    fn commit_packed_sparse_witness(
+    pub fn commit_sparse_polynomial(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
-        polynomial: &NativeSparsePoly,
+        polynomial: &AkitaSparsePolynomial,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         commit_native_group(
             setup,
             layout_digest,
             polynomial.num_vars(),
             1,
-            &[polynomial],
+            &[&polynomial.native],
         )
     }
 
-    fn commit_packed_dense_source(
+    pub fn prove_sparse_batch<T, OpeningId, RelationId>(
         setup: &AkitaProverSetup,
-        layout_digest: [u8; 32],
-        polynomial: Polynomial<AkitaField>,
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        Self::commit_packed_witness(
-            setup,
-            AkitaCommitInput {
-                layout_digest,
-                polynomial,
-            },
-        )
-    }
-
-    pub fn commit_packed_witness(
-        setup: &AkitaProverSetup,
-        input: AkitaCommitInput,
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        validate_setup_layout_digest(setup.default_layout_digest, input.layout_digest)?;
-        Self::commit_group(setup, input.layout_digest, &[input.polynomial])
-    }
-
-    pub fn commit_packed_source<S>(
-        setup: &AkitaProverSetup,
-        source: &S,
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+        transcript: &mut T,
+        statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+        polynomial: &AkitaSparsePolynomial,
+        hint: AkitaProverHint,
+    ) -> Result<AkitaBatchProof, OpeningsError>
     where
-        S: PackedWitnessSource<AkitaField>,
+        T: Transcript<Challenge = AkitaField>,
     {
-        let layout = source.layout();
-        if layout.dimension > setup.max_num_vars {
-            return Err(OpeningsError::PolynomialTooLarge {
-                poly_size: layout.dimension,
-                setup_max: setup.max_num_vars,
-            });
-        }
-        if let Some(polynomial) = packed_source_sparse_polynomial(source)? {
-            return Self::commit_packed_sparse_witness(setup, layout.digest, &polynomial);
-        }
-        let polynomial = packed_source_polynomial(source)?;
-        Self::commit_packed_dense_source(setup, layout.digest, polynomial)
+        prove_batch_with_native_polynomials(
+            setup,
+            transcript,
+            statement,
+            &[&polynomial.native],
+            vec![hint],
+        )
     }
 }
 
@@ -194,132 +169,6 @@ fn validate_commit_polynomials(
         }
     }
     Ok(num_vars)
-}
-
-pub(crate) fn packed_source_sparse_polynomial<S>(
-    source: &S,
-) -> Result<Option<NativeSparsePoly>, OpeningsError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let layout = source.layout();
-    if layout.cells == 0 {
-        return Err(invalid_batch(
-            "Akita packed witness layout must contain at least one cell",
-        ));
-    }
-    if layout.dimension >= usize::BITS as usize {
-        return Err(invalid_batch(format!(
-            "Akita packed witness dimension {} exceeds usize bit width",
-            layout.dimension
-        )));
-    }
-    let domain_size = 1usize << layout.dimension;
-    if domain_size < AKITA_D {
-        return Ok(None);
-    }
-    if layout.cells > domain_size {
-        return Err(invalid_batch(format!(
-            "Akita packed witness has {} cells but dimension {} supports {domain_size}",
-            layout.cells, layout.dimension
-        )));
-    }
-
-    let mut seen = BTreeSet::new();
-    let mut coeffs = Vec::new();
-    let mut result = Ok(());
-    source.for_each_nonzero(|rank, value| {
-        if result.is_err() {
-            return;
-        }
-        if rank >= layout.cells {
-            result = Err(invalid_batch(format!(
-                "Akita packed witness source emitted rank {rank} outside {} real cells",
-                layout.cells
-            )));
-            return;
-        }
-        if !seen.insert(rank) {
-            result = Err(invalid_batch(format!(
-                "Akita packed witness source emitted rank {rank} more than once"
-            )));
-            return;
-        }
-        if value != AkitaField::one() {
-            result = Err(invalid_batch(format!(
-                "Akita sparse packed witness source emitted non-unit value at rank {rank}"
-            )));
-            return;
-        }
-        let akita_rank = jolt_to_akita_index(layout.dimension, rank);
-        coeffs.push((akita_rank / AKITA_D, akita_rank % AKITA_D, 1));
-    });
-    result?;
-
-    NativeSparsePoly::from_signed_coeffs(layout.dimension, domain_size / AKITA_D, coeffs)
-        .map(Some)
-        .map_err(akita_error)
-}
-
-pub(crate) fn packed_source_polynomial<S>(
-    source: &S,
-) -> Result<Polynomial<AkitaField>, OpeningsError>
-where
-    S: PackedWitnessSource<AkitaField>,
-{
-    let layout = source.layout();
-    if layout.cells == 0 {
-        return Err(invalid_batch(
-            "Akita packed witness layout must contain at least one cell",
-        ));
-    }
-    if layout.dimension >= usize::BITS as usize {
-        return Err(invalid_batch(format!(
-            "Akita packed witness dimension {} exceeds usize bit width",
-            layout.dimension
-        )));
-    }
-    let domain_size = 1usize << layout.dimension;
-    if layout.cells > domain_size {
-        return Err(invalid_batch(format!(
-            "Akita packed witness has {} cells but dimension {} supports {domain_size}",
-            layout.cells, layout.dimension
-        )));
-    }
-
-    let mut evals = vec![AkitaField::zero(); domain_size];
-    let mut seen = vec![false; layout.cells];
-    let mut result = Ok(());
-    source.for_each_nonzero(|rank, value| {
-        if result.is_err() {
-            return;
-        }
-        if rank >= layout.cells {
-            result = Err(invalid_batch(format!(
-                "Akita packed witness source emitted rank {rank} outside {} real cells",
-                layout.cells
-            )));
-            return;
-        }
-        if seen[rank] {
-            result = Err(invalid_batch(format!(
-                "Akita packed witness source emitted rank {rank} more than once"
-            )));
-            return;
-        }
-        if value.is_zero() {
-            result = Err(invalid_batch(format!(
-                "Akita packed witness source emitted zero at rank {rank}"
-            )));
-            return;
-        }
-
-        seen[rank] = true;
-        evals[rank] = value;
-    });
-    result?;
-
-    Ok(Polynomial::new(evals))
 }
 
 impl Commitment for AkitaScheme {
@@ -790,15 +639,6 @@ fn validate_setup_shape(
     Ok(())
 }
 
-fn validate_setup_layout_digest(expected: [u8; 32], actual: [u8; 32]) -> Result<(), OpeningsError> {
-    if actual != expected {
-        return Err(invalid_batch(
-            "Akita commitment layout digest does not match setup key layout digest",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn bind_verifier_setup_key<T>(setup: &AkitaVerifierSetup, transcript: &mut T)
 where
     T: Transcript<Challenge = AkitaField>,
@@ -929,13 +769,6 @@ fn jolt_to_akita_evals(
         akita_evals[akita_index] = eval;
     }
     Ok(akita_evals)
-}
-
-fn jolt_to_akita_index(num_vars: usize, index: usize) -> usize {
-    if num_vars == 0 {
-        return index;
-    }
-    index.reverse_bits() >> (usize::BITS as usize - num_vars)
 }
 
 fn polynomial_evaluations<P>(polynomial: &P) -> Vec<AkitaField>

@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-use jolt_akita::{AkitaCommitInput, AkitaCommitment, AkitaField, AkitaScheme, AkitaSetupParams};
+use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme, AkitaSetupParams};
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
     PhysicalView, ZkBatchOpeningScheme,
@@ -85,14 +85,9 @@ fn akita_single_opening_roundtrip() {
         let poly = polynomial(1);
         let point = vec![f(2), f(3), f(5), f(7)];
         let eval = poly.evaluate(&point);
-        let (commitment, hint) = AkitaScheme::commit_packed_witness(
-            &prover_setup,
-            AkitaCommitInput {
-                layout_digest: layout(7),
-                polynomial: poly.clone(),
-            },
-        )
-        .expect("commit should succeed");
+        let (commitment, hint) =
+            AkitaScheme::commit_group(&prover_setup, layout(7), std::slice::from_ref(&poly))
+                .expect("commit should succeed");
 
         let mut prover_transcript = Blake2bTranscript::new(b"akita-single");
         let proof = AkitaScheme::open(
@@ -185,18 +180,6 @@ fn akita_direct_commit_group_accepts_statement_layout_and_rejects_dimension_mism
     let statement_layout = AkitaScheme::commit_group(&prover_setup, layout(8), &[polynomial(1)])
         .expect("direct commitments carry their statement layout digest");
     assert_eq!(statement_layout.0.layout_digest, layout(8));
-
-    let wrong_packed_layout = AkitaScheme::commit_packed_witness(
-        &prover_setup,
-        AkitaCommitInput {
-            layout_digest: layout(8),
-            polynomial: polynomial(1),
-        },
-    );
-    assert!(matches!(
-        wrong_packed_layout,
-        Err(OpeningsError::InvalidBatch(_))
-    ));
 
     let (wrong_dimension_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(5, 2, layout(7)));
     let wrong_dimension =

@@ -8,6 +8,7 @@ use crate::{
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
+use jolt_poly::Polynomial;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -574,10 +575,74 @@ pub trait PackedWitnessSource<F: Field> {
     fn eval_direct_fact(&self, address: &PackedCellAddress) -> Result<F, PackedLayoutError>;
 }
 
+pub fn packed_witness_source_polynomial<F, S>(source: &S) -> Result<Polynomial<F>, OpeningsError>
+where
+    F: Field,
+    S: PackedWitnessSource<F>,
+{
+    let layout = source.layout();
+    if layout.cells == 0 {
+        return Err(invalid_packed_source(
+            "packed witness layout must contain at least one cell",
+        ));
+    }
+    if layout.dimension >= usize::BITS as usize {
+        return Err(invalid_packed_source(format!(
+            "packed witness dimension {} exceeds usize bit width",
+            layout.dimension
+        )));
+    }
+    let domain_size = 1usize << layout.dimension;
+    if layout.cells > domain_size {
+        return Err(invalid_packed_source(format!(
+            "packed witness has {} cells but dimension {} supports {domain_size}",
+            layout.cells, layout.dimension
+        )));
+    }
+
+    let mut evals = vec![F::zero(); domain_size];
+    let mut seen = vec![false; layout.cells];
+    let mut result = Ok(());
+    source.for_each_nonzero(|rank, value| {
+        if result.is_err() {
+            return;
+        }
+        if rank >= layout.cells {
+            result = Err(invalid_packed_source(format!(
+                "packed witness source emitted rank {rank} outside {} real cells",
+                layout.cells
+            )));
+            return;
+        }
+        if seen[rank] {
+            result = Err(invalid_packed_source(format!(
+                "packed witness source emitted rank {rank} more than once"
+            )));
+            return;
+        }
+        if value.is_zero() {
+            result = Err(invalid_packed_source(format!(
+                "packed witness source emitted zero at rank {rank}"
+            )));
+            return;
+        }
+
+        seen[rank] = true;
+        evals[rank] = value;
+    });
+    result?;
+
+    Ok(Polynomial::new(evals))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SparsePackedWitness<F> {
     layout: PackedWitnessLayout,
     entries: Vec<(usize, F)>,
+}
+
+fn invalid_packed_source(reason: impl Into<String>) -> OpeningsError {
+    OpeningsError::InvalidBatch(reason.into())
 }
 
 impl<F: Field> SparsePackedWitness<F> {

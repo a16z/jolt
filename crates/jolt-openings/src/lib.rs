@@ -59,10 +59,10 @@ pub use packed_view::{
     PackedViewTerm, PackedViewValidity,
 };
 pub use packing_layout::{
-    PackedAdviceKind, PackedAlphabet, PackedAlphabetCounts, PackedCellAddress,
-    PackedDomainCellCounts, PackedFactDomain, PackedFamily, PackedFamilyId, PackedFamilySpec,
-    PackedLayoutAudit, PackedLayoutError, PackedViewKind, PackedWitnessLayout, PackedWitnessSource,
-    SparsePackedWitness,
+    packed_witness_source_polynomial, PackedAdviceKind, PackedAlphabet, PackedAlphabetCounts,
+    PackedCellAddress, PackedDomainCellCounts, PackedFactDomain, PackedFamily, PackedFamilyId,
+    PackedFamilySpec, PackedLayoutAudit, PackedLayoutError, PackedViewKind, PackedWitnessLayout,
+    PackedWitnessSource, SparsePackedWitness,
 };
 pub use reduction::{reduce_prover, reduce_verifier, rlc_combine, rlc_combine_scalars};
 

@@ -1,6 +1,7 @@
 //! Prover-facing helpers for assembling Akita verifier artifacts.
 
 use crate::{
+    akita_packed::AkitaPackedScheme,
     akita_witness::JoltPackedWitnessBuilder,
     config::{
         validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
@@ -29,9 +30,7 @@ use crate::{
     VerifierError,
 };
 use common::jolt_device::JoltDevice;
-use jolt_akita::{
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaProverHint,
-};
+use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint};
 use jolt_claims::protocols::jolt::{
     lattice_packed_validity_digest, JoltAdviceKind, LatticePackedFamilyId,
     LatticePackedValidityKind, LatticePackedValidityRequirement,
