@@ -2,9 +2,9 @@
 use jolt_claims::protocols::field_inline::FieldInlineOpeningId;
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
-use jolt_openings::{
-    BatchOpeningStatement, PackedViewCatalog, PackedViewError, PhysicalView, VerifierOpeningClaim,
-};
+use jolt_openings::{BatchOpeningStatement, PhysicalView, VerifierOpeningClaim};
+#[cfg(feature = "akita")]
+use jolt_openings::{PackedViewCatalog, PackedViewError};
 use jolt_poly::{Point, HIGH_TO_LOW};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

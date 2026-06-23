@@ -13,6 +13,7 @@ mod akita_witness;
 pub mod compat;
 pub mod config;
 pub mod error;
+mod lattice_surface;
 pub mod preprocessing;
 pub mod proof;
 pub mod prover_support;
