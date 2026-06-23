@@ -12,8 +12,8 @@ use jolt_claims::protocols::jolt::{
         ram,
     },
     AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
-    BytecodeReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, PrecommittedClaimReduction, PrecommittedReductionLayout,
+    BytecodeReadRafChallenge, JoltAdviceKind, JoltChallengeId, JoltOpeningId, JoltPublicId,
+    JoltRelationClaims, JoltRelationId, PrecommittedClaimReduction, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
