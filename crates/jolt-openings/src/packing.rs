@@ -27,15 +27,15 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::*;
-    use crate::mock::{MockCommitment, MockCommitmentScheme, MockProof};
     use crate::{
         BatchOpeningClaim, BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement,
-        CommitmentScheme, OpeningsError, PackingFamilyRef, PackingTerm, PhysicalView,
+        CommitmentLayoutDigest, CommitmentScheme, OpeningsError, PackingFamilyRef, PackingTerm,
+        PhysicalView,
     };
     use jolt_crypto::Commitment;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::{EqPolynomial, MultilinearPoly, Polynomial};
-    use jolt_transcript::{Blake2bTranscript, Transcript};
+    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
     const FAMILY: PackingFamilyRef = PackingFamilyRef {
         namespace: 0x6a6f_6c74,
@@ -49,6 +49,30 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
     struct TestLayout {
         digest: [u8; 32],
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestCommitment {
+        evaluations: Vec<Fr>,
+    }
+
+    impl CommitmentLayoutDigest for TestCommitment {
+        fn layout_digest(&self) -> Option<[u8; 32]> {
+            None
+        }
+    }
+
+    impl AppendToTranscript for TestCommitment {
+        fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+            for evaluation in &self.evaluations {
+                evaluation.append_to_transcript(transcript);
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestProof {
+        evaluations: Vec<Fr>,
     }
 
     impl PackingLayout for TestLayout {
@@ -89,12 +113,12 @@ mod tests {
     }
 
     impl Commitment for TestPackingPcs {
-        type Output = MockCommitment<Fr>;
+        type Output = TestCommitment;
     }
 
     impl CommitmentScheme for TestPackingPcs {
         type Field = Fr;
-        type Proof = MockProof<Fr>;
+        type Proof = TestProof;
         type ProverSetup = TestLayout;
         type VerifierSetup = TestLayout;
         type Polynomial = Polynomial<Fr>;
@@ -113,18 +137,24 @@ mod tests {
             poly: &P,
             _setup: &Self::ProverSetup,
         ) -> (Self::Output, Self::OpeningHint) {
-            MockCommitmentScheme::<Fr>::commit(poly, &())
+            let mut evaluations = Vec::with_capacity(1 << poly.num_vars());
+            poly.for_each_row(poly.num_vars(), &mut |_, row| {
+                evaluations.extend_from_slice(row);
+            });
+            (TestCommitment { evaluations }, ())
         }
 
         fn open(
             poly: &Self::Polynomial,
-            point: &[Self::Field],
-            eval: Self::Field,
+            _point: &[Self::Field],
+            _eval: Self::Field,
             _setup: &Self::ProverSetup,
-            hint: Option<Self::OpeningHint>,
-            transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _hint: Option<Self::OpeningHint>,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
         ) -> Self::Proof {
-            MockCommitmentScheme::<Fr>::open(poly, point, eval, &(), hint, transcript)
+            TestProof {
+                evaluations: poly.evaluations().to_vec(),
+            }
         }
 
         fn verify(
@@ -133,17 +163,23 @@ mod tests {
             eval: Self::Field,
             proof: &Self::Proof,
             _setup: &Self::VerifierSetup,
-            transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
         ) -> Result<(), OpeningsError> {
-            MockCommitmentScheme::<Fr>::verify(commitment, point, eval, proof, &(), transcript)
+            if commitment.evaluations != proof.evaluations {
+                return Err(OpeningsError::VerificationFailed);
+            }
+            let poly = Polynomial::new(proof.evaluations.clone());
+            if poly.evaluate(point) != eval {
+                return Err(OpeningsError::VerificationFailed);
+            }
+            Ok(())
         }
 
         fn bind_opening_inputs(
-            transcript: &mut impl Transcript<Challenge = Self::Field>,
-            point: &[Self::Field],
-            eval: &Self::Field,
+            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _point: &[Self::Field],
+            _eval: &Self::Field,
         ) {
-            MockCommitmentScheme::<Fr>::bind_opening_inputs(transcript, point, eval);
         }
     }
 
@@ -226,10 +262,10 @@ mod tests {
     }
 
     fn statement(
-        commitment: MockCommitment<Fr>,
+        commitment: TestCommitment,
         poly: &Polynomial<Fr>,
         row_point: &[Fr],
-    ) -> BatchOpeningStatement<Fr, MockCommitment<Fr>, usize, usize> {
+    ) -> BatchOpeningStatement<Fr, TestCommitment, usize, usize> {
         let first_terms = vec![packed_term(fr(2), 1, row_point)];
         let second_terms = vec![
             packed_term(fr(5), 0, row_point),
