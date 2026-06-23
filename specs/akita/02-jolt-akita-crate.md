@@ -86,7 +86,7 @@ AkitaLayoutDigest:
 AkitaViewFormula:
   PCS-facing formula for how a logical claim is represented physically.
 
-AkitaPackedViewStatement:
+AkitaPackingViewStatement:
   normalized packed-view statement verified by the Akita backend or adapter.
 
 AkitaCommitInput:

@@ -1,10 +1,10 @@
 //! Prover-facing helpers for assembling Akita verifier artifacts.
 
 use crate::{
-    akita_packed::AkitaPackedScheme,
+    akita_packing::AkitaPackingScheme,
     akita_validation::{
         validate_akita_advice_commitment_aliases, validate_akita_artifacts_for_proof,
-        validate_akita_packed_opening_proof_payload_shape,
+        validate_akita_packing_opening_proof_payload_shape,
         validate_akita_precommitted_commitment_aliases,
         validate_akita_precommitted_opening_proof_payload_shapes,
         validate_akita_proof_payload_shape, validate_akita_verifier_setup_config,
@@ -55,20 +55,20 @@ use crate::stages::stage8::{
 use jolt_claims::protocols::jolt::LatticePackedValidityKind;
 
 pub use crate::akita_validity::{
-    attach_akita_packed_validity_proof, prove_akita_jolt_packed_validity,
-    prove_akita_packed_validity, AkitaPackedValidityProofArtifacts,
+    attach_akita_packing_validity_proof, prove_akita_jolt_packed_validity,
+    prove_akita_packing_validity, AkitaPackingValidityProofArtifacts,
 };
 
 pub type AkitaClearVectorCommitment = ClearOnlyVectorCommitment<AkitaField>;
-pub type AkitaPackedBatchProof = PackingBatchProof<AkitaBatchProof>;
-pub type AkitaPackedProverSetup = <AkitaPackedScheme as CommitmentScheme>::ProverSetup;
-pub type AkitaPackedVerifierSetup = <AkitaPackedScheme as CommitmentScheme>::VerifierSetup;
+pub type AkitaPackingBatchProof = PackingBatchProof<AkitaBatchProof>;
+pub type AkitaPackingProverSetup = <AkitaPackingScheme as CommitmentScheme>::ProverSetup;
+pub type AkitaPackingVerifierSetup = <AkitaPackingScheme as CommitmentScheme>::VerifierSetup;
 pub type AkitaVerifierPreprocessing =
-    JoltVerifierPreprocessing<AkitaPackedScheme, AkitaClearVectorCommitment>;
-pub type AkitaJoltProof = JoltProof<AkitaPackedScheme, AkitaClearVectorCommitment>;
+    JoltVerifierPreprocessing<AkitaPackingScheme, AkitaClearVectorCommitment>;
+pub type AkitaJoltProof = JoltProof<AkitaPackingScheme, AkitaClearVectorCommitment>;
 
 #[derive(Clone, Debug)]
-pub struct AkitaPackedWitnessArtifacts {
+pub struct AkitaPackingWitnessArtifacts {
     pub protocol: JoltProtocolConfig,
     pub layout: PackedWitnessLayout,
     pub commitments: CommitmentPayload<AkitaCommitment>,
@@ -76,7 +76,7 @@ pub struct AkitaPackedWitnessArtifacts {
 }
 
 #[derive(Clone, Debug)]
-pub struct AkitaPackedJoltWitnessInput<'a> {
+pub struct AkitaPackingJoltWitnessInput<'a> {
     pub layout: PackedWitnessLayout,
     pub trace_rows: &'a [JoltTraceRow],
     pub log_k_chunk: usize,
@@ -86,7 +86,7 @@ pub struct AkitaPackedJoltWitnessInput<'a> {
 
 #[derive(Clone, Debug)]
 pub struct AkitaCommittedPackedJoltWitness {
-    pub artifacts: AkitaPackedWitnessArtifacts,
+    pub artifacts: AkitaPackingWitnessArtifacts,
     pub witness: SparsePackedWitness<AkitaField>,
 }
 
@@ -98,18 +98,18 @@ pub struct AkitaPrecommittedOpeningInput<'a> {
 
 #[derive(Clone, Debug)]
 pub struct AkitaStage8ClearOpeningProofs {
-    pub packed: AkitaPackedBatchProof,
-    pub precommitted: Vec<AkitaPackedBatchProof>,
+    pub packed: AkitaPackingBatchProof,
+    pub precommitted: Vec<AkitaPackingBatchProof>,
 }
 
-impl AkitaPackedWitnessArtifacts {
+impl AkitaPackingWitnessArtifacts {
     pub fn payload(&self) -> Option<&LatticeCommitmentPayload<AkitaCommitment>> {
         self.commitments.as_lattice()
     }
 }
 
-pub fn build_akita_packed_jolt_witness(
-    input: AkitaPackedJoltWitnessInput<'_>,
+pub fn build_akita_packing_jolt_witness(
+    input: AkitaPackingJoltWitnessInput<'_>,
 ) -> Result<SparsePackedWitness<AkitaField>, VerifierError> {
     validate_akita_jolt_packed_witness_layout(&input.layout)?;
     let protocol = akita_lattice_protocol_config_for_layout(&input.layout);
@@ -139,12 +139,12 @@ pub fn build_akita_packed_jolt_witness(
     builder.finish().map_err(akita_witness_error)
 }
 
-pub fn commit_akita_packed_jolt_witness(
-    setup: &AkitaPackedProverSetup,
-    input: AkitaPackedJoltWitnessInput<'_>,
+pub fn commit_akita_packing_jolt_witness(
+    setup: &AkitaPackingProverSetup,
+    input: AkitaPackingJoltWitnessInput<'_>,
 ) -> Result<AkitaCommittedPackedJoltWitness, VerifierError> {
-    let witness = build_akita_packed_jolt_witness(input)?;
-    let artifacts = commit_akita_packed_witness(setup, &witness)?;
+    let witness = build_akita_packing_jolt_witness(input)?;
+    let artifacts = commit_akita_packing_witness(setup, &witness)?;
     Ok(AkitaCommittedPackedJoltWitness { artifacts, witness })
 }
 
@@ -155,7 +155,7 @@ fn validate_akita_jolt_packed_witness_layout(
         if jolt_packed_witness_family_is_precommitted(&family.id) {
             return Err(VerifierError::InvalidProtocolConfig {
                 reason: format!(
-                    "precommitted family {:?} cannot be included in the Akita packed witness layout",
+                    "precommitted family {:?} cannot be included in the Akita packing witness layout",
                     family.id
                 ),
             });
@@ -332,29 +332,29 @@ pub fn akita_lattice_validity_requirements_for_layout(
     requirements
 }
 
-pub fn commit_akita_packed_witness<S>(
-    setup: &AkitaPackedProverSetup,
+pub fn commit_akita_packing_witness<S>(
+    setup: &AkitaPackingProverSetup,
     source: &S,
-) -> Result<AkitaPackedWitnessArtifacts, VerifierError>
+) -> Result<AkitaPackingWitnessArtifacts, VerifierError>
 where
     S: PackedWitnessSource<AkitaField>,
 {
     let protocol = akita_lattice_protocol_config_for_layout(source.layout());
-    commit_akita_packed_witness_with_config(protocol, setup, source)
+    commit_akita_packing_witness_with_config(protocol, setup, source)
 }
 
-pub fn commit_akita_packed_witness_with_config<S>(
+pub fn commit_akita_packing_witness_with_config<S>(
     protocol: JoltProtocolConfig,
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     source: &S,
-) -> Result<AkitaPackedWitnessArtifacts, VerifierError>
+) -> Result<AkitaPackingWitnessArtifacts, VerifierError>
 where
     S: PackedWitnessSource<AkitaField>,
 {
     let layout = source.layout().clone();
     validate_lattice_packed_witness_layout_config(&protocol, &layout)?;
     let (commitment, hint) =
-        AkitaPackedScheme::commit_packed_source(setup, source).map_err(|error| {
+        AkitaPackingScheme::commit_packing_source(setup, source).map_err(|error| {
             VerifierError::AkitaCommitmentFailed {
                 reason: error.to_string(),
             }
@@ -362,7 +362,7 @@ where
     let payload = LatticeCommitmentPayload::new(commitment, layout.digest, layout.dimension);
     crate::proof::validate_lattice_commitment_payload_config(&protocol, &payload)?;
 
-    Ok(AkitaPackedWitnessArtifacts {
+    Ok(AkitaPackingWitnessArtifacts {
         protocol,
         layout,
         commitments: CommitmentPayload::Lattice(payload),
@@ -370,45 +370,45 @@ where
     })
 }
 
-pub fn prove_akita_packed_openings<T, OpeningId, RelationId, S>(
-    setup: &AkitaPackedProverSetup,
+pub fn prove_akita_packing_openings<T, OpeningId, RelationId, S>(
+    setup: &AkitaPackingProverSetup,
     transcript: &mut T,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-) -> Result<AkitaPackedBatchProof, VerifierError>
+) -> Result<AkitaPackingBatchProof, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
 {
     if source.layout() != &artifacts.layout {
         return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packed opening source layout does not match committed artifact"
+            reason: "Akita packing opening source layout does not match committed artifact"
                 .to_string(),
         });
     }
     if statement.layout_digest != artifacts.layout.digest {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason:
-                "Akita packed opening statement layout digest does not match committed artifact"
+                "Akita packing opening statement layout digest does not match committed artifact"
                     .to_string(),
         });
     }
     let payload = artifacts
         .payload()
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packed opening artifacts do not carry a lattice payload".to_string(),
+            reason: "Akita packing opening artifacts do not carry a lattice payload".to_string(),
         })?;
     for claim in &statement.claims {
         if claim.commitment != payload.packed_witness {
             return Err(VerifierError::FinalOpeningBatchFailed {
-                reason: "Akita packed opening statement references a non-artifact commitment"
+                reason: "Akita packing opening statement references a non-artifact commitment"
                     .to_string(),
             });
         }
     }
 
-    AkitaPackedScheme::prove_packed_source_batch(
+    AkitaPackingScheme::prove_packing_source_batch(
         setup,
         transcript,
         statement,
@@ -421,12 +421,12 @@ where
 }
 
 pub fn prove_akita_stage8_clear_openings<T, S>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     transcript: &mut T,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
     statement: &Stage8BatchStatement<AkitaField, AkitaCommitment>,
-) -> Result<AkitaPackedBatchProof, VerifierError>
+) -> Result<AkitaPackingBatchProof, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
@@ -443,9 +443,9 @@ where
 }
 
 pub fn prove_akita_stage8_clear_openings_with_precommitted<T, S>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     transcript: &mut T,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
     statement: &Stage8BatchStatement<AkitaField, AkitaCommitment>,
     precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
@@ -456,13 +456,13 @@ where
 {
     let Stage8BatchStatement::Clear(statement) = statement else {
         return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packed opening proving requires a clear Stage 8 statement".to_string(),
+            reason: "Akita packing opening proving requires a clear Stage 8 statement".to_string(),
         });
     };
     let payload = artifacts
         .payload()
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packed opening artifacts do not carry a lattice payload".to_string(),
+            reason: "Akita packing opening artifacts do not carry a lattice payload".to_string(),
         })?;
     validate_akita_precommitted_opening_inputs(
         &payload.packed_witness,
@@ -470,7 +470,7 @@ where
         precommitted_inputs,
     )?;
     let packed =
-        prove_akita_packed_openings(setup, transcript, artifacts, source, &statement.statement)?;
+        prove_akita_packing_openings(setup, transcript, artifacts, source, &statement.statement)?;
     let precommitted = prove_akita_precommitted_opening_batches(
         setup,
         transcript,
@@ -485,7 +485,7 @@ where
 }
 
 fn prove_akita_precommitted_opening_batches<T>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     transcript: &mut T,
     packed_witness: &AkitaCommitment,
     statements: &[BatchOpeningStatement<
@@ -495,7 +495,7 @@ fn prove_akita_precommitted_opening_batches<T>(
         Stage8OpeningId,
     >],
     inputs: &[AkitaPrecommittedOpeningInput<'_>],
-) -> Result<Vec<AkitaPackedBatchProof>, VerifierError>
+) -> Result<Vec<AkitaPackingBatchProof>, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
 {
@@ -505,7 +505,7 @@ where
         .iter()
         .zip(inputs)
         .map(|(statement, input)| {
-            AkitaPackedScheme::prove_batch(
+            AkitaPackingScheme::prove_batch(
                 setup,
                 transcript,
                 statement,
@@ -595,12 +595,12 @@ fn validate_akita_precommitted_opening_input(
 }
 
 pub fn prove_and_attach_akita_opening_proofs<T, S>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &mut AkitaJoltProof,
     trusted_advice_commitment: Option<&AkitaCommitment>,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
 ) -> Result<(), VerifierError>
 where
@@ -624,12 +624,12 @@ where
     reason = "prover helper mirrors proof attachment inputs and adds precommitted openings"
 )]
 pub fn prove_and_attach_akita_opening_proofs_with_precommitted<T, S>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &mut AkitaJoltProof,
     trusted_advice_commitment: Option<&AkitaCommitment>,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
     precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
 ) -> Result<(), VerifierError>
@@ -647,7 +647,7 @@ where
         artifacts,
         source,
     )?;
-    attach_akita_packed_validity_proof(&mut candidate, validity)?;
+    attach_akita_packing_validity_proof(&mut candidate, validity)?;
     let opening_proofs = prove_akita_jolt_final_openings_with_precommitted::<T, S>(
         setup,
         preprocessing,
@@ -665,14 +665,14 @@ where
 }
 
 pub fn prove_akita_jolt_final_openings<T, S>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &AkitaJoltProof,
     trusted_advice_commitment: Option<&AkitaCommitment>,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
-) -> Result<AkitaPackedBatchProof, VerifierError>
+) -> Result<AkitaPackingBatchProof, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
@@ -686,7 +686,7 @@ where
     let (statement, mut transcript) =
         crate::prover_support::stage8_batch_statement_with_config_and_transcript::<
             AkitaField,
-            AkitaPackedScheme,
+            AkitaPackingScheme,
             AkitaClearVectorCommitment,
             T,
             _,
@@ -705,12 +705,12 @@ where
     reason = "prover helper mirrors final opening inputs and adds precommitted openings"
 )]
 pub fn prove_akita_jolt_final_openings_with_precommitted<T, S>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &AkitaJoltProof,
     trusted_advice_commitment: Option<&AkitaCommitment>,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
     precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
 ) -> Result<AkitaStage8ClearOpeningProofs, VerifierError>
@@ -727,7 +727,7 @@ where
     let (statement, mut transcript) =
         crate::prover_support::stage8_batch_statement_with_config_and_transcript::<
             AkitaField,
-            AkitaPackedScheme,
+            AkitaPackingScheme,
             AkitaClearVectorCommitment,
             T,
             _,
@@ -761,13 +761,13 @@ where
 {
     validate_akita_verifier_setup_config(&preprocessing.pcs_setup, config)?;
     validate_akita_proof_payload_shape(&preprocessing.pcs_setup, &proof.commitments)?;
-    validate_akita_packed_opening_proof_payload_shape(
+    validate_akita_packing_opening_proof_payload_shape(
         &proof.commitments,
         &proof.joint_opening_proof,
         "Akita joint opening proof",
     )?;
     if let Some(opening_proof) = &proof.lattice_packed_validity_opening_proof {
-        validate_akita_packed_opening_proof_payload_shape(
+        validate_akita_packing_opening_proof_payload_shape(
             &proof.commitments,
             opening_proof,
             "Akita lattice packed validity opening proof",
@@ -789,7 +789,7 @@ where
     )?;
     crate::verifier::verify_clear_with_config::<
         AkitaField,
-        AkitaPackedScheme,
+        AkitaPackingScheme,
         AkitaClearVectorCommitment,
         T,
     >(
@@ -893,7 +893,7 @@ fn padded_slice<T: Clone + Default>(
 fn akita_witness_error(reason: impl ToString) -> VerifierError {
     VerifierError::AkitaCommitmentFailed {
         reason: format!(
-            "Akita packed witness packing failed: {}",
+            "Akita packing witness packing failed: {}",
             reason.to_string()
         ),
     }
@@ -1051,7 +1051,7 @@ mod tests {
             .expect("test thread panicked");
     }
 
-    fn akita_packed_params(
+    fn akita_packing_params(
         layout: &PackedWitnessLayout,
         max_num_polys_per_commitment_group: usize,
     ) -> PackingSetupParams<AkitaSetupParams, PackedWitnessLayout> {
@@ -1092,15 +1092,15 @@ mod tests {
     #[test]
     fn commits_packed_witness_and_returns_verifier_payload() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, _) = AkitaPackingScheme::setup(params);
         let source = SparsePackedWitness::try_new(
             layout.clone(),
             vec![(0, AkitaField::from_u64(1)), (256, AkitaField::from_u64(1))],
         )
         .expect("source should build");
 
-        let artifact = commit_akita_packed_witness(&prover_setup, &source)
+        let artifact = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
 
         assert_eq!(artifact.layout, layout);
@@ -1205,12 +1205,12 @@ mod tests {
                 1,
             ),
         ];
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, _) = AkitaPackingScheme::setup(params);
 
-        let committed = commit_akita_packed_jolt_witness(
+        let committed = commit_akita_packing_jolt_witness(
             &prover_setup,
-            AkitaPackedJoltWitnessInput {
+            AkitaPackingJoltWitnessInput {
                 layout: layout.clone(),
                 trace_rows: &rows,
                 log_k_chunk: 8,
@@ -1332,7 +1332,7 @@ mod tests {
             let layout =
                 PackedWitnessLayout::new([spec]).expect("forbidden layout should still parse");
 
-            let error = build_akita_packed_jolt_witness(AkitaPackedJoltWitnessInput {
+            let error = build_akita_packing_jolt_witness(AkitaPackingJoltWitnessInput {
                 layout,
                 trace_rows: &[],
                 log_k_chunk: 8,
@@ -1353,10 +1353,10 @@ mod tests {
     }
 
     #[test]
-    fn packed_witness_artifacts_feed_akita_packed_batch_verifier() {
+    fn packed_witness_artifacts_feed_akita_packing_batch_verifier() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
         let instruction_family = PackedFamilyId::InstructionRa { index: 0 };
         let sign_family = PackedFamilyId::UnsignedIncMsb;
         let source = SparsePackedWitness::try_from_cells(
@@ -1370,7 +1370,7 @@ mod tests {
             ],
         )
         .expect("source should build");
-        let artifact = commit_akita_packed_witness(&prover_setup, &source)
+        let artifact = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
         let commitment = artifact
             .payload()
@@ -1494,7 +1494,7 @@ mod tests {
         let mut missing_reduction = proof.clone();
         missing_reduction.reduction = None;
         assert!(matches!(
-            validate_akita_packed_opening_proof_payload_shape(
+            validate_akita_packing_opening_proof_payload_shape(
                 &artifact.commitments,
                 &missing_reduction,
                 "Akita joint opening proof",
@@ -1516,7 +1516,7 @@ mod tests {
                 &missing_reduction_eval,
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
-                if reason.contains("packed reduction opening eval")
+                if reason.contains("Akita packing reduction opening eval")
         ));
 
         let mut noncanonical_reduction_eval = proof.clone();
@@ -1526,7 +1526,7 @@ mod tests {
             .expect("packed proof should contain a reduction")
             .opening_eval = AKITA_FIELD_MODULUS.to_le_bytes().to_vec();
         assert!(matches!(
-            validate_akita_packed_opening_proof_payload_shape(
+            validate_akita_packing_opening_proof_payload_shape(
                 &artifact.commitments,
                 &noncanonical_reduction_eval,
                 "Akita joint opening proof",
@@ -1536,7 +1536,7 @@ mod tests {
         ));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-packed");
-        let result = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+        let result = <AkitaPackingScheme as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &mut verifier_transcript,
             &statement,
@@ -1556,15 +1556,15 @@ mod tests {
     #[test]
     fn stage8_clear_openings_prove_separate_precommitted_batches() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
         let sign_family = PackedFamilyId::UnsignedIncMsb;
         let source = SparsePackedWitness::try_from_cells(
             layout.clone(),
             [(packed_cell(sign_family.clone(), 1), AkitaField::one())],
         )
         .expect("source should build");
-        let artifact = commit_akita_packed_witness(&prover_setup, &source)
+        let artifact = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
         let packed_commitment = artifact
             .payload()
@@ -1731,14 +1731,14 @@ mod tests {
         ));
 
         let mut verifier_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
-        let _ = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+        let _ = <AkitaPackingScheme as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &mut verifier_transcript,
             &packed_statement,
             &proofs.packed,
         )
         .expect("packed proof should verify");
-        let _ = <AkitaPackedScheme as BatchOpeningScheme>::verify_batch(
+        let _ = <AkitaPackingScheme as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &mut verifier_transcript,
             &precommitted_statement,
@@ -1813,13 +1813,14 @@ mod tests {
             config.lattice.packed_witness.validity_digest =
                 Some(lattice_packed_validity_digest(&requirements));
             let source = validity_default_source(&layout, &requirements);
-            let params = akita_packed_params(&layout, 1);
-            let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
-            let artifacts = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
-                .expect("valid packed witness should commit");
+            let params = akita_packing_params(&layout, 1);
+            let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
+            let artifacts =
+                commit_akita_packing_witness_with_config(config, &prover_setup, &source)
+                    .expect("valid packed witness should commit");
 
             let mut prover_transcript = Blake2bTranscript::new(b"akita-validity");
-            let validity = prove_akita_packed_validity(
+            let validity = prove_akita_packing_validity(
                 &prover_setup,
                 &mut prover_transcript,
                 &artifacts,
@@ -1909,13 +1910,14 @@ mod tests {
             let modulus_bytes = AKITA_FIELD_MODULUS.to_le_bytes();
             let source =
                 validity_source_with_field_rd_inc_bytes(&layout, &requirements, &modulus_bytes);
-            let params = akita_packed_params(&layout, 1);
-            let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
-            let artifacts = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
-                .expect("packed witness should commit");
+            let params = akita_packing_params(&layout, 1);
+            let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
+            let artifacts =
+                commit_akita_packing_witness_with_config(config, &prover_setup, &source)
+                    .expect("packed witness should commit");
 
             let mut prover_transcript = Blake2bTranscript::new(b"akita-validity");
-            let validity = prove_akita_packed_validity(
+            let validity = prove_akita_packing_validity(
                 &prover_setup,
                 &mut prover_transcript,
                 &artifacts,
@@ -2122,10 +2124,10 @@ mod tests {
         let mut config = akita_lattice_protocol_config_for_layout(&layout);
         config.lattice.packed_witness.validity_digest =
             Some(lattice_packed_validity_digest(&requirements));
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, _) = AkitaPackingScheme::setup(params);
 
-        let error = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
+        let error = commit_akita_packing_witness_with_config(config, &prover_setup, &source)
             .expect_err("precommitted bytecode families should reject");
 
         assert!(matches!(
@@ -2334,19 +2336,19 @@ mod tests {
     }
 
     fn verify_validity_artifacts<T>(
-        setup: &AkitaPackedVerifierSetup,
+        setup: &AkitaPackingVerifierSetup,
         transcript: &mut T,
-        artifacts: &AkitaPackedWitnessArtifacts,
+        artifacts: &AkitaPackingWitnessArtifacts,
         log_k_chunk: usize,
         precommitted: &PrecommittedSchedule,
-        validity: &AkitaPackedValidityProofArtifacts,
+        validity: &AkitaPackingValidityProofArtifacts,
     ) -> Result<(), VerifierError>
     where
         T: Transcript<Challenge = AkitaField>,
     {
         crate::stages::stage8::verify_lattice_packed_validity_proof::<
             AkitaField,
-            AkitaPackedScheme,
+            AkitaPackingScheme,
             T,
             ClearOnlyCommitment,
         >(
@@ -2379,35 +2381,35 @@ mod tests {
         ) -> Result<(), VerifierError>;
         let _verify: VerifyFn = verify_akita_clear::<TestTranscript>;
         type ProveFn = fn(
-            &AkitaPackedProverSetup,
+            &AkitaPackingProverSetup,
             &AkitaVerifierPreprocessing,
             &JoltDevice,
             &AkitaJoltProof,
             Option<&AkitaCommitment>,
-            &AkitaPackedWitnessArtifacts,
+            &AkitaPackingWitnessArtifacts,
             &SparsePackedWitness<AkitaField>,
-        ) -> Result<AkitaPackedBatchProof, VerifierError>;
+        ) -> Result<AkitaPackingBatchProof, VerifierError>;
         let _prove: ProveFn =
             prove_akita_jolt_final_openings::<TestTranscript, SparsePackedWitness<AkitaField>>;
         type ProveValidityFn = fn(
-            &AkitaPackedProverSetup,
+            &AkitaPackingProverSetup,
             &AkitaVerifierPreprocessing,
             &JoltDevice,
             &AkitaJoltProof,
             Option<&AkitaCommitment>,
-            &AkitaPackedWitnessArtifacts,
+            &AkitaPackingWitnessArtifacts,
             &SparsePackedWitness<AkitaField>,
         )
-            -> Result<AkitaPackedValidityProofArtifacts, VerifierError>;
+            -> Result<AkitaPackingValidityProofArtifacts, VerifierError>;
         let _prove_validity: ProveValidityFn =
             prove_akita_jolt_packed_validity::<TestTranscript, SparsePackedWitness<AkitaField>>;
         type AttachOpeningsFn = fn(
-            &AkitaPackedProverSetup,
+            &AkitaPackingProverSetup,
             &AkitaVerifierPreprocessing,
             &JoltDevice,
             &mut AkitaJoltProof,
             Option<&AkitaCommitment>,
-            &AkitaPackedWitnessArtifacts,
+            &AkitaPackingWitnessArtifacts,
             &SparsePackedWitness<AkitaField>,
         ) -> Result<(), VerifierError>;
         let _attach_openings: AttachOpeningsFn = prove_and_attach_akita_opening_proofs::<
@@ -2419,8 +2421,8 @@ mod tests {
     #[test]
     fn akita_verifier_setup_binds_protocol_config() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (_, verifier_setup) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (_, verifier_setup) = AkitaPackingScheme::setup(params);
         let config = akita_lattice_protocol_config_for_layout(&layout);
 
         validate_akita_verifier_setup_config(&verifier_setup, &config)
@@ -2461,11 +2463,11 @@ mod tests {
     #[test]
     fn akita_verifier_setup_binds_artifact_layout() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (_, verifier_setup) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (_, verifier_setup) = AkitaPackingScheme::setup(params);
 
         validate_akita_verifier_setup_layout(&verifier_setup, &layout)
-            .expect("setup should match generated Akita packed layout");
+            .expect("setup should match generated Akita packing layout");
 
         let other_layout = PackedWitnessLayout::new([PackedFamilySpec::direct(
             PackedFamilyId::InstructionRa { index: 1 },
@@ -2490,11 +2492,11 @@ mod tests {
     #[test]
     fn akita_verifier_payload_shape_binds_inner_commitment_metadata() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
         let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
             .expect("empty sparse source should build");
-        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+        let artifacts = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
         validate_akita_proof_payload_shape(&verifier_setup, &artifacts.commitments)
             .expect("matching payload shape should pass");
@@ -2551,11 +2553,11 @@ mod tests {
     #[test]
     fn akita_untrusted_advice_aliases_packed_witness_but_trusted_must_be_separate() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, _) = AkitaPackingScheme::setup(params);
         let source = SparsePackedWitness::try_new(layout, Vec::new())
             .expect("empty sparse source should build");
-        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+        let artifacts = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
         let payload = artifacts
             .commitments
@@ -2602,11 +2604,11 @@ mod tests {
     #[test]
     fn akita_precommitted_commitments_must_not_alias_packed_witness() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, _) = AkitaPackingScheme::setup(params);
         let source = SparsePackedWitness::try_new(layout, Vec::new())
             .expect("empty sparse source should build");
-        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+        let artifacts = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
         let packed_witness = &artifacts
             .commitments
@@ -2637,14 +2639,14 @@ mod tests {
     #[test]
     fn configured_layout_mismatch_rejects_before_commit() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, _) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, _) = AkitaPackingScheme::setup(params);
         let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
             .expect("empty sparse source should build");
         let mut config = akita_lattice_protocol_config_for_layout(&layout);
         config.lattice.packed_witness.layout_digest = Some([9; 32]);
 
-        let error = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
+        let error = commit_akita_packing_witness_with_config(config, &prover_setup, &source)
             .expect_err("layout mismatch should reject");
 
         assert!(matches!(error, VerifierError::InvalidProtocolConfig { .. }));
@@ -2653,8 +2655,8 @@ mod tests {
     #[test]
     fn akita_artifact_preflight_rejects_stale_protocol_and_commitments() {
         let layout = tiny_layout();
-        let params = akita_packed_params(&layout, 1);
-        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
         let source = SparsePackedWitness::try_from_cells(
             layout.clone(),
             [
@@ -2683,9 +2685,9 @@ mod tests {
             ],
         )
         .expect("other source should build");
-        let artifacts = commit_akita_packed_witness(&prover_setup, &source)
+        let artifacts = commit_akita_packing_witness(&prover_setup, &source)
             .expect("packed witness should commit");
-        let other_artifacts = commit_akita_packed_witness(&prover_setup, &other_source)
+        let other_artifacts = commit_akita_packing_witness(&prover_setup, &other_source)
             .expect("other packed witness should commit");
 
         validate_akita_artifacts_for_proof(

@@ -164,7 +164,7 @@ PackedWitness commitment.
 PackedWitness layout digest.
 D_pack.
 Akita setup key.
-Akita packed-view proof.
+Akita packing-view proof.
 The packed-view proof covers only proof-owned W_pack claims.
 Precommitted opening proof material for TrustedAdvice, BytecodeChunk(i), and
 ProgramImageInit when those claims are present.

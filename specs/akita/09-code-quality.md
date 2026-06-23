@@ -21,8 +21,8 @@ other nits: the Akita dependencies in Cargo.toml should obviously stay pinned to
 ### naming / api simplification
 - use one vocabulary: `Packing`. avoid public API names like `PackedLinear*`. if the view happens to be a linear combination, that should be a detail or enum variant, not the root namespace for the whole mechanism.
 - suggested direction: `PackingLayout`, `PackingFamily`, `PackingAddress`, `PackingTerm`, `PackingView`, `PackingBatch<PCS>`, `PackingReductionProof`. keep the naming boring and consistent.
-- avoid multiple overlapping adapters (`PackedCombine`, `PackedLinearBatch`, `AkitaPackedScheme`) unless each has a real non-test role. if an adapter is test-only or transitional, keep it private or under tests.
-- avoid Akita-prefixed names for generic Jolt packing work. functions like `derive_akita_packed_witness_layout` and `akita_packed_view_formula` read like Akita owns the semantics; if they are deriving Jolt packing, name them as Jolt/generic packing.
+- avoid multiple overlapping adapters (`PackedCombine`, `PackedLinearBatch`, `AkitaPackingScheme`) unless each has a real non-test role. if an adapter is test-only or transitional, keep it private or under tests.
+- avoid Akita-prefixed names for generic Jolt packing work. functions like `derive_akita_packing_witness_layout` and `akita_packing_view_formula` read like Akita owns the semantics; if they are deriving Jolt packing, name them as Jolt/generic packing.
 - limit indirection. the handoff should make it easy to trace: Jolt logical claim -> packing view -> generic packing reduction -> native PCS opening. if a trait/newtype does not materially vary behavior across PCS implementations, prefer a direct function or struct.
 - keep PIOP semantics separate from PCS transport. one-hotting inc, fused increment, byte decoding, and validity requirements belong in Jolt claims/verifier logic; the PCS backend should only know how to commit/open/verify.
 

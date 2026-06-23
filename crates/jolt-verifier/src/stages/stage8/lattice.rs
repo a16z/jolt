@@ -2071,7 +2071,7 @@ mod tests {
             assert!(matches!(
                 validate_lattice_packed_witness_layout_config(&config, &layout),
                 Err(VerifierError::InvalidProtocolConfig { reason })
-                    if reason.contains("cannot be included in the Akita packed witness layout")
+                    if reason.contains("cannot be included in the Akita packing witness layout")
             ));
         }
     }

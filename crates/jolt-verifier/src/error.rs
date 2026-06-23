@@ -34,7 +34,7 @@ pub enum VerifierError {
     )]
     LatticePayloadDimensionMismatch { expected: usize, got: usize },
 
-    #[error("Akita packed witness commitment failed: {reason}")]
+    #[error("Akita packing witness commitment failed: {reason}")]
     AkitaCommitmentFailed { reason: String },
 
     #[error("lattice packed validity proof is missing {field}")]

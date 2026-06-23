@@ -17,13 +17,13 @@ use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 use serde::{Deserialize, Serialize};
 
-type AkitaPackedAdapter = PackingBatch<AkitaScheme, PackedWitnessLayout>;
+type AkitaPackingAdapter = PackingBatch<AkitaScheme, PackedWitnessLayout>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AkitaPackedScheme;
+pub struct AkitaPackingScheme;
 
-impl AkitaPackedScheme {
-    pub fn commit_packed_source<S>(
+impl AkitaPackingScheme {
+    pub fn commit_packing_source<S>(
         setup: &<Self as CommitmentScheme>::ProverSetup,
         source: &S,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
@@ -42,7 +42,7 @@ impl AkitaPackedScheme {
         AkitaScheme::commit_group(&setup.pcs, source.layout().digest, &[polynomial])
     }
 
-    pub fn prove_packed_source_batch<T, OpeningId, RelationId, S>(
+    pub fn prove_packing_source_batch<T, OpeningId, RelationId, S>(
         setup: &<Self as CommitmentScheme>::ProverSetup,
         transcript: &mut T,
         statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
@@ -70,7 +70,7 @@ impl AkitaPackedScheme {
             }
 
             let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
-            let source = AkitaPackedSource(source);
+            let source = AkitaPackingSource(source);
             let reduction =
                 prove_sparse_packing_reduction(shape.layout, statement, &source, transcript)?;
             let native_statement = singleton_statement(
@@ -102,11 +102,11 @@ impl AkitaPackedScheme {
     }
 }
 
-impl Commitment for AkitaPackedScheme {
+impl Commitment for AkitaPackingScheme {
     type Output = AkitaCommitment;
 }
 
-impl CommitmentScheme for AkitaPackedScheme {
+impl CommitmentScheme for AkitaPackingScheme {
     type Field = AkitaField;
     type Proof = PackingBatchProof<AkitaBatchProof>;
     type ProverSetup = PackingProverSetup<AkitaProverSetup, PackedWitnessLayout>;
@@ -116,11 +116,11 @@ impl CommitmentScheme for AkitaPackedScheme {
     type SetupParams = PackingSetupParams<AkitaSetupParams, PackedWitnessLayout>;
 
     fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
-        <AkitaPackedAdapter as CommitmentScheme>::setup(params)
+        <AkitaPackingAdapter as CommitmentScheme>::setup(params)
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        <AkitaPackedAdapter as CommitmentScheme>::verifier_setup(prover_setup)
+        <AkitaPackingAdapter as CommitmentScheme>::verifier_setup(prover_setup)
     }
 
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
@@ -149,7 +149,7 @@ impl CommitmentScheme for AkitaPackedScheme {
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
-        <AkitaPackedAdapter as CommitmentScheme>::verify(
+        <AkitaPackingAdapter as CommitmentScheme>::verify(
             commitment, point, eval, proof, setup, transcript,
         )
     }
@@ -163,7 +163,7 @@ impl CommitmentScheme for AkitaPackedScheme {
     }
 }
 
-impl BatchOpeningScheme for AkitaPackedScheme {
+impl BatchOpeningScheme for AkitaPackingScheme {
     fn prove_batch<T, OpeningId, RelationId>(
         setup: &Self::ProverSetup,
         transcript: &mut T,
@@ -177,7 +177,7 @@ impl BatchOpeningScheme for AkitaPackedScheme {
         if has_packing_view(statement) {
             validate_packed_adapter_prover_inputs(setup, statement, polynomials, &hints)?;
         }
-        <AkitaPackedAdapter as BatchOpeningScheme>::prove_batch(
+        <AkitaPackingAdapter as BatchOpeningScheme>::prove_batch(
             setup,
             transcript,
             statement,
@@ -198,13 +198,13 @@ impl BatchOpeningScheme for AkitaPackedScheme {
         if has_packing_view(statement) {
             validate_packed_adapter_verifier_inputs(setup, statement)?;
         }
-        <AkitaPackedAdapter as BatchOpeningScheme>::verify_batch(
+        <AkitaPackingAdapter as BatchOpeningScheme>::verify_batch(
             setup, transcript, statement, proof,
         )
     }
 }
 
-impl ZkOpeningScheme for AkitaPackedScheme {
+impl ZkOpeningScheme for AkitaPackingScheme {
     type HidingCommitment = AkitaHidingCommitment;
     type Blind = ();
 
@@ -247,7 +247,7 @@ impl ZkOpeningScheme for AkitaPackedScheme {
     }
 }
 
-impl ZkBatchOpeningScheme for AkitaPackedScheme {
+impl ZkBatchOpeningScheme for AkitaPackingScheme {
     fn prove_batch_zk<T, OpeningId, RelationId>(
         _setup: &Self::ProverSetup,
         _transcript: &mut T,
@@ -275,9 +275,9 @@ impl ZkBatchOpeningScheme for AkitaPackedScheme {
     }
 }
 
-struct AkitaPackedSource<'a, S>(&'a S);
+struct AkitaPackingSource<'a, S>(&'a S);
 
-impl<S> PackingWitnessSource<AkitaField> for AkitaPackedSource<'_, S>
+impl<S> PackingWitnessSource<AkitaField> for AkitaPackingSource<'_, S>
 where
     S: PackedWitnessSource<AkitaField>,
 {
@@ -298,7 +298,7 @@ struct PackedBatchShape<'a> {
 }
 
 fn validate_packed_adapter_prover_inputs<OpeningId, RelationId>(
-    setup: &<AkitaPackedScheme as CommitmentScheme>::ProverSetup,
+    setup: &<AkitaPackingScheme as CommitmentScheme>::ProverSetup,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
     polynomials: &[Polynomial<AkitaField>],
     hints: &[AkitaProverHint],
@@ -306,27 +306,27 @@ fn validate_packed_adapter_prover_inputs<OpeningId, RelationId>(
     let shape = validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement)?;
     if polynomials.len() != 1 {
         return Err(invalid_batch(format!(
-            "Akita packed proof expects one packed witness polynomial, got {}",
+            "Akita packing proof expects one packed witness polynomial, got {}",
             polynomials.len()
         )));
     }
     if polynomials[0].num_vars() != shape.commitment.num_vars {
         return Err(invalid_batch(format!(
-            "Akita packed witness polynomial has {} variables but commitment has {}",
+            "Akita packing witness polynomial has {} variables but commitment has {}",
             polynomials[0].num_vars(),
             shape.commitment.num_vars
         )));
     }
     if hints.len() != 1 || !hints[0].matches_commitment(&shape.commitment) {
         return Err(invalid_batch(
-            "Akita packed proof requires one hint matching the packed witness commitment",
+            "Akita packing proof requires one hint matching the packed witness commitment",
         ));
     }
     Ok(())
 }
 
 fn validate_packed_adapter_verifier_inputs<OpeningId, RelationId>(
-    setup: &<AkitaPackedScheme as CommitmentScheme>::VerifierSetup,
+    setup: &<AkitaPackingScheme as CommitmentScheme>::VerifierSetup,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
 ) -> Result<(), OpeningsError> {
     validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement).map(|_| ())
@@ -338,7 +338,7 @@ fn validate_packed_adapter_statement<'a, Setup, OpeningId, RelationId>(
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
 ) -> Result<PackedBatchShape<'a>, OpeningsError>
 where
-    Setup: AkitaPackedSetupShape,
+    Setup: AkitaPackingSetupShape,
 {
     let commitment = validate_packing_statement(layout, statement)?;
     validate_packed_setup_shape(
@@ -351,7 +351,7 @@ where
 }
 
 fn validate_packed_source_prover_inputs<'a, OpeningId, RelationId, S>(
-    setup: &'a <AkitaPackedScheme as CommitmentScheme>::ProverSetup,
+    setup: &'a <AkitaPackingScheme as CommitmentScheme>::ProverSetup,
     statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
     source: &S,
     hint: &AkitaProverHint,
@@ -365,23 +365,23 @@ where
         || source_layout.dimension != shape.layout.dimension
     {
         return Err(invalid_batch(
-            "Akita packed witness source layout does not match packed statement",
+            "Akita packing witness source layout does not match packed statement",
         ));
     }
     if !hint.matches_commitment(&shape.commitment) {
         return Err(invalid_batch(
-            "Akita packed proof requires one hint matching the packed witness commitment",
+            "Akita packing proof requires one hint matching the packed witness commitment",
         ));
     }
     Ok(shape)
 }
 
-trait AkitaPackedSetupShape {
+trait AkitaPackingSetupShape {
     fn max_num_vars(&self) -> usize;
     fn default_layout_digest(&self) -> [u8; 32];
 }
 
-impl AkitaPackedSetupShape for AkitaProverSetup {
+impl AkitaPackingSetupShape for AkitaProverSetup {
     fn max_num_vars(&self) -> usize {
         self.max_num_vars
     }
@@ -391,7 +391,7 @@ impl AkitaPackedSetupShape for AkitaProverSetup {
     }
 }
 
-impl AkitaPackedSetupShape for AkitaVerifierSetup {
+impl AkitaPackingSetupShape for AkitaVerifierSetup {
     fn max_num_vars(&self) -> usize {
         self.max_num_vars
     }
@@ -415,29 +415,29 @@ fn validate_packed_setup_shape(
     }
     if commitment.num_vars != max_num_vars {
         return Err(invalid_batch(format!(
-            "Akita packed commitment dimension {} does not match exact setup dimension {}",
+            "Akita packing commitment dimension {} does not match exact setup dimension {}",
             commitment.num_vars, max_num_vars
         )));
     }
     if commitment.layout_digest != default_layout_digest {
         return Err(invalid_batch(
-            "Akita packed commitment layout digest does not match setup",
+            "Akita packing commitment layout digest does not match setup",
         ));
     }
     if commitment.layout_digest != layout.digest {
         return Err(invalid_batch(
-            "Akita packed commitment layout digest does not match setup layout",
+            "Akita packing commitment layout digest does not match setup layout",
         ));
     }
     if commitment.num_vars != layout.dimension {
         return Err(invalid_batch(format!(
-            "Akita packed commitment dimension {} does not match layout dimension {}",
+            "Akita packing commitment dimension {} does not match layout dimension {}",
             commitment.num_vars, layout.dimension
         )));
     }
     if commitment.poly_count != 1 {
         return Err(invalid_batch(format!(
-            "Akita packed witness commitment must contain one polynomial, got {}",
+            "Akita packing witness commitment must contain one polynomial, got {}",
             commitment.poly_count
         )));
     }
@@ -453,12 +453,12 @@ where
     let layout = source.layout();
     if layout.cells == 0 {
         return Err(invalid_batch(
-            "Akita packed witness layout must contain at least one cell",
+            "Akita packing witness layout must contain at least one cell",
         ));
     }
     if layout.dimension >= usize::BITS as usize {
         return Err(invalid_batch(format!(
-            "Akita packed witness dimension {} exceeds usize bit width",
+            "Akita packing witness dimension {} exceeds usize bit width",
             layout.dimension
         )));
     }
@@ -468,7 +468,7 @@ where
     }
     if layout.cells > domain_size {
         return Err(invalid_batch(format!(
-            "Akita packed witness has {} cells but dimension {} supports {domain_size}",
+            "Akita packing witness has {} cells but dimension {} supports {domain_size}",
             layout.cells, layout.dimension
         )));
     }
@@ -482,14 +482,14 @@ where
         }
         if rank >= layout.cells {
             result = Err(invalid_batch(format!(
-                "Akita packed witness source emitted rank {rank} outside {} real cells",
+                "Akita packing witness source emitted rank {rank} outside {} real cells",
                 layout.cells
             )));
             return;
         }
         if !seen.insert(rank) {
             result = Err(invalid_batch(format!(
-                "Akita packed witness source emitted rank {rank} more than once"
+                "Akita packing witness source emitted rank {rank} more than once"
             )));
             return;
         }
@@ -545,7 +545,7 @@ fn singleton_statement(
 )]
 fn unsupported_dense_packed_path(operation: &str) -> ! {
     panic!(
-        "AkitaPackedScheme::{operation} cannot be used for dense proof-owned polynomials; use commit_packed_source/prove_packed_source_batch for W_pack or AkitaScheme direct openings for precommitted objects"
+        "AkitaPackingScheme::{operation} cannot be used for dense proof-owned polynomials; use commit_packing_source/prove_packing_source_batch for W_pack or AkitaScheme direct openings for precommitted objects"
     )
 }
 
@@ -564,5 +564,5 @@ fn invalid_batch(reason: impl Into<String>) -> OpeningsError {
 }
 
 fn transparent_zk_error() -> OpeningsError {
-    invalid_batch("Akita packed batch openings do not support ZK mode yet")
+    invalid_batch("Akita packing batch openings do not support ZK mode yet")
 }

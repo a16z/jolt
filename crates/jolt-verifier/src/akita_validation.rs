@@ -1,6 +1,6 @@
 use crate::{
     akita::{
-        AkitaPackedBatchProof, AkitaPackedVerifierSetup, AkitaPackedWitnessArtifacts,
+        AkitaPackingBatchProof, AkitaPackingVerifierSetup, AkitaPackingWitnessArtifacts,
         AkitaVerifierPreprocessing,
     },
     config::{validate_protocol_config, JoltProtocolConfig, PcsFamily},
@@ -13,10 +13,10 @@ use jolt_field::FixedByteSize;
 use jolt_openings::PackedWitnessLayout;
 
 pub(crate) fn validate_akita_artifacts_for_proof(
-    setup: &AkitaPackedVerifierSetup,
+    setup: &AkitaPackingVerifierSetup,
     proof_protocol: &JoltProtocolConfig,
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
 ) -> Result<(), VerifierError> {
     validate_akita_verifier_setup_layout(setup, &artifacts.layout)?;
     validate_lattice_packed_witness_layout_config(&artifacts.protocol, &artifacts.layout)?;
@@ -30,7 +30,7 @@ pub(crate) fn validate_akita_artifacts_for_proof(
         artifacts
             .payload()
             .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                reason: "Akita proof assembly requires Akita packed witness artifacts".to_string(),
+                reason: "Akita proof assembly requires Akita packing witness artifacts".to_string(),
             })?;
     let proof_payload =
         proof_commitments
@@ -48,7 +48,7 @@ pub(crate) fn validate_akita_artifacts_for_proof(
 }
 
 pub(crate) fn validate_akita_verifier_setup_config(
-    setup: &AkitaPackedVerifierSetup,
+    setup: &AkitaPackingVerifierSetup,
     config: &JoltProtocolConfig,
 ) -> Result<(), VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
@@ -88,7 +88,7 @@ pub(crate) fn validate_akita_verifier_setup_config(
 }
 
 pub(crate) fn validate_akita_proof_payload_shape(
-    setup: &AkitaPackedVerifierSetup,
+    setup: &AkitaPackingVerifierSetup,
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
 ) -> Result<(), VerifierError> {
     let payload =
@@ -101,19 +101,20 @@ pub(crate) fn validate_akita_proof_payload_shape(
     validate_akita_verifier_setup_shape(setup, payload.layout_digest, payload.d_pack)?;
     if payload.packed_witness.layout_digest != payload.layout_digest {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita packed witness commitment layout digest does not match proof payload"
+            reason: "Akita packing witness commitment layout digest does not match proof payload"
                 .to_string(),
         });
     }
     if payload.packed_witness.num_vars != payload.d_pack {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita packed witness commitment dimension does not match proof payload D_pack"
-                .to_string(),
+            reason:
+                "Akita packing witness commitment dimension does not match proof payload D_pack"
+                    .to_string(),
         });
     }
     if payload.packed_witness.poly_count != 1 {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita packed witness commitment must contain exactly one polynomial"
+            reason: "Akita packing witness commitment must contain exactly one polynomial"
                 .to_string(),
         });
     }
@@ -123,7 +124,7 @@ pub(crate) fn validate_akita_proof_payload_shape(
 
 pub(crate) fn validate_akita_opening_proof_payload_shape(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
-    opening_proof: &AkitaPackedBatchProof,
+    opening_proof: &AkitaPackingBatchProof,
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
@@ -156,21 +157,21 @@ pub(crate) fn validate_akita_opening_proof_payload_shape(
     }
     if let Some(reduction) = &opening_proof.reduction {
         validate_akita_field_bytes(
-            "Akita packed reduction opening eval",
+            "Akita packing reduction opening eval",
             &reduction.opening_eval,
         )?;
         for round in &reduction.rounds {
             for eval in round {
-                validate_akita_field_bytes("Akita packed reduction round eval", eval)?;
+                validate_akita_field_bytes("Akita packing reduction round eval", eval)?;
             }
         }
     }
     Ok(())
 }
 
-pub(crate) fn validate_akita_packed_opening_proof_payload_shape(
+pub(crate) fn validate_akita_packing_opening_proof_payload_shape(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
-    opening_proof: &AkitaPackedBatchProof,
+    opening_proof: &AkitaPackingBatchProof,
     field: &'static str,
 ) -> Result<(), VerifierError> {
     validate_akita_opening_proof_payload_shape(proof_commitments, opening_proof)?;
@@ -184,7 +185,7 @@ pub(crate) fn validate_akita_packed_opening_proof_payload_shape(
 
 pub(crate) fn validate_akita_precommitted_opening_proof_payload_shapes(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
-    opening_proofs: &[AkitaPackedBatchProof],
+    opening_proofs: &[AkitaPackingBatchProof],
 ) -> Result<(), VerifierError> {
     for opening_proof in opening_proofs {
         validate_akita_precommitted_opening_proof_payload_shape(proof_commitments, opening_proof)?;
@@ -194,7 +195,7 @@ pub(crate) fn validate_akita_precommitted_opening_proof_payload_shapes(
 
 fn validate_akita_precommitted_opening_proof_payload_shape(
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
-    opening_proof: &AkitaPackedBatchProof,
+    opening_proof: &AkitaPackingBatchProof,
 ) -> Result<(), VerifierError> {
     let payload =
         proof_commitments
@@ -351,7 +352,7 @@ pub(crate) fn validate_akita_precommitted_commitment_is_separate(
 }
 
 pub(crate) fn validate_akita_verifier_setup_layout(
-    setup: &AkitaPackedVerifierSetup,
+    setup: &AkitaPackingVerifierSetup,
     layout: &PackedWitnessLayout,
 ) -> Result<(), VerifierError> {
     validate_akita_verifier_setup_shape(setup, layout.digest, layout.dimension)?;
@@ -366,7 +367,7 @@ pub(crate) fn validate_akita_verifier_setup_layout(
 }
 
 fn validate_akita_verifier_setup_shape(
-    setup: &AkitaPackedVerifierSetup,
+    setup: &AkitaPackingVerifierSetup,
     expected_digest: [u8; 32],
     expected_dimension: usize,
 ) -> Result<(), VerifierError> {

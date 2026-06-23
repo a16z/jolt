@@ -1,10 +1,10 @@
 use crate::{
     akita::{
-        prove_akita_packed_openings, AkitaClearVectorCommitment, AkitaJoltProof,
-        AkitaPackedBatchProof, AkitaPackedProverSetup, AkitaPackedWitnessArtifacts,
+        prove_akita_packing_openings, AkitaClearVectorCommitment, AkitaJoltProof,
+        AkitaPackingBatchProof, AkitaPackingProverSetup, AkitaPackingWitnessArtifacts,
         AkitaVerifierPreprocessing,
     },
-    akita_packed::AkitaPackedScheme,
+    akita_packing::AkitaPackingScheme,
     akita_validation::validate_akita_artifacts_for_proof,
     proof::{ClearOnlyCommitment, JoltProofClaims},
     stages::{
@@ -37,20 +37,20 @@ use jolt_sumcheck::{
 use jolt_transcript::Transcript;
 
 #[derive(Clone, Debug)]
-pub struct AkitaPackedValidityProofArtifacts {
+pub struct AkitaPackingValidityProofArtifacts {
     pub sumcheck_proof: SumcheckProof<AkitaField, ClearOnlyCommitment>,
     pub opening_claims: LatticePackedValidityOutputClaims<AkitaField>,
-    pub opening_proof: AkitaPackedBatchProof,
+    pub opening_proof: AkitaPackingBatchProof,
 }
 
-pub fn prove_akita_packed_validity<T, S>(
-    setup: &AkitaPackedProverSetup,
+pub fn prove_akita_packing_validity<T, S>(
+    setup: &AkitaPackingProverSetup,
     transcript: &mut T,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
-) -> Result<AkitaPackedValidityProofArtifacts, VerifierError>
+) -> Result<AkitaPackingValidityProofArtifacts, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
@@ -58,7 +58,7 @@ where
     if source.layout() != &artifacts.layout {
         return Err(
             VerifierError::LatticePackedValidityOpeningVerificationFailed {
-                reason: "Akita packed validity source layout does not match committed artifact"
+                reason: "Akita packing validity source layout does not match committed artifact"
                     .to_string(),
             },
         );
@@ -84,14 +84,14 @@ where
         .map(|statement| statement.num_vars)
         .max()
         .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
-            reason: "cannot prove an empty Akita packed validity batch".to_string(),
+            reason: "cannot prove an empty Akita packing validity batch".to_string(),
         })?;
     let max_degree = statements
         .iter()
         .map(|statement| statement.degree)
         .max()
         .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
-            reason: "cannot prove an empty Akita packed validity batch".to_string(),
+            reason: "cannot prove an empty Akita packing validity batch".to_string(),
         })?;
 
     let (compressed, reduction) = prove_combined_validity_sumcheck(
@@ -119,7 +119,7 @@ where
             .payload()
             .ok_or_else(
                 || VerifierError::LatticePackedValidityOpeningVerificationFailed {
-                    reason: "Akita packed validity artifacts do not carry a lattice payload"
+                    reason: "Akita packing validity artifacts do not carry a lattice payload"
                         .to_string(),
                 },
             )?
@@ -133,18 +133,18 @@ where
         return Err(VerifierError::LatticePackedValidityOutputMismatch);
     }
     let opening_proof =
-        prove_akita_packed_openings(setup, transcript, artifacts, source, &batch.statement)?;
+        prove_akita_packing_openings(setup, transcript, artifacts, source, &batch.statement)?;
 
-    Ok(AkitaPackedValidityProofArtifacts {
+    Ok(AkitaPackingValidityProofArtifacts {
         sumcheck_proof: SumcheckProof::Clear(ClearProof::Compressed(compressed)),
         opening_claims: LatticePackedValidityOutputClaims { opening_claims },
         opening_proof,
     })
 }
 
-pub fn attach_akita_packed_validity_proof(
+pub fn attach_akita_packing_validity_proof(
     proof: &mut AkitaJoltProof,
-    validity: AkitaPackedValidityProofArtifacts,
+    validity: AkitaPackingValidityProofArtifacts,
 ) -> Result<(), VerifierError> {
     proof.stages.lattice_packed_validity_sumcheck_proof = Some(validity.sumcheck_proof);
     proof.lattice_packed_validity_opening_proof = Some(validity.opening_proof);
@@ -156,14 +156,14 @@ pub fn attach_akita_packed_validity_proof(
 }
 
 pub fn prove_akita_jolt_packed_validity<T, S>(
-    setup: &AkitaPackedProverSetup,
+    setup: &AkitaPackingProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &AkitaJoltProof,
     trusted_advice_commitment: Option<&AkitaCommitment>,
-    artifacts: &AkitaPackedWitnessArtifacts,
+    artifacts: &AkitaPackingWitnessArtifacts,
     source: &S,
-) -> Result<AkitaPackedValidityProofArtifacts, VerifierError>
+) -> Result<AkitaPackingValidityProofArtifacts, VerifierError>
 where
     T: Transcript<Challenge = AkitaField>,
     S: PackedWitnessSource<AkitaField>,
@@ -177,7 +177,7 @@ where
     let (checked, mut transcript) =
         crate::verifier::lattice_packed_validity_transcript_with_config::<
             AkitaField,
-            AkitaPackedScheme,
+            AkitaPackingScheme,
             AkitaClearVectorCommitment,
             T,
             _,
@@ -188,7 +188,7 @@ where
             trusted_advice_commitment,
             &artifacts.protocol,
         )?;
-    prove_akita_packed_validity(
+    prove_akita_packing_validity(
         setup,
         &mut transcript,
         artifacts,

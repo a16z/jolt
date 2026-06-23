@@ -29,7 +29,7 @@ In scope:
 Out of scope:
 
 ```text
-- Akita packed-view protocol details
+- Akita packing-view protocol details
 - concrete jolt-akita crate internals
 - multipoint opening support beyond the final Jolt use case
 - Akita ZK opening support
@@ -290,7 +290,7 @@ Akita implementation:
 6. derive logical coefficients internally for claim binding.
 ```
 
-Only the W_pack partition is an Akita packed-view relation. The precommitted
+Only the W_pack partition is an Akita packing-view relation. The precommitted
 partition is required because Akita does not provide the additive homomorphism
 needed to batch unrelated commitments into W_pack after the commitments were
 already fixed. Copying precommitted values into W_pack can be useful only for a
@@ -642,7 +642,7 @@ packed_combine_binds_logical_coefficients:
 packed_view_rejects_unsupported_formula:
   unsupported PhysicalView variants fail before proof verification.
 
-akita_packed_view_statement_has_one_commitment:
+akita_packing_view_statement_has_one_commitment:
   lattice-family statement has one PackedWitness commitment and no Stage 8
   Dory-style joint commitment requirement.
 

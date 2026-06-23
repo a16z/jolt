@@ -3,7 +3,7 @@
 #[cfg(feature = "akita")]
 pub mod akita;
 #[cfg(feature = "akita")]
-mod akita_packed;
+mod akita_packing;
 #[cfg(feature = "akita")]
 mod akita_validation;
 #[cfg(feature = "akita")]
@@ -21,15 +21,15 @@ mod verifier;
 
 #[cfg(feature = "akita")]
 pub use akita::{
-    akita_lattice_protocol_config_for_layout, attach_akita_packed_validity_proof,
-    commit_akita_packed_witness, commit_akita_packed_witness_with_config,
+    akita_lattice_protocol_config_for_layout, attach_akita_packing_validity_proof,
+    commit_akita_packing_witness, commit_akita_packing_witness_with_config,
     prove_akita_jolt_final_openings, prove_akita_jolt_final_openings_with_precommitted,
-    prove_akita_jolt_packed_validity, prove_akita_packed_openings, prove_akita_packed_validity,
+    prove_akita_jolt_packed_validity, prove_akita_packing_openings, prove_akita_packing_validity,
     prove_akita_stage8_clear_openings, prove_akita_stage8_clear_openings_with_precommitted,
     prove_and_attach_akita_opening_proofs, prove_and_attach_akita_opening_proofs_with_precommitted,
     verify_akita_clear, AkitaClearVectorCommitment, AkitaJoltProof,
-    AkitaPackedValidityProofArtifacts, AkitaPackedWitnessArtifacts, AkitaPrecommittedOpeningInput,
-    AkitaStage8ClearOpeningProofs, AkitaVerifierPreprocessing,
+    AkitaPackingValidityProofArtifacts, AkitaPackingWitnessArtifacts,
+    AkitaPrecommittedOpeningInput, AkitaStage8ClearOpeningProofs, AkitaVerifierPreprocessing,
 };
 pub use config::{
     validate_proof_config, validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,

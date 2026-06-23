@@ -256,7 +256,7 @@ Add targeted unit tests for:
 
 ### Performance
 
-The expected large-trace Akita packed-polynomial count changes from the implemented byte/sign fused increment layout to the unsigned-offset chunk layout.
+The expected large-trace Akita packing-polynomial count changes from the implemented byte/sign fused increment layout to the unsigned-offset chunk layout.
 For `log_k_chunk = 8`, the preferred packed layout orders fixed-width families first:
 
 ```text
@@ -267,7 +267,7 @@ at most 3 BytecodeRa
  1 shared slot for UnsignedIncMsb plus smaller advice/bytecode material
 ```
 
-The target is to fit the dominant Akita packed main commitment into 32 size-`256 * T` lanes for large traces.
+The target is to fit the dominant Akita packing main commitment into 32 size-`256 * T` lanes for large traces.
 `UnsignedIncMsb` must not consume a full size-`256 * T` lane by itself.
 The RAM and bytecode counts above are practical upper estimates for the current presets, not protocol constants.
 If a future parameter choice exceeds those estimates, the Akita layout may add padding lanes.

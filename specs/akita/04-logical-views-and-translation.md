@@ -301,7 +301,7 @@ Stage 6/7:
 
 Stage 8:
   deterministic direct/linear translation of final logical claims.
-  final Akita packed-view opening over W_pack for proof-owned packed claims.
+  final Akita packing-view opening over W_pack for proof-owned packed claims.
   separate precommitted openings for TrustedAdvice, BytecodeChunk(i), and
   ProgramImageInit.
   separate direct/native openings for precommitted linear views. For current

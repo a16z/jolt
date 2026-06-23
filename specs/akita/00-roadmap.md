@@ -549,7 +549,7 @@ Target performance:
 - Proof-owned advice data uses canonical byte-limb one-hot representations.
 - Precommitted bytecode/program-image data keeps separate commitment openings.
 - Field-inline has a separate packed family inside W_pack.
-- The verifier opens one Akita packed-view relation for proof-owned same-point
+- The verifier opens one Akita packing-view relation for proof-owned same-point
   claims whenever the PIOP has reduced claims to a common r, plus separate
   openings for any precommitted claims.
 ```
