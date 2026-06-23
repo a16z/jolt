@@ -155,7 +155,7 @@ fn validate_akita_jolt_packed_witness_layout(
         if jolt_packed_witness_family_is_precommitted(&family.id) {
             return Err(VerifierError::InvalidProtocolConfig {
                 reason: format!(
-                    "precommitted family {:?} cannot be included in the Akita packing witness layout",
+                    "precommitted family {:?} cannot be included in the lattice packing witness layout",
                     family.id
                 ),
             });
@@ -355,7 +355,7 @@ where
     validate_lattice_packed_witness_layout_config(&protocol, &layout)?;
     let (commitment, hint) =
         AkitaPackingScheme::commit_packing_source(setup, source).map_err(|error| {
-            VerifierError::AkitaCommitmentFailed {
+            VerifierError::LatticePackingCommitmentFailed {
                 reason: error.to_string(),
             }
         })?;
@@ -891,9 +891,9 @@ fn padded_slice<T: Clone + Default>(
 }
 
 fn akita_witness_error(reason: impl ToString) -> VerifierError {
-    VerifierError::AkitaCommitmentFailed {
+    VerifierError::LatticePackingCommitmentFailed {
         reason: format!(
-            "Akita packing witness packing failed: {}",
+            "lattice packing witness packing failed: {}",
             reason.to_string()
         ),
     }
@@ -1197,7 +1197,7 @@ mod tests {
                 &missing_reduction_eval,
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
-                if reason.contains("Akita packing reduction opening eval")
+                if reason.contains("lattice packing reduction opening eval")
         ));
 
         let mut noncanonical_reduction_eval = proof.clone();

@@ -30,7 +30,8 @@ pub(crate) fn validate_akita_artifacts_for_proof(
         artifacts
             .payload()
             .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                reason: "Akita proof assembly requires Akita packing witness artifacts".to_string(),
+                reason: "lattice proof assembly requires lattice packing witness artifacts"
+                    .to_string(),
             })?;
     let proof_payload =
         proof_commitments
@@ -41,7 +42,7 @@ pub(crate) fn validate_akita_artifacts_for_proof(
             })?;
     if proof_payload != artifact_payload {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita proof commitments do not match packed witness artifacts".to_string(),
+            reason: "lattice proof commitments do not match packed witness artifacts".to_string(),
         });
     }
     Ok(())
@@ -101,20 +102,20 @@ pub(crate) fn validate_akita_proof_payload_shape(
     validate_akita_verifier_setup_shape(setup, payload.layout_digest, payload.d_pack)?;
     if payload.packed_witness.layout_digest != payload.layout_digest {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita packing witness commitment layout digest does not match proof payload"
+            reason: "lattice packing witness commitment layout digest does not match proof payload"
                 .to_string(),
         });
     }
     if payload.packed_witness.num_vars != payload.d_pack {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
-                "Akita packing witness commitment dimension does not match proof payload D_pack"
+                "lattice packing witness commitment dimension does not match proof payload D_pack"
                     .to_string(),
         });
     }
     if payload.packed_witness.poly_count != 1 {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita packing witness commitment must contain exactly one polynomial"
+            reason: "lattice packing witness commitment must contain exactly one polynomial"
                 .to_string(),
         });
     }
@@ -157,12 +158,12 @@ pub(crate) fn validate_akita_opening_proof_payload_shape(
     }
     if let Some(reduction) = &opening_proof.reduction {
         validate_akita_field_bytes(
-            "Akita packing reduction opening eval",
+            "lattice packing reduction opening eval",
             &reduction.opening_eval,
         )?;
         for round in &reduction.rounds {
             for eval in round {
-                validate_akita_field_bytes("Akita packing reduction round eval", eval)?;
+                validate_akita_field_bytes("lattice packing reduction round eval", eval)?;
             }
         }
     }

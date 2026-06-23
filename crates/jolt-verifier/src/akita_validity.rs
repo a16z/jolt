@@ -58,7 +58,7 @@ where
     if source.layout() != &artifacts.layout {
         return Err(
             VerifierError::LatticePackedValidityOpeningVerificationFailed {
-                reason: "Akita packing validity source layout does not match committed artifact"
+                reason: "lattice packed validity source layout does not match committed artifact"
                     .to_string(),
             },
         );
@@ -84,14 +84,14 @@ where
         .map(|statement| statement.num_vars)
         .max()
         .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
-            reason: "cannot prove an empty Akita packing validity batch".to_string(),
+            reason: "cannot prove an empty lattice packed validity batch".to_string(),
         })?;
     let max_degree = statements
         .iter()
         .map(|statement| statement.degree)
         .max()
         .ok_or_else(|| VerifierError::LatticePackedValiditySumcheckFailed {
-            reason: "cannot prove an empty Akita packing validity batch".to_string(),
+            reason: "cannot prove an empty lattice packed validity batch".to_string(),
         })?;
 
     let (compressed, reduction) = prove_combined_validity_sumcheck(
@@ -119,7 +119,7 @@ where
             .payload()
             .ok_or_else(
                 || VerifierError::LatticePackedValidityOpeningVerificationFailed {
-                    reason: "Akita packing validity artifacts do not carry a lattice payload"
+                    reason: "lattice packed validity artifacts do not carry a lattice payload"
                         .to_string(),
                 },
             )?

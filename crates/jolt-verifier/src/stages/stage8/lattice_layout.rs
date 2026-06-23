@@ -34,7 +34,7 @@ pub fn derive_lattice_packed_witness_layout(
 ) -> Result<PackingWitnessLayout, VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
         return Err(invalid_lattice_config(
-            "Akita packing witness layout derivation requires lattice PCS mode",
+            "lattice packing witness layout derivation requires lattice PCS mode",
         ));
     }
 
@@ -97,7 +97,7 @@ pub fn derive_lattice_packed_validity_requirements(
 ) -> Result<Vec<LatticePackedValidityRequirement>, VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
         return Err(invalid_lattice_config(
-            "Akita packing witness validity derivation requires lattice PCS mode",
+            "lattice packed validity derivation requires lattice PCS mode",
         ));
     }
 
@@ -139,7 +139,7 @@ pub fn validate_lattice_packed_witness_validity_config(
     let digest = lattice_packed_validity_digest(&requirements);
     if config.lattice.packed_witness.validity_digest != Some(digest) {
         return Err(invalid_lattice_config(
-            "configured Akita packing witness validity digest does not match derived requirements",
+            "configured lattice packed validity digest does not match derived requirements",
         ));
     }
     Ok(())
@@ -151,23 +151,23 @@ pub fn validate_lattice_packed_witness_layout_config(
 ) -> Result<(), VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
         return Err(invalid_lattice_config(
-            "Akita packing witness layout validation requires lattice PCS mode",
+            "lattice packing witness layout validation requires lattice PCS mode",
         ));
     }
     if config.lattice.packed_witness.layout_digest != Some(layout.digest) {
         return Err(invalid_lattice_config(
-            "configured Akita packing witness layout digest does not match derived layout",
+            "configured lattice packing witness layout digest does not match derived layout",
         ));
     }
     if config.lattice.packed_witness.d_pack != Some(layout.dimension) {
         return Err(invalid_lattice_config(
-            "configured Akita packing witness D_pack does not match derived layout",
+            "configured lattice packing witness D_pack does not match derived layout",
         ));
     }
     for family in &layout.families {
         if packed_family_is_precommitted(&family.id) {
             return Err(invalid_lattice_config(format!(
-                "precommitted family {:?} cannot be included in the Akita packing witness layout",
+                "precommitted family {:?} cannot be included in the lattice packing witness layout",
                 family.id
             )));
         }

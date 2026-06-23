@@ -1508,7 +1508,7 @@ fn layout_config_rejects_precommitted_packed_families() {
         assert!(matches!(
             validate_lattice_packed_witness_layout_config(&config, &layout),
             Err(VerifierError::InvalidProtocolConfig { reason })
-                if reason.contains("cannot be included in the Akita packing witness layout")
+                    if reason.contains("cannot be included in the lattice packing witness layout")
         ));
     }
 }
