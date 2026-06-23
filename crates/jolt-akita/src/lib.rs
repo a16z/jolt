@@ -8,6 +8,7 @@ mod native;
 mod scheme;
 mod transcript;
 mod types;
+mod zk;
 
 pub use scheme::AkitaScheme;
 pub use types::{
