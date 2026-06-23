@@ -419,7 +419,7 @@ fn format_advice_load_operands(word: u32) -> NormalizedOperands {
         rd: Some(rd(word)),
         rs1: None,
         rs2: None,
-        imm: (word as i32 as i64 as u64) as i128,
+        imm: 0,
     }
 }
 
