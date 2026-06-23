@@ -3,6 +3,8 @@
 #[cfg(feature = "akita")]
 pub mod akita;
 #[cfg(feature = "akita")]
+mod akita_openings;
+#[cfg(feature = "akita")]
 mod akita_packing;
 #[cfg(feature = "akita")]
 mod akita_validation;
