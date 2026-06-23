@@ -861,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_key_transcript_binds_native_shape_without_upstream_revision() {
+    fn setup_key_transcript_binds_native_shape() {
         let setup = AkitaVerifierSetup {
             max_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
