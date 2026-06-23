@@ -48,6 +48,7 @@ use jolt_verifier::{
             ProgramImageCyclePhaseOutputClaim, RamHammingBooleanityOutputOpeningClaims,
             RamRaVirtualizationOutputOpeningClaims, Stage6AddressPhaseClaims,
             Stage6AdviceCyclePhaseClaims, Stage6Claims,
+            UnsignedIncClaimReductionOutputOpeningClaims,
         },
         stage7::inputs::{
             AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
@@ -84,7 +85,7 @@ pub(crate) fn build_clear_claims<F: Field>(
         stage5_increment: has_lattice_stage5_increment
             .then(|| stage5_increment_claims_from_openings(&claims))
             .transpose()?,
-        stage6: stage6_claims_from_openings(&claims)?,
+        stage6: stage6_claims_from_openings(&claims, has_lattice_stage5_increment)?,
         stage7: stage7_claims_from_openings(&claims)?,
     })
 }
@@ -312,6 +313,7 @@ fn stage5_increment_claims_from_openings<F: Field>(
 
 fn stage6_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
+    lattice_increment: bool,
 ) -> Result<Stage6Claims<F>, VerifierError> {
     let mut bytecode_ra = Vec::new();
     for index in 0.. {
@@ -409,6 +411,12 @@ fn stage6_claims_from_openings<F: Field>(
     let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
     let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
     let booleanity_address = booleanity::booleanity_address_phase_opening();
+    let unsigned_inc_chunks = unsigned_inc_chunk_claims_from_openings(claims);
+    if lattice_increment && unsigned_inc_chunks.is_empty() {
+        return Err(VerifierError::MissingOpeningClaim {
+            id: lattice::unsigned_inc_chunk_opening(0),
+        });
+    }
 
     Ok(Stage6Claims {
         address_phase: Stage6AddressPhaseClaims {
@@ -421,7 +429,7 @@ fn stage6_claims_from_openings<F: Field>(
             instruction_ra: booleanity_instruction_ra,
             bytecode_ra: booleanity_bytecode_ra,
             ram_ra: booleanity_ram_ra,
-            unsigned_inc_chunks: Vec::new(),
+            unsigned_inc_chunks,
         },
         ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
             ram_hamming_weight: claims.require(ram_hamming_weight)?,
@@ -430,11 +438,22 @@ fn stage6_claims_from_openings<F: Field>(
         instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
             committed_instruction_ra,
         },
-        inc_claim_reduction: Some(IncClaimReductionOutputOpeningClaims {
-            ram_inc: claims.require(ram_inc)?,
-            rd_inc: claims.require(rd_inc)?,
-        }),
-        unsigned_inc_claim_reduction: None,
+        inc_claim_reduction: (!lattice_increment)
+            .then(|| {
+                Ok::<_, VerifierError>(IncClaimReductionOutputOpeningClaims {
+                    ram_inc: claims.require(ram_inc)?,
+                    rd_inc: claims.require(rd_inc)?,
+                })
+            })
+            .transpose()?,
+        unsigned_inc_claim_reduction: lattice_increment
+            .then(|| {
+                Ok::<_, VerifierError>(UnsignedIncClaimReductionOutputOpeningClaims {
+                    unsigned_inc: claims.require(lattice::unsigned_inc_opening())?,
+                    unsigned_inc_msb: claims.require(lattice::unsigned_inc_msb_opening())?,
+                })
+            })
+            .transpose()?,
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_openings(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_openings(claims, JoltAdviceKind::Untrusted),
@@ -492,6 +511,17 @@ fn final_bytecode_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<
         let Some(opening_claim) = claims.get(
             bytecode_claim_reduction::final_bytecode_chunk_opening(chunk_idx),
         ) else {
+            break;
+        };
+        chunks.push(opening_claim);
+    }
+    chunks
+}
+
+fn unsigned_inc_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<F>) -> Vec<F> {
+    let mut chunks = Vec::new();
+    for index in 0.. {
+        let Some(opening_claim) = claims.get(lattice::unsigned_inc_chunk_opening(index)) else {
             break;
         };
         chunks.push(opening_claim);
