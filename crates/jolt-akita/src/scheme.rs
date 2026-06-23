@@ -826,5 +826,5 @@ fn transparent_zk_error() -> OpeningsError {
 }
 
 #[cfg(test)]
-#[path = "backend_tests.rs"]
+#[path = "scheme_tests.rs"]
 mod tests;
