@@ -2,6 +2,7 @@ pub mod inputs;
 #[cfg(feature = "akita")]
 mod lattice;
 pub mod outputs;
+mod precommitted;
 mod verify;
 
 pub use inputs::{deps, Deps};
