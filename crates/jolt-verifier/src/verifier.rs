@@ -336,53 +336,6 @@ where
     Ok(())
 }
 
-pub(crate) fn stage8_batch_statement<F, PCS, VC, T, ZkProof>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    trusted_advice_commitment: Option<&PCS::Output>,
-    zk: bool,
-) -> Result<stage8::Stage8BatchStatement<F, PCS::Output>, VerifierError>
-where
-    F: Field + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
-    VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
-{
-    stage8_batch_statement_with_config::<F, PCS, VC, T, ZkProof>(
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment,
-        &JoltProtocolConfig::for_zk(zk),
-    )
-}
-
-pub(crate) fn stage8_batch_statement_with_config<F, PCS, VC, T, ZkProof>(
-    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    trusted_advice_commitment: Option<&PCS::Output>,
-    config: &JoltProtocolConfig,
-) -> Result<stage8::Stage8BatchStatement<F, PCS::Output>, VerifierError>
-where
-    F: Field + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
-    VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
-{
-    stage8_batch_statement_with_config_and_transcript::<F, PCS, VC, T, ZkProof>(
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment,
-        config,
-    )
-    .map(|(statement, _transcript)| statement)
-}
-
 pub(crate) fn stage8_batch_statement_with_config_and_transcript<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -1462,20 +1415,6 @@ mod tests {
             ..JoltDevice::default()
         };
         let proof = proof_with_zk(false, clear_claims());
-
-        let result = stage8_batch_statement_with_config::<
-            Fr,
-            TestPcs,
-            Pedersen<Bn254G1>,
-            jolt_transcript::Blake2bTranscript,
-            _,
-        >(&preprocessing, &public_io, &proof, None, &config);
-
-        assert!(matches!(
-            result,
-            Err(VerifierError::ProtocolConfigMismatch { expected, got })
-                if expected == config && got == JoltProtocolConfig::for_zk(false)
-        ));
 
         let result_with_transcript = stage8_batch_statement_with_config_and_transcript::<
             Fr,

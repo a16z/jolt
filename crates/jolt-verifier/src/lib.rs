@@ -20,7 +20,6 @@ pub mod error;
 mod lattice_surface;
 pub mod preprocessing;
 pub mod proof;
-pub mod prover_support;
 pub mod stages;
 mod verifier;
 

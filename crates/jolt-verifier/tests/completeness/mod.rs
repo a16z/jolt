@@ -1,7 +1,6 @@
 pub mod advice;
 pub mod cases;
 pub mod fixtures;
-pub mod stage8;
 pub mod standard;
 pub mod zk;
 
