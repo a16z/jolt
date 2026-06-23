@@ -440,9 +440,10 @@ pub(crate) unsafe fn sha256_compression_initial(_input: *const u32, _state: *mut
 fn swap_bytes(mut v: u32) -> u32 {
     unsafe {
         core::arch::asm!(
-            ".insn i {opcode}, {funct3}, {r_inout}, {r_inout}, 0",
-            opcode = const crate::VIRTUAL_INSTRUCTION_TYPE_I_OPCODE,
-            funct3 = const crate::REV8W_FUNCT3,
+            ".insn r {opcode}, {funct3}, {funct7}, {r_inout}, {r_inout}, x0",
+            opcode = const crate::CUSTOM_OPCODE,
+            funct3 = const crate::FUNCT3_VIRTUAL_R,
+            funct7 = const crate::FUNCT7_VIRTUAL_REV8W,
             r_inout = inout(reg) v,
             options(nostack)
         );
