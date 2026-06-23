@@ -1142,13 +1142,8 @@ fn absorb_lattice_protocol_header<T: Transcript>(
     transcript.append(&Label(b"lattice_protocol_header"));
     absorb_labeled_u64(
         transcript,
-        b"lattice_pcs_curve",
-        (protocol.pcs == PcsFamily::Curve) as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lattice_pcs_lattice",
-        (protocol.pcs == PcsFamily::Lattice) as u64,
+        b"lattice_pcs_family",
+        pcs_family_tag(protocol.pcs),
     );
     absorb_labeled_u64(transcript, b"lattice_zk", zk_config_tag(protocol.zk));
     absorb_labeled_u64(
@@ -1160,11 +1155,6 @@ fn absorb_lattice_protocol_header<T: Transcript>(
         transcript,
         b"lattice_increment_mode",
         increment_mode_tag(protocol.lattice.increment_mode),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lattice_blindfold_zk",
-        (protocol.zk == ZkConfig::BlindFold) as u64,
     );
     absorb_labeled_u64(
         transcript,
@@ -1181,6 +1171,13 @@ fn absorb_lattice_protocol_header<T: Transcript>(
         b"lattice_advice_untrusted",
         protocol.lattice.advice.untrusted as u64,
     );
+}
+
+const fn pcs_family_tag(family: PcsFamily) -> u64 {
+    match family {
+        PcsFamily::Curve => 0,
+        PcsFamily::Lattice => 1,
+    }
 }
 
 const fn zk_config_tag(zk: ZkConfig) -> u64 {
