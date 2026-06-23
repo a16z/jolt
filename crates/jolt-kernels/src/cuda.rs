@@ -163,6 +163,19 @@ extern "C" __global__ void bind_kernel(u64 *__restrict__ out, const u64 *__restr
     }
 }
 
+extern "C" __global__ void eq_double(u64 *__restrict__ out, const u64 *__restrict__ in, const u64 *__restrict__ challenge, unsigned long size_in) {
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size_in) {
+        u64 scalar[4], c[4], hi[4], lo[4];
+        load4(in + i * 4, scalar);
+        load4(challenge, c);
+        fr_mul(scalar, c, hi);
+        fr_sub(scalar, hi, lo);
+        store4(out + (i * 2 + 1) * 4, hi);
+        store4(out + (i * 2) * 4, lo);
+    }
+}
+
 __device__ __forceinline__ void group_matvec(
     const u64 *__restrict__ dots,
     const u64 *__restrict__ weights,
@@ -641,6 +654,7 @@ pub struct CudaKernelContext {
     mul: CudaFunction,
     fma: CudaFunction,
     bind: CudaFunction,
+    eq_double: CudaFunction,
     dense_outer: CudaFunction,
     dense_outer_fused: CudaFunction,
     row_dots: CudaFunction,
@@ -832,6 +846,7 @@ impl CudaKernelContext {
             mul: module.load_function("mul_kernel")?,
             fma: module.load_function("fma_kernel")?,
             bind: module.load_function("bind_kernel")?,
+            eq_double: module.load_function("eq_double")?,
             dense_outer: module.load_function("dense_outer_kernel")?,
             dense_outer_fused: module.load_function("dense_outer_fused_kernel")?,
             row_dots: module.load_function("row_dots_kernel")?,
@@ -1344,6 +1359,49 @@ impl CudaKernelContext {
             .collect())
     }
 
+    pub fn eq_evals(&self, r: &[Fr], scaling_factor: Option<Fr>) -> Result<DeviceFrVec, CudaError> {
+        use num_traits::One;
+        let scaling = scaling_factor.unwrap_or_else(Fr::one);
+        let total = 1usize << r.len();
+
+        let mut cur: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+        self.stream
+            .memcpy_htod(&fr_to_limbs(scaling), &mut cur.slice_mut(0..LIMBS))?;
+        let mut next: CudaSlice<u64> = self.stream.alloc_zeros(total * LIMBS)?;
+
+        let mut size_in = 1usize;
+        for &r_j in r {
+            let challenge_dev = self.stream.clone_htod(&fr_to_limbs(r_j))?;
+            let size_in_arg = size_in as u64;
+            let cfg = LaunchConfig {
+                grid_dim: ((size_in as u32).div_ceil(BLOCK), 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            let f = self.eq_double.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch
+                .arg(&mut next)
+                .arg(&cur)
+                .arg(&challenge_dev)
+                .arg(&size_in_arg);
+            // SAFETY: each thread i reads cur[i] (size_in elements) and the single
+            // challenge, writing next[2i], next[2i+1]; cur and next are distinct
+            // buffers holding >= 2*size_in elements after this round.
+            let _ = unsafe { launch.launch(cfg) }?;
+            std::mem::swap(&mut cur, &mut next);
+            size_in *= 2;
+        }
+        self.stream.synchronize()?;
+
+        Ok(DeviceFrVec {
+            stream: self.stream.clone(),
+            buf: cur,
+            len: total,
+            staging: self.staging.clone(),
+        })
+    }
+
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         use num_traits::{One, Zero};
         if values.len == 0 {
@@ -1745,6 +1803,17 @@ mod tests {
                     degree,
                 })
                 .unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn eq_evals_matches_cpu(
+            r in prop::collection::vec(fr_strategy(), 0..12),
+            scaling in prop::option::of(fr_strategy()),
+        ) {
+            let expected = jolt_poly::EqPolynomial::<Fr>::evals(&r, scaling);
+            let c = ctx();
+            let got = c.eq_evals(&r, scaling).unwrap().to_host().unwrap();
             prop_assert_eq!(got, expected);
         }
     }
