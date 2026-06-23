@@ -413,12 +413,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        akita::{
-            akita_lattice_protocol_config_for_layout, commit_akita_packing_witness,
-            AkitaPackingProverSetup,
-        },
+        akita::{commit_akita_packing_witness, AkitaPackingProverSetup},
         akita_packing::AkitaPackingScheme,
         proof::LatticeCommitmentPayload,
+        stages::stage8::lattice_protocol_config_for_packed_witness_layout,
     };
     use jolt_openings::{
         CommitmentScheme, PackingAlphabet, PackingCellAddress, PackingFactDomain, PackingFamilyId,
@@ -491,7 +489,7 @@ mod tests {
     fn akita_verifier_setup_binds_protocol_config() {
         let layout = tiny_layout();
         let (_, verifier_setup) = akita_packing_setup(&layout, 1);
-        let config = akita_lattice_protocol_config_for_layout(&layout);
+        let config = lattice_protocol_config_for_packed_witness_layout(&layout);
 
         validate_akita_verifier_setup_config(&verifier_setup, &config)
             .expect("setup should match generated Akita protocol config");

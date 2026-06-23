@@ -9,27 +9,21 @@ use crate::{
         validate_akita_precommitted_opening_proof_payload_shapes,
         validate_akita_proof_payload_shape, validate_akita_verifier_setup_config,
     },
-    config::{
-        AdviceLatticeConfig, FieldInlineLatticeConfig, IncrementCommitmentMode, JoltProtocolConfig,
-        LatticeConfig, PackedWitnessConfig, PcsFamily, ProgramMode,
-    },
+    config::JoltProtocolConfig,
     preprocessing::JoltVerifierPreprocessing,
     proof::{ClearOnlyVectorCommitment, CommitmentPayload, JoltProof, LatticeCommitmentPayload},
-    stages::stage8::validate_lattice_packed_witness_layout_config,
+    stages::stage8::{
+        lattice_protocol_config_for_packed_witness_layout,
+        validate_lattice_packed_witness_layout_config,
+    },
     VerifierError,
 };
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint};
-use jolt_claims::protocols::jolt::{
-    lattice_packed_validity_digest, JoltAdviceKind, LatticePackedFamilyId,
-    LatticePackedValidityRequirement,
-};
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::{
-    CommitmentScheme, PackingAdviceKind, PackingBatchProof, PackingFamilyId, PackingWitnessLayout,
-    PackingWitnessSource,
+    CommitmentScheme, PackingBatchProof, PackingWitnessLayout, PackingWitnessSource,
 };
-use jolt_riscv::CircuitFlags;
 use jolt_transcript::Transcript;
 
 pub use crate::akita_openings::{
@@ -82,156 +76,6 @@ pub fn commit_akita_packing_jolt_witness(
     Ok(AkitaCommittedPackedJoltWitness { artifacts, witness })
 }
 
-pub fn akita_lattice_protocol_config_for_layout(
-    layout: &PackingWitnessLayout,
-) -> JoltProtocolConfig {
-    let validity_requirements = akita_lattice_validity_requirements_for_layout(layout);
-    let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
-    config.lattice = LatticeConfig {
-        program_mode: ProgramMode::Committed,
-        increment_mode: IncrementCommitmentMode::FusedOneHot,
-        packed_witness: PackedWitnessConfig {
-            layout_digest: Some(layout.digest),
-            d_pack: Some(layout.dimension),
-            validity_digest: Some(lattice_packed_validity_digest(&validity_requirements)),
-        },
-        field_inline: FieldInlineLatticeConfig {
-            enabled: layout_has_field_rd_inc(layout),
-        },
-        advice: AdviceLatticeConfig {
-            trusted: false,
-            untrusted: layout_has_advice(layout, PackingAdviceKind::Untrusted),
-        },
-    };
-    config
-}
-
-pub fn akita_lattice_validity_requirements_for_layout(
-    layout: &PackingWitnessLayout,
-) -> Vec<LatticePackedValidityRequirement> {
-    let mut requirements = layout
-        .families
-        .iter()
-        .filter_map(|family| {
-            let limbs = family.limbs;
-            let alphabet_size = family.alphabet.size();
-            match family.id {
-                PackingFamilyId::UnsignedIncChunk { index } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::UnsignedIncChunk { index },
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::UnsignedIncMsb => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::UnsignedIncMsb,
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                PackingFamilyId::FieldRdIncByte { index } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::FieldRdIncByte { index },
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::AdviceBytes { kind, index } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::AdviceBytes {
-                            kind: jolt_advice_kind(kind),
-                            index,
-                        },
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-                    Some(LatticePackedValidityRequirement::optional_one_hot(
-                        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector },
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag },
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                PackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag },
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                PackingFamilyId::BytecodeLookupSelector { chunk } => {
-                    Some(LatticePackedValidityRequirement::optional_one_hot(
-                        LatticePackedFamilyId::BytecodeLookupSelector { chunk },
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::BytecodeRafFlag { chunk } => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::BytecodeRafFlag { chunk },
-                        limbs,
-                        alphabet_size,
-                        1,
-                    ))
-                }
-                PackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::BytecodeImmBytes { chunk } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::BytecodeImmBytes { chunk },
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::ProgramImageInit => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::ProgramImageInit,
-                        limbs,
-                        alphabet_size,
-                    ))
-                }
-                PackingFamilyId::InstructionRa { .. }
-                | PackingFamilyId::BytecodeRa { .. }
-                | PackingFamilyId::RamRa { .. }
-                | PackingFamilyId::FieldRdIncSign
-                | PackingFamilyId::BytecodeChunk { .. }
-                | PackingFamilyId::Custom { .. } => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    for family in &layout.families {
-        let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &family.id else {
-            continue;
-        };
-        let chunk = *chunk;
-        if *flag == CircuitFlags::Store as usize
-            && layout
-                .family(&PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 })
-                .is_some()
-        {
-            requirements.push(LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk));
-        }
-    }
-    requirements
-}
-
 pub fn commit_akita_packing_witness<S>(
     setup: &AkitaPackingProverSetup,
     source: &S,
@@ -239,7 +83,7 @@ pub fn commit_akita_packing_witness<S>(
 where
     S: PackingWitnessSource<AkitaField>,
 {
-    let protocol = akita_lattice_protocol_config_for_layout(source.layout());
+    let protocol = lattice_protocol_config_for_packed_witness_layout(source.layout());
     commit_akita_packing_witness_with_config(protocol, setup, source)
 }
 
@@ -321,30 +165,4 @@ where
         trusted_advice_commitment,
         config,
     )
-}
-
-fn jolt_advice_kind(kind: PackingAdviceKind) -> JoltAdviceKind {
-    match kind {
-        PackingAdviceKind::Trusted => JoltAdviceKind::Trusted,
-        PackingAdviceKind::Untrusted => JoltAdviceKind::Untrusted,
-    }
-}
-
-fn layout_has_field_rd_inc(layout: &PackingWitnessLayout) -> bool {
-    layout
-        .families
-        .iter()
-        .any(|family| matches!(family.id, PackingFamilyId::FieldRdIncByte { .. }))
-}
-
-fn layout_has_advice(layout: &PackingWitnessLayout, kind: PackingAdviceKind) -> bool {
-    layout.families.iter().any(|family| {
-        matches!(
-            family.id,
-            PackingFamilyId::AdviceBytes {
-                kind: family_kind,
-                ..
-            } if family_kind == kind
-        )
-    })
 }

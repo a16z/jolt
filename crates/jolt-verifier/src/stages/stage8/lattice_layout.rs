@@ -1,5 +1,9 @@
 use crate::{
-    config::{validate_protocol_config, JoltProtocolConfig, PcsFamily},
+    config::{
+        validate_protocol_config, AdviceLatticeConfig, FieldInlineLatticeConfig,
+        IncrementCommitmentMode, JoltProtocolConfig, LatticeConfig, PackedWitnessConfig, PcsFamily,
+        ProgramMode,
+    },
     stages::PrecommittedSchedule,
     VerifierError,
 };
@@ -8,18 +12,18 @@ use jolt_akita::AkitaField;
 use jolt_akita::AKITA_FIELD_MODULUS;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::formulas::lattice as field_lattice;
-#[cfg(not(feature = "field-inline"))]
-use jolt_claims::protocols::jolt::LatticePackedFamilyId;
 use jolt_claims::protocols::jolt::{
     advice_bytes_validity_requirement, formulas::ra::JoltRaPolynomialLayout,
     lattice_packed_validity_digest, unsigned_inc_validity_requirements, AdviceClaimReductionLayout,
-    JoltAdviceKind, LatticePackedValidityKind, LatticePackedValidityRequirement,
+    JoltAdviceKind, LatticePackedFamilyId, LatticePackedValidityKind,
+    LatticePackedValidityRequirement,
 };
 use jolt_field::FixedByteSize;
 use jolt_openings::{
     PackingAdviceKind, PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
     PackingWitnessLayout,
 };
+use jolt_riscv::CircuitFlags;
 
 use super::{
     invalid_lattice_config, invalid_precommitted_schedule, lattice_packing_advice_kind,
@@ -128,6 +132,156 @@ pub fn derive_lattice_packed_validity_requirements(
     })?;
 
     Ok(requirements)
+}
+
+pub fn lattice_protocol_config_for_packed_witness_layout(
+    layout: &PackingWitnessLayout,
+) -> JoltProtocolConfig {
+    let validity_requirements = lattice_validity_requirements_for_packed_witness_layout(layout);
+    let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+    config.lattice = LatticeConfig {
+        program_mode: ProgramMode::Committed,
+        increment_mode: IncrementCommitmentMode::FusedOneHot,
+        packed_witness: PackedWitnessConfig {
+            layout_digest: Some(layout.digest),
+            d_pack: Some(layout.dimension),
+            validity_digest: Some(lattice_packed_validity_digest(&validity_requirements)),
+        },
+        field_inline: FieldInlineLatticeConfig {
+            enabled: layout_has_field_rd_inc(layout),
+        },
+        advice: AdviceLatticeConfig {
+            trusted: false,
+            untrusted: layout_has_advice(layout, PackingAdviceKind::Untrusted),
+        },
+    };
+    config
+}
+
+pub fn lattice_validity_requirements_for_packed_witness_layout(
+    layout: &PackingWitnessLayout,
+) -> Vec<LatticePackedValidityRequirement> {
+    let mut requirements = layout
+        .families
+        .iter()
+        .filter_map(|family| {
+            let limbs = family.limbs;
+            let alphabet_size = family.alphabet.size();
+            match family.id {
+                PackingFamilyId::UnsignedIncChunk { index } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::UnsignedIncChunk { index },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::UnsignedIncMsb => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::UnsignedIncMsb,
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackingFamilyId::FieldRdIncByte { index } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::FieldRdIncByte { index },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::AdviceBytes { kind, index } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::AdviceBytes {
+                            kind: jolt_advice_kind(kind),
+                            index,
+                        },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+                    Some(LatticePackedValidityRequirement::optional_one_hot(
+                        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag },
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag },
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackingFamilyId::BytecodeLookupSelector { chunk } => {
+                    Some(LatticePackedValidityRequirement::optional_one_hot(
+                        LatticePackedFamilyId::BytecodeLookupSelector { chunk },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::BytecodeRafFlag { chunk } => {
+                    Some(LatticePackedValidityRequirement::boolean_indicator(
+                        LatticePackedFamilyId::BytecodeRafFlag { chunk },
+                        limbs,
+                        alphabet_size,
+                        1,
+                    ))
+                }
+                PackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::BytecodeImmBytes { chunk } => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::BytecodeImmBytes { chunk },
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::ProgramImageInit => {
+                    Some(LatticePackedValidityRequirement::exact_one_hot(
+                        LatticePackedFamilyId::ProgramImageInit,
+                        limbs,
+                        alphabet_size,
+                    ))
+                }
+                PackingFamilyId::InstructionRa { .. }
+                | PackingFamilyId::BytecodeRa { .. }
+                | PackingFamilyId::RamRa { .. }
+                | PackingFamilyId::FieldRdIncSign
+                | PackingFamilyId::BytecodeChunk { .. }
+                | PackingFamilyId::Custom { .. } => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    for family in &layout.families {
+        let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &family.id else {
+            continue;
+        };
+        let chunk = *chunk;
+        if *flag == CircuitFlags::Store as usize
+            && layout
+                .family(&PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 })
+                .is_some()
+        {
+            requirements.push(LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk));
+        }
+    }
+    requirements
 }
 
 pub fn validate_lattice_packed_witness_validity_config(
@@ -281,6 +435,32 @@ fn require_advice_layout(
         invalid_precommitted_schedule(format!(
             "lattice advice mode requires a {kind:?} advice claim-reduction layout",
         ))
+    })
+}
+
+fn jolt_advice_kind(kind: PackingAdviceKind) -> JoltAdviceKind {
+    match kind {
+        PackingAdviceKind::Trusted => JoltAdviceKind::Trusted,
+        PackingAdviceKind::Untrusted => JoltAdviceKind::Untrusted,
+    }
+}
+
+fn layout_has_field_rd_inc(layout: &PackingWitnessLayout) -> bool {
+    layout
+        .families
+        .iter()
+        .any(|family| matches!(family.id, PackingFamilyId::FieldRdIncByte { .. }))
+}
+
+fn layout_has_advice(layout: &PackingWitnessLayout, kind: PackingAdviceKind) -> bool {
+    layout.families.iter().any(|family| {
+        matches!(
+            family.id,
+            PackingFamilyId::AdviceBytes {
+                kind: family_kind,
+                ..
+            } if family_kind == kind
+        )
     })
 }
 

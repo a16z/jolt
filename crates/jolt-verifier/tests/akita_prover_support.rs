@@ -22,12 +22,15 @@ use jolt_riscv::{
 };
 use jolt_verifier::{
     akita::{
-        akita_lattice_protocol_config_for_layout, akita_lattice_validity_requirements_for_layout,
         build_akita_packing_jolt_witness, commit_akita_packing_jolt_witness,
         commit_akita_packing_witness, commit_akita_packing_witness_with_config, verify_akita_clear,
         AkitaJoltProof, AkitaPackingBatchProof, AkitaPackingJoltWitnessInput,
         AkitaPackingProverSetup, AkitaPackingValidityProofArtifacts, AkitaPackingVerifierSetup,
         AkitaPackingWitnessArtifacts, AkitaVerifierPreprocessing,
+    },
+    stages::stage8::{
+        lattice_protocol_config_for_packed_witness_layout,
+        lattice_validity_requirements_for_packed_witness_layout,
     },
     IncrementCommitmentMode, JoltProtocolConfig, ProgramMode, VerifierError,
 };
@@ -131,7 +134,7 @@ fn akita_packing_setup(
 fn protocol_config_binds_layout_digest_and_dimension() {
     let layout = tiny_layout();
 
-    let config = akita_lattice_protocol_config_for_layout(&layout);
+    let config = lattice_protocol_config_for_packed_witness_layout(&layout);
 
     assert_eq!(
         config.lattice.packed_witness.layout_digest,
@@ -141,7 +144,7 @@ fn protocol_config_binds_layout_digest_and_dimension() {
     assert_eq!(
         config.lattice.packed_witness.validity_digest,
         Some(lattice_packed_validity_digest(
-            &akita_lattice_validity_requirements_for_layout(&layout)
+            &lattice_validity_requirements_for_packed_witness_layout(&layout)
         ))
     );
     assert_eq!(config.lattice.program_mode, ProgramMode::Committed);
@@ -418,7 +421,7 @@ fn configured_layout_mismatch_rejects_before_commit() {
     let (prover_setup, _) = akita_packing_setup(&layout, 1);
     let source = SparsePackingWitness::try_new(layout.clone(), Vec::new())
         .expect("empty source should build");
-    let mut config = akita_lattice_protocol_config_for_layout(&layout);
+    let mut config = lattice_protocol_config_for_packed_witness_layout(&layout);
     config.lattice.packed_witness.layout_digest = Some([9; 32]);
 
     let error = commit_akita_packing_witness_with_config(config, &prover_setup, &source)

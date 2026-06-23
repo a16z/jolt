@@ -744,16 +744,17 @@ mod tests {
 
     use super::*;
     use crate::{
-        akita::{
-            akita_lattice_protocol_config_for_layout, commit_akita_packing_witness_with_config,
-            AkitaPackingVerifierSetup,
-        },
+        akita::{commit_akita_packing_witness_with_config, AkitaPackingVerifierSetup},
         akita_packing::AkitaPackingScheme,
         config::{IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode},
         proof::ClearOnlyCommitment,
         stages::{
-            stage8::derive_lattice_packed_witness_layout, CommittedProgramSchedule,
-            PrecommittedSchedule,
+            stage8::{
+                derive_lattice_packed_witness_layout,
+                lattice_protocol_config_for_packed_witness_layout,
+                lattice_validity_requirements_for_packed_witness_layout,
+            },
+            CommittedProgramSchedule, PrecommittedSchedule,
         },
     };
     use jolt_akita::AkitaSetupParams;
@@ -986,7 +987,7 @@ mod tests {
             &requirements,
             &jolt_akita::AKITA_FIELD_MODULUS.to_le_bytes(),
         );
-        let mut config = akita_lattice_protocol_config_for_layout(&layout);
+        let mut config = lattice_protocol_config_for_packed_witness_layout(&layout);
         config.lattice.packed_witness.validity_digest =
             Some(lattice_packed_validity_digest(&requirements));
         let params = akita_packing_params(&layout, 1);
@@ -1275,8 +1276,7 @@ mod tests {
         };
         let layout =
             PackingWitnessLayout::new(specs).expect("manual bytecode validity layout should build");
-        let mut requirements =
-            crate::akita::akita_lattice_validity_requirements_for_layout(&layout);
+        let mut requirements = lattice_validity_requirements_for_packed_witness_layout(&layout);
         requirements.push(bytecode_imm_canonical_bytes_requirement(
             0,
             AkitaField::NUM_BYTES,

@@ -9,8 +9,11 @@ use jolt_riscv::JoltTraceRow;
 use thiserror::Error;
 
 use crate::{
-    akita::akita_lattice_protocol_config_for_layout,
-    stages::stage8::validate_lattice_packed_witness_layout_config, VerifierError,
+    stages::stage8::{
+        lattice_protocol_config_for_packed_witness_layout,
+        validate_lattice_packed_witness_layout_config,
+    },
+    VerifierError,
 };
 
 #[derive(Clone, Debug)]
@@ -279,7 +282,7 @@ pub fn build_akita_packing_jolt_witness(
     input: AkitaPackingJoltWitnessInput<'_>,
 ) -> Result<SparsePackingWitness<AkitaField>, VerifierError> {
     validate_akita_jolt_packed_witness_layout(&input.layout)?;
-    let protocol = akita_lattice_protocol_config_for_layout(&input.layout);
+    let protocol = lattice_protocol_config_for_packed_witness_layout(&input.layout);
     validate_lattice_packed_witness_layout_config(&protocol, &input.layout)?;
 
     if input.instruction_lookup_indices.len() != input.trace_rows.len() {

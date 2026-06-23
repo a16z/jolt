@@ -27,6 +27,8 @@ use super::outputs::{Stage8LogicalManifest, Stage8OpeningId, Stage8PhysicalManif
 mod layout;
 pub use layout::{
     derive_lattice_packed_validity_requirements, derive_lattice_packed_witness_layout,
+    lattice_protocol_config_for_packed_witness_layout,
+    lattice_validity_requirements_for_packed_witness_layout,
     validate_lattice_packed_witness_layout_config, validate_lattice_packed_witness_validity_config,
 };
 
