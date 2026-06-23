@@ -449,6 +449,107 @@ extern "C" __global__ void cubic_tuple_reduce(
     }
 }
 
+extern "C" __global__ void round_poly_pairs(
+    u64 *__restrict__ out,
+    const u64 *__restrict__ factors,
+    const u64 *__restrict__ points,
+    const u64 *__restrict__ term_coeffs,
+    const unsigned int *__restrict__ term_offsets,
+    const unsigned int *__restrict__ term_indices,
+    unsigned long pair_stride,
+    unsigned int num_terms,
+    unsigned int degree,
+    unsigned long half
+) {
+    extern __shared__ u64 sdata[];
+    u64 *acc = sdata + threadIdx.x * (degree * 4);
+    for (unsigned int e = 0; e < degree; e++) {
+        for (int k = 0; k < 4; k++) acc[e * 4 + k] = 0;
+    }
+
+    unsigned long row = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < half) {
+        for (unsigned int e = 0; e < degree; e++) {
+            u64 x[4];
+            load4(points + e * 4, x);
+            u64 eval[4];
+            for (int k = 0; k < 4; k++) eval[k] = 0;
+            for (unsigned int t = 0; t < num_terms; t++) {
+                u64 prod[4];
+                load4(term_coeffs + t * 4, prod);
+                unsigned int start = term_offsets[t];
+                unsigned int end = term_offsets[t + 1];
+                for (unsigned int s = start; s < end; s++) {
+                    const u64 *factor = factors + term_indices[s] * pair_stride * 2 * 4;
+                    u64 lo[4], hi[4];
+                    load4(factor + (row * 2) * 4, lo);
+                    load4(factor + (row * 2 + 1) * 4, hi);
+                    u64 diff[4], linear[4];
+                    fr_sub(hi, lo, diff);
+                    fr_mul(diff, x, linear);
+                    fr_add(lo, linear, linear);
+                    fr_mul(prod, linear, prod);
+                }
+                fr_add(eval, prod, eval);
+            }
+            for (int k = 0; k < 4; k++) acc[e * 4 + k] = eval[k];
+        }
+    }
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            u64 *other = sdata + (threadIdx.x + stride) * (degree * 4);
+            for (unsigned int e = 0; e < degree; e++) {
+                u64 t[4];
+                fr_add(acc + e * 4, other + e * 4, t);
+                for (int k = 0; k < 4; k++) acc[e * 4 + k] = t[k];
+            }
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        for (unsigned int k = 0; k < degree * 4; k++) {
+            out[blockIdx.x * (degree * 4) + k] = acc[k];
+        }
+    }
+}
+
+extern "C" __global__ void round_poly_reduce(
+    u64 *__restrict__ out,
+    const u64 *__restrict__ in,
+    unsigned int degree,
+    unsigned long n
+) {
+    extern __shared__ u64 sdata[];
+    u64 *acc = sdata + threadIdx.x * (degree * 4);
+
+    unsigned long i = (unsigned long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        for (unsigned int k = 0; k < degree * 4; k++) acc[k] = in[i * (degree * 4) + k];
+    } else {
+        for (unsigned int k = 0; k < degree * 4; k++) acc[k] = 0;
+    }
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            u64 *other = sdata + (threadIdx.x + stride) * (degree * 4);
+            for (unsigned int e = 0; e < degree; e++) {
+                u64 t[4];
+                fr_add(acc + e * 4, other + e * 4, t);
+                for (int k = 0; k < 4; k++) acc[e * 4 + k] = t[k];
+            }
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        for (unsigned int k = 0; k < degree * 4; k++) {
+            out[blockIdx.x * (degree * 4) + k] = acc[k];
+        }
+    }
+}
+
 extern "C" __global__ void sum_reduce(u64 *__restrict__ out, const u64 *__restrict__ in, unsigned long n) {
     extern __shared__ u64 sdata[];
     u64 *acc = sdata + threadIdx.x * 4;
@@ -545,6 +646,8 @@ pub struct CudaKernelContext {
     row_dots: CudaFunction,
     cubic_pairs: CudaFunction,
     cubic_tuple_reduce: CudaFunction,
+    round_poly_pairs: CudaFunction,
+    round_poly_reduce: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -734,6 +837,8 @@ impl CudaKernelContext {
             row_dots: module.load_function("row_dots_kernel")?,
             cubic_pairs: module.load_function("cubic_pairs")?,
             cubic_tuple_reduce: module.load_function("cubic_tuple_reduce")?,
+            round_poly_pairs: module.load_function("round_poly_pairs")?,
+            round_poly_reduce: module.load_function("round_poly_reduce")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -1136,12 +1241,107 @@ impl CudaKernelContext {
         }))
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn sum_of_products_round_poly(
         &self,
         terms: RoundPolyTerms<'_>,
     ) -> Result<Vec<Fr>, CudaError> {
-        todo!()
+        use jolt_field::Field;
+        use num_traits::Zero;
+        let degree = terms.degree;
+        assert!(degree >= 1, "round poly degree must be >= 1");
+        let pair_stride = terms.factors[0].len() / 2;
+        for factor in terms.factors {
+            assert_eq!(
+                factor.len(),
+                pair_stride * 2,
+                "round poly factors must have equal length"
+            );
+        }
+        if pair_stride == 0 {
+            return Ok(vec![Fr::zero(); degree]);
+        }
+
+        let mut packed: CudaSlice<u64> =
+            self.stream.alloc_zeros(terms.factors.len() * pair_stride * 2 * LIMBS)?;
+        for (index, factor) in terms.factors.iter().enumerate() {
+            let offset = index * pair_stride * 2 * LIMBS;
+            self.stream.memcpy_dtod(
+                &factor.buf,
+                &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
+            )?;
+        }
+
+        // Evaluation points {0, 2, 3, ..., degree}: index 0 is x=0, index e>=1 is x=e+1.
+        let points: Vec<Fr> = (0..degree)
+            .map(|e| Fr::from_u64(if e == 0 { 0 } else { (e + 1) as u64 }))
+            .collect();
+        let points_dev = self.upload(&points)?;
+        let coeffs_dev = self.upload(terms.term_coeffs)?;
+        let offsets_dev = self.stream.clone_htod(terms.term_factor_offsets)?;
+        let indices_dev = self.stream.clone_htod(terms.term_factor_indices)?;
+
+        let tuple = degree * LIMBS;
+        // Cap the block so the per-thread tuple accumulators fit in 48 KB shared memory;
+        // the tree reduce needs a power-of-two block, so take the largest such <= cap.
+        let max_block = (48 * 1024 / (tuple * std::mem::size_of::<u64>())).max(1) as u32;
+        let capped = BLOCK.min(max_block);
+        let block = 1u32 << (u32::BITS - 1 - capped.leading_zeros());
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (pair_stride as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let pair_stride_arg = pair_stride as u64;
+        let num_terms_arg = terms.term_coeffs.len() as u32;
+        let degree_arg = degree as u32;
+        let half_arg = pair_stride as u64;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.round_poly_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&packed)
+            .arg(&points_dev.buf)
+            .arg(&coeffs_dev.buf)
+            .arg(&offsets_dev)
+            .arg(&indices_dev)
+            .arg(&pair_stride_arg)
+            .arg(&num_terms_arg)
+            .arg(&degree_arg)
+            .arg(&half_arg);
+        // SAFETY: one thread per row reads its pair from each packed factor and the
+        // term tables (bounded by offsets), writing one `degree`-tuple per block;
+        // shared memory holds `block` tuples as configured above.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len = blocks as usize;
+        while len > 1 {
+            let out_blocks = (len as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&degree_arg).arg(&len_arg);
+            // SAFETY: each block reads up to `block` tuples from `buf` (len total) and
+            // writes one tuple to `out`; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        Ok((0..degree)
+            .map(|e| limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]]))
+            .collect())
     }
 
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
@@ -1483,7 +1683,6 @@ mod tests {
 
     proptest! {
         #[test]
-        #[ignore = "CudaKernelContext::sum_of_products_round_poly is todo!()"]
         fn sum_of_products_round_poly_matches_cpu(
             log_pairs in 0usize..10,
             num_factors in 1usize..6,
