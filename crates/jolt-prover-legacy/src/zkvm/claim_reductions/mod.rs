@@ -25,6 +25,7 @@ pub use increments::{
 #[cfg(all(feature = "akita", not(feature = "zk")))]
 pub use increments::{
     IncVirtualizationSumcheckParams, IncVirtualizationSumcheckProver,
+    UnsignedIncChunkReconstructionSumcheckParams, UnsignedIncChunkReconstructionSumcheckProver,
     UnsignedIncClaimReductionSumcheckParams, UnsignedIncClaimReductionSumcheckProver,
     UnsignedIncMsbBooleanitySumcheckParams, UnsignedIncMsbBooleanitySumcheckProver,
 };

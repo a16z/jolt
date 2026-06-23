@@ -1284,6 +1284,243 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 }
 
 #[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative, Clone)]
+pub struct UnsignedIncChunkReconstructionSumcheckParams<F: JoltField> {
+    pub gamma_powers: Vec<F>,
+    pub places: Vec<F>,
+    pub delta: F,
+    pub input_claim: F,
+    pub log_k_chunk: usize,
+    pub r_addr_bool: Vec<F::Challenge>,
+    pub cycle_point: OpeningPoint<BIG_ENDIAN, F>,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> UnsignedIncChunkReconstructionSumcheckParams<F> {
+    pub fn new(
+        log_k_chunk: usize,
+        accumulator: &ProverOpeningAccumulator<F>,
+        transcript: &mut impl Transcript,
+    ) -> Self {
+        let chunk_count = unsigned_inc_lower_chunk_count(log_k_chunk)
+            .expect("unsigned increment chunk size must evenly divide 64 bits");
+        let gamma: F = transcript.challenge_scalar();
+        let mut gamma_powers = Vec::with_capacity(2 * chunk_count + 1);
+        let mut power = F::one();
+        for _ in 0..=2 * chunk_count {
+            gamma_powers.push(power);
+            power *= gamma;
+        }
+        let delta = gamma_powers[2 * chunk_count];
+
+        let (cycle_point, unsigned_inc) = accumulator
+            .openings
+            .get(&OpeningId::Lattice(LatticeOpening::UnsignedInc))
+            .cloned()
+            .expect("unsigned inc opening must be available before chunk reconstruction");
+        let unsigned_inc_msb =
+            accumulator.get_opening(OpeningId::Lattice(LatticeOpening::UnsignedIncMsb));
+
+        let mut chunk_claims = Vec::with_capacity(chunk_count);
+        let mut r_addr_bool = None;
+        for chunk_index in 0..chunk_count {
+            let (chunk_point, chunk_claim) = accumulator
+                .openings
+                .get(&OpeningId::Lattice(LatticeOpening::UnsignedIncChunk(
+                    chunk_index,
+                )))
+                .cloned()
+                .expect("unsigned inc Booleanity chunk opening must be available");
+            if r_addr_bool.is_none() {
+                r_addr_bool = Some(chunk_point.r[..log_k_chunk].to_vec());
+            }
+            chunk_claims.push(chunk_claim);
+        }
+
+        let places = unsigned_inc_places::<F>(chunk_count, log_k_chunk);
+        let lower_value = unsigned_inc - F::from_u128(UNSIGNED_INC_SHIFT) * unsigned_inc_msb;
+        let mut input_claim = delta * lower_value;
+        for chunk_index in 0..chunk_count {
+            input_claim += gamma_powers[2 * chunk_index]
+                + gamma_powers[2 * chunk_index + 1] * chunk_claims[chunk_index];
+        }
+
+        Self {
+            gamma_powers,
+            places,
+            delta,
+            input_claim,
+            log_k_chunk,
+            r_addr_bool: r_addr_bool.expect("at least one unsigned inc chunk is required"),
+            cycle_point,
+        }
+    }
+
+    fn chunk_count(&self) -> usize {
+        self.places.len()
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> SumcheckInstanceParams<F> for UnsignedIncChunkReconstructionSumcheckParams<F> {
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
+        self.input_claim
+    }
+
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.log_k_chunk
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        let r_address: OpeningPoint<BIG_ENDIAN, F> =
+            OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness();
+        OpeningPoint::new([r_address.r.as_slice(), self.cycle_point.r.as_slice()].concat())
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative)]
+pub struct UnsignedIncChunkReconstructionSumcheckProver<F: JoltField> {
+    pub params: UnsignedIncChunkReconstructionSumcheckParams<F>,
+    chunks: Vec<MultilinearPolynomial<F>>,
+    eq_bool: MultilinearPolynomial<F>,
+    identity: MultilinearPolynomial<F>,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> UnsignedIncChunkReconstructionSumcheckProver<F> {
+    #[tracing::instrument(
+        skip_all,
+        name = "UnsignedIncChunkReconstructionSumcheckProver::initialize"
+    )]
+    pub fn initialize(
+        params: UnsignedIncChunkReconstructionSumcheckParams<F>,
+        trace: Arc<Vec<Cycle>>,
+    ) -> Self {
+        let chunk_indices =
+            unsigned_inc_chunk_indices(&trace, params.chunk_count(), params.log_k_chunk);
+        let chunk_g = compute_unsigned_inc_chunk_g::<F>(
+            &chunk_indices,
+            1 << params.log_k_chunk,
+            &params.cycle_point.r,
+        );
+        let chunks = chunk_g
+            .into_iter()
+            .map(MultilinearPolynomial::from)
+            .collect();
+        let eq_bool = MultilinearPolynomial::from(EqPolynomial::evals(&params.r_addr_bool));
+        let identity = MultilinearPolynomial::from(
+            (0..(1 << params.log_k_chunk))
+                .map(|index| F::from_u64(index as u64))
+                .collect::<Vec<_>>(),
+        );
+
+        Self {
+            params,
+            chunks,
+            eq_bool,
+            identity,
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for UnsignedIncChunkReconstructionSumcheckProver<F>
+{
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "UnsignedIncChunkReconstructionSumcheckProver::compute_message"
+    )]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        let half_n = self.chunks[0].len() / 2;
+        let evals = (0..half_n)
+            .into_par_iter()
+            .fold(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, j| {
+                    let eq_bool = self
+                        .eq_bool
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let identity = self
+                        .identity
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+
+                    for chunk_index in 0..self.params.chunk_count() {
+                        let chunk = self.chunks[chunk_index]
+                            .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                        let gamma_even = self.params.gamma_powers[2 * chunk_index];
+                        let gamma_odd = self.params.gamma_powers[2 * chunk_index + 1];
+                        let place = self.params.places[chunk_index];
+                        for k in 0..DEGREE_BOUND {
+                            let coeff = gamma_even
+                                + gamma_odd * eq_bool[k]
+                                + self.params.delta * place * identity[k];
+                            acc[k] += chunk[k] * coeff;
+                        }
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut a, b| {
+                    for k in 0..DEGREE_BOUND {
+                        a[k] += b[k];
+                    }
+                    a
+                },
+            );
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "UnsignedIncChunkReconstructionSumcheckProver::ingest_challenge"
+    )]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        self.chunks
+            .par_iter_mut()
+            .for_each(|chunk| chunk.bind_parallel(r_j, BindingOrder::LowToHigh));
+        self.eq_bool.bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.identity.bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
+        for (chunk_index, chunk) in self.chunks.iter().enumerate() {
+            accumulator.append_lattice(
+                LatticeOpening::UnsignedIncReconstructedChunk(chunk_index),
+                opening_point.clone(),
+                chunk.final_sumcheck_claim(),
+            );
+        }
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 fn ram_inc_i128(cycle: &Cycle) -> i128 {
     match cycle.ram_access() {
         RAMAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
@@ -1322,6 +1559,18 @@ pub(crate) fn unsigned_inc_lower_chunk_count(log_k_chunk: usize) -> Option<usize
 }
 
 #[cfg(all(feature = "akita", not(feature = "zk")))]
+fn unsigned_inc_places<F: JoltField>(chunk_count: usize, log_k_chunk: usize) -> Vec<F> {
+    let mut places = Vec::with_capacity(chunk_count);
+    let radix = F::from_u64(1_u64 << log_k_chunk);
+    let mut place = F::one();
+    for _ in 0..chunk_count {
+        places.push(place);
+        place *= radix;
+    }
+    places
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 pub(crate) fn unsigned_inc_chunk_index(
     cycle: &Cycle,
     chunk_index: usize,
@@ -1329,6 +1578,105 @@ pub(crate) fn unsigned_inc_chunk_index(
 ) -> usize {
     let mask = (1_u128 << log_k_chunk) - 1;
     ((unsigned_inc_u128(cycle) >> (chunk_index * log_k_chunk)) & mask) as usize
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub(crate) fn unsigned_inc_chunk_indices(
+    trace: &[Cycle],
+    chunk_count: usize,
+    log_k_chunk: usize,
+) -> Vec<Vec<usize>> {
+    (0..chunk_count)
+        .into_par_iter()
+        .map(|chunk_index| {
+            trace
+                .par_iter()
+                .map(|cycle| unsigned_inc_chunk_index(cycle, chunk_index, log_k_chunk))
+                .collect()
+        })
+        .collect()
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub(crate) fn compute_unsigned_inc_chunk_g<F: JoltField>(
+    chunk_indices: &[Vec<usize>],
+    k_chunk: usize,
+    r_cycle: &[F::Challenge],
+) -> Vec<Vec<F>> {
+    if chunk_indices.is_empty() {
+        return Vec::new();
+    }
+
+    let chunk_count = chunk_indices.len();
+    let trace_len = chunk_indices[0].len();
+    let log_T = r_cycle.len();
+    let lo_bits = log_T / 2;
+    let hi_bits = log_T - lo_bits;
+    let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
+
+    let (E_hi, E_lo) = rayon::join(
+        || EqPolynomial::<F>::evals(r_hi),
+        || EqPolynomial::<F>::evals(r_lo),
+    );
+
+    let in_len = E_lo.len();
+    let num_threads = rayon::current_num_threads();
+    let out_len = E_hi.len();
+    let chunk_size = out_len.div_ceil(num_threads).max(1);
+
+    E_hi.par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_idx, chunk)| {
+            let mut partial: Vec<Vec<F>> =
+                (0..chunk_count).map(|_| vec![F::zero(); k_chunk]).collect();
+            let mut local: Vec<Vec<F::UnreducedMulU64>> = (0..chunk_count)
+                .map(|_| vec![F::UnreducedMulU64::zero(); k_chunk])
+                .collect();
+
+            let chunk_start = chunk_idx * chunk_size;
+            for (local_idx, &e_hi) in chunk.iter().enumerate() {
+                for values in &mut local {
+                    values.fill(F::UnreducedMulU64::zero());
+                }
+
+                let c_hi = chunk_start + local_idx;
+                let c_hi_base = c_hi * in_len;
+                for (c_lo, e_lo) in E_lo.iter().enumerate() {
+                    let cycle_index = c_hi_base + c_lo;
+                    if cycle_index >= trace_len {
+                        break;
+                    }
+
+                    let add = e_lo.to_unreduced();
+                    for chunk_index in 0..chunk_count {
+                        let k = chunk_indices[chunk_index][cycle_index];
+                        local[chunk_index][k] += add;
+                    }
+                }
+
+                for chunk_index in 0..chunk_count {
+                    for k in 0..k_chunk {
+                        let reduced = F::reduce_mul_u64(local[chunk_index][k]);
+                        if !reduced.is_zero() {
+                            partial[chunk_index][k] += e_hi * reduced;
+                        }
+                    }
+                }
+            }
+            partial
+        })
+        .reduce(
+            || (0..chunk_count).map(|_| vec![F::zero(); k_chunk]).collect(),
+            |mut a, b| {
+                for (a_poly, b_poly) in a.iter_mut().zip(b.iter()) {
+                    a_poly
+                        .par_iter_mut()
+                        .zip(b_poly.par_iter())
+                        .for_each(|(a_val, b_val)| *a_val += *b_val);
+                }
+                a
+            },
+        )
 }
 
 #[cfg(all(test, feature = "host", feature = "akita", not(feature = "zk")))]
@@ -1519,6 +1867,106 @@ mod tests {
 
         assert_eq!(final_claim, Fr::zero());
         assert_eq!(msb_claim, Fr::from_u64(1));
+    }
+
+    #[test]
+    fn unsigned_inc_chunk_reconstruction_sumcheck_caches_reconstructed_chunks() {
+        let mut program = host::Program::new("muldiv-guest");
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, mut trace, _, _) = program.trace(&inputs, &[], &[]);
+        trace.resize(trace.len().next_power_of_two(), Cycle::NoOp);
+
+        let trace = Arc::new(trace);
+        let log_t = trace.len().log_2();
+        let log_k_chunk = 4;
+        let chunk_count = unsigned_inc_lower_chunk_count(log_k_chunk).unwrap();
+        let cycle_point = challenge_point(31, log_t);
+        let r_addr_bool = challenge_point(41, log_k_chunk);
+        let full_chunk_point =
+            OpeningPoint::new([r_addr_bool.r.as_slice(), cycle_point.r.as_slice()].concat());
+
+        let unsigned_inc = MultilinearPolynomial::from(
+            trace
+                .iter()
+                .map(|cycle| Fr::from_u128(unsigned_inc_u128(cycle)))
+                .collect::<Vec<_>>(),
+        );
+        let unsigned_inc_msb_poly = MultilinearPolynomial::from(
+            trace
+                .iter()
+                .map(|cycle| Fr::from_bool(unsigned_inc_msb(cycle)))
+                .collect::<Vec<_>>(),
+        );
+        let chunk_indices = unsigned_inc_chunk_indices(&trace, chunk_count, log_k_chunk);
+        let chunk_g =
+            compute_unsigned_inc_chunk_g::<Fr>(&chunk_indices, 1 << log_k_chunk, &cycle_point.r);
+        let chunk_polys = chunk_g
+            .into_iter()
+            .map(MultilinearPolynomial::from)
+            .collect::<Vec<_>>();
+
+        let mut transcript = Blake2bTranscript::new(b"unsigned_inc_chunk_recon");
+        let mut accumulator = ProverOpeningAccumulator::new(log_t);
+        accumulator.append_lattice(
+            LatticeOpening::UnsignedInc,
+            cycle_point.clone(),
+            unsigned_inc.evaluate(&cycle_point.r),
+        );
+        accumulator.append_lattice(
+            LatticeOpening::UnsignedIncMsb,
+            cycle_point.clone(),
+            unsigned_inc_msb_poly.evaluate(&cycle_point.r),
+        );
+        for (chunk_index, chunk_poly) in chunk_polys.iter().enumerate() {
+            accumulator.append_lattice(
+                LatticeOpening::UnsignedIncChunk(chunk_index),
+                full_chunk_point.clone(),
+                chunk_poly.evaluate(&r_addr_bool.r),
+            );
+        }
+        accumulator.flush_to_transcript(&mut transcript);
+
+        let params = UnsignedIncChunkReconstructionSumcheckParams::new(
+            log_k_chunk,
+            &accumulator,
+            &mut transcript,
+        );
+        let mut prover =
+            UnsignedIncChunkReconstructionSumcheckProver::initialize(params, Arc::clone(&trace));
+        let input_claim = prover.params.input_claim(&accumulator);
+
+        let (proof, r_sumcheck, initial_claim) =
+            BatchedSumcheck::prove(vec![&mut prover], &mut accumulator, &mut transcript);
+        let final_claim = proof
+            .compressed_polys
+            .iter()
+            .zip(&r_sumcheck)
+            .fold(initial_claim, |claim, (poly, r_j)| {
+                poly.decompress(&claim).evaluate(r_j)
+            });
+
+        let r_address: OpeningPoint<BIG_ENDIAN, Fr> =
+            OpeningPoint::<LITTLE_ENDIAN, Fr>::new(r_sumcheck).match_endianness();
+        let eq_bool = EqPolynomial::<Fr>::mle(&r_address.r, &r_addr_bool.r);
+        let identity = MultilinearPolynomial::from(
+            (0..(1 << log_k_chunk))
+                .map(|index| Fr::from_u64(index as u64))
+                .collect::<Vec<_>>(),
+        )
+        .evaluate(&r_address.r);
+        let mut expected_output = Fr::zero();
+        for chunk_index in 0..chunk_count {
+            let reconstructed = accumulator.get_opening(OpeningId::Lattice(
+                LatticeOpening::UnsignedIncReconstructedChunk(chunk_index),
+            ));
+            let coeff = prover.params.gamma_powers[2 * chunk_index]
+                + prover.params.gamma_powers[2 * chunk_index + 1] * eq_bool
+                + prover.params.delta * prover.params.places[chunk_index] * identity;
+            expected_output += coeff * reconstructed;
+        }
+
+        let batch_coeff = initial_claim * input_claim.inverse().unwrap();
+        assert_eq!(final_claim, batch_coeff * expected_output);
     }
 
     fn challenge_point(seed: u64, log_t: usize) -> OpeningPoint<BIG_ENDIAN, Fr> {

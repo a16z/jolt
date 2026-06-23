@@ -1,5 +1,7 @@
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::poly::opening_proof::{LatticeOpening, OpeningId};
 #[cfg(feature = "zk")]
 use crate::zkvm::stage8_opening_ids;
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,6 +34,10 @@ use crate::zkvm::Serializable;
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::zkvm::claim_reductions::{
+    UnsignedIncChunkReconstructionSumcheckParams, UnsignedIncChunkReconstructionSumcheckProver,
+};
 use crate::{
     field::JoltField,
     guest,
@@ -1992,6 +1998,22 @@ impl<
             self.preprocessing,
             &self.one_hot_params,
         );
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let unsigned_inc_chunk_reconstruction = self
+            .opening_accumulator
+            .openings
+            .contains_key(&OpeningId::Lattice(LatticeOpening::UnsignedInc))
+            .then(|| {
+                let params = UnsignedIncChunkReconstructionSumcheckParams::new(
+                    self.one_hot_params.log_k_chunk,
+                    &self.opening_accumulator,
+                    &mut self.transcript,
+                );
+                UnsignedIncChunkReconstructionSumcheckProver::initialize(
+                    params,
+                    Arc::clone(&self.trace),
+                )
+            });
 
         #[cfg(feature = "allocative")]
         print_data_structure_heap_usage("HammingWeightClaimReductionProver", &hw_prover);
@@ -2051,6 +2073,10 @@ impl<
                 program_image_reduction_prover.transition_to_address_phase();
                 instances.push(Box::new(program_image_reduction_prover));
             }
+        }
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        if let Some(reconstruction) = unsigned_inc_chunk_reconstruction {
+            instances.push(Box::new(reconstruction));
         }
 
         #[cfg(feature = "allocative")]

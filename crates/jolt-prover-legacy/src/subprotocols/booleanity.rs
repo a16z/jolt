@@ -62,7 +62,7 @@ use crate::{
     poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialBinding},
     poly::opening_proof::LatticeOpening,
     zkvm::claim_reductions::increments::{
-        unsigned_inc_chunk_index, unsigned_inc_lower_chunk_count,
+        compute_unsigned_inc_chunk_g, unsigned_inc_chunk_indices, unsigned_inc_lower_chunk_count,
     },
 };
 
@@ -257,105 +257,6 @@ fn compute_gamma_powers<F: JoltField>(gamma: F::Challenge, count: usize) -> (Vec
     (powers, powers_inv)
 }
 
-#[cfg(all(feature = "akita", not(feature = "zk")))]
-fn compute_unsigned_inc_chunk_indices(
-    trace: &[Cycle],
-    chunk_count: usize,
-    log_k_chunk: usize,
-) -> Vec<Vec<usize>> {
-    (0..chunk_count)
-        .into_par_iter()
-        .map(|chunk_index| {
-            trace
-                .par_iter()
-                .map(|cycle| unsigned_inc_chunk_index(cycle, chunk_index, log_k_chunk))
-                .collect()
-        })
-        .collect()
-}
-
-#[cfg(all(feature = "akita", not(feature = "zk")))]
-fn compute_unsigned_inc_chunk_g<F: JoltField>(
-    chunk_indices: &[Vec<usize>],
-    k_chunk: usize,
-    r_cycle: &[F::Challenge],
-) -> Vec<Vec<F>> {
-    if chunk_indices.is_empty() {
-        return Vec::new();
-    }
-
-    let chunk_count = chunk_indices.len();
-    let trace_len = chunk_indices[0].len();
-    let log_T = r_cycle.len();
-    let lo_bits = log_T / 2;
-    let hi_bits = log_T - lo_bits;
-    let (r_hi, r_lo) = r_cycle.split_at(hi_bits);
-
-    let (E_hi, E_lo) = rayon::join(
-        || EqPolynomial::<F>::evals(r_hi),
-        || EqPolynomial::<F>::evals(r_lo),
-    );
-
-    let in_len = E_lo.len();
-    let num_threads = rayon::current_num_threads();
-    let out_len = E_hi.len();
-    let chunk_size = out_len.div_ceil(num_threads).max(1);
-
-    E_hi.par_chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_idx, chunk)| {
-            let mut partial: Vec<Vec<F>> =
-                (0..chunk_count).map(|_| vec![F::zero(); k_chunk]).collect();
-            let mut local: Vec<Vec<F::UnreducedMulU64>> = (0..chunk_count)
-                .map(|_| vec![F::UnreducedMulU64::zero(); k_chunk])
-                .collect();
-
-            let chunk_start = chunk_idx * chunk_size;
-            for (local_idx, &e_hi) in chunk.iter().enumerate() {
-                for values in &mut local {
-                    values.fill(F::UnreducedMulU64::zero());
-                }
-
-                let c_hi = chunk_start + local_idx;
-                let c_hi_base = c_hi * in_len;
-                for (c_lo, e_lo) in E_lo.iter().enumerate() {
-                    let cycle_index = c_hi_base + c_lo;
-                    if cycle_index >= trace_len {
-                        break;
-                    }
-
-                    let add = e_lo.to_unreduced();
-                    for chunk_index in 0..chunk_count {
-                        let k = chunk_indices[chunk_index][cycle_index];
-                        local[chunk_index][k] += add;
-                    }
-                }
-
-                for chunk_index in 0..chunk_count {
-                    for k in 0..k_chunk {
-                        let reduced = F::reduce_mul_u64(local[chunk_index][k]);
-                        if !reduced.is_zero() {
-                            partial[chunk_index][k] += e_hi * reduced;
-                        }
-                    }
-                }
-            }
-            partial
-        })
-        .reduce(
-            || (0..chunk_count).map(|_| vec![F::zero(); k_chunk]).collect(),
-            |mut a, b| {
-                for (a_poly, b_poly) in a.iter_mut().zip(b.iter()) {
-                    a_poly
-                        .par_iter_mut()
-                        .zip(b_poly.par_iter())
-                        .for_each(|(a_val, b_val)| *a_val += *b_val);
-                }
-                a
-            },
-        )
-}
-
 #[derive(Allocative)]
 pub struct BooleanityCycleInput<F: JoltField> {
     params: BooleanitySumcheckParams<F>,
@@ -409,7 +310,7 @@ impl<F: JoltField> BooleanityAddressSumcheckProver<F> {
         #[cfg(all(feature = "akita", not(feature = "zk")))]
         let (G, unsigned_inc_chunk_indices) = {
             let mut G = base_G;
-            let unsigned_inc_chunk_indices = compute_unsigned_inc_chunk_indices(
+            let unsigned_inc_chunk_indices = unsigned_inc_chunk_indices(
                 trace,
                 params.unsigned_inc_chunk_count,
                 params.log_k_chunk,
