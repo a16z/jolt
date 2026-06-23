@@ -17,7 +17,7 @@ pub mod preprocessing;
 pub mod proof;
 pub mod prover_support;
 pub mod stages;
-pub mod verifier;
+mod verifier;
 
 #[cfg(feature = "akita")]
 pub use akita::{
