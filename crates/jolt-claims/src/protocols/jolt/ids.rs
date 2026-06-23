@@ -123,6 +123,11 @@ pub enum IncVirtualizationPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum UnsignedIncClaimReductionPublic {
+    EqInput,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum UnsignedIncChunkReconstructionPublic {
     EqBooleanityAddress,
     IdentityAtAddress,
@@ -413,6 +418,7 @@ pub enum JoltPublicId {
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
     IncVirtualization(IncVirtualizationPublic),
+    UnsignedIncClaimReduction(UnsignedIncClaimReductionPublic),
     UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
     BytecodeReadRaf(BytecodeReadRafPublic),

@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::{
     BytecodeReadRafChallenge, IncClaimReductionChallenge, IncClaimReductionPublic,
     InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId,
     JoltRelationId, JoltVirtualPolynomial, PrecommittedReductionLayout,
-    RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
+    RamHammingBooleanityChallenge, RamRaVirtualizationChallenge, UnsignedIncClaimReductionPublic,
 };
 use jolt_crypto::VectorCommitment;
 #[cfg(not(feature = "field-inline"))]
@@ -2038,13 +2038,26 @@ where
                     stage: JoltRelationId::UnsignedIncClaimReduction,
                     reason: error.to_string(),
                 })?;
+            let stage5_increment = stage5_increment.ok_or(VerifierError::MissingOpeningClaim {
+                id: lattice::inc_virtualization_inc_opening(),
+            })?;
+            let eq_input = try_eq_mle(&opening_point, &stage5_increment.batch.opening_point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::UnsignedIncClaimReduction,
+                    reason: error.to_string(),
+                })?;
             let expected_output_claim = claim.output.expression().try_evaluate(
                 |id| match *id {
                     id if id == lattice::unsigned_inc_opening() => Ok(output_claims.unsigned_inc),
                     id => Err(VerifierError::MissingOpeningClaim { id }),
                 },
                 |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-                |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                |id| match id {
+                    JoltPublicId::UnsignedIncClaimReduction(
+                        UnsignedIncClaimReductionPublic::EqInput,
+                    ) => Ok(eq_input),
+                    _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                },
             )?;
             Some(VerifiedStage6Sumcheck {
                 input_claim,

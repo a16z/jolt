@@ -23,7 +23,11 @@ pub use increments::{
     IncClaimReductionSumcheckVerifier,
 };
 #[cfg(all(feature = "akita", not(feature = "zk")))]
-pub use increments::{IncVirtualizationSumcheckParams, IncVirtualizationSumcheckProver};
+pub use increments::{
+    IncVirtualizationSumcheckParams, IncVirtualizationSumcheckProver,
+    UnsignedIncClaimReductionSumcheckParams, UnsignedIncClaimReductionSumcheckProver,
+    UnsignedIncMsbBooleanitySumcheckParams, UnsignedIncMsbBooleanitySumcheckProver,
+};
 pub use instruction_lookups::{
     InstructionLookupsClaimReductionSumcheckParams, InstructionLookupsClaimReductionSumcheckProver,
     InstructionLookupsClaimReductionSumcheckVerifier,

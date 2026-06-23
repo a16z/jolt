@@ -58,7 +58,7 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 #[cfg(all(feature = "akita", not(feature = "zk")))]
 use crate::poly::opening_proof::LatticeOpening;
-#[cfg(feature = "zk")]
+#[cfg(any(feature = "zk", all(feature = "akita", not(feature = "zk"))))]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{
     AbstractVerifierOpeningAccumulator, OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator,
@@ -78,6 +78,8 @@ use crate::zkvm::witness::CommittedPolynomial;
 const DEGREE_BOUND: usize = 2;
 #[cfg(all(feature = "akita", not(feature = "zk")))]
 const INC_VIRTUALIZATION_DEGREE_BOUND: usize = 3;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+const UNSIGNED_INC_SHIFT: u128 = 1u128 << 64;
 
 #[derive(Allocative, Clone)]
 pub struct IncClaimReductionSumcheckParams<F: JoltField> {
@@ -994,6 +996,294 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 }
 
 #[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative, Clone)]
+pub struct UnsignedIncClaimReductionSumcheckParams<F: JoltField> {
+    pub n_cycle_vars: usize,
+    pub input_point: OpeningPoint<BIG_ENDIAN, F>,
+    pub input_claim: F,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> UnsignedIncClaimReductionSumcheckParams<F> {
+    pub fn new(trace_len: usize, accumulator: &ProverOpeningAccumulator<F>) -> Self {
+        let Some((input_point, inc_claim)) = accumulator
+            .openings
+            .get(&OpeningId::Lattice(LatticeOpening::IncVirtualizationInc))
+            .cloned()
+        else {
+            panic!("IncVirtualization inc opening must be available before unsigned inc reduction");
+        };
+
+        Self {
+            n_cycle_vars: trace_len.log_2(),
+            input_point,
+            input_claim: inc_claim + F::from_u128(UNSIGNED_INC_SHIFT),
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> SumcheckInstanceParams<F> for UnsignedIncClaimReductionSumcheckParams<F> {
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
+        self.input_claim
+    }
+
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.n_cycle_vars
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative)]
+pub struct UnsignedIncClaimReductionSumcheckProver<F: JoltField> {
+    pub params: UnsignedIncClaimReductionSumcheckParams<F>,
+    unsigned_inc: MultilinearPolynomial<F>,
+    eq_input: MultilinearPolynomial<F>,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> UnsignedIncClaimReductionSumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "UnsignedIncClaimReductionSumcheckProver::initialize")]
+    pub fn initialize(
+        params: UnsignedIncClaimReductionSumcheckParams<F>,
+        trace: Arc<Vec<Cycle>>,
+    ) -> Self {
+        let unsigned_inc = trace
+            .par_iter()
+            .map(|cycle| F::from_u128(unsigned_inc_u128(cycle)))
+            .collect::<Vec<_>>();
+        let eq_input = EqPolynomial::evals(&params.input_point.r);
+
+        Self {
+            params,
+            unsigned_inc: unsigned_inc.into(),
+            eq_input: eq_input.into(),
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for UnsignedIncClaimReductionSumcheckProver<F>
+{
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "UnsignedIncClaimReductionSumcheckProver::compute_message"
+    )]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        let half_n = self.unsigned_inc.len() / 2;
+
+        let evals = (0..half_n)
+            .into_par_iter()
+            .fold(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, j| {
+                    let unsigned_inc = self
+                        .unsigned_inc
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+                    let eq_input = self
+                        .eq_input
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+
+                    for k in 0..DEGREE_BOUND {
+                        acc[k] += unsigned_inc[k] * eq_input[k];
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut a, b| {
+                    for k in 0..DEGREE_BOUND {
+                        a[k] += b[k];
+                    }
+                    a
+                },
+            );
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "UnsignedIncClaimReductionSumcheckProver::ingest_challenge"
+    )]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        self.unsigned_inc
+            .bind_parallel(r_j, BindingOrder::LowToHigh);
+        self.eq_input.bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
+        accumulator.append_lattice(
+            LatticeOpening::UnsignedInc,
+            opening_point,
+            self.unsigned_inc.final_sumcheck_claim(),
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative, Clone)]
+pub struct UnsignedIncMsbBooleanitySumcheckParams {
+    pub n_cycle_vars: usize,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl UnsignedIncMsbBooleanitySumcheckParams {
+    pub fn new(trace_len: usize) -> Self {
+        Self {
+            n_cycle_vars: trace_len.log_2(),
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> SumcheckInstanceParams<F> for UnsignedIncMsbBooleanitySumcheckParams {
+    fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
+        F::zero()
+    }
+
+    fn degree(&self) -> usize {
+        DEGREE_BOUND
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.n_cycle_vars
+    }
+
+    fn normalize_opening_point(
+        &self,
+        challenges: &[<F as JoltField>::Challenge],
+    ) -> OpeningPoint<BIG_ENDIAN, F> {
+        OpeningPoint::<LITTLE_ENDIAN, F>::new(challenges.to_vec()).match_endianness()
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+#[derive(Allocative)]
+pub struct UnsignedIncMsbBooleanitySumcheckProver<F: JoltField> {
+    pub params: UnsignedIncMsbBooleanitySumcheckParams,
+    msb: MultilinearPolynomial<F>,
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField> UnsignedIncMsbBooleanitySumcheckProver<F> {
+    #[tracing::instrument(skip_all, name = "UnsignedIncMsbBooleanitySumcheckProver::initialize")]
+    pub fn initialize(
+        params: UnsignedIncMsbBooleanitySumcheckParams,
+        trace: Arc<Vec<Cycle>>,
+    ) -> Self {
+        let msb = trace
+            .par_iter()
+            .map(|cycle| F::from_bool(unsigned_inc_msb(cycle)))
+            .collect::<Vec<_>>();
+
+        Self {
+            params,
+            msb: msb.into(),
+        }
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
+    for UnsignedIncMsbBooleanitySumcheckProver<F>
+{
+    fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
+        &self.params
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "UnsignedIncMsbBooleanitySumcheckProver::compute_message"
+    )]
+    fn compute_message(&mut self, _round: usize, previous_claim: F) -> UniPoly<F> {
+        let half_n = self.msb.len() / 2;
+
+        let evals = (0..half_n)
+            .into_par_iter()
+            .fold(
+                || [F::zero(); DEGREE_BOUND],
+                |mut acc, j| {
+                    let msb = self
+                        .msb
+                        .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+
+                    for k in 0..DEGREE_BOUND {
+                        acc[k] += msb[k].square() - msb[k];
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [F::zero(); DEGREE_BOUND],
+                |mut a, b| {
+                    for k in 0..DEGREE_BOUND {
+                        a[k] += b[k];
+                    }
+                    a
+                },
+            );
+
+        UniPoly::from_evals_and_hint(previous_claim, &evals)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "UnsignedIncMsbBooleanitySumcheckProver::ingest_challenge"
+    )]
+    fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
+        self.msb.bind_parallel(r_j, BindingOrder::LowToHigh);
+    }
+
+    fn cache_openings(
+        &self,
+        accumulator: &mut ProverOpeningAccumulator<F>,
+        sumcheck_challenges: &[F::Challenge],
+    ) {
+        let opening_point = SumcheckInstanceProver::<F, T>::get_params(self)
+            .normalize_opening_point(sumcheck_challenges);
+        accumulator.append_lattice(
+            LatticeOpening::UnsignedIncMsb,
+            opening_point,
+            self.msb.final_sumcheck_claim(),
+        );
+    }
+
+    #[cfg(feature = "allocative")]
+    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder) {
+        flamegraph.visit_root(self);
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 fn ram_inc_i128(cycle: &Cycle) -> i128 {
     match cycle.ram_access() {
         RAMAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
@@ -1005,6 +1295,25 @@ fn ram_inc_i128(cycle: &Cycle) -> i128 {
 fn rd_inc_i128(cycle: &Cycle) -> i128 {
     let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
     post_value as i128 - pre_value as i128
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn selected_inc_i128(cycle: &Cycle) -> i128 {
+    if matches!(cycle.ram_access(), RAMAccess::Write(_)) {
+        ram_inc_i128(cycle)
+    } else {
+        rd_inc_i128(cycle)
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn unsigned_inc_u128(cycle: &Cycle) -> u128 {
+    (UNSIGNED_INC_SHIFT as i128 + selected_inc_i128(cycle)) as u128
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn unsigned_inc_msb(cycle: &Cycle) -> bool {
+    (unsigned_inc_u128(cycle) >> 64) != 0
 }
 
 #[cfg(all(test, feature = "host", feature = "akita", not(feature = "zk")))]
@@ -1117,6 +1426,84 @@ mod tests {
             * (ram_coeff * store_claim + gamma_sqr * rd_coeff * (Fr::from_u64(1) - store_claim));
 
         assert_eq!(final_claim, batch_coeff * expected);
+    }
+
+    #[test]
+    fn unsigned_inc_claim_reduction_sumcheck_matches_cached_lattice_opening() {
+        let mut program = host::Program::new("muldiv-guest");
+        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap();
+        let (_, mut trace, _, _) = program.trace(&inputs, &[], &[]);
+        trace.resize(trace.len().next_power_of_two(), Cycle::NoOp);
+
+        let trace = Arc::new(trace);
+        let log_t = trace.len().log_2();
+        let selected_inc = MultilinearPolynomial::from(
+            trace
+                .iter()
+                .map(|cycle| Fr::from_i128(selected_inc_i128(cycle)))
+                .collect::<Vec<_>>(),
+        );
+
+        let input_point = challenge_point(23, log_t);
+        let mut transcript = Blake2bTranscript::new(b"unsigned_inc_reduction_test");
+        let mut accumulator = ProverOpeningAccumulator::new(log_t);
+        accumulator.append_lattice(
+            LatticeOpening::IncVirtualizationInc,
+            input_point.clone(),
+            selected_inc.evaluate(&input_point.r),
+        );
+        accumulator.flush_to_transcript(&mut transcript);
+
+        let params = UnsignedIncClaimReductionSumcheckParams::new(trace.len(), &accumulator);
+        let mut prover =
+            UnsignedIncClaimReductionSumcheckProver::initialize(params, Arc::clone(&trace));
+        let input_claim = prover.params.input_claim(&accumulator);
+
+        let (proof, r_sumcheck, initial_claim) =
+            BatchedSumcheck::prove(vec![&mut prover], &mut accumulator, &mut transcript);
+
+        let batch_coeff = initial_claim * input_claim.inverse().unwrap();
+        let final_claim = proof
+            .compressed_polys
+            .iter()
+            .zip(&r_sumcheck)
+            .fold(initial_claim, |claim, (poly, r_j)| {
+                poly.decompress(&claim).evaluate(r_j)
+            });
+
+        let (opening_point, unsigned_inc_claim) = accumulator
+            .openings
+            .get(&OpeningId::Lattice(LatticeOpening::UnsignedInc))
+            .cloned()
+            .expect("unsigned inc reduction should cache unsigned inc opening");
+        let eq_input = EqPolynomial::<Fr>::mle(&opening_point.r, &input_point.r);
+
+        assert_eq!(final_claim, batch_coeff * eq_input * unsigned_inc_claim);
+    }
+
+    #[test]
+    fn unsigned_inc_msb_booleanity_sumcheck_caches_lattice_opening() {
+        let trace = Arc::new(vec![Cycle::NoOp; 8]);
+        let log_t = trace.len().log_2();
+        let mut transcript = Blake2bTranscript::new(b"unsigned_inc_msb_booleanity_test");
+        let mut accumulator = ProverOpeningAccumulator::new(log_t);
+        let params = UnsignedIncMsbBooleanitySumcheckParams::new(trace.len());
+        let mut prover =
+            UnsignedIncMsbBooleanitySumcheckProver::<Fr>::initialize(params, Arc::clone(&trace));
+
+        let (proof, r_sumcheck, initial_claim) =
+            BatchedSumcheck::prove(vec![&mut prover], &mut accumulator, &mut transcript);
+        let final_claim = proof
+            .compressed_polys
+            .iter()
+            .zip(&r_sumcheck)
+            .fold(initial_claim, |claim, (poly, r_j)| {
+                poly.decompress(&claim).evaluate(r_j)
+            });
+        let msb_claim = accumulator.get_opening(OpeningId::Lattice(LatticeOpening::UnsignedIncMsb));
+
+        assert_eq!(final_claim, Fr::zero());
+        assert_eq!(msb_claim, Fr::from_u64(1));
     }
 
     fn challenge_point(seed: u64, log_t: usize) -> OpeningPoint<BIG_ENDIAN, Fr> {

@@ -863,6 +863,10 @@ fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelationId {
         }
         prover_opening::SumcheckId::IncClaimReduction => JoltRelationId::IncClaimReduction,
         prover_opening::SumcheckId::IncVirtualization => JoltRelationId::IncVirtualization,
+        prover_opening::SumcheckId::UnsignedIncClaimReduction => {
+            JoltRelationId::UnsignedIncClaimReduction
+        }
+        prover_opening::SumcheckId::UnsignedIncMsbBooleanity => JoltRelationId::Booleanity,
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }

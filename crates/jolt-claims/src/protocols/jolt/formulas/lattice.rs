@@ -11,7 +11,7 @@ use crate::{challenge, constant, opening, public};
 use super::super::{
     IncVirtualizationChallenge, IncVirtualizationPublic, JoltChallengeId, JoltExpr, JoltPublicId,
     JoltRelationClaims, UnsignedIncChunkReconstructionChallenge,
-    UnsignedIncChunkReconstructionPublic,
+    UnsignedIncChunkReconstructionPublic, UnsignedIncClaimReductionPublic,
 };
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::claim_reductions::bytecode as bytecode_reduction;
@@ -377,7 +377,8 @@ where
     F: RingCore + FromPrimitiveInt,
 {
     let input = opening(inc_virtualization_inc_opening()) + constant(F::from_u128(1u128 << 64));
-    let output = opening(unsigned_inc_opening());
+    let output = unsigned_inc_claim_reduction_public(UnsignedIncClaimReductionPublic::EqInput)
+        * opening(unsigned_inc_opening());
 
     JoltRelationClaims::new(
         JoltRelationId::UnsignedIncClaimReduction,
@@ -408,6 +409,13 @@ where
 }
 
 fn inc_virtualization_public<F>(id: IncVirtualizationPublic) -> JoltExpr<F>
+where
+    F: RingCore,
+{
+    public(JoltPublicId::from(id))
+}
+
+fn unsigned_inc_claim_reduction_public<F>(id: UnsignedIncClaimReductionPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -1097,7 +1105,10 @@ mod tests {
             vec![unsigned_inc_opening()]
         );
         assert!(claims.required_challenges().is_empty());
-        assert!(claims.required_publics().is_empty());
+        assert_eq!(
+            claims.required_publics(),
+            vec![JoltPublicId::from(UnsignedIncClaimReductionPublic::EqInput)]
+        );
 
         let input = claims.input.expression().evaluate(
             |id| match *id {
@@ -1113,7 +1124,12 @@ mod tests {
                 _ => zero,
             },
             |_| zero,
-            |_| zero,
+            |id| match *id {
+                JoltPublicId::UnsignedIncClaimReduction(
+                    UnsignedIncClaimReductionPublic::EqInput,
+                ) => Fr::from_u64(1),
+                _ => zero,
+            },
         );
 
         assert_eq!(input, unsigned_inc);

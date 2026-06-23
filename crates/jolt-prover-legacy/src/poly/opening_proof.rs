@@ -166,6 +166,8 @@ pub enum SumcheckId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     IncVirtualization,
+    UnsignedIncClaimReduction,
+    UnsignedIncMsbBooleanity,
     HammingWeightClaimReduction,
 }
 
