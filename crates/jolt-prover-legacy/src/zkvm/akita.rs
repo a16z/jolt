@@ -618,14 +618,14 @@ impl AkitaPrecommittedProgramProverData {
 #[derive(Clone, Debug)]
 pub struct AkitaOwnedPrecommittedOpening {
     pub commitment: AkitaCommitment,
-    pub polynomial: Polynomial<AkitaField>,
+    pub polynomials: Vec<Polynomial<AkitaField>>,
     pub hint: AkitaProverHint,
 }
 
 impl AkitaOwnedPrecommittedOpening {
     pub fn as_input(&self) -> AkitaPrecommittedOpeningInput<'_> {
         AkitaPrecommittedOpeningInput {
-            polynomial: &self.polynomial,
+            polynomials: self.polynomials.as_slice(),
             hint: &self.hint,
         }
     }
@@ -669,8 +669,16 @@ where
             .max(akita_precommitted_program_max_num_vars(
                 &self.preprocessing.shared,
             )?);
-        let (prover_setup, verifier_setup) =
-            akita_packing_setup_with_max_num_vars(&layout, max_num_vars, 1);
+        let max_num_polys_per_commitment_group =
+            require_committed_program(&self.preprocessing.shared.program)?
+                .bytecode_commitments
+                .bytecode_chunk_count
+                .max(1);
+        let (prover_setup, verifier_setup) = akita_packing_setup_with_max_num_vars(
+            &layout,
+            max_num_vars,
+            max_num_polys_per_commitment_group,
+        );
         let trace_rows = build_trace_rows(
             &self.trace,
             &self.preprocessing.materialized_program().bytecode,
@@ -730,25 +738,26 @@ where
         let committed = require_committed_program(&shared.program)?;
         let program = self.preprocessing.materialized_program();
         let bytecode_chunk_count = committed.bytecode_commitments.bytecode_chunk_count;
-        let mut bytecode_chunk_commitments = Vec::with_capacity(bytecode_chunk_count);
-        let mut opening_inputs = Vec::with_capacity(bytecode_chunk_count + 1);
-        for polynomial in
-            build_akita_bytecode_chunk_polynomials(&program.bytecode.bytecode, bytecode_chunk_count)
-        {
-            let opening =
-                commit_akita_precommitted_polynomial(polynomial, &packed_witness.prover_setup.pcs);
-            bytecode_chunk_commitments.push(opening.commitment.clone());
-            opening_inputs.push(opening);
-        }
+        let bytecode_opening = commit_akita_precommitted_polynomial_group(
+            build_akita_bytecode_chunk_polynomials(
+                &program.bytecode.bytecode,
+                bytecode_chunk_count,
+            ),
+            &packed_witness.prover_setup.pcs,
+        )?;
+        let bytecode_chunk_commitments =
+            vec![bytecode_opening.commitment.clone(); bytecode_chunk_count];
+        let mut opening_inputs = Vec::with_capacity(2);
+        opening_inputs.push(bytecode_opening);
 
         let program_image_polynomial = build_akita_program_image_polynomial(
             program,
             committed.program_commitments.program_image_num_words,
         );
-        let program_image_opening = commit_akita_precommitted_polynomial(
-            program_image_polynomial,
+        let program_image_opening = commit_akita_precommitted_polynomial_group(
+            vec![program_image_polynomial],
             &packed_witness.prover_setup.pcs,
-        );
+        )?;
         let program_image_commitment = program_image_opening.commitment.clone();
         opening_inputs.push(program_image_opening);
 
@@ -991,16 +1000,21 @@ fn build_akita_program_image_polynomial(
     )
 }
 
-fn commit_akita_precommitted_polynomial(
-    polynomial: Polynomial<AkitaField>,
+fn commit_akita_precommitted_polynomial_group(
+    polynomials: Vec<Polynomial<AkitaField>>,
     setup: &jolt_akita::AkitaProverSetup,
-) -> AkitaOwnedPrecommittedOpening {
-    let (commitment, hint) = AkitaScheme::commit(&polynomial, setup);
-    AkitaOwnedPrecommittedOpening {
+) -> Result<AkitaOwnedPrecommittedOpening, VerifierError> {
+    let (commitment, hint) =
+        AkitaScheme::commit_group(setup, setup.default_layout_digest, &polynomials).map_err(
+            |error| VerifierError::FinalOpeningBatchFailed {
+                reason: error.to_string(),
+            },
+        )?;
+    Ok(AkitaOwnedPrecommittedOpening {
         commitment,
-        polynomial,
+        polynomials,
         hint,
-    }
+    })
 }
 
 fn verifier_program_metadata(
@@ -1122,22 +1136,26 @@ mod tests {
             verifier_committed.bytecode_chunk_commitments.len(),
             prover.preprocessing.shared.bytecode_chunk_count
         );
-        assert_eq!(
-            precommitted.opening_inputs.len(),
-            prover.preprocessing.shared.bytecode_chunk_count + 1
-        );
-        for (opening, commitment) in precommitted
+        assert_eq!(precommitted.opening_inputs.len(), 2);
+        let bytecode_opening = precommitted
             .opening_inputs
-            .iter()
-            .zip(verifier_committed.bytecode_chunk_commitments.iter())
-        {
-            assert_eq!(&opening.commitment, commitment);
-            assert!(opening.hint.matches_commitment(commitment));
+            .first()
+            .expect("bytecode opening should be first");
+        assert_eq!(
+            bytecode_opening.polynomials.len(),
+            prover.preprocessing.shared.bytecode_chunk_count
+        );
+        assert!(bytecode_opening
+            .hint
+            .matches_commitment(&bytecode_opening.commitment));
+        for commitment in &verifier_committed.bytecode_chunk_commitments {
+            assert_eq!(&bytecode_opening.commitment, commitment);
         }
         let program_image_opening = precommitted
             .opening_inputs
             .last()
             .expect("program image opening should follow bytecode chunks");
+        assert_eq!(program_image_opening.polynomials.len(), 1);
         assert_eq!(
             program_image_opening.commitment,
             verifier_committed.program_image_commitment

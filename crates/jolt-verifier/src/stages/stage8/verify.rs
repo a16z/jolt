@@ -88,7 +88,7 @@ where
     PCS: CommitmentScheme<Field = F>
         + BatchOpeningScheme
         + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: Clone + CommitmentLayoutDigest,
+    PCS::Output: Clone + CommitmentLayoutDigest + PartialEq,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -165,7 +165,7 @@ pub fn verify_clear<F, PCS, VC, T, ZkProof>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
-    PCS::Output: Clone + CommitmentLayoutDigest,
+    PCS::Output: Clone + CommitmentLayoutDigest + PartialEq,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -221,7 +221,7 @@ pub fn batch_statement<F, PCS, VC, ZkProof>(
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + CommitmentLayoutDigest,
+    PCS::Output: Clone + CommitmentLayoutDigest + PartialEq,
     VC: VectorCommitment<Field = F>,
 {
     match (checked.zk, deps) {

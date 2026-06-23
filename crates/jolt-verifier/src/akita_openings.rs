@@ -19,7 +19,7 @@ use jolt_transcript::Transcript;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AkitaPrecommittedOpeningInput<'a> {
-    pub polynomial: &'a Polynomial<AkitaField>,
+    pub polynomials: &'a [Polynomial<AkitaField>],
     pub hint: &'a AkitaProverHint,
 }
 
@@ -169,7 +169,7 @@ where
                 setup,
                 transcript,
                 statement,
-                std::slice::from_ref(input.polynomial),
+                input.polynomials,
                 vec![input.hint.clone()],
             )
             .map_err(|error| VerifierError::FinalOpeningBatchFailed {
@@ -219,6 +219,15 @@ fn validate_akita_precommitted_opening_input(
     if statement.claims.is_empty() {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason: format!("lattice precommitted opening statement {index} has no claims"),
+        });
+    }
+    if input.polynomials.len() != statement.claims.len() {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "lattice precommitted opening input {index} has {} polynomials for {} claims",
+                input.polynomials.len(),
+                statement.claims.len()
+            ),
         });
     }
     if input.hint.matches_commitment(packed_witness) {
@@ -772,7 +781,7 @@ mod tests {
             precommitted_statements: vec![precommitted_statement.clone()],
         });
         let precommitted_inputs = [AkitaPrecommittedOpeningInput {
-            polynomial: &precommitted_poly,
+            polynomials: std::slice::from_ref(&precommitted_poly),
             hint: &precommitted_hint,
         }];
 
@@ -840,7 +849,7 @@ mod tests {
         ));
 
         let packed_hint_inputs = [AkitaPrecommittedOpeningInput {
-            polynomial: &precommitted_poly,
+            polynomials: std::slice::from_ref(&precommitted_poly),
             hint: &artifact.hint,
         }];
         let mut packed_hint_transcript = Blake2bTranscript::new(b"verifier-akita-precommitted");
