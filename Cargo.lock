@@ -3224,6 +3224,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-prover"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "blake2 0.11.0-rc.6",
+ "common",
+ "jolt-backends",
+ "jolt-blindfold",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-riscv",
+ "jolt-sdk",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "muldiv-guest",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "sha2-chain-guest",
+ "thiserror 2.0.18",
+ "tracer",
+]
+
+[[package]]
 name = "jolt-prover-legacy"
 version = "0.1.0"
 dependencies = [

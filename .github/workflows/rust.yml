@@ -52,10 +52,7 @@ jobs:
       - name: cargo clippy --features allocative,host,zk
         run: cargo clippy --all --all-targets --features allocative,host,zk
       - name: cargo clippy --no-default-features
-        # jolt-backends is not standalone no-default-features-clean: cpu-gated code
-        # is the only consumer of a few pub(crate) helpers. jolt-prover (next PR in
-        # the stack) depends on it with default features and restores full coverage.
-        run: cargo clippy --all --all-targets --no-default-features --exclude jolt-backends
+        run: cargo clippy --all --all-targets --no-default-features
       # jolt-verifier's prover-fixtures feature gates live prover artifact
       # generation for verifier tests. It is not enabled by the workspace-wide
       # invocations above, so build it explicitly in both modes.
@@ -265,6 +262,23 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v5
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Discover modular crates
