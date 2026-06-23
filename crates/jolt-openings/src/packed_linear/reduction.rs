@@ -1,11 +1,13 @@
 use jolt_field::Field;
 use jolt_poly::{EqPolynomial, MultilinearPoly};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::{
     BatchOpeningResult, BatchOpeningStatement, OpeningsError, PackedLinearTerm, PhysicalView,
 };
 
+use super::encoding::{decode_round, encode_round, field_bytes, field_from_bytes};
+use super::transcript::{append_round, bind_packed_statement};
 use super::types::{
     PackedLinearAddress, PackedLinearFamily, PackedLinearLayout, PackedLinearProverReduction,
     PackedLinearReductionProof, PackedLinearVerifierReduction, PackedLinearWitnessSource,
@@ -194,7 +196,10 @@ where
         .ok_or_else(|| invalid_batch("packed linear term references an unknown family"))
 }
 
-fn validate_term<F, L>(layout: &L, term: &PackedLinearTerm<F>) -> Result<(), OpeningsError>
+pub(super) fn validate_term<F, L>(
+    layout: &L,
+    term: &PackedLinearTerm<F>,
+) -> Result<(), OpeningsError>
 where
     F: Field,
     L: PackedLinearLayout,
@@ -871,67 +876,6 @@ where
     evals[0] * l0 + evals[1] * l1 + evals[2] * l2
 }
 
-fn append_round<F, T>(transcript: &mut T, round: &[F; 3])
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    transcript.append(&Label(b"akpk_sum_round"));
-    for eval in round {
-        eval.append_to_transcript(transcript);
-    }
-}
-
-fn bind_packed_statement<F, C, OpeningId, RelationId, L, T>(
-    layout: &L,
-    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
-    transcript: &mut T,
-) -> Result<(), OpeningsError>
-where
-    F: Field,
-    C: AppendToTranscript,
-    L: PackedLinearLayout,
-    T: Transcript<Challenge = F>,
-{
-    transcript.append(&Label(b"akpk_batch_stmt"));
-    transcript.append_bytes(&layout.digest());
-    transcript.append(&U64Word(layout.dimension() as u64));
-    transcript.append(&U64Word(layout.cells() as u64));
-    append_field_slice(transcript, b"akpk_logical_point", &statement.logical_point);
-    append_field_slice(transcript, b"akpk_pcs_point", &statement.pcs_point);
-    transcript.append(&LabelWithCount(
-        b"akita_packed_claims",
-        statement.claims.len() as u64,
-    ));
-    for claim in &statement.claims {
-        claim.commitment.append_to_transcript(transcript);
-        claim.claim.append_to_transcript(transcript);
-        claim.scale.append_to_transcript(transcript);
-        match &claim.view {
-            PhysicalView::Direct => transcript.append_bytes(&[0]),
-            PhysicalView::PackedLinear {
-                layout_digest,
-                terms,
-            } => {
-                transcript.append_bytes(&[1]);
-                transcript.append_bytes(layout_digest);
-                transcript.append(&LabelWithCount(b"akpk_view_terms", terms.len() as u64));
-                for term in terms {
-                    validate_term(layout, term)?;
-                    transcript.append(&U64Word(term.family.namespace));
-                    transcript.append(&U64Word(term.family.id));
-                    transcript.append(&U64Word(term.family.index));
-                    transcript.append(&U64Word(term.limb as u64));
-                    transcript.append(&U64Word(term.symbol as u64));
-                    append_field_slice(transcript, b"akpk_view_row_point", &term.row_point);
-                    term.coefficient.append_to_transcript(transcript);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 fn checked_domain_size(num_vars: usize) -> Result<usize, OpeningsError> {
     if num_vars >= usize::BITS as usize {
         return Err(invalid_batch(format!(
@@ -954,55 +898,6 @@ fn offset_bit(offset: usize, bit: usize) -> bool {
     bit < usize::BITS as usize && ((offset >> bit) & 1) != 0
 }
 
-fn field_bytes<F>(value: F) -> Vec<u8>
-where
-    F: Field,
-{
-    value.to_bytes_le_vec()
-}
-
-fn field_from_bytes<F>(bytes: &[u8]) -> Result<F, OpeningsError>
-where
-    F: Field,
-{
-    if bytes.len() != F::NUM_BYTES {
-        return Err(invalid_batch(format!(
-            "packed linear proof field encoding has {} bytes but expected {}",
-            bytes.len(),
-            F::NUM_BYTES
-        )));
-    }
-    let value = F::from_le_bytes_mod_order(bytes);
-    if value.to_bytes_le_vec() != bytes {
-        return Err(invalid_batch(
-            "packed linear proof field encoding is not canonical",
-        ));
-    }
-    Ok(value)
-}
-
-fn encode_round<F>(round: [F; 3]) -> [Vec<u8>; 3]
-where
-    F: Field,
-{
-    [
-        field_bytes(round[0]),
-        field_bytes(round[1]),
-        field_bytes(round[2]),
-    ]
-}
-
-fn decode_round<F>(round: &[Vec<u8>; 3]) -> Result<[F; 3], OpeningsError>
-where
-    F: Field,
-{
-    Ok([
-        field_from_bytes(&round[0])?,
-        field_from_bytes(&round[1])?,
-        field_from_bytes(&round[2])?,
-    ])
-}
-
 pub(super) fn polynomial_evaluations<F, P>(polynomial: &P) -> Vec<F>
 where
     F: Field,
@@ -1013,17 +908,6 @@ where
         evals.extend_from_slice(row);
     });
     evals
-}
-
-fn append_field_slice<F, T>(transcript: &mut T, label: &'static [u8], values: &[F])
-where
-    F: Field,
-    T: Transcript<Challenge = F>,
-{
-    transcript.append(&LabelWithCount(label, values.len() as u64));
-    for value in values {
-        value.append_to_transcript(transcript);
-    }
 }
 
 pub(super) fn invalid_batch(reason: impl Into<String>) -> OpeningsError {

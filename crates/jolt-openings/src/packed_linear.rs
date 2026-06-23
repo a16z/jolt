@@ -1,5 +1,7 @@
 mod batch;
+mod encoding;
 mod reduction;
+mod transcript;
 mod types;
 
 pub use reduction::{
