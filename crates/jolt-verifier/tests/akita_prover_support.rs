@@ -278,6 +278,7 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
             trace_rows: &rows,
             log_k_chunk: 8,
             instruction_lookup_indices: &[0xaa, 0xbb],
+            remapped_ram_addresses: None,
             untrusted_advice: Some(&[7, 8]),
         },
     )
@@ -400,6 +401,7 @@ fn build_jolt_packed_witness_rejects_precommitted_layout_families() {
             trace_rows: &[],
             log_k_chunk: 8,
             instruction_lookup_indices: &[],
+            remapped_ram_addresses: None,
             untrusted_advice: None,
         })
         .expect_err("precommitted packed-witness layout should reject");

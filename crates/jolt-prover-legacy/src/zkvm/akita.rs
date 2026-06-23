@@ -60,6 +60,7 @@ use crate::{
         preprocessing::JoltSharedPreprocessing,
         program::{build_program_image_words_padded, ProgramPreprocessing},
         prover::JoltCpuProver,
+        ram::remap_address,
         ProverDebugInfo,
     },
 };
@@ -678,6 +679,16 @@ where
             invalid_akita_prover_config(format!("failed to build Akita trace rows: {error}"))
         })?;
         let instruction_lookup_indices = instruction_lookup_indices(&self.trace);
+        let remapped_ram_addresses = self
+            .trace
+            .iter()
+            .map(|cycle| {
+                remap_address(
+                    cycle.ram_access().address() as u64,
+                    &self.preprocessing.shared.memory_layout,
+                )
+            })
+            .collect::<Vec<_>>();
         let committed = commit_akita_packing_jolt_witness(
             &prover_setup,
             AkitaPackingJoltWitnessInput {
@@ -685,6 +696,7 @@ where
                 trace_rows: &trace_rows,
                 log_k_chunk: self.one_hot_params.log_k_chunk,
                 instruction_lookup_indices: &instruction_lookup_indices,
+                remapped_ram_addresses: Some(&remapped_ram_addresses),
                 untrusted_advice: (!self.program_io.untrusted_advice.is_empty())
                     .then_some(self.program_io.untrusted_advice.as_slice()),
             },

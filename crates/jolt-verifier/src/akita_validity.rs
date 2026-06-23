@@ -13,10 +13,10 @@ use crate::{
         stage8::{
             build_lattice_packed_validity_batch, derive_lattice_packed_validity_requirements,
             derive_lattice_packed_validity_statements, field_element_canonical_factors,
-            field_element_canonical_value_from_openings, lattice_packed_validity_claims,
-            lattice_packed_validity_opening_count, lattice_packing_family_id,
-            sample_lattice_packed_validity_eq_points, FieldCanonicalFactor,
-            LatticePackedValidityStatement, LatticePackedValidityStatementKind,
+            lattice_packed_validity_claims, lattice_packed_validity_opening_count,
+            lattice_packing_family_id, sample_lattice_packed_validity_eq_points,
+            FieldCanonicalFactor, LatticePackedValidityStatement,
+            LatticePackedValidityStatementKind,
         },
         PrecommittedSchedule,
     },
@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::{
     LatticePackedFamilyId, LatticePackedValidityKind, LatticePackedValidityRequirement,
 };
 use jolt_openings::{PackingFamilyId, PackingWitnessLayout, PackingWitnessSource};
-use jolt_poly::{try_eq_mle, EqPolynomial};
+use jolt_poly::EqPolynomial;
 use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{append_sumcheck_claim, ClearProof, SumcheckProof};
 use jolt_transcript::Transcript;
@@ -195,37 +195,6 @@ where
     )
 }
 
-pub(crate) fn validity_value<S>(
-    source: &S,
-    statement: &LatticePackedValidityStatement,
-    eq_point: &[AkitaField],
-    point: &[AkitaField],
-) -> Result<AkitaField, VerifierError>
-where
-    S: PackingWitnessSource<AkitaField>,
-{
-    let eq_mask = try_eq_mle(point, eq_point).map_err(|error| {
-        VerifierError::LatticePackedValiditySumcheckFailed {
-            reason: error.to_string(),
-        }
-    })?;
-    let value = match statement.kind {
-        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint => {
-            let openings = validity_opening_values(source, statement, point)?;
-            openings[0] * openings[1]
-        }
-        LatticePackedValidityStatementKind::FieldElementCanonicalBytes => {
-            let openings = validity_opening_values(source, statement, point)?;
-            field_element_canonical_value_from_openings(statement, &openings)?
-        }
-        _ => validity_violation(
-            statement.kind,
-            validity_opening_value(source, statement, point)?,
-        ),
-    };
-    Ok(eq_mask * value)
-}
-
 fn validity_opening_values<S>(
     source: &S,
     statement: &LatticePackedValidityStatement,
@@ -309,22 +278,6 @@ where
                     .to_string(),
             })
         }
-    }
-}
-
-fn validity_violation(kind: LatticePackedValidityStatementKind, opening: AkitaField) -> AkitaField {
-    match kind {
-        LatticePackedValidityStatementKind::CellBooleanity
-        | LatticePackedValidityStatementKind::BooleanIndicator
-        | LatticePackedValidityStatementKind::OptionalOneHotRowSum => {
-            opening * (opening - AkitaField::one())
-        }
-        LatticePackedValidityStatementKind::ExactOneHotRowSum => {
-            let difference = opening - AkitaField::one();
-            difference * difference
-        }
-        LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint
-        | LatticePackedValidityStatementKind::FieldElementCanonicalBytes => opening,
     }
 }
 
@@ -746,6 +699,7 @@ mod tests {
     use crate::{
         akita::{commit_akita_packing_witness_with_config, AkitaPackingVerifierSetup},
         akita_packing::AkitaPackingScheme,
+        akita_validity_sumcheck::validity_value_for_testing as validity_value,
         config::{IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode},
         proof::ClearOnlyCommitment,
         stages::{

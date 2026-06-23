@@ -479,12 +479,8 @@ where
         &physical_manifest.openings[..entries.len()],
         &pcs_opening_point,
     )?;
-    let (precommitted_opening_claims, precommitted_statements) = precommitted_clear_statements(
-        &precommitted_entries,
-        stage8_layout_digest(preprocessing),
-        &point,
-        &pcs_opening_point,
-    )?;
+    let (precommitted_opening_claims, precommitted_statements) =
+        precommitted_clear_statements(&precommitted_entries, stage8_layout_digest(preprocessing))?;
     opening_claims.extend(precommitted_opening_claims);
     Ok(Stage8BatchStatement::Clear(Stage8ClearBatchStatement {
         logical_manifest,

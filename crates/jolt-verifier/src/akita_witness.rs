@@ -22,6 +22,7 @@ pub struct AkitaPackingJoltWitnessInput<'a> {
     pub trace_rows: &'a [JoltTraceRow],
     pub log_k_chunk: usize,
     pub instruction_lookup_indices: &'a [u128],
+    pub remapped_ram_addresses: Option<&'a [Option<u64>]>,
     pub untrusted_advice: Option<&'a [u8]>,
 }
 
@@ -292,6 +293,15 @@ pub fn build_akita_packing_jolt_witness(
             input.trace_rows.len()
         )));
     }
+    if let Some(addresses) = input.remapped_ram_addresses {
+        if addresses.len() != input.trace_rows.len() {
+            return Err(akita_witness_error(format!(
+                "remapped RAM address count {} does not match trace row count {}",
+                addresses.len(),
+                input.trace_rows.len()
+            )));
+        }
+    }
 
     let mut builder = JoltPackedWitnessBuilder::new(input.layout.clone());
     builder
@@ -299,7 +309,12 @@ pub fn build_akita_packing_jolt_witness(
             input.trace_rows,
             input.log_k_chunk,
             |row, _| input.instruction_lookup_indices[row],
-            |_, row| (row.is_load() || row.is_store()).then(|| row.ram_address()),
+            |row_index, row| {
+                input.remapped_ram_addresses.map_or_else(
+                    || (row.is_load() || row.is_store()).then(|| row.ram_address()),
+                    |addresses| addresses[row_index],
+                )
+            },
         )
         .map(|_| ())
         .map_err(akita_witness_error)?;

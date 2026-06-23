@@ -1,14 +1,11 @@
-use super::{
-    outputs::{Stage8OpeningStatement, Stage8PhysicalOpening},
-    verify::{clear_batch_claims, Stage8BatchEntry},
-};
+use super::{outputs::Stage8OpeningStatement, verify::Stage8BatchEntry};
 use crate::VerifierError;
 use jolt_field::Field;
 use jolt_openings::{
-    BatchOpeningScheme, BatchOpeningStatement, CommitmentLayoutDigest, PhysicalView,
-    VerifierOpeningClaim,
+    BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentLayoutDigest,
+    EvaluationClaim, PhysicalView, VerifierOpeningClaim,
 };
-use jolt_poly::{Point, HIGH_TO_LOW};
+use jolt_poly::Point;
 use jolt_transcript::Transcript;
 
 type Stage8PrecommittedStatementBuild<F, C> = (
@@ -51,8 +48,6 @@ where
 pub(super) fn precommitted_clear_statements<F, C>(
     entries: &[Stage8BatchEntry<'_, F, C>],
     default_layout_digest: [u8; 32],
-    point: &[F],
-    pcs_opening_point: &Point<HIGH_TO_LOW, F>,
 ) -> Result<Stage8PrecommittedStatementBuild<F, C>, VerifierError>
 where
     F: Field,
@@ -61,22 +56,29 @@ where
     let mut opening_claims = Vec::with_capacity(entries.len());
     let mut statements = Vec::with_capacity(entries.len());
     for entry in entries {
-        let physical = Stage8PhysicalOpening {
-            id: entry.id,
-            relation: entry.id,
-            view: PhysicalView::Direct,
-        };
-        let (mut entry_claims, claims) = clear_batch_claims(
-            std::slice::from_ref(entry),
-            std::slice::from_ref(&physical),
-            pcs_opening_point,
-        )?;
-        opening_claims.append(&mut entry_claims);
+        let opening_claim =
+            entry
+                .opening_claim
+                .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+                    reason: "missing clear opening claim in final batch".to_string(),
+                })?;
+        let own_point = Point::high_to_low(entry.own_point.clone());
+        opening_claims.push(VerifierOpeningClaim {
+            commitment: entry.commitment.clone(),
+            evaluation: EvaluationClaim::new(own_point, opening_claim * entry.scale),
+        });
         statements.push(BatchOpeningStatement {
-            logical_point: point.to_vec(),
-            pcs_point: point.to_vec(),
+            logical_point: entry.own_point.clone(),
+            pcs_point: entry.own_point.clone(),
             layout_digest: direct_statement_layout_digest(entry.commitment, default_layout_digest),
-            claims,
+            claims: vec![BatchOpeningClaim {
+                id: entry.id,
+                relation: entry.id,
+                commitment: entry.commitment.clone(),
+                claim: opening_claim,
+                view: PhysicalView::Direct,
+                scale: entry.scale,
+            }],
         });
     }
 
@@ -304,14 +306,44 @@ mod tests {
             own_point: vec![Fr::from_u64(0)],
             scale: Fr::from_u64(1),
         };
-        let point = vec![Fr::from_u64(0)];
-        let pcs_opening_point = Point::high_to_low(point.clone());
-        let (_, statements) =
-            precommitted_clear_statements(&[entry], default_digest, &point, &pcs_opening_point)
-                .expect("precommitted statement should build");
+        let (_, statements) = precommitted_clear_statements(&[entry], default_digest)
+            .expect("precommitted statement should build");
 
         assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0].logical_point, vec![Fr::from_u64(0)]);
+        assert_eq!(statements[0].pcs_point, vec![Fr::from_u64(0)]);
         assert_eq!(statements[0].layout_digest, digest);
         assert_ne!(statements[0].layout_digest, default_digest);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn precommitted_statements_use_entry_point_not_unified_point() {
+        let commitment = jolt_akita::AkitaCommitment {
+            layout_digest: [23; 32],
+            num_vars: 1,
+            poly_count: 1,
+            native: vec![1],
+        };
+        let id = Stage8OpeningId::from(JoltOpeningId::committed(
+            JoltCommittedPolynomial::ProgramImageInit,
+            JoltRelationId::ProgramImageClaimReduction,
+        ));
+        let entry = Stage8BatchEntry {
+            id,
+            commitment: &commitment,
+            opening_claim: Some(Fr::from_u64(7)),
+            own_point: vec![Fr::from_u64(5)],
+            scale: Fr::from_u64(3),
+        };
+
+        let (claims, statements) = precommitted_clear_statements(&[entry], [17; 32])
+            .expect("precommitted statement should build");
+
+        assert_eq!(claims[0].evaluation.point.as_slice(), &[Fr::from_u64(5)]);
+        assert_eq!(claims[0].evaluation.value, Fr::from_u64(21));
+        assert_eq!(statements[0].logical_point, vec![Fr::from_u64(5)]);
+        assert_eq!(statements[0].pcs_point, vec![Fr::from_u64(5)]);
+        assert_eq!(statements[0].claims[0].scale, Fr::from_u64(3));
     }
 }
