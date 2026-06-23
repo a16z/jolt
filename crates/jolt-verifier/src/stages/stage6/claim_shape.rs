@@ -7,6 +7,7 @@ use jolt_claims::protocols::jolt::{
     JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_field::Field;
+use jolt_sumcheck::BatchedEvaluationClaim;
 
 use super::inputs::{
     BooleanityOutputOpeningClaims, IncClaimReductionOutputOpeningClaims,
@@ -178,4 +179,65 @@ pub(super) fn validate_bytecode_val_stage_claim_count<F: Field>(
         }
     }
     Ok(())
+}
+
+pub(super) fn validate_stage6_batch_expected_output<F: Field>(
+    batch: &BatchedEvaluationClaim<F>,
+    expected_outputs: &Stage6BatchExpectedOutputClaims<F>,
+) -> Result<F, VerifierError> {
+    let mut expected_outputs_in_order = vec![
+        expected_outputs.bytecode_read_raf,
+        expected_outputs.booleanity,
+        expected_outputs.ram_hamming_booleanity,
+        expected_outputs.ram_ra_virtualization,
+        expected_outputs.instruction_ra_virtualization,
+    ];
+    if let Some(output_claim) = expected_outputs.inc_claim_reduction {
+        expected_outputs_in_order.push(output_claim);
+    }
+    #[cfg(feature = "field-inline")]
+    expected_outputs_in_order.push(expected_outputs.field_registers_inc_claim_reduction);
+    if let Some(output_claim) = expected_outputs.unsigned_inc_claim_reduction {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.unsigned_inc_msb_booleanity {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.untrusted_advice_cycle_phase {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.bytecode_claim_reduction {
+        expected_outputs_in_order.push(output_claim);
+    }
+    if let Some(output_claim) = expected_outputs.program_image_claim_reduction {
+        expected_outputs_in_order.push(output_claim);
+    }
+
+    if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: format!(
+                "Stage 6 batch verifier returned {} coefficients for {} instances",
+                batch.batching_coefficients.len(),
+                expected_outputs_in_order.len()
+            ),
+        });
+    }
+    let expected_final_claim = batch
+        .batching_coefficients
+        .iter()
+        .zip(expected_outputs_in_order)
+        .fold(F::zero(), |acc, (coefficient, output)| {
+            acc + *coefficient * output
+        });
+    if batch.reduction.value != expected_final_claim {
+        return Err(VerifierError::StageClaimOutputMismatch {
+            stage: JoltRelationId::BytecodeReadRaf,
+        });
+    }
+
+    Ok(expected_final_claim)
 }

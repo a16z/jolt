@@ -36,8 +36,8 @@ use super::{
     claim_shape::{
         unsigned_inc_claims_for_protocol, validate_bytecode_val_stage_claim_count,
         validate_compressed_stage_claim, validate_dense_increment_claim_shape,
-        validate_lattice_increment_claim_shape, Stage6BatchExpectedOutputClaims,
-        Stage6BatchInputClaims,
+        validate_lattice_increment_claim_shape, validate_stage6_batch_expected_output,
+        Stage6BatchExpectedOutputClaims, Stage6BatchInputClaims,
     },
     inputs::Deps,
     outputs::{
@@ -2256,57 +2256,7 @@ where
             .as_ref()
             .map(|verified| verified.expected_output_claim),
     };
-    let mut expected_outputs_in_order = vec![
-        expected_outputs.bytecode_read_raf,
-        expected_outputs.booleanity,
-        expected_outputs.ram_hamming_booleanity,
-        expected_outputs.ram_ra_virtualization,
-        expected_outputs.instruction_ra_virtualization,
-    ];
-    if let Some(output_claim) = expected_outputs.inc_claim_reduction {
-        expected_outputs_in_order.push(output_claim);
-    }
-    #[cfg(feature = "field-inline")]
-    expected_outputs_in_order.push(expected_outputs.field_registers_inc_claim_reduction);
-    if let Some(output_claim) = expected_outputs.unsigned_inc_claim_reduction {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.unsigned_inc_msb_booleanity {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.untrusted_advice_cycle_phase {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.bytecode_claim_reduction {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.program_image_claim_reduction {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: format!(
-                "Stage 6 batch verifier returned {} coefficients for {} instances",
-                batch.batching_coefficients.len(),
-                expected_outputs_in_order.len()
-            ),
-        });
-    }
-    let expected_final_claim = batch
-        .batching_coefficients
-        .iter()
-        .zip(expected_outputs_in_order)
-        .map(|(coefficient, output)| *coefficient * output)
-        .sum();
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::BytecodeReadRaf,
-        });
-    }
+    let expected_final_claim = validate_stage6_batch_expected_output(&batch, &expected_outputs)?;
 
     verify_b::append_opening_claims(
         transcript,
