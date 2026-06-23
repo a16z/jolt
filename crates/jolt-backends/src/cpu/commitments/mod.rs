@@ -8,7 +8,7 @@ use jolt_claims::protocols::jolt::formulas::dimensions::TracePolynomialOrder;
 use jolt_openings::ZkStreamingCommitment;
 use jolt_poly::OneHotIndexOrder;
 use jolt_witness::{
-    MaterializationPolicy, OracleDescriptor, OracleKind, PolynomialEncoding, RetentionHint,
+    MaterializationPolicy, OracleDescriptor, OracleRef, PolynomialEncoding, RetentionHint,
     ViewRequirement, WitnessError, WitnessNamespace, WitnessProvider,
 };
 use rayon::prelude::*;
@@ -53,7 +53,7 @@ where
                 }
                 .into());
             }
-            let OracleKind::Committed(_) = item.requirement.oracle.kind else {
+            let OracleRef::Committed(_) = item.requirement.oracle else {
                 return Err(WitnessError::InvalidWitnessData {
                     namespace: N::ID.name,
                     reason: "commitment requests require committed oracles".to_owned(),
@@ -162,7 +162,7 @@ where
     let chunk_size = core_fast_path_layout.map_or(chunk_size, |layout| layout.row_width);
     let ids = indices
         .iter()
-        .map(|&index| committed_id(resolved[index].requirement.oracle.kind))
+        .map(|&index| committed_id(resolved[index].requirement.oracle))
         .collect::<Vec<_>>();
     let mut stream = witness.committed_batch_stream(&ids, chunk_size)?;
     let items = indices
@@ -172,7 +172,7 @@ where
             stream::BatchCommitmentPlanItem {
                 slot: item.slot,
                 oracle: item.requirement.oracle,
-                id: committed_id(item.requirement.oracle.kind),
+                id: committed_id(item.requirement.oracle),
                 polynomial_rows: item.descriptor.dimensions.rows(),
                 layout: item.commitment_layout(core_fast_path_layout),
                 mode: item.mode,
@@ -208,7 +208,7 @@ where
             .par_iter()
             .map(|&index| {
                 let item = &resolved[index];
-                let id = committed_id(item.requirement.oracle.kind);
+                let id = committed_id(item.requirement.oracle);
                 let mut stream = witness.committed_stream(id, chunk_size)?;
                 let layout = item.commitment_layout(core_fast_path_layout);
                 let result = stream::commit_streamed_witness::<F, PCS, N>(
@@ -228,8 +228,8 @@ where
     Ok(committed)
 }
 
-fn committed_id<C, V>(kind: OracleKind<C, V>) -> C {
-    let OracleKind::Committed(id) = kind else {
+fn committed_id<N: WitnessNamespace>(kind: OracleRef<N>) -> N::CommittedId {
+    let OracleRef::Committed(id) = kind else {
         unreachable!("committed oracle shape is validated before request resolution")
     };
     id

@@ -22,9 +22,8 @@ use jolt_witness::protocols::jolt_vm::{JoltVmNamespace, JoltVmStage2Rows, JoltVm
 use jolt_witness::protocols::jolt_vm::{JoltVmSpartanOuterRow, JoltVmSpartanOuterRows};
 #[cfg(feature = "zk")]
 use jolt_witness::{
-    MaterializationPolicy, OracleDescriptor, OracleKind, OracleRef, PolynomialEncoding,
-    PolynomialView, RetentionHint, ViewRequirement, WitnessDimensions, WitnessError,
-    WitnessProvider,
+    MaterializationPolicy, OracleDescriptor, OracleRef, PolynomialEncoding, PolynomialView,
+    RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessProvider,
 };
 
 #[cfg(feature = "zk")]
@@ -302,12 +301,12 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage2Witness {
         &self,
         oracle: OracleRef<JoltVmNamespace>,
     ) -> Result<OracleDescriptor<JoltVmNamespace>, WitnessError> {
-        let dimensions = match oracle.kind {
-            OracleKind::Virtual(
+        let dimensions = match oracle {
+            OracleRef::Virtual(
                 jolt_claims::protocols::jolt::JoltVirtualPolynomial::RamVal
                 | jolt_claims::protocols::jolt::JoltVirtualPolynomial::RamRa,
             ) => WitnessDimensions::new(8),
-            OracleKind::Committed(_) | OracleKind::Virtual(_) => WitnessDimensions::new(4),
+            OracleRef::Committed(_) | OracleRef::Virtual(_) => WitnessDimensions::new(4),
         };
         Ok(OracleDescriptor::new(
             oracle,
@@ -335,11 +334,11 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage2Witness {
     ) -> Result<PolynomialView<'_, Fr, JoltVmNamespace>, WitnessError> {
         let descriptor = self.describe_oracle(requirement.oracle)?;
         let rows = descriptor.dimensions.rows();
-        let values = match requirement.oracle.kind {
-            OracleKind::Virtual(
+        let values = match requirement.oracle {
+            OracleRef::Virtual(
                 jolt_claims::protocols::jolt::JoltVirtualPolynomial::NextUnexpandedPC,
             ) => vec![Fr::from_u64(4); rows],
-            OracleKind::Virtual(
+            OracleRef::Virtual(
                 jolt_claims::protocols::jolt::JoltVirtualPolynomial::RamValFinal,
             ) => self
                 .final_ram_state

@@ -17,7 +17,7 @@ use jolt_verifier::proof::{JoltCommitments, JoltRaCommitments};
 use jolt_verifier::stages::stage8::{stage8_final_opening_order, Stage8FinalOpening};
 use jolt_witness::{
     protocols::jolt_vm::JoltVmNamespace, CommittedWitnessProvider, MaterializationPolicy,
-    OracleKind, OracleRef, RetentionHint, ViewRequirement, WitnessNamespace,
+    OracleRef, RetentionHint, ViewRequirement, WitnessNamespace,
 };
 
 use crate::ProverError;
@@ -366,7 +366,7 @@ where
                     reason: format!("duplicate {label} commitment output slot {:?}", output.slot),
                 });
             }
-            let OracleKind::Committed(polynomial) = output.oracle.kind else {
+            let OracleRef::Committed(polynomial) = output.oracle else {
                 return Err(ProverError::InvalidCommitmentOutput {
                     reason: format!("{label} commitment backend emitted a virtual oracle output"),
                 });

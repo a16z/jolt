@@ -31,15 +31,15 @@ where
 {
     let Some(requirement) = witness.view_requirements(oracle)?.into_iter().next() else {
         return Err(ProverError::InvalidStageRequest {
-            reason: format!("witness returned no view requirement for {:?}", oracle.kind),
+            reason: format!("witness returned no view requirement for {:?}", oracle),
         });
     };
-    if requirement.oracle.kind != oracle.kind {
+    if requirement.oracle != oracle {
         return Err(ProverError::InvalidStageRequest {
             reason: format!(
                 "witness returned requirement for {:?}, expected {oracle:?}",
-                requirement.oracle.kind,
-                oracle = oracle.kind
+                requirement.oracle,
+                oracle = oracle
             ),
         });
     }

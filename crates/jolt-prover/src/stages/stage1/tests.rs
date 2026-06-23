@@ -44,9 +44,9 @@ use jolt_verifier::stages::stage1::{
 };
 use jolt_witness::protocols::jolt_vm::{JoltVmSpartanOuterRow, JoltVmSpartanOuterRows};
 use jolt_witness::{
-    protocols::jolt_vm::JoltVmNamespace, MaterializationPolicy, OracleDescriptor, OracleKind,
-    OracleRef, PolynomialEncoding, PolynomialView, RetentionHint, ViewRequirement,
-    WitnessDimensions, WitnessError, WitnessNamespace, WitnessProvider,
+    protocols::jolt_vm::JoltVmNamespace, MaterializationPolicy, OracleDescriptor, OracleRef,
+    PolynomialEncoding, PolynomialView, RetentionHint, ViewRequirement, WitnessDimensions,
+    WitnessError, WitnessNamespace, WitnessProvider,
 };
 
 use crate::stages::primary_view_requirement;
@@ -875,7 +875,7 @@ impl WitnessProvider<Fr, JoltVmNamespace> for Stage1Witness {
         &self,
         oracle: OracleRef<JoltVmNamespace>,
     ) -> Result<OracleDescriptor<JoltVmNamespace>, WitnessError> {
-        let OracleKind::Virtual(_) = oracle.kind else {
+        let OracleRef::Virtual(_) = oracle else {
             return Err(WitnessError::UnknownOracle {
                 namespace: JoltVmNamespace::ID.name,
             });
@@ -917,7 +917,7 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage1Witness {
         &self,
         oracle: OracleRef<JoltVmNamespace>,
     ) -> Result<OracleDescriptor<JoltVmNamespace>, WitnessError> {
-        let OracleKind::Virtual(_) = oracle.kind else {
+        let OracleRef::Virtual(_) = oracle else {
             return Err(WitnessError::UnknownOracle {
                 namespace: JoltVmNamespace::ID.name,
             });
@@ -947,7 +947,7 @@ impl WitnessProvider<Fr, JoltVmNamespace> for SatisfyingStage1Witness {
         requirement: ViewRequirement<JoltVmNamespace>,
     ) -> Result<PolynomialView<'_, Fr, JoltVmNamespace>, WitnessError> {
         let descriptor = self.describe_oracle(requirement.oracle)?;
-        let OracleKind::Virtual(variable) = requirement.oracle.kind else {
+        let OracleRef::Virtual(variable) = requirement.oracle else {
             return Err(WitnessError::UnknownOracle {
                 namespace: JoltVmNamespace::ID.name,
             });

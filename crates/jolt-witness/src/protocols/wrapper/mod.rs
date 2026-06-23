@@ -1,8 +1,8 @@
 use super::util::{power_of_two_log_rows, require_unique_ids};
 use crate::{
-    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind, OracleRef,
-    PolynomialEncoding, PolynomialView, PublicValue, RetentionHint, ViewRequirement,
-    WitnessDimensions, WitnessError, WitnessNamespace, WitnessProvider,
+    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef, PolynomialEncoding,
+    PolynomialView, PublicValue, RetentionHint, ViewRequirement, WitnessDimensions, WitnessError,
+    WitnessNamespace, WitnessProvider,
 };
 
 pub const WRAPPER_NAMESPACE: NamespaceId = NamespaceId::new("wrapper");
@@ -145,7 +145,7 @@ impl<F> WitnessProvider<F, WrapperNamespace> for WrapperAssignmentWitness<F> {
         &self,
         oracle: OracleRef<WrapperNamespace>,
     ) -> Result<OracleDescriptor<WrapperNamespace>, WitnessError> {
-        let OracleKind::Virtual(id) = oracle.kind;
+        let OracleRef::Virtual(id) = oracle;
         Ok(OracleDescriptor::new(
             oracle,
             self.dimensions(id)?,
@@ -175,7 +175,7 @@ impl<F> WitnessProvider<F, WrapperNamespace> for WrapperAssignmentWitness<F> {
             self,
             requirement.oracle,
         )?;
-        let OracleKind::Virtual(id) = requirement.oracle.kind;
+        let OracleRef::Virtual(id) = requirement.oracle;
         Ok(PolynomialView::borrowed(
             descriptor,
             self.assignment_slice(id)?,

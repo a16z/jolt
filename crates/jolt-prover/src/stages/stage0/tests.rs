@@ -17,9 +17,8 @@ use jolt_poly::Polynomial;
 use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
 use jolt_witness::{
     protocols::jolt_vm::JoltVmNamespace, CommittedWitnessProvider, MaterializationPolicy,
-    NamespaceId, OracleDescriptor, OracleKind, OracleRef, PolynomialEncoding, PolynomialView,
-    RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace,
-    WitnessProvider,
+    NamespaceId, OracleDescriptor, OracleRef, PolynomialEncoding, PolynomialView, RetentionHint,
+    ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace, WitnessProvider,
 };
 
 use super::prove::{build_commitment_request, CommitmentStageConfig};
@@ -52,8 +51,8 @@ impl<F> WitnessProvider<F, TestNamespace> for TestWitness {
         Ok(OracleDescriptor::new(
             oracle,
             WitnessDimensions::new(3),
-            match oracle.kind {
-                OracleKind::Committed(1) => PolynomialEncoding::OneHot,
+            match oracle {
+                OracleRef::Committed(1) => PolynomialEncoding::OneHot,
                 _ => PolynomialEncoding::Compact,
             },
         ))
@@ -63,8 +62,8 @@ impl<F> WitnessProvider<F, TestNamespace> for TestWitness {
         &self,
         oracle: OracleRef<TestNamespace>,
     ) -> Result<Vec<ViewRequirement<TestNamespace>>, WitnessError> {
-        let retention = match oracle.kind {
-            OracleKind::Committed(2) => RetentionHint::ThroughBlindFold,
+        let retention = match oracle {
+            OracleRef::Committed(2) => RetentionHint::ThroughBlindFold,
             _ => RetentionHint::ThroughStage8,
         };
         Ok(vec![ViewRequirement::new(
@@ -235,7 +234,7 @@ impl CommitmentBackend<Fr, JoltVmNamespace, MockPcs> for JoltVmRecordingBackend 
             .items
             .iter()
             .map(|item| {
-                let OracleKind::Committed(polynomial) = item.requirement.oracle.kind else {
+                let OracleRef::Committed(polynomial) = item.requirement.oracle else {
                     unreachable!("commitment request should contain committed oracles only")
                 };
                 jolt_output(item.slot.0, polynomial, u64::from(item.slot.0) + 1)
@@ -277,20 +276,20 @@ fn canonical_stage0_contract_requests_and_assembles_verifier_fields() -> Result<
     let requested = request
         .items
         .iter()
-        .map(|item| item.requirement.oracle.kind)
+        .map(|item| item.requirement.oracle)
         .collect::<Vec<_>>();
     assert_eq!(
         requested,
         vec![
-            OracleKind::Committed(JoltCommittedPolynomial::RdInc),
-            OracleKind::Committed(JoltCommittedPolynomial::RamInc),
-            OracleKind::Committed(JoltCommittedPolynomial::InstructionRa(0)),
-            OracleKind::Committed(JoltCommittedPolynomial::InstructionRa(1)),
-            OracleKind::Committed(JoltCommittedPolynomial::RamRa(0)),
-            OracleKind::Committed(JoltCommittedPolynomial::RamRa(1)),
-            OracleKind::Committed(JoltCommittedPolynomial::BytecodeRa(0)),
-            OracleKind::Committed(JoltCommittedPolynomial::TrustedAdvice),
-            OracleKind::Committed(JoltCommittedPolynomial::UntrustedAdvice),
+            OracleRef::Committed(JoltCommittedPolynomial::RdInc),
+            OracleRef::Committed(JoltCommittedPolynomial::RamInc),
+            OracleRef::Committed(JoltCommittedPolynomial::InstructionRa(0)),
+            OracleRef::Committed(JoltCommittedPolynomial::InstructionRa(1)),
+            OracleRef::Committed(JoltCommittedPolynomial::RamRa(0)),
+            OracleRef::Committed(JoltCommittedPolynomial::RamRa(1)),
+            OracleRef::Committed(JoltCommittedPolynomial::BytecodeRa(0)),
+            OracleRef::Committed(JoltCommittedPolynomial::TrustedAdvice),
+            OracleRef::Committed(JoltCommittedPolynomial::UntrustedAdvice),
         ]
     );
 

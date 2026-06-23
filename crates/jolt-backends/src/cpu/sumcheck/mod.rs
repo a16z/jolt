@@ -1109,7 +1109,7 @@ where
                 task: EVALUATION_TASK,
                 reason: format!(
                     "{context} direct evaluation for {:?} failed: {error}",
-                    view_request.requirement.oracle.kind
+                    view_request.requirement.oracle
                 ),
             })?
         {
@@ -1780,10 +1780,10 @@ where
             task,
             reason: format!(
                 "{context} describe {:?} failed: {error}",
-                requirement.oracle.kind
+                requirement.oracle
             ),
         })?;
-    if descriptor.reference.kind != requirement.oracle.kind {
+    if descriptor.reference != requirement.oracle {
         return Err(BackendError::InvalidRequest {
             backend,
             task,
@@ -1866,10 +1866,10 @@ where
             task,
             reason: format!(
                 "{context} materialize {:?} failed: {error}",
-                requirement.oracle.kind
+                requirement.oracle
             ),
         })?;
-    if view.descriptor().reference.kind != descriptor.reference.kind {
+    if view.descriptor().reference != descriptor.reference {
         return Err(BackendError::InvalidRequest {
             backend,
             task,

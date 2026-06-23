@@ -65,11 +65,11 @@ where
                     task: RLC_MATERIALIZATION_TASK,
                     reason: format!(
                         "{context} materialize {:?} failed: {error}",
-                        component.view.oracle.kind
+                        component.view.oracle
                     ),
                 })?;
         let descriptor = view.descriptor();
-        if descriptor.reference.kind != component.view.oracle.kind {
+        if descriptor.reference != component.view.oracle {
             return Err(BackendError::InvalidRequest {
                 backend,
                 task: RLC_MATERIALIZATION_TASK,

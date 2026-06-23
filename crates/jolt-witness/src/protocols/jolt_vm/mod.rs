@@ -24,10 +24,9 @@ use jolt_riscv::{
 use rayon::prelude::*;
 
 use crate::{
-    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind, OracleRef,
-    PolynomialBatchChunk, PolynomialBatchStream, PolynomialChunk, PolynomialEncoding,
-    PolynomialStream, PolynomialView, RetentionHint, ViewRequirement, WitnessDimensions,
-    WitnessError, WitnessNamespace,
+    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef, PolynomialBatchChunk,
+    PolynomialBatchStream, PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView,
+    RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace,
 };
 
 pub mod rv64;

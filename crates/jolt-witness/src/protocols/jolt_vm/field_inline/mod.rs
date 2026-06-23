@@ -20,9 +20,9 @@ use rayon::prelude::*;
 
 use super::{checked_pow2, eq_evals_msb, TraceBackedJoltVmWitness};
 use crate::{
-    CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind,
-    OracleRef, PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView,
-    RetentionHint, ViewRequirement, WitnessError, WitnessNamespace, WitnessProvider,
+    CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef,
+    PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView, RetentionHint,
+    ViewRequirement, WitnessError, WitnessNamespace, WitnessProvider,
 };
 
 pub const FIELD_INLINE_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm.field_inline");
@@ -395,11 +395,11 @@ impl<F: Field> WitnessProvider<F, FieldInlineNamespace> for TraceBackedFieldInli
         &self,
         oracle: OracleRef<FieldInlineNamespace>,
     ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
-        match oracle.kind {
-            OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => Ok(
+        match oracle {
+            OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => Ok(
                 OracleDescriptor::new(oracle, self.trace_dimensions()?, PolynomialEncoding::Dense),
             ),
-            OracleKind::Virtual(id) => self.describe_virtual(id),
+            OracleRef::Virtual(id) => self.describe_virtual(id),
         }
     }
 
@@ -425,14 +425,14 @@ impl<F: Field> WitnessProvider<F, FieldInlineNamespace> for TraceBackedFieldInli
             self,
             requirement.oracle,
         )?;
-        let values = match requirement.oracle.kind {
-            OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
+        let values = match requirement.oracle {
+            OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 materialize_field_rd_inc::<F>(&self.trace_rows, self.rows)
             }
-            OracleKind::Virtual(id) if is_register_domain_virtual(id) => {
+            OracleRef::Virtual(id) if is_register_domain_virtual(id) => {
                 self.materialize_register_virtual(id)?
             }
-            OracleKind::Virtual(id) => self.materialize_trace_virtual(id)?,
+            OracleRef::Virtual(id) => self.materialize_trace_virtual(id)?,
         };
         Ok(PolynomialView::owned(descriptor, values))
     }
@@ -445,14 +445,14 @@ impl<F: Field> WitnessProvider<F, FieldInlineNamespace> for TraceBackedFieldInli
         if requirement.encoding != PolynomialEncoding::Dense {
             return Ok(None);
         }
-        match requirement.oracle.kind {
-            OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
+        match requirement.oracle {
+            OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 self.evaluate_field_rd_inc(point).map(Some)
             }
-            OracleKind::Virtual(id) if is_register_domain_virtual(id) => {
+            OracleRef::Virtual(id) if is_register_domain_virtual(id) => {
                 self.evaluate_register_virtual(id, point).map(Some)
             }
-            OracleKind::Virtual(_) => Ok(None),
+            OracleRef::Virtual(_) => Ok(None),
         }
     }
 

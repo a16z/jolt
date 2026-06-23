@@ -27,7 +27,7 @@ use jolt_witness::{
         DoryAssistOperationFamily, DoryAssistWitness,
     },
     protocols::jolt_vm::JoltVmStage6Row,
-    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind, OracleRef, PolynomialChunk,
+    MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef, PolynomialChunk,
     PolynomialChunkKind, PolynomialEncoding, PolynomialStream, PolynomialView,
     RaFamilyCycleIndexSource, RetentionHint, ViewRequirement, WitnessDimensions, WitnessError,
     WitnessNamespace, WitnessProvider,
@@ -2152,7 +2152,7 @@ impl WitnessProvider<Fr, TestNamespace> for TestRlcViewWitness {
         &self,
         oracle: OracleRef<TestNamespace>,
     ) -> Result<OracleDescriptor<TestNamespace>, WitnessError> {
-        let OracleKind::Committed(id) = oracle.kind else {
+        let OracleRef::Committed(id) = oracle else {
             return Err(WitnessError::UnknownOracle {
                 namespace: TestNamespace::ID.name,
             });
@@ -2186,7 +2186,7 @@ impl WitnessProvider<Fr, TestNamespace> for TestRlcViewWitness {
         &self,
         requirement: ViewRequirement<TestNamespace>,
     ) -> Result<PolynomialView<'_, Fr, TestNamespace>, WitnessError> {
-        let OracleKind::Committed(id) = requirement.oracle.kind else {
+        let OracleRef::Committed(id) = requirement.oracle else {
             return Err(WitnessError::UnknownOracle {
                 namespace: TestNamespace::ID.name,
             });
@@ -3715,7 +3715,7 @@ impl WitnessProvider<Fr, TestNamespace> for TestMultiOracleWitness {
         &self,
         oracle: OracleRef<TestNamespace>,
     ) -> Result<OracleDescriptor<TestNamespace>, WitnessError> {
-        let jolt_witness::OracleKind::Committed(id) = oracle.kind else {
+        let jolt_witness::OracleRef::Committed(id) = oracle else {
             return Err(WitnessError::UnknownOracle {
                 namespace: TestNamespace::ID.name,
             });
