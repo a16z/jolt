@@ -42,26 +42,26 @@ where
 {
     if source.layout() != &artifacts.layout {
         return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packing opening source layout does not match committed artifact"
+            reason: "lattice packing opening source layout does not match committed artifact"
                 .to_string(),
         });
     }
     if statement.layout_digest != artifacts.layout.digest {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason:
-                "Akita packing opening statement layout digest does not match committed artifact"
+                "lattice packing opening statement layout digest does not match committed artifact"
                     .to_string(),
         });
     }
     let payload = artifacts
         .payload()
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packing opening artifacts do not carry a lattice payload".to_string(),
+            reason: "lattice packing opening artifacts do not carry a lattice payload".to_string(),
         })?;
     for claim in &statement.claims {
         if claim.commitment != payload.packed_witness {
             return Err(VerifierError::FinalOpeningBatchFailed {
-                reason: "Akita packing opening statement references a non-artifact commitment"
+                reason: "lattice packing opening statement references a non-artifact commitment"
                     .to_string(),
             });
         }
@@ -115,13 +115,14 @@ where
 {
     let Stage8BatchStatement::Clear(statement) = statement else {
         return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packing opening proving requires a clear Stage 8 statement".to_string(),
+            reason: "lattice packing opening proving requires a clear Stage 8 statement"
+                .to_string(),
         });
     };
     let payload = artifacts
         .payload()
         .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "Akita packing opening artifacts do not carry a lattice payload".to_string(),
+            reason: "lattice packing opening artifacts do not carry a lattice payload".to_string(),
         })?;
     validate_akita_precommitted_opening_inputs(
         &payload.packed_witness,
@@ -191,7 +192,7 @@ fn validate_akita_precommitted_opening_inputs(
     if statements.len() != inputs.len() {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason: format!(
-                "expected {} Akita precommitted opening inputs, got {}",
+                "expected {} lattice precommitted opening inputs, got {}",
                 statements.len(),
                 inputs.len()
             ),
@@ -217,13 +218,13 @@ fn validate_akita_precommitted_opening_input(
 ) -> Result<(), VerifierError> {
     if statement.claims.is_empty() {
         return Err(VerifierError::FinalOpeningBatchFailed {
-            reason: format!("Akita precommitted opening statement {index} has no claims"),
+            reason: format!("lattice precommitted opening statement {index} has no claims"),
         });
     }
     if input.hint.matches_commitment(packed_witness) {
         return Err(VerifierError::FinalOpeningBatchFailed {
             reason: format!(
-                "Akita precommitted opening input {index} must not use the packed witness hint"
+                "lattice precommitted opening input {index} must not use the packed witness hint"
             ),
         });
     }
@@ -231,21 +232,21 @@ fn validate_akita_precommitted_opening_input(
         if !matches!(claim.view, PhysicalView::Direct) {
             return Err(VerifierError::FinalOpeningBatchFailed {
                 reason: format!(
-                    "Akita precommitted opening statement {index} must use direct physical views"
+                    "lattice precommitted opening statement {index} must use direct physical views"
                 ),
             });
         }
         if claim.commitment == *packed_witness {
             return Err(VerifierError::FinalOpeningBatchFailed {
                 reason: format!(
-                    "Akita precommitted opening statement {index} must target a separate precommitted commitment"
+                    "lattice precommitted opening statement {index} must target a separate precommitted commitment"
                 ),
             });
         }
         if !input.hint.matches_commitment(&claim.commitment) {
             return Err(VerifierError::FinalOpeningBatchFailed {
                 reason: format!(
-                    "Akita precommitted opening input {index} does not match statement commitment"
+                    "lattice precommitted opening input {index} does not match statement commitment"
                 ),
             });
         }
@@ -625,7 +626,7 @@ mod tests {
             validate_akita_packing_opening_proof_payload_shape(
                 &artifact.commitments,
                 &missing_reduction,
-                "Akita joint opening proof",
+                "lattice joint opening proof",
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("packed reduction")
@@ -657,7 +658,7 @@ mod tests {
             validate_akita_packing_opening_proof_payload_shape(
                 &artifact.commitments,
                 &noncanonical_reduction_eval,
-                "Akita joint opening proof",
+                "lattice joint opening proof",
             ),
             Err(VerifierError::InvalidProtocolConfig { reason })
                 if reason.contains("canonical Akita field encoding")
@@ -887,7 +888,7 @@ mod tests {
         assert!(matches!(
             error,
             VerifierError::FinalOpeningBatchFailed { reason }
-                if reason.contains("expected 1 Akita precommitted opening inputs")
+                if reason.contains("expected 1 lattice precommitted opening inputs")
         ));
     }
 }

@@ -54,7 +54,7 @@ pub(crate) fn validate_akita_verifier_setup_config(
 ) -> Result<(), VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita verifier setup requires lattice PCS mode".to_string(),
+            reason: "lattice packing verifier setup requires lattice PCS mode".to_string(),
         });
     }
 
@@ -63,25 +63,28 @@ pub(crate) fn validate_akita_verifier_setup_config(
         packed_witness
             .layout_digest
             .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                reason: "Akita verifier setup requires a packed witness layout digest".to_string(),
+                reason: "lattice packing verifier setup requires a packed witness layout digest"
+                    .to_string(),
             })?;
     let expected_dimension =
         packed_witness
             .d_pack
             .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                reason: "Akita verifier setup requires D_pack".to_string(),
+                reason: "lattice packing verifier setup requires D_pack".to_string(),
             })?;
     validate_akita_verifier_setup_shape(setup, expected_digest, expected_dimension)?;
 
     if setup.layout.digest != expected_digest {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita verifier setup layout digest does not match protocol config".to_string(),
+            reason: "lattice packing verifier setup layout digest does not match protocol config"
+                .to_string(),
         });
     }
     if setup.layout.dimension != expected_dimension {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita verifier setup layout dimension does not match protocol D_pack"
-                .to_string(),
+            reason:
+                "lattice packing verifier setup layout dimension does not match protocol D_pack"
+                    .to_string(),
         });
     }
 
@@ -136,7 +139,7 @@ pub(crate) fn validate_akita_opening_proof_payload_shape(
             })?;
     if opening_proof.native.commitment != payload.packed_witness {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita opening proof commitment does not match packed witness payload"
+            reason: "lattice packed opening proof commitment does not match packed witness payload"
                 .to_string(),
         });
     }
@@ -208,13 +211,13 @@ fn validate_akita_precommitted_opening_proof_payload_shape(
     if opening_proof.native.commitment == payload.packed_witness {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
-                "Akita precommitted opening proof must target a separate precommitted commitment"
+                "lattice precommitted opening proof must target a separate precommitted commitment"
                     .to_string(),
         });
     }
     if opening_proof.reduction.is_some() {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita precommitted opening proof must not include a packed reduction"
+            reason: "lattice precommitted opening proof must not include a packed reduction"
                 .to_string(),
         });
     }
@@ -289,7 +292,7 @@ pub(crate) fn validate_akita_advice_commitment_aliases(
             })?;
     if untrusted_advice_commitment.is_some_and(|commitment| commitment != &payload.packed_witness) {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita untrusted advice commitment must alias the packed witness commitment"
+            reason: "lattice untrusted advice commitment must alias the packed witness commitment"
                 .to_string(),
         });
     }
@@ -346,7 +349,7 @@ pub(crate) fn validate_akita_precommitted_commitment_is_separate(
 ) -> Result<(), VerifierError> {
     if precommitted == packed_witness {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: format!("Akita {label} commitment must be separate from packed witness"),
+            reason: format!("lattice {label} commitment must be separate from packed witness"),
         });
     }
     validate_akita_commitment_bytes(precommitted)
@@ -359,7 +362,7 @@ pub(crate) fn validate_akita_verifier_setup_layout(
     validate_akita_verifier_setup_shape(setup, layout.digest, layout.dimension)?;
     if setup.layout != *layout {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita verifier setup layout does not match packed witness artifact layout"
+            reason: "lattice packing verifier setup layout does not match packed witness artifact layout"
                 .to_string(),
         });
     }
@@ -374,20 +377,21 @@ fn validate_akita_verifier_setup_shape(
 ) -> Result<(), VerifierError> {
     if setup.pcs.default_layout_digest != expected_digest {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita verifier setup layout digest does not match packed witness layout"
-                .to_string(),
+            reason:
+                "lattice packing verifier setup layout digest does not match packed witness layout"
+                    .to_string(),
         });
     }
     if setup.pcs.max_num_vars != expected_dimension {
         return Err(VerifierError::InvalidProtocolConfig {
-            reason: "Akita verifier setup max_num_vars does not match packed witness dimension"
+            reason: "lattice packing verifier setup max_num_vars does not match packed witness dimension"
                 .to_string(),
         });
     }
     if setup.pcs.max_num_polys_per_commitment_group == 0 {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
-                "Akita verifier setup must support at least one polynomial per commitment group"
+                "lattice packing verifier setup must support at least one polynomial per commitment group"
                     .to_string(),
         });
     }

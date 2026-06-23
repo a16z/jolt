@@ -286,13 +286,13 @@ where
     validate_akita_packing_opening_proof_payload_shape(
         &proof.commitments,
         &proof.joint_opening_proof,
-        "Akita joint opening proof",
+        "lattice joint opening proof",
     )?;
     if let Some(opening_proof) = &proof.lattice_packed_validity_opening_proof {
         validate_akita_packing_opening_proof_payload_shape(
             &proof.commitments,
             opening_proof,
-            "Akita lattice packed validity opening proof",
+            "lattice packed validity opening proof",
         )?;
     }
     validate_akita_precommitted_opening_proof_payload_shapes(
