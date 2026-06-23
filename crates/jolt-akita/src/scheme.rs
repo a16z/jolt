@@ -1,6 +1,5 @@
 use akita_pcs::{AkitaTranscript, CommitmentProver, ComputeBackendSetup, CpuBackend};
 use akita_prover::{AkitaPolyOps, CommittedPolynomials, ProverClaims};
-use akita_transcript::Transcript as AkitaNativeTranscript;
 use akita_types::{
     BasisMode, CommitmentVerifier, CommittedOpenings, SetupContributionMode, VerifierClaims,
 };
@@ -10,12 +9,15 @@ use jolt_openings::{
     PhysicalView, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{AppendToTranscript, Label, Transcript};
 use serde::{Deserialize, Serialize};
 
 use crate::native::{
     akita_error, dense_polynomials, deserialize_akita, field_bytes, invalid_batch,
     polynomial_evaluations, serialize_akita, transparent_zk_error,
+};
+use crate::transcript::{
+    bind_batch_statement, bind_jolt_transcript_bridge, bind_proof_bytes, bind_verifier_setup_key,
 };
 use crate::types::{
     append_field_slice, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
@@ -315,7 +317,13 @@ impl BatchOpeningScheme for AkitaScheme {
         }
         validate_verifier_setup(setup, &normalized.commitment)?;
         bind_verifier_setup_key(setup, transcript);
-        bind_batch_statement(statement, &normalized, transcript);
+        bind_batch_statement(
+            statement,
+            &normalized.commitment,
+            &normalized.coefficients,
+            normalized.reduced_opening,
+            transcript,
+        );
         let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
         let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
         if proof.statement_bridge != statement_bridge {
@@ -372,7 +380,13 @@ where
     let normalized = normalize_clear_batch(statement)?;
     validate_native_prover_inputs(setup, &normalized.commitment, polynomials, &hints)?;
     bind_verifier_setup_key(&setup.verifier, transcript);
-    bind_batch_statement(statement, &normalized, transcript);
+    bind_batch_statement(
+        statement,
+        &normalized.commitment,
+        &normalized.coefficients,
+        normalized.reduced_opening,
+        transcript,
+    );
     let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
     let statement_bridge = bind_jolt_transcript_bridge(transcript, &mut akita_transcript);
 
@@ -635,80 +649,6 @@ fn validate_setup_shape(
         )));
     }
     Ok(())
-}
-
-pub(crate) fn bind_verifier_setup_key<T>(setup: &AkitaVerifierSetup, transcript: &mut T)
-where
-    T: Transcript<Challenge = AkitaField>,
-{
-    transcript.append(&Label(b"akita_setup_key"));
-    transcript.append_bytes(b"akita/fp128/d64full");
-    transcript.append(&U64Word(AKITA_D as u64));
-    transcript.append(&U64Word(setup.max_num_vars as u64));
-    transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
-    transcript.append_bytes(&setup.default_layout_digest);
-    transcript.append(&LabelWithCount(
-        b"akita_verifier_setup",
-        setup.native.len() as u64,
-    ));
-    transcript.append_bytes(&setup.native);
-}
-
-fn bind_batch_statement<OpeningId, RelationId, T>(
-    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
-    normalized: &NormalizedBatch,
-    transcript: &mut T,
-) where
-    T: Transcript<Challenge = AkitaField>,
-{
-    transcript.append(&Label(b"akita_batch_statement"));
-    normalized.commitment.append_to_transcript(transcript);
-    transcript.append_bytes(&statement.layout_digest);
-    transcript.append_bytes(&normalized.commitment.layout_digest);
-    append_field_slice(transcript, b"akita_logical_point", &statement.logical_point);
-    append_field_slice(transcript, b"akita_pcs_point", &statement.pcs_point);
-    transcript.append(&LabelWithCount(
-        b"akita_claims",
-        statement.claims.len() as u64,
-    ));
-    for claim in &statement.claims {
-        claim.commitment.append_to_transcript(transcript);
-        claim.claim.append_to_transcript(transcript);
-        claim.scale.append_to_transcript(transcript);
-        transcript.append_bytes(&[0]);
-    }
-    append_field_slice(transcript, b"akita_coefficients", &normalized.coefficients);
-    normalized.reduced_opening.append_to_transcript(transcript);
-}
-
-fn bind_jolt_transcript_bridge<T>(
-    jolt_transcript: &mut T,
-    akita_transcript: &mut AkitaTranscript<AkitaField>,
-) -> Vec<u8>
-where
-    T: Transcript<Challenge = AkitaField>,
-{
-    let bridge = jolt_transcript.challenge_scalar();
-    akita_transcript.append_field(b"jolt_statement_bridge", &bridge);
-    field_bytes(bridge)
-}
-
-fn bind_proof_bytes<T>(proof: &AkitaBatchProof, transcript: &mut T)
-where
-    T: Transcript<Challenge = AkitaField>,
-{
-    transcript.append(&LabelWithCount(
-        b"akita_stmt_bridge",
-        proof.statement_bridge.len() as u64,
-    ));
-    transcript.append_bytes(&proof.statement_bridge);
-    transcript.append(&LabelWithCount(
-        b"akita_proof_shape",
-        proof.proof_shape.len() as u64,
-    ));
-    transcript.append_bytes(&proof.proof_shape);
-    transcript.append(&LabelWithCount(b"akita_proof", proof.proof.len() as u64));
-    transcript.append_bytes(&proof.proof);
 }
 
 fn singleton_statement(

@@ -5,6 +5,7 @@
 
 mod native;
 mod scheme;
+mod transcript;
 mod types;
 
 pub use scheme::AkitaScheme;
