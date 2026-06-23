@@ -11,6 +11,8 @@ mod akita_validation;
 #[cfg(feature = "akita")]
 mod akita_validity;
 #[cfg(feature = "akita")]
+mod akita_validity_sumcheck;
+#[cfg(feature = "akita")]
 mod akita_witness;
 pub mod compat;
 pub mod config;
