@@ -30,6 +30,9 @@ pub enum JoltRelationId {
     ProgramImageClaimReductionCyclePhase,
     ProgramImageClaimReduction,
     IncClaimReduction,
+    IncVirtualization,
+    UnsignedIncClaimReduction,
+    UnsignedIncChunkReconstruction,
     HammingWeightClaimReduction,
 }
 
@@ -94,11 +97,35 @@ pub enum IncClaimReductionChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum IncVirtualizationChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum UnsignedIncChunkReconstructionChallenge {
+    Gamma,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IncClaimReductionPublic {
     EqRamReadWrite,
     EqRamValCheck,
     EqRegistersReadWrite,
     EqRegistersValEvaluation,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum IncVirtualizationPublic {
+    EqRamReadWrite,
+    EqRamValCheck,
+    EqRegistersReadWrite,
+    EqRegistersValEvaluation,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum UnsignedIncChunkReconstructionPublic {
+    EqBooleanityAddress,
+    IdentityAtAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -241,6 +268,8 @@ pub enum JoltChallengeId {
     RamHammingBooleanity(RamHammingBooleanityChallenge),
     Booleanity(BooleanityChallenge),
     IncClaimReduction(IncClaimReductionChallenge),
+    IncVirtualization(IncVirtualizationChallenge),
+    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
     BytecodeClaimReduction(BytecodeClaimReductionChallenge),
@@ -335,6 +364,10 @@ pub enum JoltOpeningId {
     TrustedAdvice {
         relation: JoltRelationId,
     },
+    Lattice {
+        relation: JoltRelationId,
+        index: usize,
+    },
 }
 
 impl JoltOpeningId {
@@ -360,6 +393,10 @@ impl JoltOpeningId {
     pub fn trusted_advice(relation: JoltRelationId) -> Self {
         Self::TrustedAdvice { relation }
     }
+
+    pub fn lattice(relation: JoltRelationId, index: usize) -> Self {
+        Self::Lattice { relation, index }
+    }
 }
 
 #[derive(
@@ -375,6 +412,8 @@ pub enum JoltPublicId {
     RamRaClaimReduction(RamRaClaimReductionPublic),
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
+    IncVirtualization(IncVirtualizationPublic),
+    UnsignedIncChunkReconstruction(UnsignedIncChunkReconstructionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
     BytecodeReadRaf(BytecodeReadRafPublic),
     AdviceClaimReduction(AdviceClaimReductionPublic),

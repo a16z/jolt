@@ -117,8 +117,8 @@ where
             expected_output_claim: claims.uniskip_output_claim,
         };
 
-        // Match the prover transcript: the uni-skip output is absorbed as an
-        // opening claim before deriving the remainder batching challenge.
+        // Core absorbs the uni-skip output as an opening claim before deriving
+        // the batching challenge for the remainder sumcheck.
         transcript.append_labeled(b"opening_claim", &uniskip.expected_output_claim);
 
         let [uniskip_challenge] = uniskip.sumcheck_point.as_slice() else {

@@ -39,7 +39,8 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage4Claims<F: Field> {
     pub advice: RamValCheckAdviceOpeningClaims<F>,
     /// Staged `ProgramImageInitContributionRw` scalar; present only in
@@ -52,14 +53,16 @@ pub struct Stage4Claims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RamValCheckAdviceOpeningClaims<F: Field> {
     pub untrusted: Option<F>,
     pub trusted: Option<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RegistersReadWriteOutputOpeningClaims<F: Field> {
     pub registers_val: F,
     pub rs1_ra: F,
@@ -70,14 +73,16 @@ pub struct RegistersReadWriteOutputOpeningClaims<F: Field> {
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldInlineStage4Claims<F: Field> {
     pub field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims<F>,
 }
 
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct FieldRegistersReadWriteOutputOpeningClaims<F: Field> {
     pub field_registers_val: F,
     pub field_rs1_ra: F,
@@ -87,7 +92,8 @@ pub struct FieldRegistersReadWriteOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RamValCheckOutputOpeningClaims<F: Field> {
     pub ram_ra: F,
     pub ram_inc: F,

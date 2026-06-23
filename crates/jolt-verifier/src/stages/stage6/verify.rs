@@ -1,3 +1,9 @@
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{
+    formulas::{bytecode as field_bytecode, claim_reductions::increments as field_increments},
+    FieldInlineChallengeId, FieldInlinePublicId, FieldRegistersIncClaimReductionChallenge,
+    FieldRegistersIncClaimReductionPublic, FieldRegistersTraceDimensions,
+};
 use jolt_claims::protocols::jolt::{
     formulas::{
         booleanity::{self, BooleanityDimensions},
@@ -6,25 +12,34 @@ use jolt_claims::protocols::jolt::{
         },
         claim_reductions::{advice, bytecode as bytecode_reduction, increments, program_image},
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
-        instruction, ram,
+        instruction, lattice, ram,
     },
     BooleanityChallenge, BooleanityPublic, BytecodeClaimReductionChallenge,
     BytecodeReadRafChallenge, IncClaimReductionChallenge, IncClaimReductionPublic,
     InstructionRaVirtualizationChallenge, JoltAdviceKind, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, JoltVirtualPolynomial,
-    PrecommittedReductionLayout, RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
+    JoltRelationId, JoltVirtualPolynomial, PrecommittedReductionLayout,
+    RamHammingBooleanityChallenge, RamRaVirtualizationChallenge,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
-use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+#[cfg(not(feature = "field-inline"))]
+use jolt_lookup_tables::LookupTableKind;
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::try_eq_mle;
+#[cfg(not(feature = "field-inline"))]
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use jolt_sumcheck::{BatchedSumcheckVerifier, SumcheckClaim, SumcheckStatement};
 use jolt_transcript::Transcript;
 use num_traits::{One, Zero};
 
 use super::{
+    claim_shape::{
+        unsigned_inc_claims_for_protocol, validate_bytecode_val_stage_claim_count,
+        validate_compressed_stage_claim, validate_dense_increment_claim_shape,
+        validate_lattice_increment_claim_shape, validate_optional_cycle_phase_claim_presence,
+        validate_stage6_batch_expected_output, OptionalCyclePhaseClaimPresence,
+        Stage6BatchExpectedOutputClaims, Stage6BatchInputClaims,
+    },
     inputs::Deps,
     outputs::{
         BooleanityPublicOutput, BytecodeReadRafPublicOutput,
@@ -38,41 +53,13 @@ use super::{
     verify_a, verify_b,
 };
 use crate::{
-    preprocessing::JoltVerifierPreprocessing, proof::JoltProof, stages::zk::committed,
-    verifier::CheckedInputs, VerifierError,
+    config::{validate_protocol_config, PcsFamily},
+    preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
+    stages::zk::committed,
+    verifier::CheckedInputs,
+    VerifierError,
 };
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage6BatchInputClaims<F: Field> {
-    bytecode_read_raf_address: F,
-    booleanity_address: F,
-    bytecode_read_raf: F,
-    booleanity: F,
-    ram_hamming_booleanity: F,
-    ram_ra_virtualization: F,
-    instruction_ra_virtualization: F,
-    inc_claim_reduction: F,
-    trusted_advice_cycle_phase: Option<F>,
-    untrusted_advice_cycle_phase: Option<F>,
-    bytecode_claim_reduction: Option<F>,
-    program_image_claim_reduction: Option<F>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stage6BatchExpectedOutputClaims<F: Field> {
-    bytecode_read_raf_address: F,
-    booleanity_address: F,
-    bytecode_read_raf: F,
-    booleanity: F,
-    ram_hamming_booleanity: F,
-    ram_ra_virtualization: F,
-    instruction_ra_virtualization: F,
-    inc_claim_reduction: F,
-    trusted_advice_cycle_phase: Option<F>,
-    untrusted_advice_cycle_phase: Option<F>,
-    bytecode_claim_reduction: Option<F>,
-    program_image_claim_reduction: Option<F>,
-}
 
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
@@ -114,11 +101,37 @@ where
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
     let program_image_reduction_layout = checked.precommitted.program_image.as_ref();
     let committed_program = bytecode_reduction_layout.is_some();
+    let bind_store_bytecode = validate_protocol_config(&proof.protocol)? == PcsFamily::Lattice;
+    let unsigned_inc_chunk_count = if bind_store_bytecode {
+        lattice::unsigned_inc_lower_chunk_count(proof.one_hot_config.committed_chunk_bits())
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: format!(
+                    "unsigned increment chunk size must evenly divide 64 bits, got {}",
+                    proof.one_hot_config.committed_chunk_bits()
+                ),
+            })?
+    } else {
+        0
+    };
 
-    let bytecode_address_claims =
-        bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf);
+    let bytecode_address_claims = if bind_store_bytecode {
+        bytecode::read_raf_address_phase_with_store_binding::<PCS::Field>(
+            formula_dimensions.bytecode_read_raf,
+        )
+    } else {
+        bytecode::read_raf_address_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+    };
     let bytecode_claims = if committed_program {
-        bytecode::read_raf_cycle_phase_committed::<PCS::Field>(formula_dimensions.bytecode_read_raf)
+        if bind_store_bytecode {
+            bytecode::read_raf_cycle_phase_committed_with_store_binding::<PCS::Field>(
+                formula_dimensions.bytecode_read_raf,
+            )
+        } else {
+            bytecode::read_raf_cycle_phase_committed::<PCS::Field>(
+                formula_dimensions.bytecode_read_raf,
+            )
+        }
     } else {
         bytecode::read_raf_cycle_phase::<PCS::Field>(formula_dimensions.bytecode_read_raf)
     };
@@ -126,6 +139,7 @@ where
         formula_dimensions.ra_layout,
         log_t,
         proof.one_hot_config.committed_chunk_bits(),
+        unsigned_inc_chunk_count,
     );
     let booleanity_address_claims =
         booleanity::booleanity_address_phase::<PCS::Field>(booleanity_dimensions);
@@ -137,6 +151,11 @@ where
         formula_dimensions.instruction_ra_virtualization,
     );
     let inc_claims = increments::claim_reduction::<PCS::Field>(trace_dimensions);
+    let unsigned_inc_msb_booleanity_claims = bind_store_bytecode
+        .then(|| lattice::unsigned_inc_msb_booleanity_claim::<PCS::Field>(trace_dimensions));
+    #[cfg(feature = "field-inline")]
+    let field_inc_claims =
+        field_increments::claim_reduction::<PCS::Field>(FieldRegistersTraceDimensions::new(log_t));
 
     let trusted_advice_layout = checked.precommitted.trusted_advice.as_ref();
     let untrusted_advice_layout = checked.precommitted.untrusted_advice.as_ref();
@@ -147,7 +166,14 @@ where
         advice::cycle_phase::<PCS::Field>(JoltAdviceKind::Untrusted, layout.dimensions())
     });
     let bytecode_reduction_claims = bytecode_reduction_layout.map(|layout| {
-        bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
+        if bind_store_bytecode {
+            bytecode_reduction::cycle_phase_with_store_binding::<PCS::Field>(
+                layout.dimensions(),
+                layout.chunk_count(),
+            )
+        } else {
+            bytecode_reduction::cycle_phase::<PCS::Field>(layout.dimensions(), layout.chunk_count())
+        }
     });
     let program_image_reduction_claims = program_image_reduction_layout
         .map(|layout| program_image::cycle_phase::<PCS::Field>(layout.dimensions()));
@@ -169,6 +195,7 @@ where
         &untrusted_advice_claims,
         &bytecode_reduction_claims,
         &program_image_reduction_claims,
+        &unsigned_inc_msb_booleanity_claims,
     ]
     .into_iter()
     .flatten()
@@ -178,12 +205,24 @@ where
 
     let bytecode_gamma_powers = transcript.challenge_scalar_powers(8);
     let bytecode_gamma = bytecode_gamma_powers[1];
-    let stage1_gammas = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
+    #[cfg(feature = "field-inline")]
+    let stage1_gamma_count = field_bytecode::FIELD_INLINE_STAGE1_GAMMA_OFFSET
+        + field_bytecode::FIELD_INLINE_OP_FLAGS.len();
+    #[cfg(not(feature = "field-inline"))]
+    let stage1_gamma_count = 2 + NUM_CIRCUIT_FLAGS;
+    let stage1_gammas = transcript.challenge_scalar_powers(stage1_gamma_count);
     let stage2_gammas = transcript.challenge_scalar_powers(4);
     let stage3_gammas = transcript.challenge_scalar_powers(9);
-    let stage4_gammas = transcript.challenge_scalar_powers(3);
-    let stage5_gammas =
-        transcript.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT);
+    #[cfg(feature = "field-inline")]
+    let stage4_gamma_count = field_bytecode::FIELD_INLINE_STAGE4_GAMMA_OFFSET + 3;
+    #[cfg(not(feature = "field-inline"))]
+    let stage4_gamma_count = 3;
+    let stage4_gammas = transcript.challenge_scalar_powers(stage4_gamma_count);
+    #[cfg(feature = "field-inline")]
+    let stage5_gamma_count = field_bytecode::FIELD_INLINE_STAGE5_GAMMA_OFFSET + 1;
+    #[cfg(not(feature = "field-inline"))]
+    let stage5_gamma_count = 2 + LookupTableKind::<RISCV_XLEN>::COUNT;
+    let stage5_gammas = transcript.challenge_scalar_powers(stage5_gamma_count);
 
     let (stage5_instruction_address, stage5_instruction_cycle) = match deps {
         Deps::Clear { stage5, .. } => (
@@ -215,6 +254,7 @@ where
 
     let public = |instruction_ra_gamma_powers: Vec<PCS::Field>,
                   inc_gamma: PCS::Field,
+                  #[cfg(feature = "field-inline")] field_inc_gamma: PCS::Field,
                   eta: Option<PCS::Field>,
                   address_phase_challenges: Vec<PCS::Field>,
                   address_phase_batching_coefficients: Vec<PCS::Field>,
@@ -235,6 +275,8 @@ where
         booleanity_gamma,
         instruction_ra_gamma_powers: instruction_ra_gamma_powers.clone(),
         inc_gamma,
+        #[cfg(feature = "field-inline")]
+        field_inline: super::outputs::FieldInlineStage6PublicOutput { field_inc_gamma },
         bytecode_reduction_eta: eta,
     };
 
@@ -256,6 +298,8 @@ where
                 .num_virtual_ra_polys(),
         );
         let inc_gamma = transcript.challenge_scalar();
+        #[cfg(feature = "field-inline")]
+        let field_inc_gamma = transcript.challenge_scalar();
         let eta = committed_program.then(|| transcript.challenge_scalar());
 
         let mut statements = vec![
@@ -278,6 +322,11 @@ where
             ),
             SumcheckStatement::new(inc_claims.sumcheck.rounds, inc_claims.sumcheck.degree),
         ];
+        #[cfg(feature = "field-inline")]
+        statements.push(SumcheckStatement::new(
+            field_inc_claims.sumcheck.rounds,
+            field_inc_claims.sumcheck.degree,
+        ));
         if let Some(claim) = &trusted_advice_claims {
             statements.push(SumcheckStatement::new(
                 claim.sumcheck.rounds,
@@ -431,6 +480,26 @@ where
                     reason: error.to_string(),
                 })?;
 
+        #[cfg(feature = "field-inline")]
+        let field_inc_claim_reduction = {
+            let field_inc_point = consistency
+                .try_instance_point(field_inc_claims.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltRelationId::IncClaimReduction,
+                    reason: error.to_string(),
+                })?;
+            let field_inc_opening_point = trace_dimensions
+                .cycle_opening_point(&field_inc_point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::IncClaimReduction,
+                    reason: error.to_string(),
+                })?;
+            Stage6SumcheckPublicOutput {
+                sumcheck_point: field_inc_point.clone(),
+                opening_point: field_inc_opening_point,
+            }
+        };
+
         let trusted_advice = if let (Some(layout), Some(claim)) =
             (trusted_advice_layout, trusted_advice_claims.as_ref())
         {
@@ -484,8 +553,10 @@ where
 
         let bytecode_output_openings =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
-        let booleanity_output_openings =
-            booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
+        let booleanity_output_openings = booleanity::booleanity_output_openings(
+            formula_dimensions.ra_layout,
+            unsigned_inc_chunk_count,
+        );
         let ram_ra_output_openings =
             ram::ra_virtualization_output_openings(formula_dimensions.ram_ra_virtualization);
         let instruction_ra_output_openings = instruction::ra_virtualization_output_openings(
@@ -514,6 +585,16 @@ where
             + ram_ra_output_openings.len()
             + flat_instruction_ra_output_openings.len()
             + 2
+            + {
+                #[cfg(feature = "field-inline")]
+                {
+                    1
+                }
+                #[cfg(not(feature = "field-inline"))]
+                {
+                    0
+                }
+            }
             + usize::from(trusted_advice_claims.is_some())
             + usize::from(untrusted_advice_claims.is_some())
             + bytecode_reduction_output_claims
@@ -531,6 +612,8 @@ where
             public: public(
                 instruction_ra_gamma_powers,
                 inc_gamma,
+                #[cfg(feature = "field-inline")]
+                field_inc_gamma,
                 eta,
                 stage6a.address_phase_consistency.challenges(),
                 stage6a
@@ -585,6 +668,10 @@ where
                 sumcheck_point: inc_point,
                 opening_point: inc_opening_point,
             },
+            unsigned_inc_claim_reduction: None,
+            unsigned_inc_msb_booleanity: None,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: field_inc_claim_reduction,
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
             bytecode_cycle_phase,
@@ -598,20 +685,17 @@ where
         stage3,
         stage4,
         stage5,
+        stage5_increment,
     } = deps
     else {
         return Err(VerifierError::ExpectedClearProof { field: "stage5" });
     };
     let claims = &proof.clear_claims()?.stage6;
-    if committed_program != claims.address_phase.bytecode_val_stages.is_some() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: format!(
-                "bytecode Val-stage claims presence ({}) does not match committed program mode ({committed_program})",
-                claims.address_phase.bytecode_val_stages.is_some()
-            ),
-        });
-    }
+    validate_bytecode_val_stage_claim_count(
+        committed_program,
+        bind_store_bytecode,
+        claims.address_phase.bytecode_val_stages.as_deref(),
+    )?;
 
     let bytecode_input_openings = bytecode::read_raf_input_openings();
     let [(spartan_shift_unexpanded_pc, instruction_input_unexpanded_pc)] =
@@ -625,13 +709,44 @@ where
             right: instruction_input_unexpanded_pc,
         });
     }
+    let store_binding_increment = if bind_store_bytecode {
+        Some(stage5_increment.ok_or(VerifierError::MissingOpeningClaim {
+            id: lattice::inc_virtualization_store_opening(),
+        })?)
+    } else {
+        None
+    };
 
     let [ram_ra_reduced] = ram::ra_virtualization_input_openings();
+    let (ram_ra_reduced_claim, ram_ra_reduced_opening_point) = if bind_store_bytecode {
+        let stage5_increment = store_binding_increment
+            .ok_or(VerifierError::MissingOpeningClaim { id: ram_ra_reduced })?;
+        (
+            stage5_increment.output_claims.ram_ra_claim_reduction.ram_ra,
+            stage5_increment
+                .ram_ra_claim_reduction
+                .opening_point
+                .as_slice(),
+        )
+    } else {
+        let output_claims = stage5
+            .output_claims
+            .ram_ra_claim_reduction
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim { id: ram_ra_reduced })?;
+        let batch = stage5
+            .batch
+            .ram_ra_claim_reduction
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim { id: ram_ra_reduced })?;
+        (output_claims.ram_ra, batch.opening_point.as_slice())
+    };
     let instruction_ra_input_openings = instruction::ra_virtualization_input_openings(
         formula_dimensions.instruction_ra_virtualization,
     );
     let [ram_inc_read_write, ram_inc_val_check, rd_inc_read_write, rd_inc_val_evaluation] =
         increments::claim_reduction_input_openings();
+    let [ram_inc_output, rd_inc_output] = increments::claim_reduction_output_openings();
 
     let bytecode_read_raf_address_input = bytecode_address_claims.input.expression().try_evaluate(
         |id| {
@@ -761,6 +876,11 @@ where
             if *id == bytecode_input_openings.spartan_shift_pc {
                 return Ok(stage3.output_claims.shift.pc);
             }
+            if *id == lattice::inc_virtualization_store_opening() {
+                return store_binding_increment
+                    .map(|stage5_increment| stage5_increment.output_claims.inc_virtualization.store)
+                    .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+            }
             Err(VerifierError::MissingOpeningClaim { id: *id })
         },
         |id| match id {
@@ -784,27 +904,108 @@ where
         },
         |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
     )?;
+    #[cfg(feature = "field-inline")]
+    let field_bytecode_input_extension = field_bytecode::read_raf_input_extension::<PCS::Field>()
+        .try_evaluate(
+        |id| {
+            use jolt_claims::protocols::field_inline::{
+                FieldInlinePolynomialId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
+            };
+
+            match *id {
+                jolt_claims::protocols::field_inline::FieldInlineOpeningId::Polynomial {
+                    polynomial: FieldInlinePolynomialId::Virtual(variable),
+                    relation: FieldInlineRelationId::FieldRegistersSpartanOuter,
+                } => stage1
+                    .field_inline
+                    .claim(variable)
+                    .ok_or(VerifierError::MissingFieldInlineOpeningClaim { id: *id }),
+                jolt_claims::protocols::field_inline::FieldInlineOpeningId::Polynomial {
+                    polynomial:
+                        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRdWa),
+                    relation: FieldInlineRelationId::FieldRegistersReadWriteChecking,
+                } => Ok(stage4
+                    .output_claims
+                    .field_inline
+                    .field_registers_read_write
+                    .field_rd_wa),
+                jolt_claims::protocols::field_inline::FieldInlineOpeningId::Polynomial {
+                    polynomial:
+                        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRs1Ra),
+                    relation: FieldInlineRelationId::FieldRegistersReadWriteChecking,
+                } => Ok(stage4
+                    .output_claims
+                    .field_inline
+                    .field_registers_read_write
+                    .field_rs1_ra),
+                jolt_claims::protocols::field_inline::FieldInlineOpeningId::Polynomial {
+                    polynomial:
+                        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRs2Ra),
+                    relation: FieldInlineRelationId::FieldRegistersReadWriteChecking,
+                } => Ok(stage4
+                    .output_claims
+                    .field_inline
+                    .field_registers_read_write
+                    .field_rs2_ra),
+                jolt_claims::protocols::field_inline::FieldInlineOpeningId::Polynomial {
+                    polynomial:
+                        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRdWa),
+                    relation: FieldInlineRelationId::FieldRegistersValEvaluation,
+                } => Ok(stage5
+                    .output_claims
+                    .field_inline
+                    .field_registers_val_evaluation
+                    .field_rd_wa),
+                jolt_claims::protocols::field_inline::FieldInlineOpeningId::Polynomial {
+                    ..
+                } => Err(VerifierError::MissingFieldInlineOpeningClaim { id: *id }),
+            }
+        },
+        |id| match id {
+            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(bytecode_gamma),
+            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage1Gamma) => {
+                Ok(stage1_gammas[1])
+            }
+            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage4Gamma) => {
+                Ok(stage4_gammas[1])
+            }
+            JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage5Gamma) => {
+                Ok(stage5_gammas[1])
+            }
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+        },
+        |()| unreachable!("field bytecode extension has no public inputs"),
+    )?;
     let booleanity_address_input = PCS::Field::zero();
 
-    if trusted_advice_claims.is_none() && claims.advice_cycle_phase.trusted.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted),
-        });
-    }
-    if untrusted_advice_claims.is_none() && claims.advice_cycle_phase.untrusted.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
-        });
-    }
-    if bytecode_reduction_claims.is_none() && claims.bytecode_claim_reduction.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        });
-    }
-    if program_image_reduction_claims.is_none() && claims.program_image_claim_reduction.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
-        });
+    validate_optional_cycle_phase_claim_presence(
+        OptionalCyclePhaseClaimPresence {
+            trusted_advice: trusted_advice_claims.is_some(),
+            untrusted_advice: untrusted_advice_claims.is_some(),
+            bytecode_claim_reduction: bytecode_reduction_claims.is_some(),
+            program_image_claim_reduction: program_image_reduction_claims.is_some(),
+        },
+        OptionalCyclePhaseClaimPresence {
+            trusted_advice: claims.advice_cycle_phase.trusted.is_some(),
+            untrusted_advice: claims.advice_cycle_phase.untrusted.is_some(),
+            bytecode_claim_reduction: claims.bytecode_claim_reduction.is_some(),
+            program_image_claim_reduction: claims.program_image_claim_reduction.is_some(),
+        },
+    )?;
+    let unsigned_inc_claims = unsigned_inc_claims_for_protocol::<PCS::Field>(
+        &proof.protocol,
+        trace_dimensions,
+        claims.unsigned_inc_claim_reduction.is_some(),
+    )?;
+    validate_lattice_increment_claim_shape(
+        unsigned_inc_claims.as_ref(),
+        claims.unsigned_inc_claim_reduction.as_ref(),
+        &claims.booleanity,
+        proof.one_hot_config.committed_chunk_bits(),
+    )?;
+    validate_dense_increment_claim_shape(bind_store_bytecode, claims.inc_claim_reduction.as_ref())?;
+    if let Some(claim) = &unsigned_inc_claims {
+        validate_compressed_stage_claim(claim)?;
     }
 
     let stage6a = verify_a::verify_clear(
@@ -831,20 +1032,33 @@ where
         .get(1)
         .copied()
         .unwrap_or_else(PCS::Field::one);
-    let inc_gamma = transcript.challenge_scalar();
+    let inc_gamma = if bind_store_bytecode {
+        PCS::Field::zero()
+    } else {
+        transcript.challenge_scalar()
+    };
+    #[cfg(feature = "field-inline")]
+    let field_inc_gamma = transcript.challenge_scalar();
     let eta = committed_program.then(|| transcript.challenge_scalar());
 
     let input_claims = Stage6BatchInputClaims {
         bytecode_read_raf_address: stage6a.bytecode_read_raf_input,
         booleanity_address: stage6a.booleanity_input,
-        bytecode_read_raf: claims.address_phase.bytecode_read_raf,
+        bytecode_read_raf: claims.address_phase.bytecode_read_raf + {
+            #[cfg(feature = "field-inline")]
+            {
+                field_bytecode_input_extension
+            }
+            #[cfg(not(feature = "field-inline"))]
+            {
+                PCS::Field::zero()
+            }
+        },
         booleanity: claims.address_phase.booleanity,
         ram_hamming_booleanity: PCS::Field::zero(),
         ram_ra_virtualization: ram_ra_claims.input.expression().try_evaluate(
             |id| match *id {
-                id if id == ram_ra_reduced => {
-                    Ok(stage5.output_claims.ram_ra_claim_reduction.ram_ra)
-                }
+                id if id == ram_ra_reduced => Ok(ram_ra_reduced_claim),
                 id => Err(VerifierError::MissingOpeningClaim { id }),
             },
             |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
@@ -873,26 +1087,83 @@ where
             },
             |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
         )?,
-        inc_claim_reduction: inc_claims.input.expression().try_evaluate(
-            |id| match *id {
-                id if id == ram_inc_read_write => Ok(stage2.output_claims.ram_read_write.inc),
-                id if id == ram_inc_val_check => Ok(stage4.output_claims.ram_val_check.ram_inc),
-                id if id == rd_inc_read_write => {
-                    Ok(stage4.output_claims.registers_read_write.rd_inc)
-                }
-                id if id == rd_inc_val_evaluation => {
-                    Ok(stage5.output_claims.registers_val_evaluation.rd_inc)
-                }
-                id => Err(VerifierError::MissingOpeningClaim { id }),
-            },
-            |id| match id {
-                JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => {
-                    Ok(inc_gamma)
-                }
-                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-            },
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        )?,
+        inc_claim_reduction: (!bind_store_bytecode)
+            .then(|| {
+                inc_claims.input.expression().try_evaluate(
+                    |id| match *id {
+                        id if id == ram_inc_read_write => {
+                            Ok(stage2.output_claims.ram_read_write.inc)
+                        }
+                        id if id == ram_inc_val_check => {
+                            Ok(stage4.output_claims.ram_val_check.ram_inc)
+                        }
+                        id if id == rd_inc_read_write => {
+                            Ok(stage4.output_claims.registers_read_write.rd_inc)
+                        }
+                        id if id == rd_inc_val_evaluation => {
+                            Ok(stage5.output_claims.registers_val_evaluation.rd_inc)
+                        }
+                        id => Err(VerifierError::MissingOpeningClaim { id }),
+                    },
+                    |id| match id {
+                        JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => {
+                            Ok(inc_gamma)
+                        }
+                        _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    },
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
+        unsigned_inc_claim_reduction: unsigned_inc_claims
+            .as_ref()
+            .map(|claim| {
+                let stage5_increment =
+                    stage5_increment.ok_or(VerifierError::MissingOpeningClaim {
+                        id: lattice::inc_virtualization_inc_opening(),
+                    })?;
+                claim.input.expression().try_evaluate(
+                    |id| match *id {
+                        id if id == lattice::unsigned_inc_input_opening() => {
+                            Ok(stage5_increment.output_claims.inc_virtualization.inc)
+                        }
+                        id => Err(VerifierError::MissingOpeningClaim { id }),
+                    },
+                    |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+                )
+            })
+            .transpose()?,
+        unsigned_inc_msb_booleanity: unsigned_inc_msb_booleanity_claims
+            .as_ref()
+            .map(|_| PCS::Field::zero()),
+        #[cfg(feature = "field-inline")]
+        field_registers_inc_claim_reduction: {
+            let [field_rd_inc_read_write, field_rd_inc_val_evaluation] =
+                field_increments::claim_reduction_input_openings();
+            field_inc_claims.input.expression().try_evaluate(
+                |id| match *id {
+                    id if id == field_rd_inc_read_write => Ok(stage4
+                        .output_claims
+                        .field_inline
+                        .field_registers_read_write
+                        .field_rd_inc),
+                    id if id == field_rd_inc_val_evaluation => Ok(stage5
+                        .output_claims
+                        .field_inline
+                        .field_registers_val_evaluation
+                        .field_rd_inc),
+                    id => Err(VerifierError::MissingFieldInlineOpeningClaim { id }),
+                },
+                |id| match id {
+                    FieldInlineChallengeId::FieldRegistersIncClaimReduction(
+                        FieldRegistersIncClaimReductionChallenge::Gamma,
+                    ) => Ok(field_inc_gamma),
+                    _ => Err(VerifierError::MissingFieldInlineChallenge { id: *id }),
+                },
+                |id| Err(VerifierError::MissingFieldInlinePublic { id: *id }),
+            )?
+        },
         trusted_advice_cycle_phase: trusted_advice_claims
             .as_ref()
             .map(|claim| {
@@ -991,12 +1262,40 @@ where
             instruction_ra_claims.sumcheck.degree,
             input_claims.instruction_ra_virtualization,
         ),
-        SumcheckClaim::new(
+    ];
+    if let Some(input_claim) = input_claims.inc_claim_reduction {
+        sumcheck_claims.push(SumcheckClaim::new(
             inc_claims.sumcheck.rounds,
             inc_claims.sumcheck.degree,
-            input_claims.inc_claim_reduction,
-        ),
-    ];
+            input_claim,
+        ));
+    }
+    #[cfg(feature = "field-inline")]
+    sumcheck_claims.push(SumcheckClaim::new(
+        field_inc_claims.sumcheck.rounds,
+        field_inc_claims.sumcheck.degree,
+        input_claims.field_registers_inc_claim_reduction,
+    ));
+    if let (Some(claim), Some(input_claim)) = (
+        &unsigned_inc_claims,
+        input_claims.unsigned_inc_claim_reduction,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
+    if let (Some(claim), Some(input_claim)) = (
+        &unsigned_inc_msb_booleanity_claims,
+        input_claims.unsigned_inc_msb_booleanity,
+    ) {
+        sumcheck_claims.push(SumcheckClaim::new(
+            claim.sumcheck.rounds,
+            claim.sumcheck.degree,
+            input_claim,
+        ));
+    }
     if let (Some(claim), Some(input_claim)) = (
         &trusted_advice_claims,
         input_claims.trusted_advice_cycle_phase,
@@ -1111,20 +1410,29 @@ where
         Err(VerifierError::MissingOpeningClaim { id: *id })
     };
     let bytecode_output = if committed_program {
+        let mut stage_cycle_points = vec![
+            stage1_cycle.as_slice(),
+            stage2_cycle.as_slice(),
+            stage3_cycle.as_slice(),
+            stage4_cycle,
+            stage5_cycle,
+        ];
+        if let Some(stage5_increment) = store_binding_increment {
+            stage_cycle_points.push(stage5_increment.batch.opening_point.as_slice());
+        }
         let bytecode_public_values = bytecode::read_raf_committed_public_values::<PCS::Field>(
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
-                    stage4_cycle,
-                    stage5_cycle,
-                ],
+                stage_cycle_points: &stage_cycle_points,
                 entry_bytecode_index,
+                bind_store: bind_store_bytecode,
             },
-        );
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
         let stage_claims = claims.address_phase.bytecode_val_stages.as_ref().ok_or(
             VerifierError::MissingOpeningClaim {
                 id: bytecode_reduction::bytecode_val_stage_opening(0),
@@ -1184,6 +1492,74 @@ where
                 stage: JoltRelationId::BytecodeReadRaf,
                 reason: error.to_string(),
             })?;
+        #[cfg(feature = "field-inline")]
+        let mut bytecode_public_values = bytecode_public_values;
+        #[cfg(feature = "field-inline")]
+        {
+            let field_inline_bytecode =
+                preprocessing
+                    .field_inline_bytecode
+                    .as_deref()
+                    .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::BytecodeReadRaf,
+                        reason: "field-inline bytecode metadata is missing".to_string(),
+                    })?;
+            let field_log_k = proof.protocol.field_inline.field_register_log_k;
+            let field_read_write_opening = &stage4.batch.field_registers_read_write.opening_point;
+            let field_val_evaluation_opening =
+                &stage5.batch.field_registers_val_evaluation.opening_point;
+            if field_read_write_opening.len() != field_log_k + log_t {
+                return Err(VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: format!(
+                        "field-register read-write opening point length mismatch: expected {}, got {}",
+                        field_log_k + log_t,
+                        field_read_write_opening.len()
+                    ),
+                });
+            }
+            if field_val_evaluation_opening.len() != field_log_k + log_t {
+                return Err(VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: format!(
+                        "field-register val-evaluation opening point length mismatch: expected {}, got {}",
+                        field_log_k + log_t,
+                        field_val_evaluation_opening.len()
+                    ),
+                });
+            }
+            let (field_read_write_address, field_read_write_cycle) =
+                field_read_write_opening.split_at(field_log_k);
+            let (field_val_evaluation_address, field_val_evaluation_cycle) =
+                field_val_evaluation_opening.split_at(field_log_k);
+            let field_values = field_bytecode::read_raf_public_values(
+                field_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
+                    bytecode: field_inline_bytecode,
+                    field_register_log_k: field_log_k,
+                    r_address: &bytecode_r_address,
+                    r_cycle: &bytecode_r_cycle,
+                    stage1_cycle_point: &stage1_cycle,
+                    field_register_read_write_point: field_read_write_address,
+                    field_register_read_write_cycle_point: field_read_write_cycle,
+                    field_register_val_evaluation_point: field_val_evaluation_address,
+                    field_register_val_evaluation_cycle_point: field_val_evaluation_cycle,
+                    stage1_gammas: &stage1_gammas,
+                    stage4_gammas: &stage4_gammas,
+                    stage5_gammas: &stage5_gammas,
+                },
+            )
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: error.to_string(),
+            })?;
+            for (stage_value, field_value) in bytecode_public_values
+                .stage_values
+                .iter_mut()
+                .zip(field_values.stage_values)
+            {
+                *stage_value += field_value;
+            }
+        }
         bytecode_claims.output.expression().try_evaluate(
             evaluate_bytecode_ra_claim,
             |id| match id {
@@ -1222,17 +1598,20 @@ where
     if claims.booleanity.instruction_ra.len() != formula_dimensions.ra_layout.instruction()
         || claims.booleanity.bytecode_ra.len() != formula_dimensions.ra_layout.bytecode()
         || claims.booleanity.ram_ra.len() != formula_dimensions.ra_layout.ram()
+        || claims.booleanity.unsigned_inc_chunks.len() != unsigned_inc_chunk_count
     {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::Booleanity,
             reason: format!(
-                "booleanity RA claim count mismatch: expected ({}, {}, {}), got ({}, {}, {})",
+                "booleanity claim count mismatch: expected ({}, {}, {}, {}), got ({}, {}, {}, {})",
                 formula_dimensions.ra_layout.instruction(),
                 formula_dimensions.ra_layout.bytecode(),
                 formula_dimensions.ra_layout.ram(),
+                unsigned_inc_chunk_count,
                 claims.booleanity.instruction_ra.len(),
                 claims.booleanity.bytecode_ra.len(),
-                claims.booleanity.ram_ra.len()
+                claims.booleanity.ram_ra.len(),
+                claims.booleanity.unsigned_inc_chunks.len()
             ),
         });
     }
@@ -1248,8 +1627,10 @@ where
             stage: JoltRelationId::Booleanity,
             reason: error.to_string(),
         })?;
-    let booleanity_output_openings =
-        booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
+    let booleanity_output_openings = booleanity::booleanity_output_openings(
+        formula_dimensions.ra_layout,
+        unsigned_inc_chunk_count,
+    );
     let booleanity_output = booleanity_claims.output.expression().try_evaluate(
         |id| {
             for (index, opening) in booleanity_output_openings.iter().enumerate() {
@@ -1262,7 +1643,11 @@ where
                         return Ok(claims.booleanity.bytecode_ra[bytecode_index]);
                     }
                     let ram_index = bytecode_index - formula_dimensions.ra_layout.bytecode();
-                    return Ok(claims.booleanity.ram_ra[ram_index]);
+                    if ram_index < formula_dimensions.ra_layout.ram() {
+                        return Ok(claims.booleanity.ram_ra[ram_index]);
+                    }
+                    let unsigned_inc_chunk_index = ram_index - formula_dimensions.ra_layout.ram();
+                    return Ok(claims.booleanity.unsigned_inc_chunks[unsigned_inc_chunk_index]);
                 }
             }
             Err(VerifierError::MissingOpeningClaim { id: *id })
@@ -1334,18 +1719,17 @@ where
             ),
         });
     }
-    let ram_reduced_opening_point = &stage5.batch.ram_ra_claim_reduction.opening_point;
-    if ram_reduced_opening_point.len() != log_k + log_t {
+    if ram_ra_reduced_opening_point.len() != log_k + log_t {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamRaVirtualization,
             reason: format!(
                 "RAM RA reduction opening point length mismatch: expected {}, got {}",
                 log_k + log_t,
-                ram_reduced_opening_point.len()
+                ram_ra_reduced_opening_point.len()
             ),
         });
     }
-    let (ram_reduced_address, ram_reduced_cycle) = ram_reduced_opening_point.split_at(log_k);
+    let (ram_reduced_address, ram_reduced_cycle) = ram_ra_reduced_opening_point.split_at(log_k);
     let eq_ram_ra_cycle = try_eq_mle(ram_reduced_cycle, &ram_ra_cycle).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamRaVirtualization,
@@ -1455,83 +1839,258 @@ where
     ]
     .concat();
 
-    let inc_point = batch
-        .try_instance_point(inc_claims.sumcheck.rounds)
-        .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::IncClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let inc_opening_point = trace_dimensions
-        .cycle_opening_point(inc_point)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::IncClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let (_, ram_read_write_cycle) = stage2.batch.ram_read_write.opening_point.split_at(log_k);
-    let (_, ram_val_check_cycle) = stage4.batch.ram_val_check.opening_point.split_at(log_k);
-    let (_, registers_read_write_cycle) = stage4
-        .batch
-        .registers_read_write
-        .opening_point
-        .split_at(REGISTER_ADDRESS_BITS);
-    let (_, registers_val_evaluation_cycle) = stage5
-        .batch
-        .registers_val_evaluation
-        .opening_point
-        .split_at(REGISTER_ADDRESS_BITS);
-    let eq_ram_read_write =
-        try_eq_mle(&inc_opening_point, ram_read_write_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
+    let inc_claim_reduction = if !bind_store_bytecode {
+        let output_claims = claims
+            .inc_claim_reduction
+            .as_ref()
+            .ok_or(VerifierError::MissingOpeningClaim { id: ram_inc_output })?;
+        let input_claim =
+            input_claims
+                .inc_claim_reduction
+                .ok_or(VerifierError::MissingOpeningClaim {
+                    id: ram_inc_read_write,
+                })?;
+        let inc_point = batch
+            .try_instance_point(inc_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::IncClaimReduction,
                 reason: error.to_string(),
-            }
-        })?;
-    let eq_ram_val_check =
-        try_eq_mle(&inc_opening_point, ram_val_check_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
+            })?;
+        let inc_opening_point =
+            trace_dimensions
+                .cycle_opening_point(inc_point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::IncClaimReduction,
+                    reason: error.to_string(),
+                })?;
+        let (_, ram_read_write_cycle) = stage2.batch.ram_read_write.opening_point.split_at(log_k);
+        let (_, ram_val_check_cycle) = stage4.batch.ram_val_check.opening_point.split_at(log_k);
+        let (_, registers_read_write_cycle) = stage4
+            .batch
+            .registers_read_write
+            .opening_point
+            .split_at(REGISTER_ADDRESS_BITS);
+        let (_, registers_val_evaluation_cycle) = stage5
+            .batch
+            .registers_val_evaluation
+            .opening_point
+            .split_at(REGISTER_ADDRESS_BITS);
+        let eq_ram_read_write =
+            try_eq_mle(&inc_opening_point, ram_read_write_cycle).map_err(|error| {
+                VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::IncClaimReduction,
+                    reason: error.to_string(),
+                }
+            })?;
+        let eq_ram_val_check =
+            try_eq_mle(&inc_opening_point, ram_val_check_cycle).map_err(|error| {
+                VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::IncClaimReduction,
+                    reason: error.to_string(),
+                }
+            })?;
+        let eq_registers_read_write = try_eq_mle(&inc_opening_point, registers_read_write_cycle)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::IncClaimReduction,
                 reason: error.to_string(),
-            }
-        })?;
-    let eq_registers_read_write = try_eq_mle(&inc_opening_point, registers_read_write_cycle)
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::IncClaimReduction,
-            reason: error.to_string(),
-        })?;
-    let eq_registers_val_evaluation =
-        try_eq_mle(&inc_opening_point, registers_val_evaluation_cycle).map_err(|error| {
-            VerifierError::StageClaimPublicInputFailed {
+            })?;
+        let eq_registers_val_evaluation =
+            try_eq_mle(&inc_opening_point, registers_val_evaluation_cycle).map_err(|error| {
+                VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::IncClaimReduction,
+                    reason: error.to_string(),
+                }
+            })?;
+        let expected_output_claim = inc_claims.output.expression().try_evaluate(
+            |id| match *id {
+                id if id == ram_inc_output => Ok(output_claims.ram_inc),
+                id if id == rd_inc_output => Ok(output_claims.rd_inc),
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| match id {
+                JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => {
+                    Ok(inc_gamma)
+                }
+                _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            },
+            |id| match id {
+                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamReadWrite) => {
+                    Ok(eq_ram_read_write)
+                }
+                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamValCheck) => {
+                    Ok(eq_ram_val_check)
+                }
+                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRegistersReadWrite) => {
+                    Ok(eq_registers_read_write)
+                }
+                JoltPublicId::IncClaimReduction(
+                    IncClaimReductionPublic::EqRegistersValEvaluation,
+                ) => Ok(eq_registers_val_evaluation),
+                _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            },
+        )?;
+        Some(VerifiedStage6Sumcheck {
+            input_claim,
+            sumcheck_point: inc_point.to_vec(),
+            opening_point: inc_opening_point,
+            expected_output_claim,
+        })
+    } else {
+        None
+    };
+    #[cfg(feature = "field-inline")]
+    let field_inc_claim_reduction = {
+        let [field_rd_inc_output] = field_increments::claim_reduction_output_openings();
+        let field_inc_point = batch
+            .try_instance_point(field_inc_claims.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
                 stage: JoltRelationId::IncClaimReduction,
                 reason: error.to_string(),
-            }
-        })?;
-    let [ram_inc, rd_inc] = increments::claim_reduction_output_openings();
-    let inc_output = inc_claims.output.expression().try_evaluate(
-        |id| match *id {
-            id if id == ram_inc => Ok(claims.inc_claim_reduction.ram_inc),
-            id if id == rd_inc => Ok(claims.inc_claim_reduction.rd_inc),
-            id => Err(VerifierError::MissingOpeningClaim { id }),
-        },
-        |id| match id {
-            JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => Ok(inc_gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
-        },
-        |id| match id {
-            JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamReadWrite) => {
-                Ok(eq_ram_read_write)
-            }
-            JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamValCheck) => {
-                Ok(eq_ram_val_check)
-            }
-            JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRegistersReadWrite) => {
-                Ok(eq_registers_read_write)
-            }
-            JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRegistersValEvaluation) => {
-                Ok(eq_registers_val_evaluation)
-            }
-            _ => Err(VerifierError::MissingStageClaimPublic { id: *id }),
-        },
-    )?;
+            })?;
+        let field_inc_opening_point = trace_dimensions
+            .cycle_opening_point(field_inc_point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::IncClaimReduction,
+                reason: error.to_string(),
+            })?;
+        let field_log_k = proof.protocol.field_inline.field_register_log_k;
+        let field_read_write_cycle = stage4
+            .batch
+            .field_registers_read_write
+            .opening_point
+            .get(field_log_k..)
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::IncClaimReduction,
+                reason: format!(
+                    "field-register read-write opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
+                    stage4.batch.field_registers_read_write.opening_point.len()
+                ),
+            })?;
+        let field_val_evaluation_cycle = stage5
+            .batch
+            .field_registers_val_evaluation
+            .opening_point
+            .get(field_log_k..)
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::IncClaimReduction,
+                reason: format!(
+                    "field-register val-evaluation opening point is shorter than the field-register address: expected at least {field_log_k}, got {}",
+                    stage5.batch.field_registers_val_evaluation.opening_point.len()
+                ),
+            })?;
+        let eq_field_read_write = try_eq_mle(&field_inc_opening_point, field_read_write_cycle)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::IncClaimReduction,
+                reason: error.to_string(),
+            })?;
+        let eq_field_val_evaluation =
+            try_eq_mle(&field_inc_opening_point, field_val_evaluation_cycle).map_err(|error| {
+                VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::IncClaimReduction,
+                    reason: error.to_string(),
+                }
+            })?;
+        let expected_output_claim = field_inc_claims.output.expression().try_evaluate(
+            |id| match *id {
+                id if id == field_rd_inc_output => Ok(claims
+                    .field_inline
+                    .field_registers_inc_claim_reduction
+                    .field_rd_inc),
+                id => Err(VerifierError::MissingFieldInlineOpeningClaim { id }),
+            },
+            |id| match id {
+                FieldInlineChallengeId::FieldRegistersIncClaimReduction(
+                    FieldRegistersIncClaimReductionChallenge::Gamma,
+                ) => Ok(field_inc_gamma),
+                _ => Err(VerifierError::MissingFieldInlineChallenge { id: *id }),
+            },
+            |id| match id {
+                FieldInlinePublicId::FieldRegistersIncClaimReduction(
+                    FieldRegistersIncClaimReductionPublic::EqReadWrite,
+                ) => Ok(eq_field_read_write),
+                FieldInlinePublicId::FieldRegistersIncClaimReduction(
+                    FieldRegistersIncClaimReductionPublic::EqValEvaluation,
+                ) => Ok(eq_field_val_evaluation),
+            },
+        )?;
+        VerifiedStage6Sumcheck {
+            input_claim: input_claims.field_registers_inc_claim_reduction,
+            sumcheck_point: field_inc_point.to_vec(),
+            opening_point: field_inc_opening_point,
+            expected_output_claim,
+        }
+    };
+    let unsigned_inc_claim_reduction =
+        if let (Some(claim), Some(output_claims), Some(input_claim)) = (
+            &unsigned_inc_claims,
+            claims.unsigned_inc_claim_reduction.as_ref(),
+            input_claims.unsigned_inc_claim_reduction,
+        ) {
+            let point = batch
+                .try_instance_point(claim.sumcheck.rounds)
+                .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                    stage: JoltRelationId::UnsignedIncClaimReduction,
+                    reason: error.to_string(),
+                })?;
+            let opening_point = trace_dimensions
+                .cycle_opening_point(point)
+                .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::UnsignedIncClaimReduction,
+                    reason: error.to_string(),
+                })?;
+            let expected_output_claim = claim.output.expression().try_evaluate(
+                |id| match *id {
+                    id if id == lattice::unsigned_inc_opening() => Ok(output_claims.unsigned_inc),
+                    id => Err(VerifierError::MissingOpeningClaim { id }),
+                },
+                |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            )?;
+            Some(VerifiedStage6Sumcheck {
+                input_claim,
+                sumcheck_point: point.to_vec(),
+                opening_point,
+                expected_output_claim,
+            })
+        } else {
+            None
+        };
+    let unsigned_inc_msb_booleanity = if let (Some(claim), Some(output_claims), Some(input_claim)) = (
+        &unsigned_inc_msb_booleanity_claims,
+        claims.unsigned_inc_claim_reduction.as_ref(),
+        input_claims.unsigned_inc_msb_booleanity,
+    ) {
+        let point = batch
+            .try_instance_point(claim.sumcheck.rounds)
+            .map_err(|error| VerifierError::StageClaimSumcheckFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?;
+        let opening_point = trace_dimensions
+            .cycle_opening_point(point)
+            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: error.to_string(),
+            })?;
+        let expected_output_claim = claim.output.expression().try_evaluate(
+            |id| match *id {
+                id if id == lattice::unsigned_inc_msb_opening() => {
+                    Ok(output_claims.unsigned_inc_msb)
+                }
+                id => Err(VerifierError::MissingOpeningClaim { id }),
+            },
+            |id| Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+        )?;
+        Some(VerifiedStage6Sumcheck {
+            input_claim,
+            sumcheck_point: point.to_vec(),
+            opening_point,
+            expected_output_claim,
+        })
+    } else {
+        None
+    };
 
     let trusted_advice = if let (Some(layout), Some(claim), Some(opening_claim)) = (
         trusted_advice_layout,
@@ -1614,6 +2173,7 @@ where
                     register_read_write_point: stage4_register_address,
                     register_val_evaluation_point: stage5_register_address,
                     bytecode_r_address: &bytecode_r_address,
+                    bind_store: bind_store_bytecode,
                 },
             )?;
             let input_claim = input_claims.bytecode_claim_reduction.ok_or(
@@ -1667,7 +2227,17 @@ where
         ram_hamming_booleanity: ram_hamming_output,
         ram_ra_virtualization: ram_ra_output,
         instruction_ra_virtualization: instruction_ra_output,
-        inc_claim_reduction: inc_output,
+        inc_claim_reduction: inc_claim_reduction
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        unsigned_inc_claim_reduction: unsigned_inc_claim_reduction
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        unsigned_inc_msb_booleanity: unsigned_inc_msb_booleanity
+            .as_ref()
+            .map(|verified| verified.expected_output_claim),
+        #[cfg(feature = "field-inline")]
+        field_registers_inc_claim_reduction: field_inc_claim_reduction.expected_output_claim,
         trusted_advice_cycle_phase: trusted_advice
             .as_ref()
             .map(|verified| verified.expected_output_claim),
@@ -1681,47 +2251,7 @@ where
             .as_ref()
             .map(|verified| verified.expected_output_claim),
     };
-    let mut expected_outputs_in_order = vec![
-        expected_outputs.bytecode_read_raf,
-        expected_outputs.booleanity,
-        expected_outputs.ram_hamming_booleanity,
-        expected_outputs.ram_ra_virtualization,
-        expected_outputs.instruction_ra_virtualization,
-        expected_outputs.inc_claim_reduction,
-    ];
-    if let Some(output_claim) = expected_outputs.trusted_advice_cycle_phase {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.untrusted_advice_cycle_phase {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.bytecode_claim_reduction {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if let Some(output_claim) = expected_outputs.program_image_claim_reduction {
-        expected_outputs_in_order.push(output_claim);
-    }
-    if batch.batching_coefficients.len() != expected_outputs_in_order.len() {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: format!(
-                "Stage 6 batch verifier returned {} coefficients for {} instances",
-                batch.batching_coefficients.len(),
-                expected_outputs_in_order.len()
-            ),
-        });
-    }
-    let expected_final_claim = batch
-        .batching_coefficients
-        .iter()
-        .zip(expected_outputs_in_order)
-        .map(|(coefficient, output)| *coefficient * output)
-        .sum();
-    if batch.reduction.value != expected_final_claim {
-        return Err(VerifierError::StageClaimOutputMismatch {
-            stage: JoltRelationId::BytecodeReadRaf,
-        });
-    }
+    let expected_final_claim = validate_stage6_batch_expected_output(&batch, &expected_outputs)?;
 
     verify_b::append_opening_claims(
         transcript,
@@ -1734,6 +2264,8 @@ where
         public: public(
             instruction_ra_gamma_powers,
             inc_gamma,
+            #[cfg(feature = "field-inline")]
+            field_inc_gamma,
             eta,
             address_batch.reduction.point.as_slice().to_vec(),
             address_batch.batching_coefficients.clone(),
@@ -1801,12 +2333,11 @@ where
                 instruction_ra_opening_points,
                 expected_output_claim: expected_outputs.instruction_ra_virtualization,
             },
-            inc_claim_reduction: VerifiedStage6Sumcheck {
-                input_claim: input_claims.inc_claim_reduction,
-                sumcheck_point: inc_point.to_vec(),
-                opening_point: inc_opening_point,
-                expected_output_claim: expected_outputs.inc_claim_reduction,
-            },
+            inc_claim_reduction,
+            unsigned_inc_claim_reduction,
+            unsigned_inc_msb_booleanity,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: field_inc_claim_reduction,
             trusted_advice_cycle_phase: trusted_advice,
             untrusted_advice_cycle_phase: untrusted_advice,
             bytecode_cycle_phase,
@@ -1815,17 +2346,190 @@ where
     }))
 }
 
-fn validate_compressed_stage_claim<F: Field>(
-    claim: &JoltRelationClaims<F>,
-) -> Result<(), VerifierError> {
-    if claim.sumcheck.degree == 0 {
-        return Err(VerifierError::InvalidStageSumcheckDegree {
-            stage: claim.id,
-            degree: claim.sumcheck.degree,
-        });
+#[cfg(test)]
+mod tests {
+
+    #![expect(
+        clippy::expect_used,
+        reason = "test setup should fail loudly when helper contracts change"
+    )]
+
+    use super::*;
+    use crate::config::{IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode};
+    use jolt_claims::protocols::jolt::formulas::dimensions::TraceDimensions;
+    use jolt_field::Fr;
+
+    fn lattice_config() -> JoltProtocolConfig {
+        let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+        config.lattice.program_mode = ProgramMode::Committed;
+        config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some([7; 32]);
+        config.lattice.packed_witness.d_pack = Some(8);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+        }
+        config
     }
-    if !matches!(claim.sumcheck.domain, JoltSumcheckDomain::BooleanHypercube) {
-        return Err(VerifierError::CompressedStageClaimRequiresBooleanDomain { stage: claim.id });
+
+    fn curve_config() -> JoltProtocolConfig {
+        JoltProtocolConfig::for_zk(false)
     }
-    Ok(())
+
+    fn trace_dimensions() -> TraceDimensions {
+        TraceDimensions::new(2)
+    }
+
+    #[test]
+    fn lattice_stage6_requires_unsigned_increment_claims() {
+        let error =
+            unsigned_inc_claims_for_protocol::<Fr>(&lattice_config(), trace_dimensions(), false)
+                .expect_err("lattice mode should require unsigned increment claims");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id } if id == lattice::unsigned_inc_opening()
+        ));
+    }
+
+    #[test]
+    fn lattice_stage6_builds_unsigned_increment_claims() {
+        let claims =
+            unsigned_inc_claims_for_protocol::<Fr>(&lattice_config(), trace_dimensions(), true)
+                .expect("lattice mode with unsigned claim should build stage claims");
+        assert_eq!(
+            claims.expect("unsigned increment claims should exist").id,
+            JoltRelationId::UnsignedIncClaimReduction
+        );
+    }
+
+    #[test]
+    fn lattice_stage6_rejects_wrong_unsigned_increment_chunk_count() {
+        let claims =
+            unsigned_inc_claims_for_protocol::<Fr>(&lattice_config(), trace_dimensions(), true)
+                .expect("lattice mode with unsigned claim should build stage claims");
+        let output_claims = super::super::inputs::UnsignedIncClaimReductionOutputOpeningClaims {
+            unsigned_inc: Fr::zero(),
+            unsigned_inc_msb: Fr::zero(),
+        };
+        let booleanity_claims = super::super::inputs::BooleanityOutputOpeningClaims {
+            instruction_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            ram_ra: Vec::new(),
+            unsigned_inc_chunks: vec![Fr::zero(); 7],
+        };
+
+        let error = validate_lattice_increment_claim_shape(
+            claims.as_ref(),
+            Some(&output_claims),
+            &booleanity_claims,
+            8,
+        )
+        .expect_err("lattice booleanity must require all lower chunks");
+        assert!(matches!(
+            error,
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lattice_stage6_rejects_missing_unsigned_increment_output_claims() {
+        let claims =
+            unsigned_inc_claims_for_protocol::<Fr>(&lattice_config(), trace_dimensions(), true)
+                .expect("lattice mode with unsigned claim should build stage claims");
+        let booleanity_claims = super::super::inputs::BooleanityOutputOpeningClaims {
+            instruction_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            ram_ra: Vec::new(),
+            unsigned_inc_chunks: vec![Fr::zero(); 8],
+        };
+
+        let error =
+            validate_lattice_increment_claim_shape(claims.as_ref(), None, &booleanity_claims, 8)
+                .expect_err("lattice unsigned increment output claims are required");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id } if id == lattice::unsigned_inc_opening()
+        ));
+    }
+
+    #[test]
+    fn lattice_stage6_rejects_dense_increment_claims() {
+        let dense_claims = super::super::inputs::IncClaimReductionOutputOpeningClaims {
+            ram_inc: Fr::zero(),
+            rd_inc: Fr::zero(),
+        };
+
+        let error = validate_dense_increment_claim_shape(true, Some(&dense_claims))
+            .expect_err("lattice mode must not accept dense increment claims");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedOpeningClaim { id }
+                if id == increments::claim_reduction_output_openings()[0]
+        ));
+    }
+
+    #[test]
+    fn curve_stage6_requires_dense_increment_claims() {
+        let error = validate_dense_increment_claim_shape::<Fr>(false, None)
+            .expect_err("curve mode must require dense increment claims");
+        assert!(matches!(
+            error,
+            VerifierError::MissingOpeningClaim { id }
+                if id == increments::claim_reduction_output_openings()[0]
+        ));
+    }
+
+    #[test]
+    fn curve_stage6_rejects_unsigned_increment_chunk_claims() {
+        let booleanity_claims = super::super::inputs::BooleanityOutputOpeningClaims {
+            instruction_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            ram_ra: Vec::new(),
+            unsigned_inc_chunks: vec![Fr::zero()],
+        };
+
+        let error = validate_lattice_increment_claim_shape(None, None, &booleanity_claims, 8)
+            .expect_err("curve mode must not accept lattice unsigned increment chunk claims");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedOpeningClaim { id }
+                if id == lattice::unsigned_inc_chunk_opening(0)
+        ));
+    }
+
+    #[test]
+    fn curve_stage6_rejects_unsigned_increment_claims() {
+        let error =
+            unsigned_inc_claims_for_protocol::<Fr>(&curve_config(), trace_dimensions(), true)
+                .expect_err("curve mode should reject unsigned increment claims");
+        assert!(matches!(
+            error,
+            VerifierError::UnexpectedOpeningClaim { id } if id == lattice::unsigned_inc_opening()
+        ));
+    }
+
+    #[test]
+    fn bytecode_val_stage_count_keeps_curve_and_lattice_shapes_distinct() {
+        let five = vec![Fr::zero(); bytecode_reduction::NUM_BYTECODE_VAL_STAGES];
+        let six = vec![Fr::zero(); bytecode_reduction::LATTICE_BYTECODE_VAL_STAGES];
+
+        validate_bytecode_val_stage_claim_count(true, false, Some(&five))
+            .expect("curve committed bytecode keeps five staged values");
+        validate_bytecode_val_stage_claim_count(true, true, Some(&six))
+            .expect("lattice committed bytecode requires Store binding stage");
+
+        let error = validate_bytecode_val_stage_claim_count(true, true, Some(&five))
+            .expect_err("lattice committed bytecode must reject five staged values");
+        assert!(matches!(
+            error,
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                ..
+            }
+        ));
+    }
 }

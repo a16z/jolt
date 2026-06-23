@@ -50,7 +50,7 @@
 //! binds the hidden R1CS witness value used in the Jolt claim relation to the
 //! hidden PCS evaluation proved by Stage 8.
 //!
-//! In ZK mode this is the link between the committed stage proofs and the
+//! In ZK mode this is the bridge between the committed stage proofs and the
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
@@ -215,7 +215,7 @@ struct SourceValues<F: Field> {
     challenges: Vec<(VerifierChallengeId, F)>,
 }
 
-pub fn build<PCS, VC, ZkProof>(
+pub(crate) fn build<PCS, VC, ZkProof>(
     input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
 ) -> Result<BlindFoldOutput<PCS::Field, VC::Output>, VerifierError>
 where
@@ -590,14 +590,23 @@ where
     let hi_scale = r_hi.iter().fold(PCS::Field::one(), |acc, challenge| {
         acc * (PCS::Field::one() - *challenge)
     });
-    let val_io = hi_scale
-        * sparse_segments_mle_msb(
-            public_memory
-                .segments
-                .iter()
-                .map(|segment| (segment.start_index, segment.words.as_slice())),
-            r_lo,
-        );
+    let public_segments = public_memory
+        .segments
+        .iter()
+        .map(|segment| {
+            let start_index = usize::try_from(segment.start_index).map_err(|_| {
+                VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::RamOutputCheck,
+                    reason: format!(
+                        "public IO segment start {} does not fit in usize",
+                        segment.start_index
+                    ),
+                }
+            })?;
+            Ok((start_index, segment.words.as_slice()))
+        })
+        .collect::<Result<Vec<_>, VerifierError>>()?;
+    let val_io = hi_scale * sparse_segments_mle_msb(public_segments, r_lo);
     let eq_io_mask = output_eq * output_mask;
     Ok((eq_io_mask, -eq_io_mask * val_io))
 }
@@ -672,7 +681,7 @@ where
     let start_index = layout
         .remapped_word_address(start_address)
         .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?
-        as u128;
+        as usize;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
         .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?;
@@ -886,16 +895,21 @@ where
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &bytecode_r_address,
                 r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    &stage1_cycle,
-                    &stage2_cycle,
-                    &stage3_cycle,
+                stage_cycle_points: &[
+                    stage1_cycle.as_slice(),
+                    stage2_cycle.as_slice(),
+                    stage3_cycle.as_slice(),
                     stage4_cycle,
                     stage5_cycle,
                 ],
                 entry_bytecode_index,
+                bind_store: false,
             },
-        );
+        )
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::BytecodeReadRaf,
+            reason: error.to_string(),
+        })?;
         for (index, stage_cycle_eq) in committed_public_values.stage_cycle_eqs.iter().enumerate() {
             values.public(
                 JoltPublicId::from(BytecodeReadRafPublic::StageCycleEq(index)),
@@ -1183,6 +1197,7 @@ where
             register_val_evaluation_point: &input.stage5.registers_val_evaluation.opening_point
                 [..REGISTER_ADDRESS_BITS],
             bytecode_r_address: &input.stage6.bytecode_read_raf_address.opening_point,
+            bind_store: false,
         },
     )
 }

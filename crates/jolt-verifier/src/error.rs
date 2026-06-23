@@ -1,12 +1,14 @@
 //! Verifier error types.
 
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineOpeningId;
+use jolt_claims::protocols::field_inline::{
+    FieldInlineChallengeId, FieldInlineOpeningId, FieldInlinePublicId,
+};
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 
-use crate::config::JoltProtocolConfig;
+use crate::config::{JoltProtocolConfig, PcsFamily};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
@@ -16,11 +18,56 @@ pub enum VerifierError {
         got: JoltProtocolConfig,
     },
 
+    #[error("invalid protocol config: {reason}")]
+    InvalidProtocolConfig { reason: String },
+
+    #[error(
+        "proof commitment payload family {got:?} does not match selected PCS family {expected:?}"
+    )]
+    CommitmentPayloadFamilyMismatch { expected: PcsFamily, got: PcsFamily },
+
+    #[error("lattice commitment payload layout digest does not match verifier config")]
+    LatticePayloadLayoutDigestMismatch { expected: [u8; 32], got: [u8; 32] },
+
+    #[error(
+        "lattice commitment payload D_pack {got} does not match verifier config D_pack {expected}"
+    )]
+    LatticePayloadDimensionMismatch { expected: usize, got: usize },
+
+    #[error("lattice packing witness commitment failed: {reason}")]
+    LatticePackingCommitmentFailed { reason: String },
+
+    #[error("lattice packed validity proof is missing {field}")]
+    MissingLatticePackedValidityProof { field: &'static str },
+
+    #[error("non-lattice proof unexpectedly includes lattice packed validity {field}")]
+    UnexpectedLatticePackedValidityProof { field: &'static str },
+
+    #[error(
+        "lattice packed validity opening claim count {got} does not match derived statement count {expected}"
+    )]
+    LatticePackedValidityClaimCountMismatch { expected: usize, got: usize },
+
+    #[error("lattice packed validity sumcheck failed: {reason}")]
+    LatticePackedValiditySumcheckFailed { reason: String },
+
+    #[error("lattice packed validity sumcheck output does not match packed opening claims")]
+    LatticePackedValidityOutputMismatch,
+
+    #[error("lattice packed validity opening proof verification failed: {reason}")]
+    LatticePackedValidityOpeningVerificationFailed { reason: String },
+
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 
     #[error("proof field {field} must be committed for ZK verification")]
     ExpectedCommittedProof { field: &'static str },
+
+    #[error("proof is missing optional stage proof field {field}")]
+    MissingStageProof { field: &'static str },
+
+    #[error("proof unexpectedly includes optional stage proof field {field}")]
+    UnexpectedStageProof { field: &'static str },
 
     #[error("clear proof is missing opening claims")]
     MissingOpeningClaims,
@@ -40,6 +87,14 @@ pub enum VerifierError {
     #[cfg(feature = "field-inline")]
     #[error("missing field-inline opening claim scalar {id:?}")]
     MissingFieldInlineOpeningClaim { id: FieldInlineOpeningId },
+
+    #[cfg(feature = "field-inline")]
+    #[error("missing field-inline claim challenge input {id:?}")]
+    MissingFieldInlineChallenge { id: FieldInlineChallengeId },
+
+    #[cfg(feature = "field-inline")]
+    #[error("missing field-inline claim public input {id:?}")]
+    MissingFieldInlinePublic { id: FieldInlinePublicId },
 
     #[error("unexpected opening claim scalar {id:?}")]
     UnexpectedOpeningClaim { id: JoltOpeningId },

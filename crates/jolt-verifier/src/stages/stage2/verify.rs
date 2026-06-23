@@ -972,14 +972,23 @@ where
             let hi_scale = r_hi.iter().fold(PCS::Field::from_u64(1), |acc, challenge| {
                 acc * (PCS::Field::from_u64(1) - *challenge)
             });
-            let val_io = hi_scale
-                * sparse_segments_mle_msb(
-                    public_memory
-                        .segments
-                        .iter()
-                        .map(|segment| (segment.start_index, segment.words.as_slice())),
-                    r_lo,
-                );
+            let public_segments = public_memory
+                .segments
+                .iter()
+                .map(|segment| {
+                    let start_index = usize::try_from(segment.start_index).map_err(|_| {
+                        VerifierError::StageClaimPublicInputFailed {
+                            stage: JoltRelationId::RamOutputCheck,
+                            reason: format!(
+                                "public IO segment start {} does not fit in usize",
+                                segment.start_index
+                            ),
+                        }
+                    })?;
+                    Ok((start_index, segment.words.as_slice()))
+                })
+                .collect::<Result<Vec<_>, VerifierError>>()?;
+            let val_io = hi_scale * sparse_segments_mle_msb(public_segments, r_lo);
             let eq_io_mask = output_eq * output_mask;
             let ram_output_public_values = RamOutputCheckPublicValues {
                 eq_io_mask,

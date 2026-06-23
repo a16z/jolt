@@ -26,6 +26,7 @@ where
         formula_dimensions.ra_layout,
         log_t,
         input.proof.one_hot_config.committed_chunk_bits(),
+        0,
     );
     let booleanity_address_claims =
         booleanity::booleanity_address_phase::<PCS::Field>(booleanity_dimensions);
@@ -349,7 +350,7 @@ fn stage6_cycle_output_openings_and_aliases<F: Field>(
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
     let booleanity_output_openings =
-        booleanity::booleanity_output_openings(formula_dimensions.ra_layout);
+        booleanity::booleanity_output_openings(formula_dimensions.ra_layout, 0);
 
     let mut output_ids = map_jolt_opening_ids(bytecode_output_openings.bytecode_ra.clone());
     let mut aliases = Vec::new();

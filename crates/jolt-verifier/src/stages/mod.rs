@@ -12,11 +12,11 @@ pub mod stage2;
 pub mod stage3;
 pub mod stage4;
 pub mod stage5;
+pub mod stage5_increment;
 pub mod stage6;
 pub mod stage7;
 pub mod stage8;
-#[doc(hidden)]
-pub mod zk;
+pub(crate) mod zk;
 
 /// Committed-program geometry feeding the bytecode and program-image
 /// claim-reduction layouts, derived from the committed preprocessing during

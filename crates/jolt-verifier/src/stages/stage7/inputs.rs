@@ -38,7 +38,8 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage7Claims<F: Field> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims<F>,
     pub advice_address_phase: Stage7AdviceAddressPhaseClaims<F>,
@@ -48,10 +49,18 @@ pub struct Stage7Claims<F: Field> {
     /// Final `ProgramImageInit` claim from the program-image reduction's
     /// address phase; present only when that phase runs.
     pub program_image_address_phase: Option<ProgramImageAddressPhaseOutputClaim<F>>,
+    /// Lattice PCS mode only: final lower `UnsignedIncChunk(j)` openings
+    /// produced by the increment chunk reconstruction stage.
+    pub unsigned_inc_chunk_reconstruction: Option<UnsignedIncChunkReconstructionOutputClaims<F>>,
+    /// Lattice PCS mode only: final packed view openings produced by packed
+    /// validity sumchecks, in verifier-derived statement order.
+    #[serde(default)]
+    pub lattice_packed_validity: Option<LatticePackedValidityOutputClaims<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct HammingWeightClaimReductionOutputOpeningClaims<F: Field> {
     pub instruction_ra: Vec<F>,
     pub bytecode_ra: Vec<F>,
@@ -59,26 +68,44 @@ pub struct HammingWeightClaimReductionOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage7AdviceAddressPhaseClaims<F: Field> {
     pub trusted: Option<AdviceAddressPhaseOutputClaim<F>>,
     pub untrusted: Option<AdviceAddressPhaseOutputClaim<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct AdviceAddressPhaseOutputClaim<F: Field> {
     pub opening_claim: F,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct BytecodeAddressPhaseOutputClaims<F: Field> {
     pub chunks: Vec<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct ProgramImageAddressPhaseOutputClaim<F: Field> {
     pub opening_claim: F,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct UnsignedIncChunkReconstructionOutputClaims<F: Field> {
+    pub chunks: Vec<F>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct LatticePackedValidityOutputClaims<F: Field> {
+    pub opening_claims: Vec<F>,
 }

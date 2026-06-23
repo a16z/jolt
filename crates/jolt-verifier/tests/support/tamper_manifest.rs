@@ -721,6 +721,38 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets each register value-evaluation output claim",
     ),
+    checked_standard(
+        "stage5.increment.claims",
+        "claims.stage5_increment",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the optional fused claim object",
+    ),
+    checked_standard(
+        "stage5.increment.claims.ram_ra_claim_reduction",
+        "claims.stage5_increment.ram_ra_claim_reduction.ram_ra",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the moved RAM RA claim-reduction output claim",
+    ),
+    checked_standard(
+        "stage5.increment.claims.inc_virtualization.inc",
+        "claims.stage5_increment.inc_virtualization.inc",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the packed increment output claim",
+    ),
+    checked_standard(
+        "stage5.increment.claims.inc_virtualization.store",
+        "claims.stage5_increment.inc_virtualization.store",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with Stage 5 increment virtualization needed to actively cover the packed store output claim",
+    ),
 ];
 
 pub const STAGE6_TARGETS: &[TamperTarget] = &[
@@ -821,6 +853,14 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "prover-fixture test offsets every Booleanity RAM RA output claim",
     ),
     checked_standard(
+        "stage6.claims.booleanity.unsigned_inc_chunks",
+        "claims.stage6.booleanity.unsigned_inc_chunks",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Deferred,
+        "lattice-only fused increment chunk claims need an Akita clear fixture; curve fixtures carry an empty vector",
+    ),
+    checked_standard(
         "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
         "claims.stage6.ram_hamming_booleanity.ram_hamming_weight",
         VerifierPhase::Stage6,
@@ -859,6 +899,14 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets the register increment reduction output claim",
+    ),
+    checked_standard(
+        "stage6.claims.unsigned_inc_claim_reduction",
+        "claims.stage6.unsigned_inc_claim_reduction",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with unsigned increment claim reduction needed to actively cover the optional claim",
     ),
     checked_standard(
         "stage6.claims.advice_cycle_phase.trusted.opening_claim",
@@ -982,6 +1030,22 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
         "committed fixture test offsets the final program-image claim",
+    ),
+    checked_standard(
+        "stage7.claims.unsigned_inc_chunk_reconstruction",
+        "claims.stage7.unsigned_inc_chunk_reconstruction",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "lattice fixture with unsigned increment reconstruction needed to actively cover final chunk claims",
+    ),
+    checked_standard(
+        "stage7.claims.lattice_packed_validity",
+        "claims.stage7.lattice_packed_validity",
+        VerifierPhase::Stage7,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "Akita fixture test offsets each packed validity opening claim",
     ),
 ];
 
@@ -1372,19 +1436,28 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 instruction_ra: vec![zero],
                 instruction_raf_flag: zero,
             },
-            ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
+            ram_ra_claim_reduction: Some(stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
                 ram_ra: zero,
-            },
+            }),
             registers_val_evaluation: stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
                 rd_inc: zero,
                 rd_wa: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: stage5::inputs::FieldInlineStage5Claims {
+                field_registers_val_evaluation:
+                    stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                        field_rd_inc: zero,
+                        field_rd_wa: zero,
+                    },
+            },
         },
+        stage5_increment: None,
         stage6: stage6::inputs::Stage6Claims {
             address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
-                bytecode_val_stages: Some([zero; 5]),
+                bytecode_val_stages: Some(vec![zero; 5]),
             },
             bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
                 bytecode_ra: vec![zero],
@@ -1393,6 +1466,7 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
+                unsigned_inc_chunks: Vec::new(),
             },
             ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
                 ram_hamming_weight: zero,
@@ -1404,9 +1478,17 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                 stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
                     committed_instruction_ra: vec![zero],
                 },
-            inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: Some(stage6::inputs::IncClaimReductionOutputOpeningClaims {
                 ram_inc: zero,
                 rd_inc: zero,
+            }),
+            unsigned_inc_claim_reduction: None,
+            #[cfg(feature = "field-inline")]
+            field_inline: stage6::inputs::FieldInlineStage6Claims {
+                field_registers_inc_claim_reduction:
+                    stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                        field_rd_inc: zero,
+                    },
             },
             advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                 trusted: Some(stage6::inputs::AdviceCyclePhaseOutputClaim {
@@ -1448,6 +1530,8 @@ fn zero_clear_claims() -> ClearProofClaims<Fr> {
                     opening_claim: zero,
                 },
             ),
+            unsigned_inc_chunk_reconstruction: None,
+            lattice_packed_validity: None,
         },
     }
 }

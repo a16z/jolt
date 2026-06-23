@@ -177,6 +177,7 @@ pub(crate) struct BytecodeReductionWeightInputs<'a, F: Field> {
     pub register_val_evaluation_point: &'a [F],
     /// Full bytecode address point (the `BytecodeReadRafAddrClaim` opening).
     pub bytecode_r_address: &'a [F],
+    pub bind_store: bool,
 }
 
 pub(crate) fn bytecode_reduction_weights<F: Field>(
@@ -189,7 +190,7 @@ pub(crate) fn bytecode_reduction_weights<F: Field>(
             stage: JoltRelationId::BytecodeClaimReductionCyclePhase,
             reason: error.to_string(),
         })?;
-    let lane_weights = bytecode_reduction::lane_weights(BytecodeLaneWeightInputs {
+    let lane_weight_inputs = BytecodeLaneWeightInputs {
         eta: inputs.eta,
         stage1_gammas: inputs.stage1_gammas,
         stage2_gammas: inputs.stage2_gammas,
@@ -198,6 +199,11 @@ pub(crate) fn bytecode_reduction_weights<F: Field>(
         stage5_gammas: inputs.stage5_gammas,
         register_read_write_point: inputs.register_read_write_point,
         register_val_evaluation_point: inputs.register_val_evaluation_point,
+    };
+    let lane_weights = (if inputs.bind_store {
+        bytecode_reduction::lane_weights_with_store_binding(lane_weight_inputs)
+    } else {
+        bytecode_reduction::lane_weights(lane_weight_inputs)
     })
     .map_err(|error| VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::BytecodeClaimReductionCyclePhase,
@@ -436,6 +442,9 @@ pub(super) fn append_opening_claims<F, T>(
     for opening_claim in &claims.booleanity.ram_ra {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
+    for opening_claim in &claims.booleanity.unsigned_inc_chunks {
+        transcript.append_labeled(b"opening_claim", opening_claim);
+    }
     transcript.append_labeled(
         b"opening_claim",
         &claims.ram_hamming_booleanity.ram_hamming_weight,
@@ -449,8 +458,14 @@ pub(super) fn append_opening_claims<F, T>(
     {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.ram_inc);
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.rd_inc);
+    if let Some(output_claims) = &claims.inc_claim_reduction {
+        transcript.append_labeled(b"opening_claim", &output_claims.ram_inc);
+        transcript.append_labeled(b"opening_claim", &output_claims.rd_inc);
+    }
+    if let Some(output_claims) = &claims.unsigned_inc_claim_reduction {
+        transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc);
+        transcript.append_labeled(b"opening_claim", &output_claims.unsigned_inc_msb);
+    }
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
     }

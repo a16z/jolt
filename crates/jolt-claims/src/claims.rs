@@ -6,13 +6,8 @@ use crate::util::extend_unique;
 /// An atomic value used inside a symbolic claim expression.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Source<O, P = (), C = usize> {
-    /// Polynomial opening supplied by the prover and checked by the verifier.
     Opening(O),
-    /// Transcript-derived scalar, including verifier-computed Eq/Lt values over
-    /// Fiat-Shamir challenge points that are consumed as stage challenges.
     Challenge(C),
-    /// Deterministic verifier-side scalar: public IO, preprocessing, boundary
-    /// data, or fixed coefficients computed from already-known points.
     Public(P),
 }
 

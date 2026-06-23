@@ -34,6 +34,14 @@ pub fn field_product_output_openings() -> [FieldInlineOpeningId; 2] {
     [field_rs1_value_product(), field_rs2_value_product()]
 }
 
+pub fn selected_product_remainder_output_openings() -> [FieldInlineOpeningId; 3] {
+    [
+        field_rs1_value_product(),
+        field_rs2_value_product(),
+        field_rd_value_product(),
+    ]
+}
+
 fn field_product_opening() -> FieldInlineOpeningId {
     FieldInlineOpeningId::virtual_polynomial(
         FieldInlineVirtualPolynomial::FieldProduct,
@@ -51,6 +59,13 @@ fn field_rs1_value_product() -> FieldInlineOpeningId {
 fn field_rs2_value_product() -> FieldInlineOpeningId {
     FieldInlineOpeningId::virtual_polynomial(
         FieldInlineVirtualPolynomial::FieldRs2Value,
+        FieldInlineRelationId::FieldRegistersProduct,
+    )
+}
+
+fn field_rd_value_product() -> FieldInlineOpeningId {
+    FieldInlineOpeningId::virtual_polynomial(
+        FieldInlineVirtualPolynomial::FieldRdValue,
         FieldInlineRelationId::FieldRegistersProduct,
     )
 }

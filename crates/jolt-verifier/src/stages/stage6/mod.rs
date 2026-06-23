@@ -1,5 +1,6 @@
 //! Stage 6 verifier entry point.
 
+mod claim_shape;
 pub mod inputs;
 pub mod inputs_a;
 pub mod inputs_b;

@@ -14,6 +14,7 @@ workspace = true
 [features]
 default = ["transcript-blake2b"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+akita = ["dep:jolt-akita"]
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
 zk = ["jolt-prover-legacy/zk"]
 transcript-blake2b = []
@@ -24,6 +25,7 @@ transcript-poseidon = []
 ark-serialize.workspace = true
 common.workspace = true
 jolt-blindfold.workspace = true
+jolt-akita = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true

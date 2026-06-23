@@ -34,7 +34,10 @@ pub enum ConstraintMatrixEvalError {
 /// the same invariants as [`ConstraintMatrices::new`]; malformed input is
 /// rejected before any consumer sees the struct.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "", try_from = "RawConstraintMatrices<F>")]
+#[serde(
+    bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"),
+    try_from = "RawConstraintMatrices<F>"
+)]
 pub struct ConstraintMatrices<F: Field> {
     pub num_constraints: usize,
     pub num_vars: usize,
@@ -59,7 +62,7 @@ pub struct MatrixColumnContributions<F: Field> {
 
 /// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
-#[serde(bound = "")]
+#[serde(bound(deserialize = "F: Deserialize<'de>"))]
 struct RawConstraintMatrices<F: Field> {
     num_constraints: usize,
     num_vars: usize,

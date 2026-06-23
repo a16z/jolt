@@ -681,7 +681,9 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_) => zero,
             },
             |_| zero,
         );
@@ -712,7 +714,9 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_) => zero,
             },
             |_| zero,
         );
@@ -959,7 +963,9 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_) => zero,
             },
             |_| zero,
         );
@@ -987,7 +993,9 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_) => zero,
             },
             |id| match *id {
                 JoltPublicId::RamRaClaimReduction(id) => public_values.value(id),
@@ -1260,7 +1268,9 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_) => zero,
             },
             |_| zero,
         );
@@ -1292,7 +1302,9 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_) => zero,
             },
             |_| zero,
         );
@@ -1359,7 +1371,9 @@ mod tests {
                 | JoltChallengeId::HammingWeightClaimReduction(_)
                 | JoltChallengeId::BytecodeReadRaf(_)
                 | JoltChallengeId::BytecodeClaimReduction(_)
-                | JoltChallengeId::SpartanShift(_) => zero,
+                | JoltChallengeId::SpartanShift(_)
+                | JoltChallengeId::IncVirtualization(_)
+                | JoltChallengeId::UnsignedIncChunkReconstruction(_) => zero,
             },
             |_| zero,
         );

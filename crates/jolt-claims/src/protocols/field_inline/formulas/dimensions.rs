@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use jolt_field::Field;
+
+use crate::protocols::jolt::formulas::error::JoltFormulaPointError;
+
 pub const FIELD_REGISTERS_ADDRESS_BITS: usize = super::super::FIELD_REGISTERS_LOG_K;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,4 +79,56 @@ impl FieldRegistersReadWriteDimensions {
     pub const fn read_write_sumcheck(self) -> FieldInlineSumcheckSpec {
         FieldInlineSumcheckSpec::boolean(self.log_t + self.log_k, 3)
     }
+
+    pub fn read_write_opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<FieldRegistersReadWriteOpeningPoint<F>, JoltFormulaPointError> {
+        let expected = self.log_t + self.log_k;
+        if challenges.len() != expected {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected,
+                got: challenges.len(),
+            });
+        }
+        if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
+            return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+                phase1_num_rounds: self.phase1_num_rounds,
+                log_t: self.log_t,
+                phase2_num_rounds: self.phase2_num_rounds,
+                log_k: self.log_k,
+            });
+        }
+
+        let (phase1, rest) = challenges.split_at(self.phase1_num_rounds);
+        let (phase2, rest) = rest.split_at(self.phase2_num_rounds);
+        let (phase3_cycle, phase3_address) = rest.split_at(self.log_t - self.phase1_num_rounds);
+
+        let r_cycle = phase3_cycle
+            .iter()
+            .rev()
+            .copied()
+            .chain(phase1.iter().rev().copied())
+            .collect::<Vec<_>>();
+        let r_address = phase3_address
+            .iter()
+            .rev()
+            .copied()
+            .chain(phase2.iter().rev().copied())
+            .collect::<Vec<_>>();
+        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
+
+        Ok(FieldRegistersReadWriteOpeningPoint {
+            r_address,
+            r_cycle,
+            opening_point,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldRegistersReadWriteOpeningPoint<F: Field> {
+    pub r_address: Vec<F>,
+    pub r_cycle: Vec<F>,
+    pub opening_point: Vec<F>,
 }

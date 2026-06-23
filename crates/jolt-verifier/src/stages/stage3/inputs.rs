@@ -39,7 +39,8 @@ pub fn deps<'a, F: Field, C>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct Stage3Claims<F: Field> {
     pub shift: SpartanShiftOutputOpeningClaims<F>,
     pub instruction_input: InstructionInputOutputOpeningClaims<F>,
@@ -47,7 +48,8 @@ pub struct Stage3Claims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct SpartanShiftOutputOpeningClaims<F: Field> {
     pub unexpanded_pc: F,
     pub pc: F,
@@ -57,7 +59,8 @@ pub struct SpartanShiftOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct InstructionInputOutputOpeningClaims<F: Field> {
     pub left_operand_is_rs1: F,
     pub rs1_value: F,
@@ -70,7 +73,8 @@ pub struct InstructionInputOutputOpeningClaims<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[serde(deny_unknown_fields)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct RegistersClaimReductionOutputOpeningClaims<F: Field> {
     pub rd_write_value: F,
     pub rs1_value: F,

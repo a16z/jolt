@@ -7,21 +7,28 @@ use super::super::{
     JoltRelationClaims, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
-use super::ra::JoltRaPolynomialLayout;
+use super::{lattice, ra::JoltRaPolynomialLayout};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BooleanityDimensions {
     pub layout: JoltRaPolynomialLayout,
     pub log_t: usize,
     pub log_k_chunk: usize,
+    pub unsigned_inc_chunk_count: usize,
 }
 
 impl BooleanityDimensions {
-    pub const fn new(layout: JoltRaPolynomialLayout, log_t: usize, log_k_chunk: usize) -> Self {
+    pub const fn new(
+        layout: JoltRaPolynomialLayout,
+        log_t: usize,
+        log_k_chunk: usize,
+        unsigned_inc_chunk_count: usize,
+    ) -> Self {
         Self {
             layout,
             log_t,
             log_k_chunk,
+            unsigned_inc_chunk_count,
         }
     }
 
@@ -115,9 +122,10 @@ where
     let eq_address_cycle = booleanity_public(BooleanityPublic::EqAddressCycle);
     let mut output = JoltExpr::zero();
 
-    for (i, opening_id) in booleanity_output_openings(dimensions.layout)
-        .into_iter()
-        .enumerate()
+    for (i, opening_id) in
+        booleanity_output_openings(dimensions.layout, dimensions.unsigned_inc_chunk_count)
+            .into_iter()
+            .enumerate()
     {
         let ra = opening(opening_id);
         output = output + gamma.clone().pow(2 * i) * (ra.clone() * ra.clone() - ra);
@@ -140,8 +148,15 @@ where
     public(JoltPublicId::from(id))
 }
 
-pub fn booleanity_output_openings(layout: JoltRaPolynomialLayout) -> Vec<JoltOpeningId> {
-    layout.openings(JoltRelationId::Booleanity).collect()
+pub fn booleanity_output_openings(
+    layout: JoltRaPolynomialLayout,
+    unsigned_inc_chunk_count: usize,
+) -> Vec<JoltOpeningId> {
+    let mut openings = layout
+        .openings(JoltRelationId::Booleanity)
+        .collect::<Vec<_>>();
+    openings.extend((0..unsigned_inc_chunk_count).map(lattice::unsigned_inc_chunk_opening));
+    openings
 }
 
 pub fn booleanity_address_phase_opening() -> JoltOpeningId {
@@ -167,7 +182,7 @@ mod tests {
     }
 
     fn dimensions(layout: JoltRaPolynomialLayout) -> BooleanityDimensions {
-        BooleanityDimensions::new(layout, 5, 8)
+        BooleanityDimensions::new(layout, 5, 8, 0)
     }
 
     #[test]
@@ -180,7 +195,7 @@ mod tests {
         assert!(claims.input.required_openings.is_empty());
         assert_eq!(
             claims.output.required_openings,
-            booleanity_output_openings(layout)
+            booleanity_output_openings(layout, 0)
         );
         assert_eq!(
             claims.input.required_challenges,
@@ -199,6 +214,68 @@ mod tests {
             vec![JoltPublicId::from(BooleanityPublic::EqAddressCycle)]
         );
         assert_eq!(claims.num_challenges(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn booleanity_can_include_unsigned_increment_chunks() -> Result<(), JoltFormulaDimensionsError>
+    {
+        let layout = layout(1, 0, 0)?;
+        let dimensions = BooleanityDimensions::new(layout, 5, 8, 2);
+        let claims = booleanity::<Fr>(dimensions);
+
+        assert_eq!(
+            claims.output.required_openings,
+            vec![
+                JoltOpeningId::committed(
+                    JoltCommittedPolynomial::InstructionRa(0),
+                    JoltRelationId::Booleanity,
+                ),
+                lattice::unsigned_inc_chunk_opening(0),
+                lattice::unsigned_inc_chunk_opening(1),
+            ]
+        );
+
+        let instruction_ra = Fr::from_u64(3);
+        let chunk_0 = Fr::from_u64(5);
+        let chunk_1 = Fr::from_u64(7);
+        let gamma = Fr::from_u64(11);
+        let eq_address_cycle = Fr::from_u64(13);
+        let zero = Fr::from_u64(0);
+
+        let output = claims.output.expression().evaluate(
+            |id| match *id {
+                id if id
+                    == JoltOpeningId::committed(
+                        JoltCommittedPolynomial::InstructionRa(0),
+                        JoltRelationId::Booleanity,
+                    ) =>
+                {
+                    instruction_ra
+                }
+                id if id == lattice::unsigned_inc_chunk_opening(0) => chunk_0,
+                id if id == lattice::unsigned_inc_chunk_opening(1) => chunk_1,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::Booleanity(BooleanityChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) => eq_address_cycle,
+                _ => zero,
+            },
+        );
+
+        let gamma_2 = gamma * gamma;
+        let gamma_4 = gamma_2 * gamma_2;
+        assert_eq!(
+            output,
+            eq_address_cycle
+                * ((instruction_ra * instruction_ra - instruction_ra)
+                    + gamma_2 * (chunk_0 * chunk_0 - chunk_0)
+                    + gamma_4 * (chunk_1 * chunk_1 - chunk_1))
+        );
         Ok(())
     }
 

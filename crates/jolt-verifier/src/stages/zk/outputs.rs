@@ -23,11 +23,11 @@ pub struct CommittedOutputClaimOutput<C> {
 }
 
 #[derive(Clone, Debug)]
-pub struct BlindFoldOutput<F: Field, C> {
+pub(crate) struct BlindFoldOutput<F: Field, C> {
     pub protocol: BlindFoldProtocol<F, C>,
 }
 
-pub struct ZkStageOutputs<'a, PCS, VC>
+pub(crate) struct ZkStageOutputs<'a, PCS, VC>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -46,7 +46,7 @@ where
     clippy::too_many_arguments,
     reason = "The top-level verifier explicitly threads each stage output in protocol order."
 )]
-pub fn zk_stage_outputs<'a, PCS, VC>(
+pub(crate) fn zk_stage_outputs<'a, PCS, VC>(
     stage1: &'a stage1::Stage1Output<PCS::Field, VC::Output>,
     stage2: &'a stage2::Stage2Output<PCS::Field, VC::Output>,
     stage3: &'a stage3::Stage3Output<PCS::Field, VC::Output>,

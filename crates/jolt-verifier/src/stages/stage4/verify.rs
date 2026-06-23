@@ -695,9 +695,19 @@ where
         stage: JoltRelationId::RamValCheck,
         reason: error.to_string(),
     })?;
+    let ram_domain = checked.ram_K as u128;
     for segment in &public_initial_ram.segments {
-        let end = segment.start_index + segment.words.len() as u128;
-        if end > checked.ram_K as u128 {
+        let end = segment
+            .start_index
+            .checked_add(segment.words.len() as u128)
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::RamValCheck,
+                reason: format!(
+                    "public initial RAM segment at {} overflows address range",
+                    segment.start_index
+                ),
+            })?;
+        if end > ram_domain {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamValCheck,
                 reason: format!(
@@ -707,14 +717,24 @@ where
             });
         }
     }
+    let public_segments = public_initial_ram
+        .segments
+        .iter()
+        .map(|segment| {
+            let start_index = usize::try_from(segment.start_index).map_err(|_| {
+                VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::RamValCheck,
+                    reason: format!(
+                        "public initial RAM segment start {} does not fit in usize",
+                        segment.start_index
+                    ),
+                }
+            })?;
+            Ok((start_index, segment.words.as_slice()))
+        })
+        .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    Ok(sparse_segments_mle_msb(
-        public_initial_ram
-            .segments
-            .iter()
-            .map(|segment| (segment.start_index, segment.words.as_slice())),
-        r_address,
-    ))
+    Ok(sparse_segments_mle_msb(public_segments, r_address))
 }
 
 fn stage4_committed_output_claims<PCS, VC, ZkProof>(
@@ -770,7 +790,7 @@ fn collect_advice_contribution<F: Field>(
         .map_err(|error| VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamValCheck,
             reason: error.to_string(),
-        })? as u128;
+        })? as usize;
     let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
     let selector =
         block_selector_mle_msb(start_index, advice_num_vars, r_address).map_err(|error| {

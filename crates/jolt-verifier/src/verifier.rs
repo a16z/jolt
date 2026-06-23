@@ -3,17 +3,28 @@
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+#[cfg(all(test, feature = "akita"))]
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
+use jolt_openings::{
+    BatchOpeningScheme, CommitmentLayoutDigest, CommitmentScheme, ZkBatchOpeningScheme,
+};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig},
+    config::{
+        validate_proof_config, IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode,
+        ZkConfig,
+    },
+    lattice_surface::{
+        validate_lattice_layout_binding, validate_lattice_validity_proof_surface,
+        verify_lattice_packed_validity,
+    },
     preprocessing::JoltVerifierPreprocessing,
-    proof::JoltProof,
+    proof::{CommitmentPayload, JoltProof},
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
+        stage1, stage2, stage3, stage4, stage5, stage5_increment, stage6, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
         CommittedProgramSchedule, PrecommittedSchedule,
     },
@@ -30,14 +41,65 @@ pub fn verify<F, PCS, VC, T>(
 where
     F: Field + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
-        + AdditivelyHomomorphic
-        + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+        + BatchOpeningScheme
+        + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
+    verify_with_config::<F, PCS, VC, T>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        &JoltProtocolConfig::for_zk(zk),
+    )
+}
+
+pub fn verify_clear<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+) -> Result<(), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+{
+    verify_clear_with_config::<F, PCS, VC, T>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        &JoltProtocolConfig::for_zk(false),
+    )
+}
+
+pub fn verify_with_config<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<(), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F>
+        + BatchOpeningScheme
+        + ZkBatchOpeningScheme<HidingCommitment = VC::Output>,
+    PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
+    VC: VectorCommitment<Field = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
+    T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+{
+    let zk = config_zk(config);
     let checked = validate_inputs(
         preprocessing,
         public_io,
@@ -46,7 +108,9 @@ where
         zk,
     )?;
     validate_proof_consistency(proof, checked.zk)?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+    validate_proof_config(config, proof)?;
+    validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
+    validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -55,7 +119,7 @@ where
         proof,
         trusted_advice_commitment,
         &mut transcript,
-    );
+    )?;
 
     let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
     let stage2 = stage2::verify(
@@ -86,12 +150,25 @@ where
         &mut transcript,
         stage5::deps(&stage2, &stage4)?,
     )?;
+    let _stage5_increment = stage5_increment::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stage5_increment::deps(&stage2, &stage4, &stage5),
+    )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        stage6::deps(
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            _stage5_increment.as_ref(),
+        )?,
     )?;
     let stage7 = stage7::verify(
         &checked,
@@ -100,6 +177,7 @@ where
         &mut transcript,
         stage7::deps(&stage4, &stage6)?,
     )?;
+    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
     let stage8 = stage8::verify(
         &checked,
         preprocessing,
@@ -147,6 +225,289 @@ where
     Ok(())
 }
 
+pub fn verify_clear_with_config<F, PCS, VC, T>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<(), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+{
+    if config_zk(config) {
+        return Err(VerifierError::InvalidProtocolConfig {
+            reason: "verify_clear requires a transparent protocol config".to_string(),
+        });
+    }
+
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        false,
+    )?;
+    validate_proof_consistency(proof, false)?;
+    validate_proof_config(config, proof)?;
+    validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
+    validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+    )?;
+
+    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
+    let stage2 = stage2::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage2::deps(&stage1),
+    )?;
+    let stage3 = stage3::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage3::deps(&stage1, &stage2)?,
+    )?;
+    let stage4 = stage4::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage4::deps(&stage2, &stage3)?,
+    )?;
+    let stage5 = stage5::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage5::deps(&stage2, &stage4)?,
+    )?;
+    let _stage5_increment = stage5_increment::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stage5_increment::deps(&stage2, &stage4, &stage5),
+    )?;
+    let stage6 = stage6::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage6::deps(
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            _stage5_increment.as_ref(),
+        )?,
+    )?;
+    let stage7 = stage7::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage7::deps(&stage4, &stage6)?,
+    )?;
+    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
+    let _stage8 = stage8::verify_clear(
+        &checked,
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+        stage8::deps(&stage6, &stage7)?,
+    )?;
+
+    Ok(())
+}
+
+#[cfg(any(test, feature = "akita"))]
+pub(crate) fn stage8_batch_statement_with_config_and_transcript<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<(stage8::Stage8BatchStatement<F, PCS::Output>, T), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript + CommitmentLayoutDigest,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let (checked, mut transcript, stage6, stage7) =
+        stage7_transcript_with_config_impl::<F, PCS, VC, T, ZkProof>(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+            config,
+            true,
+        )?;
+    verify_lattice_packed_validity(config, preprocessing, proof, &checked, &mut transcript)?;
+    let statement = stage8::batch_statement(
+        &checked,
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        stage8::deps(&stage6, &stage7)?,
+    )?;
+    Ok((statement, transcript))
+}
+
+#[cfg(feature = "akita")]
+pub(crate) fn lattice_packed_validity_transcript_with_config<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+) -> Result<(CheckedInputs, T), VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let (checked, transcript, _, _) = stage7_transcript_with_config_impl::<F, PCS, VC, T, ZkProof>(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment,
+        config,
+        false,
+    )?;
+    Ok((checked, transcript))
+}
+
+#[cfg(any(test, feature = "akita"))]
+type Stage7TranscriptContext<F, C, T> = (
+    CheckedInputs,
+    T,
+    stage6::Stage6Output<F, C>,
+    stage7::Stage7Output<F, C>,
+);
+
+#[cfg(any(test, feature = "akita"))]
+fn stage7_transcript_with_config_impl<F, PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    config: &JoltProtocolConfig,
+    require_lattice_validity_surface: bool,
+) -> Result<Stage7TranscriptContext<F, VC::Output, T>, VerifierError>
+where
+    F: Field + AppendToTranscript,
+    PCS: CommitmentScheme<Field = F> + BatchOpeningScheme,
+    PCS::Output: Clone + AppendToTranscript,
+    VC: VectorCommitment<Field = F>,
+    T: Transcript<Challenge = F>,
+{
+    let zk = config_zk(config);
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        zk,
+    )?;
+    validate_proof_consistency(proof, checked.zk)?;
+    validate_proof_config(config, proof)?;
+    validate_lattice_layout_binding(config, preprocessing, proof, &checked)?;
+    if require_lattice_validity_surface {
+        validate_lattice_validity_proof_surface(config, preprocessing, proof, &checked)?;
+    }
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+    )?;
+
+    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
+    let stage2 = stage2::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage2::deps(&stage1),
+    )?;
+    let stage3 = stage3::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage3::deps(&stage1, &stage2)?,
+    )?;
+    let stage4 = stage4::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage4::deps(&stage2, &stage3)?,
+    )?;
+    let stage5 = stage5::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage5::deps(&stage2, &stage4)?,
+    )?;
+    let _stage5_increment = stage5_increment::verify(
+        &checked,
+        proof,
+        &mut transcript,
+        stage5_increment::deps(&stage2, &stage4, &stage5),
+    )?;
+    let stage6 = stage6::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage6::deps(
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            _stage5_increment.as_ref(),
+        )?,
+    )?;
+    let stage7 = stage7::verify(
+        &checked,
+        preprocessing,
+        proof,
+        &mut transcript,
+        stage7::deps(&stage4, &stage6)?,
+    )?;
+    Ok((checked, transcript, stage6, stage7))
+}
+
+fn config_zk(config: &JoltProtocolConfig) -> bool {
+    matches!(config.zk, ZkConfig::BlindFold)
+}
+
 #[expect(
     non_snake_case,
     reason = "Matches current jolt-prover-legacy proof field name."
@@ -164,7 +525,7 @@ pub struct CheckedInputs {
     pub precommitted: PrecommittedSchedule,
 }
 
-pub fn validate_inputs<PCS, VC, ZkProof>(
+pub(crate) fn validate_inputs<PCS, VC, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -389,46 +750,133 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-) where
+) -> Result<(), VerifierError>
+where
     PCS: CommitmentScheme,
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let mut absorb_commitment = |commitment: &PCS::Output| {
-        append_payload_label(transcript, b"commitment", commitment);
-        transcript.append(commitment);
-    };
-    absorb_commitment(&proof.commitments.rd_inc);
-    absorb_commitment(&proof.commitments.ram_inc);
-    for commitment in &proof.commitments.ra.instruction {
-        absorb_commitment(commitment);
-    }
-    for commitment in &proof.commitments.ra.ram {
-        absorb_commitment(commitment);
-    }
-    for commitment in &proof.commitments.ra.bytecode {
-        absorb_commitment(commitment);
-    }
-    if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
-        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
-        transcript.append(untrusted_advice_commitment);
-    }
-    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
-        transcript.append(trusted_advice_commitment);
-    }
-    if let Some(committed) = preprocessing.program.committed() {
-        for commitment in &committed.bytecode_chunk_commitments {
-            append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-            transcript.append(commitment);
+    match &proof.commitments {
+        CommitmentPayload::Dory(commitments) => {
+            let mut absorb_commitment = |commitment: &PCS::Output| {
+                append_payload_label(transcript, b"commitment", commitment);
+                transcript.append(commitment);
+            };
+            absorb_commitment(&commitments.rd_inc);
+            absorb_commitment(&commitments.ram_inc);
+            for commitment in &commitments.ra.instruction {
+                absorb_commitment(commitment);
+            }
+            for commitment in &commitments.ra.ram {
+                absorb_commitment(commitment);
+            }
+            for commitment in &commitments.ra.bytecode {
+                absorb_commitment(commitment);
+            }
+            if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
+                append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
+                transcript.append(untrusted_advice_commitment);
+            }
+            if let Some(trusted_advice_commitment) = trusted_advice_commitment {
+                append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
+                transcript.append(trusted_advice_commitment);
+            }
+            if let Some(committed) = preprocessing.program.committed() {
+                for commitment in &committed.bytecode_chunk_commitments {
+                    append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
+                    transcript.append(commitment);
+                }
+                append_payload_label(
+                    transcript,
+                    b"program_image_commitment",
+                    &committed.program_image_commitment,
+                );
+                transcript.append(&committed.program_image_commitment);
+            }
         }
-        append_payload_label(
-            transcript,
-            b"program_image_commitment",
-            &committed.program_image_commitment,
-        );
-        transcript.append(&committed.program_image_commitment);
+        CommitmentPayload::Lattice(payload) => {
+            absorb_lattice_protocol_header(transcript, &proof.protocol);
+            append_payload_label(
+                transcript,
+                b"lattice_packed_witness",
+                &payload.packed_witness,
+            );
+            transcript.append(&payload.packed_witness);
+            absorb_labeled_bytes(transcript, b"lattice_layout_digest", &payload.layout_digest);
+            absorb_labeled_u64(transcript, b"lattice_d_pack", payload.d_pack as u64);
+            if let Some(validity_digest) = proof.protocol.lattice.packed_witness.validity_digest {
+                absorb_labeled_bytes(transcript, b"lattice_validity_digest", &validity_digest);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn absorb_lattice_protocol_header<T: Transcript>(
+    transcript: &mut T,
+    protocol: &JoltProtocolConfig,
+) {
+    transcript.append(&Label(b"lattice_protocol_header"));
+    absorb_labeled_u64(
+        transcript,
+        b"lattice_pcs_family",
+        pcs_family_tag(protocol.pcs),
+    );
+    absorb_labeled_u64(transcript, b"lattice_zk", zk_config_tag(protocol.zk));
+    absorb_labeled_u64(
+        transcript,
+        b"lattice_program_mode",
+        program_mode_tag(protocol.lattice.program_mode),
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"lattice_increment_mode",
+        increment_mode_tag(protocol.lattice.increment_mode),
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"lattice_field_inline",
+        protocol.lattice.field_inline.enabled as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"lattice_advice_trusted",
+        protocol.lattice.advice.trusted as u64,
+    );
+    absorb_labeled_u64(
+        transcript,
+        b"lattice_advice_untrusted",
+        protocol.lattice.advice.untrusted as u64,
+    );
+}
+
+const fn pcs_family_tag(family: PcsFamily) -> u64 {
+    match family {
+        PcsFamily::Curve => 0,
+        PcsFamily::Lattice => 1,
+    }
+}
+
+const fn zk_config_tag(zk: ZkConfig) -> u64 {
+    match zk {
+        ZkConfig::Transparent => 0,
+        ZkConfig::BlindFold => 1,
+    }
+}
+
+const fn program_mode_tag(mode: ProgramMode) -> u64 {
+    match mode {
+        ProgramMode::Full => 0,
+        ProgramMode::Committed => 1,
+    }
+}
+
+const fn increment_mode_tag(mode: IncrementCommitmentMode) -> u64 {
+    match mode {
+        IncrementCommitmentMode::Dense => 0,
+        IncrementCommitmentMode::SeparateOneHot => 1,
+        IncrementCommitmentMode::FusedOneHot => 2,
     }
 }
 
@@ -454,7 +902,7 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     transcript.append(&U64Word(value));
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
+pub(crate) fn validate_proof_consistency<PCS, VC, ZkProof>(
     proof: &JoltProof<PCS, VC, ZkProof>,
     zk: bool,
 ) -> Result<(), VerifierError>
@@ -547,16 +995,38 @@ where
 
 #[cfg(test)]
 mod tests {
+
+    #![expect(
+        clippy::panic,
+        reason = "verifier unit tests fail loudly on setup errors"
+    )]
+
     use super::*;
-    use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    use crate::proof::{
+        ClearProofClaims, CommitmentPayload, JoltProofClaims, JoltStageProofs,
+        LatticeCommitmentPayload,
+    };
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    #[cfg(feature = "akita")]
+    use jolt_claims::protocols::jolt::{
+        formulas::{
+            claim_reductions::bytecode, dimensions::JoltFormulaDimensions,
+            ra::JoltRaPolynomialLayout,
+        },
+        lattice_packed_validity_digest, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId,
+        JoltReadWriteConfig, JoltRelationId,
+    };
+    #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, PedersenSetup, VectorCommitmentOpening};
-    use jolt_field::Fr;
-    use jolt_openings::{CommitmentScheme, OpeningsError};
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_openings::{
+        BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentLayoutDigest,
+        CommitmentScheme, OpeningsError,
+    };
     use jolt_poly::{MultilinearPoly, Polynomial};
     use jolt_program::preprocess::{
-        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+        BytecodePreprocessing, JoltProgramPreprocessing, ProgramMetadata, RAMPreprocessing,
     };
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
@@ -569,6 +1039,12 @@ mod tests {
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestCommitment;
+
+    impl CommitmentLayoutDigest for TestCommitment {
+        fn layout_digest(&self) -> Option<[u8; 32]> {
+            None
+        }
+    }
 
     impl Commitment for TestPcs {
         type Output = TestCommitment;
@@ -625,8 +1101,81 @@ mod tests {
         }
     }
 
+    impl BatchOpeningScheme for TestPcs {
+        fn prove_batch<T, OpeningId, RelationId>(
+            _setup: &Self::ProverSetup,
+            _transcript: &mut T,
+            _statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+            _polynomials: &[Self::Polynomial],
+            _hints: Vec<Self::OpeningHint>,
+        ) -> Result<Self::Proof, OpeningsError>
+        where
+            T: Transcript<Challenge = Self::Field>,
+        {
+            Ok(())
+        }
+
+        fn verify_batch<T, OpeningId, RelationId>(
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut T,
+            statement: &BatchOpeningStatement<Self::Field, Self::Output, OpeningId, RelationId>,
+            _proof: &Self::Proof,
+        ) -> Result<BatchOpeningResult<Self::Field, Self::Output>, OpeningsError>
+        where
+            T: Transcript<Challenge = Self::Field>,
+        {
+            let coefficients = vec![Fr::from_u64(1); statement.claims.len()];
+            let reduced_opening = statement
+                .claims
+                .iter()
+                .map(|claim| claim.claim * claim.scale)
+                .sum();
+            Ok(BatchOpeningResult {
+                coefficients,
+                joint_commitment: TestCommitment,
+                reduced_opening,
+            })
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    type AkitaStage8StatementFixture = (
+        JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        CheckedInputs,
+        TestProof,
+        stage6::Stage6ClearOutput<Fr>,
+        stage7::Stage7ClearOutput<Fr>,
+    );
+
     impl jolt_transcript::AppendToTranscript for TestCommitment {
         fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
+    }
+
+    #[derive(Default)]
+    struct RecordingTranscript {
+        bytes: Vec<u8>,
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+
+        fn new(label: &'static [u8]) -> Self {
+            let mut transcript = Self::default();
+            transcript.append_bytes(label);
+            transcript
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.bytes.extend_from_slice(bytes);
+        }
+
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::zero()
+        }
+
+        fn state(&self) -> [u8; 32] {
+            [0; 32]
+        }
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
@@ -701,6 +1250,878 @@ mod tests {
             validate_proof_consistency(&proof_with_zk(true, clear_claims()), true),
             Err(VerifierError::UnexpectedOpeningClaims)
         ));
+    }
+
+    #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "test fixture mutation should fail loudly if the serialized shape changes"
+    )]
+    fn proof_model_rejects_unknown_serialized_fields() {
+        fn with_extra_field(
+            mut value: serde_json::Value,
+            path: &[&str],
+            field: &str,
+        ) -> serde_json::Value {
+            let mut cursor = &mut value;
+            for segment in path {
+                cursor = cursor
+                    .as_object_mut()
+                    .expect("proof segment should be an object")
+                    .get_mut(*segment)
+                    .expect("proof segment should exist");
+            }
+            let previous = cursor
+                .as_object_mut()
+                .expect("target proof segment should be an object")
+                .insert(field.to_string(), serde_json::Value::Bool(true));
+            assert!(previous.is_none());
+            value
+        }
+
+        let clear = serde_json::to_value(proof_with_zk(false, clear_claims()))
+            .expect("clear proof should serialize");
+        let zk = serde_json::to_value(proof_with_zk(true, zk_claims()))
+            .expect("ZK proof should serialize");
+
+        for (value, path, field) in [
+            (clear.clone(), &[][..], "extra_proof"),
+            (clear.clone(), &["stages"][..], "extra_stage_proof"),
+            (
+                clear.clone(),
+                &["claims", "Clear"][..],
+                "extra_clear_claims",
+            ),
+            (
+                clear.clone(),
+                &["claims", "Clear", "stage1"][..],
+                "extra_stage1",
+            ),
+            (
+                clear.clone(),
+                &["claims", "Clear", "stage1", "outer"][..],
+                "extra_outer",
+            ),
+            (
+                clear.clone(),
+                &["claims", "Clear", "stage6", "inc_claim_reduction"][..],
+                "extra_inc_claim_reduction",
+            ),
+            (
+                clear,
+                &[
+                    "claims",
+                    "Clear",
+                    "stage7",
+                    "hamming_weight_claim_reduction",
+                ][..],
+                "extra_hamming_weight",
+            ),
+            (zk, &["claims", "Zk"][..], "extra_zk_claims"),
+        ] {
+            assert!(
+                serde_json::from_value::<TestProof>(with_extra_field(value, path, field)).is_err(),
+                "unknown proof field {field} at path {path:?} must reject"
+            );
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    #[expect(
+        clippy::expect_used,
+        reason = "test fixture mutation should fail loudly if the serialized shape changes"
+    )]
+    fn proof_model_rejects_unknown_akita_nested_fields() {
+        fn with_extra_field(
+            mut value: serde_json::Value,
+            path: &[&str],
+            field: &str,
+        ) -> serde_json::Value {
+            let mut cursor = &mut value;
+            for segment in path {
+                cursor = cursor
+                    .as_object_mut()
+                    .expect("proof segment should be an object")
+                    .get_mut(*segment)
+                    .expect("proof segment should exist");
+            }
+            let previous = cursor
+                .as_object_mut()
+                .expect("target proof segment should be an object")
+                .insert(field.to_string(), serde_json::Value::Bool(true));
+            assert!(previous.is_none());
+            value
+        }
+
+        let (_, _, _, proof) = lattice_validity_surface_fixture();
+        let value = serde_json::to_value(proof).expect("Akita proof should serialize");
+
+        for (path, field) in [
+            (
+                &["claims", "Clear", "stage7", "lattice_packed_validity"][..],
+                "extra_validity_claim",
+            ),
+            (&["claims", "Clear", "stage6"][..], "extra_stage6_claim"),
+        ] {
+            assert!(
+                serde_json::from_value::<TestProof>(with_extra_field(value.clone(), path, field))
+                    .is_err(),
+                "unknown Akita proof field {field} at path {path:?} must reject"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_proof_config_checks_akita_payload_layout() {
+        let mut config =
+            JoltProtocolConfig::for_zk(false).with_pcs_family(crate::config::PcsFamily::Lattice);
+        config.lattice.program_mode = crate::config::ProgramMode::Committed;
+        config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some([7; 32]);
+        config.lattice.packed_witness.d_pack = Some(43);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+        }
+
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.protocol = config;
+        proof.commitments = crate::proof::CommitmentPayload::Lattice(
+            crate::proof::LatticeCommitmentPayload::new(TestCommitment, [8; 32], 43),
+        );
+
+        assert!(matches!(
+            validate_proof_config(&config, &proof),
+            Err(VerifierError::LatticePayloadLayoutDigestMismatch {
+                expected,
+                got,
+            }) if expected == [7; 32] && got == [8; 32]
+        ));
+    }
+
+    #[test]
+    fn stage8_statement_with_config_uses_supplied_protocol_config() {
+        let mut config =
+            JoltProtocolConfig::for_zk(false).with_pcs_family(crate::config::PcsFamily::Lattice);
+        config.lattice.program_mode = crate::config::ProgramMode::Committed;
+        config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some([7; 32]);
+        config.lattice.packed_witness.d_pack = Some(43);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+        }
+
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        let result_with_transcript = stage8_batch_statement_with_config_and_transcript::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(&preprocessing, &public_io, &proof, None, &config);
+
+        assert!(matches!(
+            result_with_transcript,
+            Err(VerifierError::ProtocolConfigMismatch { expected, got })
+                if expected == config && got == JoltProtocolConfig::for_zk(false)
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_accepts_derived_layout_config() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
+        let config = lattice_config_with_derived_validity(
+            layout.digest,
+            layout.dimension,
+            &checked.precommitted,
+        );
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+
+        validate_proof_config(&config, &proof)
+            .unwrap_or_else(|error| panic!("proof config should validate: {error}"));
+        validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked)
+            .unwrap_or_else(|error| panic!("layout binding should validate: {error}"));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_rejects_derived_layout_mismatch() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        validate_proof_config(&config, &proof)
+            .unwrap_or_else(|error| panic!("proof config should validate: {error}"));
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_rejects_trusted_advice_schedule_without_config() {
+        let preprocessing = committed_test_preprocessing_with_advice(64, 0);
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        proof.ram_K = 16;
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, true, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("trusted advice precommitted schedule")
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_layout_binding_rejects_untrusted_advice_schedule_without_config() {
+        let preprocessing = committed_test_preprocessing_with_advice(0, 64);
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        proof.ram_K = 16;
+        proof.untrusted_advice_commitment = Some(TestCommitment);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("untrusted advice precommitted schedule")
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_validity_surface_accepts_derived_statement_count() {
+        let (preprocessing, checked, config, proof) = lattice_validity_surface_fixture();
+
+        validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked)
+            .unwrap_or_else(|error| panic!("validity proof surface should validate: {error}"));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_validity_surface_requires_all_validity_material() {
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        proof.stages.lattice_packed_validity_sumcheck_proof = None;
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::MissingLatticePackedValidityProof {
+                field: "sumcheck_proof"
+            })
+        ));
+
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        proof.lattice_packed_validity_opening_proof = None;
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::MissingLatticePackedValidityProof {
+                field: "opening_proof"
+            })
+        ));
+
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("fixture should be a clear proof");
+        };
+        claims.stage7.lattice_packed_validity = None;
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::MissingLatticePackedValidityProof {
+                field: "opening_claims"
+            })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_validity_surface_rejects_wrong_opening_claim_count() {
+        let (preprocessing, checked, config, mut proof) = lattice_validity_surface_fixture();
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("fixture should be a clear proof");
+        };
+        let _ = claims
+            .stage7
+            .lattice_packed_validity
+            .as_mut()
+            .unwrap_or_else(|| panic!("fixture should include validity claims"))
+            .opening_claims
+            .pop();
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::LatticePackedValidityClaimCountMismatch { expected, got })
+                if expected == got + 1
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn stage8_statement_helper_requires_lattice_validity_surface() {
+        let (preprocessing, _checked, config, mut proof) = lattice_validity_surface_fixture();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        proof.stages.lattice_packed_validity_sumcheck_proof = None;
+
+        let result = stage8_batch_statement_with_config_and_transcript::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(&preprocessing, &public_io, &proof, None, &config);
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::MissingLatticePackedValidityProof {
+                field: "sumcheck_proof"
+            })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_stage8_rejects_missing_committed_program_final_openings() {
+        let (preprocessing, checked, proof, stage6, stage7) =
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+
+        for missing in [
+            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltCommittedPolynomial::ProgramImageInit,
+        ] {
+            let mut stage7 = stage7.clone();
+            stage7
+                .precommitted_final_openings
+                .retain(|opening| opening.polynomial != missing);
+
+            let result = stage8::batch_statement(
+                &checked,
+                &preprocessing,
+                &proof,
+                None,
+                stage8::Deps::Clear {
+                    stage6: &stage6,
+                    stage7: &stage7,
+                },
+            );
+
+            assert!(matches!(
+                result,
+                Err(VerifierError::MissingOpeningClaim { id })
+                    if id == final_opening_id_for_test(missing)
+            ));
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_stage8_rejects_missing_trusted_advice_final_opening() {
+        let (preprocessing, checked, proof, stage6, stage7) = lattice_stage8_statement_fixture(
+            committed_test_preprocessing_with_advice(64, 0),
+            true,
+            |config| {
+                config.lattice.advice.trusted = true;
+            },
+        );
+
+        let result = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            Some(&TestCommitment),
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::MissingOpeningClaim { id })
+                if id == JoltOpeningId::trusted_advice(
+                    JoltRelationId::AdviceClaimReduction,
+                )
+        ));
+    }
+
+    #[test]
+    fn curve_validity_surface_rejects_unexpected_lattice_material() {
+        let preprocessing = test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = JoltProtocolConfig::for_zk(false);
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.stages.lattice_packed_validity_sumcheck_proof = Some(sumcheck_proof(false));
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::UnexpectedLatticePackedValidityProof {
+                field: "sumcheck_proof"
+            })
+        ));
+
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.lattice_packed_validity_opening_proof = Some(());
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::UnexpectedLatticePackedValidityProof {
+                field: "opening_proof"
+            })
+        ));
+
+        let mut proof = proof_with_zk(false, clear_claims());
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("fixture should be a clear proof");
+        };
+        claims.stage7.lattice_packed_validity =
+            Some(stage7::inputs::LatticePackedValidityOutputClaims {
+                opening_claims: Vec::new(),
+            });
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        assert!(matches!(
+            validate_lattice_validity_proof_surface(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::UnexpectedLatticePackedValidityProof {
+                field: "opening_claims"
+            })
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_stage8_batch_statement_uses_precommitted_bytecode_source_components() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
+        let config = lattice_config_with_derived_validity(
+            layout.digest,
+            layout.dimension,
+            &checked.precommitted,
+        );
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+        let bytecode_layout = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"));
+        let bytecode_address_point = field_zeros(bytecode_layout.log_bytecode_chunk_size() + 1);
+        let stage6 = akita_snapshot_stage6_output(
+            formula_dimensions.ra_layout.bytecode(),
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            bytecode_layout.chunk_count(),
+            bytecode_address_point,
+        );
+        let stage7 = akita_snapshot_stage7_output(
+            formula_dimensions.ra_layout,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        );
+
+        let result = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        let stage8::Stage8BatchStatement::Clear(batch) =
+            result.unwrap_or_else(|error| panic!("Stage 8 statement should build: {error}"))
+        else {
+            panic!("fixture is clear mode");
+        };
+        let bytecode_chunk_count = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+            .chunk_count();
+        assert_eq!(
+            batch.precommitted_statements.len(),
+            bytecode_chunk_count + 1
+        );
+        assert!(batch.precommitted_statements.iter().all(|statement| {
+            statement.claims.len() == 1
+                && statement
+                    .claims
+                    .iter()
+                    .all(|claim| matches!(claim.view, jolt_openings::PhysicalView::Direct))
+        }));
+        let precommitted_ids = batch
+            .precommitted_statements
+            .iter()
+            .map(|statement| statement.claims[0].id)
+            .collect::<Vec<_>>();
+        let count_id = |id| precommitted_ids.iter().filter(|&&got| got == id).count();
+        for chunk in 0..bytecode_chunk_count {
+            assert_eq!(
+                count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                    JoltCommittedPolynomial::BytecodeChunk(chunk),
+                ))),
+                1
+            );
+        }
+        assert_eq!(
+            count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                JoltCommittedPolynomial::ProgramImageInit,
+            ))),
+            1
+        );
+        let packed_ids = batch
+            .statement
+            .claims
+            .iter()
+            .map(|claim| claim.id)
+            .collect::<Vec<_>>();
+        let packed_count_id = |id| packed_ids.iter().filter(|&&got| got == id).count();
+        assert_eq!(
+            packed_count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                JoltCommittedPolynomial::RamInc,
+            ))),
+            0
+        );
+        assert_eq!(
+            packed_count_id(stage8::Stage8OpeningId::from(final_opening_id_for_test(
+                JoltCommittedPolynomial::RdInc,
+            ))),
+            0
+        );
+        let unsigned_inc_chunk_count =
+            jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count(
+                proof.one_hot_config.committed_chunk_bits(),
+            )
+            .unwrap_or_else(|| panic!("test unsigned increment chunks should derive"));
+        for index in 0..unsigned_inc_chunk_count {
+            assert_eq!(
+                packed_count_id(stage8::Stage8OpeningId::from(
+                    jolt_claims::protocols::jolt::unsigned_inc_chunk_opening(index),
+                )),
+                1
+            );
+        }
+        assert_eq!(
+            packed_count_id(stage8::Stage8OpeningId::from(
+                jolt_claims::protocols::jolt::unsigned_inc_msb_opening(),
+            )),
+            1
+        );
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_stage8_rejects_missing_unsigned_increment_final_sources() {
+        let (preprocessing, checked, proof, stage6, stage7) =
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+
+        let assert_missing_unsigned_source =
+            |stage6: stage6::Stage6ClearOutput<Fr>, stage7: stage7::Stage7ClearOutput<Fr>| {
+                let result = stage8::batch_statement(
+                    &checked,
+                    &preprocessing,
+                    &proof,
+                    None,
+                    stage8::Deps::Clear {
+                        stage6: &stage6,
+                        stage7: &stage7,
+                    },
+                );
+                assert!(matches!(
+                    result,
+                    Err(VerifierError::MissingOpeningClaim { id })
+                        if id == jolt_claims::protocols::jolt::unsigned_inc_chunk_opening(0)
+                ));
+            };
+
+        let mut missing_msb_sumcheck = stage6.clone();
+        missing_msb_sumcheck.batch.unsigned_inc_msb_booleanity = None;
+        assert_missing_unsigned_source(missing_msb_sumcheck, stage7.clone());
+
+        let mut missing_msb_claim = stage6.clone();
+        missing_msb_claim.output_claims.unsigned_inc_claim_reduction = None;
+        assert_missing_unsigned_source(missing_msb_claim, stage7.clone());
+
+        let mut missing_chunk_sumcheck = stage7.clone();
+        missing_chunk_sumcheck
+            .batch
+            .unsigned_inc_chunk_reconstruction = None;
+        assert_missing_unsigned_source(stage6.clone(), missing_chunk_sumcheck);
+
+        let mut missing_chunk_claims = stage7;
+        missing_chunk_claims
+            .output_claims
+            .unsigned_inc_chunk_reconstruction = None;
+        assert_missing_unsigned_source(stage6, missing_chunk_claims);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_stage8_rejects_wrong_unsigned_increment_final_chunk_count() {
+        let (preprocessing, checked, proof, stage6, mut stage7) =
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+        let _ = stage7
+            .output_claims
+            .unsigned_inc_chunk_reconstruction
+            .as_mut()
+            .unwrap_or_else(|| panic!("test fixture should include unsigned increment chunks"))
+            .chunks
+            .pop();
+
+        let result = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::FinalOpeningBatchFailed { reason })
+                if reason.contains("unsigned increment final chunk opening count mismatch")
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_stage8_verify_rejects_missing_precommitted_bytecode_source_proofs() {
+        let (preprocessing, checked, proof, stage6, stage7) =
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"akita-stage8-test");
+
+        let result = stage8::verify_clear::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            &mut transcript,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::FinalOpeningVerificationFailed { reason })
+                if reason.contains("precommitted opening proofs")
+        ));
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn lattice_stage8_verify_rejects_missing_committed_program_precommitted_proofs() {
+        let (preprocessing, checked, mut proof, stage6, stage7) =
+            lattice_stage8_statement_fixture(committed_test_preprocessing(), false, |_| {});
+        let statement = stage8::batch_statement(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        )
+        .unwrap_or_else(|error| panic!("Stage 8 statement should build: {error}"));
+        let stage8::Stage8BatchStatement::Clear(batch) = statement else {
+            panic!("fixture is clear mode");
+        };
+        let bytecode_chunk_count = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"))
+            .chunk_count();
+        let expected_precommitted_count = bytecode_chunk_count + 1;
+        assert_eq!(
+            batch.precommitted_statements.len(),
+            expected_precommitted_count
+        );
+        proof.lattice_precommitted_opening_proofs =
+            vec![(); expected_precommitted_count.saturating_sub(1)];
+        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"akita-stage8-test");
+
+        let result = stage8::verify_clear::<
+            Fr,
+            TestPcs,
+            Pedersen<Bn254G1>,
+            jolt_transcript::Blake2bTranscript,
+            _,
+        >(
+            &checked,
+            &preprocessing,
+            &proof,
+            None,
+            &mut transcript,
+            stage8::Deps::Clear {
+                stage6: &stage6,
+                stage7: &stage7,
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerifierError::FinalOpeningVerificationFailed { reason })
+                if reason.contains(&format!(
+                    "expected {} precommitted opening proofs, got {}",
+                    expected_precommitted_count,
+                    expected_precommitted_count.saturating_sub(1)
+                ))
+        ));
+    }
+
+    #[cfg(not(feature = "akita"))]
+    #[test]
+    fn lattice_layout_binding_requires_akita_feature() {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let config = lattice_config([0; 32], 0);
+        let proof = proof_with_lattice_payload(&config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+
+        validate_proof_config(&config, &proof)
+            .unwrap_or_else(|error| panic!("proof config should validate: {error}"));
+        assert!(matches!(
+            validate_lattice_layout_binding(&config, &preprocessing, &proof, &checked),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn absorb_commitments_accepts_lattice_payload_and_binds_layout_metadata() {
+        let preprocessing = committed_test_preprocessing();
+        let layout_digest = [9; 32];
+        let d_pack = 44;
+        let validity_digest = [11; 32];
+        let proof = proof_with_lattice_payload(
+            &lattice_config(layout_digest, d_pack),
+            layout_digest,
+            d_pack,
+        );
+        let mut transcript = RecordingTranscript::new(b"test");
+
+        absorb_commitments(&preprocessing, &proof, None, &mut transcript).unwrap_or_else(|error| {
+            panic!("lattice commitment absorption should succeed: {error}")
+        });
+
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"lattice_protocol_header"
+        ));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"lattice_program_mode"
+        ));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"lattice_increment_mode"
+        ));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            b"lattice_advice_trusted"
+        ));
+        assert!(contains_subslice(&transcript.bytes, &layout_digest));
+        assert!(contains_subslice(&transcript.bytes, b"lattice_d_pack"));
+        assert!(contains_subslice(
+            &transcript.bytes,
+            &u64_word_bytes(d_pack as u64)
+        ));
+        assert!(contains_subslice(&transcript.bytes, &validity_digest));
+    }
+
+    #[test]
+    fn absorb_commitments_binds_lattice_protocol_header_flags() {
+        let preprocessing = committed_test_preprocessing();
+        let layout_digest = [9; 32];
+        let d_pack = 44;
+        let config = lattice_config(layout_digest, d_pack);
+        let proof = proof_with_lattice_payload(&config, layout_digest, d_pack);
+        let mut transcript = RecordingTranscript::new(b"test");
+        absorb_commitments(&preprocessing, &proof, None, &mut transcript).unwrap_or_else(|error| {
+            panic!("lattice commitment absorption should succeed: {error}")
+        });
+
+        let mut changed_proof = proof;
+        changed_proof.protocol.lattice.advice.trusted = true;
+        let mut changed_transcript = RecordingTranscript::new(b"test");
+        absorb_commitments(
+            &preprocessing,
+            &changed_proof,
+            None,
+            &mut changed_transcript,
+        )
+        .unwrap_or_else(|error| panic!("lattice commitment absorption should succeed: {error}"));
+
+        assert_ne!(transcript.bytes, changed_transcript.bytes);
     }
 
     #[test]
@@ -826,6 +2247,10 @@ mod tests {
                     Vec::<TestCommitment>::new(),
                     Vec::<TestCommitment>::new(),
                 ),
+                #[cfg(feature = "field-inline")]
+                crate::proof::FieldInlineCommitments::new(
+                    crate::proof::FieldRegistersCommitments::new(TestCommitment),
+                ),
             ),
             stage_proofs(is_zk),
             (),
@@ -854,6 +2279,8 @@ mod tests {
             stage1: stage1::inputs::Stage1Claims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
+                #[cfg(feature = "field-inline")]
+                field_inline: stage1::inputs::FieldInlineStage1Claims::zero(),
             },
             stage2: stage2::inputs::Stage2Claims {
                 product_uniskip_output_claim: zero,
@@ -872,6 +2299,14 @@ mod tests {
                         branch_flag: zero,
                         next_is_noop: zero,
                         virtual_instruction: zero,
+                    },
+                    #[cfg(feature = "field-inline")]
+                    field_inline: stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+                        product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                            field_rs1_value: zero,
+                            field_rs2_value: zero,
+                            field_rd_value: zero,
+                        },
                     },
                     instruction_claim_reduction:
                         stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
@@ -923,6 +2358,17 @@ mod tests {
                     rd_wa: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage4::inputs::FieldInlineStage4Claims {
+                    field_registers_read_write:
+                        stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                            field_registers_val: zero,
+                            field_rs1_ra: zero,
+                            field_rs2_ra: zero,
+                            field_rd_wa: zero,
+                            field_rd_inc: zero,
+                        },
+                },
                 ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                     ram_ra: zero,
                     ram_inc: zero,
@@ -934,15 +2380,24 @@ mod tests {
                     instruction_ra: Vec::new(),
                     instruction_raf_flag: zero,
                 },
-                ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
-                    ram_ra: zero,
-                },
+                ram_ra_claim_reduction: Some(
+                    stage5::inputs::RamRaClaimReductionOutputOpeningClaims { ram_ra: zero },
+                ),
                 registers_val_evaluation:
                     stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
                         rd_inc: zero,
                         rd_wa: zero,
                     },
+                #[cfg(feature = "field-inline")]
+                field_inline: stage5::inputs::FieldInlineStage5Claims {
+                    field_registers_val_evaluation:
+                        stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                            field_rd_inc: zero,
+                            field_rd_wa: zero,
+                        },
+                },
             },
+            stage5_increment: None,
             stage6: stage6::inputs::Stage6Claims {
                 address_phase: stage6::inputs::Stage6AddressPhaseClaims {
                     bytecode_read_raf: zero,
@@ -956,6 +2411,7 @@ mod tests {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
+                    unsigned_inc_chunks: Vec::new(),
                 },
                 ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
                     ram_hamming_weight: zero,
@@ -967,9 +2423,17 @@ mod tests {
                     stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
                         committed_instruction_ra: Vec::new(),
                     },
-                inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+                inc_claim_reduction: Some(stage6::inputs::IncClaimReductionOutputOpeningClaims {
                     ram_inc: zero,
                     rd_inc: zero,
+                }),
+                unsigned_inc_claim_reduction: None,
+                #[cfg(feature = "field-inline")]
+                field_inline: stage6::inputs::FieldInlineStage6Claims {
+                    field_registers_inc_claim_reduction:
+                        stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                            field_rd_inc: zero,
+                        },
                 },
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
@@ -991,6 +2455,8 @@ mod tests {
                 },
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
+                unsigned_inc_chunk_reconstruction: None,
+                lattice_packed_validity: None,
             },
         })
     }
@@ -1084,9 +2550,11 @@ mod tests {
             stage3_sumcheck_proof: sumcheck_proof(is_zk),
             stage4_sumcheck_proof: sumcheck_proof(is_zk),
             stage5_sumcheck_proof: sumcheck_proof(is_zk),
+            stage5_increment_sumcheck_proof: None,
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
+            lattice_packed_validity_sumcheck_proof: None,
         }
     }
 
@@ -1127,5 +2595,575 @@ mod tests {
             (),
             None,
         )
+    }
+
+    fn committed_test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        committed_test_preprocessing_with_advice(0, 0)
+    }
+
+    fn committed_test_preprocessing_with_advice(
+        max_trusted_advice_size: u64,
+        max_untrusted_advice_size: u64,
+    ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size,
+            max_untrusted_advice_size,
+            max_input_size: 8,
+            max_output_size: 8,
+            stack_size: 8,
+            heap_size: 8,
+        });
+        let bytecode_address = memory_layout.get_lowest_address();
+        JoltVerifierPreprocessing::new(
+            crate::preprocessing::ProgramPreprocessing::Committed(
+                crate::preprocessing::CommittedProgramPreprocessing {
+                    meta: ProgramMetadata {
+                        entry_address: bytecode_address,
+                        min_bytecode_address: bytecode_address,
+                        entry_bytecode_index: 0,
+                        program_image_len_words: 4,
+                        bytecode_len: 16,
+                    },
+                    memory_layout,
+                    max_padded_trace_length: 16,
+                    bytecode_chunk_commitments: vec![TestCommitment, TestCommitment],
+                    program_image_commitment: TestCommitment,
+                },
+            ),
+            [7; 32],
+            (),
+            None,
+        )
+    }
+
+    fn public_io_for_preprocessing<PCS, VC>(
+        preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    ) -> JoltDevice
+    where
+        PCS: CommitmentScheme,
+        VC: VectorCommitment<Field = PCS::Field>,
+    {
+        JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        }
+    }
+
+    fn lattice_config(layout_digest: [u8; 32], d_pack: usize) -> JoltProtocolConfig {
+        let mut config =
+            JoltProtocolConfig::for_zk(false).with_pcs_family(crate::config::PcsFamily::Lattice);
+        config.lattice.program_mode = crate::config::ProgramMode::Committed;
+        config.lattice.increment_mode = crate::config::IncrementCommitmentMode::FusedOneHot;
+        config.lattice.packed_witness.layout_digest = Some(layout_digest);
+        config.lattice.packed_witness.d_pack = Some(d_pack);
+        config.lattice.packed_witness.validity_digest = Some([11; 32]);
+        #[cfg(feature = "field-inline")]
+        {
+            config.lattice.field_inline.enabled = true;
+        }
+        config
+    }
+
+    #[cfg(feature = "akita")]
+    fn lattice_config_with_derived_validity(
+        layout_digest: [u8; 32],
+        d_pack: usize,
+        precommitted: &crate::stages::PrecommittedSchedule,
+    ) -> JoltProtocolConfig {
+        let mut config = lattice_config(layout_digest, d_pack);
+        let requirements =
+            stage8::derive_lattice_packed_validity_requirements(&config, 8, precommitted)
+                .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        config.lattice.packed_witness.validity_digest =
+            Some(lattice_packed_validity_digest(&requirements));
+        config
+    }
+
+    fn proof_with_lattice_payload(
+        config: &JoltProtocolConfig,
+        layout_digest: [u8; 32],
+        d_pack: usize,
+    ) -> TestProof {
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.protocol = *config;
+        proof.trace_length = 4;
+        proof.ram_K = 4;
+        proof.one_hot_config = JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: 8,
+        };
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
+            TestCommitment,
+            layout_digest,
+            d_pack,
+        ));
+        #[cfg(feature = "akita")]
+        attach_lattice_validity_surface(&mut proof, config);
+        proof
+    }
+
+    #[cfg(feature = "akita")]
+    fn attach_lattice_validity_surface(proof: &mut TestProof, config: &JoltProtocolConfig) {
+        let precommitted = test_lattice_precommitted_schedule();
+        let log_t = proof.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            16,
+            proof.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        let layout = stage8::derive_lattice_packed_witness_layout(
+            config,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            formula_dimensions.ra_layout,
+            &precommitted,
+        )
+        .unwrap_or_else(|error| panic!("packed witness layout should derive: {error}"));
+        let requirements = stage8::derive_lattice_packed_validity_requirements(
+            config,
+            proof.one_hot_config.committed_chunk_bits(),
+            &precommitted,
+        )
+        .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        let statements = stage8::derive_lattice_packed_validity_statements(&layout, &requirements)
+            .unwrap_or_else(|error| panic!("validity statements should derive: {error}"));
+
+        proof.stages.lattice_packed_validity_sumcheck_proof = Some(sumcheck_proof(false));
+        proof.lattice_packed_validity_opening_proof = Some(());
+        let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+            panic!("test lattice proof should be transparent");
+        };
+        claims.stage7.lattice_packed_validity =
+            Some(stage7::inputs::LatticePackedValidityOutputClaims {
+                opening_claims: vec![
+                    Fr::zero();
+                    stage8::lattice_packed_validity_opening_count(&statements)
+                ],
+            });
+    }
+
+    #[cfg(feature = "akita")]
+    fn test_lattice_precommitted_schedule() -> PrecommittedSchedule {
+        PrecommittedSchedule::new(
+            crate::proof::TracePolynomialOrder::CycleMajor,
+            2,
+            8,
+            None,
+            None,
+            Some(CommittedProgramSchedule {
+                bytecode_len: 16,
+                bytecode_chunk_count: 2,
+                program_image_len_words: 4,
+                program_image_start_index: 0,
+            }),
+        )
+        .unwrap_or_else(|error| panic!("test lattice precommitted schedule should build: {error}"))
+    }
+
+    #[cfg(feature = "akita")]
+    fn lattice_validity_surface_fixture() -> (
+        JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        CheckedInputs,
+        JoltProtocolConfig,
+        TestProof,
+    ) {
+        let preprocessing = committed_test_preprocessing();
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        let checked = validate_inputs(&preprocessing, &public_io, &proof, false, false)
+            .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let layout = expected_lattice_layout(&placeholder_config, &preprocessing, &proof, &checked);
+        let config = lattice_config_with_derived_validity(
+            layout.digest,
+            layout.dimension,
+            &checked.precommitted,
+        );
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+
+        (preprocessing, checked, config, proof)
+    }
+
+    #[cfg(feature = "akita")]
+    fn lattice_stage8_statement_fixture(
+        preprocessing: JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        trusted_advice_commitment_present: bool,
+        configure_lattice: impl FnOnce(&mut JoltProtocolConfig),
+    ) -> AkitaStage8StatementFixture {
+        let public_io = public_io_for_preprocessing(&preprocessing);
+        let placeholder_config = lattice_config([0; 32], 0);
+        let mut proof = proof_with_lattice_payload(&placeholder_config, [0; 32], 0);
+        if trusted_advice_commitment_present {
+            proof.ram_K = 16;
+        }
+        let checked = validate_inputs(
+            &preprocessing,
+            &public_io,
+            &proof,
+            trusted_advice_commitment_present,
+            false,
+        )
+        .unwrap_or_else(|error| panic!("inputs should validate: {error}"));
+        let mut config = lattice_config([0; 32], 0);
+        configure_lattice(&mut config);
+        let layout = expected_lattice_layout(&config, &preprocessing, &proof, &checked);
+        config.lattice.packed_witness.layout_digest = Some(layout.digest);
+        config.lattice.packed_witness.d_pack = Some(layout.dimension);
+        let requirements = stage8::derive_lattice_packed_validity_requirements(
+            &config,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        )
+        .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
+        config.lattice.packed_witness.validity_digest =
+            Some(lattice_packed_validity_digest(&requirements));
+        proof.protocol = config;
+        proof.commitments = CommitmentPayload::Lattice(LatticeCommitmentPayload::new(
+            TestCommitment,
+            layout.digest,
+            layout.dimension,
+        ));
+
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        let bytecode_layout = checked
+            .precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"));
+        let bytecode_address_point = field_zeros(bytecode_layout.log_bytecode_chunk_size() + 1);
+        let stage6 = akita_snapshot_stage6_output(
+            formula_dimensions.ra_layout.bytecode(),
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            bytecode_layout.chunk_count(),
+            bytecode_address_point,
+        );
+        let stage7 = akita_snapshot_stage7_output(
+            formula_dimensions.ra_layout,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            &checked.precommitted,
+        );
+
+        (preprocessing, checked, proof, stage6, stage7)
+    }
+
+    #[cfg(feature = "akita")]
+    fn akita_snapshot_stage6_output(
+        _bytecode_ra_count: usize,
+        log_t: usize,
+        log_k_chunk: usize,
+        _bytecode_chunk_count: usize,
+        _bytecode_address_point: Vec<Fr>,
+    ) -> stage6::Stage6ClearOutput<Fr> {
+        let zero = Fr::zero();
+        let trace_point = field_zeros(log_t);
+        let unsigned_inc_chunk_count =
+            jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count(log_k_chunk)
+                .unwrap_or_else(|| panic!("test unsigned increment chunks should derive"));
+        let mut output_claims = clear_claim_payload().stage6;
+        output_claims.inc_claim_reduction = None;
+        output_claims.booleanity.unsigned_inc_chunks = field_zeros(unsigned_inc_chunk_count);
+        output_claims.unsigned_inc_claim_reduction = Some(
+            stage6::inputs::UnsignedIncClaimReductionOutputOpeningClaims {
+                unsigned_inc: zero,
+                unsigned_inc_msb: zero,
+            },
+        );
+
+        stage6::Stage6ClearOutput {
+            public: stage6::outputs::Stage6PublicOutput {
+                address_phase_challenges: Vec::new(),
+                address_phase_batching_coefficients: Vec::new(),
+                challenges: Vec::new(),
+                batching_coefficients: Vec::new(),
+                bytecode_gamma_powers: Vec::new(),
+                stage1_gammas: Vec::new(),
+                stage2_gammas: Vec::new(),
+                stage3_gammas: Vec::new(),
+                stage4_gammas: Vec::new(),
+                stage5_gammas: Vec::new(),
+                booleanity_reference_address: Vec::new(),
+                booleanity_reference_cycle: Vec::new(),
+                booleanity_gamma: zero,
+                instruction_ra_gamma_powers: Vec::new(),
+                inc_gamma: zero,
+                #[cfg(feature = "field-inline")]
+                field_inline: stage6::outputs::FieldInlineStage6PublicOutput {
+                    field_inc_gamma: zero,
+                },
+                bytecode_reduction_eta: None,
+            },
+            output_claims,
+            batch: stage6::outputs::VerifiedStage6Batch {
+                address_phase_batching_coefficients: Vec::new(),
+                address_phase_sumcheck_point: jolt_poly::Point::high_to_low(Vec::new()),
+                address_phase_sumcheck_final_claim: zero,
+                address_phase_expected_final_claim: zero,
+                bytecode_read_raf_address: verified_stage6_address_sumcheck(Vec::new()),
+                booleanity_address: verified_stage6_address_sumcheck(Vec::new()),
+                batching_coefficients: Vec::new(),
+                sumcheck_point: jolt_poly::Point::high_to_low(Vec::new()),
+                sumcheck_final_claim: zero,
+                expected_final_claim: zero,
+                bytecode_read_raf: verified_bytecode_read_raf(Vec::new(), Vec::new(), Vec::new()),
+                booleanity: stage6::outputs::VerifiedBooleanitySumcheck {
+                    input_claim: zero,
+                    sumcheck_point: Vec::new(),
+                    r_address: Vec::new(),
+                    r_cycle: Vec::new(),
+                    opening_point: Vec::new(),
+                    reference_address: Vec::new(),
+                    reference_cycle: Vec::new(),
+                    expected_output_claim: zero,
+                },
+                ram_hamming_booleanity: verified_stage6_sumcheck(Vec::new()),
+                ram_ra_virtualization: stage6::outputs::VerifiedRamRaVirtualizationSumcheck {
+                    input_claim: zero,
+                    sumcheck_point: Vec::new(),
+                    opening_point: Vec::new(),
+                    ram_ra_opening_points: Vec::new(),
+                    expected_output_claim: zero,
+                },
+                instruction_ra_virtualization:
+                    stage6::outputs::VerifiedInstructionRaVirtualizationSumcheck {
+                        input_claim: zero,
+                        sumcheck_point: Vec::new(),
+                        opening_point: Vec::new(),
+                        instruction_ra_opening_points: Vec::new(),
+                        expected_output_claim: zero,
+                    },
+                inc_claim_reduction: None,
+                unsigned_inc_claim_reduction: Some(verified_stage6_sumcheck(trace_point.clone())),
+                unsigned_inc_msb_booleanity: Some(verified_stage6_sumcheck(trace_point.clone())),
+                #[cfg(feature = "field-inline")]
+                field_registers_inc_claim_reduction: verified_stage6_sumcheck(trace_point.clone()),
+                trusted_advice_cycle_phase: None,
+                untrusted_advice_cycle_phase: None,
+                bytecode_cycle_phase: None,
+                program_image_cycle_phase: None,
+            },
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn akita_snapshot_stage7_output(
+        ra_layout: JoltRaPolynomialLayout,
+        log_t: usize,
+        log_k_chunk: usize,
+        precommitted: &PrecommittedSchedule,
+    ) -> stage7::Stage7ClearOutput<Fr> {
+        let zero = Fr::zero();
+        let ra_point = field_zeros(log_k_chunk + log_t);
+        let unsigned_inc_chunk_count =
+            jolt_claims::protocols::jolt::unsigned_inc_lower_chunk_count(log_k_chunk)
+                .unwrap_or_else(|| panic!("test unsigned increment chunks should derive"));
+        let mut output_claims = clear_claim_payload().stage7;
+        output_claims.hamming_weight_claim_reduction.instruction_ra =
+            field_zeros(ra_layout.instruction());
+        output_claims.hamming_weight_claim_reduction.bytecode_ra =
+            field_zeros(ra_layout.bytecode());
+        output_claims.hamming_weight_claim_reduction.ram_ra = field_zeros(ra_layout.ram());
+        output_claims.unsigned_inc_chunk_reconstruction =
+            Some(stage7::inputs::UnsignedIncChunkReconstructionOutputClaims {
+                chunks: field_zeros(unsigned_inc_chunk_count),
+            });
+
+        let bytecode_layout = precommitted
+            .bytecode
+            .as_ref()
+            .unwrap_or_else(|| panic!("committed bytecode schedule should exist"));
+        let bytecode_point = field_zeros(
+            bytecode::committed_lane_vars() + bytecode_layout.log_bytecode_chunk_size(),
+        );
+        let mut precommitted_final_openings = (0..bytecode_layout.chunk_count())
+            .map(|index| stage7::outputs::PrecommittedFinalOpening {
+                polynomial: JoltCommittedPolynomial::BytecodeChunk(index),
+                point: bytecode_point.clone(),
+                opening_claim: Some(zero),
+            })
+            .collect::<Vec<_>>();
+        let program_image_layout = precommitted
+            .program_image
+            .as_ref()
+            .unwrap_or_else(|| panic!("program image schedule should exist"));
+        precommitted_final_openings.push(stage7::outputs::PrecommittedFinalOpening {
+            polynomial: JoltCommittedPolynomial::ProgramImageInit,
+            point: field_zeros(program_image_layout.image_shape().row_vars()),
+            opening_claim: Some(zero),
+        });
+
+        stage7::Stage7ClearOutput {
+            public: stage7::outputs::Stage7PublicOutput {
+                challenges: Vec::new(),
+                batching_coefficients: Vec::new(),
+                hamming_gamma: zero,
+            },
+            output_claims,
+            batch: stage7::outputs::VerifiedStage7Batch {
+                batching_coefficients: Vec::new(),
+                sumcheck_point: jolt_poly::Point::high_to_low(Vec::new()),
+                sumcheck_final_claim: zero,
+                expected_final_claim: zero,
+                hamming_weight_claim_reduction:
+                    stage7::outputs::VerifiedHammingWeightClaimReductionSumcheck {
+                        input_claim: zero,
+                        sumcheck_point: Vec::new(),
+                        opening_point: ra_point.clone(),
+                        instruction_ra_opening_points: vec![
+                            ra_point.clone();
+                            ra_layout.instruction()
+                        ],
+                        bytecode_ra_opening_points: vec![ra_point.clone(); ra_layout.bytecode()],
+                        ram_ra_opening_points: vec![ra_point.clone(); ra_layout.ram()],
+                        expected_output_claim: zero,
+                    },
+                trusted_advice_address_phase: None,
+                untrusted_advice_address_phase: None,
+                bytecode_address_phase: None,
+                program_image_address_phase: None,
+                unsigned_inc_chunk_reconstruction: Some(
+                    stage7::outputs::VerifiedUnsignedIncChunkReconstructionSumcheck {
+                        input_claim: zero,
+                        sumcheck_point: field_zeros(log_k_chunk),
+                        opening_point: ra_point.clone(),
+                        expected_output_claim: zero,
+                    },
+                ),
+            },
+            precommitted_final_openings,
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn final_opening_id_for_test(polynomial: JoltCommittedPolynomial) -> JoltOpeningId {
+        match polynomial {
+            JoltCommittedPolynomial::TrustedAdvice => {
+                JoltOpeningId::trusted_advice(JoltRelationId::AdviceClaimReduction)
+            }
+            JoltCommittedPolynomial::UntrustedAdvice => {
+                JoltOpeningId::untrusted_advice(JoltRelationId::AdviceClaimReduction)
+            }
+            JoltCommittedPolynomial::BytecodeChunk(_) => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeClaimReduction)
+            }
+            JoltCommittedPolynomial::ProgramImageInit => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::ProgramImageClaimReduction)
+            }
+            JoltCommittedPolynomial::RamInc | JoltCommittedPolynomial::RdInc => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::IncClaimReduction)
+            }
+            JoltCommittedPolynomial::InstructionRa(_)
+            | JoltCommittedPolynomial::BytecodeRa(_)
+            | JoltCommittedPolynomial::RamRa(_) => {
+                JoltOpeningId::committed(polynomial, JoltRelationId::HammingWeightClaimReduction)
+            }
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn verified_stage6_address_sumcheck(
+        opening_point: Vec<Fr>,
+    ) -> stage6::outputs::VerifiedStage6AddressPhaseSumcheck<Fr> {
+        stage6::outputs::VerifiedStage6AddressPhaseSumcheck {
+            input_claim: Fr::zero(),
+            sumcheck_point: Vec::new(),
+            opening_point,
+            expected_output_claim: Fr::zero(),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn verified_stage6_sumcheck(
+        opening_point: Vec<Fr>,
+    ) -> stage6::outputs::VerifiedStage6Sumcheck<Fr> {
+        stage6::outputs::VerifiedStage6Sumcheck {
+            input_claim: Fr::zero(),
+            sumcheck_point: Vec::new(),
+            opening_point,
+            expected_output_claim: Fr::zero(),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn verified_bytecode_read_raf(
+        r_address: Vec<Fr>,
+        r_cycle: Vec<Fr>,
+        bytecode_ra_opening_points: Vec<Vec<Fr>>,
+    ) -> stage6::outputs::VerifiedBytecodeReadRafSumcheck<Fr> {
+        stage6::outputs::VerifiedBytecodeReadRafSumcheck {
+            input_claim: Fr::zero(),
+            sumcheck_point: Vec::new(),
+            full_opening_point: [r_address.as_slice(), r_cycle.as_slice()].concat(),
+            r_address,
+            r_cycle,
+            bytecode_ra_opening_points,
+            expected_output_claim: Fr::zero(),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn clear_claim_payload() -> ClearProofClaims<Fr> {
+        match clear_claims() {
+            JoltProofClaims::Clear(claims) => claims,
+            JoltProofClaims::Zk { .. } => panic!("test clear claims helper returned ZK claims"),
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    fn field_zeros(len: usize) -> Vec<Fr> {
+        vec![Fr::zero(); len]
+    }
+
+    fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+
+    fn u64_word_bytes(value: u64) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        bytes[24..].copy_from_slice(&value.to_be_bytes());
+        bytes
+    }
+
+    #[cfg(feature = "akita")]
+    fn expected_lattice_layout(
+        config: &JoltProtocolConfig,
+        preprocessing: &JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>,
+        proof: &TestProof,
+        checked: &CheckedInputs,
+    ) -> jolt_openings::PackingWitnessLayout {
+        let log_t = checked.trace_length.ilog2() as usize;
+        let formula_dimensions = JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+            log_t,
+            2 * RISCV_XLEN,
+            preprocessing.program.bytecode_len(),
+            checked.ram_K,
+        ))
+        .unwrap_or_else(|error| panic!("formula dimensions should derive: {error}"));
+        stage8::derive_lattice_packed_witness_layout(
+            config,
+            log_t,
+            proof.one_hot_config.committed_chunk_bits(),
+            formula_dimensions.ra_layout,
+            &checked.precommitted,
+        )
+        .unwrap_or_else(|error| panic!("Akita layout should derive: {error}"))
     }
 }
