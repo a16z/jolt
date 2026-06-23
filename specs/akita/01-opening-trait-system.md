@@ -391,8 +391,8 @@ preprocessing digest. This is a deterministic public anchor available on main.
 It is not the final PackedWitness layout digest; specs 03/04 replace it once
 the PackedWitness planner exists.
 
-PackedCombine binds its layout digest, points, scales, and physical-view
-coefficients before delegating to the inner batch-opening PCS. The Dory
+PackingBatch binds its layout digest, points, scales, and physical-view
+terms before reducing packing claims to one native PCS opening. The Dory
 homomorphic blanket implementation preserves the legacy Stage 8 transcript
 schedule for compatibility with the current core prover.
 ```
@@ -476,15 +476,14 @@ Implementation sequence:
    compile and pass.
    keep AdditivelyHomomorphic bounds only inside the Dory/homomorphic adapter.
 
-9. Add a packed-combine implementation path:
-   implement a PCS-generic PackedCombine-style batch adapter that satisfies
+9. Add the packing reduction path:
+   implement a PCS-generic PackingBatch adapter that satisfies
    BatchOpeningScheme without exposing AdditivelyHomomorphic to Stage 8.
-   use a wrapper/newtype when the underlying PCS also satisfies the homomorphic
-   blanket impl.
-   use Dory where appropriate to exercise the generic packed interface shape
-   before jolt-akita exists: one physical commitment handle, many logical
-   claims, deterministic IDs, and clean rejection of unsupported views.
-   this does not claim to test Akita's real PackedWitness relation.
+   reduce many logical packing claims behind one physical commitment to one
+   native PCS opening.
+   test deterministic IDs, one-commitment claim batches, transcript binding,
+   and clean rejection of unsupported views without introducing a fake
+   Akita backend.
 ```
 
 Minimal abstraction set:
@@ -626,16 +625,15 @@ non_homomorphic_batch_opening_requires_no_combine:
   a wrapper or real non-homomorphic PCS can satisfy BatchOpeningScheme without
   exposing AdditivelyHomomorphic to Stage 8.
 
-packed_combine_requires_no_stage8_combine:
-  a PackedCombine-style adapter exposes no AdditivelyHomomorphic bound to
+packing_batch_requires_no_stage8_combine:
+  a PackingBatch adapter exposes no AdditivelyHomomorphic bound to
   Stage 8.
 
-packed_combine_many_claims_one_commitment:
+packing_batch_many_claims_one_commitment:
   the packed-style statement can represent many logical claims behind one
-  physical commitment handle. Dory may be used to exercise this path before
-  jolt-akita exists.
+  physical commitment handle.
 
-packed_combine_binds_logical_coefficients:
+packing_batch_binds_logical_coefficients:
   internally derived coefficients bind the original logical claims even though
   Stage 8 does not see a Dory-style joint commitment.
 
@@ -652,14 +650,6 @@ akita_precommitted_claims_use_original_commitments:
 
 akita_increment_views_do_not_use_dense_scale:
   fused RamInc/RdInc claims have no Dory dense-increment embedding scale.
-```
-
-Scope note:
-
-```text
-The Dory-backed PackedCombine path tests the packed interface boundary only. It
-does not test Akita's real PackedWitness short-witness relation, which requires
-later PIOP and jolt-akita specs.
 ```
 
 Targeted command filters:

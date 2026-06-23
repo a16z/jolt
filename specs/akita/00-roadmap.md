@@ -412,7 +412,7 @@ The current implementation covers the transparent verifier/protocol target:
 jolt-openings:
   generic BatchOpeningScheme and ZkBatchOpeningScheme interfaces.
   additive-homomorphic batching for the Dory-style path.
-  PackedCombine-style packed-view batching without requiring additive
+  PackingBatch reduction for packing views without requiring additive
   homomorphism.
 
 jolt-akita:
