@@ -57,7 +57,8 @@ use crate::{
     proof::JoltProof,
     stages::{
         relations::{
-            check_relation_boolean_hypercube, zip_openings, OpeningClaim, SumcheckInstance,
+            check_relation_boolean_hypercube, zip_openings, OpeningClaim, OutputClaims,
+            SumcheckInstance,
         },
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},
@@ -2274,9 +2275,11 @@ pub(super) fn append_opening_claims<F, T>(
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    for opening_claim in &claims.bytecode_read_raf.bytecode_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
+    // Full relations delegate to their derived `append_openings`, single-sourcing
+    // the per-field Fiat-Shamir order from the `OutputClaims` derive. `booleanity`
+    // stays explicit because its `bytecode_ra` openings are conditionally deduped
+    // against the bytecode-read-RAF points.
+    claims.bytecode_read_raf.append_openings(transcript);
     for opening_claim in &claims.booleanity.instruction_ra {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
@@ -2292,21 +2295,12 @@ pub(super) fn append_opening_claims<F, T>(
     for opening_claim in &claims.booleanity.ram_ra {
         transcript.append_labeled(b"opening_claim", opening_claim);
     }
-    transcript.append_labeled(
-        b"opening_claim",
-        &claims.ram_hamming_booleanity.ram_hamming_weight,
-    );
-    for opening_claim in &claims.ram_ra_virtualization.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for opening_claim in &claims
+    claims.ram_hamming_booleanity.append_openings(transcript);
+    claims.ram_ra_virtualization.append_openings(transcript);
+    claims
         .instruction_ra_virtualization
-        .committed_instruction_ra
-    {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.ram_inc);
-    transcript.append_labeled(b"opening_claim", &claims.inc_claim_reduction.rd_inc);
+        .append_openings(transcript);
+    claims.inc_claim_reduction.append_openings(transcript);
     if let Some(opening_claim) = &claims.advice_cycle_phase.trusted {
         transcript.append_labeled(b"opening_claim", &opening_claim.opening_claim);
     }
@@ -2327,5 +2321,90 @@ pub(super) fn append_opening_claims<F, T>(
     }
     if let Some(output_claim) = &claims.program_image_claim_reduction {
         transcript.append_labeled(b"opening_claim", &output_claim.opening_claim);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingTranscript {
+        chunks: Vec<Vec<u8>>,
+    }
+
+    impl Transcript for RecordingTranscript {
+        type Challenge = Fr;
+        fn new(_label: &'static [u8]) -> Self {
+            Self::default()
+        }
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            self.chunks.push(bytes.to_vec());
+        }
+        fn challenge(&mut self) -> Self::Challenge {
+            Fr::from_u64(0)
+        }
+        fn state(&self) -> [u8; 32] {
+            [0u8; 32]
+        }
+    }
+
+    /// Locks the stage-6 cycle-phase Fiat-Shamir append order against silent drift.
+    /// The full relations are single-sourced via their `OutputClaims` derive;
+    /// `booleanity` (conditional `bytecode_ra` dedup) and the optional reductions
+    /// stay explicit. Points are empty so no `bytecode_ra` element is deduped;
+    /// `address_phase` (absorbed in the address phase) and the `None` reductions
+    /// carry distinct/absent sentinels to prove they are not appended here.
+    #[test]
+    fn append_opening_claims_follows_canonical_order() {
+        let claims: Stage6OutputClaims<Fr> = Stage6OutputClaims {
+            address_phase: Stage6AddressPhaseClaims {
+                bytecode_read_raf: fr(901),
+                booleanity: fr(902),
+                bytecode_val_stages: None,
+            },
+            bytecode_read_raf: BytecodeReadRafOutputClaims {
+                bytecode_ra: vec![fr(1), fr(2)],
+            },
+            booleanity: BooleanityOutputClaims {
+                instruction_ra: vec![fr(3)],
+                bytecode_ra: vec![fr(4)],
+                ram_ra: vec![fr(5)],
+            },
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                ram_hamming_weight: fr(6),
+            },
+            ram_ra_virtualization: RamRaVirtualizationOutputClaims {
+                ram_ra: vec![fr(7)],
+            },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                committed_instruction_ra: vec![fr(8)],
+            },
+            inc_claim_reduction: IncClaimReductionOutputClaims {
+                ram_inc: fr(9),
+                rd_inc: fr(10),
+            },
+            advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
+                trusted: None,
+                untrusted: None,
+            },
+            bytecode_claim_reduction: None,
+            program_image_claim_reduction: None,
+        };
+
+        let mut got = RecordingTranscript::default();
+        append_opening_claims(&mut got, &claims, &[], &[]);
+
+        let mut want = RecordingTranscript::default();
+        for value in (1..=10).map(fr) {
+            want.append_labeled(b"opening_claim", &value);
+        }
+
+        assert_eq!(got.chunks, want.chunks);
     }
 }
