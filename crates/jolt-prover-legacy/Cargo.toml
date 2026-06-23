@@ -179,5 +179,10 @@ name = "jolt-prover-legacy"
 path = "src/bin/jolt_prover_legacy.rs"
 required-features = ["host"]
 
+[[bin]]
+name = "sha2-chain-prover-compare"
+path = "src/bin/sha2_chain_prover_compare.rs"
+required-features = ["host", "akita"]
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memory-stats.workspace = true
