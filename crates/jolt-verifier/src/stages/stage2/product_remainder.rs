@@ -150,8 +150,7 @@ impl<F: Field> SumcheckInstance<F> for ProductRemainder<F> {
             // The uni-skip first-round Lagrange weights, evaluated at the product
             // uni-skip challenge; the product remainder reweights its operands by
             // `LagrangeWeight(0..2)` exactly as the formula's `product_weight(i)`.
-            SpartanProductVirtualizationPublic::LagrangeWeight(index)
-            | SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index) => {
+            SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
                 let weights = centered_lagrange_evals(
                     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
                     self.uniskip_challenge,
@@ -163,6 +162,13 @@ impl<F: Field> SumcheckInstance<F> for ProductRemainder<F> {
                     .ok_or_else(|| public_input_failed(format!(
                         "product remainder Lagrange weight index {index} out of range for domain size {SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE}"
                     )))
+            }
+            // `UniskipLagrangeWeight` belongs to the product uni-skip relation, not the
+            // remainder: `product_remainder` reweights via `product_weight` ->
+            // `LagrangeWeight` only (plus `TauKernel`). Reject rather than silently
+            // aliasing it onto the Lagrange-weight path, so a misrouted public surfaces.
+            SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
+                Err(VerifierError::MissingStageClaimPublic { id: *id })
             }
             // The product opening point binds the uni-skip kernel (against
             // `tau_high`) and the equality of the low remainder challenges
