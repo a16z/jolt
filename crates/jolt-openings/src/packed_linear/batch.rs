@@ -9,11 +9,11 @@ use crate::{
 
 use super::{
     reduction::{
-        has_packed_linear_view, invalid_batch, polynomial_evaluations,
-        prove_packed_linear_reduction, validate_packed_linear_statement,
+        has_packed_linear_view, prove_packed_linear_reduction, validate_packed_linear_statement,
         verify_packed_linear_reduction,
     },
     types::{PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof},
+    util::{invalid_batch, polynomial_evaluations},
 };
 
 impl<PCS> Commitment for PackedLinearBatch<PCS>

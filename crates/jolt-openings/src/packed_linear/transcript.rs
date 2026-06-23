@@ -3,7 +3,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 
 use crate::{BatchOpeningStatement, OpeningsError, PhysicalView};
 
-use super::reduction::validate_term;
+use super::selector::validate_term;
 use super::types::PackedLinearLayout;
 
 pub(super) fn append_round<F, T>(transcript: &mut T, round: &[F; 3])
