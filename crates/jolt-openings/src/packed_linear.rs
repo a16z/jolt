@@ -11,8 +11,8 @@ pub use reduction::{
     validate_packed_linear_statement, verify_packed_linear_reduction,
 };
 pub use types::{
-    PackedLinearAddress, PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof,
-    PackedLinearFamily, PackedLinearLayout, PackedLinearProverReduction, PackedLinearProverSetup,
+    PackedLinearAddress, PackedLinearBatch, PackedLinearBatchProof, PackedLinearFamily,
+    PackedLinearLayout, PackedLinearProverReduction, PackedLinearProverSetup,
     PackedLinearReductionProof, PackedLinearSetupParams, PackedLinearVerifierReduction,
     PackedLinearVerifierSetup, PackedLinearWitnessSource,
 };

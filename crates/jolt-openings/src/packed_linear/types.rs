@@ -1,11 +1,9 @@
 use std::{fmt, marker::PhantomData};
 
 use jolt_field::Field;
-use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::{BatchOpeningResult, BatchOpeningScheme, OpeningsError, PackedFamilyRef};
+use crate::{BatchOpeningResult, OpeningsError, PackedFamilyRef};
 
 pub struct PackedLinearBatch<PCS, L = crate::PackedWitnessLayout>(PhantomData<fn() -> (PCS, L)>);
 
@@ -111,63 +109,6 @@ where
     fn layout(&self) -> &Self::Layout;
 
     fn for_each_nonzero(&self, f: impl FnMut(usize, F));
-}
-
-pub trait PackedLinearBatchBackend: BatchOpeningScheme {
-    type Layout: PackedLinearLayout;
-
-    fn prover_layout(setup: &Self::ProverSetup) -> Option<&Self::Layout>;
-
-    fn verifier_layout(setup: &Self::VerifierSetup) -> Option<&Self::Layout>;
-
-    fn validate_packed_prover_inputs(
-        _setup: &Self::ProverSetup,
-        layout: &Self::Layout,
-        _commitment: &Self::Output,
-        polynomials: &[Self::Polynomial],
-        hints: &[Self::OpeningHint],
-    ) -> Result<(), OpeningsError> {
-        if polynomials.len() != 1 {
-            return Err(OpeningsError::InvalidBatch(format!(
-                "packed linear proof expects one packed polynomial, got {}",
-                polynomials.len()
-            )));
-        }
-        if polynomials[0].num_vars() != layout.dimension() {
-            return Err(OpeningsError::InvalidBatch(format!(
-                "packed linear polynomial has {} variables but layout has {}",
-                polynomials[0].num_vars(),
-                layout.dimension()
-            )));
-        }
-        if hints.len() != 1 {
-            return Err(OpeningsError::InvalidBatch(format!(
-                "packed linear proof expects one opening hint, got {}",
-                hints.len()
-            )));
-        }
-        Ok(())
-    }
-
-    fn validate_packed_verifier_inputs(
-        _setup: &Self::VerifierSetup,
-        _layout: &Self::Layout,
-        _commitment: &Self::Output,
-    ) -> Result<(), OpeningsError> {
-        Ok(())
-    }
-
-    fn bind_packed_prover_setup<T>(_setup: &Self::ProverSetup, _transcript: &mut T)
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-    }
-
-    fn bind_packed_verifier_setup<T>(_setup: &Self::VerifierSetup, _transcript: &mut T)
-    where
-        T: Transcript<Challenge = Self::Field>,
-    {
-    }
 }
 
 pub struct PackedLinearProverReduction<F> {

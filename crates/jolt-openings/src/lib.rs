@@ -49,10 +49,10 @@ pub use packed_combine::PackedCombine;
 pub use packed_linear::{
     has_packed_linear_view, prove_packed_linear_reduction, prove_sparse_packed_linear_reduction,
     validate_packed_linear_statement, verify_packed_linear_reduction, PackedLinearAddress,
-    PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof, PackedLinearFamily,
-    PackedLinearLayout, PackedLinearProverReduction, PackedLinearProverSetup,
-    PackedLinearReductionProof, PackedLinearSetupParams, PackedLinearVerifierReduction,
-    PackedLinearVerifierSetup, PackedLinearWitnessSource,
+    PackedLinearBatch, PackedLinearBatchProof, PackedLinearFamily, PackedLinearLayout,
+    PackedLinearProverReduction, PackedLinearProverSetup, PackedLinearReductionProof,
+    PackedLinearSetupParams, PackedLinearVerifierReduction, PackedLinearVerifierSetup,
+    PackedLinearWitnessSource,
 };
 pub use packed_view::{
     PackedViewCatalog, PackedViewDigest, PackedViewEntry, PackedViewError, PackedViewFormula,
