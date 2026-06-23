@@ -1,16 +1,17 @@
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck_prover::{
-    BackendError as UniversalBackendError, BatchedSumcheckSpec, SumcheckBackend as UniversalSumcheckBackend,
+    BackendError as UniversalBackendError, BatchedSumcheckSpec,
+    SumcheckBackend as UniversalSumcheckBackend,
 };
 
-use crate::{Backend, BackendError, Stage4ReadWriteSumcheckBackend};
+use crate::{BackendError, Stage4ReadWriteSumcheckBackend};
 
 /// Stage 4 batched sumcheck over pre-materialized register and RAM states.
 ///
 /// Materialization stays in stage code until [`ProverProgram`] lowering lands;
 /// this adapter only dispatches `evaluate` / `bind` through the existing CPU kernels.
-pub struct PreMaterializedStage4Backend<F, B> {
+pub struct PreMaterializedStage4Backend<F: Field, B: Stage4ReadWriteSumcheckBackend<F>> {
     inner: B,
     registers_state: B::RegistersReadWriteState,
     ram_state: B::RamValCheckState,
@@ -103,14 +104,10 @@ fn validate_stage4_spec<F: Field>(
     spec: &BatchedSumcheckSpec<F>,
 ) -> Result<(), UniversalBackendError> {
     if spec.instances.len() != 2 {
-        return Err(UniversalBackendError::UnsupportedRelation {
-            label: spec.label,
-        });
+        return Err(UniversalBackendError::UnsupportedRelation { label: spec.label });
     }
     let [registers, ram] = spec.instances.as_slice() else {
-        return Err(UniversalBackendError::UnsupportedRelation {
-            label: spec.label,
-        });
+        return Err(UniversalBackendError::UnsupportedRelation { label: spec.label });
     };
     if registers.relation != "registers::read_write_checking"
         && registers.relation != "stage4.registers_read_write"
@@ -139,10 +136,7 @@ where
     match instance_index {
         0 => backend
             .inner
-            .evaluate_sumcheck_registers_read_write_round(
-                &backend.registers_state,
-                previous_claim,
-            ),
+            .evaluate_sumcheck_registers_read_write_round(&backend.registers_state, previous_claim),
         1 => backend
             .inner
             .evaluate_sumcheck_ram_val_check_round(&backend.ram_state, previous_claim),

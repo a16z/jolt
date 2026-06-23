@@ -2775,6 +2775,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-backends"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-r1cs",
+ "jolt-sumcheck-prover",
+ "jolt-witness",
+ "rayon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
