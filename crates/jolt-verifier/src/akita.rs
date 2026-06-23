@@ -193,7 +193,6 @@ pub fn akita_lattice_protocol_config_for_layout(
             d_pack: Some(layout.dimension),
             validity_digest: Some(lattice_packed_validity_digest(&validity_requirements)),
             field_rd_inc_family: layout_has_field_rd_inc(layout),
-            trusted_advice_family: false,
             untrusted_advice_family: layout_has_advice(layout, PackedAdviceKind::Untrusted),
         },
         field_inline: FieldInlineLatticeConfig {

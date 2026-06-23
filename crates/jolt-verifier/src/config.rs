@@ -54,7 +54,6 @@ pub struct PackedWitnessConfig {
     #[serde(default)]
     pub validity_digest: Option<[u8; 32]>,
     pub field_rd_inc_family: bool,
-    pub trusted_advice_family: bool,
     pub untrusted_advice_family: bool,
 }
 
@@ -106,7 +105,6 @@ impl JoltProtocolConfig {
                     d_pack: None,
                     validity_digest: None,
                     field_rd_inc_family: false,
-                    trusted_advice_family: false,
                     untrusted_advice_family: false,
                 },
                 field_inline: FieldInlineLatticeConfig { enabled: false },
@@ -148,7 +146,6 @@ pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
             d_pack: None,
             validity_digest: None,
             field_rd_inc_family: false,
-            trusted_advice_family: false,
             untrusted_advice_family: false,
         },
         field_inline: FieldInlineLatticeConfig { enabled: false },
@@ -210,11 +207,6 @@ fn validate_lattice_config(config: &JoltProtocolConfig) -> Result<(), VerifierEr
     if !config.lattice.field_inline.enabled && config.lattice.packed_witness.field_rd_inc_family {
         return Err(invalid_config(
             "FieldRdInc packed witness families require field-inline lattice mode",
-        ));
-    }
-    if config.lattice.packed_witness.trusted_advice_family {
-        return Err(invalid_config(
-            "trusted advice uses separate precommitted openings and cannot be a packed witness family",
         ));
     }
     if config.lattice.advice.untrusted && !config.lattice.packed_witness.untrusted_advice_family {
@@ -380,9 +372,6 @@ mod tests {
             Some(PcsFamily::Lattice)
         );
 
-        trusted.lattice.packed_witness.trusted_advice_family = true;
-        assert!(invalid(&trusted));
-
         let mut untrusted = valid_lattice_config();
         untrusted.lattice.advice.untrusted = true;
         assert!(invalid(&untrusted));
@@ -392,13 +381,6 @@ mod tests {
             validate_protocol_config(&untrusted).ok(),
             Some(PcsFamily::Lattice)
         );
-
-        let mut extra_trusted_family = valid_lattice_config();
-        extra_trusted_family
-            .lattice
-            .packed_witness
-            .trusted_advice_family = true;
-        assert!(invalid(&extra_trusted_family));
 
         let mut extra_untrusted_family = valid_lattice_config();
         extra_untrusted_family

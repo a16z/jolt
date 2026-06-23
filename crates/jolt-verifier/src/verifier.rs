@@ -1188,11 +1188,6 @@ fn absorb_lattice_protocol_header<T: Transcript>(
     );
     absorb_labeled_u64(
         transcript,
-        b"lattice_tr_advice_family",
-        protocol.lattice.packed_witness.trusted_advice_family as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
         b"lattice_un_advice_family",
         protocol.lattice.packed_witness.untrusted_advice_family as u64,
     );

@@ -32,7 +32,6 @@ fn lattice_config() -> JoltProtocolConfig {
         d_pack: Some(0),
         validity_digest: Some([0; 32]),
         field_rd_inc_family: false,
-        trusted_advice_family: false,
         untrusted_advice_family: false,
     };
     #[cfg(feature = "field-inline")]

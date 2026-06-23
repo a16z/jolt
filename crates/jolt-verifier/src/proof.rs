@@ -475,7 +475,6 @@ mod tests {
             d_pack: Some(43),
             validity_digest: Some([11; 32]),
             field_rd_inc_family: false,
-            trusted_advice_family: false,
             untrusted_advice_family: false,
         };
         #[cfg(feature = "field-inline")]
