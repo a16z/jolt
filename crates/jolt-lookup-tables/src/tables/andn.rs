@@ -34,6 +34,10 @@ impl<const XLEN: usize> LookupTable for AndnTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for AndnTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::Andn]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::AndNot]
     }

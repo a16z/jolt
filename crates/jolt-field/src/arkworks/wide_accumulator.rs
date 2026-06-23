@@ -1,37 +1,34 @@
 //! Wide-integer accumulator for BN254 Fr deferred reduction.
 //!
-//! Accumulates `sum += a * b` as 9-limb (576-bit) schoolbook products,
-//! deferring the Montgomery reduction to a single call at the end.
+//! Accumulates `sum += a * b` as folded 4x4 limb products, deferring
+//! carry propagation and Montgomery reduction to a single call at the end.
 //!
 //! # Capacity
 //!
-//! Each Fr element is 4 limbs (256 bits). The unreduced product of two
-//! elements is 8 limbs (512 bits). A 9-limb accumulator (576 bits) can
-//! hold up to 2^64 such products without overflow.
+//! Each Fr element is 4 limbs (256 bits). The product of two elements is
+//! accumulated into eight positional `u128` slots. Carry headroom in each
+//! slot lets the hot loop avoid carry propagation until reduction.
 
 use crate::accumulator::{AdditiveAccumulator, RingAccumulator};
 use crate::arkworks::bn254::Fr;
-use crate::Limbs;
+use ark_ff::BigInt;
 
 use super::bn254_ops;
 
-/// Wide 9-limb accumulator for BN254 Fr deferred reduction.
+/// Folded 4x4 product accumulator for BN254 Fr deferred reduction.
 ///
-/// Stores the running sum of Montgomery-form products as a 576-bit integer.
-/// Converting to a field element requires a single Montgomery reduction
-/// via [`AdditiveAccumulator::reduce`].
+/// Stores the running sum of Montgomery-form products in positional `u128`
+/// slots. Converting to a field element requires one carry propagation pass
+/// and one Montgomery reduction via [`AdditiveAccumulator::reduce`].
 #[derive(Clone, Copy)]
 pub struct WideAccumulator {
-    /// 9 limbs = 2×4 (product width) + 1 (addition headroom).
-    limbs: Limbs<9>,
+    slots: [u128; 8],
 }
 
 impl Default for WideAccumulator {
     #[inline]
     fn default() -> Self {
-        Self {
-            limbs: Limbs::zero(),
-        }
+        Self { slots: [0; 8] }
     }
 }
 
@@ -45,22 +42,45 @@ impl AdditiveAccumulator for WideAccumulator {
 
     #[inline(always)]
     fn merge(&mut self, other: Self) {
-        self.limbs.add_assign_trunc::<9>(&other.limbs);
+        for (lhs, rhs) in self.slots.iter_mut().zip(other.slots) {
+            *lhs += rhs;
+        }
     }
 
     fn reduce(self) -> Fr {
         // The accumulator holds Montgomery-form products and/or elements.
-        // Montgomery reduction divides product terms by R; raw element additions
-        // are already in Montgomery form and live in the low limbs.
-        let bigint = self.limbs.into();
-        Fr::from_inner(bn254_ops::from_montgomery_reduce(bigint))
+        // Montgomery reduction divides product terms by R.
+        Fr::from_inner(bn254_ops::from_montgomery_reduce(self.normalize()))
     }
 }
 
 impl RingAccumulator for WideAccumulator {
     #[inline(always)]
     fn fmadd(&mut self, a: Fr, b: Fr) {
-        self.limbs.fmadd::<4, 4>(&a.inner_limbs(), &b.inner_limbs());
+        let a = a.inner_limbs();
+        let b = b.inner_limbs();
+        for i in 0..4 {
+            for j in 0..4 {
+                let product = (a.0[i] as u128) * (b.0[j] as u128);
+                self.slots[i + j] += (product as u64) as u128;
+                self.slots[i + j + 1] += ((product >> 64) as u64) as u128;
+            }
+        }
+    }
+}
+
+impl WideAccumulator {
+    #[inline]
+    fn normalize(self) -> BigInt<9> {
+        let mut out = [0u64; 9];
+        let mut carry = 0u128;
+        for (index, slot) in self.slots.into_iter().enumerate() {
+            let (sum, overflow) = slot.overflowing_add(carry);
+            out[index] = sum as u64;
+            carry = (sum >> 64) + ((overflow as u128) << 64);
+        }
+        out[8] = carry as u64;
+        BigInt::new(out)
     }
 }
 

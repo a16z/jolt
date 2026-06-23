@@ -2,6 +2,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::BlindFoldProtocol;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::Field;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
@@ -12,7 +13,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
+        build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
         zk::{blindfold, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
     },
     verifier::{absorb_commitments, absorb_preamble, validate_inputs, validate_proof_consistency},
@@ -86,56 +87,62 @@ where
         &mut transcript,
     );
 
-    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
-    let stage2 = stage2::verify(
-        &checked,
-        preprocessing,
+    let formula_dimensions = build_formula_dimensions(
         proof,
-        &mut transcript,
-        stage2::deps(&stage1),
-    )?;
-    let stage3 = stage3::verify(
-        &checked,
         preprocessing,
-        proof,
-        &mut transcript,
-        stage3::deps(&stage1, &stage2)?,
+        &checked,
+        checked.trace_length.ilog2() as usize,
+        JoltRelationId::InstructionReadRaf,
     )?;
+
+    let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
+    let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
+    let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
     let stage4 = stage4::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage4::deps(&stage2, &stage3)?,
+        &stage2,
+        &stage3,
     )?;
     let stage5 = stage5::verify(
         &checked,
-        preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
-        stage5::deps(&stage2, &stage4)?,
+        &stage2,
+        &stage4,
     )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
     )?;
     let stage7 = stage7::verify(
         &checked,
-        preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
-        stage7::deps(&stage4, &stage6)?,
+        &stage4,
+        &stage6,
     )?;
     let stage8 = stage8::verify(
         &checked,
         preprocessing,
         proof,
+        &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
-        stage8::deps(&stage6, &stage7)?,
+        &stage6,
+        &stage7,
     )?;
 
     let zk_stages = zk_stage_outputs::<PCS, VC>(

@@ -27,6 +27,10 @@ impl<const XLEN: usize> LookupTable for WordAlignmentTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WordAlignmentTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::TwoLsb]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::TwoLsb]
     }

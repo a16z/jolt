@@ -97,6 +97,23 @@ impl ProgramImageClaimReductionLayout {
         Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
     }
 
+    /// `FinalScale` value from the reduction's already-derived cycle-phase
+    /// opening point, rather than re-deriving it from the sumcheck challenges.
+    /// Lets the cycle-phase relation object's `resolve_public` recover the scale
+    /// from the opening point it produced in `derive_opening_points`.
+    pub fn cycle_phase_scale_at_opening_point<F: Field>(
+        &self,
+        r_addr_rw: &[F],
+        opening_point: &[F],
+    ) -> Result<F, JoltFormulaPointError> {
+        let permuted = self
+            .precommitted
+            .cycle_phase_permuted_from_opening_point(opening_point)?;
+        let eq_eval =
+            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &permuted)?;
+        Ok(eq_eval * self.precommitted.cycle_phase_skip_scale::<F>())
+    }
+
     /// `FinalScale` value when the reduction completes in the address phase.
     pub fn address_phase_final_output_scale<F: Field>(
         &self,
@@ -107,8 +124,20 @@ impl ProgramImageClaimReductionLayout {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
+        self.address_phase_scale_at_opening_point(r_addr_rw, &opening_point)
+    }
+
+    /// `FinalScale` value from the reduction's already-derived address-phase
+    /// opening point, rather than re-deriving it from the cycle/sumcheck
+    /// challenges. Lets the stage 7 relation object's `resolve_public` recover the
+    /// scale from the opening point it produced in `derive_opening_points`.
+    pub fn address_phase_scale_at_opening_point<F: Field>(
+        &self,
+        r_addr_rw: &[F],
+        opening_point: &[F],
+    ) -> Result<F, JoltFormulaPointError> {
         let eq_eval =
-            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, &opening_point)?;
+            eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, opening_point)?;
         Ok(eq_eval * precommitted_skip_round_scale::<F>(&self.precommitted))
     }
 }

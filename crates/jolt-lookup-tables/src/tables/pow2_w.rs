@@ -31,6 +31,10 @@ impl<const XLEN: usize> LookupTable for Pow2WTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for Pow2WTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::Pow2W]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::Pow2W]
     }

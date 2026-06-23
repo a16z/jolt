@@ -8,7 +8,7 @@ use crate::VerifierError;
 pub(crate) use crate::stages::zk::inputs::CommittedOutputClaimInputs;
 pub(crate) use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-pub(crate) fn zk_vector_commitment_capacity_requirement() -> usize {
+pub fn zk_vector_commitment_capacity_requirement() -> usize {
     MAX_BLINDFOLD_GENERATORS
 }
 

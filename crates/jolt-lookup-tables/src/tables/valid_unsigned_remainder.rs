@@ -39,6 +39,14 @@ impl<const XLEN: usize> LookupTable for ValidUnsignedRemainderTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidUnsignedRemainderTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[
+            Prefixes::RightOperandIsZero,
+            Prefixes::LessThan,
+            Prefixes::Eq,
+        ]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[
             Suffixes::One,

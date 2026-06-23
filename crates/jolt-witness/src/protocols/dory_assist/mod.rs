@@ -1,7 +1,7 @@
 use super::util::{power_of_two_log_rows, require_unique_ids};
 use crate::{
-    CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind,
-    OracleRef, PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView, PublicValue,
+    CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef,
+    PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView, PublicValue,
     RetentionHint, ViewRequirement, WitnessDimensions, WitnessError, WitnessNamespace,
     WitnessProvider,
 };
@@ -164,7 +164,7 @@ impl<F: Clone> WitnessProvider<F, DoryAssistNamespace> for DoryAssistWitness<F> 
         &self,
         oracle: OracleRef<DoryAssistNamespace>,
     ) -> Result<OracleDescriptor<DoryAssistNamespace>, WitnessError> {
-        let OracleKind::Committed(id) = oracle.kind;
+        let OracleRef::Committed(id) = oracle;
         Ok(OracleDescriptor::new(
             oracle,
             self.dimensions(id)?,
@@ -194,7 +194,7 @@ impl<F: Clone> WitnessProvider<F, DoryAssistNamespace> for DoryAssistWitness<F> 
             self,
             requirement.oracle,
         )?;
-        let OracleKind::Committed(id) = requirement.oracle.kind;
+        let OracleRef::Committed(id) = requirement.oracle;
         Ok(PolynomialView::borrowed(
             descriptor,
             self.committed_values(id)?,

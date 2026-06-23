@@ -28,6 +28,10 @@ impl<const XLEN: usize> LookupTable for NotEqualTable<XLEN> {
 }
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for NotEqualTable<XLEN> {
+    fn prefixes(&self) -> &'static [Prefixes] {
+        &[Prefixes::Eq]
+    }
+
     fn suffixes(&self) -> &'static [Suffixes] {
         &[Suffixes::One, Suffixes::Eq]
     }

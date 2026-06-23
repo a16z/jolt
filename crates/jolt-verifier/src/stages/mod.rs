@@ -2,11 +2,21 @@
 
 use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::{advice, bytecode, program_image},
+    formulas::dimensions::JoltFormulaDimensions,
     formulas::error::JoltFormulaPointError,
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
     PrecommittedClaimReduction, ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
+use jolt_crypto::VectorCommitment;
+use jolt_lookup_tables::XLEN as RISCV_XLEN;
+use jolt_openings::CommitmentScheme;
 
+use crate::preprocessing::JoltVerifierPreprocessing;
+use crate::proof::JoltProof;
+use crate::verifier::CheckedInputs;
+use crate::VerifierError;
+
+pub mod relations;
 pub mod stage1;
 pub mod stage2;
 pub mod stage3;
@@ -15,7 +25,34 @@ pub mod stage5;
 pub mod stage6;
 pub mod stage7;
 pub mod stage8;
-pub(crate) mod zk;
+pub mod zk;
+
+/// Build the one-hot [`JoltFormulaDimensions`] from the proof's one-hot config and
+/// the verifier-trusted geometry (trace length, lookup operand width, bytecode
+/// length, RAM size), mapping the layout error to `stage`. Shared by the stages
+/// (5, 6, 7) that derive their RA layouts from it.
+pub fn build_formula_dimensions<PCS, VC, ZkProof>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    checked: &CheckedInputs,
+    log_t: usize,
+    stage: JoltRelationId,
+) -> Result<JoltFormulaDimensions, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    JoltFormulaDimensions::try_from(proof.one_hot_config.dimensions(
+        log_t,
+        2 * RISCV_XLEN,
+        preprocessing.program.bytecode_len(),
+        checked.ram_K,
+    ))
+    .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+        stage,
+        reason: error.to_string(),
+    })
+}
 
 /// Committed-program geometry feeding the bytecode and program-image
 /// claim-reduction layouts, derived from the committed preprocessing during

@@ -5,46 +5,42 @@ use std::collections::BTreeMap;
 
 #[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 use crate::compat::ids as legacy;
-#[cfg(feature = "field-inline")]
-use crate::stages::{
-    stage1::inputs::FieldInlineStage1Claims,
-    stage2::inputs::{FieldInlineProductOutputOpeningClaims, FieldInlineStage2OutputOpeningClaims},
-    stage4::inputs::{FieldInlineStage4Claims, FieldRegistersReadWriteOutputOpeningClaims},
-    stage5::inputs::{FieldInlineStage5Claims, FieldRegistersValEvaluationOutputOpeningClaims},
-    stage6::inputs::{FieldInlineStage6Claims, FieldRegistersIncClaimReductionOutputOpeningClaims},
-};
 use crate::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
     stages::{
-        stage1::inputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1Claims},
-        stage2::inputs::{
-            InstructionClaimReductionOutputOpeningClaims, ProductRemainderOutputOpeningClaims,
-            RamReadWriteOutputOpeningClaims, Stage2BatchOutputOpeningClaims, Stage2Claims,
+        stage1::outputs::{SpartanOuterClaims, SpartanOuterFlagClaims, Stage1OutputClaims},
+        stage2::outputs::{
+            InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
+            RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
+            Stage2BatchOutputClaims, Stage2OutputClaims,
         },
-        stage3::inputs::{
-            InstructionInputOutputOpeningClaims, RegistersClaimReductionOutputOpeningClaims,
-            SpartanShiftOutputOpeningClaims, Stage3Claims,
+        stage3::outputs::{
+            InstructionInputOutputClaims, RegistersClaimReductionOutputClaims,
+            SpartanShiftOutputClaims, Stage3OutputClaims,
         },
-        stage4::inputs::{
-            RamValCheckAdviceOpeningClaims, RamValCheckOutputOpeningClaims,
-            RegistersReadWriteOutputOpeningClaims, Stage4Claims,
+        stage4::{
+            RamValCheckAdviceClaims, RamValCheckOutputClaims, RegistersReadWriteOutputClaims,
+            Stage4OutputClaims,
         },
-        stage5::inputs::{
-            InstructionReadRafOutputOpeningClaims, RamRaClaimReductionOutputOpeningClaims,
-            RegistersValEvaluationOutputOpeningClaims, Stage5Claims,
+        stage5::{
+            InstructionReadRafOutputClaims, RamRaClaimReductionOutputClaims,
+            RegistersValEvaluationOutputClaims, Stage5OutputClaims,
         },
-        stage6::inputs::{
-            AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims,
-            BytecodeCyclePhaseOutputClaims, BytecodeReadRafOutputOpeningClaims,
-            IncClaimReductionOutputOpeningClaims, InstructionRaVirtualizationOutputOpeningClaims,
-            ProgramImageCyclePhaseOutputClaim, RamHammingBooleanityOutputOpeningClaims,
-            RamRaVirtualizationOutputOpeningClaims, Stage6AddressPhaseClaims,
-            Stage6AdviceCyclePhaseClaims, Stage6Claims,
+        stage6::outputs::{
+            AdviceCyclePhaseOutputClaim, BooleanityOutputClaims, BytecodeCyclePhaseOutputClaims,
+            BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
+            InstructionRaVirtualizationOutputClaims, ProgramImageCyclePhaseOutputClaim,
+            RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
+            Stage6AddressPhaseClaims, Stage6AdviceCyclePhaseClaims, Stage6OutputClaims,
         },
-        stage7::inputs::{
-            AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
-            HammingWeightClaimReductionOutputOpeningClaims, ProgramImageAddressPhaseOutputClaim,
-            Stage7AdviceAddressPhaseClaims, Stage7Claims,
+        stage7::{
+            advice_address_phase::AdviceAddressPhaseOutputClaims,
+            committed_reduction_address_phase::{
+                BytecodeReductionAddressPhaseOutputClaims,
+                ProgramImageReductionAddressPhaseOutputClaims,
+            },
+            hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
+            outputs::Stage7OutputClaims,
         },
     },
     VerifierError,
@@ -106,11 +102,9 @@ pub(crate) fn clear_claims_from_native<F: Field>(
         claims: claims.into_iter().collect(),
     };
     Ok(ClearProofClaims {
-        stage1: Stage1Claims {
+        stage1: Stage1OutputClaims {
             uniskip_output_claim: claims.require(outer_uniskip_opening())?,
             outer: spartan_outer_claims_from_native(&claims)?,
-            #[cfg(feature = "field-inline")]
-            field_inline: zero_field_inline_stage1_claims(),
         },
         stage2: stage2_claims_from_native(&claims)?,
         stage3: stage3_claims_from_native(&claims)?,
@@ -170,7 +164,7 @@ fn spartan_outer_claims_from_native<F: Field>(
 
 fn stage2_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage2Claims<F>, VerifierError> {
+) -> Result<Stage2OutputClaims<F>, VerifierError> {
     let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
     let [product_left_instruction_input, product_right_instruction_input, product_jump_flag, product_write_lookup_output_to_rd, product_lookup_output, product_branch_flag, product_next_is_noop, product_virtual_instruction] =
         product_remainder_output_openings();
@@ -179,15 +173,15 @@ fn stage2_claims_from_native<F: Field>(
     let [ram_ra_raf_evaluation] = ram::raf_evaluation_output_openings();
     let [ram_val_final] = ram::output_check_output_openings();
 
-    Ok(Stage2Claims {
+    Ok(Stage2OutputClaims {
         product_uniskip_output_claim: claims.require(product_uniskip_opening())?,
-        batch_outputs: Stage2BatchOutputOpeningClaims {
-            ram_read_write: RamReadWriteOutputOpeningClaims {
+        batch_outputs: Stage2BatchOutputClaims {
+            ram_read_write: RamReadWriteOutputClaims {
                 val: claims.get_or_zero(ram_val),
                 ra: claims.get_or_zero(ram_ra),
                 inc: claims.get_or_zero(ram_inc),
             },
-            product_remainder: ProductRemainderOutputOpeningClaims {
+            product_remainder: ProductRemainderOutputClaims {
                 left_instruction_input: claims.get_or_zero(product_left_instruction_input),
                 right_instruction_input: claims.get_or_zero(product_right_instruction_input),
                 jump_flag: claims.get_or_zero(product_jump_flag),
@@ -197,24 +191,26 @@ fn stage2_claims_from_native<F: Field>(
                 next_is_noop: claims.get_or_zero(product_next_is_noop),
                 virtual_instruction: claims.get_or_zero(product_virtual_instruction),
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: zero_field_inline_stage2_claims(),
-            instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
+            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
                 lookup_output: claims.get(instruction_lookup_output),
                 left_lookup_operand: claims.get_or_zero(instruction_left_lookup_operand),
                 right_lookup_operand: claims.get_or_zero(instruction_right_lookup_operand),
                 left_instruction_input: claims.get(instruction_left_instruction_input),
                 right_instruction_input: claims.get(instruction_right_instruction_input),
             },
-            ram_raf_evaluation: claims.get_or_zero(ram_ra_raf_evaluation),
-            ram_output_check: claims.get_or_zero(ram_val_final),
+            ram_raf_evaluation: RamRafEvaluationOutputClaims {
+                ram_ra: claims.get_or_zero(ram_ra_raf_evaluation),
+            },
+            ram_output_check: RamOutputCheckOutputClaims {
+                val_final: claims.get_or_zero(ram_val_final),
+            },
         },
     })
 }
 
 fn stage3_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage3Claims<F>, VerifierError> {
+) -> Result<Stage3OutputClaims<F>, VerifierError> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
         shift_output_openings();
     let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] =
@@ -222,14 +218,14 @@ fn stage3_claims_from_native<F: Field>(
     let [rd_write_value_reduced, rs1_value_reduced, rs2_value_reduced] =
         registers_claim_reduction::claim_reduction_output_openings();
 
-    let shift = SpartanShiftOutputOpeningClaims {
+    let shift = SpartanShiftOutputClaims {
         unexpanded_pc: claims.require(unexpanded_pc_shift)?,
         pc: claims.require(pc_shift)?,
         is_virtual: claims.require(is_virtual_shift)?,
         is_first_in_sequence: claims.require(is_first_in_sequence_shift)?,
         is_noop: claims.require(is_noop_shift)?,
     };
-    let instruction_input = InstructionInputOutputOpeningClaims {
+    let instruction_input = InstructionInputOutputClaims {
         left_operand_is_rs1: claims.require(left_operand_is_rs1)?,
         rs1_value: claims.require(rs1_value_input)?,
         left_operand_is_pc: claims.require(left_operand_is_pc)?,
@@ -241,7 +237,7 @@ fn stage3_claims_from_native<F: Field>(
         right_operand_is_imm: claims.require(right_operand_is_imm)?,
         imm: claims.require(imm_input)?,
     };
-    let registers_claim_reduction = RegistersClaimReductionOutputOpeningClaims {
+    let registers_claim_reduction = RegistersClaimReductionOutputClaims {
         rd_write_value: claims.require(rd_write_value_reduced)?,
         rs1_value: claims
             .get(rs1_value_reduced)
@@ -251,7 +247,7 @@ fn stage3_claims_from_native<F: Field>(
             .unwrap_or(instruction_input.rs2_value),
     };
 
-    Ok(Stage3Claims {
+    Ok(Stage3OutputClaims {
         shift,
         instruction_input,
         registers_claim_reduction,
@@ -260,27 +256,25 @@ fn stage3_claims_from_native<F: Field>(
 
 fn stage4_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage4Claims<F>, VerifierError> {
+) -> Result<Stage4OutputClaims<F>, VerifierError> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
         registers::read_write_checking_output_openings();
     let [ram_ra, ram_inc] = ram::val_check_output_openings();
 
-    Ok(Stage4Claims {
-        advice: RamValCheckAdviceOpeningClaims {
+    Ok(Stage4OutputClaims {
+        advice: RamValCheckAdviceClaims {
             untrusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
             trusted: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
         },
         program_image_contribution: claims.get(program_image::ram_val_check_contribution_opening()),
-        registers_read_write: RegistersReadWriteOutputOpeningClaims {
+        registers_read_write: RegistersReadWriteOutputClaims {
             registers_val: claims.require(registers_val)?,
             rs1_ra: claims.require(rs1_ra)?,
             rs2_ra: claims.require(rs2_ra)?,
             rd_wa: claims.require(rd_wa)?,
             rd_inc: claims.require(rd_inc)?,
         },
-        #[cfg(feature = "field-inline")]
-        field_inline: zero_field_inline_stage4_claims(),
-        ram_val_check: RamValCheckOutputOpeningClaims {
+        ram_val_check: RamValCheckOutputClaims {
             ram_ra: claims.require(ram_ra)?,
             ram_inc: claims.require(ram_inc)?,
         },
@@ -289,7 +283,7 @@ fn stage4_claims_from_native<F: Field>(
 
 fn stage5_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage5Claims<F>, VerifierError> {
+) -> Result<Stage5OutputClaims<F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
         .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
         .collect::<Result<Vec<_>, _>>()?;
@@ -309,28 +303,26 @@ fn stage5_claims_from_native<F: Field>(
     let [ram_ra] = ram::ra_claim_reduction_output_openings();
     let [rd_inc, rd_wa] = registers::val_evaluation_output_openings();
 
-    Ok(Stage5Claims {
-        instruction_read_raf: InstructionReadRafOutputOpeningClaims {
+    Ok(Stage5OutputClaims {
+        instruction_read_raf: InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra,
             instruction_raf_flag: claims
                 .require(instruction::read_raf_instruction_raf_flag_opening())?,
         },
-        ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims {
+        ram_ra_claim_reduction: RamRaClaimReductionOutputClaims {
             ram_ra: claims.require(ram_ra)?,
         },
-        registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
+        registers_val_evaluation: RegistersValEvaluationOutputClaims {
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
         },
-        #[cfg(feature = "field-inline")]
-        field_inline: zero_field_inline_stage5_claims(),
     })
 }
 
 fn stage6_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage6Claims<F>, VerifierError> {
+) -> Result<Stage6OutputClaims<F>, VerifierError> {
     let mut bytecode_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -428,31 +420,29 @@ fn stage6_claims_from_native<F: Field>(
     let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
     let booleanity_address = booleanity::booleanity_address_phase_opening();
 
-    Ok(Stage6Claims {
+    Ok(Stage6OutputClaims {
         address_phase: Stage6AddressPhaseClaims {
             bytecode_read_raf: claims.require(bytecode_read_raf_address)?,
             booleanity: claims.require(booleanity_address)?,
             bytecode_val_stages: bytecode_val_stage_claims_from_native(claims)?,
         },
-        bytecode_read_raf: BytecodeReadRafOutputOpeningClaims { bytecode_ra },
-        booleanity: BooleanityOutputOpeningClaims {
+        bytecode_read_raf: BytecodeReadRafOutputClaims { bytecode_ra },
+        booleanity: BooleanityOutputClaims {
             instruction_ra: booleanity_instruction_ra,
             bytecode_ra: booleanity_bytecode_ra,
             ram_ra: booleanity_ram_ra,
         },
-        ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
             ram_hamming_weight: claims.require(ram_hamming_weight)?,
         },
-        ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims { ram_ra },
-        instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
             committed_instruction_ra,
         },
-        inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+        inc_claim_reduction: IncClaimReductionOutputClaims {
             ram_inc: claims.require(ram_inc)?,
             rd_inc: claims.require(rd_inc)?,
         },
-        #[cfg(feature = "field-inline")]
-        field_inline: zero_field_inline_stage6_claims(),
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
@@ -519,7 +509,7 @@ fn final_bytecode_chunk_claims_from_native<F: Field>(claims: &NativeOpeningClaim
 
 fn stage7_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Result<Stage7Claims<F>, VerifierError> {
+) -> Result<Stage7OutputClaims<F>, VerifierError> {
     let mut instruction_ra = Vec::new();
     for index in 0.. {
         let id = JoltOpeningId::committed(
@@ -562,13 +552,13 @@ fn stage7_claims_from_native<F: Field>(
         });
     }
 
-    Ok(Stage7Claims {
-        hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims {
+    Ok(Stage7OutputClaims {
+        hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
             instruction_ra,
             bytecode_ra,
             ram_ra,
         },
-        advice_address_phase: Stage7AdviceAddressPhaseClaims {
+        advice_address_phase: AdviceAddressPhaseOutputClaims {
             trusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_address_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
         },
@@ -580,28 +570,26 @@ fn stage7_claims_from_native<F: Field>(
 fn advice_address_phase_claim_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
     kind: JoltAdviceKind,
-) -> Option<AdviceAddressPhaseOutputClaim<F>> {
+) -> Option<F> {
     let _ = claims.get(advice::cycle_phase_advice_opening(kind))?;
-    claims
-        .get(advice::final_advice_opening(kind))
-        .map(|opening_claim| AdviceAddressPhaseOutputClaim { opening_claim })
+    claims.get(advice::final_advice_opening(kind))
 }
 
 fn bytecode_address_phase_claims_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Option<BytecodeAddressPhaseOutputClaims<F>> {
+) -> Option<BytecodeReductionAddressPhaseOutputClaims<F>> {
     let _ = claims.get(bytecode_claim_reduction::cycle_phase_intermediate_opening())?;
     let chunks = final_bytecode_chunk_claims_from_native(claims);
-    (!chunks.is_empty()).then_some(BytecodeAddressPhaseOutputClaims { chunks })
+    (!chunks.is_empty()).then_some(BytecodeReductionAddressPhaseOutputClaims { chunks })
 }
 
 fn program_image_address_phase_claim_from_native<F: Field>(
     claims: &NativeOpeningClaims<F>,
-) -> Option<ProgramImageAddressPhaseOutputClaim<F>> {
+) -> Option<ProgramImageReductionAddressPhaseOutputClaims<F>> {
     let _ = claims.get(program_image::cycle_phase_program_image_opening())?;
     claims
         .get(program_image::final_program_image_opening())
-        .map(|opening_claim| ProgramImageAddressPhaseOutputClaim { opening_claim })
+        .map(|program_image| ProgramImageReductionAddressPhaseOutputClaims { program_image })
 }
 
 #[derive(Clone, Debug)]
@@ -652,21 +640,19 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
     let zero = F::zero();
 
     ClearProofClaims {
-        stage1: Stage1Claims {
+        stage1: Stage1OutputClaims {
             uniskip_output_claim: zero,
             outer: empty_spartan_outer_claims(),
-            #[cfg(feature = "field-inline")]
-            field_inline: zero_field_inline_stage1_claims(),
         },
-        stage2: Stage2Claims {
+        stage2: Stage2OutputClaims {
             product_uniskip_output_claim: zero,
-            batch_outputs: Stage2BatchOutputOpeningClaims {
-                ram_read_write: RamReadWriteOutputOpeningClaims {
+            batch_outputs: Stage2BatchOutputClaims {
+                ram_read_write: RamReadWriteOutputClaims {
                     val: zero,
                     ra: zero,
                     inc: zero,
                 },
-                product_remainder: ProductRemainderOutputOpeningClaims {
+                product_remainder: ProductRemainderOutputClaims {
                     left_instruction_input: zero,
                     right_instruction_input: zero,
                     jump_flag: zero,
@@ -676,28 +662,26 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                     next_is_noop: zero,
                     virtual_instruction: zero,
                 },
-                #[cfg(feature = "field-inline")]
-                field_inline: zero_field_inline_stage2_claims(),
-                instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
+                instruction_claim_reduction: InstructionClaimReductionOutputClaims {
                     lookup_output: None,
                     left_lookup_operand: zero,
                     right_lookup_operand: zero,
                     left_instruction_input: None,
                     right_instruction_input: None,
                 },
-                ram_raf_evaluation: zero,
-                ram_output_check: zero,
+                ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: zero },
+                ram_output_check: RamOutputCheckOutputClaims { val_final: zero },
             },
         },
-        stage3: Stage3Claims {
-            shift: SpartanShiftOutputOpeningClaims {
+        stage3: Stage3OutputClaims {
+            shift: SpartanShiftOutputClaims {
                 unexpanded_pc: zero,
                 pc: zero,
                 is_virtual: zero,
                 is_first_in_sequence: zero,
                 is_noop: zero,
             },
-            instruction_input: InstructionInputOutputOpeningClaims {
+            instruction_input: InstructionInputOutputClaims {
                 left_operand_is_rs1: zero,
                 rs1_value: zero,
                 left_operand_is_pc: zero,
@@ -707,73 +691,67 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 right_operand_is_imm: zero,
                 imm: zero,
             },
-            registers_claim_reduction: RegistersClaimReductionOutputOpeningClaims {
+            registers_claim_reduction: RegistersClaimReductionOutputClaims {
                 rd_write_value: zero,
                 rs1_value: zero,
                 rs2_value: zero,
             },
         },
-        stage4: Stage4Claims {
-            advice: RamValCheckAdviceOpeningClaims {
+        stage4: Stage4OutputClaims {
+            advice: RamValCheckAdviceClaims {
                 untrusted: None,
                 trusted: None,
             },
             program_image_contribution: None,
-            registers_read_write: RegistersReadWriteOutputOpeningClaims {
+            registers_read_write: RegistersReadWriteOutputClaims {
                 registers_val: zero,
                 rs1_ra: zero,
                 rs2_ra: zero,
                 rd_wa: zero,
                 rd_inc: zero,
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: zero_field_inline_stage4_claims(),
-            ram_val_check: RamValCheckOutputOpeningClaims {
+            ram_val_check: RamValCheckOutputClaims {
                 ram_ra: zero,
                 ram_inc: zero,
             },
         },
-        stage5: Stage5Claims {
-            instruction_read_raf: InstructionReadRafOutputOpeningClaims {
+        stage5: Stage5OutputClaims {
+            instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![zero; LookupTableKind::<RISCV_XLEN>::COUNT],
                 instruction_ra: vec![zero],
                 instruction_raf_flag: zero,
             },
-            ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims { ram_ra: zero },
-            registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
+            ram_ra_claim_reduction: RamRaClaimReductionOutputClaims { ram_ra: zero },
+            registers_val_evaluation: RegistersValEvaluationOutputClaims {
                 rd_inc: zero,
                 rd_wa: zero,
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: zero_field_inline_stage5_claims(),
         },
-        stage6: Stage6Claims {
+        stage6: Stage6OutputClaims {
             address_phase: Stage6AddressPhaseClaims {
                 bytecode_read_raf: zero,
                 booleanity: zero,
                 bytecode_val_stages: None,
             },
-            bytecode_read_raf: BytecodeReadRafOutputOpeningClaims {
+            bytecode_read_raf: BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![zero],
             },
-            booleanity: BooleanityOutputOpeningClaims {
+            booleanity: BooleanityOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
-            ram_ra_virtualization: RamRaVirtualizationOutputOpeningClaims { ram_ra: vec![zero] },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
+            ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra: vec![zero] },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
                 committed_instruction_ra: vec![zero],
             },
-            inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+            inc_claim_reduction: IncClaimReductionOutputClaims {
                 ram_inc: zero,
                 rd_inc: zero,
             },
-            #[cfg(feature = "field-inline")]
-            field_inline: zero_field_inline_stage6_claims(),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
                 untrusted: None,
@@ -781,69 +759,18 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             bytecode_claim_reduction: None,
             program_image_claim_reduction: None,
         },
-        stage7: Stage7Claims {
-            hamming_weight_claim_reduction: HammingWeightClaimReductionOutputOpeningClaims {
+        stage7: Stage7OutputClaims {
+            hamming_weight_claim_reduction: HammingWeightClaimReductionOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            advice_address_phase: Stage7AdviceAddressPhaseClaims {
+            advice_address_phase: AdviceAddressPhaseOutputClaims {
                 trusted: None,
                 untrusted: None,
             },
             bytecode_address_phase: None,
             program_image_address_phase: None,
-        },
-    }
-}
-
-#[cfg(feature = "field-inline")]
-fn zero_field_inline_stage1_claims<F: Field>() -> FieldInlineStage1Claims<F> {
-    FieldInlineStage1Claims::zero()
-}
-
-#[cfg(feature = "field-inline")]
-fn zero_field_inline_stage2_claims<F: Field>() -> FieldInlineStage2OutputOpeningClaims<F> {
-    let zero = F::zero();
-    FieldInlineStage2OutputOpeningClaims {
-        product: FieldInlineProductOutputOpeningClaims {
-            field_rs1_value: zero,
-            field_rs2_value: zero,
-            field_rd_value: zero,
-        },
-    }
-}
-
-#[cfg(feature = "field-inline")]
-fn zero_field_inline_stage4_claims<F: Field>() -> FieldInlineStage4Claims<F> {
-    let zero = F::zero();
-    FieldInlineStage4Claims {
-        field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims {
-            field_registers_val: zero,
-            field_rs1_ra: zero,
-            field_rs2_ra: zero,
-            field_rd_wa: zero,
-            field_rd_inc: zero,
-        },
-    }
-}
-
-#[cfg(feature = "field-inline")]
-fn zero_field_inline_stage5_claims<F: Field>() -> FieldInlineStage5Claims<F> {
-    let zero = F::zero();
-    FieldInlineStage5Claims {
-        field_registers_val_evaluation: FieldRegistersValEvaluationOutputOpeningClaims {
-            field_rd_inc: zero,
-            field_rd_wa: zero,
-        },
-    }
-}
-
-#[cfg(feature = "field-inline")]
-fn zero_field_inline_stage6_claims<F: Field>() -> FieldInlineStage6Claims<F> {
-    FieldInlineStage6Claims {
-        field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputOpeningClaims {
-            field_rd_inc: F::zero(),
         },
     }
 }
@@ -1122,7 +1049,7 @@ fn stage1_outer_variable(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage2_batch_outputs<F: Field>(
-    claims: &Stage2BatchOutputOpeningClaims<F>,
+    claims: &Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
@@ -1166,15 +1093,15 @@ fn claim_from_stage2_batch_outputs<F: Field>(
         id if id == instruction_right_instruction_input => {
             claims.instruction_claim_reduction.right_instruction_input
         }
-        id if id == ram_ra_raf_evaluation => Some(claims.ram_raf_evaluation),
-        id if id == ram_val_final => Some(claims.ram_output_check),
+        id if id == ram_ra_raf_evaluation => Some(claims.ram_raf_evaluation.ram_ra),
+        id if id == ram_val_final => Some(claims.ram_output_check.val_final),
         _ => None,
     }
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage2_batch_outputs<F: Field>(
-    claims: &mut Stage2BatchOutputOpeningClaims<F>,
+    claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [ram_val, ram_ra, ram_inc] = ram::read_write_checking_output_openings();
@@ -1222,15 +1149,15 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
             .instruction_claim_reduction
             .right_instruction_input
             .as_mut(),
-        id if id == ram_ra_raf_evaluation => Some(&mut claims.ram_raf_evaluation),
-        id if id == ram_val_final => Some(&mut claims.ram_output_check),
+        id if id == ram_ra_raf_evaluation => Some(&mut claims.ram_raf_evaluation.ram_ra),
+        id if id == ram_val_final => Some(&mut claims.ram_output_check.val_final),
         _ => None,
     }
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn set_optional_stage2_batch_output<F: Field>(
-    claims: &mut Stage2BatchOutputOpeningClaims<F>,
+    claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1256,7 +1183,7 @@ fn set_optional_stage2_batch_output<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn set_optional_stage4_output<F: Field>(
-    claims: &mut Stage4Claims<F>,
+    claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1275,7 +1202,7 @@ fn set_optional_stage4_output<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn set_optional_stage6_output<F: Field>(
-    claims: &mut Stage6Claims<F>,
+    claims: &mut Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
     opening_claim: F,
 ) -> bool {
@@ -1307,7 +1234,7 @@ fn set_optional_stage6_output<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage3_outputs<F: Field>(
-    claims: &Stage3Claims<F>,
+    claims: &Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
@@ -1340,7 +1267,7 @@ fn claim_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage3_outputs<F: Field>(
-    claims: &mut Stage3Claims<F>,
+    claims: &mut Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [unexpanded_pc_shift, pc_shift, is_virtual_shift, is_first_in_sequence_shift, is_noop_shift] =
@@ -1379,7 +1306,7 @@ fn claim_mut_from_stage3_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage4_outputs<F: Field>(
-    claims: &Stage4Claims<F>,
+    claims: &Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
@@ -1404,7 +1331,7 @@ fn claim_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage4_outputs<F: Field>(
-    claims: &mut Stage4Claims<F>,
+    claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     let [registers_val, rs1_ra, rs2_ra, rd_wa, rd_inc] =
@@ -1431,7 +1358,7 @@ fn claim_mut_from_stage4_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage5_outputs<F: Field>(
-    claims: &Stage5Claims<F>,
+    claims: &Stage5OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
@@ -1469,7 +1396,7 @@ fn claim_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage5_outputs<F: Field>(
-    claims: &mut Stage5Claims<F>,
+    claims: &mut Stage5OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for table in LookupTableKind::<RISCV_XLEN>::iter() {
@@ -1506,7 +1433,7 @@ fn claim_mut_from_stage5_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage6_outputs<F: Field>(
-    claims: &Stage6Claims<F>,
+    claims: &Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening_claim) in claims.bytecode_read_raf.bytecode_ra.iter().enumerate() {
@@ -1602,7 +1529,7 @@ fn claim_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage6_outputs<F: Field>(
-    claims: &mut Stage6Claims<F>,
+    claims: &mut Stage6OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening_claim) in claims.bytecode_read_raf.bytecode_ra.iter_mut().enumerate() {
@@ -1698,7 +1625,7 @@ fn claim_mut_from_stage6_outputs<F: Field>(
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_from_stage7_outputs<F: Field>(
-    claims: &Stage7Claims<F>,
+    claims: &Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<F> {
     for (index, opening) in claims
@@ -1748,23 +1675,19 @@ fn claim_from_stage7_outputs<F: Field>(
     }
 
     match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
-            .advice_address_phase
-            .trusted
-            .as_ref()
-            .map(|claim| claim.opening_claim),
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
-            .advice_address_phase
-            .untrusted
-            .as_ref()
-            .map(|claim| claim.opening_claim),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => {
+            claims.advice_address_phase.trusted
+        }
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => {
+            claims.advice_address_phase.untrusted
+        }
         _ => None,
     }
 }
 
 #[cfg(any(feature = "jolt-core-compat", test))]
 fn claim_mut_from_stage7_outputs<F: Field>(
-    claims: &mut Stage7Claims<F>,
+    claims: &mut Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
     for (index, opening) in claims
@@ -1814,16 +1737,12 @@ fn claim_mut_from_stage7_outputs<F: Field>(
     }
 
     match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
-            .advice_address_phase
-            .trusted
-            .as_mut()
-            .map(|claim| &mut claim.opening_claim),
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
-            .advice_address_phase
-            .untrusted
-            .as_mut()
-            .map(|claim| &mut claim.opening_claim),
+        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => {
+            claims.advice_address_phase.trusted.as_mut()
+        }
+        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => {
+            claims.advice_address_phase.untrusted.as_mut()
+        }
         _ => None,
     }
 }

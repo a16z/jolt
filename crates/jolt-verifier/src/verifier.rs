@@ -1,6 +1,9 @@
 //! Top-level verifier entry point.
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::{
+    JoltOneHotConfig, JoltReadWriteConfig, JoltRelationId, TracePolynomialOrder,
+};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Field, RingAccumulator, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
@@ -11,7 +14,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig},
     preprocessing::JoltVerifierPreprocessing,
-    proof::JoltProof,
+    proof::{JoltCommitments, JoltProof},
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6, stage7, stage8,
         zk::{blindfold, committed, inputs::BlindFoldInputs, outputs::zk_stage_outputs},
@@ -19,6 +22,31 @@ use crate::{
     },
     VerifierError,
 };
+
+/// Proof-derived configuration that participates in the Fiat-Shamir preamble.
+/// Bundles the parameters [`absorb_transcript_preamble`] reads from the proof so
+/// the modular prover can seed an identical transcript before it has a finished
+/// [`JoltProof`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProofTranscriptConfig {
+    pub rw_config: JoltReadWriteConfig,
+    pub one_hot_config: JoltOneHotConfig,
+    pub trace_polynomial_order: TracePolynomialOrder,
+}
+
+impl ProofTranscriptConfig {
+    pub const fn new(
+        rw_config: JoltReadWriteConfig,
+        one_hot_config: JoltOneHotConfig,
+        trace_polynomial_order: TracePolynomialOrder,
+    ) -> Self {
+        Self {
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
+        }
+    }
+}
 
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -57,56 +85,64 @@ where
         &mut transcript,
     );
 
-    let stage1 = stage1::verify(&checked, preprocessing, proof, &mut transcript)?;
-    let stage2 = stage2::verify(
-        &checked,
-        preprocessing,
+    // Built once for the whole verification and shared by the stages that read the
+    // RA layout (5–8), instead of each rebuilding the same dimensions.
+    let formula_dimensions = crate::stages::build_formula_dimensions(
         proof,
-        &mut transcript,
-        stage2::deps(&stage1),
-    )?;
-    let stage3 = stage3::verify(
-        &checked,
         preprocessing,
-        proof,
-        &mut transcript,
-        stage3::deps(&stage1, &stage2)?,
+        &checked,
+        checked.trace_length.ilog2() as usize,
+        JoltRelationId::InstructionReadRaf,
     )?;
+
+    let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
+    let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
+    let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
     let stage4 = stage4::verify(
         &checked,
         preprocessing,
         proof,
         &mut transcript,
-        stage4::deps(&stage2, &stage3)?,
+        &stage2,
+        &stage3,
     )?;
     let stage5 = stage5::verify(
         &checked,
-        preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
-        stage5::deps(&stage2, &stage4)?,
+        &stage2,
+        &stage4,
     )?;
     let stage6 = stage6::verify(
         &checked,
         preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
-        stage6::deps(&stage1, &stage2, &stage3, &stage4, &stage5)?,
+        &stage1,
+        &stage2,
+        &stage3,
+        &stage4,
+        &stage5,
     )?;
     let stage7 = stage7::verify(
         &checked,
-        preprocessing,
         proof,
+        &formula_dimensions,
         &mut transcript,
-        stage7::deps(&stage4, &stage6)?,
+        &stage4,
+        &stage6,
     )?;
     let stage8 = stage8::verify(
         &checked,
         preprocessing,
         proof,
+        &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
-        stage8::deps(&stage6, &stage7)?,
+        &stage6,
+        &stage7,
     )?;
 
     if checked.zk {
@@ -147,6 +183,59 @@ where
     Ok(())
 }
 
+/// Verifier state captured immediately before stage 1, after input validation
+/// and the preamble/commitment absorption. The modular prover drives the staged
+/// verification itself, so it reuses this entry point to obtain the checked
+/// inputs and a transcript seeded identically to [`verify`].
+#[derive(Debug)]
+pub struct PreStage1VerifierState<T> {
+    pub checked: CheckedInputs,
+    pub transcript: T,
+}
+
+/// Runs the [`verify`] preamble — input validation, proof-consistency and
+/// config checks, then preamble + commitment absorption — and returns the
+/// pre-stage-1 state. WARNING: the absorption order here must stay identical to
+/// [`verify`] or the prover and verifier transcripts diverge.
+pub fn verify_until_stage1<PCS, VC, T, ZkProof>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    zk: bool,
+) -> Result<PreStage1VerifierState<T>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: AppendToTranscript,
+    VC: VectorCommitment<Field = PCS::Field>,
+    VC::Output: AppendToTranscript,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let checked = validate_inputs(
+        preprocessing,
+        public_io,
+        proof,
+        trusted_advice_commitment.is_some(),
+        zk,
+    )?;
+    validate_proof_consistency(proof, checked.zk)?;
+    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof)?;
+
+    let mut transcript = T::new(b"Jolt");
+    absorb_preamble(&checked, proof, &mut transcript);
+    absorb_commitments(
+        preprocessing,
+        proof,
+        trusted_advice_commitment,
+        &mut transcript,
+    );
+
+    Ok(PreStage1VerifierState {
+        checked,
+        transcript,
+    })
+}
+
 #[expect(non_snake_case, reason = "Matches current jolt-core proof field name.")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedInputs {
@@ -166,6 +255,47 @@ pub fn validate_inputs<PCS, VC, ZkProof>(
     public_io: &JoltDevice,
     proof: &JoltProof<PCS, VC, ZkProof>,
     trusted_advice_commitment_present: bool,
+    zk: bool,
+) -> Result<CheckedInputs, VerifierError>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    validate_inputs_from_parts(
+        preprocessing,
+        public_io,
+        proof.trace_length,
+        proof.ram_K,
+        proof.trace_polynomial_order,
+        proof.one_hot_config,
+        trusted_advice_commitment_present,
+        proof.untrusted_advice_commitment.is_some(),
+        zk,
+    )
+}
+
+/// Validates the verifier inputs from the individual proof-derived parameters,
+/// rather than a finished [`JoltProof`]. The modular prover calls this before it
+/// has assembled a proof, so it must supply `trace_length`, `ram_k`,
+/// `trace_polynomial_order`, and `one_hot_config` directly, along with whether
+/// the trusted/untrusted advice commitments are present.
+///
+/// [`validate_inputs`] delegates here, so the two paths produce identical
+/// [`CheckedInputs`] — including the [`PrecommittedSchedule`] — given matching
+/// parameters.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Mirrors the proof-derived inputs validate_inputs threads through; bundling them would obscure the FS-critical parameter set."
+)]
+pub fn validate_inputs_from_parts<PCS, VC>(
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    public_io: &JoltDevice,
+    trace_length: usize,
+    ram_k: usize,
+    trace_polynomial_order: TracePolynomialOrder,
+    one_hot_config: JoltOneHotConfig,
+    trusted_advice_commitment_present: bool,
+    untrusted_advice_commitment_present: bool,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
@@ -193,11 +323,11 @@ where
         });
     }
 
-    if !proof.trace_length.is_power_of_two()
-        || proof.trace_length > preprocessing.program.max_padded_trace_length()
+    if !trace_length.is_power_of_two()
+        || trace_length > preprocessing.program.max_padded_trace_length()
     {
         return Err(VerifierError::InvalidTraceLength {
-            got: proof.trace_length,
+            got: trace_length,
             max: preprocessing.program.max_padded_trace_length(),
         });
     }
@@ -214,9 +344,9 @@ where
         compute_max_ram_k(memory_layout).map_err(|error| VerifierError::InvalidMemoryLayout {
             reason: error.to_string(),
         })?;
-    if !proof.ram_K.is_power_of_two() || proof.ram_K < min_ram_k || proof.ram_K > max_ram_k {
+    if !ram_k.is_power_of_two() || ram_k < min_ram_k || ram_k > max_ram_k {
         return Err(VerifierError::InvalidRamK {
-            got: proof.ram_K,
+            got: ram_k,
             min: min_ram_k,
             max: max_ram_k,
         });
@@ -265,13 +395,11 @@ where
         })
         .transpose()?;
     let precommitted = PrecommittedSchedule::new(
-        proof.trace_polynomial_order,
-        proof.trace_length.ilog2() as usize,
-        proof.one_hot_config.committed_chunk_bits(),
+        trace_polynomial_order,
+        trace_length.ilog2() as usize,
+        one_hot_config.committed_chunk_bits(),
         trusted_advice_commitment_present.then_some(memory_layout.max_trusted_advice_size as usize),
-        proof
-            .untrusted_advice_commitment
-            .is_some()
+        untrusted_advice_commitment_present
             .then_some(memory_layout.max_untrusted_advice_size as usize),
         committed_program,
     )
@@ -282,8 +410,8 @@ where
     Ok(CheckedInputs {
         public_io: normalized_public_io,
         zk,
-        trace_length: proof.trace_length,
-        ram_K: proof.ram_K,
+        trace_length,
+        ram_K: ram_k,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
         trusted_advice_commitment_present,
@@ -321,6 +449,29 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
+    absorb_transcript_preamble(
+        checked,
+        ProofTranscriptConfig::new(
+            proof.rw_config,
+            proof.one_hot_config,
+            proof.trace_polynomial_order,
+        ),
+        transcript,
+    );
+}
+
+/// Absorbs the Jolt Fiat-Shamir preamble: the preprocessing digest, public I/O
+/// metadata, and the proof-derived structural parameters carried by
+/// [`ProofTranscriptConfig`]. WARNING: the byte order here is consensus-critical
+/// — it must stay identical to the order [`verify`] uses (via [`absorb_preamble`])
+/// or prover and verifier transcripts diverge.
+pub fn absorb_transcript_preamble<T>(
+    checked: &CheckedInputs,
+    config: ProofTranscriptConfig,
+    transcript: &mut T,
+) where
+    T: Transcript,
+{
     let public_io = &checked.public_io;
     absorb_labeled_bytes(
         transcript,
@@ -347,37 +498,37 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase1_num_rounds",
-        proof.rw_config.ram_rw_phase1_num_rounds as u64,
+        config.rw_config.ram_rw_phase1_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase2_num_rounds",
-        proof.rw_config.ram_rw_phase2_num_rounds as u64,
+        config.rw_config.ram_rw_phase2_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase1_num_rounds",
-        proof.rw_config.registers_rw_phase1_num_rounds as u64,
+        config.rw_config.registers_rw_phase1_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase2_num_rounds",
-        proof.rw_config.registers_rw_phase2_num_rounds as u64,
+        config.rw_config.registers_rw_phase2_num_rounds as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"log_k_chunk",
-        proof.one_hot_config.log_k_chunk as u64,
+        config.one_hot_config.log_k_chunk as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"lookups_ra_virtual_log_k_chunk",
-        proof.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
+        config.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
     );
     absorb_labeled_u64(
         transcript,
         b"dory_layout",
-        proof.trace_polynomial_order.transcript_scalar(),
+        config.trace_polynomial_order.transcript_scalar(),
     );
 }
 
@@ -392,29 +543,12 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let mut absorb_commitment = |commitment: &PCS::Output| {
-        append_payload_label(transcript, b"commitment", commitment);
-        transcript.append(commitment);
-    };
-    absorb_commitment(&proof.commitments.rd_inc);
-    absorb_commitment(&proof.commitments.ram_inc);
-    for commitment in &proof.commitments.ra.instruction {
-        absorb_commitment(commitment);
-    }
-    for commitment in &proof.commitments.ra.ram {
-        absorb_commitment(commitment);
-    }
-    for commitment in &proof.commitments.ra.bytecode {
-        absorb_commitment(commitment);
-    }
-    if let Some(untrusted_advice_commitment) = &proof.untrusted_advice_commitment {
-        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
-        transcript.append(untrusted_advice_commitment);
-    }
-    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
-        transcript.append(trusted_advice_commitment);
-    }
+    absorb_transcript_commitments(
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+        transcript,
+    );
     if let Some(committed) = preprocessing.program.committed() {
         for commitment in &committed.bytecode_chunk_commitments {
             append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
@@ -426,6 +560,45 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
             &committed.program_image_commitment,
         );
         transcript.append(&committed.program_image_commitment);
+    }
+}
+
+/// Absorbs the proof-derived polynomial commitments (increment, one-hot `ra`,
+/// and optional advice commitments) in the consensus-critical order. WARNING:
+/// this covers only the commitments carried by the proof itself; committed
+/// program-image commitments live in the preprocessing and are absorbed
+/// separately by [`absorb_commitments`] immediately after this call.
+pub fn absorb_transcript_commitments<C, T>(
+    commitments: &JoltCommitments<C>,
+    untrusted_advice_commitment: Option<&C>,
+    trusted_advice_commitment: Option<&C>,
+    transcript: &mut T,
+) where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    let mut absorb_commitment = |commitment: &C| {
+        append_payload_label(transcript, b"commitment", commitment);
+        transcript.append(commitment);
+    };
+    absorb_commitment(&commitments.rd_inc);
+    absorb_commitment(&commitments.ram_inc);
+    for commitment in &commitments.ra.instruction {
+        absorb_commitment(commitment);
+    }
+    for commitment in &commitments.ra.ram {
+        absorb_commitment(commitment);
+    }
+    for commitment in &commitments.ra.bytecode {
+        absorb_commitment(commitment);
+    }
+    if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
+        append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
+        transcript.append(untrusted_advice_commitment);
+    }
+    if let Some(trusted_advice_commitment) = trusted_advice_commitment {
+        append_payload_label(transcript, b"trusted_advice", trusted_advice_commitment);
+        transcript.append(trusted_advice_commitment);
     }
 }
 
@@ -836,7 +1009,6 @@ mod tests {
         )
     }
 
-    #[cfg(not(feature = "field-inline"))]
     fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
         crate::proof::JoltCommitments::new(
             TestCommitment,
@@ -845,22 +1017,6 @@ mod tests {
                 Vec::<TestCommitment>::new(),
                 Vec::<TestCommitment>::new(),
                 Vec::<TestCommitment>::new(),
-            ),
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
-        crate::proof::JoltCommitments::new(
-            TestCommitment,
-            TestCommitment,
-            crate::proof::JoltRaCommitments::new(
-                Vec::<TestCommitment>::new(),
-                Vec::<TestCommitment>::new(),
-                Vec::<TestCommitment>::new(),
-            ),
-            crate::proof::FieldInlineCommitments::new(
-                crate::proof::FieldRegistersCommitments::new(TestCommitment),
             ),
         )
     }
@@ -869,21 +1025,19 @@ mod tests {
         let zero = Fr::zero();
 
         JoltProofClaims::Clear(ClearProofClaims {
-            stage1: stage1::inputs::Stage1Claims {
+            stage1: stage1::outputs::Stage1OutputClaims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
-                #[cfg(feature = "field-inline")]
-                field_inline: zero_field_inline_stage1_claims(),
             },
-            stage2: stage2::inputs::Stage2Claims {
+            stage2: stage2::outputs::Stage2OutputClaims {
                 product_uniskip_output_claim: zero,
-                batch_outputs: stage2::inputs::Stage2BatchOutputOpeningClaims {
-                    ram_read_write: stage2::inputs::RamReadWriteOutputOpeningClaims {
+                batch_outputs: stage2::outputs::Stage2BatchOutputClaims {
+                    ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                         val: zero,
                         ra: zero,
                         inc: zero,
                     },
-                    product_remainder: stage2::inputs::ProductRemainderOutputOpeningClaims {
+                    product_remainder: stage2::outputs::ProductRemainderOutputClaims {
                         left_instruction_input: zero,
                         right_instruction_input: zero,
                         jump_flag: zero,
@@ -893,29 +1047,31 @@ mod tests {
                         next_is_noop: zero,
                         virtual_instruction: zero,
                     },
-                    #[cfg(feature = "field-inline")]
-                    field_inline: zero_field_inline_stage2_claims(),
                     instruction_claim_reduction:
-                        stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
+                        stage2::outputs::InstructionClaimReductionOutputClaims {
                             lookup_output: None,
                             left_lookup_operand: zero,
                             right_lookup_operand: zero,
                             left_instruction_input: None,
                             right_instruction_input: None,
                         },
-                    ram_raf_evaluation: zero,
-                    ram_output_check: zero,
+                    ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims {
+                        ram_ra: zero,
+                    },
+                    ram_output_check: stage2::outputs::RamOutputCheckOutputClaims {
+                        val_final: zero,
+                    },
                 },
             },
-            stage3: stage3::inputs::Stage3Claims {
-                shift: stage3::inputs::SpartanShiftOutputOpeningClaims {
+            stage3: stage3::outputs::Stage3OutputClaims {
+                shift: stage3::outputs::SpartanShiftOutputClaims {
                     unexpanded_pc: zero,
                     pc: zero,
                     is_virtual: zero,
                     is_first_in_sequence: zero,
                     is_noop: zero,
                 },
-                instruction_input: stage3::inputs::InstructionInputOutputOpeningClaims {
+                instruction_input: stage3::outputs::InstructionInputOutputClaims {
                     left_operand_is_rs1: zero,
                     rs1_value: zero,
                     left_operand_is_pc: zero,
@@ -925,163 +1081,99 @@ mod tests {
                     right_operand_is_imm: zero,
                     imm: zero,
                 },
-                registers_claim_reduction:
-                    stage3::inputs::RegistersClaimReductionOutputOpeningClaims {
-                        rd_write_value: zero,
-                        rs1_value: zero,
-                        rs2_value: zero,
-                    },
+                registers_claim_reduction: stage3::outputs::RegistersClaimReductionOutputClaims {
+                    rd_write_value: zero,
+                    rs1_value: zero,
+                    rs2_value: zero,
+                },
             },
-            stage4: stage4::inputs::Stage4Claims {
-                advice: stage4::inputs::RamValCheckAdviceOpeningClaims {
+            stage4: stage4::outputs::Stage4OutputClaims {
+                advice: stage4::RamValCheckAdviceClaims {
                     untrusted: None,
                     trusted: None,
                 },
                 program_image_contribution: None,
-                registers_read_write: stage4::inputs::RegistersReadWriteOutputOpeningClaims {
+                registers_read_write: stage4::RegistersReadWriteOutputClaims {
                     registers_val: zero,
                     rs1_ra: zero,
                     rs2_ra: zero,
                     rd_wa: zero,
                     rd_inc: zero,
                 },
-                #[cfg(feature = "field-inline")]
-                field_inline: zero_field_inline_stage4_claims(),
-                ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
+                ram_val_check: stage4::RamValCheckOutputClaims {
                     ram_ra: zero,
                     ram_inc: zero,
                 },
             },
-            stage5: stage5::inputs::Stage5Claims {
-                instruction_read_raf: stage5::inputs::InstructionReadRafOutputOpeningClaims {
+            stage5: stage5::outputs::Stage5OutputClaims {
+                instruction_read_raf: stage5::InstructionReadRafOutputClaims {
                     lookup_table_flags: Vec::new(),
                     instruction_ra: Vec::new(),
                     instruction_raf_flag: zero,
                 },
-                ram_ra_claim_reduction: stage5::inputs::RamRaClaimReductionOutputOpeningClaims {
-                    ram_ra: zero,
+                ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims { ram_ra: zero },
+                registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
+                    rd_inc: zero,
+                    rd_wa: zero,
                 },
-                registers_val_evaluation:
-                    stage5::inputs::RegistersValEvaluationOutputOpeningClaims {
-                        rd_inc: zero,
-                        rd_wa: zero,
-                    },
-                #[cfg(feature = "field-inline")]
-                field_inline: zero_field_inline_stage5_claims(),
             },
-            stage6: stage6::inputs::Stage6Claims {
-                address_phase: stage6::inputs::Stage6AddressPhaseClaims {
+            stage6: stage6::outputs::Stage6OutputClaims {
+                address_phase: stage6::outputs::Stage6AddressPhaseClaims {
                     bytecode_read_raf: zero,
                     booleanity: zero,
                     bytecode_val_stages: None,
                 },
-                bytecode_read_raf: stage6::inputs::BytecodeReadRafOutputOpeningClaims {
+                bytecode_read_raf: stage6::outputs::BytecodeReadRafOutputClaims {
                     bytecode_ra: Vec::new(),
                 },
-                booleanity: stage6::inputs::BooleanityOutputOpeningClaims {
+                booleanity: stage6::outputs::BooleanityOutputClaims {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                ram_hamming_booleanity: stage6::inputs::RamHammingBooleanityOutputOpeningClaims {
+                ram_hamming_booleanity: stage6::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
                 },
-                ram_ra_virtualization: stage6::inputs::RamRaVirtualizationOutputOpeningClaims {
+                ram_ra_virtualization: stage6::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),
                 },
                 instruction_ra_virtualization:
-                    stage6::inputs::InstructionRaVirtualizationOutputOpeningClaims {
+                    stage6::outputs::InstructionRaVirtualizationOutputClaims {
                         committed_instruction_ra: Vec::new(),
                     },
-                inc_claim_reduction: stage6::inputs::IncClaimReductionOutputOpeningClaims {
+                inc_claim_reduction: stage6::outputs::IncClaimReductionOutputClaims {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
-                #[cfg(feature = "field-inline")]
-                field_inline: zero_field_inline_stage6_claims(),
-                advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
+                advice_cycle_phase: stage6::outputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,
                 },
                 bytecode_claim_reduction: None,
                 program_image_claim_reduction: None,
             },
-            stage7: stage7::inputs::Stage7Claims {
+            stage7: stage7::outputs::Stage7OutputClaims {
                 hamming_weight_claim_reduction:
-                    stage7::inputs::HammingWeightClaimReductionOutputOpeningClaims {
+                    stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
                     },
-                advice_address_phase: stage7::inputs::Stage7AdviceAddressPhaseClaims {
-                    trusted: None,
-                    untrusted: None,
-                },
+                advice_address_phase:
+                    stage7::advice_address_phase::AdviceAddressPhaseOutputClaims {
+                        trusted: None,
+                        untrusted: None,
+                    },
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
             },
         })
     }
 
-    #[cfg(feature = "field-inline")]
-    fn zero_field_inline_stage1_claims() -> stage1::inputs::FieldInlineStage1Claims<Fr> {
-        stage1::inputs::FieldInlineStage1Claims::zero()
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn zero_field_inline_stage2_claims() -> stage2::inputs::FieldInlineStage2OutputOpeningClaims<Fr>
-    {
-        let zero = Fr::zero();
-        stage2::inputs::FieldInlineStage2OutputOpeningClaims {
-            product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
-                field_rs1_value: zero,
-                field_rs2_value: zero,
-                field_rd_value: zero,
-            },
-        }
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn zero_field_inline_stage4_claims() -> stage4::inputs::FieldInlineStage4Claims<Fr> {
-        let zero = Fr::zero();
-        stage4::inputs::FieldInlineStage4Claims {
-            field_registers_read_write:
-                stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
-                    field_registers_val: zero,
-                    field_rs1_ra: zero,
-                    field_rs2_ra: zero,
-                    field_rd_wa: zero,
-                    field_rd_inc: zero,
-                },
-        }
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn zero_field_inline_stage5_claims() -> stage5::inputs::FieldInlineStage5Claims<Fr> {
-        let zero = Fr::zero();
-        stage5::inputs::FieldInlineStage5Claims {
-            field_registers_val_evaluation:
-                stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
-                    field_rd_inc: zero,
-                    field_rd_wa: zero,
-                },
-        }
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn zero_field_inline_stage6_claims() -> stage6::inputs::FieldInlineStage6Claims<Fr> {
-        stage6::inputs::FieldInlineStage6Claims {
-            field_registers_inc_claim_reduction:
-                stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
-                    field_rd_inc: Fr::zero(),
-                },
-        }
-    }
-
-    fn empty_spartan_outer_claims() -> stage1::inputs::SpartanOuterClaims<Fr> {
+    fn empty_spartan_outer_claims() -> stage1::outputs::SpartanOuterClaims<Fr> {
         let zero = Fr::zero();
 
-        stage1::inputs::SpartanOuterClaims {
+        stage1::outputs::SpartanOuterClaims {
             left_instruction_input: zero,
             right_instruction_input: zero,
             product: zero,
@@ -1103,7 +1195,7 @@ mod tests {
             next_is_first_in_sequence: zero,
             lookup_output: zero,
             should_jump: zero,
-            flags: stage1::inputs::SpartanOuterFlagClaims {
+            flags: stage1::outputs::SpartanOuterFlagClaims {
                 add_operands: zero,
                 subtract_operands: zero,
                 multiply_operands: zero,

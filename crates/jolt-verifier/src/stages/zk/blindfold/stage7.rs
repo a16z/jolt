@@ -37,8 +37,10 @@ where
                 .then(|| program_image::address_phase::<PCS::Field>(layout.dimensions()))
         });
 
-    values.challenge(
-        JoltChallengeId::from(HammingWeightClaimReductionChallenge::Gamma),
+    values.public(
+        VerifierPublicId::Challenge(JoltChallengeId::from(
+            HammingWeightClaimReductionChallenge::Gamma,
+        )),
         input.stage7.public.hamming_gamma,
     )?;
     let hamming_point = input
@@ -49,9 +51,18 @@ where
             stage_sumcheck_error(JoltRelationId::HammingWeightClaimReduction, error)
         })?;
     let rho_rev = hamming_point.iter().rev().copied().collect::<Vec<_>>();
+    let booleanity_opening = input
+        .stage6
+        .output_points
+        .booleanity_opening_point()
+        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::HammingWeightClaimReduction,
+            reason: "Stage 6 booleanity produced no opening point".to_string(),
+        })?;
+    let booleanity_r_address = &booleanity_opening[..hamming_dimensions.log_k_chunk];
     values.public(
         JoltPublicId::from(HammingWeightClaimReductionPublic::EqBooleanity),
-        try_eq_mle(&rho_rev, &input.stage6.booleanity.r_address)
+        try_eq_mle(&rho_rev, booleanity_r_address)
             .map_err(|error| public_error(JoltRelationId::HammingWeightClaimReduction, error))?,
     )?;
     let virtualization_points = stage6_virtualization_points(input, hamming_dimensions)?;
@@ -63,33 +74,37 @@ where
             })?,
         )?;
     }
-    if let (Some(layout), Some(_claim), Some(public)) = (
-        trusted_layout.as_ref(),
-        trusted_claims.as_ref(),
-        input.stage7.trusted_advice_address_phase.as_ref(),
-    ) {
-        add_advice_address_publics(input, values, layout, JoltAdviceKind::Trusted, public)?;
+    // The stage-7 ZK output no longer carries each address phase's sumcheck point;
+    // recompute the prefix-aligned point from the committed consistency, matching
+    // `try_instance_point_at(0, rounds)` in the verifier's ZK arm.
+    let address_phase_point = |claim: &JoltRelationClaims<PCS::Field>, stage| {
+        input
+            .stage7
+            .batch_consistency
+            .try_instance_point_at(0, claim.sumcheck.rounds)
+            .map_err(|error| stage_sumcheck_error(stage, error))
+    };
+    if let (Some(layout), Some(claim)) = (trusted_layout.as_ref(), trusted_claims.as_ref()) {
+        let point = address_phase_point(claim, JoltRelationId::AdviceClaimReduction)?;
+        add_advice_address_publics(input, values, layout, JoltAdviceKind::Trusted, &point)?;
     }
-    if let (Some(layout), Some(_claim), Some(public)) = (
-        untrusted_layout.as_ref(),
-        untrusted_claims.as_ref(),
-        input.stage7.untrusted_advice_address_phase.as_ref(),
-    ) {
-        add_advice_address_publics(input, values, layout, JoltAdviceKind::Untrusted, public)?;
+    if let (Some(layout), Some(claim)) = (untrusted_layout.as_ref(), untrusted_claims.as_ref()) {
+        let point = address_phase_point(claim, JoltRelationId::AdviceClaimReduction)?;
+        add_advice_address_publics(input, values, layout, JoltAdviceKind::Untrusted, &point)?;
     }
-    if let (Some(layout), Some(_claim), Some(public)) = (
+    if let (Some(layout), Some(claim)) = (
         bytecode_reduction_layout.as_ref(),
         bytecode_reduction_claims.as_ref(),
-        input.stage7.bytecode_address_phase.as_ref(),
     ) {
-        add_bytecode_reduction_address_publics(input, values, layout, public)?;
+        let point = address_phase_point(claim, JoltRelationId::BytecodeClaimReduction)?;
+        add_bytecode_reduction_address_publics(input, values, layout, &point)?;
     }
-    if let (Some(layout), Some(_claim), Some(public)) = (
+    if let (Some(layout), Some(claim)) = (
         program_image_reduction_layout.as_ref(),
         program_image_reduction_claims.as_ref(),
-        input.stage7.program_image_address_phase.as_ref(),
     ) {
-        add_program_image_reduction_address_publics(input, values, layout, public)?;
+        let point = address_phase_point(claim, JoltRelationId::ProgramImageClaimReduction)?;
+        add_program_image_reduction_address_publics(input, values, layout, &point)?;
     }
 
     let mut claims = vec![hamming_claims];

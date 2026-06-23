@@ -134,12 +134,15 @@ impl CommitmentScheme for DoryCommitmentScheme {
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
-        // The prepared-point cache in dory-pcs is global and can only be initialized once.
-        // In unit tests, multiple setups with different sizes are created, so initializing the
-        // cache with a small setup can break later tests that need more generators.
-        // We therefore disable cache initialization in `cfg(test)` builds.
-        #[cfg(not(test))]
-        DoryGlobals::init_prepared_cache(&setup.g1_vec, &setup.g2_vec);
+        // We intentionally do NOT seed dory-pcs's global prepared-point cache. That cache
+        // is process-global and keyed only by length, so once seeded it is substituted for
+        // the g2 generators of *any* later `multi_pair` regardless of which SRS produced
+        // them. When this scheme shares a process with the modular prover (jolt-dory) — e.g.
+        // the `e2e_micro` bench, which runs both in one process with different per-size SRS —
+        // the cached g2 silently corrupts the modular prover's openings
+        // (FinalOpeningVerificationFailed). Leaving the cache unseeded keeps every pairing on
+        // its own SRS, at the cost of the cache's pairing-prep speedup. (This was previously
+        // only disabled under `cfg(test)`.)
 
         setup
     }

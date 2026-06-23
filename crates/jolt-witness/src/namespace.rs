@@ -1,4 +1,7 @@
-use core::{fmt::Debug, hash::Hash};
+use core::{
+    fmt::{self, Debug},
+    hash::{Hash, Hasher},
+};
 
 /// Label identifying which protocol a witness item belongs to; appears in
 /// every [`crate::WitnessError`].
@@ -29,22 +32,26 @@ pub trait WitnessNamespace {
     const ID: NamespaceId;
 }
 
+/// Typed reference to a single polynomial within namespace `N`.
+///
 /// Committed polynomials go through the commitment scheme; virtual
 /// polynomials are derived during proving and never committed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum OracleKind<C, V> {
-    Committed(C),
-    Virtual(V),
+pub enum OracleRef<N: WitnessNamespace> {
+    Committed(N::CommittedId),
+    Virtual(N::VirtualId),
 }
 
-/// Typed reference to a single polynomial within namespace `N`.
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct OracleRef<N: WitnessNamespace> {
-    pub kind: OracleKind<N::CommittedId, N::VirtualId>,
-}
-
-// Manual impls: deriving would incorrectly require `N: Clone + Copy` even
+// Manual impls: deriving would incorrectly require traits on `N` even
 // though `N` only appears through its associated types.
+impl<N: WitnessNamespace> Debug for OracleRef<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Committed(id) => f.debug_tuple("Committed").field(id).finish(),
+            Self::Virtual(id) => f.debug_tuple("Virtual").field(id).finish(),
+        }
+    }
+}
+
 impl<N: WitnessNamespace> Clone for OracleRef<N> {
     fn clone(&self) -> Self {
         *self
@@ -53,16 +60,39 @@ impl<N: WitnessNamespace> Clone for OracleRef<N> {
 
 impl<N: WitnessNamespace> Copy for OracleRef<N> {}
 
+impl<N: WitnessNamespace> PartialEq for OracleRef<N> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Committed(lhs), Self::Committed(rhs)) => lhs == rhs,
+            (Self::Virtual(lhs), Self::Virtual(rhs)) => lhs == rhs,
+            _ => false,
+        }
+    }
+}
+
+impl<N: WitnessNamespace> Eq for OracleRef<N> {}
+
+impl<N: WitnessNamespace> Hash for OracleRef<N> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Committed(id) => {
+                0_u8.hash(state);
+                id.hash(state);
+            }
+            Self::Virtual(id) => {
+                1_u8.hash(state);
+                id.hash(state);
+            }
+        }
+    }
+}
+
 impl<N: WitnessNamespace> OracleRef<N> {
     pub const fn committed(id: N::CommittedId) -> Self {
-        Self {
-            kind: OracleKind::Committed(id),
-        }
+        Self::Committed(id)
     }
 
     pub const fn virtual_polynomial(id: N::VirtualId) -> Self {
-        Self {
-            kind: OracleKind::Virtual(id),
-        }
+        Self::Virtual(id)
     }
 }

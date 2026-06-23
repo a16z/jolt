@@ -1,16 +1,17 @@
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineOpFlag,
-    FieldInlineOpeningId, FieldInlinePublicId, FieldInlineVirtualPolynomial, FIELD_REGISTERS_LOG_K,
+    FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlineOpeningId, FieldInlinePublicId,
+    FieldInlineVirtualPolynomial, FIELD_REGISTERS_LOG_K,
 };
 use jolt_field::{Field, ReducingBytes};
 use jolt_program::{
-    execution::{TraceRow, TraceSource},
+    execution::{JoltProgram, TraceOutput, TraceRow, TraceSource},
     field_inline::{
         FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
         FieldRegisterWrite,
     },
+    preprocess::JoltProgramPreprocessing,
 };
 use jolt_riscv::{
     field_inline_operand_shape, FieldInlineOp, FieldInlineOperandShape, FieldInlineXRegisterRole,
@@ -19,9 +20,9 @@ use rayon::prelude::*;
 
 use super::{checked_pow2, eq_evals_msb, TraceBackedJoltVmWitness};
 use crate::{
-    CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleKind,
-    OracleRef, PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView,
-    RetentionHint, ViewRequirement, WitnessError, WitnessNamespace, WitnessProvider,
+    CommittedWitnessProvider, MaterializationPolicy, NamespaceId, OracleDescriptor, OracleRef,
+    PolynomialChunk, PolynomialEncoding, PolynomialStream, PolynomialView, RetentionHint,
+    ViewRequirement, WitnessError, WitnessNamespace, WitnessProvider,
 };
 
 pub const FIELD_INLINE_NAMESPACE: NamespaceId = NamespaceId::new("jolt_vm.field_inline");
@@ -34,7 +35,7 @@ impl WitnessNamespace for FieldInlineNamespace {
     type VirtualId = FieldInlineVirtualPolynomial;
     type OpeningId = FieldInlineOpeningId;
     type PublicId = FieldInlinePublicId;
-    type ChallengeId = FieldInlineChallengeId;
+    type ChallengeId = FieldInlinePublicId;
 
     const ID: NamespaceId = FIELD_INLINE_NAMESPACE;
 }
@@ -66,17 +67,19 @@ pub trait FieldInlineRegisterReadWriteRows<F: Field> {
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
 }
 
-pub struct TraceBackedFieldInlineWitness<'w, 'a, T: TraceSource> {
-    parent: &'w TraceBackedJoltVmWitness<'a, T>,
+pub struct TraceBackedFieldInlineWitness<'a> {
+    log_t: usize,
+    program: &'a JoltProgram,
+    preprocessing: &'a JoltProgramPreprocessing,
     trace_rows: Vec<TraceRow>,
     rows: usize,
 }
 
 fn collect_trace_rows<T: TraceSource + Clone>(
-    parent: &TraceBackedJoltVmWitness<'_, T>,
+    trace: &TraceOutput<T>,
     rows: usize,
 ) -> Result<Vec<TraceRow>, WitnessError> {
-    let mut source = parent.trace.trace.clone();
+    let mut source = trace.trace.clone();
     let mut trace_rows = Vec::with_capacity(rows);
     for _ in 0..rows {
         let Some(row) = source.next_row() else {
@@ -93,12 +96,19 @@ fn collect_trace_rows<T: TraceSource + Clone>(
     Ok(trace_rows)
 }
 
-impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
-    pub fn new(parent: &'w TraceBackedJoltVmWitness<'a, T>) -> Result<Self, WitnessError> {
-        let rows = checked_pow2(parent.config.log_t)?;
-        let trace_rows = collect_trace_rows(parent, rows)?;
+impl<'a> TraceBackedFieldInlineWitness<'a> {
+    pub(crate) fn build<T: TraceSource + Clone>(
+        log_t: usize,
+        program: &'a JoltProgram,
+        preprocessing: &'a JoltProgramPreprocessing,
+        trace: &TraceOutput<T>,
+    ) -> Result<Self, WitnessError> {
+        let rows = checked_pow2(log_t)?;
+        let trace_rows = collect_trace_rows(trace, rows)?;
         let witness = Self {
-            parent,
+            log_t,
+            program,
+            preprocessing,
             trace_rows,
             rows,
         };
@@ -107,13 +117,11 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
     }
 
     fn trace_dimensions(&self) -> Result<crate::WitnessDimensions, WitnessError> {
-        Ok(crate::WitnessDimensions::new(self.parent.config.log_t))
+        Ok(crate::WitnessDimensions::new(self.log_t))
     }
 
     fn field_register_dimensions(&self) -> Result<crate::WitnessDimensions, WitnessError> {
         let log_rows = self
-            .parent
-            .config
             .log_t
             .checked_add(FIELD_REGISTERS_LOG_K)
             .ok_or_else(|| WitnessError::InvalidDimensions {
@@ -124,7 +132,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
     }
 
     fn validate_inputs(&self) -> Result<(), WitnessError> {
-        if !self.parent.program.profile.supports_field_inline() {
+        if !self.program.profile.supports_field_inline() {
             for (index, row) in self.trace_rows.iter().enumerate() {
                 if row.field_inline.is_some()
                     || field_inline_operand_shape(row.instruction.instruction_kind).is_some()
@@ -141,7 +149,6 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
         }
 
         let metadata = self
-            .parent
             .preprocessing
             .bytecode
             .field_inline
@@ -151,7 +158,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
                 reason: "FR-enabled program is missing field-inline bytecode metadata".to_owned(),
             })?;
         metadata
-            .validate(self.parent.preprocessing.bytecode.bytecode.len())
+            .validate(self.preprocessing.bytecode.bytecode.len())
             .map_err(|error| WitnessError::InvalidWitnessData {
                 namespace: FIELD_INLINE_NAMESPACE.name,
                 reason: error.to_string(),
@@ -166,7 +173,6 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
     fn validate_row_shape(&self, index: usize, row: &TraceRow) -> Result<(), WitnessError> {
         let shape = field_inline_operand_shape(row.instruction.instruction_kind);
         let metadata = self
-            .parent
             .preprocessing
             .bytecode
             .field_inline
@@ -188,7 +194,6 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
             )),
             (Some(shape), Some(data)) => {
                 let pc = self
-                    .parent
                     .preprocessing
                     .bytecode
                     .get_pc(&row.instruction)
@@ -271,13 +276,13 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
     }
 
     fn evaluate_field_rd_inc<F: Field>(&self, point: &[F]) -> Result<F, WitnessError> {
-        if point.len() != self.parent.config.log_t {
+        if point.len() != self.log_t {
             return Err(WitnessError::InvalidDimensions {
                 namespace: FIELD_INLINE_NAMESPACE.name,
                 reason: format!(
                     "field-inline rd_inc point has {} variables, expected {}",
                     point.len(),
-                    self.parent.config.log_t
+                    self.log_t
                 ),
             });
         }
@@ -304,7 +309,7 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
             });
         }
         let expected_vars = FIELD_REGISTERS_LOG_K
-            .checked_add(self.parent.config.log_t)
+            .checked_add(self.log_t)
             .ok_or_else(|| WitnessError::InvalidDimensions {
                 namespace: FIELD_INLINE_NAMESPACE.name,
                 reason: "field-register point length overflow".to_owned(),
@@ -385,18 +390,16 @@ impl<'w, 'a, T: TraceSource + Clone> TraceBackedFieldInlineWitness<'w, 'a, T> {
     }
 }
 
-impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
-    for TraceBackedFieldInlineWitness<'_, '_, T>
-{
+impl<F: Field> WitnessProvider<F, FieldInlineNamespace> for TraceBackedFieldInlineWitness<'_> {
     fn describe_oracle(
         &self,
         oracle: OracleRef<FieldInlineNamespace>,
     ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
-        match oracle.kind {
-            OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => Ok(
+        match oracle {
+            OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => Ok(
                 OracleDescriptor::new(oracle, self.trace_dimensions()?, PolynomialEncoding::Dense),
             ),
-            OracleKind::Virtual(id) => self.describe_virtual(id),
+            OracleRef::Virtual(id) => self.describe_virtual(id),
         }
     }
 
@@ -422,14 +425,14 @@ impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
             self,
             requirement.oracle,
         )?;
-        let values = match requirement.oracle.kind {
-            OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
+        let values = match requirement.oracle {
+            OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 materialize_field_rd_inc::<F>(&self.trace_rows, self.rows)
             }
-            OracleKind::Virtual(id) if is_register_domain_virtual(id) => {
+            OracleRef::Virtual(id) if is_register_domain_virtual(id) => {
                 self.materialize_register_virtual(id)?
             }
-            OracleKind::Virtual(id) => self.materialize_trace_virtual(id)?,
+            OracleRef::Virtual(id) => self.materialize_trace_virtual(id)?,
         };
         Ok(PolynomialView::owned(descriptor, values))
     }
@@ -442,14 +445,14 @@ impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
         if requirement.encoding != PolynomialEncoding::Dense {
             return Ok(None);
         }
-        match requirement.oracle.kind {
-            OracleKind::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
+        match requirement.oracle {
+            OracleRef::Committed(FieldInlineCommittedPolynomial::FieldRdInc) => {
                 self.evaluate_field_rd_inc(point).map(Some)
             }
-            OracleKind::Virtual(id) if is_register_domain_virtual(id) => {
+            OracleRef::Virtual(id) if is_register_domain_virtual(id) => {
                 self.evaluate_register_virtual(id, point).map(Some)
             }
-            OracleKind::Virtual(_) => Ok(None),
+            OracleRef::Virtual(_) => Ok(None),
         }
     }
 
@@ -488,17 +491,15 @@ impl<F: Field, T: TraceSource + Clone> WitnessProvider<F, FieldInlineNamespace>
     }
 }
 
-impl<F: Field, T: TraceSource + Clone> CommittedWitnessProvider<F, FieldInlineNamespace>
-    for TraceBackedFieldInlineWitness<'_, '_, T>
+impl<F: Field> CommittedWitnessProvider<F, FieldInlineNamespace>
+    for TraceBackedFieldInlineWitness<'_>
 {
     fn committed_oracle_order(&self) -> Result<Vec<FieldInlineCommittedPolynomial>, WitnessError> {
         Ok(vec![FieldInlineCommittedPolynomial::FieldRdInc])
     }
 }
 
-impl<F: Field, T: TraceSource + Clone> FieldInlineRegisterReadWriteRows<F>
-    for TraceBackedFieldInlineWitness<'_, '_, T>
-{
+impl<F: Field> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWitness<'_> {
     fn field_inline_register_read_write_rows(
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
@@ -509,6 +510,108 @@ impl<F: Field, T: TraceSource + Clone> FieldInlineRegisterReadWriteRows<F>
                     .map_or_else(FieldInlineRegisterReadWriteRow::default, field_register_row)
             })
             .collect())
+    }
+}
+
+impl<'a, T: TraceSource + Clone> TraceBackedJoltVmWitness<'a, T> {
+    pub fn field_inline_witness(&self) -> Result<TraceBackedFieldInlineWitness<'a>, WitnessError> {
+        TraceBackedFieldInlineWitness::build(
+            self.config.log_t,
+            self.program,
+            self.preprocessing,
+            &self.trace,
+        )
+    }
+
+    /// Eagerly materializes and validates the field-inline witness view and stores
+    /// it so this witness can serve the field-inline namespace directly. Callers
+    /// enable the field-inline traits on the main witness by threading the result.
+    pub fn with_field_inline(mut self) -> Result<Self, WitnessError> {
+        self.field_inline = Some(self.field_inline_witness()?);
+        Ok(self)
+    }
+}
+
+impl<'a, T: TraceSource> TraceBackedJoltVmWitness<'a, T> {
+    fn field_inline_view(&self) -> Result<&TraceBackedFieldInlineWitness<'a>, WitnessError> {
+        self.field_inline
+            .as_ref()
+            .ok_or(WitnessError::UnavailableView {
+                namespace: FIELD_INLINE_NAMESPACE.name,
+            })
+    }
+}
+
+impl<F: Field, T: TraceSource> WitnessProvider<F, FieldInlineNamespace>
+    for TraceBackedJoltVmWitness<'_, T>
+{
+    fn describe_oracle(
+        &self,
+        oracle: OracleRef<FieldInlineNamespace>,
+    ) -> Result<OracleDescriptor<FieldInlineNamespace>, WitnessError> {
+        WitnessProvider::<F, FieldInlineNamespace>::describe_oracle(
+            self.field_inline_view()?,
+            oracle,
+        )
+    }
+
+    fn view_requirements(
+        &self,
+        oracle: OracleRef<FieldInlineNamespace>,
+    ) -> Result<Vec<ViewRequirement<FieldInlineNamespace>>, WitnessError> {
+        WitnessProvider::<F, FieldInlineNamespace>::view_requirements(
+            self.field_inline_view()?,
+            oracle,
+        )
+    }
+
+    fn oracle_view(
+        &self,
+        requirement: ViewRequirement<FieldInlineNamespace>,
+    ) -> Result<PolynomialView<'_, F, FieldInlineNamespace>, WitnessError> {
+        self.field_inline_view()?.oracle_view(requirement)
+    }
+
+    fn try_evaluate_oracle_view(
+        &self,
+        requirement: ViewRequirement<FieldInlineNamespace>,
+        point: &[F],
+    ) -> Result<Option<F>, WitnessError> {
+        self.field_inline_view()?
+            .try_evaluate_oracle_view(requirement, point)
+    }
+
+    fn committed_stream<'b>(
+        &'b self,
+        id: FieldInlineCommittedPolynomial,
+        chunk_size: usize,
+    ) -> Result<Box<dyn PolynomialStream<F> + 'b>, WitnessError>
+    where
+        F: 'b,
+        FieldInlineNamespace: 'b,
+    {
+        self.field_inline_view()?.committed_stream(id, chunk_size)
+    }
+}
+
+impl<F: Field, T: TraceSource> CommittedWitnessProvider<F, FieldInlineNamespace>
+    for TraceBackedJoltVmWitness<'_, T>
+{
+    fn committed_oracle_order(&self) -> Result<Vec<FieldInlineCommittedPolynomial>, WitnessError> {
+        CommittedWitnessProvider::<F, FieldInlineNamespace>::committed_oracle_order(
+            self.field_inline_view()?,
+        )
+    }
+}
+
+impl<F: Field, T: TraceSource> FieldInlineRegisterReadWriteRows<F>
+    for TraceBackedJoltVmWitness<'_, T>
+{
+    fn field_inline_register_read_write_rows(
+        &self,
+    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
+        self.field_inline_view()?
+            .field_inline_register_read_write_rows()
     }
 }
 
@@ -1070,7 +1173,7 @@ mod tests {
         bytecode: Vec<JoltInstructionRow>,
         rows: Vec<TraceRow>,
         log_t: usize,
-    ) -> TraceBackedFieldInlineWitness<'static, 'static, OwnedTrace> {
+    ) -> TraceBackedFieldInlineWitness<'static> {
         let program = Box::leak(Box::new(program(
             bytecode.clone(),
             RV64IMAC_JOLT_FIELD_INLINE,
@@ -1084,17 +1187,17 @@ mod tests {
     }
 
     fn owned_view(
-        provider: &TraceBackedFieldInlineWitness<'_, '_, OwnedTrace>,
+        provider: &TraceBackedFieldInlineWitness<'_>,
         oracle: OracleRef<FieldInlineNamespace>,
     ) -> Vec<Fr> {
-        let requirement = <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
+        let requirement = <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
             Fr,
             FieldInlineNamespace,
         >>::view_requirements(provider, oracle)
         .unwrap()
         .remove(0);
         let view: PolynomialView<'_, Fr, FieldInlineNamespace> =
-            <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
+            <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
                 Fr,
                 FieldInlineNamespace,
             >>::oracle_view(provider, requirement)
@@ -1177,7 +1280,7 @@ mod tests {
         let provider = build_field_provider(bytecode, rows, 3);
 
         let order: Vec<FieldInlineCommittedPolynomial> =
-            <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as CommittedWitnessProvider<
+            <TraceBackedFieldInlineWitness<'_> as CommittedWitnessProvider<
                 Fr,
                 FieldInlineNamespace,
             >>::committed_oracle_order(&provider)
@@ -1186,7 +1289,7 @@ mod tests {
 
         let oracle = OracleRef::committed(FieldInlineCommittedPolynomial::FieldRdInc);
         let descriptor: OracleDescriptor<FieldInlineNamespace> =
-            <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
+            <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
                 Fr,
                 FieldInlineNamespace,
             >>::describe_oracle(&provider, oracle)
@@ -1195,7 +1298,7 @@ mod tests {
         assert_eq!(descriptor.encoding, PolynomialEncoding::Dense);
 
         let requirements: Vec<ViewRequirement<FieldInlineNamespace>> =
-            <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
+            <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
                 Fr,
                 FieldInlineNamespace,
             >>::view_requirements(&provider, oracle)
@@ -1211,7 +1314,7 @@ mod tests {
     fn field_rd_inc_streams_field_deltas_and_padding() {
         let (bytecode, rows) = arithmetic_fixture();
         let provider = build_field_provider(bytecode, rows, 3);
-        let mut stream = <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
+        let mut stream = <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
             Fr,
             FieldInlineNamespace,
         >>::committed_stream(
@@ -1390,14 +1493,13 @@ mod tests {
             Ok(Some(PolynomialChunk::<Fr>::I128(vec![0, 11, 0, 0])))
         );
 
-        let mut field_stream =
-            <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
-                Fr,
-                FieldInlineNamespace,
-            >>::committed_stream(
-                &provider, FieldInlineCommittedPolynomial::FieldRdInc, 4
-            )
-            .unwrap();
+        let mut field_stream = <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
+            Fr,
+            FieldInlineNamespace,
+        >>::committed_stream(
+            &provider, FieldInlineCommittedPolynomial::FieldRdInc, 4
+        )
+        .unwrap();
         assert_eq!(
             field_stream.next_chunk(),
             Ok(Some(PolynomialChunk::Dense(vec![
@@ -1449,7 +1551,7 @@ mod tests {
             )),
         ] {
             let requirements: Vec<ViewRequirement<FieldInlineNamespace>> =
-                <TraceBackedFieldInlineWitness<'_, '_, OwnedTrace> as WitnessProvider<
+                <TraceBackedFieldInlineWitness<'_> as WitnessProvider<
                     Fr,
                     FieldInlineNamespace,
                 >>::view_requirements(&provider, oracle)
