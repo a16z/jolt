@@ -8,11 +8,12 @@ use jolt_akita::AkitaField;
 use jolt_akita::AKITA_FIELD_MODULUS;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::formulas::lattice as field_lattice;
+#[cfg(not(feature = "field-inline"))]
+use jolt_claims::protocols::jolt::LatticePackedFamilyId;
 use jolt_claims::protocols::jolt::{
     advice_bytes_validity_requirement, formulas::ra::JoltRaPolynomialLayout,
     lattice_packed_validity_digest, unsigned_inc_validity_requirements, AdviceClaimReductionLayout,
-    JoltAdviceKind, LatticePackedFamilyId, LatticePackedValidityKind,
-    LatticePackedValidityRequirement,
+    JoltAdviceKind, LatticePackedValidityKind, LatticePackedValidityRequirement,
 };
 use jolt_field::FixedByteSize;
 use jolt_openings::{

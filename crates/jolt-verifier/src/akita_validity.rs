@@ -892,25 +892,263 @@ mod tests {
 
     use super::*;
     use crate::{
+        akita::{
+            akita_lattice_protocol_config_for_layout, commit_akita_packing_witness_with_config,
+            AkitaPackingVerifierSetup,
+        },
+        akita_packing::AkitaPackingScheme,
         config::{IncrementCommitmentMode, JoltProtocolConfig, PcsFamily, ProgramMode},
+        proof::ClearOnlyCommitment,
         stages::{
             stage8::derive_lattice_packed_witness_layout, CommittedProgramSchedule,
             PrecommittedSchedule,
         },
     };
+    use jolt_akita::AkitaSetupParams;
     use jolt_claims::protocols::jolt::{
         bytecode_imm_canonical_bytes_requirement,
         formulas::{
             dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
             ra::JoltRaPolynomialLayout,
         },
-        JoltAdviceKind,
+        lattice_packed_validity_digest, JoltAdviceKind,
     };
     use jolt_field::FixedByteSize;
     use jolt_openings::{
-        PackingAdviceKind, PackingAlphabet, PackingCellAddress, PackingFactDomain,
-        PackingFamilySpec, SparsePackingWitness,
+        CommitmentScheme, PackingAdviceKind, PackingAlphabet, PackingCellAddress,
+        PackingFactDomain, PackingFamilySpec, PackingSetupParams, SparsePackingWitness,
     };
+    use jolt_transcript::{Blake2bTranscript, Transcript};
+
+    fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(test)
+            .expect("failed to spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    fn akita_packing_params(
+        layout: &PackingWitnessLayout,
+        max_num_polys_per_commitment_group: usize,
+    ) -> PackingSetupParams<AkitaSetupParams, PackingWitnessLayout> {
+        PackingSetupParams {
+            pcs: AkitaSetupParams::new(
+                layout.dimension,
+                max_num_polys_per_commitment_group,
+                layout.digest,
+            ),
+            layout: layout.clone(),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(
+        feature = "field-inline",
+        ignore = "field-inline canonical-byte validity makes the real Akita proof fixture expensive; run explicitly with --run-ignored"
+    )]
+    fn packed_validity_helper_proves_real_akita_opening_proof() {
+        run_on_large_stack(|| {
+            let log_t = 0;
+            let log_k_chunk = 1;
+            let precommitted = PrecommittedSchedule::new(
+                TracePolynomialOrder::CycleMajor,
+                log_t,
+                log_k_chunk,
+                None,
+                None,
+                Some(CommittedProgramSchedule {
+                    bytecode_len: 1,
+                    bytecode_chunk_count: 1,
+                    program_image_len_words: 1,
+                    program_image_start_index: 0,
+                }),
+            )
+            .expect("precommitted schedule should build");
+            let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+            config.lattice.program_mode = ProgramMode::Committed;
+            config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+            config.lattice.packed_witness.layout_digest = Some([0; 32]);
+            config.lattice.packed_witness.d_pack = Some(0);
+            config.lattice.packed_witness.validity_digest = Some([0; 32]);
+            #[cfg(feature = "field-inline")]
+            {
+                config.lattice.field_inline.enabled = true;
+            }
+
+            let layout = derive_lattice_packed_witness_layout(
+                &config,
+                log_t,
+                log_k_chunk,
+                JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+                &precommitted,
+            )
+            .expect("layout should derive");
+            config.lattice.packed_witness.layout_digest = Some(layout.digest);
+            config.lattice.packed_witness.d_pack = Some(layout.dimension);
+            let requirements =
+                derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                    .expect("validity requirements should derive");
+            config.lattice.packed_witness.validity_digest =
+                Some(lattice_packed_validity_digest(&requirements));
+            let source = validity_default_source(&layout, &requirements);
+            let params = akita_packing_params(&layout, 1);
+            let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
+            let artifacts =
+                commit_akita_packing_witness_with_config(config, &prover_setup, &source)
+                    .expect("valid packed witness should commit");
+
+            let mut prover_transcript = Blake2bTranscript::new(b"akita-validity");
+            let validity = prove_akita_packing_validity(
+                &prover_setup,
+                &mut prover_transcript,
+                &artifacts,
+                &source,
+                log_k_chunk,
+                &precommitted,
+            )
+            .expect("validity proof should prove");
+
+            let mut verifier_transcript = Blake2bTranscript::new(b"akita-validity");
+            verify_validity_artifacts(
+                &verifier_setup,
+                &mut verifier_transcript,
+                &artifacts,
+                log_k_chunk,
+                &precommitted,
+                &validity,
+            )
+            .expect("validity proof should verify");
+            assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+            let mut tampered = validity.clone();
+            tampered.opening_claims.opening_claims[0] += AkitaField::one();
+            let mut tampered_transcript = Blake2bTranscript::new(b"akita-validity");
+            let error = verify_validity_artifacts(
+                &verifier_setup,
+                &mut tampered_transcript,
+                &artifacts,
+                log_k_chunk,
+                &precommitted,
+                &tampered,
+            )
+            .expect_err("tampered validity opening claim should reject");
+            assert!(matches!(
+                error,
+                VerifierError::LatticePackedValidityOutputMismatch
+                    | VerifierError::LatticePackedValidityOpeningVerificationFailed { .. }
+            ));
+        });
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[ignore = "real Akita negative canonical-byte proof takes over two minutes; run explicitly with --run-ignored"]
+    fn packed_validity_rejects_noncanonical_field_rd_inc_bytes() {
+        run_on_large_stack(|| {
+            let log_t = 0;
+            let log_k_chunk = 1;
+            let precommitted = PrecommittedSchedule::new(
+                TracePolynomialOrder::CycleMajor,
+                log_t,
+                log_k_chunk,
+                None,
+                None,
+                Some(CommittedProgramSchedule {
+                    bytecode_len: 1,
+                    bytecode_chunk_count: 1,
+                    program_image_len_words: 1,
+                    program_image_start_index: 0,
+                }),
+            )
+            .expect("precommitted schedule should build");
+            let mut config = JoltProtocolConfig::for_zk(false).with_pcs_family(PcsFamily::Lattice);
+            config.lattice.program_mode = ProgramMode::Committed;
+            config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
+            config.lattice.field_inline.enabled = true;
+            config.lattice.packed_witness.layout_digest = Some([0; 32]);
+            config.lattice.packed_witness.d_pack = Some(0);
+            config.lattice.packed_witness.validity_digest = Some([0; 32]);
+
+            let layout = derive_lattice_packed_witness_layout(
+                &config,
+                log_t,
+                log_k_chunk,
+                JoltRaPolynomialLayout::new(1, 1, 1).expect("RA layout should build"),
+                &precommitted,
+            )
+            .expect("layout should derive");
+            config.lattice.packed_witness.layout_digest = Some(layout.digest);
+            config.lattice.packed_witness.d_pack = Some(layout.dimension);
+            let requirements =
+                derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
+                    .expect("validity requirements should derive");
+            config.lattice.packed_witness.validity_digest =
+                Some(lattice_packed_validity_digest(&requirements));
+
+            let modulus_bytes = jolt_akita::AKITA_FIELD_MODULUS.to_le_bytes();
+            let source =
+                validity_source_with_field_rd_inc_bytes(&layout, &requirements, &modulus_bytes);
+            let params = akita_packing_params(&layout, 1);
+            let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
+            let artifacts =
+                commit_akita_packing_witness_with_config(config, &prover_setup, &source)
+                    .expect("packed witness should commit");
+
+            let mut prover_transcript = Blake2bTranscript::new(b"akita-validity");
+            let validity = prove_akita_packing_validity(
+                &prover_setup,
+                &mut prover_transcript,
+                &artifacts,
+                &source,
+                log_k_chunk,
+                &precommitted,
+            )
+            .expect("invalid packed witness can still produce a proof transcript");
+
+            let mut verifier_transcript = Blake2bTranscript::new(b"akita-validity");
+            let error = verify_validity_artifacts(
+                &verifier_setup,
+                &mut verifier_transcript,
+                &artifacts,
+                log_k_chunk,
+                &precommitted,
+                &validity,
+            )
+            .expect_err("noncanonical field bytes should reject");
+            assert!(matches!(
+                error,
+                VerifierError::LatticePackedValidityOutputMismatch
+                    | VerifierError::LatticePackedValiditySumcheckFailed { .. }
+                    | VerifierError::LatticePackedValidityOpeningVerificationFailed { .. }
+            ));
+        });
+    }
+
+    #[test]
+    fn packed_validity_rejects_precommitted_bytecode_layout_config() {
+        let (layout, _, requirements) = small_bytecode_validity_context();
+        let source = validity_source_with_bytecode_imm_bytes(
+            &layout,
+            &requirements,
+            &jolt_akita::AKITA_FIELD_MODULUS.to_le_bytes(),
+        );
+        let mut config = akita_lattice_protocol_config_for_layout(&layout);
+        config.lattice.packed_witness.validity_digest =
+            Some(lattice_packed_validity_digest(&requirements));
+        let params = akita_packing_params(&layout, 1);
+        let (prover_setup, _) = AkitaPackingScheme::setup(params);
+
+        let error = commit_akita_packing_witness_with_config(config, &prover_setup, &source)
+            .expect_err("precommitted bytecode families should reject");
+
+        assert!(matches!(
+            error,
+            VerifierError::InvalidProtocolConfig { reason }
+                if reason.contains("precommitted family")
+        ));
+    }
 
     #[cfg(feature = "field-inline")]
     #[test]
@@ -1234,6 +1472,13 @@ mod tests {
         AkitaField::from_u64(value)
     }
 
+    fn validity_default_source(
+        layout: &PackingWitnessLayout,
+        requirements: &[LatticePackedValidityRequirement],
+    ) -> SparsePackingWitness<AkitaField> {
+        validity_source_with_symbols(layout, requirements, |_, _| 0)
+    }
+
     #[cfg(feature = "field-inline")]
     fn validity_source_with_field_rd_inc_bytes(
         layout: &PackingWitnessLayout,
@@ -1289,5 +1534,39 @@ mod tests {
         }
         SparsePackingWitness::try_from_cells(layout.clone(), cells)
             .expect("validity source should build")
+    }
+
+    fn verify_validity_artifacts<T>(
+        setup: &AkitaPackingVerifierSetup,
+        transcript: &mut T,
+        artifacts: &AkitaPackingWitnessArtifacts,
+        log_k_chunk: usize,
+        precommitted: &PrecommittedSchedule,
+        validity: &AkitaPackingValidityProofArtifacts,
+    ) -> Result<(), VerifierError>
+    where
+        T: Transcript<Challenge = AkitaField>,
+    {
+        crate::stages::stage8::verify_lattice_packed_validity_proof::<
+            AkitaField,
+            AkitaPackingScheme,
+            T,
+            ClearOnlyCommitment,
+        >(
+            setup,
+            transcript,
+            &artifacts.protocol,
+            log_k_chunk,
+            precommitted,
+            &artifacts.layout,
+            artifacts
+                .payload()
+                .expect("artifact should carry lattice payload")
+                .packed_witness
+                .clone(),
+            &validity.sumcheck_proof,
+            &validity.opening_claims.opening_claims,
+            &validity.opening_proof,
+        )
     }
 }
