@@ -36,7 +36,10 @@ use crate::utils::profiling::print_current_memory_usage;
 use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
 #[cfg(all(feature = "akita", not(feature = "zk")))]
 use crate::zkvm::claim_reductions::{
+    IncVirtualizationSumcheckParams, IncVirtualizationSumcheckProver,
     UnsignedIncChunkReconstructionSumcheckParams, UnsignedIncChunkReconstructionSumcheckProver,
+    UnsignedIncClaimReductionSumcheckParams, UnsignedIncClaimReductionSumcheckProver,
+    UnsignedIncMsbBooleanitySumcheckParams, UnsignedIncMsbBooleanitySumcheckProver,
 };
 use crate::{
     field::JoltField,
@@ -439,6 +442,7 @@ impl<
     #[tracing::instrument(skip_all)]
     fn prove_parts(
         mut self,
+        _lattice_increment: bool,
     ) -> (
         JoltProofParts<F, C, PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
@@ -507,11 +511,19 @@ impl<
             self.prove_stage2();
         let (stage3_sumcheck_proof, r_stage3) = self.prove_stage3();
         let (stage4_sumcheck_proof, r_stage4) = self.prove_stage4();
-        let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5();
+        let (stage5_sumcheck_proof, r_stage5) = self.prove_stage5(_lattice_increment);
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let stage5_increment_sumcheck_proof =
+            _lattice_increment.then(|| self.prove_stage5_increment());
+        #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+        let stage5_increment_sumcheck_proof = None;
         let (stage6a_sumcheck_proof, bytecode_read_raf_params, booleanity_cycle_input) =
-            self.prove_stage6a();
-        let (stage6b_sumcheck_proof, r_stage6) =
-            self.prove_stage6b(bytecode_read_raf_params, booleanity_cycle_input);
+            self.prove_stage6a(_lattice_increment);
+        let (stage6b_sumcheck_proof, r_stage6) = self.prove_stage6b(
+            bytecode_read_raf_params,
+            booleanity_cycle_input,
+            _lattice_increment,
+        );
         let (stage7_sumcheck_proof, r_stage7) = self.prove_stage7();
 
         let _sumcheck_challenges = [
@@ -559,7 +571,7 @@ impl<
             stage3_sumcheck_proof,
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
-            stage5_increment_sumcheck_proof: None,
+            stage5_increment_sumcheck_proof,
             stage6a_sumcheck_proof,
             stage6b_sumcheck_proof,
             stage7_sumcheck_proof,
@@ -610,7 +622,7 @@ impl<
         C: crate::zkvm::proof::ProofCurve<F>,
         PCS: crate::zkvm::proof::ProofCommitmentScheme<F>,
     {
-        let (proof, debug_info) = self.prove_parts();
+        let (proof, debug_info) = self.prove_parts(false);
         let proof = crate::zkvm::proof::proof_parts_into_verifier(proof)?;
         Ok((proof, debug_info))
     }
@@ -1170,6 +1182,7 @@ impl<
     #[tracing::instrument(skip_all)]
     fn prove_stage5(
         &mut self,
+        _lattice_increment: bool,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
@@ -1183,12 +1196,30 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let ram_ra_reduction_params = RaReductionParams::new(
-            self.trace.len(),
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        let ram_ra_reduction_params = {
+            #[cfg(all(feature = "akita", not(feature = "zk")))]
+            {
+                if _lattice_increment {
+                    None
+                } else {
+                    Some(RaReductionParams::new(
+                        self.trace.len(),
+                        &self.one_hot_params,
+                        &self.opening_accumulator,
+                        &mut self.transcript,
+                    ))
+                }
+            }
+            #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+            {
+                Some(RaReductionParams::new(
+                    self.trace.len(),
+                    &self.one_hot_params,
+                    &self.opening_accumulator,
+                    &mut self.transcript,
+                ))
+            }
+        };
         let registers_val_evaluation_params =
             RegistersValEvaluationSumcheckParams::new(&self.opening_accumulator);
 
@@ -1196,12 +1227,14 @@ impl<
             lookups_read_raf_params,
             Arc::clone(&self.trace),
         );
-        let ram_ra_reduction = RamRaClaimReductionSumcheckProver::initialize(
-            ram_ra_reduction_params,
-            &self.trace,
-            &self.program_io.memory_layout,
-            &self.one_hot_params,
-        );
+        let ram_ra_reduction = ram_ra_reduction_params.map(|params| {
+            RamRaClaimReductionSumcheckProver::initialize(
+                params,
+                &self.trace,
+                &self.program_io.memory_layout,
+                &self.one_hot_params,
+            )
+        });
         let registers_val_evaluation = RegistersValEvaluationSumcheckProver::initialize(
             registers_val_evaluation_params,
             &self.trace,
@@ -1212,7 +1245,12 @@ impl<
         #[cfg(feature = "allocative")]
         {
             print_data_structure_heap_usage("InstructionReadRafSumcheckProver", &lookups_read_raf);
-            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
+            if let Some(ram_ra_reduction) = &ram_ra_reduction {
+                print_data_structure_heap_usage(
+                    "RamRaClaimReductionSumcheckProver",
+                    ram_ra_reduction,
+                );
+            }
             print_data_structure_heap_usage(
                 "RegistersValEvaluationSumcheckProver",
                 &registers_val_evaluation,
@@ -1221,9 +1259,11 @@ impl<
 
         let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> = vec![
             Box::new(lookups_read_raf),
-            Box::new(ram_ra_reduction),
             Box::new(registers_val_evaluation),
         ];
+        if let Some(ram_ra_reduction) = ram_ra_reduction {
+            instances.insert(1, Box::new(ram_ra_reduction));
+        }
 
         #[cfg(feature = "allocative")]
         write_boxed_instance_flamegraph_svg(&instances, "stage5_start_flamechart.svg");
@@ -1238,9 +1278,61 @@ impl<
         (sumcheck_proof, r_stage5)
     }
 
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    #[tracing::instrument(skip_all)]
+    fn prove_stage5_increment(&mut self) -> SumcheckInstanceProof<F, C, ProofTranscript> {
+        #[cfg(not(target_arch = "wasm32"))]
+        print_current_memory_usage("Stage 5 increment baseline");
+
+        let ram_ra_reduction_params = RaReductionParams::new(
+            self.trace.len(),
+            &self.one_hot_params,
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+        let inc_virtualization_params = IncVirtualizationSumcheckParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
+
+        let ram_ra_reduction = RamRaClaimReductionSumcheckProver::initialize(
+            ram_ra_reduction_params,
+            &self.trace,
+            &self.program_io.memory_layout,
+            &self.one_hot_params,
+        );
+        let inc_virtualization = IncVirtualizationSumcheckProver::initialize(
+            inc_virtualization_params,
+            Arc::clone(&self.trace),
+        );
+
+        #[cfg(feature = "allocative")]
+        {
+            print_data_structure_heap_usage("RamRaClaimReductionSumcheckProver", &ram_ra_reduction);
+            print_data_structure_heap_usage("IncVirtualizationSumcheckProver", &inc_virtualization);
+        }
+
+        let mut instances: Vec<Box<dyn SumcheckInstanceProver<_, _>>> =
+            vec![Box::new(ram_ra_reduction), Box::new(inc_virtualization)];
+
+        #[cfg(feature = "allocative")]
+        write_boxed_instance_flamegraph_svg(&instances, "stage5_increment_start_flamechart.svg");
+        tracing::info!("Stage 5 increment proving");
+
+        let (sumcheck_proof, _r_stage5_increment, _initial_claim) =
+            self.prove_batched_sumcheck(instances.iter_mut().map(|v| &mut **v as _).collect());
+        #[cfg(feature = "allocative")]
+        write_boxed_instance_flamegraph_svg(&instances, "stage5_increment_end_flamechart.svg");
+        drop_in_background_thread(instances);
+
+        sumcheck_proof
+    }
+
     #[tracing::instrument(skip_all)]
     fn prove_stage6a(
         &mut self,
+        _lattice_increment: bool,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         BytecodeReadRafSumcheckParams<F>,
@@ -1258,12 +1350,35 @@ impl<
             &mut self.transcript,
         );
 
-        let booleanity_params = BooleanitySumcheckParams::new(
-            self.trace.len().log_2(),
-            &self.one_hot_params,
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        let booleanity_params = {
+            #[cfg(all(feature = "akita", not(feature = "zk")))]
+            {
+                if _lattice_increment {
+                    BooleanitySumcheckParams::new_with_unsigned_inc_chunks(
+                        self.trace.len().log_2(),
+                        &self.one_hot_params,
+                        &self.opening_accumulator,
+                        &mut self.transcript,
+                    )
+                } else {
+                    BooleanitySumcheckParams::new(
+                        self.trace.len().log_2(),
+                        &self.one_hot_params,
+                        &self.opening_accumulator,
+                        &mut self.transcript,
+                    )
+                }
+            }
+            #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+            {
+                BooleanitySumcheckParams::new(
+                    self.trace.len().log_2(),
+                    &self.one_hot_params,
+                    &self.opening_accumulator,
+                    &mut self.transcript,
+                )
+            }
+        };
         let mut bytecode_read_raf = BytecodeReadRafAddressSumcheckProver::initialize(
             bytecode_read_raf_params,
             Arc::clone(&self.trace),
@@ -1313,6 +1428,7 @@ impl<
         &mut self,
         bytecode_read_raf_params: BytecodeReadRafSumcheckParams<F>,
         booleanity_cycle_input: BooleanityCycleInput<F>,
+        _lattice_increment: bool,
     ) -> (
         SumcheckInstanceProof<F, C, ProofTranscript>,
         Vec<F::Challenge>,
@@ -1333,11 +1449,28 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         );
-        let inc_reduction_params = IncClaimReductionSumcheckParams::new(
-            self.trace.len(),
-            &self.opening_accumulator,
-            &mut self.transcript,
-        );
+        let inc_reduction_params = {
+            #[cfg(all(feature = "akita", not(feature = "zk")))]
+            {
+                if _lattice_increment {
+                    None
+                } else {
+                    Some(IncClaimReductionSumcheckParams::new(
+                        self.trace.len(),
+                        &self.opening_accumulator,
+                        &mut self.transcript,
+                    ))
+                }
+            }
+            #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+            {
+                Some(IncClaimReductionSumcheckParams::new(
+                    self.trace.len(),
+                    &self.opening_accumulator,
+                    &mut self.transcript,
+                ))
+            }
+        };
 
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
@@ -1460,8 +1593,21 @@ impl<
         );
         let mut lookups_ra_virtual =
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
-        let mut inc_reduction =
-            IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
+        let mut inc_reduction = inc_reduction_params
+            .map(|params| IncClaimReductionSumcheckProver::initialize(params, self.trace.clone()));
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let mut unsigned_inc_reduction = _lattice_increment.then(|| {
+            let params = UnsignedIncClaimReductionSumcheckParams::new(
+                self.trace.len(),
+                &self.opening_accumulator,
+            );
+            UnsignedIncClaimReductionSumcheckProver::initialize(params, Arc::clone(&self.trace))
+        });
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let mut unsigned_inc_msb_booleanity = _lattice_increment.then(|| {
+            let params = UnsignedIncMsbBooleanitySumcheckParams::new(self.trace.len());
+            UnsignedIncMsbBooleanitySumcheckProver::initialize(params, Arc::clone(&self.trace))
+        });
 
         #[cfg(feature = "allocative")]
         {
@@ -1476,7 +1622,24 @@ impl<
             );
             print_data_structure_heap_usage("RamRaSumcheckProver", &ram_ra_virtual);
             print_data_structure_heap_usage("LookupsRaSumcheckProver", &lookups_ra_virtual);
-            print_data_structure_heap_usage("IncClaimReductionSumcheckProver", &inc_reduction);
+            if let Some(inc_reduction) = &inc_reduction {
+                print_data_structure_heap_usage("IncClaimReductionSumcheckProver", inc_reduction);
+            }
+            #[cfg(all(feature = "akita", not(feature = "zk")))]
+            {
+                if let Some(unsigned_inc_reduction) = &unsigned_inc_reduction {
+                    print_data_structure_heap_usage(
+                        "UnsignedIncClaimReductionSumcheckProver",
+                        unsigned_inc_reduction,
+                    );
+                }
+                if let Some(unsigned_inc_msb_booleanity) = &unsigned_inc_msb_booleanity {
+                    print_data_structure_heap_usage(
+                        "UnsignedIncMsbBooleanitySumcheckProver",
+                        unsigned_inc_msb_booleanity,
+                    );
+                }
+            }
             if let Some(ref advice) = self.advice_reduction_prover_trusted {
                 print_data_structure_heap_usage("AdviceClaimReductionProver(trusted)", advice);
             }
@@ -1496,8 +1659,19 @@ impl<
             &mut ram_hamming_booleanity,
             &mut ram_ra_virtual,
             &mut lookups_ra_virtual,
-            &mut inc_reduction,
         ];
+        if let Some(ref mut inc_reduction) = inc_reduction {
+            instances.push(inc_reduction);
+        }
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        {
+            if let Some(ref mut unsigned_inc_reduction) = unsigned_inc_reduction {
+                instances.push(unsigned_inc_reduction);
+            }
+            if let Some(ref mut unsigned_inc_msb_booleanity) = unsigned_inc_msb_booleanity {
+                instances.push(unsigned_inc_msb_booleanity);
+            }
+        }
         if let Some(ref mut advice) = advice_trusted {
             instances.push(advice);
         }
@@ -1524,7 +1698,18 @@ impl<
         drop_in_background_thread(ram_hamming_booleanity);
         drop_in_background_thread(ram_ra_virtual);
         drop_in_background_thread(lookups_ra_virtual);
-        drop_in_background_thread(inc_reduction);
+        if let Some(inc_reduction) = inc_reduction {
+            drop_in_background_thread(inc_reduction);
+        }
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        {
+            if let Some(unsigned_inc_reduction) = unsigned_inc_reduction {
+                drop_in_background_thread(unsigned_inc_reduction);
+            }
+            if let Some(unsigned_inc_msb_booleanity) = unsigned_inc_msb_booleanity {
+                drop_in_background_thread(unsigned_inc_msb_booleanity);
+            }
+        }
 
         self.advice_reduction_prover_trusted = advice_trusted;
         self.advice_reduction_prover_untrusted = advice_untrusted;
