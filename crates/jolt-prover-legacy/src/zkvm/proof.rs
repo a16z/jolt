@@ -89,6 +89,15 @@ impl ProofField for crate::ark_bn254::Fr {
     }
 }
 
+#[cfg(feature = "akita")]
+impl ProofField for crate::field::akita::JoltAkitaField {
+    type VerifierField = jolt_akita::AkitaField;
+
+    fn into_verifier_field(self) -> Self::VerifierField {
+        self.into_akita()
+    }
+}
+
 pub trait ProofCommitmentScheme<F>: CommitmentScheme<Field = F>
 where
     F: ProofField,
