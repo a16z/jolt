@@ -7,7 +7,7 @@ use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsis
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim};
+use crate::stages::relations::{GetPoint, OpeningClaim, OutputClaims};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
@@ -102,23 +102,22 @@ impl<F: Field> Stage2BatchOutputClaims<F> {
     /// openings. Single-sources [`append_to_transcript`](Self::append_to_transcript)
     /// and the prover's batch output-claim values.
     pub fn opening_values(&self) -> Vec<F> {
-        vec![
-            self.ram_read_write.val,
-            self.ram_read_write.ra,
-            self.ram_read_write.inc,
-            self.product_remainder.left_instruction_input,
-            self.product_remainder.right_instruction_input,
-            self.product_remainder.jump_flag,
-            self.product_remainder.write_lookup_output_to_rd,
-            self.product_remainder.lookup_output,
-            self.product_remainder.branch_flag,
-            self.product_remainder.next_is_noop,
-            self.product_remainder.virtual_instruction,
-            self.instruction_claim_reduction.left_lookup_operand,
-            self.instruction_claim_reduction.right_lookup_operand,
-            self.ram_raf_evaluation.ram_ra,
-            self.ram_output_check.val_final,
-        ]
+        // Full relations delegate to their derived `opening_values()` so the
+        // per-field order is single-sourced from the `OutputClaims` derive. Only
+        // the two reduced instruction lookup operands are listed explicitly: the
+        // reduction's other openings alias the product-remainder ones and are not
+        // re-absorbed (see `validate`).
+        self.ram_read_write
+            .opening_values()
+            .into_iter()
+            .chain(self.product_remainder.opening_values())
+            .chain([
+                self.instruction_claim_reduction.left_lookup_operand,
+                self.instruction_claim_reduction.right_lookup_operand,
+            ])
+            .chain(self.ram_raf_evaluation.opening_values())
+            .chain(self.ram_output_check.opening_values())
+            .collect()
     }
 
     /// Append every batch opening to the transcript in canonical order, each under
@@ -306,4 +305,52 @@ pub struct VerifiedProductUniSkip<F: Field> {
     pub tau_low: Vec<F>,
     pub tau_high: F,
     pub sumcheck_point: Point<HIGH_TO_LOW, F>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    /// Locks the stage-2 batch Fiat-Shamir append order against silent drift. The
+    /// full relations single-source their order via the `OutputClaims` derive; only
+    /// the two reduced instruction lookup operands are curated (the reduction's
+    /// other openings alias the product-remainder ones and must NOT be
+    /// re-absorbed). Those aliased `Option` openings carry distinct sentinels here
+    /// to prove they are skipped.
+    #[test]
+    fn opening_values_follow_canonical_order() {
+        let claims = Stage2BatchOutputClaims {
+            ram_read_write: RamReadWriteOutputClaims {
+                val: fr(1),
+                ra: fr(2),
+                inc: fr(3),
+            },
+            product_remainder: ProductRemainderOutputClaims {
+                left_instruction_input: fr(4),
+                right_instruction_input: fr(5),
+                jump_flag: fr(6),
+                write_lookup_output_to_rd: fr(7),
+                lookup_output: fr(8),
+                branch_flag: fr(9),
+                next_is_noop: fr(10),
+                virtual_instruction: fr(11),
+            },
+            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
+                lookup_output: Some(fr(101)),
+                left_lookup_operand: fr(12),
+                right_lookup_operand: fr(13),
+                left_instruction_input: Some(fr(102)),
+                right_instruction_input: Some(fr(103)),
+            },
+            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
+            ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
+        };
+
+        assert_eq!(claims.opening_values(), (1..=15).map(fr).collect::<Vec<_>>());
+    }
 }

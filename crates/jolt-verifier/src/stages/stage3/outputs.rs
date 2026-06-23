@@ -9,7 +9,7 @@ use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::OpeningClaim;
+use crate::stages::relations::{OpeningClaim, OutputClaims};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
 
@@ -42,21 +42,26 @@ impl<F: Field> Stage3OutputClaims<F> {
     /// [`append_to_transcript`](Self::append_to_transcript) and the prover's
     /// output-claim values.
     pub fn opening_values(&self) -> Vec<F> {
-        vec![
-            self.shift.unexpanded_pc,
-            self.shift.pc,
-            self.shift.is_virtual,
-            self.shift.is_first_in_sequence,
-            self.shift.is_noop,
-            self.instruction_input.left_operand_is_rs1,
-            self.instruction_input.rs1_value,
-            self.instruction_input.left_operand_is_pc,
-            self.instruction_input.right_operand_is_rs2,
-            self.instruction_input.rs2_value,
-            self.instruction_input.right_operand_is_imm,
-            self.instruction_input.imm,
-            self.registers_claim_reduction.rd_write_value,
-        ]
+        // `shift` delegates to its derived `opening_values()` so its per-field order
+        // is single-sourced from the `OutputClaims` derive. The instruction-input
+        // and register-reduction openings are listed explicitly because three of
+        // them alias canonical sources and are absorbed once (see `validate`):
+        // `instruction_input.unexpanded_pc` (= `shift.unexpanded_pc`) and the
+        // register-reduction `rs1`/`rs2` values are skipped here.
+        self.shift
+            .opening_values()
+            .into_iter()
+            .chain([
+                self.instruction_input.left_operand_is_rs1,
+                self.instruction_input.rs1_value,
+                self.instruction_input.left_operand_is_pc,
+                self.instruction_input.right_operand_is_rs2,
+                self.instruction_input.rs2_value,
+                self.instruction_input.right_operand_is_imm,
+                self.instruction_input.imm,
+                self.registers_claim_reduction.rd_write_value,
+            ])
+            .collect()
     }
 
     /// Append every absorbed opening to the transcript in canonical order, each
@@ -175,5 +180,50 @@ impl<F: Field, C> Stage3Output<F, C> {
             Self::Zk(output) => Ok(output),
             Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage3" }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    /// Locks the stage-3 Fiat-Shamir append order against silent drift. `shift`
+    /// single-sources its order via the `OutputClaims` derive; the instruction-input
+    /// and register-reduction relations are curated (three openings alias canonical
+    /// sources and are absorbed once via those sources). The aliased openings carry
+    /// distinct sentinels here to prove they are skipped.
+    #[test]
+    fn opening_values_follow_canonical_order() {
+        let claims = Stage3OutputClaims {
+            shift: SpartanShiftOutputClaims {
+                unexpanded_pc: fr(1),
+                pc: fr(2),
+                is_virtual: fr(3),
+                is_first_in_sequence: fr(4),
+                is_noop: fr(5),
+            },
+            instruction_input: InstructionInputOutputClaims {
+                left_operand_is_rs1: fr(6),
+                rs1_value: fr(7),
+                left_operand_is_pc: fr(8),
+                unexpanded_pc: fr(101),
+                right_operand_is_rs2: fr(9),
+                rs2_value: fr(10),
+                right_operand_is_imm: fr(11),
+                imm: fr(12),
+            },
+            registers_claim_reduction: RegistersClaimReductionOutputClaims {
+                rd_write_value: fr(13),
+                rs1_value: fr(102),
+                rs2_value: fr(103),
+            },
+        };
+
+        assert_eq!(claims.opening_values(), (1..=13).map(fr).collect::<Vec<_>>());
     }
 }
