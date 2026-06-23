@@ -184,6 +184,7 @@ pub enum LatticeOpening {
     UnsignedInc,
     UnsignedIncMsb,
     UnsignedIncChunk(usize),
+    UnsignedIncReconstructedChunk(usize),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

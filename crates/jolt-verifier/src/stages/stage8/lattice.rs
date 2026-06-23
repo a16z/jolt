@@ -408,13 +408,13 @@ where
 
 fn unsigned_inc_chunk_index(id: JoltOpeningId) -> Option<usize> {
     let JoltOpeningId::Lattice {
-        relation: JoltRelationId::UnsignedIncClaimReduction,
+        relation: JoltRelationId::UnsignedIncChunkReconstruction,
         index,
     } = id
     else {
         return None;
     };
-    (index >= 2).then_some(index - 2)
+    Some(index)
 }
 
 fn unsigned_inc_chunk_lattice_view_formula<F>(

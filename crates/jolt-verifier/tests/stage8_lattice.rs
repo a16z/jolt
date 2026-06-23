@@ -6,12 +6,12 @@ use jolt_claims::protocols::jolt::formulas::claim_reductions::bytecode;
 use jolt_claims::protocols::jolt::{
     byte_decode_terms, bytecode_imm_canonical_bytes_requirement, bytecode_validity_requirements,
     formulas::dimensions::REGISTER_ADDRESS_BITS, formulas::ra::JoltRaPolynomialLayout,
-    lattice_packed_validity_digest, program_image_validity_requirement, unsigned_inc_chunk_opening,
+    lattice_packed_validity_digest, program_image_validity_requirement,
     unsigned_inc_lower_chunk_count, unsigned_inc_lower_value_lattice_view_formula,
-    unsigned_inc_msb_opening, unsigned_inc_validity_requirements, JoltAdviceKind,
-    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticePackedFamilyId,
-    LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
-    TracePolynomialOrder,
+    unsigned_inc_msb_opening, unsigned_inc_reconstructed_chunk_opening,
+    unsigned_inc_validity_requirements, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
+    JoltRelationId, LatticePackedFamilyId, LatticePackedValidityRequirement,
+    LatticePackedViewFormula, LatticePackedViewTerm, TracePolynomialOrder,
 };
 use jolt_field::{FixedByteSize, Fr, FromPrimitiveInt};
 use jolt_openings::{
@@ -880,7 +880,7 @@ fn validity_coverage_requires_canonical_byte_requirements_for_field_bytes() {
 
 #[test]
 fn validity_coverage_accepts_unsigned_increment_validity_requirements() {
-    let id = Stage8OpeningId::from(unsigned_inc_chunk_opening(0));
+    let id = Stage8OpeningId::from(unsigned_inc_reconstructed_chunk_opening(0));
     let formula = unsigned_inc_lower_value_lattice_view_formula::<Fr>(8)
         .unwrap_or_else(|| panic!("unsigned increment lower-value view should derive"));
     let requirements = unsigned_inc_validity_requirements(8)
@@ -1248,7 +1248,7 @@ fn jolt_lattice_resolver_rejects_dense_increment_openings() {
 fn jolt_lattice_resolver_lowers_unsigned_increment_chunk_and_msb_outputs() {
     let point = (1..=9).map(Fr::from_u64).collect::<Vec<_>>();
     let chunk = jolt_lattice_view_formula(
-        unsigned_inc_chunk_opening(7),
+        unsigned_inc_reconstructed_chunk_opening(7),
         &point,
         8,
         &precommitted_schedule(None),

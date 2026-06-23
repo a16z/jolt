@@ -1853,7 +1853,7 @@ mod tests {
         for index in 0..unsigned_inc_chunk_count {
             assert_eq!(
                 packed_count_id(stage8::Stage8OpeningId::from(
-                    jolt_claims::protocols::jolt::unsigned_inc_chunk_opening(index),
+                    jolt_claims::protocols::jolt::unsigned_inc_reconstructed_chunk_opening(index),
                 )),
                 1
             );
@@ -1887,7 +1887,7 @@ mod tests {
                 assert!(matches!(
                     result,
                     Err(VerifierError::MissingOpeningClaim { id })
-                        if id == jolt_claims::protocols::jolt::unsigned_inc_chunk_opening(0)
+                        if id == jolt_claims::protocols::jolt::unsigned_inc_reconstructed_chunk_opening(0)
                 ));
             };
 

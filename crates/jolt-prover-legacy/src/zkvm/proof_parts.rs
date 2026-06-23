@@ -277,12 +277,16 @@ impl CanonicalSerialize for LatticeOpening {
                 4u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*index).unwrap()).serialize_with_mode(writer, compress)
             }
+            Self::UnsignedIncReconstructedChunk(index) => {
+                5u8.serialize_with_mode(&mut writer, compress)?;
+                (u8::try_from(*index).unwrap()).serialize_with_mode(writer, compress)
+            }
         }
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
-            Self::UnsignedIncChunk(index) => {
+            Self::UnsignedIncChunk(index) | Self::UnsignedIncReconstructedChunk(index) => {
                 1 + u8::try_from(*index).unwrap().serialized_size(compress)
             }
             Self::IncVirtualizationInc
@@ -315,6 +319,9 @@ impl CanonicalDeserialize for LatticeOpening {
                 compress,
                 validate,
             )? as usize)),
+            5 => Ok(Self::UnsignedIncReconstructedChunk(
+                u8::deserialize_with_mode(&mut reader, compress, validate)? as usize,
+            )),
             _ => Err(SerializationError::InvalidData),
         }
     }

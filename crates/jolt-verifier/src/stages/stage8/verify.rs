@@ -714,7 +714,7 @@ where
     F: Field,
 {
     let sources = sources.ok_or(VerifierError::MissingOpeningClaim {
-        id: lattice_formulas::unsigned_inc_chunk_opening(0),
+        id: lattice_formulas::unsigned_inc_reconstructed_chunk_opening(0),
     })?;
     let chunk_count =
         lattice_formulas::unsigned_inc_lower_chunk_count(log_k_chunk).ok_or_else(|| {
@@ -738,7 +738,9 @@ where
     let mut entries = Vec::with_capacity(chunk_count + 1);
     for index in 0..chunk_count {
         entries.push(Stage8BatchEntry {
-            id: Stage8OpeningId::from(lattice_formulas::unsigned_inc_chunk_opening(index)),
+            id: Stage8OpeningId::from(lattice_formulas::unsigned_inc_reconstructed_chunk_opening(
+                index,
+            )),
             commitment,
             opening_claim: sources.chunk_claims.map(|claims| claims[index]),
             own_point: sources.chunk_point.to_vec(),
@@ -1109,7 +1111,7 @@ mod tests {
         assert!(matches!(
             error,
             VerifierError::MissingOpeningClaim { id }
-                if id == lattice_formulas::unsigned_inc_chunk_opening(0)
+                if id == lattice_formulas::unsigned_inc_reconstructed_chunk_opening(0)
         ));
 
         let short_chunks = vec![Fr::from_u64(0); 7];
@@ -1166,7 +1168,9 @@ mod tests {
         for (index, entry) in entries.iter().take(8).enumerate() {
             assert_eq!(
                 entry.id,
-                Stage8OpeningId::from(lattice_formulas::unsigned_inc_chunk_opening(index))
+                Stage8OpeningId::from(lattice_formulas::unsigned_inc_reconstructed_chunk_opening(
+                    index
+                ))
             );
             assert_eq!(entry.own_point, chunk_point);
         }

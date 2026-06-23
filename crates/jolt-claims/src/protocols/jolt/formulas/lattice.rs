@@ -505,6 +505,10 @@ pub fn unsigned_inc_chunk_opening(index: usize) -> JoltOpeningId {
     JoltOpeningId::lattice(JoltRelationId::UnsignedIncClaimReduction, 2 + index)
 }
 
+pub fn unsigned_inc_reconstructed_chunk_opening(index: usize) -> JoltOpeningId {
+    JoltOpeningId::lattice(JoltRelationId::UnsignedIncChunkReconstruction, index)
+}
+
 pub fn unsigned_inc_lower_chunk_count(log_k_chunk: usize) -> Option<usize> {
     (log_k_chunk != 0 && UNSIGNED_INC_BITS.is_multiple_of(log_k_chunk))
         .then_some(UNSIGNED_INC_BITS / log_k_chunk)
@@ -539,7 +543,7 @@ where
         let output_coeff = gamma.clone().pow(2 * index)
             + gamma.clone().pow(2 * index + 1) * eq_booleanity_address.clone()
             + delta.clone() * constant(place) * identity_at_address.clone();
-        output = output + output_coeff * opening(unsigned_inc_chunk_opening(index));
+        output = output + output_coeff * opening(unsigned_inc_reconstructed_chunk_opening(index));
         place *= F::from_u64(1u64 << log_k_chunk);
     }
 
@@ -1181,7 +1185,9 @@ mod tests {
             .contains(&unsigned_inc_msb_opening()));
         assert_eq!(
             claims.output.required_openings,
-            (0..8).map(unsigned_inc_chunk_opening).collect::<Vec<_>>()
+            (0..8)
+                .map(unsigned_inc_reconstructed_chunk_opening)
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             claims.required_challenges(),

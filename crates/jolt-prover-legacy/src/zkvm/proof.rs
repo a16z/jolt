@@ -792,6 +792,11 @@ fn convert_lattice_opening(opening: prover_opening::LatticeOpening) -> JoltOpeni
         prover_opening::LatticeOpening::UnsignedIncChunk(index) => {
             jolt_claims::protocols::jolt::formulas::lattice::unsigned_inc_chunk_opening(index)
         }
+        prover_opening::LatticeOpening::UnsignedIncReconstructedChunk(index) => {
+            jolt_claims::protocols::jolt::formulas::lattice::unsigned_inc_reconstructed_chunk_opening(
+                index,
+            )
+        }
     }
 }
 

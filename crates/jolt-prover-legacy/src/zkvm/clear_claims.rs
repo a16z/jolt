@@ -54,6 +54,7 @@ use jolt_verifier::{
             AdviceAddressPhaseOutputClaim, BytecodeAddressPhaseOutputClaims,
             HammingWeightClaimReductionOutputOpeningClaims, ProgramImageAddressPhaseOutputClaim,
             Stage7AdviceAddressPhaseClaims, Stage7Claims,
+            UnsignedIncChunkReconstructionOutputClaims,
         },
     },
     VerifierError,
@@ -529,6 +530,21 @@ fn unsigned_inc_chunk_claims_from_openings<F: Field>(claims: &OpeningClaimMap<F>
     chunks
 }
 
+fn unsigned_inc_reconstructed_chunk_claims_from_openings<F: Field>(
+    claims: &OpeningClaimMap<F>,
+) -> Option<Vec<F>> {
+    let mut chunks = Vec::new();
+    for index in 0.. {
+        let Some(opening_claim) =
+            claims.get(lattice::unsigned_inc_reconstructed_chunk_opening(index))
+        else {
+            break;
+        };
+        chunks.push(opening_claim);
+    }
+    (!chunks.is_empty()).then_some(chunks)
+}
+
 fn stage7_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage7Claims<F>, VerifierError> {
@@ -586,7 +602,10 @@ fn stage7_claims_from_openings<F: Field>(
         },
         bytecode_address_phase: bytecode_address_phase_claims_from_openings(claims),
         program_image_address_phase: program_image_address_phase_claim_from_openings(claims),
-        unsigned_inc_chunk_reconstruction: None,
+        unsigned_inc_chunk_reconstruction: unsigned_inc_reconstructed_chunk_claims_from_openings(
+            claims,
+        )
+        .map(|chunks| UnsignedIncChunkReconstructionOutputClaims { chunks }),
         lattice_packed_validity: None,
     })
 }

@@ -32,10 +32,11 @@ pub use formulas::{
         unsigned_inc_lower_chunk_count, unsigned_inc_lower_value_lattice_view_formula,
         unsigned_inc_lower_value_terms, unsigned_inc_msb_booleanity_claim,
         unsigned_inc_msb_lattice_view_formula, unsigned_inc_msb_opening, unsigned_inc_opening,
-        unsigned_inc_validity_requirements, weighted_byte_decode_terms, weighted_symbol_terms,
-        LatticeFinalOpeningRequirement, LatticePackedFamilyId, LatticePackedValidityDigest,
-        LatticePackedValidityKind, LatticePackedValidityRequirement, LatticePackedViewFormula,
-        LatticePackedViewTerm, UNSIGNED_INC_BITS,
+        unsigned_inc_reconstructed_chunk_opening, unsigned_inc_validity_requirements,
+        weighted_byte_decode_terms, weighted_symbol_terms, LatticeFinalOpeningRequirement,
+        LatticePackedFamilyId, LatticePackedValidityDigest, LatticePackedValidityKind,
+        LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
+        UNSIGNED_INC_BITS,
     },
 };
 pub use ids::{
