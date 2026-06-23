@@ -353,7 +353,6 @@ impl CommitmentScheme for AkitaScheme {
             max_num_vars: params.max_num_vars,
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
-            packed_layout: params.packed_layout.clone(),
             native: serialize_akita(&native_verifier)
                 .unwrap_or_else(|err| panic!("Akita verifier setup serialization failed: {err}")),
         };
@@ -361,7 +360,6 @@ impl CommitmentScheme for AkitaScheme {
             max_num_vars: params.max_num_vars,
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
-            packed_layout: params.packed_layout,
             native,
             prepared,
             verifier: verifier.clone(),
@@ -811,15 +809,6 @@ where
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
     transcript.append_bytes(&setup.default_layout_digest);
-    match &setup.packed_layout {
-        Some(layout) => {
-            transcript.append_bytes(&[1]);
-            transcript.append_bytes(&layout.digest);
-            transcript.append(&U64Word(layout.dimension as u64));
-            transcript.append(&U64Word(layout.cells as u64));
-        }
-        None => transcript.append_bytes(&[0]),
-    }
     transcript.append(&LabelWithCount(
         b"akita_verifier_setup",
         setup.native.len() as u64,

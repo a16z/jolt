@@ -7,7 +7,7 @@ use akita_types::{
     AkitaCommitmentHint as NativeCommitmentHint, AkitaVerifierSetup as NativeVerifierSetup,
     RingCommitment as NativeRingCommitment,
 };
-use jolt_openings::{CommitmentLayoutDigest, PackedWitnessLayout};
+use jolt_openings::CommitmentLayoutDigest;
 use jolt_poly::Polynomial;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,6 @@ pub struct AkitaSetupParams {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
     pub default_layout_digest: AkitaLayoutDigest,
-    pub packed_layout: Option<PackedWitnessLayout>,
 }
 
 impl AkitaSetupParams {
@@ -49,25 +48,7 @@ impl AkitaSetupParams {
             max_num_vars,
             max_num_polys_per_commitment_group,
             default_layout_digest,
-            packed_layout: None,
         }
-    }
-
-    pub fn with_packed_layout(mut self, layout: PackedWitnessLayout) -> Self {
-        self.packed_layout = Some(layout);
-        self
-    }
-
-    pub fn from_packed_layout(
-        layout: &PackedWitnessLayout,
-        max_num_polys_per_commitment_group: usize,
-    ) -> Self {
-        Self::new(
-            layout.dimension,
-            max_num_polys_per_commitment_group,
-            layout.digest,
-        )
-        .with_packed_layout(layout.clone())
     }
 }
 
@@ -76,7 +57,6 @@ pub struct AkitaProverSetup {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
     pub default_layout_digest: AkitaLayoutDigest,
-    pub packed_layout: Option<PackedWitnessLayout>,
     pub(crate) native: akita_prover::AkitaProverSetup<AkitaField, AKITA_D>,
     pub(crate) prepared: NativePreparedSetup,
     pub(crate) verifier: AkitaVerifierSetup,
@@ -88,7 +68,6 @@ pub struct AkitaVerifierSetup {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
     pub default_layout_digest: AkitaLayoutDigest,
-    pub packed_layout: Option<PackedWitnessLayout>,
     pub native: Vec<u8>,
 }
 

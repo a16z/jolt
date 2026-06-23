@@ -3,10 +3,11 @@ use super::support::*;
 #[test]
 fn setup_params_report_packed_dimension_and_digest() {
     let layout = packed_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_params_for_layout(&layout, 1);
     assert_eq!(params.max_num_vars, layout.dimension);
     assert_eq!(params.default_layout_digest, layout.digest);
-    assert_eq!(params.packed_layout.as_ref(), Some(&layout));
+    let packed_params = packed_akita_params(&layout, 1);
+    assert_eq!(packed_params.layout, layout);
 }
 
 #[test]
@@ -23,7 +24,7 @@ fn akita_commit_packed_source_roundtrip() {
         let point = vec![f(2), f(3), f(5)];
         let eval = poly.evaluate(&point);
         let (prover_setup, verifier_setup) =
-            AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+            AkitaScheme::setup(akita_params_for_layout(&layout, 1));
 
         let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
             .expect("source commit should succeed");
@@ -73,9 +74,9 @@ fn akita_commit_packed_source_roundtrip_with_sparse_unit_source() {
         let point = vec![f(2), f(3), f(5), f(7), f(11), f(13)];
         let eval = poly.evaluate(&point);
         let (prover_setup, verifier_setup) =
-            AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+            AkitaPackedScheme::setup(packed_akita_params(&layout, 1));
 
-        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+        let (commitment, hint) = AkitaPackedScheme::commit_packed_source(&prover_setup, &witness)
             .expect("source commit should succeed");
         assert_eq!(commitment.layout_digest, layout.digest);
         assert_eq!(commitment.num_vars, layout.dimension);
@@ -131,7 +132,7 @@ fn akita_packed_source_sparse_unit_views_roundtrip() {
         )
         .expect("sparse one-hot witness should be valid");
         let (prover_setup, verifier_setup) =
-            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+            AkitaPackedScheme::setup(packed_akita_params(&layout, 1));
         let (commitment, hint) = AkitaPackedScheme::commit_packed_source(&prover_setup, &witness)
             .expect("source commit should succeed");
 
@@ -188,7 +189,7 @@ fn akita_packed_source_sparse_unit_views_roundtrip() {
 #[test]
 fn akita_commit_packed_source_rejects_malformed_emitters() {
     let layout = packed_layout();
-    let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+    let (prover_setup, _) = AkitaScheme::setup(akita_params_for_layout(&layout, 1));
 
     let dummy_rank = layout.cells;
     let dummy_result = AkitaScheme::commit_packed_source(
@@ -225,7 +226,7 @@ fn akita_commit_packed_source_rejects_malformed_emitters() {
 #[test]
 fn akita_commit_packed_source_rejects_non_unit_sparse_values() {
     let layout = ring_sized_packed_layout();
-    let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
+    let (prover_setup, _) = AkitaScheme::setup(akita_params_for_layout(&layout, 1));
 
     let result = AkitaScheme::commit_packed_source(
         &prover_setup,
@@ -277,10 +278,8 @@ fn akita_packed_source_hint_layout_mismatch_rejects() {
             )],
         )
         .expect("packed witness B should be valid");
-        let (prover_setup_a, _) =
-            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout_a, 1));
-        let (prover_setup_b, _) =
-            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout_b, 1));
+        let (prover_setup_a, _) = AkitaPackedScheme::setup(packed_akita_params(&layout_a, 1));
+        let (prover_setup_b, _) = AkitaPackedScheme::setup(packed_akita_params(&layout_b, 1));
         let (_, hint_a) = AkitaPackedScheme::commit_packed_source(&prover_setup_a, &witness_a)
             .expect("source A commit should succeed");
         let (commitment_b, _) =

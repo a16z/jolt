@@ -3,7 +3,10 @@ use super::support::*;
 #[test]
 fn akita_packed_scheme_rejects_generic_dense_single_opening_path() {
     run_on_large_stack(|| {
-        let (prover_setup, _) = setup();
+        let (prover_setup, _) = AkitaPackedScheme::setup(PackedLinearSetupParams {
+            pcs: AkitaSetupParams::new(4, 2, layout(7)),
+            layout: packed_reduction_layout(),
+        });
         let poly = polynomial(1);
         let point = vec![f(2), f(3), f(5), f(7)];
         let eval = poly.evaluate(&point);
@@ -17,7 +20,7 @@ fn akita_packed_scheme_rejects_generic_dense_single_opening_path() {
         );
 
         let (_, hint) =
-            AkitaScheme::commit_group(&prover_setup, layout(7), std::slice::from_ref(&poly))
+            AkitaScheme::commit_group(&prover_setup.pcs, layout(7), std::slice::from_ref(&poly))
                 .expect("direct commitment should commit");
         let open_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut transcript = Blake2bTranscript::new(b"akita-packed-dense-open");
@@ -48,16 +51,21 @@ fn akita_packed_scheme_rejects_generic_dense_single_opening_path() {
 #[test]
 fn akita_packed_scheme_keeps_direct_batch_opening_path() {
     run_on_large_stack(|| {
-        let (prover_setup, verifier_setup) =
-            AkitaPackedScheme::setup(AkitaSetupParams::new(4, 2, layout(7)));
+        let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(PackedLinearSetupParams {
+            pcs: AkitaSetupParams::new(4, 2, layout(7)),
+            layout: packed_reduction_layout(),
+        });
         let poly_a = polynomial(1);
         let poly_b = polynomial(20);
         let point = vec![f(2), f(3), f(5), f(7)];
         let eval_a = poly_a.evaluate(&point);
         let eval_b = poly_b.evaluate(&point);
-        let (commitment, hint) =
-            AkitaScheme::commit_group(&prover_setup, layout(7), &[poly_a.clone(), poly_b.clone()])
-                .expect("grouped commit should succeed");
+        let (commitment, hint) = AkitaScheme::commit_group(
+            &prover_setup.pcs,
+            layout(7),
+            &[poly_a.clone(), poly_b.clone()],
+        )
+        .expect("grouped commit should succeed");
         let statement = direct_statement(commitment.clone(), &point, eval_a, eval_b);
 
         let mut prover_transcript = Blake2bTranscript::new(b"akita-packed-direct");
@@ -109,8 +117,8 @@ fn akita_packed_scheme_reduces_packed_views_to_native_opening() {
         )
         .expect("packed witness should be valid");
         let (prover_setup, verifier_setup) =
-            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
-        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            AkitaPackedScheme::setup(packed_akita_params(&layout, 1));
+        let (commitment, hint) = AkitaPackedScheme::commit_packed_source(&prover_setup, &witness)
             .expect("source commit should succeed");
         let row_point = vec![f(2), f(5)];
         let terms_a = vec![packed_reduction_term(f(1), 0, 1, &row_point)];
@@ -182,8 +190,8 @@ fn akita_packed_scheme_rejects_tampered_packed_statement() {
         )
         .expect("packed witness should be valid");
         let (prover_setup, verifier_setup) =
-            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 1));
-        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            AkitaPackedScheme::setup(packed_akita_params(&layout, 1));
+        let (commitment, hint) = AkitaPackedScheme::commit_packed_source(&prover_setup, &witness)
             .expect("source commit should succeed");
         let row_point = vec![f(2), f(5)];
         let terms_a = vec![packed_reduction_term(f(1), 0, 1, &row_point)];
@@ -274,8 +282,8 @@ fn akita_packed_scheme_requires_one_packed_witness_commitment() {
         )
         .expect("packed witness should be valid");
         let (prover_setup, verifier_setup) =
-            AkitaPackedScheme::setup(AkitaSetupParams::from_packed_layout(&layout, 2));
-        let (commitment, hint) = AkitaScheme::commit_packed_source(&prover_setup, &witness)
+            AkitaPackedScheme::setup(packed_akita_params(&layout, 2));
+        let (commitment, hint) = AkitaPackedScheme::commit_packed_source(&prover_setup, &witness)
             .expect("source commit should succeed");
         let row_point = vec![f(2), f(5)];
         let terms_a = vec![packed_reduction_term(f(1), 0, 1, &row_point)];
@@ -300,7 +308,7 @@ fn akita_packed_scheme_requires_one_packed_witness_commitment() {
         .expect("packed reduction proof should be produced");
 
         let (group_commitment, _) = AkitaScheme::commit_group(
-            &prover_setup,
+            &prover_setup.pcs,
             layout.digest,
             &[polynomial(100), polynomial(200)],
         )
@@ -322,7 +330,7 @@ fn akita_packed_scheme_requires_one_packed_witness_commitment() {
         );
 
         let (other_commitment, _) =
-            AkitaScheme::commit_group(&prover_setup, layout.digest, &[polynomial(300)])
+            AkitaScheme::commit_group(&prover_setup.pcs, layout.digest, &[polynomial(300)])
                 .expect("alternate commitment should succeed");
         let mut mixed_commitment_statement = statement;
         mixed_commitment_statement.claims[1].commitment = other_commitment;

@@ -5,8 +5,8 @@ pub(crate) use jolt_akita::{
 pub(crate) use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
     PackedAlphabet, PackedCellAddress, PackedCombine, PackedFactDomain, PackedFamilyId,
-    PackedFamilySpec, PackedLayoutError, PackedLinearTerm, PackedWitnessLayout,
-    PackedWitnessSource, PhysicalView, SparsePackedWitness, ZkOpeningScheme,
+    PackedFamilySpec, PackedLayoutError, PackedLinearSetupParams, PackedLinearTerm,
+    PackedWitnessLayout, PackedWitnessSource, PhysicalView, SparsePackedWitness, ZkOpeningScheme,
 };
 pub(crate) use jolt_poly::{EqPolynomial, Polynomial};
 pub(crate) use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -41,6 +41,27 @@ pub(crate) fn setup() -> (
     <AkitaScheme as CommitmentScheme>::VerifierSetup,
 ) {
     AkitaScheme::setup(AkitaSetupParams::new(4, 2, layout(7)))
+}
+
+pub(crate) fn akita_params_for_layout(
+    layout: &PackedWitnessLayout,
+    max_num_polys_per_commitment_group: usize,
+) -> AkitaSetupParams {
+    AkitaSetupParams::new(
+        layout.dimension,
+        max_num_polys_per_commitment_group,
+        layout.digest,
+    )
+}
+
+pub(crate) fn packed_akita_params(
+    layout: &PackedWitnessLayout,
+    max_num_polys_per_commitment_group: usize,
+) -> PackedLinearSetupParams<AkitaSetupParams, PackedWitnessLayout> {
+    PackedLinearSetupParams {
+        pcs: akita_params_for_layout(layout, max_num_polys_per_commitment_group),
+        layout: layout.clone(),
+    }
 }
 
 pub(crate) fn packed_layout() -> PackedWitnessLayout {

@@ -37,7 +37,6 @@ fn setup_key_transcript_binds_native_shape_without_upstream_revision() {
         max_num_vars: 4,
         max_num_polys_per_commitment_group: 1,
         default_layout_digest: [7; 32],
-        packed_layout: None,
         native: vec![1, 2, 3],
     };
     let mut transcript = RecordingTranscript::new(b"akita-setup-key-test");

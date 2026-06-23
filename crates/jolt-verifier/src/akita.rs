@@ -31,7 +31,6 @@ use crate::{
 use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaPackedScheme, AkitaProverHint,
-    AkitaProverSetup, AkitaVerifierSetup,
 };
 use jolt_claims::protocols::jolt::{
     lattice_packed_validity_digest, JoltAdviceKind, LatticePackedFamilyId,
@@ -39,9 +38,9 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::{FixedByteSize, RingAccumulator, WithAccumulator};
 use jolt_openings::{
-    BatchOpeningScheme, BatchOpeningStatement, PackedAdviceKind, PackedFactDomain, PackedFamilyId,
-    PackedLinearBatchProof, PackedWitnessLayout, PackedWitnessSource, PhysicalView,
-    SparsePackedWitness,
+    BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackedAdviceKind,
+    PackedFactDomain, PackedFamilyId, PackedLinearBatchProof, PackedWitnessLayout,
+    PackedWitnessSource, PhysicalView, SparsePackedWitness,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
@@ -54,6 +53,8 @@ use jolt_transcript::Transcript;
 
 pub type AkitaClearVectorCommitment = ClearOnlyVectorCommitment<AkitaField>;
 pub type AkitaPackedBatchProof = PackedLinearBatchProof<AkitaBatchProof>;
+pub type AkitaPackedProverSetup = <AkitaPackedScheme as CommitmentScheme>::ProverSetup;
+pub type AkitaPackedVerifierSetup = <AkitaPackedScheme as CommitmentScheme>::VerifierSetup;
 pub type AkitaVerifierPreprocessing =
     JoltVerifierPreprocessing<AkitaPackedScheme, AkitaClearVectorCommitment>;
 pub type AkitaJoltProof = JoltProof<AkitaPackedScheme, AkitaClearVectorCommitment>;
@@ -138,7 +139,7 @@ pub fn build_akita_packed_jolt_witness(
 }
 
 pub fn commit_akita_packed_jolt_witness(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     input: AkitaPackedJoltWitnessInput<'_>,
 ) -> Result<AkitaCommittedPackedJoltWitness, VerifierError> {
     let witness = build_akita_packed_jolt_witness(input)?;
@@ -331,7 +332,7 @@ pub fn akita_lattice_validity_requirements_for_layout(
 }
 
 pub fn commit_akita_packed_witness<S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     source: &S,
 ) -> Result<AkitaPackedWitnessArtifacts, VerifierError>
 where
@@ -343,7 +344,7 @@ where
 
 pub fn commit_akita_packed_witness_with_config<S>(
     protocol: JoltProtocolConfig,
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     source: &S,
 ) -> Result<AkitaPackedWitnessArtifacts, VerifierError>
 where
@@ -369,7 +370,7 @@ where
 }
 
 pub fn prove_akita_packed_openings<T, OpeningId, RelationId, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     transcript: &mut T,
     artifacts: &AkitaPackedWitnessArtifacts,
     source: &S,
@@ -419,7 +420,7 @@ where
 }
 
 pub fn prove_akita_stage8_clear_openings<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     transcript: &mut T,
     artifacts: &AkitaPackedWitnessArtifacts,
     source: &S,
@@ -441,7 +442,7 @@ where
 }
 
 pub fn prove_akita_stage8_clear_openings_with_precommitted<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     transcript: &mut T,
     artifacts: &AkitaPackedWitnessArtifacts,
     source: &S,
@@ -483,7 +484,7 @@ where
 }
 
 fn prove_akita_precommitted_opening_batches<T>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     transcript: &mut T,
     packed_witness: &AkitaCommitment,
     statements: &[BatchOpeningStatement<
@@ -593,7 +594,7 @@ fn validate_akita_precommitted_opening_input(
 }
 
 pub fn prove_akita_packed_validity<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     transcript: &mut T,
     artifacts: &AkitaPackedWitnessArtifacts,
     source: &S,
@@ -705,7 +706,7 @@ pub fn attach_akita_packed_validity_proof(
 }
 
 pub fn prove_akita_jolt_packed_validity<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &AkitaJoltProof,
@@ -748,7 +749,7 @@ where
 }
 
 pub fn prove_and_attach_akita_opening_proofs<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &mut AkitaJoltProof,
@@ -777,7 +778,7 @@ where
     reason = "prover helper mirrors proof attachment inputs and adds precommitted openings"
 )]
 pub fn prove_and_attach_akita_opening_proofs_with_precommitted<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &mut AkitaJoltProof,
@@ -818,7 +819,7 @@ where
 }
 
 pub fn prove_akita_jolt_final_openings<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &AkitaJoltProof,
@@ -858,7 +859,7 @@ where
     reason = "prover helper mirrors final opening inputs and adds precommitted openings"
 )]
 pub fn prove_akita_jolt_final_openings_with_precommitted<T, S>(
-    setup: &AkitaProverSetup,
+    setup: &AkitaPackedProverSetup,
     preprocessing: &AkitaVerifierPreprocessing,
     public_io: &JoltDevice,
     proof: &AkitaJoltProof,
@@ -955,7 +956,7 @@ where
 }
 
 fn validate_akita_artifacts_for_proof(
-    setup: &AkitaVerifierSetup,
+    setup: &AkitaPackedVerifierSetup,
     proof_protocol: &JoltProtocolConfig,
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
     artifacts: &AkitaPackedWitnessArtifacts,
@@ -990,7 +991,7 @@ fn validate_akita_artifacts_for_proof(
 }
 
 fn validate_akita_verifier_setup_config(
-    setup: &AkitaVerifierSetup,
+    setup: &AkitaPackedVerifierSetup,
     config: &JoltProtocolConfig,
 ) -> Result<(), VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
@@ -1014,19 +1015,12 @@ fn validate_akita_verifier_setup_config(
             })?;
     validate_akita_verifier_setup_shape(setup, expected_digest, expected_dimension)?;
 
-    let setup_layout =
-        setup
-            .packed_layout
-            .as_ref()
-            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                reason: "Akita verifier setup requires a packed witness layout".to_string(),
-            })?;
-    if setup_layout.digest != expected_digest {
+    if setup.layout.digest != expected_digest {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita verifier setup layout digest does not match protocol config".to_string(),
         });
     }
-    if setup_layout.dimension != expected_dimension {
+    if setup.layout.dimension != expected_dimension {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita verifier setup layout dimension does not match protocol D_pack"
                 .to_string(),
@@ -1037,7 +1031,7 @@ fn validate_akita_verifier_setup_config(
 }
 
 fn validate_akita_proof_payload_shape(
-    setup: &AkitaVerifierSetup,
+    setup: &AkitaPackedVerifierSetup,
     proof_commitments: &CommitmentPayload<AkitaCommitment>,
 ) -> Result<(), VerifierError> {
     let payload =
@@ -1300,18 +1294,11 @@ fn validate_akita_precommitted_commitment_is_separate(
 }
 
 fn validate_akita_verifier_setup_layout(
-    setup: &AkitaVerifierSetup,
+    setup: &AkitaPackedVerifierSetup,
     layout: &PackedWitnessLayout,
 ) -> Result<(), VerifierError> {
     validate_akita_verifier_setup_shape(setup, layout.digest, layout.dimension)?;
-    let setup_layout =
-        setup
-            .packed_layout
-            .as_ref()
-            .ok_or_else(|| VerifierError::InvalidProtocolConfig {
-                reason: "Akita verifier setup requires a packed witness layout".to_string(),
-            })?;
-    if setup_layout != layout {
+    if setup.layout != *layout {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita verifier setup layout does not match packed witness artifact layout"
                 .to_string(),
@@ -1322,30 +1309,30 @@ fn validate_akita_verifier_setup_layout(
 }
 
 fn validate_akita_verifier_setup_shape(
-    setup: &AkitaVerifierSetup,
+    setup: &AkitaPackedVerifierSetup,
     expected_digest: [u8; 32],
     expected_dimension: usize,
 ) -> Result<(), VerifierError> {
-    if setup.default_layout_digest != expected_digest {
+    if setup.pcs.default_layout_digest != expected_digest {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita verifier setup layout digest does not match packed witness layout"
                 .to_string(),
         });
     }
-    if setup.max_num_vars != expected_dimension {
+    if setup.pcs.max_num_vars != expected_dimension {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita verifier setup max_num_vars does not match packed witness dimension"
                 .to_string(),
         });
     }
-    if setup.max_num_polys_per_commitment_group == 0 {
+    if setup.pcs.max_num_polys_per_commitment_group == 0 {
         return Err(VerifierError::InvalidProtocolConfig {
             reason:
                 "Akita verifier setup must support at least one polynomial per commitment group"
                     .to_string(),
         });
     }
-    if setup.native.is_empty() {
+    if setup.pcs.native.is_empty() {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "Akita verifier setup is missing native setup bytes".to_string(),
         });

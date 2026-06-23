@@ -22,7 +22,7 @@ use jolt_field::FixedByteSize;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackedAlphabet,
     PackedCellAddress, PackedFactDomain, PackedFamilySpec, PackedLinearReductionProof,
-    PackedLinearTerm, PhysicalView, SparsePackedWitness,
+    PackedLinearSetupParams, PackedLinearTerm, PhysicalView, SparsePackedWitness,
 };
 use jolt_poly::Point;
 use jolt_riscv::{
@@ -122,6 +122,20 @@ fn run_on_large_stack(test: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
+fn akita_packed_params(
+    layout: &PackedWitnessLayout,
+    max_num_polys_per_commitment_group: usize,
+) -> PackedLinearSetupParams<AkitaSetupParams, PackedWitnessLayout> {
+    PackedLinearSetupParams {
+        pcs: AkitaSetupParams::new(
+            layout.dimension,
+            max_num_polys_per_commitment_group,
+            layout.digest,
+        ),
+        layout: layout.clone(),
+    }
+}
+
 #[test]
 fn protocol_config_binds_layout_digest_and_dimension() {
     let layout = tiny_layout();
@@ -149,7 +163,7 @@ fn protocol_config_binds_layout_digest_and_dimension() {
 #[test]
 fn commits_packed_witness_and_returns_verifier_payload() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, _) = AkitaPackedScheme::setup(params);
     let source = SparsePackedWitness::try_new(
         layout.clone(),
@@ -262,7 +276,7 @@ fn commits_jolt_packed_witness_inputs_with_padding() {
             1,
         ),
     ];
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, _) = AkitaPackedScheme::setup(params);
 
     let committed = commit_akita_packed_jolt_witness(
@@ -411,7 +425,7 @@ fn build_jolt_packed_witness_rejects_precommitted_layout_families() {
 #[test]
 fn packed_witness_artifacts_feed_akita_packed_batch_verifier() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
     let instruction_family = PackedFamilyId::InstructionRa { index: 0 };
     let sign_family = PackedFamilyId::UnsignedIncMsb;
@@ -612,7 +626,7 @@ fn packed_witness_artifacts_feed_akita_packed_batch_verifier() {
 #[test]
 fn stage8_clear_openings_prove_separate_precommitted_batches() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
     let sign_family = PackedFamilyId::UnsignedIncMsb;
     let source = SparsePackedWitness::try_from_cells(
@@ -657,7 +671,7 @@ fn stage8_clear_openings_prove_separate_precommitted_batches() {
     let precommitted_poly = Polynomial::new(precommitted_evals);
     let precommitted_digest = [11; 32];
     let (precommitted_commitment, precommitted_hint) = AkitaScheme::commit_group(
-        &prover_setup,
+        &prover_setup.pcs,
         precommitted_digest,
         std::slice::from_ref(&precommitted_poly),
     )
@@ -869,7 +883,7 @@ fn packed_validity_helper_proves_real_akita_opening_proof() {
         config.lattice.packed_witness.validity_digest =
             Some(lattice_packed_validity_digest(&requirements));
         let source = validity_default_source(&layout, &requirements);
-        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let params = akita_packed_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
         let artifacts = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
             .expect("valid packed witness should commit");
@@ -965,7 +979,7 @@ fn packed_validity_rejects_noncanonical_field_rd_inc_bytes() {
         let modulus_bytes = AKITA_FIELD_MODULUS.to_le_bytes();
         let source =
             validity_source_with_field_rd_inc_bytes(&layout, &requirements, &modulus_bytes);
-        let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+        let params = akita_packed_params(&layout, 1);
         let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
         let artifacts = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
             .expect("packed witness should commit");
@@ -1176,7 +1190,7 @@ fn packed_validity_rejects_precommitted_bytecode_layout_config() {
     let mut config = akita_lattice_protocol_config_for_layout(&layout);
     config.lattice.packed_witness.validity_digest =
         Some(lattice_packed_validity_digest(&requirements));
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, _) = AkitaPackedScheme::setup(params);
 
     let error = commit_akita_packed_witness_with_config(config, &prover_setup, &source)
@@ -1388,7 +1402,7 @@ fn validity_source_with_symbols(
 }
 
 fn verify_validity_artifacts<T>(
-    setup: &AkitaVerifierSetup,
+    setup: &AkitaPackedVerifierSetup,
     transcript: &mut T,
     artifacts: &AkitaPackedWitnessArtifacts,
     log_k_chunk: usize,
@@ -1433,7 +1447,7 @@ fn akita_clear_verifier_surface_is_nameable() {
     ) -> Result<(), VerifierError>;
     let _verify: VerifyFn = verify_akita_clear::<TestTranscript>;
     type ProveFn = fn(
-        &AkitaProverSetup,
+        &AkitaPackedProverSetup,
         &AkitaVerifierPreprocessing,
         &JoltDevice,
         &AkitaJoltProof,
@@ -1444,7 +1458,7 @@ fn akita_clear_verifier_surface_is_nameable() {
     let _prove: ProveFn =
         prove_akita_jolt_final_openings::<TestTranscript, SparsePackedWitness<AkitaField>>;
     type ProveValidityFn = fn(
-        &AkitaProverSetup,
+        &AkitaPackedProverSetup,
         &AkitaVerifierPreprocessing,
         &JoltDevice,
         &AkitaJoltProof,
@@ -1455,7 +1469,7 @@ fn akita_clear_verifier_surface_is_nameable() {
     let _prove_validity: ProveValidityFn =
         prove_akita_jolt_packed_validity::<TestTranscript, SparsePackedWitness<AkitaField>>;
     type AttachOpeningsFn = fn(
-        &AkitaProverSetup,
+        &AkitaPackedProverSetup,
         &AkitaVerifierPreprocessing,
         &JoltDevice,
         &mut AkitaJoltProof,
@@ -1470,7 +1484,7 @@ fn akita_clear_verifier_surface_is_nameable() {
 #[test]
 fn akita_verifier_setup_binds_protocol_config() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (_, verifier_setup) = AkitaPackedScheme::setup(params);
     let config = akita_lattice_protocol_config_for_layout(&layout);
 
@@ -1493,15 +1507,15 @@ fn akita_verifier_setup_binds_protocol_config() {
         Err(VerifierError::InvalidProtocolConfig { .. })
     ));
 
-    let mut missing_layout = verifier_setup.clone();
-    missing_layout.packed_layout = None;
+    let mut wrong_setup_layout = verifier_setup.clone();
+    wrong_setup_layout.layout.digest[0] ^= 1;
     assert!(matches!(
-        validate_akita_verifier_setup_config(&missing_layout, &config),
+        validate_akita_verifier_setup_config(&wrong_setup_layout, &config),
         Err(VerifierError::InvalidProtocolConfig { .. })
     ));
 
     let mut missing_native = verifier_setup;
-    missing_native.native.clear();
+    missing_native.pcs.native.clear();
     assert!(matches!(
         validate_akita_verifier_setup_config(&missing_native, &config),
         Err(VerifierError::InvalidProtocolConfig { reason })
@@ -1512,7 +1526,7 @@ fn akita_verifier_setup_binds_protocol_config() {
 #[test]
 fn akita_verifier_setup_binds_artifact_layout() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (_, verifier_setup) = AkitaPackedScheme::setup(params);
 
     validate_akita_verifier_setup_layout(&verifier_setup, &layout)
@@ -1531,7 +1545,7 @@ fn akita_verifier_setup_binds_artifact_layout() {
     ));
 
     let mut zero_group_setup = verifier_setup;
-    zero_group_setup.max_num_polys_per_commitment_group = 0;
+    zero_group_setup.pcs.max_num_polys_per_commitment_group = 0;
     assert!(matches!(
         validate_akita_verifier_setup_layout(&zero_group_setup, &layout),
         Err(VerifierError::InvalidProtocolConfig { .. })
@@ -1541,7 +1555,7 @@ fn akita_verifier_setup_binds_artifact_layout() {
 #[test]
 fn akita_verifier_payload_shape_binds_inner_commitment_metadata() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
     let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
         .expect("empty sparse source should build");
@@ -1602,7 +1616,7 @@ fn akita_verifier_payload_shape_binds_inner_commitment_metadata() {
 #[test]
 fn akita_untrusted_advice_aliases_packed_witness_but_trusted_must_be_separate() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, _) = AkitaPackedScheme::setup(params);
     let source =
         SparsePackedWitness::try_new(layout, Vec::new()).expect("empty sparse source should build");
@@ -1645,7 +1659,7 @@ fn akita_untrusted_advice_aliases_packed_witness_but_trusted_must_be_separate() 
 #[test]
 fn akita_precommitted_commitments_must_not_alias_packed_witness() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, _) = AkitaPackedScheme::setup(params);
     let source =
         SparsePackedWitness::try_new(layout, Vec::new()).expect("empty sparse source should build");
@@ -1680,7 +1694,7 @@ fn akita_precommitted_commitments_must_not_alias_packed_witness() {
 #[test]
 fn configured_layout_mismatch_rejects_before_commit() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, _) = AkitaPackedScheme::setup(params);
     let source = SparsePackedWitness::try_new(layout.clone(), Vec::new())
         .expect("empty sparse source should build");
@@ -1696,7 +1710,7 @@ fn configured_layout_mismatch_rejects_before_commit() {
 #[test]
 fn akita_artifact_preflight_rejects_stale_protocol_and_commitments() {
     let layout = tiny_layout();
-    let params = AkitaSetupParams::from_packed_layout(&layout, 1);
+    let params = akita_packed_params(&layout, 1);
     let (prover_setup, verifier_setup) = AkitaPackedScheme::setup(params);
     let source = SparsePackedWitness::try_from_cells(
         layout.clone(),
