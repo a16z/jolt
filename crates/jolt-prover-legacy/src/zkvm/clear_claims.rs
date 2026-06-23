@@ -73,6 +73,7 @@ pub(crate) fn build_clear_claims<F: Field>(
         stage3: stage3_claims_from_openings(&claims)?,
         stage4: stage4_claims_from_openings(&claims)?,
         stage5: stage5_claims_from_openings(&claims)?,
+        stage5_increment: None,
         stage6: stage6_claims_from_openings(&claims)?,
         stage7: stage7_claims_from_openings(&claims)?,
     })
@@ -269,9 +270,9 @@ fn stage5_claims_from_openings<F: Field>(
             instruction_raf_flag: claims
                 .require(instruction::read_raf_instruction_raf_flag_opening())?,
         },
-        ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims {
+        ram_ra_claim_reduction: Some(RamRaClaimReductionOutputOpeningClaims {
             ram_ra: claims.require(ram_ra)?,
-        },
+        }),
         registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
@@ -390,6 +391,7 @@ fn stage6_claims_from_openings<F: Field>(
             instruction_ra: booleanity_instruction_ra,
             bytecode_ra: booleanity_bytecode_ra,
             ram_ra: booleanity_ram_ra,
+            unsigned_inc_chunks: Vec::new(),
         },
         ram_hamming_booleanity: RamHammingBooleanityOutputOpeningClaims {
             ram_hamming_weight: claims.require(ram_hamming_weight)?,
@@ -398,10 +400,11 @@ fn stage6_claims_from_openings<F: Field>(
         instruction_ra_virtualization: InstructionRaVirtualizationOutputOpeningClaims {
             committed_instruction_ra,
         },
-        inc_claim_reduction: IncClaimReductionOutputOpeningClaims {
+        inc_claim_reduction: Some(IncClaimReductionOutputOpeningClaims {
             ram_inc: claims.require(ram_inc)?,
             rd_inc: claims.require(rd_inc)?,
-        },
+        }),
+        unsigned_inc_claim_reduction: None,
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_openings(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_openings(claims, JoltAdviceKind::Untrusted),
@@ -426,7 +429,7 @@ fn advice_cycle_phase_claim_from_openings<F: Field>(
 
 fn bytecode_val_stage_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
-) -> Result<Option<[F; bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES]>, VerifierError> {
+) -> Result<Option<Vec<F>>, VerifierError> {
     if claims
         .get(bytecode_claim_reduction::bytecode_val_stage_opening(0))
         .is_none()
@@ -438,7 +441,7 @@ fn bytecode_val_stage_claims_from_openings<F: Field>(
         *stage_claim =
             claims.require(bytecode_claim_reduction::bytecode_val_stage_opening(stage))?;
     }
-    Ok(Some(stage_claims))
+    Ok(Some(stage_claims.into()))
 }
 
 fn bytecode_cycle_phase_claims_from_openings<F: Field>(
@@ -523,6 +526,8 @@ fn stage7_claims_from_openings<F: Field>(
         },
         bytecode_address_phase: bytecode_address_phase_claims_from_openings(claims),
         program_image_address_phase: program_image_address_phase_claim_from_openings(claims),
+        unsigned_inc_chunk_reconstruction: None,
+        lattice_packed_validity: None,
     })
 }
 

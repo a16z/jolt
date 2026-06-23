@@ -8,7 +8,6 @@
 use crate::zkvm::clear_claims::build_clear_claims;
 pub use jolt_verifier::VerifierError;
 use jolt_verifier::{
-    config::JoltProtocolConfig,
     preprocessing::{
         CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
     },
@@ -429,29 +428,30 @@ where
         stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
         stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
         stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
+        stage5_increment_sumcheck_proof: None,
         stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
         stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
+        lattice_packed_validity_sumcheck_proof: None,
     };
 
-    Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+    Ok(JoltProof::new(
         commitments,
         stages,
-        joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),
-        untrusted_advice_commitment: proof
+        PCS::opening_proof_into_verifier(proof.joint_opening_proof),
+        proof
             .untrusted_advice_commitment
             .map(PCS::commitment_into_verifier),
-        claims: JoltProofClaims::Clear(convert_opening_claims(
+        JoltProofClaims::Clear(convert_opening_claims(
             proof.opening_claims,
             proof.trace_length,
         )),
-        trace_length: proof.trace_length,
-        ram_K: proof.ram_K,
-        rw_config: convert_read_write_config(proof.rw_config),
+        proof.trace_length,
+        proof.ram_K,
+        convert_read_write_config(proof.rw_config),
         one_hot_config,
-        trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
-    })
+        convert_trace_polynomial_order(proof.dory_layout),
+    ))
 }
 
 #[cfg(feature = "zk")]
@@ -485,28 +485,29 @@ where
         stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
         stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
         stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
+        stage5_increment_sumcheck_proof: None,
         stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
         stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
+        lattice_packed_validity_sumcheck_proof: None,
     };
 
-    Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(true),
+    Ok(JoltProof::new(
         commitments,
         stages,
-        joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),
-        untrusted_advice_commitment: proof
+        PCS::opening_proof_into_verifier(proof.joint_opening_proof),
+        proof
             .untrusted_advice_commitment
             .map(PCS::commitment_into_verifier),
-        claims: JoltProofClaims::Zk {
+        JoltProofClaims::Zk {
             blindfold_proof: prover_blindfold_proof_into_verifier::<F, C>(&proof.blindfold_proof),
         },
-        trace_length: proof.trace_length,
-        ram_K: proof.ram_K,
-        rw_config: convert_read_write_config(proof.rw_config),
+        proof.trace_length,
+        proof.ram_K,
+        convert_read_write_config(proof.rw_config),
         one_hot_config,
-        trace_polynomial_order: convert_trace_polynomial_order(proof.dory_layout),
-    })
+        convert_trace_polynomial_order(proof.dory_layout),
+    ))
 }
 
 fn convert_uniskip<F, C, FS>(
