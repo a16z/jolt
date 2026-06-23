@@ -1228,7 +1228,6 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn batched_bind(
         &self,
         values: &mut DeviceFrVec,
@@ -1236,7 +1235,50 @@ impl CudaKernelContext {
         num_buffers: usize,
         challenge: Fr,
     ) -> Result<(), CudaError> {
-        todo!()
+        assert!(num_buffers > 0, "num_buffers must be > 0");
+        assert_eq!(
+            values.len % num_buffers,
+            0,
+            "packed buffer length must split evenly across num_buffers"
+        );
+        let seg_len = values.len / num_buffers;
+        assert_eq!(seg_len % 2, 0, "each buffer must have even length");
+
+        // Each segment has even length, so pairing (0,1),(2,3),... over the whole
+        // packed buffer never straddles a segment boundary: batched bind is a single
+        // bind over all num_buffers*half pairs.
+        let half = values.len / 2;
+        if scratch.buf.len() < half * LIMBS {
+            scratch.buf = self.stream.alloc_zeros(half * LIMBS)?;
+        }
+        scratch.len = half;
+        if half == 0 {
+            std::mem::swap(values, scratch);
+            return Ok(());
+        }
+
+        let challenge_dev = self.stream.clone_htod(&fr_to_limbs(challenge))?;
+        let cfg = LaunchConfig {
+            grid_dim: ((half as u32).div_ceil(BLOCK), 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let half_arg = half as u64;
+        let f = self.bind.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut scratch.buf)
+            .arg(&values.buf)
+            .arg(&challenge_dev)
+            .arg(&half_arg);
+        // SAFETY: each thread i reads values[2i], values[2i+1] and the single
+        // challenge, writing scratch[i]; scratch and values are distinct buffers
+        // holding >= half and 2*half elements respectively.
+        let _ = unsafe { launch.launch(cfg) }?;
+        self.stream.synchronize()?;
+
+        std::mem::swap(values, scratch);
+        Ok(())
     }
 
     pub fn bind(
@@ -2105,7 +2147,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::batched_bind is todo!()"]
         fn batched_bind_matches_cpu(
             log_half in 0usize..10,
             num_buffers in 1usize..6,
