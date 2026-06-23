@@ -42,10 +42,10 @@ pub use claims::{EvaluationClaim, ProverOpeningClaim, VerifierOpeningClaim};
 pub use error::OpeningsError;
 pub use packing::{
     has_packing_view, prove_packing_reduction, prove_sparse_packing_reduction,
-    validate_packing_statement, verify_packing_reduction, PackingAddress, PackingBatch,
-    PackingBatchProof, PackingFamily, PackingLayout, PackingProverReduction, PackingProverSetup,
-    PackingReductionProof, PackingSetupParams, PackingSource, PackingVerifierReduction,
-    PackingVerifierSetup,
+    prove_sparse_packing_reduction_from_entries, validate_packing_statement,
+    verify_packing_reduction, PackingAddress, PackingBatch, PackingBatchProof, PackingFamily,
+    PackingLayout, PackingProverReduction, PackingProverSetup, PackingReductionProof,
+    PackingSetupParams, PackingSource, PackingVerifierReduction, PackingVerifierSetup,
 };
 pub use packing_layout::{
     packing_witness_source_polynomial, PackingAdviceKind, PackingAlphabet, PackingAlphabetCounts,

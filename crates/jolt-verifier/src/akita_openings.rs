@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::{
     akita::{
         AkitaClearVectorCommitment, AkitaJoltProof, AkitaPackingBatchProof,
@@ -13,6 +15,7 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaCommitment, AkitaField, AkitaProverHint};
 use jolt_openings::{
     BatchOpeningScheme, BatchOpeningStatement, PackingWitnessSource, PhysicalView,
+    SparsePackingWitness,
 };
 use jolt_poly::Polynomial;
 use jolt_transcript::Transcript;
@@ -79,6 +82,55 @@ where
     })
 }
 
+pub fn prove_akita_sparse_packing_witness_openings<T, OpeningId, RelationId>(
+    setup: &AkitaPackingProverSetup,
+    transcript: &mut T,
+    artifacts: &AkitaPackingWitnessArtifacts,
+    source: SparsePackingWitness<AkitaField>,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+) -> Result<AkitaPackingBatchProof, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+{
+    if source.layout() != &artifacts.layout {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: "lattice packing opening source layout does not match committed artifact"
+                .to_string(),
+        });
+    }
+    if statement.layout_digest != artifacts.layout.digest {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason:
+                "lattice packing opening statement layout digest does not match committed artifact"
+                    .to_string(),
+        });
+    }
+    let payload = artifacts
+        .payload()
+        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason: "lattice packing opening artifacts do not carry a lattice payload".to_string(),
+        })?;
+    for claim in &statement.claims {
+        if claim.commitment != payload.packed_witness {
+            return Err(VerifierError::FinalOpeningBatchFailed {
+                reason: "lattice packing opening statement references a non-artifact commitment"
+                    .to_string(),
+            });
+        }
+    }
+
+    AkitaPackingScheme::prove_sparse_packing_witness_batch(
+        setup,
+        transcript,
+        statement,
+        source,
+        artifacts.hint.clone(),
+    )
+    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+        reason: error.to_string(),
+    })
+}
+
 pub fn prove_akita_stage8_clear_openings<T, S>(
     setup: &AkitaPackingProverSetup,
     transcript: &mut T,
@@ -129,8 +181,76 @@ where
         &statement.precommitted_statements,
         precommitted_inputs,
     )?;
-    let packed =
-        prove_akita_packing_openings(setup, transcript, artifacts, source, &statement.statement)?;
+    tracing::info!(
+        packed_claims = statement.statement.claims.len(),
+        precommitted_batches = statement.precommitted_statements.len(),
+        "Akita final openings statement"
+    );
+    let packed = time_akita_final_opening_phase(
+        "prove_final_packed_openings",
+        0,
+        statement.statement.claims.len(),
+        || prove_akita_packing_openings(setup, transcript, artifacts, source, &statement.statement),
+    )?;
+    let precommitted = prove_akita_precommitted_opening_batches(
+        setup,
+        transcript,
+        &payload.packed_witness,
+        &statement.precommitted_statements,
+        precommitted_inputs,
+    )?;
+    Ok(AkitaStage8ClearOpeningProofs {
+        packed,
+        precommitted,
+    })
+}
+
+pub fn prove_akita_stage8_clear_openings_with_precommitted_owned_witness<T>(
+    setup: &AkitaPackingProverSetup,
+    transcript: &mut T,
+    artifacts: &AkitaPackingWitnessArtifacts,
+    source: SparsePackingWitness<AkitaField>,
+    statement: &Stage8BatchStatement<AkitaField, AkitaCommitment>,
+    precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
+) -> Result<AkitaStage8ClearOpeningProofs, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+{
+    let Stage8BatchStatement::Clear(statement) = statement else {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: "lattice packing opening proving requires a clear Stage 8 statement"
+                .to_string(),
+        });
+    };
+    let payload = artifacts
+        .payload()
+        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+            reason: "lattice packing opening artifacts do not carry a lattice payload".to_string(),
+        })?;
+    validate_akita_precommitted_opening_inputs(
+        &payload.packed_witness,
+        &statement.precommitted_statements,
+        precommitted_inputs,
+    )?;
+    tracing::info!(
+        packed_claims = statement.statement.claims.len(),
+        precommitted_batches = statement.precommitted_statements.len(),
+        "Akita final openings statement"
+    );
+    let packed = time_akita_final_opening_phase(
+        "prove_final_packed_openings",
+        0,
+        statement.statement.claims.len(),
+        || {
+            prove_akita_sparse_packing_witness_openings(
+                setup,
+                transcript,
+                artifacts,
+                source,
+                &statement.statement,
+            )
+        },
+    )?;
     let precommitted = prove_akita_precommitted_opening_batches(
         setup,
         transcript,
@@ -164,19 +284,51 @@ where
     statements
         .iter()
         .zip(inputs)
-        .map(|(statement, input)| {
-            AkitaPackingScheme::prove_batch(
-                setup,
-                transcript,
-                statement,
-                input.polynomials,
-                vec![input.hint.clone()],
+        .enumerate()
+        .map(|(index, (statement, input))| {
+            time_akita_final_opening_phase(
+                "prove_final_precommitted_openings",
+                index,
+                statement.claims.len(),
+                || {
+                    AkitaPackingScheme::prove_batch(
+                        setup,
+                        transcript,
+                        statement,
+                        input.polynomials,
+                        vec![input.hint.clone()],
+                    )
+                    .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+                        reason: error.to_string(),
+                    })
+                },
             )
-            .map_err(|error| VerifierError::FinalOpeningBatchFailed {
-                reason: error.to_string(),
-            })
         })
         .collect()
+}
+
+fn time_akita_final_opening_phase<T>(
+    phase: &'static str,
+    batch_index: usize,
+    claims: usize,
+    f: impl FnOnce() -> T,
+) -> T {
+    tracing::info!(
+        phase,
+        batch_index,
+        claims,
+        "Akita final opening phase start"
+    );
+    let start = Instant::now();
+    let output = f();
+    tracing::info!(
+        phase,
+        batch_index,
+        claims,
+        seconds = start.elapsed().as_secs_f64(),
+        "Akita final opening phase"
+    );
+    output
 }
 
 fn validate_akita_precommitted_opening_inputs(
@@ -408,6 +560,53 @@ where
             &artifacts.protocol,
         )?;
     prove_akita_stage8_clear_openings_with_precommitted(
+        setup,
+        &mut transcript,
+        artifacts,
+        source,
+        &statement,
+        precommitted_inputs,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "prover helper mirrors final opening inputs and consumes the packed witness"
+)]
+pub fn prove_akita_jolt_final_openings_with_precommitted_owned_witness<T>(
+    setup: &AkitaPackingProverSetup,
+    preprocessing: &AkitaVerifierPreprocessing,
+    public_io: &JoltDevice,
+    proof: &AkitaJoltProof,
+    trusted_advice_commitment: Option<&AkitaCommitment>,
+    artifacts: &AkitaPackingWitnessArtifacts,
+    source: SparsePackingWitness<AkitaField>,
+    precommitted_inputs: &[AkitaPrecommittedOpeningInput<'_>],
+) -> Result<AkitaStage8ClearOpeningProofs, VerifierError>
+where
+    T: Transcript<Challenge = AkitaField>,
+{
+    validate_akita_artifacts_for_proof(
+        &preprocessing.pcs_setup,
+        &proof.protocol,
+        &proof.commitments,
+        artifacts,
+    )?;
+    let (statement, mut transcript) =
+        crate::verifier::stage8_batch_statement_with_config_and_transcript::<
+            AkitaField,
+            AkitaPackingScheme,
+            AkitaClearVectorCommitment,
+            T,
+            _,
+        >(
+            preprocessing,
+            public_io,
+            proof,
+            trusted_advice_commitment,
+            &artifacts.protocol,
+        )?;
+    prove_akita_stage8_clear_openings_with_precommitted_owned_witness(
         setup,
         &mut transcript,
         artifacts,

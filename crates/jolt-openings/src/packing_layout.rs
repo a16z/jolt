@@ -680,6 +680,10 @@ impl<F: Field> SparsePackingWitness<F> {
     pub fn entries(&self) -> &[(usize, F)] {
         &self.entries
     }
+
+    pub fn into_parts(self) -> (PackingWitnessLayout, Vec<(usize, F)>) {
+        (self.layout, self.entries)
+    }
 }
 
 impl<F: Field> PackingWitnessSource<F> for SparsePackingWitness<F> {

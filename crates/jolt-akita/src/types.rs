@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use akita_config::CommitmentConfig;
 use akita_field::PseudoMersenneField;
 use akita_pcs::AkitaCommitmentScheme;
@@ -40,6 +38,15 @@ impl AkitaSparsePolynomial {
         num_vars: usize,
         indices: impl IntoIterator<Item = usize>,
     ) -> Result<Self, OpeningsError> {
+        let mut indices = indices.into_iter().collect::<Vec<_>>();
+        indices.sort_unstable();
+        Self::from_sorted_jolt_unit_indices(num_vars, indices)
+    }
+
+    pub fn from_sorted_jolt_unit_indices(
+        num_vars: usize,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> Result<Self, OpeningsError> {
         if num_vars >= usize::BITS as usize {
             return Err(invalid_sparse_polynomial(format!(
                 "Akita sparse polynomial dimension {num_vars} exceeds usize bit width"
@@ -52,19 +59,21 @@ impl AkitaSparsePolynomial {
             )));
         }
 
-        let mut seen = BTreeSet::new();
-        let mut coeffs = Vec::new();
+        let indices = indices.into_iter();
+        let mut previous = None;
+        let mut coeffs = Vec::with_capacity(indices.size_hint().0);
         for index in indices {
             if index >= domain_size {
                 return Err(invalid_sparse_polynomial(format!(
                     "Akita sparse polynomial index {index} outside domain size {domain_size}"
                 )));
             }
-            if !seen.insert(index) {
+            if previous.is_some_and(|previous| previous >= index) {
                 return Err(invalid_sparse_polynomial(format!(
-                    "Akita sparse polynomial index {index} appears more than once"
+                    "Akita sparse polynomial indices must be sorted and distinct; bad index {index}"
                 )));
             }
+            previous = Some(index);
             let akita_index = jolt_to_akita_index(num_vars, index);
             coeffs.push((akita_index / AKITA_D, akita_index % AKITA_D, 1i8));
         }
@@ -126,14 +135,27 @@ pub struct AkitaProverSetup {
     pub(crate) verifier: AkitaVerifierSetup,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
     pub max_num_vars: usize,
     pub max_num_polys_per_commitment_group: usize,
     pub default_layout_digest: AkitaLayoutDigest,
     pub native: Vec<u8>,
+    #[serde(skip)]
+    pub(crate) native_verifier: Option<NativeVerifier>,
 }
+
+impl PartialEq for AkitaVerifierSetup {
+    fn eq(&self, other: &Self) -> bool {
+        self.max_num_vars == other.max_num_vars
+            && self.max_num_polys_per_commitment_group == other.max_num_polys_per_commitment_group
+            && self.default_layout_digest == other.default_layout_digest
+            && self.native == other.native
+    }
+}
+
+impl Eq for AkitaVerifierSetup {}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -164,13 +186,43 @@ impl CommitmentLayoutDigest for AkitaCommitment {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
     pub commitment: AkitaCommitment,
     pub statement_bridge: Vec<u8>,
     pub proof_shape: Vec<u8>,
     pub proof: Vec<u8>,
+    #[serde(skip)]
+    pub(crate) native_proof: Option<NativeProof>,
+}
+
+impl PartialEq for AkitaBatchProof {
+    fn eq(&self, other: &Self) -> bool {
+        self.commitment == other.commitment
+            && self.statement_bridge == other.statement_bridge
+            && self.proof_shape == other.proof_shape
+            && self.proof == other.proof
+    }
+}
+
+impl Eq for AkitaBatchProof {}
+
+impl AkitaBatchProof {
+    pub fn serialized(
+        commitment: AkitaCommitment,
+        statement_bridge: Vec<u8>,
+        proof_shape: Vec<u8>,
+        proof: Vec<u8>,
+    ) -> Self {
+        Self {
+            commitment,
+            statement_bridge,
+            proof_shape,
+            proof,
+            native_proof: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

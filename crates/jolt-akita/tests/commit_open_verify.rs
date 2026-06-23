@@ -2,7 +2,7 @@
 
 mod support;
 
-use jolt_akita::{AkitaScheme, AkitaSetupParams};
+use jolt_akita::{AkitaScheme, AkitaSetupParams, AkitaSparsePolynomial};
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
     PhysicalView,
@@ -204,4 +204,79 @@ fn akita_direct_opening_uses_commitment_layout_digest() {
             "direct proof must reject a statement digest that differs from the opened commitment"
         );
     });
+}
+
+#[test]
+#[ignore = "large Akita sparse PCS regression test; run explicitly"]
+fn akita_sparse_num_vars_30_jolt_index_roundtrip() {
+    run_on_large_stack(|| {
+        let num_vars = 30;
+        let setup_params = AkitaSetupParams::new(num_vars, 1, layout(7));
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params);
+        let indices = [0, 1, 2, 3, 1_234_567, (1usize << 29) + 5];
+        let polynomial = AkitaSparsePolynomial::from_jolt_unit_indices(num_vars, indices)
+            .expect("sparse polynomial should build");
+        let (commitment, hint) =
+            AkitaScheme::commit_sparse_polynomial(&prover_setup, layout(7), &polynomial)
+                .expect("sparse commitment should succeed");
+        let jolt_point = (0..num_vars)
+            .map(|index| f(index as u64 + 2))
+            .collect::<Vec<_>>();
+        let native_point = jolt_point.iter().rev().copied().collect::<Vec<_>>();
+        let claim = indices
+            .iter()
+            .copied()
+            .map(|index| jolt_unit_eval(index, &jolt_point))
+            .sum();
+        let statement = BatchOpeningStatement {
+            logical_point: native_point.clone(),
+            pcs_point: native_point,
+            layout_digest: commitment.layout_digest,
+            claims: vec![BatchOpeningClaim {
+                id: OpeningId::A,
+                relation: RelationId::NativeBatch,
+                commitment: commitment.clone(),
+                claim,
+                view: PhysicalView::Direct,
+                scale: f(1),
+            }],
+        };
+
+        let mut prover_transcript = Blake2bTranscript::new(b"akita-sparse-30");
+        let proof = AkitaScheme::prove_sparse_batch(
+            &prover_setup,
+            &mut prover_transcript,
+            &statement,
+            &polynomial,
+            hint,
+        )
+        .expect("sparse proof should be produced");
+
+        let mut verifier_transcript = Blake2bTranscript::new(b"akita-sparse-30");
+        let result = <AkitaScheme as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &mut verifier_transcript,
+            &statement,
+            &proof,
+        )
+        .expect("sparse proof should verify");
+
+        assert_eq!(result.joint_commitment, commitment);
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    });
+}
+
+fn jolt_unit_eval(index: usize, point_lsb: &[jolt_akita::AkitaField]) -> jolt_akita::AkitaField {
+    point_lsb
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(round, challenge)| {
+            if (index >> round) & 1 == 0 {
+                f(1) - challenge
+            } else {
+                challenge
+            }
+        })
+        .product()
 }

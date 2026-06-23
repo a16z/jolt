@@ -1,5 +1,6 @@
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
+use std::{cmp::Reverse, collections::BinaryHeap};
 
 use crate::{BatchOpeningStatement, OpeningsError, PackingTerm, PhysicalView};
 
@@ -121,6 +122,46 @@ where
     Ok(selector)
 }
 
+pub(super) fn for_each_packed_selector_sparse_eval<F, C, OpeningId, RelationId, L>(
+    layout: &L,
+    statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
+    gamma_powers: &[F],
+    mut visit: impl FnMut(usize, F) -> Result<(), OpeningsError>,
+) -> Result<(), OpeningsError>
+where
+    F: Field,
+    L: PackingLayout,
+{
+    let mut sequences = Vec::new();
+    for (claim, gamma) in statement.claims.iter().zip(gamma_powers) {
+        let PhysicalView::Packing { terms, .. } = &claim.view else {
+            return Err(invalid_batch("packing selector requires Packing views"));
+        };
+        let claim_weight = *gamma * claim.scale;
+        for term in terms {
+            let family = family_for_term(layout, term)?;
+            let row_weights = EqPolynomial::new(term.row_point.clone()).evaluations();
+            if row_weights.len() != family.rows {
+                return Err(invalid_batch(
+                    "packing term row point does not match family row count",
+                ));
+            }
+            let weight = claim_weight * term.coefficient;
+            if weight.is_zero() {
+                continue;
+            }
+            sequences.push(SelectorSequence::new(
+                family,
+                term.limb,
+                term.symbol,
+                weight,
+                row_weights,
+            ));
+        }
+    }
+    stream_selector_sequences(&mut sequences, &mut visit)
+}
+
 pub(super) fn packed_selector_eval<F, C, OpeningId, RelationId, L>(
     layout: &L,
     statement: &BatchOpeningStatement<F, C, OpeningId, RelationId>,
@@ -149,6 +190,106 @@ where
         }
     }
     Ok(result)
+}
+
+struct SelectorSequence<F> {
+    family: PackingFamily,
+    limb: usize,
+    symbol: usize,
+    weight: F,
+    row_weights: Vec<F>,
+    row: usize,
+}
+
+impl<F> SelectorSequence<F>
+where
+    F: Field,
+{
+    fn new(
+        family: PackingFamily,
+        limb: usize,
+        symbol: usize,
+        weight: F,
+        row_weights: Vec<F>,
+    ) -> Self {
+        Self {
+            family,
+            limb,
+            symbol,
+            weight,
+            row_weights,
+            row: 0,
+        }
+    }
+
+    fn advance_to_nonzero(&mut self) {
+        while self.row < self.row_weights.len() && self.row_weights[self.row].is_zero() {
+            self.row += 1;
+        }
+    }
+
+    fn current(&self) -> Option<(usize, F)> {
+        if self.row >= self.row_weights.len() {
+            return None;
+        }
+        let local =
+            (self.row * self.family.limbs + self.limb) * self.family.alphabet_size + self.symbol;
+        Some((
+            self.family.offset + local,
+            self.weight * self.row_weights[self.row],
+        ))
+    }
+
+    fn advance(&mut self) {
+        self.row += 1;
+        self.advance_to_nonzero();
+    }
+}
+
+fn stream_selector_sequences<F>(
+    sequences: &mut [SelectorSequence<F>],
+    visit: &mut impl FnMut(usize, F) -> Result<(), OpeningsError>,
+) -> Result<(), OpeningsError>
+where
+    F: Field,
+{
+    let mut heap = BinaryHeap::new();
+    for (index, sequence) in sequences.iter_mut().enumerate() {
+        sequence.advance_to_nonzero();
+        if let Some((rank, _)) = sequence.current() {
+            heap.push(Reverse((rank, index)));
+        }
+    }
+
+    while let Some(Reverse((rank, sequence_index))) = heap.pop() {
+        let mut value = sequences[sequence_index]
+            .current()
+            .map_or_else(F::zero, |(_, value)| value);
+        sequences[sequence_index].advance();
+        if let Some((next_rank, _)) = sequences[sequence_index].current() {
+            heap.push(Reverse((next_rank, sequence_index)));
+        }
+        while heap
+            .peek()
+            .is_some_and(|Reverse((next_rank, _))| *next_rank == rank)
+        {
+            let Reverse((_, sequence_index)) = heap.pop().ok_or_else(|| {
+                invalid_batch("packing selector sequence heap unexpectedly empty")
+            })?;
+            value += sequences[sequence_index]
+                .current()
+                .map_or_else(F::zero, |(_, value)| value);
+            sequences[sequence_index].advance();
+            if let Some((next_rank, _)) = sequences[sequence_index].current() {
+                heap.push(Reverse((next_rank, sequence_index)));
+            }
+        }
+        if value.is_zero() {
+            continue;
+        }
+        visit(rank, value)?;
+    }
+    Ok(())
 }
 
 fn packed_term_selector_eval<F, L>(

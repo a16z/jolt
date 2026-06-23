@@ -1,5 +1,7 @@
+use akita_field::ReducingBytes;
 use akita_pcs::{AkitaTranscript, CommitmentProver, CpuBackend};
 use akita_prover::{AkitaPolyOps, CommittedPolynomials, ProverClaims};
+use akita_transcript::Transcript as AkitaNativeTranscript;
 use akita_types::{
     BasisMode, CommitmentVerifier, CommittedOpenings, SetupContributionMode, VerifierClaims,
 };
@@ -21,6 +23,8 @@ use crate::{
         NativeScheme, NativeVerifier, AKITA_D,
     },
 };
+
+const SETUP_CONTRIBUTION_MODE: SetupContributionMode = SetupContributionMode::Direct;
 
 impl BatchOpeningScheme for AkitaScheme {
     fn prove_batch<T, OpeningId, RelationId>(
@@ -73,11 +77,52 @@ impl BatchOpeningScheme for AkitaScheme {
         }
         bind_proof_bytes(proof, transcript);
 
-        let native_verifier = deserialize_akita::<NativeVerifier>(&setup.native, &())?;
+        let native_verifier_owned;
+        let native_verifier = if let Some(native_verifier) = setup.native_verifier.as_ref() {
+            native_verifier
+        } else {
+            native_verifier_owned = deserialize_akita::<NativeVerifier>(&setup.native, &())
+                .map_err(|error| {
+                invalid_batch(format!(
+                    "native verifier setup deserialization failed for num_vars={}, claims={}: {error}",
+                    normalized.commitment.num_vars,
+                    statement.claims.len()
+                ))
+                })?;
+            &native_verifier_owned
+        };
         let native_commitment =
-            deserialize_akita::<NativeCommitment>(&proof.commitment.native, &())?;
-        let proof_shape = deserialize_akita::<NativeProofShape>(&proof.proof_shape, &())?;
-        let native_proof = deserialize_akita::<NativeProof>(&proof.proof, &proof_shape)?;
+            deserialize_akita::<NativeCommitment>(&proof.commitment.native, &()).map_err(
+                |error| {
+                    invalid_batch(format!(
+                "native commitment deserialization failed for num_vars={}, claims={}: {error}",
+                normalized.commitment.num_vars,
+                statement.claims.len()
+            ))
+                },
+            )?;
+        let proof_shape =
+            deserialize_akita::<NativeProofShape>(&proof.proof_shape, &()).map_err(|error| {
+                invalid_batch(format!(
+                    "native proof shape deserialization failed for num_vars={}, claims={}: {error}",
+                    normalized.commitment.num_vars,
+                    statement.claims.len()
+                ))
+            })?;
+        let native_proof_owned;
+        let native_proof = if let Some(native_proof) = proof.native_proof.as_ref() {
+            native_proof
+        } else {
+            native_proof_owned = deserialize_akita::<NativeProof>(&proof.proof, &proof_shape)
+                .map_err(|error| {
+                    invalid_batch(format!(
+                        "native proof deserialization failed for num_vars={}, claims={}: {error}",
+                        normalized.commitment.num_vars,
+                        statement.claims.len()
+                    ))
+                })?;
+            &native_proof_owned
+        };
         let openings = statement
             .claims
             .iter()
@@ -91,14 +136,20 @@ impl BatchOpeningScheme for AkitaScheme {
             }],
         );
         NativeScheme::batched_verify(
-            &native_proof,
-            &native_verifier,
+            native_proof,
+            native_verifier,
             &mut akita_transcript,
             claims,
             BasisMode::Lagrange,
-            SetupContributionMode::Direct,
+            SETUP_CONTRIBUTION_MODE,
         )
-        .map_err(|_| OpeningsError::VerificationFailed)?;
+        .map_err(|error| {
+            invalid_batch(format!(
+                "native batched verify failed for num_vars={}, claims={}: {error}",
+                normalized.commitment.num_vars,
+                statement.claims.len()
+            ))
+        })?;
 
         Ok(BatchOpeningResult {
             coefficients: normalized.coefficients,
@@ -155,15 +206,79 @@ where
         claims,
         &mut akita_transcript,
         BasisMode::Lagrange,
-        SetupContributionMode::Direct,
+        SETUP_CONTRIBUTION_MODE,
     )
-    .map_err(akita_error)?;
+    .map_err(|error| {
+        akita_error(format!(
+            "native batched prove failed for num_vars={}, claims={}: {error}",
+            normalized.commitment.num_vars,
+            statement.claims.len()
+        ))
+    })?;
+    if std::env::var_os("JOLT_DEBUG_AKITA_NATIVE_SELF_VERIFY").is_some() {
+        let mut verify_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
+        let bridge = AkitaField::from_le_bytes_mod_order(&statement_bridge);
+        verify_transcript.append_field(b"jolt_statement_bridge", &bridge);
+        let openings = statement
+            .claims
+            .iter()
+            .map(|claim| claim.claim)
+            .collect::<Vec<_>>();
+        let verifier_claims: VerifierClaims<'_, AkitaField, _> = (
+            statement.pcs_point.as_slice(),
+            vec![CommittedOpenings {
+                openings: openings.as_slice(),
+                commitment: &native_commitment,
+            }],
+        );
+        let native_verifier_owned;
+        let native_verifier = if let Some(native_verifier) = setup.verifier.native_verifier.as_ref()
+        {
+            native_verifier
+        } else {
+            native_verifier_owned = NativeScheme::setup_verifier(&setup.native);
+            &native_verifier_owned
+        };
+        NativeScheme::batched_verify(
+            &native_proof,
+            native_verifier,
+            &mut verify_transcript,
+            verifier_claims,
+            BasisMode::Lagrange,
+            SETUP_CONTRIBUTION_MODE,
+        )
+        .map_err(|error| {
+            invalid_batch(format!(
+                "native batched proof failed immediate self-verify for num_vars={}, claims={}: {error}",
+                normalized.commitment.num_vars,
+                statement.claims.len()
+            ))
+        })?;
+    }
     let proof_shape = native_proof.shape();
+    let proof_shape = serialize_akita(&proof_shape).map_err(|error| {
+        invalid_batch(format!(
+            "native proof shape serialization failed for num_vars={}, claims={}: {error}",
+            normalized.commitment.num_vars,
+            statement.claims.len()
+        ))
+    })?;
+    let proof = serialize_akita(&native_proof).map_err(|error| {
+        invalid_batch(format!(
+            "native proof serialization failed for num_vars={}, claims={}: {error}",
+            normalized.commitment.num_vars,
+            statement.claims.len()
+        ))
+    })?;
+    let native_proof = std::env::var_os("JOLT_AKITA_KEEP_NATIVE_PROOF_CACHE")
+        .is_some()
+        .then_some(native_proof);
     let proof = AkitaBatchProof {
         commitment: normalized.commitment,
         statement_bridge,
-        proof_shape: serialize_akita(&proof_shape)?,
-        proof: serialize_akita(&native_proof)?,
+        proof_shape,
+        proof,
+        native_proof,
     };
     bind_proof_bytes(&proof, transcript);
     Ok(proof)

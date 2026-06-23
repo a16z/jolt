@@ -1,0 +1,56 @@
+[package]
+name = "akita-prover"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+authors = [
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Prover-facing APIs for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/akita"
+readme = "../../README.md"
+
+[dependencies]
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c" }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c" }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
+akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c" }
+akita-serialization = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c" }
+akita-sumcheck = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c" }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c" }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c" }
+aes = "0.8.4"
+cfg-if = "1.0.4"
+ctr = "0.9.2"
+rand_core = "0.6"
+rayon = { version = "1.10", optional = true }
+sha3 = "0.10.8"
+tracing = "0.1"
+
+[dev-dependencies]
+rand = "0.8"
+
+[features]
+default = []
+logging-transcript = ["akita-transcript/logging-transcript"]
+parallel = [
+  "dep:rayon",
+  "akita-challenges/parallel",
+  "akita-field/parallel",
+  "akita-sumcheck/parallel",
+  "akita-types/parallel",
+]
+zk = [
+  "akita-config/zk",
+  "akita-sumcheck/zk",
+  "akita-types/zk",
+  "rand_core/getrandom",
+]
+
+[lints]
+workspace = true

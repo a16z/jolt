@@ -34,6 +34,8 @@ pub use layout::{
 
 #[path = "lattice_validity.rs"]
 mod validity;
+#[cfg(test)]
+pub(crate) use validity::field_element_canonical_value_from_openings;
 pub use validity::{
     build_lattice_packed_validity_batch, derive_lattice_packed_validity_statements,
     lattice_packed_validity_claims, lattice_packed_validity_opening_count,
@@ -41,10 +43,7 @@ pub use validity::{
     LatticePackedValidityBatch, LatticePackedValidityBatchStatement,
     LatticePackedValidityStatement, LatticePackedValidityStatementKind,
 };
-pub(crate) use validity::{
-    field_element_canonical_factors, field_element_canonical_value_from_openings,
-    FieldCanonicalFactor,
-};
+pub(crate) use validity::{field_element_canonical_factors, FieldCanonicalFactor};
 
 #[path = "lattice_validity_coverage.rs"]
 mod validity_coverage;

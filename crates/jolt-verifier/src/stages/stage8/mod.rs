@@ -6,6 +6,8 @@ mod precommitted;
 mod verify;
 
 pub use inputs::{deps, Deps};
+#[cfg(all(feature = "akita", test))]
+pub(crate) use lattice::field_element_canonical_value_from_openings;
 #[cfg(feature = "akita")]
 pub use lattice::{
     build_lattice_packed_validity_batch, derive_lattice_packed_validity_requirements,
@@ -22,10 +24,7 @@ pub use lattice::{
     LatticePackedValidityStatement, LatticePackedValidityStatementKind,
 };
 #[cfg(feature = "akita")]
-pub(crate) use lattice::{
-    field_element_canonical_factors, field_element_canonical_value_from_openings,
-    FieldCanonicalFactor,
-};
+pub(crate) use lattice::{field_element_canonical_factors, FieldCanonicalFactor};
 pub use outputs::{
     Stage8BatchStatement, Stage8ClaimMode, Stage8ClearBatchStatement, Stage8ClearOutput,
     Stage8LogicalManifest, Stage8LogicalOpening, Stage8OpeningId, Stage8OpeningStatement,

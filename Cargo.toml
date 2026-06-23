@@ -176,6 +176,7 @@ codegen-units = 1
 "ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 "ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 "git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7#jolt-field@0.1.0" = { path = "./crates/jolt-field" }
+"git+https://github.com/LayerZero-Labs/akita.git?rev=15cd0069873aaed12fa3e3cb69d2108cfb88e95c#akita-prover@0.1.0" = { path = "./third_party/akita-prover" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

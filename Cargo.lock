@@ -157,7 +157,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
- "akita-prover",
+ "akita-prover 0.1.0 (git+https://github.com/LayerZero-Labs/akita.git?rev=15cd0069873aaed12fa3e3cb69d2108cfb88e95c)",
  "akita-serialization",
  "akita-setup",
  "akita-sumcheck",
@@ -180,7 +180,6 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=15cd0069873aaed12fa3e3cb69d2108cfb88e95c#15cd0069873aaed12fa3e3cb69d2108cfb88e95c"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -199,6 +198,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-prover"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=15cd0069873aaed12fa3e3cb69d2108cfb88e95c#15cd0069873aaed12fa3e3cb69d2108cfb88e95c"
+replace = "akita-prover 0.1.0"
+
+[[package]]
 name = "akita-serialization"
 version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/akita.git?rev=15cd0069873aaed12fa3e3cb69d2108cfb88e95c#15cd0069873aaed12fa3e3cb69d2108cfb88e95c"
@@ -214,7 +219,7 @@ dependencies = [
  "akita-algebra",
  "akita-config",
  "akita-field",
- "akita-prover",
+ "akita-prover 0.1.0 (git+https://github.com/LayerZero-Labs/akita.git?rev=15cd0069873aaed12fa3e3cb69d2108cfb88e95c)",
  "akita-serialization",
  "akita-types",
  "tracing",
@@ -3108,7 +3113,7 @@ dependencies = [
  "akita-config",
  "akita-field",
  "akita-pcs",
- "akita-prover",
+ "akita-prover 0.1.0 (git+https://github.com/LayerZero-Labs/akita.git?rev=15cd0069873aaed12fa3e3cb69d2108cfb88e95c)",
  "akita-serialization",
  "akita-transcript",
  "akita-types",

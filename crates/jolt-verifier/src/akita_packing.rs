@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::time::Instant;
 
 use jolt_akita::{
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaProverHint,
@@ -8,10 +8,11 @@ use jolt_akita::{
 use jolt_crypto::Commitment;
 use jolt_openings::{
     has_packing_view, packing_witness_source_polynomial, prove_sparse_packing_reduction,
-    validate_packing_statement, BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement,
-    CommitmentScheme, OpeningsError, PackingBatch, PackingBatchProof, PackingProverSetup,
-    PackingSetupParams, PackingSource, PackingVerifierSetup, PackingWitnessLayout,
-    PackingWitnessSource, ZkBatchOpeningScheme, ZkOpeningScheme,
+    prove_sparse_packing_reduction_from_entries, validate_packing_statement, BatchOpeningResult,
+    BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError, PackingBatch,
+    PackingBatchProof, PackingProverSetup, PackingSetupParams, PackingSource, PackingVerifierSetup,
+    PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness, ZkBatchOpeningScheme,
+    ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
@@ -54,14 +55,27 @@ impl AkitaPackingScheme {
         S: PackingWitnessSource<AkitaField>,
     {
         validate_source_fits_setup(setup.pcs.max_num_vars, source.layout())?;
-        if let Some(sparse_polynomial) = packed_source_sparse_polynomial(source)? {
-            if !has_packing_view(statement) {
-                let native = AkitaScheme::prove_sparse_batch(
-                    &setup.pcs,
-                    transcript,
-                    statement,
-                    &sparse_polynomial,
-                    hint,
+        if !has_packing_view(statement) {
+            let sparse_polynomial = time_akita_packing_phase(
+                "packed_source_sparse_polynomial",
+                source.layout(),
+                statement.claims.len(),
+                || packed_source_sparse_polynomial(source),
+            )?;
+            if let Some(sparse_polynomial) = sparse_polynomial {
+                let native = time_akita_packing_phase(
+                    "prove_sparse_batch_direct",
+                    source.layout(),
+                    statement.claims.len(),
+                    || {
+                        AkitaScheme::prove_sparse_batch(
+                            &setup.pcs,
+                            transcript,
+                            statement,
+                            &sparse_polynomial,
+                            hint,
+                        )
+                    },
                 )?;
                 return Ok(PackingBatchProof {
                     reduction: None,
@@ -69,37 +83,173 @@ impl AkitaPackingScheme {
                 });
             }
 
-            let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
-            let source = AkitaPackingSource(source);
-            let reduction =
-                prove_sparse_packing_reduction(shape.layout, statement, &source, transcript)?;
-            let native_statement = singleton_statement(
-                shape.commitment.clone(),
-                &reduction.opening_point,
-                reduction.opening_eval,
-            );
-            let native = AkitaScheme::prove_sparse_batch(
-                &setup.pcs,
+            let polynomial = packing_witness_source_polynomial(source)?;
+            return <Self as BatchOpeningScheme>::prove_batch(
+                setup,
                 transcript,
-                &native_statement,
-                &sparse_polynomial,
-                hint,
-            )?;
-            return Ok(PackingBatchProof {
-                reduction: Some(reduction.proof),
-                native,
-            });
+                statement,
+                std::slice::from_ref(&polynomial),
+                vec![hint],
+            );
         }
 
-        let polynomial = packing_witness_source_polynomial(source)?;
-        <Self as BatchOpeningScheme>::prove_batch(
-            setup,
-            transcript,
-            statement,
-            std::slice::from_ref(&polynomial),
-            vec![hint],
-        )
+        let shape = validate_packed_source_prover_inputs(setup, statement, source, &hint)?;
+        let packing_source = AkitaPackingSource(source);
+        let reduction = time_akita_packing_phase(
+            "prove_sparse_packing_reduction",
+            shape.layout,
+            statement.claims.len(),
+            || prove_sparse_packing_reduction(shape.layout, statement, &packing_source, transcript),
+        )?;
+        let native_statement = singleton_statement(
+            shape.commitment.clone(),
+            &reduction.opening_point,
+            reduction.opening_eval,
+        );
+        let sparse_polynomial = time_akita_packing_phase(
+            "packed_source_sparse_polynomial",
+            source.layout(),
+            1,
+            || packed_source_sparse_polynomial(source),
+        )?;
+        let native = if let Some(sparse_polynomial) = sparse_polynomial {
+            time_akita_packing_phase("prove_sparse_batch_reduced", shape.layout, 1, || {
+                AkitaScheme::prove_sparse_batch(
+                    &setup.pcs,
+                    transcript,
+                    &native_statement,
+                    &sparse_polynomial,
+                    hint,
+                )
+            })?
+        } else {
+            let polynomial = packing_witness_source_polynomial(source)?;
+            time_akita_packing_phase("prove_dense_batch_reduced", shape.layout, 1, || {
+                AkitaScheme::prove_batch(
+                    &setup.pcs,
+                    transcript,
+                    &native_statement,
+                    std::slice::from_ref(&polynomial),
+                    vec![hint],
+                )
+            })?
+        };
+        Ok(PackingBatchProof {
+            reduction: Some(reduction.proof),
+            native,
+        })
     }
+
+    pub fn prove_sparse_packing_witness_batch<T, OpeningId, RelationId>(
+        setup: &<Self as CommitmentScheme>::ProverSetup,
+        transcript: &mut T,
+        statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+        source: SparsePackingWitness<AkitaField>,
+        hint: AkitaProverHint,
+    ) -> Result<PackingBatchProof<AkitaBatchProof>, OpeningsError>
+    where
+        T: Transcript<Challenge = AkitaField>,
+    {
+        let (source_layout, entries) = source.into_parts();
+        validate_source_fits_setup(setup.pcs.max_num_vars, &source_layout)?;
+        if !has_packing_view(statement) {
+            let sparse_polynomial = packed_entries_sparse_polynomial(&source_layout, &entries)?;
+            if let Some(sparse_polynomial) = sparse_polynomial {
+                let native = time_akita_packing_phase(
+                    "prove_sparse_batch_direct",
+                    &source_layout,
+                    statement.claims.len(),
+                    || {
+                        AkitaScheme::prove_sparse_batch(
+                            &setup.pcs,
+                            transcript,
+                            statement,
+                            &sparse_polynomial,
+                            hint,
+                        )
+                    },
+                )?;
+                return Ok(PackingBatchProof {
+                    reduction: None,
+                    native,
+                });
+            }
+
+            let source = SparsePackingWitness::try_new(source_layout, entries)
+                .map_err(|error| invalid_batch(error.to_string()))?;
+            let polynomial = packing_witness_source_polynomial(&source)?;
+            return <Self as BatchOpeningScheme>::prove_batch(
+                setup,
+                transcript,
+                statement,
+                std::slice::from_ref(&polynomial),
+                vec![hint],
+            );
+        }
+
+        let shape =
+            validate_packed_owned_source_prover_inputs(setup, statement, &source_layout, &hint)?;
+        let sparse_polynomial =
+            time_akita_packing_phase("packed_source_sparse_polynomial", &source_layout, 1, || {
+                packed_entries_sparse_polynomial(&source_layout, &entries)
+            })?;
+        let reduction = time_akita_packing_phase(
+            "prove_sparse_packing_reduction",
+            shape.layout,
+            statement.claims.len(),
+            || {
+                prove_sparse_packing_reduction_from_entries(
+                    shape.layout,
+                    statement,
+                    entries,
+                    transcript,
+                )
+            },
+        )?;
+        let native_statement = singleton_statement(
+            shape.commitment.clone(),
+            &reduction.opening_point,
+            reduction.opening_eval,
+        );
+        let native = if let Some(sparse_polynomial) = sparse_polynomial {
+            time_akita_packing_phase("prove_sparse_batch_reduced", shape.layout, 1, || {
+                AkitaScheme::prove_sparse_batch(
+                    &setup.pcs,
+                    transcript,
+                    &native_statement,
+                    &sparse_polynomial,
+                    hint,
+                )
+            })?
+        } else {
+            return Err(invalid_batch(
+                "owned sparse packing witness cannot fall back to dense reduced proving",
+            ));
+        };
+        Ok(PackingBatchProof {
+            reduction: Some(reduction.proof),
+            native,
+        })
+    }
+}
+
+fn time_akita_packing_phase<T>(
+    phase: &'static str,
+    layout: &PackingWitnessLayout,
+    claims: usize,
+    f: impl FnOnce() -> T,
+) -> T {
+    let start = Instant::now();
+    let output = f();
+    tracing::info!(
+        phase,
+        seconds = start.elapsed().as_secs_f64(),
+        dimension = layout.dimension,
+        cells = layout.cells,
+        claims,
+        "Akita packing phase"
+    );
+    output
 }
 
 impl Commitment for AkitaPackingScheme {
@@ -376,6 +526,28 @@ where
     Ok(shape)
 }
 
+fn validate_packed_owned_source_prover_inputs<'a, OpeningId, RelationId>(
+    setup: &'a <AkitaPackingScheme as CommitmentScheme>::ProverSetup,
+    statement: &BatchOpeningStatement<AkitaField, AkitaCommitment, OpeningId, RelationId>,
+    source_layout: &PackingWitnessLayout,
+    hint: &AkitaProverHint,
+) -> Result<PackingBatchShape<'a>, OpeningsError> {
+    let shape = validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement)?;
+    if source_layout.digest != shape.layout.digest
+        || source_layout.dimension != shape.layout.dimension
+    {
+        return Err(invalid_batch(
+            "Akita packing witness source layout does not match packed statement",
+        ));
+    }
+    if !hint.matches_commitment(&shape.commitment) {
+        return Err(invalid_batch(
+            "Akita packing proof requires one hint matching the packed witness commitment",
+        ));
+    }
+    Ok(shape)
+}
+
 trait AkitaPackingSetupShape {
     fn max_num_vars(&self) -> usize;
     fn default_layout_digest(&self) -> [u8; 32];
@@ -467,7 +639,6 @@ where
         )));
     }
 
-    let mut seen = BTreeSet::new();
     let mut ranks = Vec::new();
     let mut result = Ok(());
     source.for_each_nonzero(|rank, value| {
@@ -478,12 +649,6 @@ where
             result = Err(invalid_batch(format!(
                 "Akita packing witness source emitted rank {rank} outside {} real cells",
                 layout.cells
-            )));
-            return;
-        }
-        if !seen.insert(rank) {
-            result = Err(invalid_batch(format!(
-                "Akita packing witness source emitted rank {rank} more than once"
             )));
             return;
         }
@@ -498,6 +663,60 @@ where
     result?;
 
     AkitaSparsePolynomial::from_jolt_unit_indices(layout.dimension, ranks).map(Some)
+}
+
+fn packed_entries_sparse_polynomial(
+    layout: &PackingWitnessLayout,
+    entries: &[(usize, AkitaField)],
+) -> Result<Option<AkitaSparsePolynomial>, OpeningsError> {
+    if layout.cells == 0 {
+        return Err(invalid_batch(
+            "Akita packing witness layout must contain at least one cell",
+        ));
+    }
+    if layout.dimension >= usize::BITS as usize {
+        return Err(invalid_batch(format!(
+            "Akita packing witness dimension {} exceeds usize bit width",
+            layout.dimension
+        )));
+    }
+    let domain_size = 1usize << layout.dimension;
+    if domain_size < AKITA_D {
+        return Ok(None);
+    }
+    if layout.cells > domain_size {
+        return Err(invalid_batch(format!(
+            "Akita packing witness has {} cells but dimension {} supports {domain_size}",
+            layout.cells, layout.dimension
+        )));
+    }
+
+    for window in entries.windows(2) {
+        if window[0].0 >= window[1].0 {
+            return Err(invalid_batch(
+                "Akita sparse packed witness entries must be strictly sorted",
+            ));
+        }
+    }
+    for &(rank, value) in entries {
+        if rank >= layout.cells {
+            return Err(invalid_batch(format!(
+                "Akita packing witness source emitted rank {rank} outside {} real cells",
+                layout.cells
+            )));
+        }
+        if value != AkitaField::one() {
+            return Err(invalid_batch(format!(
+                "Akita sparse packed witness source emitted non-unit value at rank {rank}"
+            )));
+        }
+    }
+
+    AkitaSparsePolynomial::from_sorted_jolt_unit_indices(
+        layout.dimension,
+        entries.iter().map(|(rank, _)| *rank),
+    )
+    .map(Some)
 }
 
 fn validate_source_fits_setup(

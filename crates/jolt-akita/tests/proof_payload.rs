@@ -8,17 +8,17 @@ fn layout(byte: u8) -> [u8; 32] {
 
 #[test]
 fn akita_proof_payloads_reject_unknown_serialized_fields() {
-    let proof = AkitaBatchProof {
-        commitment: AkitaCommitment {
+    let proof = AkitaBatchProof::serialized(
+        AkitaCommitment {
             layout_digest: layout(7),
             num_vars: 4,
             poly_count: 1,
             native: vec![1, 2, 3],
         },
-        statement_bridge: vec![4],
-        proof_shape: vec![5],
-        proof: vec![6],
-    };
+        vec![4],
+        vec![5],
+        vec![6],
+    );
 
     let mut root = serde_json::to_value(&proof).expect("proof should serialize");
     let _ = root

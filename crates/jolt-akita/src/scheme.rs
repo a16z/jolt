@@ -190,6 +190,7 @@ impl CommitmentScheme for AkitaScheme {
             default_layout_digest: params.default_layout_digest,
             native: serialize_akita(&native_verifier)
                 .unwrap_or_else(|err| panic!("Akita verifier setup serialization failed: {err}")),
+            native_verifier: Some(native_verifier),
         };
         let prover = AkitaProverSetup {
             max_num_vars: params.max_num_vars,
@@ -329,6 +330,7 @@ mod tests {
             max_num_polys_per_commitment_group: 1,
             default_layout_digest: [7; 32],
             native: vec![1, 2, 3],
+            native_verifier: None,
         };
         let mut transcript = RecordingTranscript::new(b"akita-setup-key-test");
 

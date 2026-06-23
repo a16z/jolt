@@ -602,18 +602,23 @@ impl
         time_akita_phase("attach_packed_validity", || {
             jolt_verifier::akita::attach_akita_packing_validity_proof(&mut proof, validity)
         })?;
+        let AkitaPackedWitnessProverData {
+            prover_setup,
+            committed,
+            ..
+        } = packed_witness;
+        let AkitaCommittedPackedJoltWitness { artifacts, witness } = committed;
         let opening_proofs = time_akita_phase("prove_final_openings", || {
-            jolt_verifier::akita::prove_akita_jolt_final_openings_with_precommitted::<
+            jolt_verifier::akita::prove_akita_jolt_final_openings_with_precommitted_owned_witness::<
                 AkitaLegacyBlake2bTranscript,
-                _,
             >(
-                &packed_witness.prover_setup,
+                &prover_setup,
                 &precommitted.preprocessing,
                 &public_io,
                 &proof,
                 None,
-                &packed_witness.committed.artifacts,
-                &packed_witness.committed.witness,
+                &artifacts,
+                witness,
                 &opening_inputs,
             )
         })?;
@@ -647,12 +652,12 @@ fn packed_witness_commitment(
 fn placeholder_akita_batch_proof(commitment: AkitaCommitment) -> AkitaPackingBatchProof {
     jolt_openings::PackingBatchProof {
         reduction: None,
-        native: jolt_akita::AkitaBatchProof {
+        native: jolt_akita::AkitaBatchProof::serialized(
             commitment,
-            statement_bridge: Vec::new(),
-            proof_shape: Vec::new(),
-            proof: Vec::new(),
-        },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
     }
 }
 
@@ -750,17 +755,8 @@ where
             .max(akita_precommitted_program_max_num_vars(
                 &self.preprocessing.shared,
             )?);
-        let max_num_polys_per_commitment_group =
-            require_committed_program(&self.preprocessing.shared.program)?
-                .bytecode_commitments
-                .bytecode_chunk_count
-                .max(1);
         let (prover_setup, verifier_setup) = time_akita_phase("akita_packing_setup", || {
-            akita_packing_setup_with_max_num_vars(
-                &layout,
-                max_num_vars,
-                max_num_polys_per_commitment_group,
-            )
+            akita_packing_setup_with_max_num_vars(&layout, max_num_vars, 1)
         });
 
         Ok(AkitaPackedWitnessSetupData {
@@ -875,13 +871,19 @@ where
                     bytecode_chunk_count,
                 )
             });
-        let bytecode_opening = time_akita_phase("commit_precommitted_bytecode_group", || {
-            commit_akita_precommitted_polynomial_group(bytecode_polynomials, &prover_setup.pcs)
+        let mut bytecode_chunk_commitments = Vec::with_capacity(bytecode_chunk_count);
+        let mut opening_inputs = Vec::with_capacity(bytecode_chunk_count + 1);
+        time_akita_phase("commit_precommitted_bytecode_chunks", || {
+            for polynomial in bytecode_polynomials {
+                let opening = commit_akita_precommitted_polynomial_group(
+                    vec![polynomial],
+                    &prover_setup.pcs,
+                )?;
+                bytecode_chunk_commitments.push(opening.commitment.clone());
+                opening_inputs.push(opening);
+            }
+            Ok::<(), VerifierError>(())
         })?;
-        let bytecode_chunk_commitments =
-            vec![bytecode_opening.commitment.clone(); bytecode_chunk_count];
-        let mut opening_inputs = Vec::with_capacity(2);
-        opening_inputs.push(bytecode_opening);
 
         let program_image_polynomial =
             time_akita_phase("build_precommitted_program_image_polynomial", || {
@@ -1274,20 +1276,21 @@ mod tests {
             verifier_committed.bytecode_chunk_commitments.len(),
             prover.preprocessing.shared.bytecode_chunk_count
         );
-        assert_eq!(precommitted.opening_inputs.len(), 2);
-        let bytecode_opening = precommitted
-            .opening_inputs
-            .first()
-            .expect("bytecode opening should be first");
         assert_eq!(
-            bytecode_opening.polynomials.len(),
-            prover.preprocessing.shared.bytecode_chunk_count
+            precommitted.opening_inputs.len(),
+            prover.preprocessing.shared.bytecode_chunk_count + 1
         );
-        assert!(bytecode_opening
-            .hint
-            .matches_commitment(&bytecode_opening.commitment));
-        for commitment in &verifier_committed.bytecode_chunk_commitments {
+        for (bytecode_opening, commitment) in precommitted
+            .opening_inputs
+            .iter()
+            .take(prover.preprocessing.shared.bytecode_chunk_count)
+            .zip(&verifier_committed.bytecode_chunk_commitments)
+        {
+            assert_eq!(bytecode_opening.polynomials.len(), 1);
             assert_eq!(&bytecode_opening.commitment, commitment);
+            assert!(bytecode_opening
+                .hint
+                .matches_commitment(&bytecode_opening.commitment));
         }
         let program_image_opening = precommitted
             .opening_inputs

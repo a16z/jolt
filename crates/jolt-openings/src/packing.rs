@@ -8,7 +8,8 @@ mod util;
 
 pub use reduction::{
     has_packing_view, prove_packing_reduction, prove_sparse_packing_reduction,
-    validate_packing_statement, verify_packing_reduction,
+    prove_sparse_packing_reduction_from_entries, validate_packing_statement,
+    verify_packing_reduction,
 };
 pub use types::{
     PackingAddress, PackingBatch, PackingBatchProof, PackingFamily, PackingLayout,

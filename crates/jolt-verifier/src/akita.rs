@@ -28,7 +28,8 @@ use jolt_transcript::Transcript;
 
 pub use crate::akita_openings::{
     prove_akita_jolt_final_openings, prove_akita_jolt_final_openings_with_precommitted,
-    prove_akita_packing_openings, prove_akita_stage8_clear_openings,
+    prove_akita_jolt_final_openings_with_precommitted_owned_witness, prove_akita_packing_openings,
+    prove_akita_sparse_packing_witness_openings, prove_akita_stage8_clear_openings,
     prove_akita_stage8_clear_openings_with_precommitted, prove_and_attach_akita_opening_proofs,
     prove_and_attach_akita_opening_proofs_with_precommitted, AkitaPrecommittedOpeningInput,
     AkitaStage8ClearOpeningProofs,

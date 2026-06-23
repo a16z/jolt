@@ -26,8 +26,10 @@ mod verifier;
 pub use akita::{
     attach_akita_packing_validity_proof, commit_akita_packing_witness,
     commit_akita_packing_witness_with_config, prove_akita_jolt_final_openings,
-    prove_akita_jolt_final_openings_with_precommitted, prove_akita_jolt_packed_validity,
-    prove_akita_packing_openings, prove_akita_packing_validity, prove_akita_stage8_clear_openings,
+    prove_akita_jolt_final_openings_with_precommitted,
+    prove_akita_jolt_final_openings_with_precommitted_owned_witness,
+    prove_akita_jolt_packed_validity, prove_akita_packing_openings, prove_akita_packing_validity,
+    prove_akita_sparse_packing_witness_openings, prove_akita_stage8_clear_openings,
     prove_akita_stage8_clear_openings_with_precommitted, prove_and_attach_akita_opening_proofs,
     prove_and_attach_akita_opening_proofs_with_precommitted, verify_akita_clear,
     AkitaClearVectorCommitment, AkitaJoltProof, AkitaPackingValidityProofArtifacts,
