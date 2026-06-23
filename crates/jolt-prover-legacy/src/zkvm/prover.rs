@@ -4020,7 +4020,7 @@ mod tests {
             None,
             None,
         );
-        let (jolt_proof, _) = prover.prove_parts();
+        let (jolt_proof, _) = prover.prove_parts(false);
 
         println!("\n=== BlindFold R1CS Satisfaction Test (All 7 Stages) ===\n");
 

@@ -1040,6 +1040,7 @@ mod tests {
             prover::JoltProverPreprocessing, RV64IMACProver,
         },
     };
+    use jolt_verifier::JoltProofClaims;
 
     fn muldiv_program_inputs() -> (host::Program, Vec<u8>) {
         let program = host::Program::new("muldiv-guest");
@@ -1196,5 +1197,36 @@ mod tests {
             &proof.protocol,
         )
         .expect("Akita proof should verify");
+
+        let mut tampered_claim = proof.clone();
+        let JoltProofClaims::Clear(claims) = &mut tampered_claim.claims else {
+            panic!("Akita e2e proof should be clear");
+        };
+        claims.stage7.hamming_weight_claim_reduction.ram_ra[0] += AkitaField::one();
+        jolt_verifier::akita::verify_akita_clear::<AkitaLegacyBlake2bTranscript>(
+            &verifier_preprocessing,
+            &io_device,
+            &tampered_claim,
+            None,
+            &tampered_claim.protocol,
+        )
+        .expect_err("tampered prover-produced Akita opening claim should reject");
+
+        let mut tampered_opening = proof.clone();
+        let first_byte = tampered_opening
+            .joint_opening_proof
+            .native
+            .proof
+            .first_mut()
+            .expect("prover-produced Akita final opening proof should contain proof bytes");
+        *first_byte ^= 1;
+        jolt_verifier::akita::verify_akita_clear::<AkitaLegacyBlake2bTranscript>(
+            &verifier_preprocessing,
+            &io_device,
+            &tampered_opening,
+            None,
+            &tampered_opening.protocol,
+        )
+        .expect_err("tampered prover-produced Akita final opening proof should reject");
     }
 }
