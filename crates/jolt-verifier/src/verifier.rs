@@ -815,15 +815,7 @@ mod tests {
 
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof::new(
-            crate::proof::JoltCommitments::new(
-                TestCommitment,
-                TestCommitment,
-                crate::proof::JoltRaCommitments::new(
-                    Vec::<TestCommitment>::new(),
-                    Vec::<TestCommitment>::new(),
-                    Vec::<TestCommitment>::new(),
-                ),
-            ),
+            test_commitments(),
             stage_proofs(is_zk),
             (),
             None,
@@ -844,6 +836,35 @@ mod tests {
         )
     }
 
+    #[cfg(not(feature = "field-inline"))]
+    fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
+        crate::proof::JoltCommitments::new(
+            TestCommitment,
+            TestCommitment,
+            crate::proof::JoltRaCommitments::new(
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+            ),
+        )
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
+        crate::proof::JoltCommitments::new(
+            TestCommitment,
+            TestCommitment,
+            crate::proof::JoltRaCommitments::new(
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+            ),
+            crate::proof::FieldInlineCommitments::new(
+                crate::proof::FieldRegistersCommitments::new(TestCommitment),
+            ),
+        )
+    }
+
     fn clear_claims() -> TestClaims {
         let zero = Fr::zero();
 
@@ -851,6 +872,8 @@ mod tests {
             stage1: stage1::inputs::Stage1Claims {
                 uniskip_output_claim: zero,
                 outer: empty_spartan_outer_claims(),
+                #[cfg(feature = "field-inline")]
+                field_inline: zero_field_inline_stage1_claims(),
             },
             stage2: stage2::inputs::Stage2Claims {
                 product_uniskip_output_claim: zero,
@@ -870,6 +893,8 @@ mod tests {
                         next_is_noop: zero,
                         virtual_instruction: zero,
                     },
+                    #[cfg(feature = "field-inline")]
+                    field_inline: zero_field_inline_stage2_claims(),
                     instruction_claim_reduction:
                         stage2::inputs::InstructionClaimReductionOutputOpeningClaims {
                             lookup_output: None,
@@ -920,6 +945,8 @@ mod tests {
                     rd_wa: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: zero_field_inline_stage4_claims(),
                 ram_val_check: stage4::inputs::RamValCheckOutputOpeningClaims {
                     ram_ra: zero,
                     ram_inc: zero,
@@ -939,6 +966,8 @@ mod tests {
                         rd_inc: zero,
                         rd_wa: zero,
                     },
+                #[cfg(feature = "field-inline")]
+                field_inline: zero_field_inline_stage5_claims(),
             },
             stage6: stage6::inputs::Stage6Claims {
                 address_phase: stage6::inputs::Stage6AddressPhaseClaims {
@@ -968,6 +997,8 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: zero_field_inline_stage6_claims(),
                 advice_cycle_phase: stage6::inputs::Stage6AdviceCyclePhaseClaims {
                     trusted: None,
                     untrusted: None,
@@ -990,6 +1021,61 @@ mod tests {
                 program_image_address_phase: None,
             },
         })
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn zero_field_inline_stage1_claims() -> stage1::inputs::FieldInlineStage1Claims<Fr> {
+        stage1::inputs::FieldInlineStage1Claims::zero()
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn zero_field_inline_stage2_claims() -> stage2::inputs::FieldInlineStage2OutputOpeningClaims<Fr>
+    {
+        let zero = Fr::zero();
+        stage2::inputs::FieldInlineStage2OutputOpeningClaims {
+            product: stage2::inputs::FieldInlineProductOutputOpeningClaims {
+                field_rs1_value: zero,
+                field_rs2_value: zero,
+                field_rd_value: zero,
+            },
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn zero_field_inline_stage4_claims() -> stage4::inputs::FieldInlineStage4Claims<Fr> {
+        let zero = Fr::zero();
+        stage4::inputs::FieldInlineStage4Claims {
+            field_registers_read_write:
+                stage4::inputs::FieldRegistersReadWriteOutputOpeningClaims {
+                    field_registers_val: zero,
+                    field_rs1_ra: zero,
+                    field_rs2_ra: zero,
+                    field_rd_wa: zero,
+                    field_rd_inc: zero,
+                },
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn zero_field_inline_stage5_claims() -> stage5::inputs::FieldInlineStage5Claims<Fr> {
+        let zero = Fr::zero();
+        stage5::inputs::FieldInlineStage5Claims {
+            field_registers_val_evaluation:
+                stage5::inputs::FieldRegistersValEvaluationOutputOpeningClaims {
+                    field_rd_inc: zero,
+                    field_rd_wa: zero,
+                },
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn zero_field_inline_stage6_claims() -> stage6::inputs::FieldInlineStage6Claims<Fr> {
+        stage6::inputs::FieldInlineStage6Claims {
+            field_registers_inc_claim_reduction:
+                stage6::inputs::FieldRegistersIncClaimReductionOutputOpeningClaims {
+                    field_rd_inc: Fr::zero(),
+                },
+        }
     }
 
     fn empty_spartan_outer_claims() -> stage1::inputs::SpartanOuterClaims<Fr> {

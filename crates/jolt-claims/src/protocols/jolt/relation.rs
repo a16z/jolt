@@ -19,10 +19,6 @@ pub struct JoltRelationClaims<F> {
     pub sumcheck: JoltSumcheckSpec,
     pub input: JoltInputClaimExpression<F>,
     pub output: JoltOutputClaimExpression<F>,
-    /// Extra equality constraints that are part of the relation's soundness contract.
-    ///
-    /// Consumers must enforce these in the same constraint system as the input and output
-    /// claims; treating them as metadata can leave alternate opening chains unbound.
     pub consistency: Vec<JoltConsistencyClaim<F>>,
 }
 
@@ -183,7 +179,7 @@ fn debug_assert_unique_relation_ids<F>(relations: &[JoltRelationClaims<F>]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{challenge, constant, opening, public};
+    use crate::{challenge, constant, opening, public, SameEvaluationAs};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     use super::super::{JoltCommittedPolynomial, JoltVirtualPolynomial, RamReadWriteChallenge};
@@ -214,7 +210,7 @@ mod tests {
             input,
             output,
         )
-        .with_consistency([JoltConsistencyClaim::same_evaluation(rd_inc, ram_val)]);
+        .with_consistency([rd_inc.same_evaluation_as(ram_val)]);
 
         assert_eq!(relation.id, JoltRelationId::RamReadWriteChecking);
         assert_eq!(relation.sumcheck, sumcheck);

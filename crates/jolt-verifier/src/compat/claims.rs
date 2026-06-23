@@ -5,6 +5,14 @@ use std::collections::BTreeMap;
 
 #[cfg(all(any(feature = "jolt-core-compat", test), not(feature = "zk")))]
 use crate::compat::ids as legacy;
+#[cfg(feature = "field-inline")]
+use crate::stages::{
+    stage1::inputs::FieldInlineStage1Claims,
+    stage2::inputs::{FieldInlineProductOutputOpeningClaims, FieldInlineStage2OutputOpeningClaims},
+    stage4::inputs::{FieldInlineStage4Claims, FieldRegistersReadWriteOutputOpeningClaims},
+    stage5::inputs::{FieldInlineStage5Claims, FieldRegistersValEvaluationOutputOpeningClaims},
+    stage6::inputs::{FieldInlineStage6Claims, FieldRegistersIncClaimReductionOutputOpeningClaims},
+};
 use crate::{
     proof::{ClearProofClaims, JoltProof, JoltProofClaims},
     stages::{
@@ -101,6 +109,8 @@ pub(crate) fn clear_claims_from_native<F: Field>(
         stage1: Stage1Claims {
             uniskip_output_claim: claims.require(outer_uniskip_opening())?,
             outer: spartan_outer_claims_from_native(&claims)?,
+            #[cfg(feature = "field-inline")]
+            field_inline: zero_field_inline_stage1_claims(),
         },
         stage2: stage2_claims_from_native(&claims)?,
         stage3: stage3_claims_from_native(&claims)?,
@@ -187,6 +197,8 @@ fn stage2_claims_from_native<F: Field>(
                 next_is_noop: claims.get_or_zero(product_next_is_noop),
                 virtual_instruction: claims.get_or_zero(product_virtual_instruction),
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: zero_field_inline_stage2_claims(),
             instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
                 lookup_output: claims.get(instruction_lookup_output),
                 left_lookup_operand: claims.get_or_zero(instruction_left_lookup_operand),
@@ -266,6 +278,8 @@ fn stage4_claims_from_native<F: Field>(
             rd_wa: claims.require(rd_wa)?,
             rd_inc: claims.require(rd_inc)?,
         },
+        #[cfg(feature = "field-inline")]
+        field_inline: zero_field_inline_stage4_claims(),
         ram_val_check: RamValCheckOutputOpeningClaims {
             ram_ra: claims.require(ram_ra)?,
             ram_inc: claims.require(ram_inc)?,
@@ -309,6 +323,8 @@ fn stage5_claims_from_native<F: Field>(
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
         },
+        #[cfg(feature = "field-inline")]
+        field_inline: zero_field_inline_stage5_claims(),
     })
 }
 
@@ -435,6 +451,8 @@ fn stage6_claims_from_native<F: Field>(
             ram_inc: claims.require(ram_inc)?,
             rd_inc: claims.require(rd_inc)?,
         },
+        #[cfg(feature = "field-inline")]
+        field_inline: zero_field_inline_stage6_claims(),
         advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
             trusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Trusted),
             untrusted: advice_cycle_phase_claim_from_native(claims, JoltAdviceKind::Untrusted),
@@ -637,6 +655,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
         stage1: Stage1Claims {
             uniskip_output_claim: zero,
             outer: empty_spartan_outer_claims(),
+            #[cfg(feature = "field-inline")]
+            field_inline: zero_field_inline_stage1_claims(),
         },
         stage2: Stage2Claims {
             product_uniskip_output_claim: zero,
@@ -656,6 +676,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                     next_is_noop: zero,
                     virtual_instruction: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_inline: zero_field_inline_stage2_claims(),
                 instruction_claim_reduction: InstructionClaimReductionOutputOpeningClaims {
                     lookup_output: None,
                     left_lookup_operand: zero,
@@ -704,6 +726,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_wa: zero,
                 rd_inc: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: zero_field_inline_stage4_claims(),
             ram_val_check: RamValCheckOutputOpeningClaims {
                 ram_ra: zero,
                 ram_inc: zero,
@@ -720,6 +744,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 rd_inc: zero,
                 rd_wa: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: zero_field_inline_stage5_claims(),
         },
         stage6: Stage6Claims {
             address_phase: Stage6AddressPhaseClaims {
@@ -746,6 +772,8 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_inline: zero_field_inline_stage6_claims(),
             advice_cycle_phase: Stage6AdviceCyclePhaseClaims {
                 trusted: None,
                 untrusted: None,
@@ -765,6 +793,57 @@ fn empty_clear_claims<F: Field>(_trace_length: usize) -> ClearProofClaims<F> {
             },
             bytecode_address_phase: None,
             program_image_address_phase: None,
+        },
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn zero_field_inline_stage1_claims<F: Field>() -> FieldInlineStage1Claims<F> {
+    FieldInlineStage1Claims::zero()
+}
+
+#[cfg(feature = "field-inline")]
+fn zero_field_inline_stage2_claims<F: Field>() -> FieldInlineStage2OutputOpeningClaims<F> {
+    let zero = F::zero();
+    FieldInlineStage2OutputOpeningClaims {
+        product: FieldInlineProductOutputOpeningClaims {
+            field_rs1_value: zero,
+            field_rs2_value: zero,
+            field_rd_value: zero,
+        },
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn zero_field_inline_stage4_claims<F: Field>() -> FieldInlineStage4Claims<F> {
+    let zero = F::zero();
+    FieldInlineStage4Claims {
+        field_registers_read_write: FieldRegistersReadWriteOutputOpeningClaims {
+            field_registers_val: zero,
+            field_rs1_ra: zero,
+            field_rs2_ra: zero,
+            field_rd_wa: zero,
+            field_rd_inc: zero,
+        },
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn zero_field_inline_stage5_claims<F: Field>() -> FieldInlineStage5Claims<F> {
+    let zero = F::zero();
+    FieldInlineStage5Claims {
+        field_registers_val_evaluation: FieldRegistersValEvaluationOutputOpeningClaims {
+            field_rd_inc: zero,
+            field_rd_wa: zero,
+        },
+    }
+}
+
+#[cfg(feature = "field-inline")]
+fn zero_field_inline_stage6_claims<F: Field>() -> FieldInlineStage6Claims<F> {
+    FieldInlineStage6Claims {
+        field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputOpeningClaims {
+            field_rd_inc: F::zero(),
         },
     }
 }

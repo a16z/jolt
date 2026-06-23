@@ -274,6 +274,23 @@ impl<F: Field> Polynomial<F> {
         }
     }
 
+    #[inline]
+    pub fn sumcheck_round_eval(&self, index: usize, point: F) -> F {
+        let (lo, hi) = self.sumcheck_eval_pair(index, crate::BindingOrder::HighToLow);
+        lo + point * (hi - lo)
+    }
+
+    #[inline]
+    pub fn sumcheck_round_eval_with_order(
+        &self,
+        index: usize,
+        point: F,
+        order: crate::BindingOrder,
+    ) -> F {
+        let (lo, hi) = self.sumcheck_eval_pair(index, order);
+        lo + point * (hi - lo)
+    }
+
     /// Evaluates the polynomial at `point` using the multilinear extension formula:
     /// $$f(r) = \sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, r)$$
     pub fn evaluate(&self, point: &[F]) -> F {
