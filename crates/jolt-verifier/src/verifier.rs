@@ -1181,16 +1181,6 @@ fn absorb_lattice_protocol_header<T: Transcript>(
         b"lattice_advice_untrusted",
         protocol.lattice.advice.untrusted as u64,
     );
-    absorb_labeled_u64(
-        transcript,
-        b"lattice_rd_inc_family",
-        protocol.lattice.packed_witness.field_rd_inc_family as u64,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lattice_un_advice_family",
-        protocol.lattice.packed_witness.untrusted_advice_family as u64,
-    );
 }
 
 const fn zk_config_tag(zk: ZkConfig) -> u64 {

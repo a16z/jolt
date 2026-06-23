@@ -31,13 +31,10 @@ fn lattice_config() -> JoltProtocolConfig {
         layout_digest: Some([0; 32]),
         d_pack: Some(0),
         validity_digest: Some([0; 32]),
-        field_rd_inc_family: false,
-        untrusted_advice_family: false,
     };
     #[cfg(feature = "field-inline")]
     {
         config.lattice.field_inline.enabled = true;
-        config.lattice.packed_witness.field_rd_inc_family = true;
     }
     config
 }
@@ -1375,7 +1372,6 @@ fn jolt_lattice_physical_manifest_rejects_dense_increment_view() {
 fn jolt_lattice_physical_manifest_resolves_field_inline_rd_inc() {
     let mut config = lattice_config();
     config.lattice.field_inline.enabled = true;
-    config.lattice.packed_witness.field_rd_inc_family = true;
     let layout = derive_lattice_packed_witness_layout(
         &config,
         2,
@@ -1488,7 +1484,6 @@ fn layout_config_rejects_precommitted_packed_families() {
 fn untrusted_advice_layout_requires_precommitted_schedule() {
     let mut config = lattice_config();
     config.lattice.advice.untrusted = true;
-    config.lattice.packed_witness.untrusted_advice_family = true;
 
     assert!(matches!(
         derive_lattice_packed_witness_layout(
@@ -1522,7 +1517,6 @@ fn untrusted_advice_layout_requires_precommitted_schedule() {
 fn field_inline_layout_uses_separate_rd_inc_families() {
     let mut config = lattice_config();
     config.lattice.field_inline.enabled = true;
-    config.lattice.packed_witness.field_rd_inc_family = true;
 
     let layout = derive_lattice_packed_witness_layout(
         &config,
@@ -1549,7 +1543,6 @@ fn field_inline_layout_uses_separate_rd_inc_families() {
 fn untrusted_advice_uses_non_trace_domain() {
     let mut config = lattice_config();
     config.lattice.advice.untrusted = true;
-    config.lattice.packed_witness.untrusted_advice_family = true;
 
     let layout = derive_lattice_packed_witness_layout(
         &config,
@@ -1603,8 +1596,6 @@ fn single_packed_witness_layout_includes_all_supported_lattice_families() {
     config.lattice.field_inline.enabled = true;
     config.lattice.advice.trusted = true;
     config.lattice.advice.untrusted = true;
-    config.lattice.packed_witness.field_rd_inc_family = true;
-    config.lattice.packed_witness.untrusted_advice_family = true;
 
     let layout = derive_lattice_packed_witness_layout(
         &config,

@@ -851,7 +851,6 @@ fn packed_validity_helper_proves_real_akita_opening_proof() {
         #[cfg(feature = "field-inline")]
         {
             config.lattice.field_inline.enabled = true;
-            config.lattice.packed_witness.field_rd_inc_family = true;
         }
 
         let layout = crate::stages::stage8::derive_lattice_packed_witness_layout(
@@ -943,7 +942,6 @@ fn packed_validity_rejects_noncanonical_field_rd_inc_bytes() {
         config.lattice.program_mode = ProgramMode::Committed;
         config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
         config.lattice.field_inline.enabled = true;
-        config.lattice.packed_witness.field_rd_inc_family = true;
         config.lattice.packed_witness.layout_digest = Some([0; 32]);
         config.lattice.packed_witness.d_pack = Some(0);
         config.lattice.packed_witness.validity_digest = Some([0; 32]);
@@ -1025,7 +1023,6 @@ fn packed_validity_value_detects_noncanonical_field_rd_inc_bytes() {
     config.lattice.program_mode = ProgramMode::Committed;
     config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
     config.lattice.field_inline.enabled = true;
-    config.lattice.packed_witness.field_rd_inc_family = true;
     config.lattice.packed_witness.layout_digest = Some([0; 32]);
     config.lattice.packed_witness.d_pack = Some(0);
     config.lattice.packed_witness.validity_digest = Some([0; 32]);
@@ -1220,14 +1217,12 @@ fn small_validity_context() -> (PackedWitnessLayout, Vec<LatticePackedValiditySt
     config.lattice.program_mode = ProgramMode::Committed;
     config.lattice.increment_mode = IncrementCommitmentMode::FusedOneHot;
     config.lattice.advice.untrusted = true;
-    config.lattice.packed_witness.untrusted_advice_family = true;
     config.lattice.packed_witness.layout_digest = Some([0; 32]);
     config.lattice.packed_witness.d_pack = Some(0);
     config.lattice.packed_witness.validity_digest = Some([0; 32]);
     #[cfg(feature = "field-inline")]
     {
         config.lattice.field_inline.enabled = true;
-        config.lattice.packed_witness.field_rd_inc_family = true;
     }
 
     let layout = crate::stages::stage8::derive_lattice_packed_witness_layout(

@@ -385,7 +385,6 @@ fn validate_proof_config_checks_akita_payload_layout() {
     #[cfg(feature = "field-inline")]
     {
         config.lattice.field_inline.enabled = true;
-        config.lattice.packed_witness.field_rd_inc_family = true;
     }
 
     let mut proof = proof_with_zk(false, clear_claims());
@@ -415,7 +414,6 @@ fn stage8_statement_with_config_uses_supplied_protocol_config() {
     #[cfg(feature = "field-inline")]
     {
         config.lattice.field_inline.enabled = true;
-        config.lattice.packed_witness.field_rd_inc_family = true;
     }
 
     let preprocessing = test_preprocessing();
@@ -1673,7 +1671,6 @@ fn lattice_config(layout_digest: [u8; 32], d_pack: usize) -> JoltProtocolConfig 
     #[cfg(feature = "field-inline")]
     {
         config.lattice.field_inline.enabled = true;
-        config.lattice.packed_witness.field_rd_inc_family = true;
     }
     config
 }

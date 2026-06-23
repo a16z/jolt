@@ -18,7 +18,6 @@ fn lattice_config() -> JoltProtocolConfig {
     #[cfg(feature = "field-inline")]
     {
         config.lattice.field_inline.enabled = true;
-        config.lattice.packed_witness.field_rd_inc_family = true;
     }
     config
 }

@@ -474,13 +474,10 @@ mod tests {
             layout_digest: Some([7; 32]),
             d_pack: Some(43),
             validity_digest: Some([11; 32]),
-            field_rd_inc_family: false,
-            untrusted_advice_family: false,
         };
         #[cfg(feature = "field-inline")]
         {
             config.lattice.field_inline.enabled = true;
-            config.lattice.packed_witness.field_rd_inc_family = true;
         }
         config
     }
