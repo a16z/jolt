@@ -12,8 +12,9 @@ pub use reduction::{
 };
 pub use types::{
     PackedLinearAddress, PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof,
-    PackedLinearFamily, PackedLinearLayout, PackedLinearProverReduction,
-    PackedLinearReductionProof, PackedLinearVerifierReduction, PackedLinearWitnessSource,
+    PackedLinearFamily, PackedLinearLayout, PackedLinearProverReduction, PackedLinearProverSetup,
+    PackedLinearReductionProof, PackedLinearSetupParams, PackedLinearVerifierReduction,
+    PackedLinearVerifierSetup, PackedLinearWitnessSource,
 };
 
 #[cfg(test)]

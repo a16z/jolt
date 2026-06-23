@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
@@ -7,19 +7,60 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BatchOpeningResult, BatchOpeningScheme, OpeningsError, PackedFamilyRef};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PackedLinearBatch<PCS>(PhantomData<PCS>);
+pub struct PackedLinearBatch<PCS, L = crate::PackedWitnessLayout>(PhantomData<fn() -> (PCS, L)>);
 
-impl<PCS> PackedLinearBatch<PCS> {
+impl<PCS, L> PackedLinearBatch<PCS, L> {
     pub fn new() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<PCS> Default for PackedLinearBatch<PCS> {
+impl<PCS, L> Default for PackedLinearBatch<PCS, L> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+impl<PCS, L> Clone for PackedLinearBatch<PCS, L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<PCS, L> Copy for PackedLinearBatch<PCS, L> {}
+
+impl<PCS, L> fmt::Debug for PackedLinearBatch<PCS, L> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("PackedLinearBatch").finish()
+    }
+}
+
+impl<PCS, L> PartialEq for PackedLinearBatch<PCS, L> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<PCS, L> Eq for PackedLinearBatch<PCS, L> {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackedLinearSetupParams<PCSParams, L = crate::PackedWitnessLayout> {
+    pub pcs: PCSParams,
+    pub layout: L,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackedLinearProverSetup<PCSSetup, L = crate::PackedWitnessLayout> {
+    pub pcs: PCSSetup,
+    pub layout: L,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackedLinearVerifierSetup<PCSSetup, L = crate::PackedWitnessLayout> {
+    pub pcs: PCSSetup,
+    pub layout: L,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

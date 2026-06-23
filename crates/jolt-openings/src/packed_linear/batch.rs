@@ -1,10 +1,11 @@
 use jolt_crypto::Commitment;
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
-    ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentLayoutDigest,
+    CommitmentScheme, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 
 use super::{
@@ -12,42 +13,60 @@ use super::{
         has_packed_linear_view, prove_packed_linear_reduction, validate_packed_linear_statement,
         verify_packed_linear_reduction,
     },
-    types::{PackedLinearBatch, PackedLinearBatchBackend, PackedLinearBatchProof},
+    types::{
+        PackedLinearBatch, PackedLinearBatchProof, PackedLinearLayout, PackedLinearProverSetup,
+        PackedLinearSetupParams, PackedLinearVerifierSetup,
+    },
     util::{invalid_batch, polynomial_evaluations},
 };
 
-impl<PCS> Commitment for PackedLinearBatch<PCS>
+impl<PCS, L> Commitment for PackedLinearBatch<PCS, L>
 where
     PCS: CommitmentScheme,
+    L: 'static,
 {
     type Output = PCS::Output;
 }
 
-impl<PCS> CommitmentScheme for PackedLinearBatch<PCS>
+impl<PCS, L> CommitmentScheme for PackedLinearBatch<PCS, L>
 where
     PCS: CommitmentScheme,
+    L: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     type Field = PCS::Field;
     type Proof = PackedLinearBatchProof<PCS::Proof>;
-    type ProverSetup = PCS::ProverSetup;
-    type VerifierSetup = PCS::VerifierSetup;
+    type ProverSetup = PackedLinearProverSetup<PCS::ProverSetup, L>;
+    type VerifierSetup = PackedLinearVerifierSetup<PCS::VerifierSetup, L>;
     type Polynomial = PCS::Polynomial;
     type OpeningHint = PCS::OpeningHint;
-    type SetupParams = PCS::SetupParams;
+    type SetupParams = PackedLinearSetupParams<PCS::SetupParams, L>;
 
     fn setup(params: Self::SetupParams) -> (Self::ProverSetup, Self::VerifierSetup) {
-        PCS::setup(params)
+        let (prover, verifier) = PCS::setup(params.pcs);
+        (
+            PackedLinearProverSetup {
+                pcs: prover,
+                layout: params.layout.clone(),
+            },
+            PackedLinearVerifierSetup {
+                pcs: verifier,
+                layout: params.layout,
+            },
+        )
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        PCS::verifier_setup(prover_setup)
+        PackedLinearVerifierSetup {
+            pcs: PCS::verifier_setup(&prover_setup.pcs),
+            layout: prover_setup.layout.clone(),
+        }
     }
 
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        PCS::commit(poly, setup)
+        PCS::commit(poly, &setup.pcs)
     }
 
     fn open(
@@ -60,7 +79,7 @@ where
     ) -> Self::Proof {
         PackedLinearBatchProof {
             reduction: None,
-            native: PCS::open(poly, point, eval, setup, hint, transcript),
+            native: PCS::open(poly, point, eval, &setup.pcs, hint, transcript),
         }
     }
 
@@ -75,7 +94,14 @@ where
         if proof.reduction.is_some() {
             return Err(OpeningsError::VerificationFailed);
         }
-        PCS::verify(commitment, point, eval, &proof.native, setup, transcript)
+        PCS::verify(
+            commitment,
+            point,
+            eval,
+            &proof.native,
+            &setup.pcs,
+            transcript,
+        )
     }
 
     fn bind_opening_inputs(
@@ -87,10 +113,11 @@ where
     }
 }
 
-impl<PCS> BatchOpeningScheme for PackedLinearBatch<PCS>
+impl<PCS, L> BatchOpeningScheme for PackedLinearBatch<PCS, L>
 where
-    PCS: PackedLinearBatchBackend,
-    PCS::Output: AppendToTranscript,
+    PCS: BatchOpeningScheme,
+    PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
+    L: PackedLinearLayout + Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     fn prove_batch<T, OpeningId, RelationId>(
         setup: &Self::ProverSetup,
@@ -103,22 +130,21 @@ where
         T: Transcript<Challenge = Self::Field>,
     {
         if !has_packed_linear_view(statement) {
-            let native = PCS::prove_batch(setup, transcript, statement, polynomials, hints)?;
+            let native = PCS::prove_batch(&setup.pcs, transcript, statement, polynomials, hints)?;
             return Ok(PackedLinearBatchProof {
                 reduction: None,
                 native,
             });
         }
 
-        let layout = PCS::prover_layout(setup)
-            .ok_or_else(|| invalid_batch("packed linear opening requires setup layout"))?;
+        let layout = &setup.layout;
         let commitment = validate_packed_linear_statement(layout, statement)?;
-        PCS::validate_packed_prover_inputs(setup, layout, &commitment, polynomials, &hints)?;
+        validate_packed_commitment_digest(layout, &commitment)?;
+        validate_packed_prover_inputs::<PCS::Field, _, _, _>(layout, polynomials, &hints)?;
         let hint = hints
             .into_iter()
             .next()
             .ok_or_else(|| invalid_batch("packed linear proof requires one opening hint"))?;
-        PCS::bind_packed_prover_setup(setup, transcript);
         let reduction = prove_packed_linear_reduction(
             layout,
             statement,
@@ -129,7 +155,7 @@ where
             &polynomials[0],
             &reduction.opening_point,
             reduction.opening_eval,
-            setup,
+            &setup.pcs,
             Some(hint),
             transcript,
         );
@@ -152,18 +178,16 @@ where
             if proof.reduction.is_some() {
                 return Err(OpeningsError::VerificationFailed);
             }
-            return PCS::verify_batch(setup, transcript, statement, &proof.native);
+            return PCS::verify_batch(&setup.pcs, transcript, statement, &proof.native);
         }
 
         let reduction_proof = proof
             .reduction
             .as_ref()
             .ok_or(OpeningsError::VerificationFailed)?;
-        let layout = PCS::verifier_layout(setup)
-            .ok_or_else(|| invalid_batch("packed linear opening requires setup layout"))?;
+        let layout = &setup.layout;
         let commitment = validate_packed_linear_statement(layout, statement)?;
-        PCS::validate_packed_verifier_inputs(setup, layout, &commitment)?;
-        PCS::bind_packed_verifier_setup(setup, transcript);
+        validate_packed_commitment_digest(layout, &commitment)?;
         let reduction =
             verify_packed_linear_reduction(layout, statement, reduction_proof, transcript)?;
         PCS::verify(
@@ -171,16 +195,17 @@ where
             &reduction.opening_point,
             reduction.opening_eval,
             &proof.native,
-            setup,
+            &setup.pcs,
             transcript,
         )?;
         Ok(reduction.result)
     }
 }
 
-impl<PCS> ZkOpeningScheme for PackedLinearBatch<PCS>
+impl<PCS, L> ZkOpeningScheme for PackedLinearBatch<PCS, L>
 where
     PCS: ZkOpeningScheme,
+    L: Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     type HidingCommitment = PCS::HidingCommitment;
     type Blind = PCS::Blind;
@@ -189,7 +214,7 @@ where
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> (Self::Output, Self::OpeningHint) {
-        PCS::commit_zk(poly, setup)
+        PCS::commit_zk(poly, &setup.pcs)
     }
 
     fn open_zk(
@@ -200,7 +225,7 @@ where
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> (Self::Proof, Self::HidingCommitment, Self::Blind) {
-        let (native, hiding, blind) = PCS::open_zk(poly, point, eval, setup, hint, transcript);
+        let (native, hiding, blind) = PCS::open_zk(poly, point, eval, &setup.pcs, hint, transcript);
         (
             PackedLinearBatchProof {
                 reduction: None,
@@ -221,7 +246,7 @@ where
         if proof.reduction.is_some() {
             return Err(OpeningsError::VerificationFailed);
         }
-        PCS::verify_zk(commitment, point, &proof.native, setup, transcript)
+        PCS::verify_zk(commitment, point, &proof.native, &setup.pcs, transcript)
     }
 
     fn bind_zk_opening_inputs(
@@ -233,10 +258,11 @@ where
     }
 }
 
-impl<PCS> ZkBatchOpeningScheme for PackedLinearBatch<PCS>
+impl<PCS, L> ZkBatchOpeningScheme for PackedLinearBatch<PCS, L>
 where
-    PCS: PackedLinearBatchBackend + ZkBatchOpeningScheme,
-    PCS::Output: AppendToTranscript,
+    PCS: ZkBatchOpeningScheme,
+    PCS::Output: AppendToTranscript + CommitmentLayoutDigest,
+    L: PackedLinearLayout + Clone + Send + Sync + Serialize + DeserializeOwned + 'static,
 {
     fn prove_batch_zk<T, OpeningId, RelationId>(
         setup: &Self::ProverSetup,
@@ -255,7 +281,7 @@ where
             ));
         }
         let (native, hiding, blind) =
-            PCS::prove_batch_zk(setup, transcript, statement, evals, polynomials, hints)?;
+            PCS::prove_batch_zk(&setup.pcs, transcript, statement, evals, polynomials, hints)?;
         Ok((
             PackedLinearBatchProof {
                 reduction: None,
@@ -283,6 +309,53 @@ where
         if proof.reduction.is_some() {
             return Err(OpeningsError::VerificationFailed);
         }
-        PCS::verify_batch_zk(setup, transcript, statement, &proof.native)
+        PCS::verify_batch_zk(&setup.pcs, transcript, statement, &proof.native)
     }
+}
+
+fn validate_packed_commitment_digest<C, L>(layout: &L, commitment: &C) -> Result<(), OpeningsError>
+where
+    C: CommitmentLayoutDigest,
+    L: PackedLinearLayout,
+{
+    if let Some(commitment_digest) = commitment.layout_digest() {
+        if commitment_digest != layout.digest() {
+            return Err(invalid_batch(
+                "packed linear commitment layout digest does not match setup layout",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_packed_prover_inputs<F, P, H, L>(
+    layout: &L,
+    polynomials: &[P],
+    hints: &[H],
+) -> Result<(), OpeningsError>
+where
+    F: jolt_field::Field,
+    P: MultilinearPoly<F>,
+    L: PackedLinearLayout,
+{
+    if polynomials.len() != 1 {
+        return Err(invalid_batch(format!(
+            "packed linear proof expects one packed polynomial, got {}",
+            polynomials.len()
+        )));
+    }
+    if polynomials[0].num_vars() != layout.dimension() {
+        return Err(invalid_batch(format!(
+            "packed linear polynomial has {} variables but layout has {}",
+            polynomials[0].num_vars(),
+            layout.dimension()
+        )));
+    }
+    if hints.len() != 1 {
+        return Err(invalid_batch(format!(
+            "packed linear proof expects one opening hint, got {}",
+            hints.len()
+        )));
+    }
+    Ok(())
 }

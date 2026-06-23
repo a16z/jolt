@@ -155,24 +155,30 @@ impl BatchOpeningScheme for TestPackedPcs {
     }
 }
 
-impl PackedLinearBatchBackend for TestPackedPcs {
-    type Layout = TestLayout;
-
-    fn prover_layout(setup: &Self::ProverSetup) -> Option<&Self::Layout> {
-        Some(setup)
-    }
-
-    fn verifier_layout(setup: &Self::VerifierSetup) -> Option<&Self::Layout> {
-        Some(setup)
-    }
-}
-
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
 fn layout() -> TestLayout {
     TestLayout { digest: [17; 32] }
+}
+
+fn packed_setup(
+    layout: TestLayout,
+) -> (
+    PackedLinearProverSetup<TestLayout, TestLayout>,
+    PackedLinearVerifierSetup<TestLayout, TestLayout>,
+) {
+    (
+        PackedLinearProverSetup {
+            pcs: layout.clone(),
+            layout: layout.clone(),
+        },
+        PackedLinearVerifierSetup {
+            pcs: layout.clone(),
+            layout,
+        },
+    )
 }
 
 fn packed_polynomial() -> Polynomial<Fr> {
@@ -239,9 +245,10 @@ fn statement(
 
 #[test]
 fn packed_linear_batch_roundtrip_many_views_one_commitment() {
-    type PackedTestPcs = PackedLinearBatch<TestPackedPcs>;
+    type PackedTestPcs = PackedLinearBatch<TestPackedPcs, TestLayout>;
 
     let layout = layout();
+    let (prover_setup, verifier_setup) = packed_setup(layout.clone());
     let poly = packed_polynomial();
     let (commitment, hint) = TestPackedPcs::commit(&poly, &layout);
     let row_point = vec![fr(2), fr(5)];
@@ -249,7 +256,7 @@ fn packed_linear_batch_roundtrip_many_views_one_commitment() {
 
     let mut prover_transcript = Blake2bTranscript::new(b"generic-packed-linear");
     let proof = <PackedTestPcs as BatchOpeningScheme>::prove_batch(
-        &layout,
+        &prover_setup,
         &mut prover_transcript,
         &statement,
         std::slice::from_ref(&poly),
@@ -260,7 +267,7 @@ fn packed_linear_batch_roundtrip_many_views_one_commitment() {
 
     let mut verifier_transcript = Blake2bTranscript::new(b"generic-packed-linear");
     let result = <PackedTestPcs as BatchOpeningScheme>::verify_batch(
-        &layout,
+        &verifier_setup,
         &mut verifier_transcript,
         &statement,
         &proof,
@@ -284,16 +291,17 @@ fn packed_linear_batch_roundtrip_many_views_one_commitment() {
 
 #[test]
 fn packed_linear_batch_rejects_tampered_view_address() {
-    type PackedTestPcs = PackedLinearBatch<TestPackedPcs>;
+    type PackedTestPcs = PackedLinearBatch<TestPackedPcs, TestLayout>;
 
     let layout = layout();
+    let (prover_setup, verifier_setup) = packed_setup(layout.clone());
     let poly = packed_polynomial();
     let (commitment, hint) = TestPackedPcs::commit(&poly, &layout);
     let row_point = vec![fr(2), fr(5)];
     let statement = statement(commitment, &poly, &row_point);
     let mut prover_transcript = Blake2bTranscript::new(b"generic-packed-linear-tamper");
     let proof = <PackedTestPcs as BatchOpeningScheme>::prove_batch(
-        &layout,
+        &prover_setup,
         &mut prover_transcript,
         &statement,
         std::slice::from_ref(&poly),
@@ -309,7 +317,7 @@ fn packed_linear_batch_rejects_tampered_view_address() {
 
     let mut verifier_transcript = Blake2bTranscript::new(b"generic-packed-linear-tamper");
     let result = <PackedTestPcs as BatchOpeningScheme>::verify_batch(
-        &layout,
+        &verifier_setup,
         &mut verifier_transcript,
         &tampered,
         &proof,
