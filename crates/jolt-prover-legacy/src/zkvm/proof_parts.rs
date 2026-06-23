@@ -46,6 +46,7 @@ pub(crate) struct JoltProofParts<
     pub stage3_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage4_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage5_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
+    pub stage5_increment_sumcheck_proof: Option<SumcheckInstanceProof<F, C, FS>>,
     pub stage6a_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage6b_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,
     pub stage7_sumcheck_proof: SumcheckInstanceProof<F, C, FS>,

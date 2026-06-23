@@ -428,7 +428,9 @@ where
         stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
         stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
         stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
-        stage5_increment_sumcheck_proof: None,
+        stage5_increment_sumcheck_proof: proof
+            .stage5_increment_sumcheck_proof
+            .map(convert_sumcheck),
         stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
         stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),
@@ -485,7 +487,9 @@ where
         stage3_sumcheck_proof: convert_sumcheck(proof.stage3_sumcheck_proof),
         stage4_sumcheck_proof: convert_sumcheck(proof.stage4_sumcheck_proof),
         stage5_sumcheck_proof: convert_sumcheck(proof.stage5_sumcheck_proof),
-        stage5_increment_sumcheck_proof: None,
+        stage5_increment_sumcheck_proof: proof
+            .stage5_increment_sumcheck_proof
+            .map(convert_sumcheck),
         stage6a_sumcheck_proof: convert_sumcheck(proof.stage6a_sumcheck_proof),
         stage6b_sumcheck_proof: convert_sumcheck(proof.stage6b_sumcheck_proof),
         stage7_sumcheck_proof: convert_sumcheck(proof.stage7_sumcheck_proof),

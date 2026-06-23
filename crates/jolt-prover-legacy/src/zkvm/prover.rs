@@ -553,6 +553,7 @@ impl<
             stage3_sumcheck_proof,
             stage4_sumcheck_proof,
             stage5_sumcheck_proof,
+            stage5_increment_sumcheck_proof: None,
             stage6a_sumcheck_proof,
             stage6b_sumcheck_proof,
             stage7_sumcheck_proof,
