@@ -80,7 +80,7 @@ fn jolt_program_rv64_decode_matches_tracer_normalization() {
         (0x0010_0073, false),
         (0x3020_0073, false),
         (0x3001_10f3, false),
-        (0x0000_50db, false),
+        (0x0000_10db, false),
         (0x0020_802b, false),
         (uncompress_instruction(0x107a), true),
     ];
