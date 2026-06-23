@@ -5,7 +5,10 @@
 //! trace execution and sumcheck proving; Akita artifacts are derived from those
 //! prover-native inputs without going through deleted core/compat paths.
 
-use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
+use std::{
+    ops::{Add, AddAssign, Neg, Sub, SubAssign},
+    time::Instant,
+};
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use blake2::{digest::consts::U32, Blake2b, Digest};
@@ -536,14 +539,47 @@ impl
         ),
         VerifierError,
     > {
+        let packed_setup =
+            time_akita_phase("setup_packed_witness", || self.setup_akita_packed_witness())?;
+        let precommitted = time_akita_phase("commit_precommitted_program", || {
+            self.commit_akita_precommitted_program_from_setup(&packed_setup)
+        })?;
+        self.prove_akita_with_precomputed(packed_setup, precommitted)
+    }
+
+    #[expect(
+        clippy::type_complexity,
+        reason = "public prover API returns verifier preprocessing, proof, and optional debug data"
+    )]
+    pub fn prove_akita_with_precomputed(
+        self,
+        packed_setup: AkitaPackedWitnessSetupData,
+        precommitted: AkitaPrecommittedProgramProverData,
+    ) -> Result<
+        (
+            AkitaVerifierPreprocessing,
+            AkitaJoltProof,
+            Option<
+                ProverDebugInfo<
+                    JoltAkitaField,
+                    AkitaLegacyBlake2bTranscript,
+                    AkitaNoopCommitmentScheme,
+                >,
+            >,
+        ),
+        VerifierError,
+    > {
         let public_io = self.program_io.clone();
         let has_untrusted_advice = !self.program_io.untrusted_advice.is_empty();
-        let packed_witness = self.commit_akita_packed_witness()?;
-        let precommitted = self.commit_akita_precommitted_program(&packed_witness)?;
+        let packed_witness = time_akita_phase("commit_packed_witness", || {
+            self.commit_akita_packed_witness_with_setup(packed_setup)
+        })?;
         let packed_commitment = packed_witness_commitment(&packed_witness.committed.artifacts)?;
         let untrusted_advice_commitment = has_untrusted_advice.then(|| packed_commitment.clone());
         let placeholder_opening = placeholder_akita_batch_proof(packed_commitment);
-        let (proof_parts, debug_info) = self.prove_parts_with_akita(&packed_witness);
+        let (proof_parts, debug_info) = time_akita_phase("prove_jolt_sumchecks", || {
+            self.prove_parts_with_akita(&packed_witness)
+        });
         let mut proof = crate::zkvm::proof::akita_proof_parts_into_verifier(
             proof_parts,
             packed_witness.committed.artifacts.protocol,
@@ -552,22 +588,51 @@ impl
             untrusted_advice_commitment,
         )?;
         let opening_inputs = precommitted.opening_inputs();
-        jolt_verifier::akita::prove_and_attach_akita_opening_proofs_with_precommitted::<
-            AkitaLegacyBlake2bTranscript,
-            _,
-        >(
-            &packed_witness.prover_setup,
-            &precommitted.preprocessing,
-            &public_io,
-            &mut proof,
-            None,
-            &packed_witness.committed.artifacts,
-            &packed_witness.committed.witness,
-            &opening_inputs,
-        )?;
+        let validity = time_akita_phase("prove_packed_validity", || {
+            jolt_verifier::akita::prove_akita_jolt_packed_validity::<AkitaLegacyBlake2bTranscript, _>(
+                &packed_witness.prover_setup,
+                &precommitted.preprocessing,
+                &public_io,
+                &proof,
+                None,
+                &packed_witness.committed.artifacts,
+                &packed_witness.committed.witness,
+            )
+        })?;
+        time_akita_phase("attach_packed_validity", || {
+            jolt_verifier::akita::attach_akita_packing_validity_proof(&mut proof, validity)
+        })?;
+        let opening_proofs = time_akita_phase("prove_final_openings", || {
+            jolt_verifier::akita::prove_akita_jolt_final_openings_with_precommitted::<
+                AkitaLegacyBlake2bTranscript,
+                _,
+            >(
+                &packed_witness.prover_setup,
+                &precommitted.preprocessing,
+                &public_io,
+                &proof,
+                None,
+                &packed_witness.committed.artifacts,
+                &packed_witness.committed.witness,
+                &opening_inputs,
+            )
+        })?;
+        proof.joint_opening_proof = opening_proofs.packed;
+        proof.lattice_precommitted_opening_proofs = opening_proofs.precommitted;
 
         Ok((precommitted.preprocessing, proof, debug_info))
     }
+}
+
+fn time_akita_phase<T>(phase: &'static str, f: impl FnOnce() -> T) -> T {
+    let start = Instant::now();
+    let output = f();
+    tracing::info!(
+        phase,
+        seconds = start.elapsed().as_secs_f64(),
+        "Akita prover phase"
+    );
+    output
 }
 
 fn packed_witness_commitment(
@@ -589,6 +654,13 @@ fn placeholder_akita_batch_proof(commitment: AkitaCommitment) -> AkitaPackingBat
             proof: Vec::new(),
         },
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct AkitaPackedWitnessSetupData {
+    pub precommitted: PrecommittedSchedule,
+    pub prover_setup: AkitaPackingProverSetup,
+    pub verifier_setup: AkitaPackingVerifierSetup,
 }
 
 #[derive(Clone, Debug)]
@@ -641,6 +713,11 @@ where
     pub fn commit_akita_packed_witness(
         &self,
     ) -> Result<AkitaPackedWitnessProverData, VerifierError> {
+        let packed_setup = self.setup_akita_packed_witness()?;
+        self.commit_akita_packed_witness_with_setup(packed_setup)
+    }
+
+    pub fn setup_akita_packed_witness(&self) -> Result<AkitaPackedWitnessSetupData, VerifierError> {
         if !self.program_io.trusted_advice.is_empty()
             || self.advice.trusted_advice_commitment.is_some()
         {
@@ -649,21 +726,25 @@ where
             ));
         }
 
-        let precommitted = derive_precommitted_schedule(
-            &self.preprocessing.shared,
-            self.trace.len().ilog2() as usize,
-            self.one_hot_params.log_k_chunk,
-            !self.program_io.untrusted_advice.is_empty(),
-        )?;
-        let layout = derive_akita_packed_layout(
-            &self.preprocessing.shared,
-            self.trace.len().ilog2() as usize,
-            self.one_hot_params.log_k_chunk,
-            self.one_hot_params.instruction_d,
-            self.one_hot_params.bytecode_d,
-            self.one_hot_params.ram_d,
-            &precommitted,
-        )?;
+        let precommitted = time_akita_phase("derive_precommitted_schedule", || {
+            derive_precommitted_schedule(
+                &self.preprocessing.shared,
+                self.trace.len().ilog2() as usize,
+                self.one_hot_params.log_k_chunk,
+                !self.program_io.untrusted_advice.is_empty(),
+            )
+        })?;
+        let layout = time_akita_phase("derive_packed_layout", || {
+            derive_akita_packed_layout(
+                &self.preprocessing.shared,
+                self.trace.len().ilog2() as usize,
+                self.one_hot_params.log_k_chunk,
+                self.one_hot_params.instruction_d,
+                self.one_hot_params.bytecode_d,
+                self.one_hot_params.ram_d,
+                &precommitted,
+            )
+        })?;
         let max_num_vars = layout
             .dimension
             .max(akita_precommitted_program_max_num_vars(
@@ -674,47 +755,68 @@ where
                 .bytecode_commitments
                 .bytecode_chunk_count
                 .max(1);
-        let (prover_setup, verifier_setup) = akita_packing_setup_with_max_num_vars(
-            &layout,
-            max_num_vars,
-            max_num_polys_per_commitment_group,
-        );
-        let trace_rows = build_trace_rows(
-            &self.trace,
-            &self.preprocessing.materialized_program().bytecode,
-        )
-        .map_err(|error| {
-            invalid_akita_prover_config(format!("failed to build Akita trace rows: {error}"))
-        })?;
-        let instruction_lookup_indices = instruction_lookup_indices(&self.trace);
-        let remapped_ram_addresses = self
-            .trace
-            .iter()
-            .map(|cycle| {
-                remap_address(
-                    cycle.ram_access().address() as u64,
-                    &self.preprocessing.shared.memory_layout,
-                )
-            })
-            .collect::<Vec<_>>();
-        let committed = commit_akita_packing_jolt_witness(
-            &prover_setup,
-            AkitaPackingJoltWitnessInput {
-                layout,
-                trace_rows: &trace_rows,
-                log_k_chunk: self.one_hot_params.log_k_chunk,
-                instruction_lookup_indices: &instruction_lookup_indices,
-                remapped_ram_addresses: Some(&remapped_ram_addresses),
-                untrusted_advice: (!self.program_io.untrusted_advice.is_empty())
-                    .then_some(self.program_io.untrusted_advice.as_slice()),
-            },
-        )?;
+        let (prover_setup, verifier_setup) = time_akita_phase("akita_packing_setup", || {
+            akita_packing_setup_with_max_num_vars(
+                &layout,
+                max_num_vars,
+                max_num_polys_per_commitment_group,
+            )
+        });
 
-        Ok(AkitaPackedWitnessProverData {
-            protocol: committed.artifacts.protocol,
+        Ok(AkitaPackedWitnessSetupData {
             precommitted,
             prover_setup,
             verifier_setup,
+        })
+    }
+
+    pub fn commit_akita_packed_witness_with_setup(
+        &self,
+        packed_setup: AkitaPackedWitnessSetupData,
+    ) -> Result<AkitaPackedWitnessProverData, VerifierError> {
+        let trace_rows = time_akita_phase("build_akita_trace_rows", || {
+            build_trace_rows(
+                &self.trace,
+                &self.preprocessing.materialized_program().bytecode,
+            )
+            .map_err(|error| {
+                invalid_akita_prover_config(format!("failed to build Akita trace rows: {error}"))
+            })
+        })?;
+        let instruction_lookup_indices = time_akita_phase("instruction_lookup_indices", || {
+            instruction_lookup_indices(&self.trace)
+        });
+        let remapped_ram_addresses = time_akita_phase("remap_ram_addresses", || {
+            self.trace
+                .iter()
+                .map(|cycle| {
+                    remap_address(
+                        cycle.ram_access().address() as u64,
+                        &self.preprocessing.shared.memory_layout,
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        let committed = time_akita_phase("commit_packing_jolt_witness", || {
+            commit_akita_packing_jolt_witness(
+                &packed_setup.prover_setup,
+                AkitaPackingJoltWitnessInput {
+                    layout: packed_setup.prover_setup.layout.clone(),
+                    trace_rows: &trace_rows,
+                    log_k_chunk: self.one_hot_params.log_k_chunk,
+                    instruction_lookup_indices: &instruction_lookup_indices,
+                    remapped_ram_addresses: Some(&remapped_ram_addresses),
+                    untrusted_advice: (!self.program_io.untrusted_advice.is_empty())
+                        .then_some(self.program_io.untrusted_advice.as_slice()),
+                },
+            )
+        })?;
+
+        Ok(AkitaPackedWitnessProverData {
+            protocol: committed.artifacts.protocol,
+            precommitted: packed_setup.precommitted,
+            prover_setup: packed_setup.prover_setup,
+            verifier_setup: packed_setup.verifier_setup,
             committed,
         })
     }
@@ -726,9 +828,37 @@ where
     where
         PCS::Commitment: ark_serialize::CanonicalSerialize,
     {
-        if packed_witness.precommitted.bytecode.is_none()
-            || packed_witness.precommitted.program_image.is_none()
-        {
+        self.commit_akita_precommitted_program_parts(
+            &packed_witness.precommitted,
+            &packed_witness.prover_setup,
+            &packed_witness.verifier_setup,
+        )
+    }
+
+    pub fn commit_akita_precommitted_program_from_setup(
+        &self,
+        packed_setup: &AkitaPackedWitnessSetupData,
+    ) -> Result<AkitaPrecommittedProgramProverData, VerifierError>
+    where
+        PCS::Commitment: ark_serialize::CanonicalSerialize,
+    {
+        self.commit_akita_precommitted_program_parts(
+            &packed_setup.precommitted,
+            &packed_setup.prover_setup,
+            &packed_setup.verifier_setup,
+        )
+    }
+
+    fn commit_akita_precommitted_program_parts(
+        &self,
+        precommitted: &PrecommittedSchedule,
+        prover_setup: &AkitaPackingProverSetup,
+        verifier_setup: &AkitaPackingVerifierSetup,
+    ) -> Result<AkitaPrecommittedProgramProverData, VerifierError>
+    where
+        PCS::Commitment: ark_serialize::CanonicalSerialize,
+    {
+        if precommitted.bytecode.is_none() || precommitted.program_image.is_none() {
             return Err(invalid_akita_prover_config(
                 "Akita committed-program openings require bytecode and program-image schedules",
             ));
@@ -738,26 +868,34 @@ where
         let committed = require_committed_program(&shared.program)?;
         let program = self.preprocessing.materialized_program();
         let bytecode_chunk_count = committed.bytecode_commitments.bytecode_chunk_count;
-        let bytecode_opening = commit_akita_precommitted_polynomial_group(
-            build_akita_bytecode_chunk_polynomials(
-                &program.bytecode.bytecode,
-                bytecode_chunk_count,
-            ),
-            &packed_witness.prover_setup.pcs,
-        )?;
+        let bytecode_polynomials =
+            time_akita_phase("build_precommitted_bytecode_polynomials", || {
+                build_akita_bytecode_chunk_polynomials(
+                    &program.bytecode.bytecode,
+                    bytecode_chunk_count,
+                )
+            });
+        let bytecode_opening = time_akita_phase("commit_precommitted_bytecode_group", || {
+            commit_akita_precommitted_polynomial_group(bytecode_polynomials, &prover_setup.pcs)
+        })?;
         let bytecode_chunk_commitments =
             vec![bytecode_opening.commitment.clone(); bytecode_chunk_count];
         let mut opening_inputs = Vec::with_capacity(2);
         opening_inputs.push(bytecode_opening);
 
-        let program_image_polynomial = build_akita_program_image_polynomial(
-            program,
-            committed.program_commitments.program_image_num_words,
-        );
-        let program_image_opening = commit_akita_precommitted_polynomial_group(
-            vec![program_image_polynomial],
-            &packed_witness.prover_setup.pcs,
-        )?;
+        let program_image_polynomial =
+            time_akita_phase("build_precommitted_program_image_polynomial", || {
+                build_akita_program_image_polynomial(
+                    program,
+                    committed.program_commitments.program_image_num_words,
+                )
+            });
+        let program_image_opening = time_akita_phase("commit_precommitted_program_image", || {
+            commit_akita_precommitted_polynomial_group(
+                vec![program_image_polynomial],
+                &prover_setup.pcs,
+            )
+        })?;
         let program_image_commitment = program_image_opening.commitment.clone();
         opening_inputs.push(program_image_opening);
 
@@ -772,7 +910,7 @@ where
         let preprocessing = AkitaVerifierPreprocessing::new(
             verifier_program,
             shared.digest(),
-            packed_witness.verifier_setup.clone(),
+            verifier_setup.clone(),
             None,
         );
 

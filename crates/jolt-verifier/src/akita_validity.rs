@@ -32,6 +32,7 @@ use jolt_poly::EqPolynomial;
 use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{append_sumcheck_claim, ClearProof, SumcheckProof};
 use jolt_transcript::Transcript;
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct AkitaPackingValidityProofArtifacts {
@@ -61,15 +62,18 @@ where
         );
     }
 
-    let requirements = derive_lattice_packed_validity_requirements(
-        &artifacts.protocol,
-        log_k_chunk,
-        precommitted,
-    )?;
-    let statements = derive_lattice_packed_validity_statements(&artifacts.layout, &requirements)?;
-    let eq_points =
-        sample_lattice_packed_validity_eq_points(transcript, &artifacts.layout, &statements);
-    let sumcheck_claims = lattice_packed_validity_claims::<AkitaField>(&statements);
+    let requirements = time_akita_validity_phase("derive_validity_requirements", || {
+        derive_lattice_packed_validity_requirements(&artifacts.protocol, log_k_chunk, precommitted)
+    })?;
+    let statements = time_akita_validity_phase("derive_validity_statements", || {
+        derive_lattice_packed_validity_statements(&artifacts.layout, &requirements)
+    })?;
+    let eq_points = time_akita_validity_phase("sample_validity_eq_points", || {
+        sample_lattice_packed_validity_eq_points(transcript, &artifacts.layout, &statements)
+    });
+    let sumcheck_claims = time_akita_validity_phase("validity_claims", || {
+        lattice_packed_validity_claims::<AkitaField>(&statements)
+    });
     for claim in &sumcheck_claims {
         append_sumcheck_claim(transcript, &claim.claimed_sum);
     }
@@ -91,46 +95,55 @@ where
             reason: "cannot prove an empty lattice packed validity batch".to_string(),
         })?;
 
-    let (compressed, reduction) = prove_combined_validity_sumcheck(
-        source,
-        &statements,
-        &eq_points,
-        &batching_coefficients,
-        max_num_vars,
-        max_degree,
-        transcript,
-    )?;
+    let (compressed, reduction) =
+        time_akita_validity_phase("prove_combined_validity_sumcheck", || {
+            prove_combined_validity_sumcheck(
+                source,
+                &statements,
+                &eq_points,
+                &batching_coefficients,
+                max_num_vars,
+                max_degree,
+                transcript,
+            )
+        })?;
     let mut opening_claims = Vec::with_capacity(lattice_packed_validity_opening_count(&statements));
-    for statement in &statements {
-        let point = reduction
-            .try_instance_point(statement.num_vars)
-            .map_err(|error| VerifierError::LatticePackedValiditySumcheckFailed {
-                reason: error.to_string(),
-            })?;
-        opening_claims.extend(validity_opening_values(source, statement, point)?);
-    }
-    let batch = build_lattice_packed_validity_batch(
-        &artifacts.layout,
-        &statements,
-        artifacts
-            .payload()
-            .ok_or_else(
-                || VerifierError::LatticePackedValidityOpeningVerificationFailed {
-                    reason: "lattice packed validity artifacts do not carry a lattice payload"
-                        .to_string(),
-                },
-            )?
-            .packed_witness
-            .clone(),
-        &eq_points,
-        &reduction,
-        &opening_claims,
-    )?;
+    time_akita_validity_phase("compute_validity_opening_values", || {
+        for statement in &statements {
+            let point = reduction
+                .try_instance_point(statement.num_vars)
+                .map_err(|error| VerifierError::LatticePackedValiditySumcheckFailed {
+                    reason: error.to_string(),
+                })?;
+            opening_claims.extend(validity_opening_values(source, statement, point)?);
+        }
+        Ok::<(), VerifierError>(())
+    })?;
+    let batch = time_akita_validity_phase("build_validity_opening_batch", || {
+        build_lattice_packed_validity_batch(
+            &artifacts.layout,
+            &statements,
+            artifacts
+                .payload()
+                .ok_or_else(
+                    || VerifierError::LatticePackedValidityOpeningVerificationFailed {
+                        reason: "lattice packed validity artifacts do not carry a lattice payload"
+                            .to_string(),
+                    },
+                )?
+                .packed_witness
+                .clone(),
+            &eq_points,
+            &reduction,
+            &opening_claims,
+        )
+    })?;
     if reduction.reduction.value != batch.expected_final_claim {
         return Err(VerifierError::LatticePackedValidityOutputMismatch);
     }
-    let opening_proof =
-        prove_akita_packing_openings(setup, transcript, artifacts, source, &batch.statement)?;
+    let opening_proof = time_akita_validity_phase("prove_validity_opening", || {
+        prove_akita_packing_openings(setup, transcript, artifacts, source, &batch.statement)
+    })?;
 
     Ok(AkitaPackingValidityProofArtifacts {
         sumcheck_proof: SumcheckProof::Clear(ClearProof::Compressed(compressed)),
@@ -193,6 +206,17 @@ where
         proof.one_hot_config.committed_chunk_bits(),
         &checked.precommitted,
     )
+}
+
+fn time_akita_validity_phase<T>(phase: &'static str, f: impl FnOnce() -> T) -> T {
+    let start = Instant::now();
+    let output = f();
+    tracing::info!(
+        phase,
+        seconds = start.elapsed().as_secs_f64(),
+        "Akita validity phase"
+    );
+    output
 }
 
 fn validity_opening_values<S>(

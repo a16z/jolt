@@ -16,6 +16,7 @@ use jolt_prover_legacy::{
         RV64IMACProver,
     },
 };
+use tracing_subscriber::EnvFilter;
 
 const CYCLES_PER_SHA256: f64 = 3396.0;
 const DEFAULT_TARGET_CYCLES: usize = 1 << 20;
@@ -40,6 +41,8 @@ struct Args {
     bytecode_chunk_count: usize,
     #[arg(long)]
     skip_verify: bool,
+    #[arg(long)]
+    trace_akita_phases: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -61,6 +64,9 @@ struct Measurement {
 
 fn main() {
     let args = Args::parse();
+    if args.trace_akita_phases {
+        init_tracing();
+    }
     let target = match args.iterations {
         Some(iterations) => trace_target(iterations),
         None => calibrate_trace_target(args.target_cycles),
@@ -94,6 +100,19 @@ fn main() {
             proof_size,
         );
     }
+}
+
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .compact()
+        .with_target(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_env_filter(filter)
+        .try_init();
 }
 
 fn calibrate_trace_target(target_cycles: usize) -> TraceTarget {
@@ -238,10 +257,16 @@ fn measure_akita(target: TraceTarget, bytecode_chunk_count: usize, verify: bool)
         None,
         None,
     );
+    let packed_setup = prover
+        .setup_akita_packed_witness()
+        .expect("Akita setup should be produced");
+    let precommitted = prover
+        .commit_akita_precommitted_program_from_setup(&packed_setup)
+        .expect("Akita precommitted program artifacts should be produced");
 
     let start = Instant::now();
     let (verifier_preprocessing, proof, _) = prover
-        .prove_akita()
+        .prove_akita_with_precomputed(packed_setup, precommitted)
         .expect("Akita prover should produce a proof");
     let prove_duration = start.elapsed();
     if verify {
