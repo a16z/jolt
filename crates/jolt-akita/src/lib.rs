@@ -3,6 +3,7 @@
 //! Wraps the upstream Akita PCS over its fp128 field using Jolt's
 //! `CommitmentScheme` and same-point `BatchOpeningScheme` traits.
 
+mod native;
 mod scheme;
 mod types;
 
