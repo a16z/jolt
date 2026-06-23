@@ -6,6 +6,8 @@
 
 #[cfg(not(feature = "zk"))]
 use crate::zkvm::clear_claims::build_clear_claims;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use jolt_verifier::proof::{ClearOnlyCommitment, CommitmentPayload};
 pub use jolt_verifier::VerifierError;
 use jolt_verifier::{
     preprocessing::{
@@ -39,6 +41,8 @@ use jolt_sumcheck::{
     CompressedSumcheckProof, SumcheckProof,
 };
 
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::zkvm::akita::{AkitaNoCurve, AkitaNoopCommitmentScheme};
 use crate::{
     curve::{Bn254Curve, JoltCurve},
     field::JoltField,
@@ -463,6 +467,106 @@ where
         one_hot_config,
         convert_trace_polynomial_order(proof.dory_layout),
     ))
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub(crate) fn akita_proof_parts_into_verifier<FS>(
+    proof: ProverProofParts<
+        crate::field::akita::JoltAkitaField,
+        AkitaNoCurve,
+        AkitaNoopCommitmentScheme,
+        FS,
+    >,
+    protocol: jolt_verifier::JoltProtocolConfig,
+    commitments: CommitmentPayload<jolt_akita::AkitaCommitment>,
+    joint_opening_proof: jolt_verifier::akita::AkitaPackingBatchProof,
+    untrusted_advice_commitment: Option<jolt_akita::AkitaCommitment>,
+) -> Result<jolt_verifier::AkitaJoltProof, VerifierError>
+where
+    FS: Transcript,
+{
+    let one_hot_config = convert_one_hot_config(proof.one_hot_config);
+    let stages = JoltStageProofs {
+        stage1_uni_skip_first_round_proof: convert_uniskip_clear(
+            proof.stage1_uni_skip_first_round_proof,
+        )?,
+        stage1_sumcheck_proof: convert_sumcheck_clear(proof.stage1_sumcheck_proof)?,
+        stage2_uni_skip_first_round_proof: convert_uniskip_clear(
+            proof.stage2_uni_skip_first_round_proof,
+        )?,
+        stage2_sumcheck_proof: convert_sumcheck_clear(proof.stage2_sumcheck_proof)?,
+        stage3_sumcheck_proof: convert_sumcheck_clear(proof.stage3_sumcheck_proof)?,
+        stage4_sumcheck_proof: convert_sumcheck_clear(proof.stage4_sumcheck_proof)?,
+        stage5_sumcheck_proof: convert_sumcheck_clear(proof.stage5_sumcheck_proof)?,
+        stage5_increment_sumcheck_proof: proof
+            .stage5_increment_sumcheck_proof
+            .map(convert_sumcheck_clear)
+            .transpose()?,
+        stage6a_sumcheck_proof: convert_sumcheck_clear(proof.stage6a_sumcheck_proof)?,
+        stage6b_sumcheck_proof: convert_sumcheck_clear(proof.stage6b_sumcheck_proof)?,
+        stage7_sumcheck_proof: convert_sumcheck_clear(proof.stage7_sumcheck_proof)?,
+        lattice_packed_validity_sumcheck_proof: None,
+    };
+
+    let mut proof = JoltProof::new_with_payload(
+        commitments,
+        stages,
+        joint_opening_proof,
+        untrusted_advice_commitment,
+        JoltProofClaims::Clear(convert_opening_claims(
+            proof.opening_claims,
+            proof.trace_length,
+        )),
+        proof.trace_length,
+        proof.ram_K,
+        convert_read_write_config(proof.rw_config),
+        one_hot_config,
+        convert_trace_polynomial_order(proof.dory_layout),
+    );
+    proof.protocol = protocol;
+    Ok(proof)
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn convert_uniskip_clear<F, C, FS>(
+    proof: UniSkipFirstRoundProofVariant<F, C, FS>,
+) -> Result<SumcheckProof<F::VerifierField, ClearOnlyCommitment>, VerifierError>
+where
+    F: ProofField,
+    C: JoltCurve<F = F>,
+    FS: Transcript,
+{
+    match proof {
+        UniSkipFirstRoundProofVariant::Standard(proof) => {
+            Ok(SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof {
+                round_polynomials: vec![convert_univariate(proof.uni_poly)],
+            })))
+        }
+        UniSkipFirstRoundProofVariant::Zk(_) => Err(VerifierError::UnexpectedBlindFoldProof),
+    }
+}
+
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+fn convert_sumcheck_clear<F, C, FS>(
+    proof: SumcheckInstanceProof<F, C, FS>,
+) -> Result<SumcheckProof<F::VerifierField, ClearOnlyCommitment>, VerifierError>
+where
+    F: ProofField,
+    C: JoltCurve<F = F>,
+    FS: Transcript,
+{
+    match proof {
+        SumcheckInstanceProof::Clear(proof) => Ok(SumcheckProof::Clear(ClearProof::Compressed(
+            CompressedSumcheckProof {
+                round_polynomials: proof
+                    .compressed_polys
+                    .into_iter()
+                    .map(convert_compressed_poly)
+                    .collect(),
+            },
+        ))),
+        SumcheckInstanceProof::Zk(_) => Err(VerifierError::UnexpectedBlindFoldProof),
+    }
 }
 
 #[cfg(feature = "zk")]

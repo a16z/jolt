@@ -35,6 +35,8 @@ use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
 #[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::zkvm::akita::AkitaPackedWitnessProverData;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use crate::zkvm::claim_reductions::{
     IncVirtualizationSumcheckParams, IncVirtualizationSumcheckProver,
     UnsignedIncChunkReconstructionSumcheckParams, UnsignedIncChunkReconstructionSumcheckProver,
@@ -439,10 +441,55 @@ impl<
         clippy::type_complexity,
         reason = "internal proof assembly returns prover-native parts plus debug payload"
     )]
-    #[tracing::instrument(skip_all)]
     fn prove_parts(
+        self,
+        _lattice_increment: bool,
+    ) -> (
+        JoltProofParts<F, C, PCS, ProofTranscript>,
+        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+    ) {
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        {
+            self.prove_parts_inner(_lattice_increment, None, None)
+        }
+        #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+        {
+            self.prove_parts_inner(_lattice_increment)
+        }
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    #[expect(
+        clippy::type_complexity,
+        reason = "internal proof assembly returns prover-native parts plus debug payload"
+    )]
+    pub(crate) fn prove_parts_with_akita(
+        self,
+        packed_witness: &AkitaPackedWitnessProverData,
+    ) -> (
+        JoltProofParts<F, C, PCS, ProofTranscript>,
+        Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
+    )
+    where
+        PCS::Proof: Default,
+    {
+        self.prove_parts_inner(true, Some(packed_witness), Some(PCS::Proof::default()))
+    }
+
+    #[expect(
+        clippy::type_complexity,
+        reason = "internal proof assembly returns prover-native parts plus debug payload"
+    )]
+    #[tracing::instrument(skip_all)]
+    fn prove_parts_inner(
         mut self,
         _lattice_increment: bool,
+        #[cfg(all(feature = "akita", not(feature = "zk")))] akita_packed_witness: Option<
+            &AkitaPackedWitnessProverData,
+        >,
+        #[cfg(all(feature = "akita", not(feature = "zk")))] akita_joint_opening_proof: Option<
+            PCS::Proof,
+        >,
     ) -> (
         JoltProofParts<F, C, PCS, ProofTranscript>,
         Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
@@ -463,15 +510,26 @@ impl<
             &preprocessing_digest,
             &mut self.transcript,
         );
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let lattice_artifacts = akita_packed_witness.map(|witness| &witness.committed.artifacts);
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        if let Some(artifacts) = lattice_artifacts {
+            Self::absorb_akita_commitments(&mut self.transcript, artifacts);
+        }
+        #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
+        let lattice_artifacts: Option<()> = None;
 
         tracing::info!(
             "bytecode size: {}",
             self.preprocessing.shared.bytecode_size()
         );
 
-        let (commitments, mut opening_proof_hints) = self.generate_and_commit_witness_polynomials();
-        let untrusted_advice_commitment = self.generate_and_commit_untrusted_advice();
-        self.generate_and_commit_trusted_advice();
+        let append_dory_commitments = lattice_artifacts.is_none();
+        let (commitments, mut opening_proof_hints) =
+            self.generate_and_commit_witness_polynomials(append_dory_commitments);
+        let untrusted_advice_commitment =
+            self.generate_and_commit_untrusted_advice(append_dory_commitments);
+        self.generate_and_commit_trusted_advice(append_dory_commitments);
 
         // Add advice hints for batched Stage 8 opening
         if let Some(hint) = self.advice.trusted_advice_hint.take() {
@@ -491,18 +549,23 @@ impl<
                 program_hints.program_image_hint.clone(),
             );
         }
-        if let Some(bytecode_commitments) = self.preprocessing.shared.program.bytecode_commitments()
-        {
-            for commitment in &bytecode_commitments.commitments {
-                self.transcript
-                    .append_serializable(b"bytecode_chunk_commit", commitment);
+        if append_dory_commitments {
+            if let Some(bytecode_commitments) =
+                self.preprocessing.shared.program.bytecode_commitments()
+            {
+                for commitment in &bytecode_commitments.commitments {
+                    self.transcript
+                        .append_serializable(b"bytecode_chunk_commit", commitment);
+                }
             }
-        }
-        if let Some(program_commitments) = self.preprocessing.shared.program.program_commitments() {
-            self.transcript.append_serializable(
-                b"program_image_commitment",
-                &program_commitments.program_image_commitment,
-            );
+            if let Some(program_commitments) =
+                self.preprocessing.shared.program.program_commitments()
+            {
+                self.transcript.append_serializable(
+                    b"program_image_commitment",
+                    &program_commitments.program_image_commitment,
+                );
+            }
         }
 
         let (stage1_uni_skip_first_round_proof, stage1_sumcheck_proof, r_stage1) =
@@ -530,6 +593,18 @@ impl<
             r_stage1, r_stage2, r_stage3, r_stage4, r_stage5, r_stage6, r_stage7,
         ];
 
+        #[cfg(all(test, feature = "akita", not(feature = "zk")))]
+        let skipped_dory_stage8 = akita_joint_opening_proof.is_some();
+        #[cfg(all(test, not(all(feature = "akita", not(feature = "zk")))))]
+        let skipped_dory_stage8 = false;
+
+        #[cfg(all(feature = "akita", not(feature = "zk")))]
+        let joint_opening_proof = if let Some(joint_opening_proof) = akita_joint_opening_proof {
+            joint_opening_proof
+        } else {
+            self.prove_stage8(opening_proof_hints)
+        };
+        #[cfg(not(all(feature = "akita", not(feature = "zk"))))]
         let joint_opening_proof = self.prove_stage8(opening_proof_hints);
         #[cfg(feature = "zk")]
         let blindfold_proof = self.prove_blindfold(&joint_opening_proof);
@@ -541,15 +616,17 @@ impl<
 
         #[cfg(test)]
         {
-            let missing_virtual = self.opening_accumulator.appended_virtual_openings.borrow();
-            let missing_committed = self
-                .opening_accumulator
-                .appended_committed_openings
-                .borrow();
-            assert!(
-                missing_virtual.is_empty() && missing_committed.is_empty(),
-                "Not all openings have been proven. Missing virtual: {missing_virtual:?}. Missing committed: {missing_committed:?}",
-            );
+            if !skipped_dory_stage8 {
+                let missing_virtual = self.opening_accumulator.appended_virtual_openings.borrow();
+                let missing_committed = self
+                    .opening_accumulator
+                    .appended_committed_openings
+                    .borrow();
+                assert!(
+                    missing_virtual.is_empty() && missing_committed.is_empty(),
+                    "Not all openings have been proven. Missing virtual: {missing_virtual:?}. Missing committed: {missing_committed:?}",
+                );
+            }
         }
 
         #[cfg(test)]
@@ -627,6 +704,105 @@ impl<
         Ok((proof, debug_info))
     }
 
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    #[expect(
+        clippy::expect_used,
+        reason = "Akita packed witness artifacts are constructed with a lattice payload"
+    )]
+    fn absorb_akita_commitments(
+        transcript: &mut ProofTranscript,
+        artifacts: &jolt_verifier::akita::AkitaPackingWitnessArtifacts,
+    ) {
+        Self::absorb_lattice_protocol_header(transcript, &artifacts.protocol);
+        let payload = artifacts
+            .payload()
+            .expect("Akita packed witness artifacts should carry a lattice payload");
+        transcript.append_label(b"lattice_packed_witness");
+        Self::append_akita_commitment(transcript, &payload.packed_witness);
+        transcript.append_bytes(b"lattice_layout_digest", &payload.layout_digest);
+        transcript.append_u64(b"lattice_d_pack", payload.d_pack as u64);
+        if let Some(validity_digest) = artifacts.protocol.lattice.packed_witness.validity_digest {
+            transcript.append_bytes(b"lattice_validity_digest", &validity_digest);
+        }
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    fn absorb_lattice_protocol_header(
+        transcript: &mut ProofTranscript,
+        protocol: &jolt_verifier::JoltProtocolConfig,
+    ) {
+        transcript.append_label(b"lattice_protocol_header");
+        transcript.append_u64(b"lattice_pcs_family", Self::pcs_family_tag(protocol.pcs));
+        transcript.append_u64(b"lattice_zk", Self::zk_config_tag(protocol.zk));
+        transcript.append_u64(
+            b"lattice_program_mode",
+            Self::program_mode_tag(protocol.lattice.program_mode),
+        );
+        transcript.append_u64(
+            b"lattice_increment_mode",
+            Self::increment_mode_tag(protocol.lattice.increment_mode),
+        );
+        transcript.append_u64(
+            b"lattice_field_inline",
+            protocol.lattice.field_inline.enabled as u64,
+        );
+        transcript.append_u64(
+            b"lattice_advice_trusted",
+            protocol.lattice.advice.trusted as u64,
+        );
+        transcript.append_u64(
+            b"lattice_advice_untrusted",
+            protocol.lattice.advice.untrusted as u64,
+        );
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    fn append_akita_commitment(
+        transcript: &mut ProofTranscript,
+        commitment: &jolt_akita::AkitaCommitment,
+    ) {
+        transcript.append_label(b"akita_commitment");
+        transcript.raw_append_bytes(&commitment.layout_digest);
+        transcript.raw_append_u64(commitment.num_vars as u64);
+        transcript.raw_append_u64(commitment.poly_count as u64);
+        transcript
+            .raw_append_label_with_len(b"akita_commitment_bytes", commitment.native.len() as u64);
+        transcript.raw_append_bytes(&commitment.native);
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    const fn pcs_family_tag(family: jolt_verifier::PcsFamily) -> u64 {
+        match family {
+            jolt_verifier::PcsFamily::Curve => 0,
+            jolt_verifier::PcsFamily::Lattice => 1,
+        }
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    const fn zk_config_tag(zk: jolt_verifier::ZkConfig) -> u64 {
+        match zk {
+            jolt_verifier::ZkConfig::Transparent => 0,
+            jolt_verifier::ZkConfig::BlindFold => 1,
+        }
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    const fn program_mode_tag(mode: jolt_verifier::ProgramMode) -> u64 {
+        match mode {
+            jolt_verifier::ProgramMode::Full => 0,
+            jolt_verifier::ProgramMode::Committed => 1,
+        }
+    }
+
+    #[cfg(all(feature = "akita", not(feature = "zk")))]
+    const fn increment_mode_tag(mode: jolt_verifier::IncrementCommitmentMode) -> u64 {
+        match mode {
+            jolt_verifier::IncrementCommitmentMode::Dense => 0,
+            jolt_verifier::IncrementCommitmentMode::SeparateOneHot => 1,
+            jolt_verifier::IncrementCommitmentMode::FusedOneHot => 2,
+        }
+    }
+
     fn prove_batched_sumcheck(
         &mut self,
         instances: Vec<&mut dyn SumcheckInstanceProver<F, ProofTranscript>>,
@@ -689,6 +865,7 @@ impl<
     #[tracing::instrument(skip_all, name = "generate_and_commit_witness_polynomials")]
     fn generate_and_commit_witness_polynomials(
         &mut self,
+        append_to_transcript: bool,
     ) -> (
         Vec<PCS::Commitment>,
         HashMap<CommittedPolynomial, PCS::OpeningProofHint>,
@@ -796,16 +973,20 @@ impl<
             (commitments, hint_map)
         };
 
-        // Append commitments to transcript
-        for commitment in &commitments {
-            self.transcript
-                .append_serializable(b"commitment", commitment);
+        if append_to_transcript {
+            for commitment in &commitments {
+                self.transcript
+                    .append_serializable(b"commitment", commitment);
+            }
         }
 
         (commitments, hint_map)
     }
 
-    fn generate_and_commit_untrusted_advice(&mut self) -> Option<PCS::Commitment> {
+    fn generate_and_commit_untrusted_advice(
+        &mut self,
+        append_to_transcript: bool,
+    ) -> Option<PCS::Commitment> {
         if self.program_io.untrusted_advice.is_empty() {
             return None;
         }
@@ -830,8 +1011,10 @@ impl<
             DoryGlobals::initialize_context(1, advice_len, DoryContext::UntrustedAdvice, None);
         let _ctx = DoryGlobals::with_context(DoryContext::UntrustedAdvice);
         let (commitment, hint) = PCS::commit(&poly, &self.preprocessing.generators);
-        self.transcript
-            .append_serializable(b"untrusted_advice", &commitment);
+        if append_to_transcript {
+            self.transcript
+                .append_serializable(b"untrusted_advice", &commitment);
+        }
 
         self.advice.untrusted_advice_polynomial = Some(poly);
         self.advice.untrusted_advice_hint = Some(hint);
@@ -839,7 +1022,7 @@ impl<
         Some(commitment)
     }
 
-    fn generate_and_commit_trusted_advice(&mut self) {
+    fn generate_and_commit_trusted_advice(&mut self, append_to_transcript: bool) {
         if self.program_io.trusted_advice.is_empty() {
             return;
         }
@@ -856,10 +1039,12 @@ impl<
 
         let poly = MultilinearPolynomial::from(trusted_advice_vec);
         self.advice.trusted_advice_polynomial = Some(poly);
-        self.transcript.append_serializable(
-            b"trusted_advice",
-            self.advice.trusted_advice_commitment.as_ref().unwrap(),
-        );
+        if append_to_transcript {
+            self.transcript.append_serializable(
+                b"trusted_advice",
+                self.advice.trusted_advice_commitment.as_ref().unwrap(),
+            );
+        }
     }
 
     /// Returns (uni_skip_proof, sumcheck_proof, challenges).
@@ -1348,6 +1533,7 @@ impl<
             &self.one_hot_params,
             &self.opening_accumulator,
             &mut self.transcript,
+            _lattice_increment,
         );
 
         let booleanity_params = {
@@ -1533,6 +1719,7 @@ impl<
             let bytecode_chunk_count = self.preprocessing.shared.bytecode_chunk_count;
             let bytecode_reduction_params = BytecodeClaimReductionParams::new(
                 bytecode_read_raf_params.stage_gammas(),
+                bytecode_read_raf_params.bind_store_bytecode,
                 self.preprocessing.shared.bytecode_size(),
                 bytecode_chunk_count,
                 precommitted_scheduling_reference,

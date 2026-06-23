@@ -39,7 +39,8 @@ const NUM_VAL_STAGES: usize = 5;
 pub struct BytecodeClaimReductionParams<F: JoltField> {
     pub precommitted: PrecommittedClaimReduction<F>,
     pub eta: F,
-    pub eta_powers: [F; NUM_VAL_STAGES],
+    pub eta_powers: Vec<F>,
+    pub bytecode_val_stage_count: usize,
     /// Eq weights over high bytecode address bits (one per committed chunk).
     pub chunk_rbc_weights: Vec<F>,
     pub log_bytecode_chunk_size: usize,
@@ -53,6 +54,7 @@ pub struct BytecodeClaimReductionParams<F: JoltField> {
 impl<F: JoltField> BytecodeClaimReductionParams<F> {
     pub fn new(
         bytecode_read_raf_gammas: [&[F]; NUM_VAL_STAGES],
+        bind_store_bytecode: bool,
         bytecode_len: usize,
         bytecode_chunk_count: usize,
         scheduling_reference: PrecommittedSchedulingReference,
@@ -67,8 +69,9 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         let log_bytecode_len = bytecode_len.log_2();
 
         let eta: F = transcript.challenge_scalar();
-        let mut eta_powers = [F::one(); NUM_VAL_STAGES];
-        for i in 1..NUM_VAL_STAGES {
+        let bytecode_val_stage_count = NUM_VAL_STAGES + usize::from(bind_store_bytecode);
+        let mut eta_powers = vec![F::one(); bytecode_val_stage_count];
+        for i in 1..bytecode_val_stage_count {
             eta_powers[i] = eta_powers[i - 1] * eta;
         }
 
@@ -86,7 +89,12 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
         debug_assert_eq!(chunk_rbc_weights.len(), bytecode_chunk_count);
         let r_bc = OpeningPoint::new(r_bc_full.r[dropped_bits..].to_vec());
 
-        let lane_weights = compute_lane_weights(bytecode_read_raf_gammas, accumulator, &eta_powers);
+        let lane_weights = compute_lane_weights(
+            bytecode_read_raf_gammas,
+            bind_store_bytecode,
+            accumulator,
+            &eta_powers,
+        );
 
         let log_committed_lane_count = committed_lanes().log_2();
         let total_vars = log_committed_lane_count + log_bytecode_chunk_size;
@@ -104,6 +112,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
             precommitted,
             eta,
             eta_powers,
+            bytecode_val_stage_count,
             chunk_rbc_weights,
             log_bytecode_chunk_size,
             bytecode_chunk_count,
@@ -124,7 +133,7 @@ impl<F: JoltField> BytecodeClaimReductionParams<F> {
 impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F> {
     fn input_claim(&self, accumulator: &dyn OpeningAccumulator<F>) -> F {
         match self.precommitted.phase {
-            PrecommittedPhase::CycleVariables => (0..NUM_VAL_STAGES)
+            PrecommittedPhase::CycleVariables => (0..self.bytecode_val_stage_count)
                 .map(|stage| {
                     let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
                         VirtualPolynomial::BytecodeValStage(stage),
@@ -160,7 +169,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeClaimReductionParams<F>
     fn input_claim_constraint(&self) -> InputClaimConstraint {
         match self.precommitted.phase {
             PrecommittedPhase::CycleVariables => {
-                let openings: Vec<OpeningId> = (0..NUM_VAL_STAGES)
+                let openings: Vec<OpeningId> = (0..self.bytecode_val_stage_count)
                     .map(|stage| {
                         OpeningId::virt(
                             VirtualPolynomial::BytecodeValStage(stage),
@@ -523,8 +532,9 @@ fn native_index_to_lane_cycle<F: JoltField>(
 
 fn compute_lane_weights<F: JoltField>(
     bytecode_read_raf_gammas: [&[F]; NUM_VAL_STAGES],
+    bind_store_bytecode: bool,
     accumulator: &dyn OpeningAccumulator<F>,
-    eta_powers: &[F; NUM_VAL_STAGES],
+    eta_powers: &[F],
 ) -> Vec<F> {
     let reg_count = REGISTER_COUNT as usize;
     let layout = BYTECODE_LANE_LAYOUT;
@@ -601,6 +611,9 @@ fn compute_lane_weights<F: JoltField>(
         for i in 0..LookupTables::<XLEN>::COUNT {
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
+    }
+    if bind_store_bytecode {
+        weights[layout.circuit_start + (CircuitFlags::Store as usize)] += eta_powers[5];
     }
 
     weights

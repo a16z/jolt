@@ -264,9 +264,9 @@ pub(super) fn validate_stage6_batch_expected_output<F: Field>(
     let expected_final_claim = batch
         .batching_coefficients
         .iter()
-        .zip(expected_outputs_in_order)
+        .zip(&expected_outputs_in_order)
         .fold(F::zero(), |acc, (coefficient, output)| {
-            acc + *coefficient * output
+            acc + *coefficient * *output
         });
     if batch.reduction.value != expected_final_claim {
         return Err(VerifierError::StageClaimOutputMismatch {

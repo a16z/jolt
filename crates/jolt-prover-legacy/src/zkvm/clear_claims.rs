@@ -486,12 +486,15 @@ fn bytecode_val_stage_claims_from_openings<F: Field>(
     {
         return Ok(None);
     }
-    let mut stage_claims = [F::zero(); bytecode_claim_reduction::NUM_BYTECODE_VAL_STAGES];
-    for (stage, stage_claim) in stage_claims.iter_mut().enumerate() {
-        *stage_claim =
-            claims.require(bytecode_claim_reduction::bytecode_val_stage_opening(stage))?;
+    let mut stage_claims = Vec::new();
+    for stage in 0.. {
+        let id = bytecode_claim_reduction::bytecode_val_stage_opening(stage);
+        let Some(stage_claim) = claims.get(id) else {
+            break;
+        };
+        stage_claims.push(stage_claim);
     }
-    Ok(Some(stage_claims.into()))
+    Ok(Some(stage_claims))
 }
 
 fn bytecode_cycle_phase_claims_from_openings<F: Field>(

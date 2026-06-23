@@ -291,6 +291,13 @@ pub trait OpeningAccumulator<F: JoltField> {
         kind: AdviceKind,
         sumcheck: SumcheckId,
     ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)>;
+
+    fn get_lattice_opening(
+        &self,
+        _opening: LatticeOpening,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        None
+    }
 }
 
 /// Extends `OpeningAccumulator` with mutation methods for verifier-side accumulators.
@@ -462,6 +469,15 @@ impl<F: JoltField> OpeningAccumulator<F> for ProverOpeningAccumulator<F> {
                 committed_openings.remove(index);
             }
         }
+        Some((point.clone(), *claim))
+    }
+
+    fn get_lattice_opening(
+        &self,
+        opening: LatticeOpening,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let key = self.resolve_alias(OpeningId::Lattice(opening));
+        let (point, claim) = self.openings.get(&key)?;
         Some((point.clone(), *claim))
     }
 }
@@ -713,6 +729,15 @@ impl<F: JoltField> OpeningAccumulator<F> for VerifierOpeningAccumulator<F> {
             AdviceKind::Untrusted => OpeningId::UntrustedAdvice(sumcheck_id),
         };
         let key = self.resolve_alias(opening_id);
+        let (point, claim) = self.openings.get(&key)?;
+        Some((point.clone(), *claim))
+    }
+
+    fn get_lattice_opening(
+        &self,
+        opening: LatticeOpening,
+    ) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
+        let key = self.resolve_alias(OpeningId::Lattice(opening));
         let (point, claim) = self.openings.get(&key)?;
         Some((point.clone(), *claim))
     }
