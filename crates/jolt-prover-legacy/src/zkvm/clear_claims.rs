@@ -9,7 +9,7 @@ use jolt_claims::protocols::jolt::{
             advice, bytecode as bytecode_claim_reduction, increments,
             instruction as instruction_claim_reduction, program_image,
         },
-        instruction, ram, registers,
+        instruction, lattice, ram, registers,
         spartan::{
             outer_opening, outer_uniskip_opening, product_remainder_output_openings,
             product_uniskip_opening, shift_output_openings,
@@ -40,6 +40,7 @@ use jolt_verifier::{
             InstructionReadRafOutputOpeningClaims, RamRaClaimReductionOutputOpeningClaims,
             RegistersValEvaluationOutputOpeningClaims, Stage5Claims,
         },
+        stage5_increment::{IncVirtualizationOutputClaims, Stage5IncrementClaims},
         stage6::inputs::{
             AdviceCyclePhaseOutputClaim, BooleanityOutputOpeningClaims,
             BytecodeCyclePhaseOutputClaims, BytecodeReadRafOutputOpeningClaims,
@@ -64,6 +65,13 @@ pub(crate) fn build_clear_claims<F: Field>(
     let claims = OpeningClaimMap {
         claims: claims.into_iter().collect(),
     };
+    let has_lattice_stage5_increment = claims
+        .get(lattice::inc_virtualization_inc_opening())
+        .is_some()
+        || claims
+            .get(lattice::inc_virtualization_store_opening())
+            .is_some();
+
     Ok(ClearProofClaims {
         stage1: Stage1Claims {
             uniskip_output_claim: claims.require(outer_uniskip_opening())?,
@@ -72,8 +80,10 @@ pub(crate) fn build_clear_claims<F: Field>(
         stage2: stage2_claims_from_openings(&claims)?,
         stage3: stage3_claims_from_openings(&claims)?,
         stage4: stage4_claims_from_openings(&claims)?,
-        stage5: stage5_claims_from_openings(&claims)?,
-        stage5_increment: None,
+        stage5: stage5_claims_from_openings(&claims, has_lattice_stage5_increment)?,
+        stage5_increment: has_lattice_stage5_increment
+            .then(|| stage5_increment_claims_from_openings(&claims))
+            .transpose()?,
         stage6: stage6_claims_from_openings(&claims)?,
         stage7: stage7_claims_from_openings(&claims)?,
     })
@@ -243,6 +253,7 @@ fn stage4_claims_from_openings<F: Field>(
 
 fn stage5_claims_from_openings<F: Field>(
     claims: &OpeningClaimMap<F>,
+    lattice_increment: bool,
 ) -> Result<Stage5Claims<F>, VerifierError> {
     let lookup_table_flags = LookupTableKind::<RISCV_XLEN>::iter()
         .map(|table| claims.require(instruction::read_raf_lookup_table_flag_opening(table)))
@@ -270,12 +281,31 @@ fn stage5_claims_from_openings<F: Field>(
             instruction_raf_flag: claims
                 .require(instruction::read_raf_instruction_raf_flag_opening())?,
         },
-        ram_ra_claim_reduction: Some(RamRaClaimReductionOutputOpeningClaims {
-            ram_ra: claims.require(ram_ra)?,
-        }),
+        ram_ra_claim_reduction: (!lattice_increment)
+            .then(|| {
+                Ok::<_, VerifierError>(RamRaClaimReductionOutputOpeningClaims {
+                    ram_ra: claims.require(ram_ra)?,
+                })
+            })
+            .transpose()?,
         registers_val_evaluation: RegistersValEvaluationOutputOpeningClaims {
             rd_inc: claims.require(rd_inc)?,
             rd_wa: claims.require(rd_wa)?,
+        },
+    })
+}
+
+fn stage5_increment_claims_from_openings<F: Field>(
+    claims: &OpeningClaimMap<F>,
+) -> Result<Stage5IncrementClaims<F>, VerifierError> {
+    let [ram_ra] = ram::ra_claim_reduction_output_openings();
+    Ok(Stage5IncrementClaims {
+        ram_ra_claim_reduction: RamRaClaimReductionOutputOpeningClaims {
+            ram_ra: claims.require(ram_ra)?,
+        },
+        inc_virtualization: IncVirtualizationOutputClaims {
+            inc: claims.require(lattice::inc_virtualization_inc_opening())?,
+            store: claims.require(lattice::inc_virtualization_store_opening())?,
         },
     })
 }
