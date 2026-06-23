@@ -9,7 +9,6 @@ use crate::{
         validate_akita_precommitted_opening_proof_payload_shapes,
         validate_akita_proof_payload_shape, validate_akita_verifier_setup_config,
     },
-    akita_witness::JoltPackedWitnessBuilder,
     config::{
         AdviceLatticeConfig, FieldInlineLatticeConfig, IncrementCommitmentMode, JoltProtocolConfig,
         LatticeConfig, PackedWitnessConfig, PcsFamily, ProgramMode,
@@ -30,11 +29,10 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::{RingAccumulator, WithAccumulator};
 use jolt_openings::{
     BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, PackingAdviceKind,
-    PackingBatchProof, PackingFactDomain, PackingFamilyId, PackingWitnessLayout,
-    PackingWitnessSource, PhysicalView, SparsePackingWitness,
+    PackingBatchProof, PackingFamilyId, PackingWitnessLayout, PackingWitnessSource, PhysicalView,
 };
 use jolt_poly::Polynomial;
-use jolt_riscv::{CircuitFlags, JoltTraceRow};
+use jolt_riscv::CircuitFlags;
 use jolt_transcript::Transcript;
 
 #[cfg(test)]
@@ -58,6 +56,7 @@ pub use crate::akita_validity::{
     attach_akita_packing_validity_proof, prove_akita_jolt_packed_validity,
     prove_akita_packing_validity, AkitaPackingValidityProofArtifacts,
 };
+pub use crate::akita_witness::{build_akita_packing_jolt_witness, AkitaPackingJoltWitnessInput};
 
 pub type AkitaClearVectorCommitment = ClearOnlyVectorCommitment<AkitaField>;
 pub type AkitaPackingBatchProof = PackingBatchProof<AkitaBatchProof>;
@@ -76,18 +75,9 @@ pub struct AkitaPackingWitnessArtifacts {
 }
 
 #[derive(Clone, Debug)]
-pub struct AkitaPackingJoltWitnessInput<'a> {
-    pub layout: PackingWitnessLayout,
-    pub trace_rows: &'a [JoltTraceRow],
-    pub log_k_chunk: usize,
-    pub instruction_lookup_indices: &'a [u128],
-    pub untrusted_advice: Option<&'a [u8]>,
-}
-
-#[derive(Clone, Debug)]
 pub struct AkitaCommittedPackedJoltWitness {
     pub artifacts: AkitaPackingWitnessArtifacts,
-    pub witness: SparsePackingWitness<AkitaField>,
+    pub witness: jolt_openings::SparsePackingWitness<AkitaField>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -108,37 +98,6 @@ impl AkitaPackingWitnessArtifacts {
     }
 }
 
-pub fn build_akita_packing_jolt_witness(
-    input: AkitaPackingJoltWitnessInput<'_>,
-) -> Result<SparsePackingWitness<AkitaField>, VerifierError> {
-    validate_akita_jolt_packed_witness_layout(&input.layout)?;
-    let protocol = akita_lattice_protocol_config_for_layout(&input.layout);
-    validate_lattice_packed_witness_layout_config(&protocol, &input.layout)?;
-
-    if input.instruction_lookup_indices.len() != input.trace_rows.len() {
-        return Err(akita_witness_error(format!(
-            "instruction lookup index count {} does not match trace row count {}",
-            input.instruction_lookup_indices.len(),
-            input.trace_rows.len()
-        )));
-    }
-
-    let mut builder = JoltPackedWitnessBuilder::new(input.layout.clone());
-    builder
-        .pack_trace_rows(
-            input.trace_rows,
-            input.log_k_chunk,
-            |row, _| input.instruction_lookup_indices[row],
-            |_, row| (row.is_load() || row.is_store()).then(|| row.ram_address()),
-        )
-        .map(|_| ())
-        .map_err(akita_witness_error)?;
-
-    pack_untrusted_advice_bytes(&mut builder, input.untrusted_advice)?;
-
-    builder.finish().map_err(akita_witness_error)
-}
-
 pub fn commit_akita_packing_jolt_witness(
     setup: &AkitaPackingProverSetup,
     input: AkitaPackingJoltWitnessInput<'_>,
@@ -146,40 +105,6 @@ pub fn commit_akita_packing_jolt_witness(
     let witness = build_akita_packing_jolt_witness(input)?;
     let artifacts = commit_akita_packing_witness(setup, &witness)?;
     Ok(AkitaCommittedPackedJoltWitness { artifacts, witness })
-}
-
-fn validate_akita_jolt_packed_witness_layout(
-    layout: &PackingWitnessLayout,
-) -> Result<(), VerifierError> {
-    for family in &layout.families {
-        if jolt_packed_witness_family_is_precommitted(&family.id) {
-            return Err(VerifierError::InvalidProtocolConfig {
-                reason: format!(
-                    "precommitted family {:?} cannot be included in the lattice packing witness layout",
-                    family.id
-                ),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn jolt_packed_witness_family_is_precommitted(family: &PackingFamilyId) -> bool {
-    matches!(
-        family,
-        PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Trusted,
-            ..
-        } | PackingFamilyId::BytecodeChunk { .. }
-            | PackingFamilyId::BytecodeRegisterSelector { .. }
-            | PackingFamilyId::BytecodeCircuitFlag { .. }
-            | PackingFamilyId::BytecodeInstructionFlag { .. }
-            | PackingFamilyId::BytecodeLookupSelector { .. }
-            | PackingFamilyId::BytecodeRafFlag { .. }
-            | PackingFamilyId::BytecodeUnexpandedPcBytes { .. }
-            | PackingFamilyId::BytecodeImmBytes { .. }
-            | PackingFamilyId::ProgramImageInit
-    )
 }
 
 pub fn akita_lattice_protocol_config_for_layout(
@@ -799,104 +724,6 @@ where
         trusted_advice_commitment,
         config,
     )
-}
-
-fn pack_untrusted_advice_bytes(
-    builder: &mut JoltPackedWitnessBuilder,
-    bytes: Option<&[u8]>,
-) -> Result<(), VerifierError> {
-    let expected = expected_rows_for_family(
-        builder.layout(),
-        |id| {
-            matches!(
-                id,
-                PackingFamilyId::AdviceBytes {
-                    kind: PackingAdviceKind::Untrusted,
-                    index: 0,
-                }
-            )
-        },
-        "untrusted advice bytes",
-    )?;
-    let Some(expected) = expected else {
-        if bytes.is_none_or(<[u8]>::is_empty) {
-            return Ok(());
-        }
-        return Err(akita_witness_error(format!(
-            "{} were supplied but the packed layout has no matching advice family",
-            "untrusted advice bytes"
-        )));
-    };
-    let padded = padded_slice(
-        bytes.unwrap_or_default(),
-        expected,
-        "untrusted advice bytes",
-    )?;
-    builder
-        .pack_untrusted_advice_bytes(&padded)
-        .map(|_| ())
-        .map_err(akita_witness_error)
-}
-
-fn expected_rows_for_family(
-    layout: &PackingWitnessLayout,
-    mut matches_family: impl FnMut(&PackingFamilyId) -> bool,
-    domain: &'static str,
-) -> Result<Option<usize>, VerifierError> {
-    let mut rows = None;
-    for family in &layout.families {
-        if !matches_family(&family.id) {
-            continue;
-        }
-        let got = packed_domain_rows(family.domain)?;
-        match rows {
-            Some(expected) if expected != got => {
-                return Err(akita_witness_error(format!(
-                    "{domain} layout row count mismatch: expected {expected}, got {got}"
-                )));
-            }
-            Some(_) => {}
-            None => rows = Some(got),
-        }
-    }
-    Ok(rows)
-}
-
-fn packed_domain_rows(domain: PackingFactDomain) -> Result<usize, VerifierError> {
-    let log_rows = match domain {
-        PackingFactDomain::TraceRows { log_t } => log_t,
-        PackingFactDomain::BytecodeRows { log_bytecode } => log_bytecode,
-        PackingFactDomain::ProgramImageWords { log_words } => log_words,
-        PackingFactDomain::AdviceBytes { log_bytes, .. } => log_bytes,
-    };
-    1usize
-        .checked_shl(log_rows as u32)
-        .ok_or_else(|| akita_witness_error("packed witness domain row count overflow"))
-}
-
-fn padded_slice<T: Clone + Default>(
-    values: &[T],
-    expected: usize,
-    domain: &'static str,
-) -> Result<Vec<T>, VerifierError> {
-    if values.len() > expected {
-        return Err(akita_witness_error(format!(
-            "{domain} length {} exceeds packed layout size {expected}",
-            values.len()
-        )));
-    }
-    let mut padded = values.to_vec();
-    padded.resize_with(expected, T::default);
-    Ok(padded)
-}
-
-fn akita_witness_error(reason: impl ToString) -> VerifierError {
-    VerifierError::LatticePackingCommitmentFailed {
-        reason: format!(
-            "lattice packing witness packing failed: {}",
-            reason.to_string()
-        ),
-    }
 }
 
 fn jolt_advice_kind(kind: PackingAdviceKind) -> JoltAdviceKind {
