@@ -1,10 +1,10 @@
 use jolt_claims::protocols::jolt::{
     formulas::{
-        claim_reductions::{bytecode as bytecode_reduction, increments},
+        claim_reductions::{advice, bytecode as bytecode_reduction, increments, program_image},
         dimensions::TraceDimensions,
         lattice,
     },
-    JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
+    JoltAdviceKind, JoltRelationClaims, JoltRelationId, JoltSumcheckDomain,
 };
 use jolt_field::Field;
 use jolt_sumcheck::BatchedEvaluationClaim;
@@ -179,6 +179,41 @@ pub(super) fn validate_bytecode_val_stage_claim_count<F: Field>(
         }
     }
     Ok(())
+}
+
+pub(super) fn validate_optional_cycle_phase_claim_presence(
+    expected: OptionalCyclePhaseClaimPresence,
+    actual: OptionalCyclePhaseClaimPresence,
+) -> Result<(), VerifierError> {
+    if !expected.trusted_advice && actual.trusted_advice {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted),
+        });
+    }
+    if !expected.untrusted_advice && actual.untrusted_advice {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
+        });
+    }
+    if !expected.bytecode_claim_reduction && actual.bytecode_claim_reduction {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+        });
+    }
+    if !expected.program_image_claim_reduction && actual.program_image_claim_reduction {
+        return Err(VerifierError::UnexpectedOpeningClaim {
+            id: program_image::cycle_phase_program_image_opening(),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct OptionalCyclePhaseClaimPresence {
+    pub(super) trusted_advice: bool,
+    pub(super) untrusted_advice: bool,
+    pub(super) bytecode_claim_reduction: bool,
+    pub(super) program_image_claim_reduction: bool,
 }
 
 pub(super) fn validate_stage6_batch_expected_output<F: Field>(

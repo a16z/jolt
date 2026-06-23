@@ -36,7 +36,8 @@ use super::{
     claim_shape::{
         unsigned_inc_claims_for_protocol, validate_bytecode_val_stage_claim_count,
         validate_compressed_stage_claim, validate_dense_increment_claim_shape,
-        validate_lattice_increment_claim_shape, validate_stage6_batch_expected_output,
+        validate_lattice_increment_claim_shape, validate_optional_cycle_phase_claim_presence,
+        validate_stage6_batch_expected_output, OptionalCyclePhaseClaimPresence,
         Stage6BatchExpectedOutputClaims, Stage6BatchInputClaims,
     },
     inputs::Deps,
@@ -977,26 +978,20 @@ where
     )?;
     let booleanity_address_input = PCS::Field::zero();
 
-    if trusted_advice_claims.is_none() && claims.advice_cycle_phase.trusted.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted),
-        });
-    }
-    if untrusted_advice_claims.is_none() && claims.advice_cycle_phase.untrusted.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
-        });
-    }
-    if bytecode_reduction_claims.is_none() && claims.bytecode_claim_reduction.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
-        });
-    }
-    if program_image_reduction_claims.is_none() && claims.program_image_claim_reduction.is_some() {
-        return Err(VerifierError::UnexpectedOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
-        });
-    }
+    validate_optional_cycle_phase_claim_presence(
+        OptionalCyclePhaseClaimPresence {
+            trusted_advice: trusted_advice_claims.is_some(),
+            untrusted_advice: untrusted_advice_claims.is_some(),
+            bytecode_claim_reduction: bytecode_reduction_claims.is_some(),
+            program_image_claim_reduction: program_image_reduction_claims.is_some(),
+        },
+        OptionalCyclePhaseClaimPresence {
+            trusted_advice: claims.advice_cycle_phase.trusted.is_some(),
+            untrusted_advice: claims.advice_cycle_phase.untrusted.is_some(),
+            bytecode_claim_reduction: claims.bytecode_claim_reduction.is_some(),
+            program_image_claim_reduction: claims.program_image_claim_reduction.is_some(),
+        },
+    )?;
     let unsigned_inc_claims = unsigned_inc_claims_for_protocol::<PCS::Field>(
         &proof.protocol,
         trace_dimensions,
