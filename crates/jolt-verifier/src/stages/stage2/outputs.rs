@@ -351,6 +351,9 @@ mod tests {
             ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
         };
 
-        assert_eq!(claims.opening_values(), (1..=15).map(fr).collect::<Vec<_>>());
+        assert_eq!(
+            claims.opening_values(),
+            (1..=15).map(fr).collect::<Vec<_>>()
+        );
     }
 }

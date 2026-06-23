@@ -224,6 +224,9 @@ mod tests {
             },
         };
 
-        assert_eq!(claims.opening_values(), (1..=13).map(fr).collect::<Vec<_>>());
+        assert_eq!(
+            claims.opening_values(),
+            (1..=13).map(fr).collect::<Vec<_>>()
+        );
     }
 }
