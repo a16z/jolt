@@ -13,10 +13,10 @@ pub use lattice::{
     jolt_lattice_view_formula, jolt_lattice_view_formulas, lattice_packed_validity_claims,
     lattice_packed_validity_opening_count, lattice_packing_family_id, lattice_packing_view_formula,
     sample_lattice_packed_validity_eq_points, validate_lattice_packed_witness_layout_config,
-    validate_lattice_packed_witness_validity_config, verify_lattice_packed_validity_proof,
-    JoltLatticeViewFormulaWithRowPoint, LatticePackedValidityBatch,
-    LatticePackedValidityBatchStatement, LatticePackedValidityStatement,
-    LatticePackedValidityStatementKind,
+    validate_lattice_packed_witness_validity_config, validate_lattice_view_validity_coverage,
+    verify_lattice_packed_validity_proof, JoltLatticeViewFormulaWithRowPoint,
+    LatticePackedValidityBatch, LatticePackedValidityBatchStatement,
+    LatticePackedValidityStatement, LatticePackedValidityStatementKind,
 };
 #[cfg(feature = "akita")]
 pub(crate) use lattice::{
