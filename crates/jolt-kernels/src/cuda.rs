@@ -1359,6 +1359,16 @@ impl CudaKernelContext {
             .collect())
     }
 
+    #[expect(clippy::todo, unused_variables)]
+    pub fn eq_weighted_round_poly(
+        &self,
+        terms: RoundPolyTerms<'_>,
+        e_in: &DeviceFrVec,
+        e_out: &DeviceFrVec,
+    ) -> Result<Vec<Fr>, CudaError> {
+        todo!()
+    }
+
     pub fn eq_evals(&self, r: &[Fr], scaling_factor: Option<Fr>) -> Result<DeviceFrVec, CudaError> {
         use num_traits::One;
         let scaling = scaling_factor.unwrap_or_else(Fr::one);
@@ -1814,6 +1824,91 @@ mod tests {
             let expected = jolt_poly::EqPolynomial::<Fr>::evals(&r, scaling);
             let c = ctx();
             let got = c.eq_evals(&r, scaling).unwrap().to_host().unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::eq_weighted_round_poly is todo!()"]
+        fn eq_weighted_round_poly_matches_cpu(
+            log_groups in 0usize..8,
+            num_factors in 1usize..5,
+            terms_spec in prop::collection::vec(
+                (fr_strategy(), prop::collection::vec(0u32..5, 1..4)),
+                1..4,
+            ),
+            point_seed in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+            let half = 1usize << log_groups;
+            let len = half * 2;
+            let terms_spec: Vec<(Fr, Vec<u32>)> = terms_spec
+                .into_iter()
+                .map(|(coeff, idxs)| {
+                    (coeff, idxs.into_iter().map(|i| i % num_factors as u32).collect())
+                })
+                .collect();
+            let degree = terms_spec.iter().map(|(_, idxs)| idxs.len()).max().unwrap();
+
+            let factors: Vec<Vec<Fr>> = (0..num_factors)
+                .map(|f| (0..len).map(|i| seed + Fr::from_u64((f * len + i) as u64)).collect())
+                .collect();
+            let point: Vec<Fr> = (0..log_groups)
+                .map(|i| point_seed + Fr::from_u64(i as u64))
+                .collect();
+            let split_eq = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
+
+            let cpu_terms: Vec<crate::stage6::DenseTerm<Fr>> = terms_spec
+                .iter()
+                .map(|(coeff, idxs)| crate::stage6::DenseTerm {
+                    coefficient: *coeff,
+                    factors: idxs.iter().map(|&i| i as usize).collect(),
+                })
+                .collect();
+            let expected = split_eq.fold_out_in(
+                || vec![Fr::zero(); degree],
+                |inner: &mut Vec<Fr>, group, _x_in, e_in| {
+                    let mut row = vec![Fr::zero(); degree];
+                    crate::stage6::accumulate_dense_row_evaluations(
+                        &factors, &cpu_terms, group, &mut row,
+                    );
+                    for (acc, e) in inner.iter_mut().zip(&row) {
+                        *acc += e_in * *e;
+                    }
+                },
+                |_x_out, e_out, inner: Vec<Fr>| {
+                    inner.into_iter().map(|v| e_out * v).collect::<Vec<_>>()
+                },
+                |mut left: Vec<Fr>, right: Vec<Fr>| {
+                    for (l, r) in left.iter_mut().zip(right) {
+                        *l += r;
+                    }
+                    left
+                },
+            );
+
+            let (term_coeffs, term_factor_offsets, term_factor_indices) =
+                flatten_terms(&terms_spec);
+            let c = ctx();
+            let factor_devs: Vec<DeviceFrVec> =
+                factors.iter().map(|f| c.upload(f).unwrap()).collect();
+            let factor_refs: Vec<&DeviceFrVec> = factor_devs.iter().collect();
+            let e_in = c.upload(split_eq.e_in_current()).unwrap();
+            let e_out = c.upload(split_eq.e_out_current()).unwrap();
+            let got = c
+                .eq_weighted_round_poly(
+                    RoundPolyTerms {
+                        factors: &factor_refs,
+                        term_coeffs: &term_coeffs,
+                        term_factor_offsets: &term_factor_offsets,
+                        term_factor_indices: &term_factor_indices,
+                        degree,
+                    },
+                    &e_in,
+                    &e_out,
+                )
+                .unwrap();
             prop_assert_eq!(got, expected);
         }
     }
