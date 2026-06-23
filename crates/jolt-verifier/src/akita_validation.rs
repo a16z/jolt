@@ -399,3 +399,347 @@ fn validate_akita_verifier_setup_shape(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "tests assert successful validation fixture construction"
+    )]
+
+    use super::*;
+    use crate::{
+        akita::{
+            akita_lattice_protocol_config_for_layout, commit_akita_packing_witness,
+            AkitaPackingProverSetup,
+        },
+        akita_packing::AkitaPackingScheme,
+        proof::LatticeCommitmentPayload,
+    };
+    use jolt_openings::{
+        CommitmentScheme, PackingAlphabet, PackingCellAddress, PackingFactDomain, PackingFamilyId,
+        PackingFamilySpec, PackingSetupParams, SparsePackingWitness,
+    };
+
+    fn tiny_layout() -> PackingWitnessLayout {
+        PackingWitnessLayout::new([
+            PackingFamilySpec::direct(
+                PackingFamilyId::InstructionRa { index: 0 },
+                PackingFactDomain::TraceRows { log_t: 0 },
+                1,
+                PackingAlphabet::Byte,
+            ),
+            PackingFamilySpec::direct(
+                PackingFamilyId::UnsignedIncMsb,
+                PackingFactDomain::TraceRows { log_t: 0 },
+                1,
+                PackingAlphabet::Bit,
+            ),
+        ])
+        .expect("layout should build")
+    }
+
+    fn packed_cell(family: PackingFamilyId, symbol: usize) -> PackingCellAddress {
+        PackingCellAddress {
+            family,
+            row: 0,
+            limb: 0,
+            symbol,
+        }
+    }
+
+    fn akita_packing_setup(
+        layout: &PackingWitnessLayout,
+        max_num_polys_per_commitment_group: usize,
+    ) -> (AkitaPackingProverSetup, AkitaPackingVerifierSetup) {
+        AkitaPackingScheme::setup(PackingSetupParams {
+            pcs: jolt_akita::AkitaSetupParams::new(
+                layout.dimension,
+                max_num_polys_per_commitment_group,
+                layout.digest,
+            ),
+            layout: layout.clone(),
+        })
+    }
+
+    fn empty_artifacts(
+        layout: PackingWitnessLayout,
+    ) -> (AkitaPackingVerifierSetup, AkitaPackingWitnessArtifacts) {
+        let (prover_setup, verifier_setup) = akita_packing_setup(&layout, 1);
+        let source = SparsePackingWitness::try_new(layout, Vec::new())
+            .expect("empty sparse source should build");
+        let artifacts = commit_akita_packing_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        (verifier_setup, artifacts)
+    }
+
+    fn lattice_payload(
+        artifacts: &AkitaPackingWitnessArtifacts,
+    ) -> LatticeCommitmentPayload<AkitaCommitment> {
+        artifacts
+            .commitments
+            .as_lattice()
+            .expect("artifact should carry lattice payload")
+            .clone()
+    }
+
+    #[test]
+    fn akita_verifier_setup_binds_protocol_config() {
+        let layout = tiny_layout();
+        let (_, verifier_setup) = akita_packing_setup(&layout, 1);
+        let config = akita_lattice_protocol_config_for_layout(&layout);
+
+        validate_akita_verifier_setup_config(&verifier_setup, &config)
+            .expect("setup should match generated Akita protocol config");
+
+        let mut wrong_digest = config;
+        let mut digest = layout.digest;
+        digest[0] ^= 1;
+        wrong_digest.lattice.packed_witness.layout_digest = Some(digest);
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&verifier_setup, &wrong_digest),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+
+        let mut wrong_dimension = config;
+        wrong_dimension.lattice.packed_witness.d_pack = Some(layout.dimension + 1);
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&verifier_setup, &wrong_dimension),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+
+        let mut wrong_setup_layout = verifier_setup.clone();
+        wrong_setup_layout.layout.digest[0] ^= 1;
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&wrong_setup_layout, &config),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+
+        let mut missing_native = verifier_setup;
+        missing_native.pcs.native.clear();
+        assert!(matches!(
+            validate_akita_verifier_setup_config(&missing_native, &config),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("native setup bytes")
+        ));
+    }
+
+    #[test]
+    fn akita_verifier_setup_binds_artifact_layout() {
+        let layout = tiny_layout();
+        let (_, verifier_setup) = akita_packing_setup(&layout, 1);
+
+        validate_akita_verifier_setup_layout(&verifier_setup, &layout)
+            .expect("setup should match generated Akita packing layout");
+
+        let other_layout = PackingWitnessLayout::new([PackingFamilySpec::direct(
+            PackingFamilyId::InstructionRa { index: 1 },
+            PackingFactDomain::TraceRows { log_t: 0 },
+            1,
+            PackingAlphabet::Byte,
+        )])
+        .expect("layout should build");
+        assert!(matches!(
+            validate_akita_verifier_setup_layout(&verifier_setup, &other_layout),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+
+        let mut zero_group_setup = verifier_setup;
+        zero_group_setup.pcs.max_num_polys_per_commitment_group = 0;
+        assert!(matches!(
+            validate_akita_verifier_setup_layout(&zero_group_setup, &layout),
+            Err(VerifierError::InvalidProtocolConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn akita_verifier_payload_shape_binds_inner_commitment_metadata() {
+        let layout = tiny_layout();
+        let (verifier_setup, artifacts) = empty_artifacts(layout.clone());
+        validate_akita_proof_payload_shape(&verifier_setup, &artifacts.commitments)
+            .expect("matching payload shape should pass");
+        let payload = lattice_payload(&artifacts);
+
+        let mut wrong_commitment_digest = payload.clone();
+        wrong_commitment_digest.packed_witness.layout_digest = [9; 32];
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Lattice(wrong_commitment_digest),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("commitment layout digest")
+        ));
+
+        let mut wrong_commitment_dimension = payload.clone();
+        wrong_commitment_dimension.packed_witness.num_vars = layout.dimension + 1;
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Lattice(wrong_commitment_dimension),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("commitment dimension")
+        ));
+
+        let mut wrong_poly_count = payload.clone();
+        wrong_poly_count.packed_witness.poly_count = 2;
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Lattice(wrong_poly_count),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("exactly one polynomial")
+        ));
+
+        let mut missing_native_commitment = payload;
+        missing_native_commitment.packed_witness.native.clear();
+        assert!(matches!(
+            validate_akita_proof_payload_shape(
+                &verifier_setup,
+                &CommitmentPayload::Lattice(missing_native_commitment),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("native commitment bytes")
+        ));
+    }
+
+    #[test]
+    fn akita_untrusted_advice_aliases_packed_witness_but_trusted_must_be_separate() {
+        let (_, artifacts) = empty_artifacts(tiny_layout());
+        let payload = lattice_payload(&artifacts);
+        let packed_witness = &payload.packed_witness;
+        validate_akita_advice_commitment_aliases(&artifacts.commitments, None, None)
+            .expect("absent advice commitments should pass");
+        validate_akita_advice_commitment_aliases(
+            &artifacts.commitments,
+            Some(packed_witness),
+            None,
+        )
+        .expect("packed-witness untrusted advice alias should pass");
+        assert!(matches!(
+            validate_akita_advice_commitment_aliases(
+                &artifacts.commitments,
+                None,
+                Some(packed_witness),
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("trusted advice commitment must be separate")
+        ));
+
+        let mut other_commitment = packed_witness.clone();
+        other_commitment.layout_digest[0] ^= 1;
+        assert!(matches!(
+            validate_akita_advice_commitment_aliases(
+                &artifacts.commitments,
+                Some(&other_commitment),
+                None,
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("untrusted advice commitment")
+        ));
+        validate_akita_advice_commitment_aliases(
+            &artifacts.commitments,
+            None,
+            Some(&other_commitment),
+        )
+        .expect("trusted advice may use a separate precommitted commitment");
+    }
+
+    #[test]
+    fn akita_precommitted_commitments_must_not_alias_packed_witness() {
+        let (_, artifacts) = empty_artifacts(tiny_layout());
+        let payload = lattice_payload(&artifacts);
+        let packed_witness = &payload.packed_witness;
+
+        assert!(matches!(
+            validate_akita_precommitted_commitment_is_separate(
+                packed_witness,
+                packed_witness,
+                "bytecode chunk",
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("bytecode chunk commitment must be separate")
+        ));
+
+        let mut separate_commitment = packed_witness.clone();
+        separate_commitment.layout_digest[0] ^= 1;
+        validate_akita_precommitted_commitment_is_separate(
+            packed_witness,
+            &separate_commitment,
+            "program image",
+        )
+        .expect("separate precommitted commitment should pass");
+    }
+
+    #[test]
+    fn akita_artifact_preflight_rejects_stale_protocol_and_commitments() {
+        let layout = tiny_layout();
+        let (prover_setup, verifier_setup) = akita_packing_setup(&layout, 1);
+        let source = SparsePackingWitness::try_from_cells(
+            layout.clone(),
+            [
+                (
+                    packed_cell(PackingFamilyId::InstructionRa { index: 0 }, 7),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell(PackingFamilyId::UnsignedIncMsb, 1),
+                    AkitaField::one(),
+                ),
+            ],
+        )
+        .expect("source should build");
+        let other_source = SparsePackingWitness::try_from_cells(
+            layout.clone(),
+            [
+                (
+                    packed_cell(PackingFamilyId::InstructionRa { index: 0 }, 8),
+                    AkitaField::one(),
+                ),
+                (
+                    packed_cell(PackingFamilyId::UnsignedIncMsb, 0),
+                    AkitaField::one(),
+                ),
+            ],
+        )
+        .expect("other source should build");
+        let artifacts = commit_akita_packing_witness(&prover_setup, &source)
+            .expect("packed witness should commit");
+        let other_artifacts = commit_akita_packing_witness(&prover_setup, &other_source)
+            .expect("other packed witness should commit");
+
+        validate_akita_artifacts_for_proof(
+            &verifier_setup,
+            &artifacts.protocol,
+            &artifacts.commitments,
+            &artifacts,
+        )
+        .expect("matching artifacts should pass preflight");
+
+        let mut stale_protocol = artifacts.protocol;
+        stale_protocol.lattice.packed_witness.d_pack = Some(layout.dimension + 1);
+        assert!(matches!(
+            validate_akita_artifacts_for_proof(
+                &verifier_setup,
+                &stale_protocol,
+                &artifacts.commitments,
+                &artifacts,
+            ),
+            Err(VerifierError::ProtocolConfigMismatch { expected, got })
+                if expected == artifacts.protocol && got == stale_protocol
+        ));
+
+        assert!(matches!(
+            validate_akita_artifacts_for_proof(
+                &verifier_setup,
+                &artifacts.protocol,
+                &other_artifacts.commitments,
+                &artifacts,
+            ),
+            Err(VerifierError::InvalidProtocolConfig { reason })
+                if reason.contains("do not match packed witness artifacts")
+        ));
+    }
+}
