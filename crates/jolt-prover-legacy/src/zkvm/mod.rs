@@ -61,6 +61,8 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use tracer::JoltDevice;
 
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+pub mod akita;
 pub mod bytecode;
 pub mod claim_reductions;
 #[cfg(all(feature = "prover", not(feature = "zk")))]

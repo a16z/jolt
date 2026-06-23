@@ -3544,6 +3544,7 @@ dependencies = [
  "iai-callgrind",
  "inferno 0.12.6",
  "itertools 0.15.0",
+ "jolt-akita",
  "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",

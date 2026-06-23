@@ -25,6 +25,7 @@ keywords = ["SNARK", "cryptography", "proofs", "zkVM"]
 [features]
 default = ["host"]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
+akita = ["prover", "dep:jolt-akita", "jolt-verifier/akita"]
 host = ["prover", "dep:jolt-inlines-sha2", "dep:jolt-inlines-keccak256"]
 prover = [
   "minimal",
@@ -103,6 +104,7 @@ inferno = { workspace = true, optional = true }
 jolt-program = { workspace = true, features = ["image", "serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-blindfold = { workspace = true, optional = true }
+jolt-akita = { workspace = true, optional = true }
 jolt-claims = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
