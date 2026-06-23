@@ -40,18 +40,7 @@ pub use openings::{
     OpeningResult, OpeningRlcComponent, OpeningRlcMaterializationRequest,
     OpeningRlcMaterializationResult, OpeningSlot,
 };
-#[cfg(not(feature = "field-inline"))]
 pub use sumcheck::stage2_regular_batch_instances;
-#[cfg(feature = "field-inline")]
-pub use sumcheck::{
-    field_register_read_write_row, field_register_read_write_rows,
-    stage1_field_inline_r1cs_input_slot, stage2_field_inline_factor_openings,
-    stage2_field_inline_materialize_product_factors,
-    stage2_field_inline_product_uniskip_extended_evals,
-    stage2_field_inline_regular_batch_instances, Stage2FieldInlineFactorOpenings,
-    Stage2FieldInlineMaterializedFactors, Stage2FieldInlineProductUniskipEvalRequest,
-    Stage2FieldInlineRegularBatchInstanceRequest, STAGE1_FIELD_INLINE_R1CS_INPUT_SLOT_START,
-};
 pub use sumcheck::{
     instruction_read_raf_row, instruction_read_raf_rows, product_uniskip_row_from_stage2_trace,
     product_uniskip_rows_from_stage2_trace, ram_read_write_row, ram_read_write_rows,
@@ -61,11 +50,7 @@ pub use sumcheck::{
     ResolvedSumcheckView, SumcheckAdviceTraceOrder, SumcheckBooleanityOutput,
     SumcheckBooleanityStateRequest, SumcheckBytecodeReadRafExtraStageValues,
     SumcheckBytecodeReadRafOutput, SumcheckBytecodeReadRafStateRequest, SumcheckEvaluationOutput,
-    SumcheckEvaluationRequest, SumcheckFieldRegisterRead, SumcheckFieldRegisterWrite,
-    SumcheckFieldRegistersIncClaimReductionOutput,
-    SumcheckFieldRegistersIncClaimReductionStateRequest, SumcheckFieldRegistersReadWriteRow,
-    SumcheckFieldRegistersReadWriteStateRequest, SumcheckFieldRegistersValEvaluationOutput,
-    SumcheckFieldRegistersValEvaluationStateRequest, SumcheckIncClaimReductionOutput,
+    SumcheckEvaluationRequest, SumcheckIncClaimReductionOutput,
     SumcheckIncClaimReductionStateRequest, SumcheckInstanceRequest,
     SumcheckInstructionRaVirtualizationOutput, SumcheckInstructionRaVirtualizationStateRequest,
     SumcheckInstructionReadRafOutput, SumcheckInstructionReadRafRow,

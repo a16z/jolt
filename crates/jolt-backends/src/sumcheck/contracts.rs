@@ -1,5 +1,3 @@
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
 use jolt_claims::protocols::jolt::formulas::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_field::Field;
 use jolt_poly::lagrange::{
@@ -7,17 +5,11 @@ use jolt_poly::lagrange::{
     interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::thread::unsafe_allocate_zero_vec;
-#[cfg(feature = "field-inline")]
-use jolt_poly::TensorEqTable;
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_program::preprocess::PublicIoMemory;
-#[cfg(any(feature = "field-inline", feature = "zk"))]
+#[cfg(feature = "zk")]
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE as SELECTED_PRODUCT_UNISKIP_DOMAIN_SIZE;
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::FieldInlineNamespace;
 use jolt_witness::protocols::jolt_vm::{JoltVmStage2TraceRow, JOLT_VM_NAMESPACE};
-#[cfg(feature = "field-inline")]
-use jolt_witness::{OracleRef, ViewRequirement, WitnessNamespace, WitnessProvider};
 use rayon::prelude::*;
 
 use super::request::{
@@ -27,13 +19,7 @@ use super::request::{
     SumcheckRegularBatchLinearFactor, SumcheckRegularBatchLinearTerm, SumcheckRowProductQuery,
     SumcheckSlot,
 };
-#[cfg(feature = "field-inline")]
-use super::request::{SumcheckMaterializationRequest, SumcheckViewMaterializationRequest};
 use super::result::SumcheckLinearProductOutput;
-#[cfg(feature = "field-inline")]
-use super::result::SumcheckMaterializationOutput;
-#[cfg(feature = "field-inline")]
-use crate::traits::SumcheckBackend;
 use crate::{BackendError, BackendRelationId, BackendValueSlot};
 
 pub const SPARTAN_OUTER_UNISKIP_RELATION: BackendRelationId =
@@ -62,32 +48,14 @@ pub const STAGE1_UNISKIP_INPUT_SLOT: BackendValueSlot = BackendValueSlot(0);
 pub const STAGE1_UNISKIP_OUTPUT_SLOT: BackendValueSlot = BackendValueSlot(1);
 pub const STAGE1_REMAINDER_OUTPUT_SLOT: BackendValueSlot = BackendValueSlot(2);
 pub const STAGE1_R1CS_INPUT_SLOT_START: u32 = 16;
-#[cfg(feature = "field-inline")]
-pub const STAGE1_FIELD_INLINE_R1CS_INPUT_SLOT_START: u32 = 64;
 
 pub const STAGE2_PRODUCT_UNISKIP_SLOT: SumcheckSlot = SumcheckSlot(0);
 pub const STAGE2_PRODUCT_UNISKIP_INPUT_SLOT: BackendValueSlot = BackendValueSlot(0);
 pub const STAGE2_PRODUCT_UNISKIP_OUTPUT_SLOT: BackendValueSlot = BackendValueSlot(1);
 pub const STAGE2_PRODUCT_UNISKIP_EXTENDED_EVAL_SLOT_START: u32 = 0;
 pub const STAGE2_PRODUCT_UNISKIP_EXTENDED_EVAL_COUNT: usize = PRODUCT_UNISKIP_DOMAIN_SIZE - 1;
-#[cfg(not(any(feature = "field-inline", feature = "zk")))]
+#[cfg(not(feature = "zk"))]
 const SELECTED_PRODUCT_UNISKIP_DOMAIN_SIZE: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage2FieldInlineMaterializedFactors<F: Field> {
-    pub rs1: Vec<F>,
-    pub rs2: Vec<F>,
-    pub rd: Vec<F>,
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2FieldInlineFactorOpenings<F: Field> {
-    pub field_rs1_value: F,
-    pub field_rs2_value: F,
-    pub field_rd_value: F,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stage2ProductRemainderOpenings<F: Field> {
@@ -139,15 +107,6 @@ pub struct Stage2RegularBatchInstanceRequest<'a, F: Field> {
     pub product_output_claim: F,
     pub instruction_claim_reduction_input_claim: F,
     pub instruction_gamma: F,
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2FieldInlineRegularBatchInstanceRequest<'a, F: Field> {
-    pub base: Stage2RegularBatchInstanceRequest<'a, F>,
-    pub field_factors: &'a Stage2FieldInlineMaterializedFactors<F>,
-    pub field_registers_claim_reduction_input_claim: F,
-    pub field_registers_claim_reduction_gamma: F,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,89 +227,6 @@ pub fn stage2_ram_state_requests<F: Field>(
         )
         .with_relation(STAGE2_RAM_OUTPUT_CHECK_RELATION)
         .with_optimization_ids(STAGE2_REGULAR_BATCH_OPTIMIZATION_IDS),
-    })
-}
-
-#[cfg(feature = "field-inline")]
-pub fn stage2_field_inline_materialize_product_factors<F, W, B>(
-    log_t: usize,
-    witness: &W,
-    backend: &mut B,
-) -> Result<Stage2FieldInlineMaterializedFactors<F>, BackendError>
-where
-    F: Field,
-    W: WitnessProvider<F, FieldInlineNamespace>,
-    B: SumcheckBackend<F, FieldInlineNamespace>,
-{
-    let rows = stage2_product_uniskip_expected_rows(log_t)?;
-    Ok(Stage2FieldInlineMaterializedFactors {
-        rs1: stage2_field_inline_materialize_oracle(
-            witness,
-            backend,
-            FieldInlineVirtualPolynomial::FieldRs1Value,
-            rows,
-        )?,
-        rs2: stage2_field_inline_materialize_oracle(
-            witness,
-            backend,
-            FieldInlineVirtualPolynomial::FieldRs2Value,
-            rows,
-        )?,
-        rd: stage2_field_inline_materialize_oracle(
-            witness,
-            backend,
-            FieldInlineVirtualPolynomial::FieldRdValue,
-            rows,
-        )?,
-    })
-}
-
-#[cfg(feature = "field-inline")]
-pub fn stage2_field_inline_factor_openings<F: Field>(
-    log_t: usize,
-    factors: &Stage2FieldInlineMaterializedFactors<F>,
-    opening_point: &[F],
-) -> Result<Stage2FieldInlineFactorOpenings<F>, BackendError> {
-    if opening_point.len() != log_t {
-        return Err(stage2_field_inline_factor_openings_error(format!(
-            "Stage 2 field-inline opening point has {} variables, expected {log_t}",
-            opening_point.len()
-        )));
-    }
-    let rows = stage2_product_uniskip_expected_rows(log_t)?;
-    if factors.rs1.len() != rows || factors.rs2.len() != rows || factors.rd.len() != rows {
-        return Err(stage2_field_inline_factor_openings_error(
-            "Stage 2 field-inline factors have inconsistent row counts".to_owned(),
-        ));
-    }
-
-    let eq = EqPolynomial::<F>::evals(opening_point, None);
-    if eq.len() != rows {
-        return Err(stage2_field_inline_factor_openings_error(format!(
-            "Stage 2 field-inline eq table has {} rows, expected {rows}",
-            eq.len()
-        )));
-    }
-
-    let (field_rs1_value, field_rs2_value, field_rd_value) = (0..rows)
-        .into_par_iter()
-        .map(|cycle| {
-            let eq = eq[cycle];
-            (
-                eq * factors.rs1[cycle],
-                eq * factors.rs2[cycle],
-                eq * factors.rd[cycle],
-            )
-        })
-        .reduce(
-            || (F::zero(), F::zero(), F::zero()),
-            |left, right| (left.0 + right.0, left.1 + right.1, left.2 + right.2),
-        );
-
-    Ok(Stage2FieldInlineFactorOpenings {
-        field_rs1_value,
-        field_rs2_value,
-        field_rd_value,
     })
 }
 
@@ -540,35 +416,14 @@ pub fn stage2_product_uniskip_first_round<F: Field>(
     })
 }
 
-#[cfg(not(feature = "field-inline"))]
 pub fn stage2_regular_batch_instances<F: Field>(
     request: &Stage2RegularBatchInstanceRequest<'_, F>,
 ) -> Result<Vec<SumcheckRegularBatchInstance<F>>, BackendError> {
     stage2_regular_batch_instances_base(*request)
 }
 
-#[cfg(feature = "field-inline")]
-pub fn stage2_field_inline_regular_batch_instances<F: Field>(
-    request: &Stage2FieldInlineRegularBatchInstanceRequest<'_, F>,
-) -> Result<Vec<SumcheckRegularBatchInstance<F>>, BackendError> {
-    let rows = stage2_regular_batch_expected_rows(&request.base)?;
-    if request.field_factors.rs1.len() != rows
-        || request.field_factors.rs2.len() != rows
-        || request.field_factors.rd.len() != rows
-    {
-        return Err(stage2_regular_batch_instances_error(
-            "Stage 2 field-inline factors have inconsistent row counts".to_owned(),
-        ));
-    }
-
-    stage2_regular_batch_instances_base(request.base, Some(request))
-}
-
 fn stage2_regular_batch_instances_base<F: Field>(
     request: Stage2RegularBatchInstanceRequest<'_, F>,
-    #[cfg(feature = "field-inline")] field_inline: Option<
-        &Stage2FieldInlineRegularBatchInstanceRequest<'_, F>,
-    >,
 ) -> Result<Vec<SumcheckRegularBatchInstance<F>>, BackendError> {
     let row_count = stage2_regular_batch_expected_rows(&request)?;
     let final_cycle = row_count - 1;
@@ -608,12 +463,7 @@ fn stage2_regular_batch_instances_base<F: Field>(
     let mut product_right = unsafe_allocate_zero_vec(row_count);
     let mut instruction_eq = unsafe_allocate_zero_vec(row_count);
     let mut instruction_reduced = unsafe_allocate_zero_vec(row_count);
-    #[cfg(feature = "field-inline")]
-    let mut field_eq = unsafe_allocate_zero_vec(row_count);
-    #[cfg(feature = "field-inline")]
-    let mut field_reduced = unsafe_allocate_zero_vec(row_count);
 
-    #[cfg(not(feature = "field-inline"))]
     {
         product_tau_eq
             .par_iter_mut()
@@ -653,70 +503,6 @@ fn stage2_regular_batch_instances_base<F: Field>(
             );
     }
 
-    #[cfg(feature = "field-inline")]
-    {
-        let field_inline = field_inline.ok_or_else(|| {
-            stage2_regular_batch_instances_error(
-                "Stage 2 field-inline regular-batch request missing field-inline inputs".to_owned(),
-            )
-        })?;
-        let field_gamma = field_inline.field_registers_claim_reduction_gamma;
-        let field_gamma2 = field_gamma * field_gamma;
-
-        product_tau_eq
-            .par_iter_mut()
-            .zip(product_left.par_iter_mut())
-            .zip(product_right.par_iter_mut())
-            .zip(instruction_eq.par_iter_mut())
-            .zip(instruction_reduced.par_iter_mut())
-            .zip(field_eq.par_iter_mut())
-            .zip(field_reduced.par_iter_mut())
-            .enumerate()
-            .for_each(
-                |(
-                    index,
-                    (
-                        (
-                            (
-                                (((product_tau_eq, product_left), product_right), instruction_eq),
-                                instruction_reduced,
-                            ),
-                            field_eq,
-                        ),
-                        field_reduced,
-                    ),
-                )| {
-                    let cycle = stage2_bit_reverse(index, request.log_t);
-                    let row = &request.rows[cycle];
-                    let tau_eq = tau_eq_by_cycle[cycle];
-                    let field_rs1 = field_inline.field_factors.rs1[cycle];
-                    let field_rs2 = field_inline.field_factors.rs2[cycle];
-                    let field_rd = field_inline.field_factors.rd[cycle];
-                    *product_tau_eq = tau_eq;
-                    *instruction_eq = tau_eq;
-                    *field_eq = tau_eq;
-                    *product_left = product_weights[0].mul_u64(row.left_instruction_input)
-                        + product_weights[1].mul_u64(row.lookup_output)
-                        + bool_opening(product_weights[2], row.jump_flag)
-                        + (product_weights[3] + product_weights[4]) * field_rs1;
-                    *product_right = product_weights[0].mul_i128(row.right_instruction_input)
-                        + bool_opening(product_weights[1], row.branch_flag)
-                        + bool_opening(
-                            product_weights[2],
-                            cycle != final_cycle && !row.next_is_noop,
-                        )
-                        + product_weights[3] * field_rs2
-                        + product_weights[4] * field_rd;
-                    *instruction_reduced = F::one().mul_u64(row.lookup_output)
-                        + instruction_gamma.mul_u64(row.left_lookup_operand)
-                        + instruction_gamma2.mul_u128(row.right_lookup_operand)
-                        + instruction_gamma3.mul_u64(row.left_instruction_input)
-                        + instruction_gamma4.mul_i128(row.right_instruction_input);
-                    *field_reduced = field_rd + field_gamma * field_rs1 + field_gamma2 * field_rs2;
-                },
-            );
-    }
-
     let instances = vec![
         regular_batch_instance(
             "product remainder",
@@ -748,28 +534,6 @@ fn stage2_regular_batch_instances_base<F: Field>(
         ),
     ];
 
-    #[cfg(feature = "field-inline")]
-    {
-        let mut instances = instances;
-        let field_inline = field_inline.ok_or_else(|| {
-            stage2_regular_batch_instances_error(
-                "Stage 2 field-inline regular-batch request missing field-inline inputs".to_owned(),
-            )
-        })?;
-        instances.push(regular_batch_instance(
-            "field-registers claim-reduction",
-            field_inline.field_registers_claim_reduction_input_claim,
-            F::one(),
-            vec![Polynomial::new(field_eq), Polynomial::new(field_reduced)],
-            vec![
-                regular_batch_factor(vec![regular_batch_term(0, F::one())]),
-                regular_batch_factor(vec![regular_batch_term(1, F::one())]),
-            ],
-        ));
-        Ok(instances)
-    }
-
-    #[cfg(not(feature = "field-inline"))]
     Ok(instances)
 }
 
@@ -887,136 +651,6 @@ pub fn stage2_product_uniskip_extended_eval_targets(
     }
 
     Ok(targets)
-}
-
-#[cfg(feature = "field-inline")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stage2FieldInlineProductUniskipEvalRequest<'a, F: Field> {
-    pub log_t: usize,
-    pub stage2_rows: &'a [JoltVmStage2TraceRow],
-    pub field_factors: &'a Stage2FieldInlineMaterializedFactors<F>,
-    pub tau_low: &'a [F],
-    pub domain_size: usize,
-    pub extended_eval_count: usize,
-}
-
-#[cfg(feature = "field-inline")]
-pub fn stage2_field_inline_product_uniskip_extended_evals<F: Field>(
-    request: &Stage2FieldInlineProductUniskipEvalRequest<'_, F>,
-) -> Result<Vec<F>, BackendError> {
-    if request.domain_size != 5 {
-        return Err(stage2_field_inline_product_uniskip_extended_eval_error(
-            format!(
-                "Stage 2 field-inline product uni-skip expected domain size 5, got {}",
-                request.domain_size
-            ),
-        ));
-    }
-    if request.extended_eval_count + 1 != request.domain_size {
-        return Err(stage2_field_inline_product_uniskip_extended_eval_error(
-            format!(
-                "Stage 2 field-inline product uni-skip extended-eval count {} is inconsistent with domain size {}",
-                request.extended_eval_count, request.domain_size
-            ),
-        ));
-    }
-    if request.tau_low.len() != request.log_t {
-        return Err(stage2_field_inline_product_uniskip_extended_eval_error(
-            format!(
-                "Stage 2 field-inline product uni-skip tau_low has {} variables, expected {}",
-                request.tau_low.len(),
-                request.log_t
-            ),
-        ));
-    }
-
-    let rows = stage2_product_uniskip_expected_rows(request.log_t)?;
-    if request.stage2_rows.len() != rows {
-        return Err(stage2_field_inline_product_uniskip_extended_eval_error(
-            format!(
-                "Stage 2 field-inline product uni-skip stage rows have {} rows, expected {rows}",
-                request.stage2_rows.len()
-            ),
-        ));
-    }
-    if request.field_factors.rs1.len() != rows
-        || request.field_factors.rs2.len() != rows
-        || request.field_factors.rd.len() != rows
-    {
-        return Err(stage2_field_inline_product_uniskip_extended_eval_error(
-            "Stage 2 field-inline product uni-skip factors have inconsistent row counts".to_owned(),
-        ));
-    }
-
-    let weights = stage2_product_uniskip_extended_eval_targets(
-        request.domain_size,
-        request.extended_eval_count,
-    )?
-    .into_iter()
-    .map(|target| {
-        centered_lagrange_evals(request.domain_size, F::from_i64(target)).map_err(|error| {
-            stage2_field_inline_product_uniskip_extended_eval_error(error.to_string())
-        })
-    })
-    .collect::<Result<Vec<_>, BackendError>>()?;
-
-    let eq_table = TensorEqTable::new(request.tau_low);
-    if eq_table.len() != rows {
-        return Err(stage2_field_inline_product_uniskip_extended_eval_error(
-            format!(
-                "Stage 2 field-inline product uni-skip eq table has {} rows, expected {rows}",
-                eq_table.len()
-            ),
-        ));
-    }
-
-    Ok(eq_table.par_fold_out_in(
-        || vec![F::zero(); weights.len()],
-        |inner, cycle, _x_in, e_in| {
-            if e_in.is_zero() {
-                return;
-            }
-            let row = request.stage2_rows[cycle];
-            let left_instruction_input = F::from_u64(row.left_instruction_input);
-            let right_instruction_input = F::from_i128(row.right_instruction_input);
-            let lookup_output = F::from_u64(row.lookup_output);
-            let jump_flag = F::from_bool(row.jump_flag);
-            let branch_flag = F::from_bool(row.branch_flag);
-            let not_next_is_noop = F::from_bool(!row.next_is_noop);
-            let field_rs1 = request.field_factors.rs1[cycle];
-            let field_rs2 = request.field_factors.rs2[cycle];
-            let field_rd = request.field_factors.rd[cycle];
-
-            for (total, weights) in inner.iter_mut().zip(&weights) {
-                let left = weights[0] * left_instruction_input
-                    + weights[1] * lookup_output
-                    + weights[2] * jump_flag
-                    + (weights[3] + weights[4]) * field_rs1;
-                let right = weights[0] * right_instruction_input
-                    + weights[1] * branch_flag
-                    + weights[2] * not_next_is_noop
-                    + weights[3] * field_rs2
-                    + weights[4] * field_rd;
-                *total += e_in * left * right;
-            }
-        },
-        |_x_out, e_out, mut inner| {
-            if e_out.is_zero() {
-                inner.fill(F::zero());
-            } else {
-                for value in &mut inner {
-                    *value *= e_out;
-                }
-            }
-            inner
-        },
-        |mut left, right| {
-            for (left, right) in left.iter_mut().zip(right) {
-                *left += right;
-            }
-            left
-        },
-    ))
 }
 
 pub fn stage2_product_uniskip_extended_eval_outputs<F: Field>(
@@ -1248,137 +882,6 @@ fn bool_opening<F: Field>(weight: F, value: bool) -> F {
     }
 }
 
-#[cfg(feature = "field-inline")]
-fn stage2_field_inline_product_uniskip_extended_eval_error(reason: String) -> BackendError {
-    BackendError::InvalidRequest {
-        backend: "sumcheck-contract",
-        task: "stage2.field_inline.product_uniskip.extended_evals",
-        reason,
-    }
-}
-
-#[cfg(feature = "field-inline")]
-fn stage2_field_inline_factor_openings_error(reason: String) -> BackendError {
-    BackendError::InvalidRequest {
-        backend: "sumcheck-contract",
-        task: "stage2.field_inline.factor_openings",
-        reason,
-    }
-}
-
-#[cfg(feature = "field-inline")]
-fn stage2_field_inline_materialize_oracle<F, W, B>(
-    witness: &W,
-    backend: &mut B,
-    variable: FieldInlineVirtualPolynomial,
-    expected_len: usize,
-) -> Result<Vec<F>, BackendError>
-where
-    F: Field,
-    W: WitnessProvider<F, FieldInlineNamespace>,
-    B: SumcheckBackend<F, FieldInlineNamespace>,
-{
-    stage2_materialize_oracle(
-        witness,
-        backend,
-        OracleRef::virtual_polynomial(variable),
-        expected_len,
-        "field-inline virtual",
-    )
-}
-
-#[cfg(feature = "field-inline")]
-fn stage2_materialize_oracle<F, W, B, N>(
-    witness: &W,
-    backend: &mut B,
-    oracle: OracleRef<N>,
-    expected_len: usize,
-    label: &'static str,
-) -> Result<Vec<F>, BackendError>
-where
-    F: Field,
-    N: WitnessNamespace,
-    W: WitnessProvider<F, N>,
-    B: SumcheckBackend<F, N>,
-{
-    let requirement = stage2_primary_view_requirement(witness, oracle)?;
-    let request = SumcheckMaterializationRequest::new(
-        "stage2.regular_batch.factor_materialization",
-        vec![SumcheckViewMaterializationRequest::new(
-            BackendValueSlot(0),
-            requirement,
-        )],
-    );
-    let mut outputs = backend.materialize_sumcheck_views(&request, witness)?;
-    let values = stage2_take_single_materialization(&mut outputs, label)?;
-    if values.len() != expected_len {
-        return Err(stage2_field_inline_materialization_error(format!(
-            "Stage 2 {label} materialized {} rows, expected {expected_len}",
-            values.len()
-        )));
-    }
-    Ok(values)
-}
-
-#[cfg(feature = "field-inline")]
-fn stage2_primary_view_requirement<F, W, N>(
-    witness: &W,
-    oracle: OracleRef<N>,
-) -> Result<ViewRequirement<N>, BackendError>
-where
-    N: WitnessNamespace,
-    W: WitnessProvider<F, N>,
-{
-    let Some(requirement) = witness.view_requirements(oracle)?.into_iter().next() else {
-        return Err(stage2_field_inline_materialization_error(format!(
-            "witness returned no view requirement for {:?}",
-            oracle.kind
-        )));
-    };
-    if requirement.oracle.kind != oracle.kind {
-        return Err(stage2_field_inline_materialization_error(format!(
-            "witness returned requirement for {:?}, expected {oracle:?}",
-            requirement.oracle.kind,
-            oracle = oracle.kind
-        )));
-    }
-    Ok(requirement)
-}
-
-#[cfg(feature = "field-inline")]
-fn stage2_take_single_materialization<F: Field>(
-    outputs: &mut Vec<SumcheckMaterializationOutput<F>>,
-    label: &'static str,
-) -> Result<Vec<F>, BackendError> {
-    if outputs.len() != 1 {
-        return Err(stage2_field_inline_materialization_error(format!(
-            "Stage 2 {label} materialization returned {} outputs, expected 1",
-            outputs.len()
-        )));
-    }
-    let output = outputs.pop().ok_or_else(|| {
-        stage2_field_inline_materialization_error(format!(
-            "Stage 2 {label} materialization returned no output"
-        ))
-    })?;
-    if output.slot != BackendValueSlot(0) {
-        return Err(stage2_field_inline_materialization_error(format!(
-            "Stage 2 {label} materialization used unexpected slot {:?}",
-            output.slot
-        )));
-    }
-    Ok(output.values)
-}
-
-#[cfg(feature = "field-inline")]
-fn stage2_field_inline_materialization_error(reason: String) -> BackendError {
-    BackendError::InvalidRequest {
-        backend: "sumcheck-contract",
-        task: "stage2.field_inline.factor_materialization",
-        reason,
-    }
-}
-
 pub const STAGE3_SHIFT_OPENING_SLOT_START: u32 = 0;
 pub const STAGE3_INSTRUCTION_INPUT_OPENING_SLOT_START: u32 = 16;
 pub const STAGE3_REGISTERS_CLAIM_REDUCTION_OPENING_SLOT_START: u32 = 32;
@@ -1404,11 +907,6 @@ pub const STAGE6_INC_RD_OPENING_SLOT: BackendValueSlot = BackendValueSlot(6145);
 
 pub const fn stage1_r1cs_input_slot(index: usize) -> BackendValueSlot {
     BackendValueSlot(STAGE1_R1CS_INPUT_SLOT_START + index as u32)
-}
-
-#[cfg(feature = "field-inline")]
-pub const fn stage1_field_inline_r1cs_input_slot(index: usize) -> BackendValueSlot {
-    BackendValueSlot(STAGE1_FIELD_INLINE_R1CS_INPUT_SLOT_START + index as u32)
 }
 
 pub const fn stage3_shift_opening_slot(index: usize) -> BackendValueSlot {
@@ -1766,7 +1264,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn stage2_regular_batch_instances_build_contract_instances() -> Result<(), String> {
         let rows = vec![
@@ -1831,173 +1328,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn stage2_field_inline_regular_batch_instances_build_contract_instances() -> Result<(), String>
-    {
-        let rows = vec![
-            stage2_regular_batch_row(Stage2RegularBatchRow {
-                left_instruction_input: 2,
-                right_instruction_input: -3,
-                lookup_output: 5,
-                left_lookup_operand: 7,
-                right_lookup_operand: 11,
-                branch_flag: false,
-                jump_flag: false,
-                next_is_noop: true,
-            }),
-            stage2_regular_batch_row(Stage2RegularBatchRow {
-                left_instruction_input: 13,
-                right_instruction_input: 17,
-                lookup_output: 19,
-                left_lookup_operand: 23,
-                right_lookup_operand: 29,
-                branch_flag: true,
-                jump_flag: true,
-                next_is_noop: false,
-            }),
-        ];
-        let field_factors = Stage2FieldInlineMaterializedFactors {
-            rs1: vec![Fr::from_u64(2), Fr::from_u64(3)],
-            rs2: vec![Fr::from_u64(5), Fr::from_u64(7)],
-            rd: vec![Fr::from_u64(11), Fr::from_u64(13)],
-        };
-        let tau_low = vec![Fr::from_u64(31)];
-        let base = Stage2RegularBatchInstanceRequest {
-            log_t: 1,
-            rows: &rows,
-            tau_low: &tau_low,
-            tau_high: Fr::from_u64(37),
-            product_challenge: Fr::from_u64(41),
-            product_output_claim: Fr::from_u64(43),
-            instruction_claim_reduction_input_claim: Fr::from_u64(47),
-            instruction_gamma: Fr::from_u64(53),
-        };
-        let request = Stage2FieldInlineRegularBatchInstanceRequest {
-            base,
-            field_factors: &field_factors,
-            field_registers_claim_reduction_input_claim: Fr::from_u64(59),
-            field_registers_claim_reduction_gamma: Fr::from_u64(61),
-        };
-
-        let instances = stage2_field_inline_regular_batch_instances(&request)
-            .map_err(|error| error.to_string())?;
-
-        assert_eq!(instances.len(), 3);
-        assert_eq!(instances[0].label, "product remainder");
-        assert_eq!(instances[0].polynomials.len(), 3);
-        assert_eq!(instances[1].label, "instruction claim-reduction");
-        assert_eq!(instances[1].polynomials.len(), 2);
-        assert_eq!(instances[2].label, "field-registers claim-reduction");
-        assert_eq!(
-            instances[2].input_claim,
-            request.field_registers_claim_reduction_input_claim
-        );
-        assert_eq!(instances[2].polynomials.len(), 2);
-
-        let invalid_factors = Stage2FieldInlineMaterializedFactors {
-            rs1: field_factors.rs1.clone(),
-            rs2: field_factors.rs2.clone(),
-            rd: vec![Fr::from_u64(11)],
-        };
-        let invalid = Stage2FieldInlineRegularBatchInstanceRequest {
-            field_factors: &invalid_factors,
-            ..request
-        };
-        let error = stage2_field_inline_regular_batch_instances(&invalid)
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
-        assert!(error.contains("inconsistent row counts"));
-        Ok(())
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn stage2_field_inline_product_uniskip_extended_evals_validate_request() -> Result<(), String> {
-        let rows = vec![
-            stage2_row(1, 2, 3, false, true, false),
-            stage2_row(4, 5, 6, true, false, true),
-        ];
-        let field_factors = Stage2FieldInlineMaterializedFactors {
-            rs1: vec![Fr::from_u64(7), Fr::from_u64(11)],
-            rs2: vec![Fr::from_u64(13), Fr::from_u64(17)],
-            rd: vec![Fr::from_u64(19), Fr::from_u64(23)],
-        };
-        let tau_low = vec![Fr::from_u64(3)];
-        let request = Stage2FieldInlineProductUniskipEvalRequest {
-            log_t: 1,
-            stage2_rows: &rows,
-            field_factors: &field_factors,
-            tau_low: &tau_low,
-            domain_size: 5,
-            extended_eval_count: 4,
-        };
-
-        let outputs = stage2_field_inline_product_uniskip_extended_evals(&request)
-            .map_err(|error| error.to_string())?;
-
-        assert_eq!(outputs.len(), 4);
-
-        let invalid_factors = Stage2FieldInlineMaterializedFactors {
-            rs1: field_factors.rs1.clone(),
-            rs2: field_factors.rs2.clone(),
-            rd: vec![Fr::from_u64(19)],
-        };
-        let invalid = Stage2FieldInlineProductUniskipEvalRequest {
-            log_t: 1,
-            stage2_rows: &rows,
-            field_factors: &invalid_factors,
-            tau_low: &tau_low,
-            domain_size: 5,
-            extended_eval_count: 4,
-        };
-        let error = stage2_field_inline_product_uniskip_extended_evals(&invalid)
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
-        assert!(error.contains("inconsistent row counts"));
-        Ok(())
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn stage2_field_inline_factor_openings_validate_request() -> Result<(), String> {
-        let field_factors = Stage2FieldInlineMaterializedFactors {
-            rs1: vec![Fr::from_u64(2), Fr::from_u64(3)],
-            rs2: vec![Fr::from_u64(5), Fr::from_u64(7)],
-            rd: vec![Fr::from_u64(11), Fr::from_u64(13)],
-        };
-        let opening_point = vec![Fr::from_u64(17)];
-
-        let output = stage2_field_inline_factor_openings(1, &field_factors, &opening_point)
-            .map_err(|error| error.to_string())?;
-
-        assert_eq!(
-            output,
-            Stage2FieldInlineFactorOpenings {
-                field_rs1_value: (Fr::from_u64(1) - opening_point[0]) * field_factors.rs1[0]
-                    + opening_point[0] * field_factors.rs1[1],
-                field_rs2_value: (Fr::from_u64(1) - opening_point[0]) * field_factors.rs2[0]
-                    + opening_point[0] * field_factors.rs2[1],
-                field_rd_value: (Fr::from_u64(1) - opening_point[0]) * field_factors.rd[0]
-                    + opening_point[0] * field_factors.rd[1],
-            }
-        );
-
-        let invalid_factors = Stage2FieldInlineMaterializedFactors {
-            rs1: field_factors.rs1.clone(),
-            rs2: field_factors.rs2.clone(),
-            rd: vec![Fr::from_u64(11)],
-        };
-        let error = stage2_field_inline_factor_openings(1, &invalid_factors, &opening_point)
-            .err()
-            .map(|error| error.to_string())
-            .unwrap_or_default();
-        assert!(error.contains("inconsistent row counts"));
-        Ok(())
-    }
-
     #[test]
     fn stage2_product_uniskip_extended_eval_outputs_follow_contract_slots() -> Result<(), String> {
         let outputs = vec![
@@ -2033,33 +1363,6 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("duplicate output slot"));
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn stage2_row(
-        left_instruction_input: u64,
-        right_instruction_input: i128,
-        lookup_output: u64,
-        jump_flag: bool,
-        branch_flag: bool,
-        next_is_noop: bool,
-    ) -> JoltVmStage2TraceRow {
-        JoltVmStage2TraceRow {
-            remapped_ram_address: None,
-            ram_read_value: 0,
-            ram_write_value: 0,
-            ram_increment: 0,
-            left_instruction_input,
-            right_instruction_input,
-            lookup_output,
-            left_lookup_operand: 0,
-            right_lookup_operand: 0,
-            branch_flag,
-            jump_flag,
-            write_lookup_output_to_rd_flag: false,
-            virtual_instruction_flag: false,
-            next_is_noop,
-        }
     }
 
     struct Stage2RegularBatchRow {

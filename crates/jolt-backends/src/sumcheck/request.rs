@@ -7,10 +7,6 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_poly::Polynomial;
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::{
-    FieldInlineRegisterReadWriteRow, FieldInlineRegisterReadWriteRows,
-};
 use jolt_witness::protocols::jolt_vm::{
     JoltVmNamespace, JoltVmRegisterReadWriteRow, JoltVmRegisterReadWriteRows,
     JoltVmSpartanOuterRow, JoltVmSpartanOuterRows, JoltVmStage2Rows, JoltVmStage2TraceRow,
@@ -383,64 +379,6 @@ pub fn register_read_write_row(row: JoltVmRegisterReadWriteRow) -> SumcheckRegis
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SumcheckFieldRegisterRead<F: Field> {
-    pub register: u8,
-    pub value: F,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SumcheckFieldRegisterWrite<F: Field> {
-    pub register: u8,
-    pub pre_value: F,
-    pub post_value: F,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SumcheckFieldRegistersReadWriteRow<F: Field> {
-    pub rs1: Option<SumcheckFieldRegisterRead<F>>,
-    pub rs2: Option<SumcheckFieldRegisterRead<F>>,
-    pub rd: Option<SumcheckFieldRegisterWrite<F>>,
-    pub rd_increment: F,
-}
-
-#[cfg(feature = "field-inline")]
-pub fn field_register_read_write_rows<F, W>(
-    witness: &W,
-) -> Result<Vec<SumcheckFieldRegistersReadWriteRow<F>>, WitnessError>
-where
-    F: Field,
-    W: FieldInlineRegisterReadWriteRows<F>,
-{
-    Ok(witness
-        .field_inline_register_read_write_rows()?
-        .into_iter()
-        .map(field_register_read_write_row)
-        .collect())
-}
-
-#[cfg(feature = "field-inline")]
-pub fn field_register_read_write_row<F: Field>(
-    row: FieldInlineRegisterReadWriteRow<F>,
-) -> SumcheckFieldRegistersReadWriteRow<F> {
-    SumcheckFieldRegistersReadWriteRow {
-        rs1: row.rs1.map(|read| SumcheckFieldRegisterRead {
-            register: read.register,
-            value: read.value,
-        }),
-        rs2: row.rs2.map(|read| SumcheckFieldRegisterRead {
-            register: read.register,
-            value: read.value,
-        }),
-        rd: row.rd.map(|write| SumcheckFieldRegisterWrite {
-            register: write.register,
-            pre_value: write.pre_value,
-            post_value: write.post_value,
-        }),
-        rd_increment: row.rd_increment,
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckRegistersReadWriteStateRequest<F: Field> {
     pub label: &'static str,
@@ -479,119 +417,6 @@ impl<F: Field> SumcheckRegistersReadWriteStateRequest<F> {
             log_k,
             phase1_num_rounds,
             phase2_num_rounds,
-        }
-    }
-
-    pub const fn with_kernel_metadata(mut self, kernel: BackendKernelMetadata) -> Self {
-        self.kernel = kernel;
-        self
-    }
-
-    pub const fn with_relation(mut self, relation: BackendRelationId) -> Self {
-        self.kernel = self.kernel.with_relation(relation);
-        self
-    }
-
-    pub const fn with_optimization_ids(
-        mut self,
-        optimization_ids: &'static [&'static str],
-    ) -> Self {
-        self.kernel = self.kernel.with_optimization_ids(optimization_ids);
-        self
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckFieldRegistersReadWriteStateRequest<F: Field> {
-    pub label: &'static str,
-    pub kernel: BackendKernelMetadata,
-    pub rows: Vec<SumcheckFieldRegistersReadWriteRow<F>>,
-    pub r_cycle: Vec<F>,
-    pub gamma: F,
-    pub input_claim: F,
-    pub log_t: usize,
-    pub log_k: usize,
-    pub phase1_num_rounds: usize,
-    pub phase2_num_rounds: usize,
-}
-
-impl<F: Field> SumcheckFieldRegistersReadWriteStateRequest<F> {
-    #[expect(clippy::too_many_arguments)]
-    pub fn new(
-        label: &'static str,
-        rows: Vec<SumcheckFieldRegistersReadWriteRow<F>>,
-        r_cycle: Vec<F>,
-        gamma: F,
-        input_claim: F,
-        log_t: usize,
-        log_k: usize,
-        phase1_num_rounds: usize,
-        phase2_num_rounds: usize,
-    ) -> Self {
-        Self {
-            label,
-            kernel: BackendKernelMetadata::empty(),
-            rows,
-            r_cycle,
-            gamma,
-            input_claim,
-            log_t,
-            log_k,
-            phase1_num_rounds,
-            phase2_num_rounds,
-        }
-    }
-
-    pub const fn with_kernel_metadata(mut self, kernel: BackendKernelMetadata) -> Self {
-        self.kernel = kernel;
-        self
-    }
-
-    pub const fn with_relation(mut self, relation: BackendRelationId) -> Self {
-        self.kernel = self.kernel.with_relation(relation);
-        self
-    }
-
-    pub const fn with_optimization_ids(
-        mut self,
-        optimization_ids: &'static [&'static str],
-    ) -> Self {
-        self.kernel = self.kernel.with_optimization_ids(optimization_ids);
-        self
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckFieldRegistersValEvaluationStateRequest<F: Field> {
-    pub label: &'static str,
-    pub kernel: BackendKernelMetadata,
-    pub rows: Vec<SumcheckFieldRegistersReadWriteRow<F>>,
-    pub r_address: Vec<F>,
-    pub r_cycle: Vec<F>,
-    pub input_claim: F,
-    pub log_t: usize,
-    pub log_k: usize,
-}
-
-impl<F: Field> SumcheckFieldRegistersValEvaluationStateRequest<F> {
-    pub fn new(
-        label: &'static str,
-        rows: Vec<SumcheckFieldRegistersReadWriteRow<F>>,
-        r_address: Vec<F>,
-        r_cycle: Vec<F>,
-        input_claim: F,
-        log_t: usize,
-        log_k: usize,
-    ) -> Self {
-        Self {
-            label,
-            kernel: BackendKernelMetadata::empty(),
-            rows,
-            r_address,
-            r_cycle,
-            input_claim,
-            log_t,
-            log_k,
         }
     }
 
@@ -1173,49 +998,6 @@ impl<F: Field> SumcheckIncClaimReductionStateRequest<F> {
             r_cycle_stage4,
             s_cycle_stage4,
             s_cycle_stage5,
-            gamma,
-            input_claim,
-            log_t,
-        }
-    }
-
-    pub const fn with_optimization_ids(
-        mut self,
-        optimization_ids: &'static [&'static str],
-    ) -> Self {
-        self.kernel = self.kernel.with_optimization_ids(optimization_ids);
-        self
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckFieldRegistersIncClaimReductionStateRequest<F: Field> {
-    pub label: &'static str,
-    pub kernel: BackendKernelMetadata,
-    pub rows: Vec<SumcheckFieldRegistersReadWriteRow<F>>,
-    pub r_cycle_read_write: Vec<F>,
-    pub r_cycle_val_evaluation: Vec<F>,
-    pub gamma: F,
-    pub input_claim: F,
-    pub log_t: usize,
-}
-
-impl<F: Field> SumcheckFieldRegistersIncClaimReductionStateRequest<F> {
-    pub fn new(
-        label: &'static str,
-        rows: Vec<SumcheckFieldRegistersReadWriteRow<F>>,
-        r_cycle_read_write: Vec<F>,
-        r_cycle_val_evaluation: Vec<F>,
-        gamma: F,
-        input_claim: F,
-        log_t: usize,
-    ) -> Self {
-        Self {
-            label,
-            kernel: BackendKernelMetadata::empty(),
-            rows,
-            r_cycle_read_write,
-            r_cycle_val_evaluation,
             gamma,
             input_claim,
             log_t,

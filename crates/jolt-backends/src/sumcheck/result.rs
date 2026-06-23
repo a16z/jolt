@@ -80,12 +80,6 @@ impl<F: Field> SumcheckLinearProductOutput<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SumcheckFieldRegistersValEvaluationOutput<F: Field> {
-    pub field_rd_inc: F,
-    pub field_rd_wa: F,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SumcheckSpartanOuterRemainderState<F: Field> {
     pub label: &'static str,
     pub eq_point: Vec<F>,
@@ -295,11 +289,6 @@ pub struct SumcheckInstructionRaVirtualizationOutput<F: Field> {
 pub struct SumcheckIncClaimReductionOutput<F: Field> {
     pub ram_inc: F,
     pub rd_inc: F,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SumcheckFieldRegistersIncClaimReductionOutput<F: Field> {
-    pub field_rd_inc: F,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

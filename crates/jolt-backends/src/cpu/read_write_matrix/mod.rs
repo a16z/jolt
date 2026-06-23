@@ -2,17 +2,10 @@ use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator, With
 use rayon::prelude::*;
 use std::{cmp::Ordering, marker::PhantomData, mem::MaybeUninit};
 
-#[cfg(feature = "field-inline")]
-mod field_registers;
 mod instruction;
 mod ram;
 mod registers;
 mod stage6;
-#[cfg(feature = "field-inline")]
-pub use field_registers::{
-    FieldRegistersIncClaimReductionState, FieldRegistersReadWriteState,
-    FieldRegistersValEvaluationState,
-};
 pub use instruction::InstructionReadRafState;
 pub use ram::{
     RamAddressMajorEntry, RamCycleMajorEntry, RamOutputCheckState, RamRaClaimReductionState,

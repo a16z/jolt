@@ -40,13 +40,6 @@ use crate::{
     BlindFoldRequest, BlindFoldResult, BlindFoldRowCommitmentRequest, BlindFoldRowCommitmentResult,
     BlindFoldRowOpeningRequest, BlindFoldRowOpeningResult,
 };
-#[cfg(feature = "field-inline")]
-use crate::{
-    SumcheckFieldRegistersIncClaimReductionOutput,
-    SumcheckFieldRegistersIncClaimReductionStateRequest,
-    SumcheckFieldRegistersReadWriteStateRequest, SumcheckFieldRegistersValEvaluationOutput,
-    SumcheckFieldRegistersValEvaluationStateRequest,
-};
 #[cfg(feature = "zk")]
 use jolt_crypto::VectorCommitment;
 
@@ -154,8 +147,6 @@ pub trait Stage3SpartanSumcheckBackend<F: Field>: Backend {
 
 pub trait Stage4ReadWriteSumcheckBackend<F: Field>: Backend {
     type RegistersReadWriteState;
-    #[cfg(feature = "field-inline")]
-    type FieldRegistersReadWriteState;
     type RamValCheckState;
 
     fn materialize_sumcheck_registers_read_write_state(
@@ -178,33 +169,6 @@ pub trait Stage4ReadWriteSumcheckBackend<F: Field>: Backend {
     fn output_sumcheck_registers_read_write_state(
         &mut self,
         state: &Self::RegistersReadWriteState,
-        opening_point: &[F],
-    ) -> Result<SumcheckRegistersReadWriteOutput<F>, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn materialize_sumcheck_field_registers_read_write_state(
-        &mut self,
-        request: &SumcheckFieldRegistersReadWriteStateRequest<F>,
-    ) -> Result<Self::FieldRegistersReadWriteState, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn evaluate_sumcheck_field_registers_read_write_round(
-        &mut self,
-        state: &Self::FieldRegistersReadWriteState,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn bind_sumcheck_field_registers_read_write_state(
-        &mut self,
-        state: &mut Self::FieldRegistersReadWriteState,
-        challenge: F,
-    ) -> Result<(), BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn output_sumcheck_field_registers_read_write_state(
-        &mut self,
-        state: &Self::FieldRegistersReadWriteState,
         opening_point: &[F],
     ) -> Result<SumcheckRegistersReadWriteOutput<F>, BackendError>;
 
@@ -235,8 +199,6 @@ pub trait Stage5ValueEvaluationSumcheckBackend<F: Field>: Backend {
     type InstructionReadRafState;
     type RamRaClaimReductionState;
     type RegistersValEvaluationState;
-    #[cfg(feature = "field-inline")]
-    type FieldRegistersValEvaluationState;
 
     fn materialize_sumcheck_instruction_read_raf_state(
         &mut self,
@@ -303,32 +265,6 @@ pub trait Stage5ValueEvaluationSumcheckBackend<F: Field>: Backend {
         &mut self,
         state: &Self::RegistersValEvaluationState,
     ) -> Result<SumcheckRegistersValEvaluationOutput<F>, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn materialize_sumcheck_field_registers_val_evaluation_state(
-        &mut self,
-        request: &SumcheckFieldRegistersValEvaluationStateRequest<F>,
-    ) -> Result<Self::FieldRegistersValEvaluationState, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn evaluate_sumcheck_field_registers_val_evaluation_round(
-        &mut self,
-        state: &Self::FieldRegistersValEvaluationState,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn bind_sumcheck_field_registers_val_evaluation_state(
-        &mut self,
-        state: &mut Self::FieldRegistersValEvaluationState,
-        challenge: F,
-    ) -> Result<(), BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn output_sumcheck_field_registers_val_evaluation_state(
-        &mut self,
-        state: &Self::FieldRegistersValEvaluationState,
-    ) -> Result<SumcheckFieldRegistersValEvaluationOutput<F>, BackendError>;
 }
 
 pub trait Stage6RegularBatchSumcheckBackend<F: Field>: Backend {
@@ -338,8 +274,6 @@ pub trait Stage6RegularBatchSumcheckBackend<F: Field>: Backend {
     type RamRaVirtualizationState;
     type InstructionRaVirtualizationState;
     type IncClaimReductionState;
-    #[cfg(feature = "field-inline")]
-    type FieldRegistersIncClaimReductionState;
 
     fn materialize_sumcheck_bytecode_read_raf_state(
         &mut self,
@@ -472,32 +406,6 @@ pub trait Stage6RegularBatchSumcheckBackend<F: Field>: Backend {
         &mut self,
         state: &Self::IncClaimReductionState,
     ) -> Result<SumcheckIncClaimReductionOutput<F>, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn materialize_sumcheck_field_registers_inc_claim_reduction_state(
-        &mut self,
-        request: &SumcheckFieldRegistersIncClaimReductionStateRequest<F>,
-    ) -> Result<Self::FieldRegistersIncClaimReductionState, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn evaluate_sumcheck_field_registers_inc_claim_reduction_round(
-        &mut self,
-        state: &Self::FieldRegistersIncClaimReductionState,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn bind_sumcheck_field_registers_inc_claim_reduction_state(
-        &mut self,
-        state: &mut Self::FieldRegistersIncClaimReductionState,
-        challenge: F,
-    ) -> Result<(), BackendError>;
-
-    #[cfg(feature = "field-inline")]
-    fn output_sumcheck_field_registers_inc_claim_reduction_state(
-        &mut self,
-        state: &Self::FieldRegistersIncClaimReductionState,
-    ) -> Result<SumcheckFieldRegistersIncClaimReductionOutput<F>, BackendError>;
 }
 
 pub trait CommitmentBackend<F, N, PCS>: Backend

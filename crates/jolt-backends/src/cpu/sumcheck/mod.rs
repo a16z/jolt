@@ -14,6 +14,11 @@ use jolt_witness::{
     RaFamilyCycleIndices as WitnessRaCycleIndices, WitnessNamespace, WitnessProvider,
 };
 
+use super::ra::{
+    pushforward_indices, RaCycleIndices, RaFamilyLayout, MAX_BYTECODE_CHUNKS,
+    MAX_INSTRUCTION_CHUNKS, MAX_RAM_CHUNKS,
+};
+use super::CpuBackend;
 use crate::{
     Backend, BackendError, BackendValueSlot, RamReadWriteSumcheckBackend, ResolvedSumcheckView,
     Stage3SpartanSumcheckBackend, Stage4ReadWriteSumcheckBackend,
@@ -41,19 +46,6 @@ use crate::{
     SumcheckStage7AdviceAddressStateRequest, SumcheckStage7HammingState,
     SumcheckStage7HammingStateRequest, SumcheckViewResolution,
 };
-#[cfg(feature = "field-inline")]
-use crate::{
-    SumcheckFieldRegistersIncClaimReductionOutput,
-    SumcheckFieldRegistersIncClaimReductionStateRequest,
-    SumcheckFieldRegistersReadWriteStateRequest, SumcheckFieldRegistersValEvaluationOutput,
-    SumcheckFieldRegistersValEvaluationStateRequest,
-};
-
-use super::ra::{
-    pushforward_indices, RaCycleIndices, RaFamilyLayout, MAX_BYTECODE_CHUNKS,
-    MAX_INSTRUCTION_CHUNKS, MAX_RAM_CHUNKS,
-};
-use super::CpuBackend;
 
 #[cfg(feature = "prover-harness")]
 fn record_sumcheck_timing(label: &'static str, start: std::time::Instant) {
@@ -106,17 +98,6 @@ const REGISTERS_READ_WRITE_STATE_TASK: &str = "registers read-write sumcheck sta
 const REGISTERS_READ_WRITE_ROUND_TASK: &str = "registers read-write sumcheck round evaluation";
 const REGISTERS_READ_WRITE_BIND_TASK: &str = "registers read-write sumcheck state bind";
 const REGISTERS_READ_WRITE_OUTPUT_TASK: &str = "registers read-write sumcheck output claims";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_READ_WRITE_STATE_TASK: &str =
-    "field-registers read-write sumcheck state materialization";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_READ_WRITE_ROUND_TASK: &str =
-    "field-registers read-write sumcheck round evaluation";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_READ_WRITE_BIND_TASK: &str = "field-registers read-write sumcheck state bind";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_READ_WRITE_OUTPUT_TASK: &str =
-    "field-registers read-write sumcheck output claims";
 const RAM_VAL_CHECK_STATE_TASK: &str = "RAM value-check sumcheck state materialization";
 const RAM_VAL_CHECK_ROUND_TASK: &str = "RAM value-check sumcheck round evaluation";
 const RAM_VAL_CHECK_BIND_TASK: &str = "RAM value-check sumcheck state bind";
@@ -133,18 +114,6 @@ const REGISTERS_VAL_EVALUATION_ROUND_TASK: &str =
 const REGISTERS_VAL_EVALUATION_BIND_TASK: &str = "registers value-evaluation sumcheck state bind";
 const REGISTERS_VAL_EVALUATION_OUTPUT_TASK: &str =
     "registers value-evaluation sumcheck output claims";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_VAL_EVALUATION_STATE_TASK: &str =
-    "field-registers value-evaluation sumcheck state materialization";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_VAL_EVALUATION_ROUND_TASK: &str =
-    "field-registers value-evaluation sumcheck round evaluation";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_VAL_EVALUATION_BIND_TASK: &str =
-    "field-registers value-evaluation sumcheck state bind";
-#[cfg(feature = "field-inline")]
-const FIELD_REGISTERS_VAL_EVALUATION_OUTPUT_TASK: &str =
-    "field-registers value-evaluation sumcheck output claims";
 const INSTRUCTION_READ_RAF_STATE_TASK: &str = "instruction read-RAF sumcheck state materialization";
 const INSTRUCTION_READ_RAF_ROUND_TASK: &str = "instruction read-RAF sumcheck round evaluation";
 const INSTRUCTION_READ_RAF_BIND_TASK: &str = "instruction read-RAF sumcheck state bind";
@@ -187,18 +156,6 @@ const STAGE6_INC_STATE_TASK: &str =
 const STAGE6_INC_ROUND_TASK: &str = "Stage 6 increment claim-reduction sumcheck round evaluation";
 const STAGE6_INC_BIND_TASK: &str = "Stage 6 increment claim-reduction sumcheck state bind";
 const STAGE6_INC_OUTPUT_TASK: &str = "Stage 6 increment claim-reduction sumcheck output claims";
-#[cfg(feature = "field-inline")]
-const STAGE6_FIELD_REGISTERS_INC_STATE_TASK: &str =
-    "Stage 6 field-registers increment claim-reduction sumcheck state materialization";
-#[cfg(feature = "field-inline")]
-const STAGE6_FIELD_REGISTERS_INC_ROUND_TASK: &str =
-    "Stage 6 field-registers increment claim-reduction sumcheck round evaluation";
-#[cfg(feature = "field-inline")]
-const STAGE6_FIELD_REGISTERS_INC_BIND_TASK: &str =
-    "Stage 6 field-registers increment claim-reduction sumcheck state bind";
-#[cfg(feature = "field-inline")]
-const STAGE6_FIELD_REGISTERS_INC_OUTPUT_TASK: &str =
-    "Stage 6 field-registers increment claim-reduction sumcheck output claims";
 
 impl<F> Stage3SpartanSumcheckBackend<F> for CpuBackend
 where
@@ -358,8 +315,6 @@ where
     <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
 {
     type RegistersReadWriteState = super::read_write_matrix::RegistersReadWriteState<F>;
-    #[cfg(feature = "field-inline")]
-    type FieldRegistersReadWriteState = super::read_write_matrix::FieldRegistersReadWriteState<F>;
     type RamValCheckState = super::read_write_matrix::RamValCheckState<F>;
 
     fn materialize_sumcheck_registers_read_write_state(
@@ -395,50 +350,6 @@ where
         opening_point: &[F],
     ) -> Result<SumcheckRegistersReadWriteOutput<F>, BackendError> {
         let _ = REGISTERS_READ_WRITE_OUTPUT_TASK;
-        state.output_claims(opening_point)
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn materialize_sumcheck_field_registers_read_write_state(
-        &mut self,
-        request: &SumcheckFieldRegistersReadWriteStateRequest<F>,
-    ) -> Result<Self::FieldRegistersReadWriteState, BackendError> {
-        super::read_write_matrix::FieldRegistersReadWriteState::new(
-            self.name(),
-            FIELD_REGISTERS_READ_WRITE_STATE_TASK,
-            request,
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn evaluate_sumcheck_field_registers_read_write_round(
-        &mut self,
-        state: &Self::FieldRegistersReadWriteState,
-        previous_claim: F,
-    ) -> Result<jolt_poly::UnivariatePoly<F>, BackendError> {
-        state.evaluate_round(
-            self.name(),
-            FIELD_REGISTERS_READ_WRITE_ROUND_TASK,
-            previous_claim,
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn bind_sumcheck_field_registers_read_write_state(
-        &mut self,
-        state: &mut Self::FieldRegistersReadWriteState,
-        challenge: F,
-    ) -> Result<(), BackendError> {
-        state.bind(self.name(), FIELD_REGISTERS_READ_WRITE_BIND_TASK, challenge)
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn output_sumcheck_field_registers_read_write_state(
-        &mut self,
-        state: &Self::FieldRegistersReadWriteState,
-        opening_point: &[F],
-    ) -> Result<SumcheckRegistersReadWriteOutput<F>, BackendError> {
-        let _ = FIELD_REGISTERS_READ_WRITE_OUTPUT_TASK;
         state.output_claims(opening_point)
     }
 
@@ -486,9 +397,6 @@ where
     type InstructionReadRafState = super::read_write_matrix::InstructionReadRafState<F>;
     type RamRaClaimReductionState = super::read_write_matrix::RamRaClaimReductionState<F>;
     type RegistersValEvaluationState = super::read_write_matrix::RegistersValEvaluationState<F>;
-    #[cfg(feature = "field-inline")]
-    type FieldRegistersValEvaluationState =
-        super::read_write_matrix::FieldRegistersValEvaluationState<F>;
 
     fn materialize_sumcheck_instruction_read_raf_state(
         &mut self,
@@ -602,53 +510,6 @@ where
         let _ = REGISTERS_VAL_EVALUATION_OUTPUT_TASK;
         state.output_claims()
     }
-
-    #[cfg(feature = "field-inline")]
-    fn materialize_sumcheck_field_registers_val_evaluation_state(
-        &mut self,
-        request: &SumcheckFieldRegistersValEvaluationStateRequest<F>,
-    ) -> Result<Self::FieldRegistersValEvaluationState, BackendError> {
-        super::read_write_matrix::FieldRegistersValEvaluationState::new(
-            self.name(),
-            FIELD_REGISTERS_VAL_EVALUATION_STATE_TASK,
-            request,
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn evaluate_sumcheck_field_registers_val_evaluation_round(
-        &mut self,
-        state: &Self::FieldRegistersValEvaluationState,
-        previous_claim: F,
-    ) -> Result<jolt_poly::UnivariatePoly<F>, BackendError> {
-        state.evaluate_round(
-            self.name(),
-            FIELD_REGISTERS_VAL_EVALUATION_ROUND_TASK,
-            previous_claim,
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn bind_sumcheck_field_registers_val_evaluation_state(
-        &mut self,
-        state: &mut Self::FieldRegistersValEvaluationState,
-        challenge: F,
-    ) -> Result<(), BackendError> {
-        state.bind(
-            self.name(),
-            FIELD_REGISTERS_VAL_EVALUATION_BIND_TASK,
-            challenge,
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn output_sumcheck_field_registers_val_evaluation_state(
-        &mut self,
-        state: &Self::FieldRegistersValEvaluationState,
-    ) -> Result<SumcheckFieldRegistersValEvaluationOutput<F>, BackendError> {
-        let _ = FIELD_REGISTERS_VAL_EVALUATION_OUTPUT_TASK;
-        state.output_claims()
-    }
 }
 
 impl<F> Stage6RegularBatchSumcheckBackend<F> for CpuBackend
@@ -663,9 +524,6 @@ where
     type InstructionRaVirtualizationState =
         super::read_write_matrix::InstructionRaVirtualizationState<F>;
     type IncClaimReductionState = super::read_write_matrix::IncClaimReductionState<F>;
-    #[cfg(feature = "field-inline")]
-    type FieldRegistersIncClaimReductionState =
-        super::read_write_matrix::FieldRegistersIncClaimReductionState<F>;
 
     fn materialize_sumcheck_bytecode_read_raf_state(
         &mut self,
@@ -892,49 +750,6 @@ where
         state: &Self::IncClaimReductionState,
     ) -> Result<SumcheckIncClaimReductionOutput<F>, BackendError> {
         let _ = STAGE6_INC_OUTPUT_TASK;
-        state.output_claims()
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn materialize_sumcheck_field_registers_inc_claim_reduction_state(
-        &mut self,
-        request: &SumcheckFieldRegistersIncClaimReductionStateRequest<F>,
-    ) -> Result<Self::FieldRegistersIncClaimReductionState, BackendError> {
-        super::read_write_matrix::FieldRegistersIncClaimReductionState::new(
-            self.name(),
-            STAGE6_FIELD_REGISTERS_INC_STATE_TASK,
-            request,
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn evaluate_sumcheck_field_registers_inc_claim_reduction_round(
-        &mut self,
-        state: &Self::FieldRegistersIncClaimReductionState,
-        previous_claim: F,
-    ) -> Result<jolt_poly::UnivariatePoly<F>, BackendError> {
-        state.evaluate_round(
-            self.name(),
-            STAGE6_FIELD_REGISTERS_INC_ROUND_TASK,
-            previous_claim,
-        )
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn bind_sumcheck_field_registers_inc_claim_reduction_state(
-        &mut self,
-        state: &mut Self::FieldRegistersIncClaimReductionState,
-        challenge: F,
-    ) -> Result<(), BackendError> {
-        state.bind(self.name(), STAGE6_FIELD_REGISTERS_INC_BIND_TASK, challenge)
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn output_sumcheck_field_registers_inc_claim_reduction_state(
-        &mut self,
-        state: &Self::FieldRegistersIncClaimReductionState,
-    ) -> Result<SumcheckFieldRegistersIncClaimReductionOutput<F>, BackendError> {
-        let _ = STAGE6_FIELD_REGISTERS_INC_OUTPUT_TASK;
         state.output_claims()
     }
 }

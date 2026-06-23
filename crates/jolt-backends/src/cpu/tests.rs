@@ -1550,14 +1550,12 @@ fn cpu_poly_stage8_streaming_rlc_vmp_matches_dense_reference() {
     let actual = poly::stage8_streaming_rlc_vector_matrix_product(
         poly::Stage8StreamingRlcVectorMatrixProductInput {
             rows: &stage_rows,
-            field_rd_inc: None,
             log_t,
             committed_chunk_bits,
             trace_polynomial_order:
                 jolt_claims::protocols::jolt::formulas::dimensions::TracePolynomialOrder::CycleMajor,
             ram_inc_coefficient,
             rd_inc_coefficient,
-            field_rd_inc_coefficient: None,
             instruction_coefficients: &instruction_coefficients,
             bytecode_coefficients: &bytecode_coefficients,
             ram_coefficients: &ram_coefficients,
@@ -3272,11 +3270,6 @@ fn spartan_outer_input_polynomials(rows: &[SumcheckSpartanOuterRow]) -> Vec<Vec<
             column.push(value);
         }
     }
-    #[cfg(feature = "field-inline")]
-    values.resize_with(
-        jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len(),
-        || vec![Fr::from_u64(0); rows.len()],
-    );
     values
 }
 

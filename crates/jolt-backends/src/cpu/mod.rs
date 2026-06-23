@@ -5,8 +5,6 @@ mod commitments;
 mod config;
 pub mod eq;
 pub mod field;
-#[cfg(feature = "field-inline")]
-mod field_inline;
 pub mod lagrange;
 mod openings;
 pub mod poly;

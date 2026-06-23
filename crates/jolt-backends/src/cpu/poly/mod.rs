@@ -456,13 +456,11 @@ pub fn materialized_rlc_vector_matrix_product<F: Field>(
 
 pub struct Stage8StreamingRlcVectorMatrixProductInput<'a, F: Field> {
     pub rows: &'a [JoltVmStage6Row],
-    pub field_rd_inc: Option<&'a [F]>,
     pub log_t: usize,
     pub committed_chunk_bits: usize,
     pub trace_polynomial_order: TracePolynomialOrder,
     pub ram_inc_coefficient: F,
     pub rd_inc_coefficient: F,
-    pub field_rd_inc_coefficient: Option<F>,
     pub instruction_coefficients: &'a [F],
     pub bytecode_coefficients: &'a [F],
     pub ram_coefficients: &'a [F],
@@ -507,22 +505,15 @@ where
                 let row_weight = input.left_vec[row_offset];
                 let scaled_ram_inc = row_weight * input.ram_inc_coefficient;
                 let scaled_rd_inc = row_weight * input.rd_inc_coefficient;
-                let scaled_field_rd_inc = input
-                    .field_rd_inc_coefficient
-                    .map(|coefficient| row_weight * coefficient);
                 let row_factor = setup.row_factors[row_offset];
                 let cycle_start = row_offset * input.num_columns;
                 let cycle_end = cycle_start + input.num_columns;
                 for (col_index, row) in input.rows[cycle_start..cycle_end].iter().enumerate() {
-                    let cycle = cycle_start + col_index;
-                    let field_rd_inc = input.field_rd_inc.and_then(|values| values.get(cycle));
                     accumulate_stage8_streaming_rlc_folded_row(
                         row,
-                        field_rd_inc.copied(),
                         &setup,
                         scaled_ram_inc,
                         scaled_rd_inc,
-                        scaled_field_rd_inc,
                         row_factor,
                         &mut dense_accs[col_index],
                         &mut one_hot_accs[col_index],
@@ -608,17 +599,11 @@ fn build_stage8_folded_one_hot_tables<F: Field>(coefficients: &[F], factors: &[F
         .collect()
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "hot row accumulator keeps borrowed inputs explicit to avoid per-row structs"
-)]
 fn accumulate_stage8_streaming_rlc_folded_row<F: Field>(
     row: &JoltVmStage6Row,
-    field_rd_inc: Option<F>,
     setup: &Stage8StreamingRlcVmpSetup<F>,
     scaled_ram_inc: F,
     scaled_rd_inc: F,
-    scaled_field_rd_inc: Option<F>,
     row_factor: F,
     dense_acc: &mut <F as jolt_field::WithAccumulator>::Accumulator,
     one_hot_acc: &mut <F as jolt_field::WithAccumulator>::Accumulator,
@@ -630,11 +615,6 @@ fn accumulate_stage8_streaming_rlc_folded_row<F: Field>(
     }
     if row.rd_increment != 0 {
         dense_acc.fmadd(scaled_rd_inc, F::from_i128(row.rd_increment));
-    }
-    if let (Some(value), Some(coefficient)) = (field_rd_inc, scaled_field_rd_inc) {
-        if !value.is_zero() {
-            dense_acc.fmadd(coefficient, value);
-        }
     }
 
     let mut one_hot_value = F::zero();
@@ -752,14 +732,6 @@ fn accumulate_stage8_streaming_rlc_row<F: Field>(
 ) {
     let dense = input.ram_inc_coefficient * F::from_i128(row.ram_increment)
         + input.rd_inc_coefficient * F::from_i128(row.rd_increment);
-    let field_dense = match (input.field_rd_inc, input.field_rd_inc_coefficient) {
-        (Some(values), Some(coefficient)) => values
-            .get(cycle)
-            .copied()
-            .map_or_else(F::zero, |value| value * coefficient),
-        _ => F::zero(),
-    };
-    let dense = dense + field_dense;
     if !dense.is_zero() {
         let address_columns = 1usize << input.committed_chunk_bits;
         let flat = input.trace_polynomial_order.address_cycle_to_index(
@@ -1272,23 +1244,6 @@ fn validate_stage8_streaming_rlc_vmp_input<F: Field>(
         trace_rows,
         "Stage 8 RLC row count mismatch"
     );
-    if let Some(field_rd_inc) = input.field_rd_inc {
-        assert_eq!(
-            field_rd_inc.len(),
-            trace_rows,
-            "Stage 8 field-inline RLC row count mismatch"
-        );
-        assert!(
-            input.field_rd_inc_coefficient.is_some(),
-            "Stage 8 field-inline RLC rows require a coefficient"
-        );
-    }
-    if input.field_rd_inc_coefficient.is_some() {
-        assert!(
-            input.field_rd_inc.is_some(),
-            "Stage 8 field-inline RLC coefficient requires rows"
-        );
-    }
     let total_len = trace_rows << input.committed_chunk_bits;
     assert!(
         input.num_columns > 0

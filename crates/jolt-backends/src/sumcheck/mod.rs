@@ -2,17 +2,7 @@ mod contracts;
 mod request;
 mod result;
 
-#[cfg(not(feature = "field-inline"))]
 pub use contracts::stage2_regular_batch_instances;
-#[cfg(feature = "field-inline")]
-pub use contracts::{
-    stage1_field_inline_r1cs_input_slot, stage2_field_inline_factor_openings,
-    stage2_field_inline_materialize_product_factors,
-    stage2_field_inline_product_uniskip_extended_evals,
-    stage2_field_inline_regular_batch_instances, Stage2FieldInlineFactorOpenings,
-    Stage2FieldInlineMaterializedFactors, Stage2FieldInlineProductUniskipEvalRequest,
-    Stage2FieldInlineRegularBatchInstanceRequest, STAGE1_FIELD_INLINE_R1CS_INPUT_SLOT_START,
-};
 pub use contracts::{
     stage1_r1cs_input_slot, stage2_product_instruction_openings_from_rows,
     stage2_product_uniskip_extended_eval_outputs, stage2_product_uniskip_extended_eval_request,
@@ -50,8 +40,6 @@ pub use contracts::{
     STAGE6_INSTRUCTION_RA_VIRTUALIZATION_OPENING_SLOT_START,
     STAGE6_RAM_HAMMING_BOOLEANITY_OPENING_SLOT, STAGE6_RAM_RA_VIRTUALIZATION_OPENING_SLOT_START,
 };
-#[cfg(feature = "field-inline")]
-pub use request::{field_register_read_write_row, field_register_read_write_rows};
 pub use request::{
     instruction_read_raf_row, instruction_read_raf_rows, product_uniskip_row_from_stage2_trace,
     product_uniskip_rows_from_stage2_trace, ram_read_write_row, ram_read_write_rows,
@@ -60,10 +48,7 @@ pub use request::{
     stage6_bytecode_pc_indices, stage6_hamming_weight, stage6_inc_rows, stage6_ra_rows,
     SumcheckAdviceTraceOrder, SumcheckBooleanityStateRequest,
     SumcheckBytecodeReadRafExtraStageValues, SumcheckBytecodeReadRafStateRequest,
-    SumcheckEvaluationRequest, SumcheckFieldRegisterRead, SumcheckFieldRegisterWrite,
-    SumcheckFieldRegistersIncClaimReductionStateRequest, SumcheckFieldRegistersReadWriteRow,
-    SumcheckFieldRegistersReadWriteStateRequest, SumcheckFieldRegistersValEvaluationStateRequest,
-    SumcheckIncClaimReductionStateRequest, SumcheckInstanceRequest,
+    SumcheckEvaluationRequest, SumcheckIncClaimReductionStateRequest, SumcheckInstanceRequest,
     SumcheckInstructionRaVirtualizationStateRequest, SumcheckInstructionReadRafRow,
     SumcheckInstructionReadRafStateRequest, SumcheckLinearProductQuery,
     SumcheckLinearProductRequest, SumcheckMaterializationRequest, SumcheckPrefixProductSumQuery,
@@ -86,8 +71,7 @@ pub use request::{
 };
 pub use result::{
     ResolvedSumcheckView, SumcheckBooleanityOutput, SumcheckBytecodeReadRafOutput,
-    SumcheckEvaluationOutput, SumcheckFieldRegistersIncClaimReductionOutput,
-    SumcheckFieldRegistersValEvaluationOutput, SumcheckIncClaimReductionOutput,
+    SumcheckEvaluationOutput, SumcheckIncClaimReductionOutput,
     SumcheckInstructionRaVirtualizationOutput, SumcheckInstructionReadRafOutput,
     SumcheckLinearProductOutput, SumcheckMaterializationOutput, SumcheckProofOutput,
     SumcheckRamHammingBooleanityOutput, SumcheckRamRaClaimReductionOutput,

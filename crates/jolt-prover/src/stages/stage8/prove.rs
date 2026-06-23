@@ -118,12 +118,10 @@ where
     )?;
 
     let combined_hint = PCS::combine_hints(hints, &gamma_powers);
-    let field_rd_inc = None;
     let joint_polynomial = Stage8JointRlcSource::new(
         stage8_joint_rlc_config(config),
         witness,
         gamma_powers.clone(),
-        field_rd_inc,
     )?;
     let joint_opening_proof = PCS::open_poly(
         &joint_polynomial,
@@ -181,13 +179,8 @@ where
     )?;
 
     let combined_hint = PCS::combine_hints(hints, &gamma_powers);
-    let field_rd_inc = None;
-    let joint_polynomial = Stage8JointRlcSource::new(
-        stage8_joint_rlc_config(config),
-        witness,
-        gamma_powers,
-        field_rd_inc,
-    )?;
+    let joint_polynomial =
+        Stage8JointRlcSource::new(stage8_joint_rlc_config(config), witness, gamma_powers)?;
     let (joint_opening_proof, hiding_evaluation_commitment, hiding_evaluation_blind) =
         PCS::open_zk_poly(
             &joint_polynomial,

@@ -1,13 +1,9 @@
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TracePolynomialOrder, ra::JoltRaPolynomialLayout},
     AdviceClaimReductionLayout, JoltCommittedPolynomial,
 };
 use jolt_field::{Field, RingAccumulator};
 use jolt_poly::{eq_index_msb, EqPolynomial, MultilinearPoly};
-#[cfg(feature = "field-inline")]
-use jolt_witness::protocols::jolt_vm::field_inline::FieldInlineNamespace;
 use jolt_witness::{
     protocols::jolt_vm::{JoltVmNamespace, JoltVmStage6Row, JoltVmStage6Rows},
     PolynomialChunk, WitnessProvider,
@@ -37,7 +33,6 @@ pub struct Stage8JointRlcSource<'a, F: Field, W> {
     witness: &'a W,
     gamma_powers: Vec<F>,
     rows: Vec<JoltVmStage6Row>,
-    field_rd_inc: Option<Vec<F>>,
 }
 
 impl<'a, F, W> Stage8JointRlcSource<'a, F, W>
@@ -49,14 +44,12 @@ where
         config: Stage8JointRlcConfig<'a>,
         witness: &'a W,
         gamma_powers: Vec<F>,
-        field_rd_inc: Option<Vec<F>>,
     ) -> Result<Self, BackendError> {
         Ok(Self {
             config,
             witness,
             gamma_powers,
             rows: witness.stage6_rows()?,
-            field_rd_inc,
         })
     }
 }
@@ -76,17 +69,15 @@ where
             &self.config,
             self.witness,
             &self.gamma_powers,
-            self.field_rd_inc.as_deref(),
             point,
         ))
     }
 
     fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        let evals = backend_or_panic(build_stage8_joint_polynomial_evals_with_field(
+        let evals = backend_or_panic(build_stage8_joint_polynomial_evals(
             &self.config,
             self.witness,
             &self.gamma_powers,
-            self.field_rd_inc.as_deref(),
         ));
         let num_cols = 1usize << sigma;
         for (row, values) in evals.chunks(num_cols).enumerate() {
@@ -103,7 +94,7 @@ where
             "Stage 8 RLC fold left-vector length mismatch"
         );
 
-        let ra_start = 2 + usize::from(self.field_rd_inc.is_some());
+        let ra_start = 2;
         let (instruction_coefficients, rest) =
             self.gamma_powers[ra_start..].split_at(self.config.layout.instruction());
         let (bytecode_coefficients, rest) = rest.split_at(self.config.layout.bytecode());
@@ -111,13 +102,11 @@ where
         let mut result = stage8_streaming_rlc_vector_matrix_product(
             Stage8StreamingRlcVectorMatrixProductInput {
                 rows: &self.rows,
-                field_rd_inc: self.field_rd_inc.as_deref(),
                 log_t: self.config.log_t,
                 committed_chunk_bits: self.config.committed_chunk_bits,
                 trace_polynomial_order: self.config.trace_polynomial_order,
                 ram_inc_coefficient: self.gamma_powers[0],
                 rd_inc_coefficient: self.gamma_powers[1],
-                field_rd_inc_coefficient: self.field_rd_inc.as_ref().map(|_| self.gamma_powers[2]),
                 instruction_coefficients,
                 bytecode_coefficients,
                 ram_coefficients,
@@ -165,11 +154,10 @@ fn backend_or_panic<T>(result: Result<T, BackendError>) -> T {
     }
 }
 
-fn build_stage8_joint_polynomial_evals_with_field<F, W>(
+fn build_stage8_joint_polynomial_evals<F, W>(
     config: &Stage8JointRlcConfig<'_>,
     witness: &W,
     gamma_powers: &[F],
-    field_rd_inc: Option<&[F]>,
 ) -> Result<Vec<F>, BackendError>
 where
     F: Field,
@@ -195,33 +183,14 @@ where
         )?;
     }
 
-    let mut batch_index = 2;
-    if let Some(field_rd_inc) = field_rd_inc {
-        if field_rd_inc.len() != num_rows {
-            return invalid(format!(
-                "field-inline rd_inc stream produced {} rows, expected {num_rows}",
-                field_rd_inc.len()
-            ));
-        }
-        let coefficient = gamma_powers[batch_index];
-        batch_index += 1;
-        let addresses = 1usize << config.committed_chunk_bits;
-        for (cycle, value) in field_rd_inc.iter().enumerate() {
-            let flat = config
-                .trace_polynomial_order
-                .address_cycle_to_index(0, cycle, addresses, num_rows);
-            joint[flat] += coefficient * *value;
-        }
-    }
-
-    for polynomial in (0..config.layout.instruction())
-        .map(JoltCommittedPolynomial::InstructionRa)
-        .chain((0..config.layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa))
-        .chain((0..config.layout.ram()).map(JoltCommittedPolynomial::RamRa))
-    {
+    for (batch_index, polynomial) in (2..).zip(
+        (0..config.layout.instruction())
+            .map(JoltCommittedPolynomial::InstructionRa)
+            .chain((0..config.layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa))
+            .chain((0..config.layout.ram()).map(JoltCommittedPolynomial::RamRa)),
+    ) {
         let indices = collect_one_hot_ra_indices::<F, W>(polynomial, num_rows, witness)?;
         let coefficient = gamma_powers[batch_index];
-        batch_index += 1;
         let addresses = 1usize << config.committed_chunk_bits;
         for (cycle, opt_col) in indices.into_iter().enumerate() {
             if let Some(col) = opt_col {
@@ -236,7 +205,7 @@ where
         }
     }
 
-    let mut batch_index = 2 + usize::from(field_rd_inc.is_some()) + config.layout.total();
+    let mut batch_index = 2 + config.layout.total();
     for (polynomial, layout) in [
         (
             JoltCommittedPolynomial::TrustedAdvice,
@@ -267,7 +236,6 @@ fn evaluate_stage8_joint_polynomial_at_point<F, W>(
     config: &Stage8JointRlcConfig<'_>,
     witness: &W,
     gamma_powers: &[F],
-    field_rd_inc: Option<&[F]>,
     point: &[F],
 ) -> Result<F, BackendError>
 where
@@ -306,32 +274,14 @@ where
         )?;
     }
 
-    let mut batch_index = 2;
-    if let Some(field_rd_inc) = field_rd_inc {
-        if field_rd_inc.len() != num_rows {
-            return invalid(format!(
-                "field-inline rd_inc stream produced {} rows, expected {num_rows}",
-                field_rd_inc.len()
-            ));
-        }
-        let coefficient = gamma_powers[batch_index];
-        batch_index += 1;
-        for (cycle, value) in field_rd_inc.iter().copied().enumerate() {
-            if value.is_zero() {
-                continue;
-            }
-            result += coefficient * value * trace_eq.weight(0, cycle);
-        }
-    }
-
-    for polynomial in (0..config.layout.instruction())
-        .map(JoltCommittedPolynomial::InstructionRa)
-        .chain((0..config.layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa))
-        .chain((0..config.layout.ram()).map(JoltCommittedPolynomial::RamRa))
-    {
+    for (batch_index, polynomial) in (2..).zip(
+        (0..config.layout.instruction())
+            .map(JoltCommittedPolynomial::InstructionRa)
+            .chain((0..config.layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa))
+            .chain((0..config.layout.ram()).map(JoltCommittedPolynomial::RamRa)),
+    ) {
         let indices = collect_one_hot_ra_indices::<F, W>(polynomial, num_rows, witness)?;
         let coefficient = gamma_powers[batch_index];
-        batch_index += 1;
         for (cycle, opt_col) in indices.into_iter().enumerate() {
             let Some(col) = opt_col else {
                 continue;
@@ -340,7 +290,7 @@ where
         }
     }
 
-    let mut advice_batch_index = 2 + usize::from(field_rd_inc.is_some()) + config.layout.total();
+    let mut advice_batch_index = 2 + config.layout.total();
     for (polynomial, layout) in [
         (
             JoltCommittedPolynomial::TrustedAdvice,
@@ -621,37 +571,6 @@ where
     }
     let expected = advice_rows * advice_cols;
     require_exact_stream_len(polynomial, index, expected)
-}
-
-#[cfg(feature = "field-inline")]
-pub fn collect_stage8_field_rd_inc_rows<F, FI>(
-    witness: &FI,
-    rows: usize,
-) -> Result<Vec<F>, BackendError>
-where
-    F: Field,
-    FI: WitnessProvider<F, FieldInlineNamespace> + ?Sized,
-{
-    let mut stream = witness.committed_stream(FieldInlineCommittedPolynomial::FieldRdInc, 1024)?;
-    let mut values = Vec::with_capacity(rows);
-    while let Some(chunk) = stream.next_chunk()? {
-        match chunk {
-            PolynomialChunk::Dense(chunk) => values.extend(chunk),
-            PolynomialChunk::Zeros(count) => {
-                values.extend(std::iter::repeat_n(F::zero(), count));
-            }
-            _ => {
-                return invalid("expected dense field-inline rd_inc stream".to_owned());
-            }
-        }
-    }
-    if values.len() != rows {
-        return invalid(format!(
-            "field-inline rd_inc stream produced {} rows, expected {rows}",
-            values.len()
-        ));
-    }
-    Ok(values)
 }
 
 fn collect_one_hot_ra_indices<F, W>(
