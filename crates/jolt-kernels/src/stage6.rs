@@ -4237,9 +4237,9 @@ struct DenseStage6State<F: Field> {
 }
 
 #[derive(Clone)]
-struct DenseTerm<F: Field> {
-    coefficient: F,
-    factors: Vec<usize>,
+pub(crate) struct DenseTerm<F: Field> {
+    pub(crate) coefficient: F,
+    pub(crate) factors: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -7317,7 +7317,7 @@ fn round_poly_from_dense_terms<F: Field>(
     Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
 }
 
-fn accumulate_dense_row_evaluations<F: Field>(
+pub(crate) fn accumulate_dense_row_evaluations<F: Field>(
     factors: &[Vec<F>],
     terms: &[DenseTerm<F>],
     row: usize,

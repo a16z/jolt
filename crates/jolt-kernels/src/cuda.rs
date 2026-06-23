@@ -705,6 +705,14 @@ pub struct FusedOuterInputs<'a> {
     pub num_vars_padded: usize,
 }
 
+pub struct RoundPolyTerms<'a> {
+    pub factors: &'a [&'a DeviceFrVec],
+    pub term_coeffs: &'a [Fr],
+    pub term_factor_offsets: &'a [u32],
+    pub term_factor_indices: &'a [u32],
+    pub degree: usize,
+}
+
 impl CudaKernelContext {
     pub fn new(ordinal: usize) -> Result<Self, CudaError> {
         let ctx = CudaContext::new(ordinal)?;
@@ -1128,6 +1136,14 @@ impl CudaKernelContext {
         }))
     }
 
+    #[expect(clippy::todo, unused_variables)]
+    pub fn sum_of_products_round_poly(
+        &self,
+        terms: RoundPolyTerms<'_>,
+    ) -> Result<Vec<Fr>, CudaError> {
+        todo!()
+    }
+
     fn reduce_to_device(&self, sum: bool, values: &DeviceFrVec) -> Result<DeviceFrVec, CudaError> {
         use num_traits::{One, Zero};
         if values.len == 0 {
@@ -1450,6 +1466,87 @@ mod tests {
                 .unwrap();
             prop_assert_eq!(got_a, expected_a);
             prop_assert_eq!(got_b, expected_b);
+        }
+    }
+
+    fn flatten_terms(terms: &[(Fr, Vec<u32>)]) -> (Vec<Fr>, Vec<u32>, Vec<u32>) {
+        let mut coeffs = Vec::new();
+        let mut offsets = vec![0u32];
+        let mut indices = Vec::new();
+        for (coeff, factor_indices) in terms {
+            coeffs.push(*coeff);
+            indices.extend_from_slice(factor_indices);
+            offsets.push(indices.len() as u32);
+        }
+        (coeffs, offsets, indices)
+    }
+
+    proptest! {
+        #[test]
+        #[ignore = "CudaKernelContext::sum_of_products_round_poly is todo!()"]
+        fn sum_of_products_round_poly_matches_cpu(
+            log_pairs in 0usize..10,
+            num_factors in 1usize..6,
+            terms_spec in prop::collection::vec(
+                (fr_strategy(), prop::collection::vec(0u32..6, 1..4)),
+                1..5,
+            ),
+            seed in fr_strategy(),
+        ) {
+            let half = 1usize << log_pairs;
+            let len = half * 2;
+            let terms_spec: Vec<(Fr, Vec<u32>)> = terms_spec
+                .into_iter()
+                .map(|(coeff, idxs)| {
+                    (coeff, idxs.into_iter().map(|i| i % num_factors as u32).collect())
+                })
+                .collect();
+            let degree = terms_spec.iter().map(|(_, idxs)| idxs.len()).max().unwrap();
+
+            let factors: Vec<Vec<Fr>> = (0..num_factors)
+                .map(|f| (0..len).map(|i| seed + Fr::from_u64((f * len + i) as u64)).collect())
+                .collect();
+
+            let cpu_terms: Vec<crate::stage6::DenseTerm<Fr>> = terms_spec
+                .iter()
+                .map(|(coeff, idxs)| crate::stage6::DenseTerm {
+                    coefficient: *coeff,
+                    factors: idxs.iter().map(|&i| i as usize).collect(),
+                })
+                .collect();
+            let mut expected = vec![Fr::zero(); degree];
+            let mut row_evals = vec![Fr::zero(); degree];
+            for row in 0..half {
+                for e in &mut row_evals {
+                    *e = Fr::zero();
+                }
+                crate::stage6::accumulate_dense_row_evaluations(
+                    &factors,
+                    &cpu_terms,
+                    row,
+                    &mut row_evals,
+                );
+                for (acc, e) in expected.iter_mut().zip(&row_evals) {
+                    *acc += *e;
+                }
+            }
+
+            let (term_coeffs, term_factor_offsets, term_factor_indices) =
+                flatten_terms(&terms_spec);
+            let c = ctx();
+            let factor_devs: Vec<DeviceFrVec> =
+                factors.iter().map(|f| c.upload(f).unwrap()).collect();
+            let factor_refs: Vec<&DeviceFrVec> = factor_devs.iter().collect();
+            let got = c
+                .sum_of_products_round_poly(RoundPolyTerms {
+                    factors: &factor_refs,
+                    term_coeffs: &term_coeffs,
+                    term_factor_offsets: &term_factor_offsets,
+                    term_factor_indices: &term_factor_indices,
+                    degree,
+                })
+                .unwrap();
+            prop_assert_eq!(got, expected);
         }
     }
 
