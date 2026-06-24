@@ -7,7 +7,7 @@ use jolt_poly::{
 };
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 
-use crate::{challenge, opening, public};
+use crate::{challenge, public};
 
 use super::super::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
@@ -317,11 +317,14 @@ pub fn outer_uniskip<F>(dimensions: &SpartanOuterDimensions) -> JoltRelationClai
 where
     F: RingCore,
 {
+    use crate::protocols::jolt::relations::spartan::OuterUniskip;
+    use crate::SymbolicSumcheck;
+    let relation = OuterUniskip::new(dimensions.clone());
     JoltRelationClaims::new(
-        JoltRelationId::SpartanOuter,
-        dimensions.uniskip_sumcheck(),
-        JoltExpr::zero(),
-        opening(outer_uniskip_opening()),
+        OuterUniskip::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
@@ -329,39 +332,14 @@ pub fn outer_remainder<F>(dimensions: &SpartanOuterDimensions) -> JoltRelationCl
 where
     F: RingCore,
 {
-    let mut output = JoltExpr::zero();
-
-    for (left_index, left_variable) in dimensions.variables().iter().copied().enumerate() {
-        for (right_index, right_variable) in dimensions.variables().iter().copied().enumerate() {
-            output = output
-                + public(JoltPublicId::from(
-                    SpartanOuterPublic::QuadraticCoefficient {
-                        left: left_index,
-                        right: right_index,
-                    },
-                )) * opening(outer_opening(left_variable))
-                    * opening(outer_opening(right_variable));
-        }
-    }
-
-    if dimensions.include_linear_terms() {
-        for (index, variable) in dimensions.variables().iter().copied().enumerate() {
-            output = output
-                + public(JoltPublicId::from(SpartanOuterPublic::LinearCoefficient(
-                    index,
-                ))) * opening(outer_opening(variable));
-        }
-    }
-
-    if dimensions.include_constant_term() {
-        output = output + public(JoltPublicId::from(SpartanOuterPublic::ConstantCoefficient));
-    }
-
+    use crate::protocols::jolt::relations::spartan::OuterRemainder;
+    use crate::SymbolicSumcheck;
+    let relation = OuterRemainder::new(dimensions.clone());
     JoltRelationClaims::new(
-        JoltRelationId::SpartanOuter,
-        dimensions.remainder_sumcheck(),
-        opening(outer_uniskip_opening()),
-        output,
+        OuterRemainder::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
@@ -377,15 +355,14 @@ pub fn product_uniskip<F>(dimensions: SpartanProductDimensions) -> JoltRelationC
 where
     F: RingCore,
 {
-    let input = product_uniskip_weight(0) * opening(product_outer_opening())
-        + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
-        + product_uniskip_weight(2) * opening(product_should_jump_outer_opening());
-
+    use crate::protocols::jolt::relations::spartan::ProductUniskip;
+    use crate::SymbolicSumcheck;
+    let relation = ProductUniskip::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::SpartanProductVirtualization,
-        dimensions.uniskip_sumcheck(),
-        input,
-        opening(product_uniskip_opening()),
+        ProductUniskip::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
@@ -393,18 +370,14 @@ pub fn product_remainder<F>(dimensions: SpartanProductDimensions) -> JoltRelatio
 where
     F: RingCore,
 {
-    let left = product_weight(0) * opening(left_instruction_input_product())
-        + product_weight(1) * opening(lookup_output_product())
-        + product_weight(2) * opening(jump_flag_product());
-    let right = product_weight(0) * opening(right_instruction_input_product())
-        + product_weight(1) * opening(branch_flag_product())
-        + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()));
-
+    use crate::protocols::jolt::relations::spartan::ProductRemainder;
+    use crate::SymbolicSumcheck;
+    let relation = ProductRemainder::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::SpartanProductVirtualization,
-        dimensions.remainder_sumcheck(),
-        opening(product_uniskip_opening()),
-        product_tau_kernel() * left * right,
+        ProductRemainder::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
@@ -488,7 +461,7 @@ fn spartan_outer_r1cs_input_index(
         .ok_or(SpartanOuterClaimError::UnsupportedR1csInput { variable })
 }
 
-fn product_weight<F>(index: usize) -> JoltExpr<F>
+pub(crate) fn product_weight<F>(index: usize) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -497,7 +470,7 @@ where
     ))
 }
 
-fn product_uniskip_weight<F>(index: usize) -> JoltExpr<F>
+pub(crate) fn product_uniskip_weight<F>(index: usize) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -506,7 +479,7 @@ where
     ))
 }
 
-fn product_tau_kernel<F>() -> JoltExpr<F>
+pub(crate) fn product_tau_kernel<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -552,28 +525,28 @@ pub fn product_should_jump_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
-fn left_instruction_input_product() -> JoltOpeningId {
+pub(crate) fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn right_instruction_input_product() -> JoltOpeningId {
+pub(crate) fn right_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn lookup_output_product() -> JoltOpeningId {
+pub(crate) fn lookup_output_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn jump_flag_product() -> JoltOpeningId {
+pub(crate) fn jump_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
         JoltRelationId::SpartanProductVirtualization,
@@ -587,7 +560,7 @@ fn write_lookup_output_to_rd_product() -> JoltOpeningId {
     )
 }
 
-fn branch_flag_product() -> JoltOpeningId {
+pub(crate) fn branch_flag_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
         JoltRelationId::SpartanProductVirtualization,

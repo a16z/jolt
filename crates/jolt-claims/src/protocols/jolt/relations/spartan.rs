@@ -2,17 +2,21 @@
 
 use jolt_field::RingCore;
 
-use crate::opening;
 use crate::protocols::jolt::formulas::spartan::{
-    is_first_in_sequence_shift, is_noop_shift, is_virtual_shift, next_is_first_in_sequence_outer,
-    next_is_noop_product, next_is_virtual_outer, next_pc_outer, next_unexpanded_pc_outer, pc_shift,
-    shift_challenge, shift_public, unexpanded_pc_shift, SHIFT_DEGREE,
+    branch_flag_product, is_first_in_sequence_shift, is_noop_shift, is_virtual_shift,
+    jump_flag_product, left_instruction_input_product, lookup_output_product,
+    next_is_first_in_sequence_outer, next_is_noop_product, next_is_virtual_outer, next_pc_outer,
+    next_unexpanded_pc_outer, outer_opening, outer_uniskip_opening, pc_shift, product_outer_opening,
+    product_should_branch_outer_opening, product_should_jump_outer_opening, product_tau_kernel,
+    product_uniskip_opening, product_uniskip_weight, product_weight, right_instruction_input_product,
+    shift_challenge, shift_public, unexpanded_pc_shift, SpartanOuterDimensions,
+    SpartanProductDimensions, SHIFT_DEGREE,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, SpartanShiftChallenge, SpartanShiftPublic,
-    TraceDimensions,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
 };
-use crate::SymbolicSumcheck;
+use crate::{opening, public, SymbolicSumcheck};
 
 /// The Spartan shift sumcheck: relates each `Next*` column from the outer
 /// sumcheck (and `next_is_noop` from the product remainder) to the shifted
@@ -60,6 +64,179 @@ impl SymbolicSumcheck for Shift {
             + shift_public(SpartanShiftPublic::EqPlusOneProduct)
                 * gamma.pow(4)
                 * (JoltExpr::one() - opening(is_noop_shift()))
+    }
+}
+
+/// The Spartan outer univariate-skip sumcheck (first round). Symbolic-only: the
+/// concrete uni-skip verification is special-cased in the verifier's stage 1.
+pub struct OuterUniskip {
+    shape: SpartanOuterDimensions,
+}
+
+impl SymbolicSumcheck for OuterUniskip {
+    type RelationId = JoltRelationId;
+    type OpeningId = JoltOpeningId;
+    type PublicId = JoltPublicId;
+    type ChallengeId = JoltChallengeId;
+    type Shape = SpartanOuterDimensions;
+
+    fn new(shape: SpartanOuterDimensions) -> Self {
+        Self { shape }
+    }
+
+    fn id() -> JoltRelationId {
+        JoltRelationId::SpartanOuter
+    }
+
+    fn sumcheck(&self) -> JoltSumcheckSpec {
+        self.shape.uniskip_sumcheck()
+    }
+
+    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        JoltExpr::zero()
+    }
+
+    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        opening(outer_uniskip_opening())
+    }
+}
+
+/// The Spartan outer remainder sumcheck: the quadratic R1CS form over the outer
+/// R1CS-input openings, weighted by the `SpartanOuterPublic` coefficients.
+pub struct OuterRemainder {
+    shape: SpartanOuterDimensions,
+}
+
+impl SymbolicSumcheck for OuterRemainder {
+    type RelationId = JoltRelationId;
+    type OpeningId = JoltOpeningId;
+    type PublicId = JoltPublicId;
+    type ChallengeId = JoltChallengeId;
+    type Shape = SpartanOuterDimensions;
+
+    fn new(shape: SpartanOuterDimensions) -> Self {
+        Self { shape }
+    }
+
+    fn id() -> JoltRelationId {
+        JoltRelationId::SpartanOuter
+    }
+
+    fn sumcheck(&self) -> JoltSumcheckSpec {
+        self.shape.remainder_sumcheck()
+    }
+
+    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        opening(outer_uniskip_opening())
+    }
+
+    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        let mut output = JoltExpr::zero();
+
+        for (left_index, left_variable) in self.shape.variables().iter().copied().enumerate() {
+            for (right_index, right_variable) in self.shape.variables().iter().copied().enumerate() {
+                output = output
+                    + public(JoltPublicId::from(
+                        SpartanOuterPublic::QuadraticCoefficient {
+                            left: left_index,
+                            right: right_index,
+                        },
+                    )) * opening(outer_opening(left_variable))
+                        * opening(outer_opening(right_variable));
+            }
+        }
+
+        if self.shape.include_linear_terms() {
+            for (index, variable) in self.shape.variables().iter().copied().enumerate() {
+                output = output
+                    + public(JoltPublicId::from(SpartanOuterPublic::LinearCoefficient(
+                        index,
+                    ))) * opening(outer_opening(variable));
+            }
+        }
+
+        if self.shape.include_constant_term() {
+            output = output + public(JoltPublicId::from(SpartanOuterPublic::ConstantCoefficient));
+        }
+
+        output
+    }
+}
+
+/// The Spartan product univariate-skip sumcheck (first round). Symbolic-only:
+/// special-cased in the verifier's stage 2.
+pub struct ProductUniskip {
+    shape: SpartanProductDimensions,
+}
+
+impl SymbolicSumcheck for ProductUniskip {
+    type RelationId = JoltRelationId;
+    type OpeningId = JoltOpeningId;
+    type PublicId = JoltPublicId;
+    type ChallengeId = JoltChallengeId;
+    type Shape = SpartanProductDimensions;
+
+    fn new(shape: SpartanProductDimensions) -> Self {
+        Self { shape }
+    }
+
+    fn id() -> JoltRelationId {
+        JoltRelationId::SpartanProductVirtualization
+    }
+
+    fn sumcheck(&self) -> JoltSumcheckSpec {
+        self.shape.uniskip_sumcheck()
+    }
+
+    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        product_uniskip_weight(0) * opening(product_outer_opening())
+            + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
+            + product_uniskip_weight(2) * opening(product_should_jump_outer_opening())
+    }
+
+    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        opening(product_uniskip_opening())
+    }
+}
+
+/// The Spartan product remainder sumcheck: the `tau_kernel * left * right`
+/// virtualization form over the product-remainder openings.
+pub struct ProductRemainder {
+    shape: SpartanProductDimensions,
+}
+
+impl SymbolicSumcheck for ProductRemainder {
+    type RelationId = JoltRelationId;
+    type OpeningId = JoltOpeningId;
+    type PublicId = JoltPublicId;
+    type ChallengeId = JoltChallengeId;
+    type Shape = SpartanProductDimensions;
+
+    fn new(shape: SpartanProductDimensions) -> Self {
+        Self { shape }
+    }
+
+    fn id() -> JoltRelationId {
+        JoltRelationId::SpartanProductVirtualization
+    }
+
+    fn sumcheck(&self) -> JoltSumcheckSpec {
+        self.shape.remainder_sumcheck()
+    }
+
+    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        opening(product_uniskip_opening())
+    }
+
+    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        let left = product_weight(0) * opening(left_instruction_input_product())
+            + product_weight(1) * opening(lookup_output_product())
+            + product_weight(2) * opening(jump_flag_product());
+        let right = product_weight(0) * opening(right_instruction_input_product())
+            + product_weight(1) * opening(branch_flag_product())
+            + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()));
+
+        product_tau_kernel() * left * right
     }
 }
 
