@@ -281,6 +281,16 @@ pub struct RoundPolyTerms<'a> {
     pub degree: usize,
 }
 
+pub struct GruenRoundPolyInputs<'a> {
+    pub factors: &'a [&'a DeviceFrVec],
+    pub term_coeffs: &'a [Fr],
+    pub term_factor_offsets: &'a [u32],
+    pub term_factor_indices: &'a [u32],
+    pub e_in: &'a DeviceFrVec,
+    pub e_out: &'a DeviceFrVec,
+    pub degree: usize,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -917,6 +927,14 @@ impl CudaKernelContext {
         }))
     }
 
+    #[expect(clippy::todo, unused_variables)]
+    pub fn dense_product_round_poly(
+        &self,
+        terms: RoundPolyTerms<'_>,
+    ) -> Result<Vec<Fr>, CudaError> {
+        todo!()
+    }
+
     pub fn sum_of_products_round_poly(
         &self,
         terms: RoundPolyTerms<'_>,
@@ -1018,6 +1036,11 @@ impl CudaKernelContext {
         Ok((0..degree)
             .map(|e| limbs_to_fr([raw[e * 4], raw[e * 4 + 1], raw[e * 4 + 2], raw[e * 4 + 3]]))
             .collect())
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn gruen_round_poly(&self, inputs: GruenRoundPolyInputs<'_>) -> Result<Vec<Fr>, CudaError> {
+        todo!()
     }
 
     pub fn eq_weighted_round_poly(
@@ -1579,6 +1602,167 @@ mod tests {
                 })
                 .unwrap();
             prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::dense_product_round_poly is todo!()"]
+        fn dense_product_round_poly_matches_cpu(
+            log_pairs in 0usize..10,
+            degree in 1usize..6,
+            seed in fr_strategy(),
+        ) {
+            let half = 1usize << log_pairs;
+            let len = half * 2;
+            let factors: Vec<Vec<Fr>> = (0..degree)
+                .map(|f| (0..len).map(|i| seed + Fr::from_u64((f * len + i) as u64)).collect())
+                .collect();
+
+            let factor_slices: Vec<&[Fr]> = factors.iter().map(Vec::as_slice).collect();
+            let expected = crate::stage2::round_poly_from_factor_slices(&factor_slices, degree)
+                .into_coefficients();
+
+            let single_term: Vec<(Fr, Vec<u32>)> =
+                vec![(Fr::one(), (0..degree as u32).collect())];
+            let (term_coeffs, term_factor_offsets, term_factor_indices) =
+                flatten_terms(&single_term);
+            let c = ctx();
+            let factor_devs: Vec<DeviceFrVec> =
+                factors.iter().map(|f| c.upload(f).unwrap()).collect();
+            let factor_refs: Vec<&DeviceFrVec> = factor_devs.iter().collect();
+            let got = c
+                .dense_product_round_poly(RoundPolyTerms {
+                    factors: &factor_refs,
+                    term_coeffs: &term_coeffs,
+                    term_factor_offsets: &term_factor_offsets,
+                    term_factor_indices: &term_factor_indices,
+                    degree,
+                })
+                .unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::gruen_round_poly is todo!()"]
+        fn gruen_round_poly_instruction_input_matches_cpu(
+            num_vars in 1usize..9,
+            gamma in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            use crate::split_eq::SplitEqState;
+            use crate::stage3::instruction_input_split_round_coefficients;
+
+            const NUM_FACTORS: usize = 8;
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| seed + Fr::from_u64(i as u64))
+                .collect();
+            let mut split_eq = SplitEqState::<Fr>::new_low_to_high(&point, None);
+            let mut factors: Vec<Vec<Fr>> = (0..NUM_FACTORS)
+                .map(|f| {
+                    (0..(1usize << num_vars))
+                        .map(|i| seed + Fr::from_u64((f * 977 + i + 1) as u64))
+                        .collect()
+                })
+                .collect();
+            let mut scratch: Vec<Vec<Fr>> = vec![Vec::new(); NUM_FACTORS];
+
+            let terms: Vec<(Fr, Vec<u32>)> = vec![
+                (Fr::one(), vec![0, 1]),
+                (Fr::one(), vec![2, 3]),
+                (gamma, vec![4, 5]),
+                (gamma, vec![6, 7]),
+            ];
+            let (term_coeffs, term_factor_offsets, term_factor_indices) = flatten_terms(&terms);
+            let c = ctx();
+
+            for _round in 0..num_vars {
+                let (q_constant, q_quadratic) =
+                    instruction_input_split_round_coefficients(&factors, &split_eq, gamma);
+
+                let factor_devs: Vec<DeviceFrVec> =
+                    factors.iter().map(|f| c.upload(f).unwrap()).collect();
+                let factor_refs: Vec<&DeviceFrVec> = factor_devs.iter().collect();
+                let e_in = c.upload(split_eq.e_in()).unwrap();
+                let e_out = c.upload(split_eq.e_out()).unwrap();
+                let got = c
+                    .gruen_round_poly(GruenRoundPolyInputs {
+                        factors: &factor_refs,
+                        term_coeffs: &term_coeffs,
+                        term_factor_offsets: &term_factor_offsets,
+                        term_factor_indices: &term_factor_indices,
+                        e_in: &e_in,
+                        e_out: &e_out,
+                        degree: 2,
+                    })
+                    .unwrap();
+                prop_assert_eq!(got[0], q_constant);
+                prop_assert_eq!(got[1], q_quadratic);
+
+                let challenge = seed + Fr::from_u64(_round as u64 + 100);
+                for (factor, scratch) in factors.iter_mut().zip(&mut scratch) {
+                    crate::dense::bind_dense_evals_reuse(factor, scratch, challenge);
+                }
+                split_eq.bind(challenge);
+            }
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::gruen_round_poly is todo!()"]
+        fn gruen_round_poly_registers_matches_cpu(
+            num_vars in 1usize..9,
+            gamma in fr_strategy(),
+            gamma2 in fr_strategy(),
+            seed in fr_strategy(),
+        ) {
+            use crate::split_eq::SplitEqState;
+            use crate::stage3::registers_split_round_constant;
+
+            const NUM_FACTORS: usize = 3;
+            let point: Vec<Fr> = (0..num_vars)
+                .map(|i| seed + Fr::from_u64(i as u64))
+                .collect();
+            let mut split_eq = SplitEqState::<Fr>::new_low_to_high(&point, None);
+            let mut factors: Vec<Vec<Fr>> = (0..NUM_FACTORS)
+                .map(|f| {
+                    (0..(1usize << num_vars))
+                        .map(|i| seed + Fr::from_u64((f * 977 + i + 1) as u64))
+                        .collect()
+                })
+                .collect();
+            let mut scratch: Vec<Vec<Fr>> = vec![Vec::new(); NUM_FACTORS];
+
+            let terms: Vec<(Fr, Vec<u32>)> =
+                vec![(Fr::one(), vec![0]), (gamma, vec![1]), (gamma2, vec![2])];
+            let (term_coeffs, term_factor_offsets, term_factor_indices) = flatten_terms(&terms);
+            let c = ctx();
+
+            for _round in 0..num_vars {
+                let q_constant =
+                    registers_split_round_constant(&factors, &split_eq, gamma, gamma2);
+
+                let factor_devs: Vec<DeviceFrVec> =
+                    factors.iter().map(|f| c.upload(f).unwrap()).collect();
+                let factor_refs: Vec<&DeviceFrVec> = factor_devs.iter().collect();
+                let e_in = c.upload(split_eq.e_in()).unwrap();
+                let e_out = c.upload(split_eq.e_out()).unwrap();
+                let got = c
+                    .gruen_round_poly(GruenRoundPolyInputs {
+                        factors: &factor_refs,
+                        term_coeffs: &term_coeffs,
+                        term_factor_offsets: &term_factor_offsets,
+                        term_factor_indices: &term_factor_indices,
+                        e_in: &e_in,
+                        e_out: &e_out,
+                        degree: 1,
+                    })
+                    .unwrap();
+                prop_assert_eq!(got[0], q_constant);
+
+                let challenge = seed + Fr::from_u64(_round as u64 + 100);
+                for (factor, scratch) in factors.iter_mut().zip(&mut scratch) {
+                    crate::dense::bind_dense_evals_reuse(factor, scratch, challenge);
+                }
+                split_eq.bind(challenge);
+            }
         }
 
         #[test]
