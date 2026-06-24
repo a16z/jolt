@@ -1,6 +1,5 @@
-use jolt_claims::protocols::jolt::{
-    LatticePackedFamilyId, LatticePackedValidityKind, LatticePackedValidityRequirement,
-    LatticePackedViewFormula,
+use jolt_openings::{
+    PackingFamilyId, PackingValidityKind, PackingValidityRequirement, PackingViewFormula,
 };
 use jolt_riscv::CircuitFlags;
 
@@ -12,7 +11,7 @@ use crate::{stages::stage8::Stage8OpeningId, VerifierError};
 
 pub fn validate_lattice_view_validity_coverage<F>(
     formulas: &[JoltLatticeViewFormulaWithRowPoint<F>],
-    requirements: &[LatticePackedValidityRequirement],
+    requirements: &[PackingValidityRequirement],
 ) -> Result<(), VerifierError> {
     for (id, formula, _) in formulas {
         validate_lattice_formula_validity_coverage(*id, formula, requirements)?;
@@ -22,17 +21,17 @@ pub fn validate_lattice_view_validity_coverage<F>(
 
 fn validate_lattice_formula_validity_coverage<F>(
     id: Stage8OpeningId,
-    formula: &LatticePackedViewFormula<F>,
-    requirements: &[LatticePackedValidityRequirement],
+    formula: &PackingViewFormula<F>,
+    requirements: &[PackingValidityRequirement],
 ) -> Result<(), VerifierError> {
     match formula {
-        LatticePackedViewFormula::Direct {
+        PackingViewFormula::Direct {
             family,
             limb,
             symbol,
         } => validate_lattice_term_validity_coverage(id, family, *limb, *symbol, requirements),
-        LatticePackedViewFormula::LinearDecoded { terms }
-        | LatticePackedViewFormula::ReducedMasked { terms, .. } => {
+        PackingViewFormula::LinearDecoded { terms, .. }
+        | PackingViewFormula::ReducedMasked { terms, .. } => {
             for term in terms {
                 validate_lattice_term_validity_coverage(
                     id,
@@ -44,18 +43,18 @@ fn validate_lattice_formula_validity_coverage<F>(
             }
             Ok(())
         }
-        LatticePackedViewFormula::MaskedDecoded { relation } => Err(unsupported_lattice_view(
-            format!("opening {id:?} still has unresolved masked relation {relation:?}"),
-        )),
+        PackingViewFormula::MaskedDecoded => Err(unsupported_lattice_view(format!(
+            "opening {id:?} still has an unresolved masked view"
+        ))),
     }
 }
 
 fn validate_lattice_term_validity_coverage(
     id: Stage8OpeningId,
-    family: &LatticePackedFamilyId,
+    family: &PackingFamilyId,
     limb: usize,
     symbol: usize,
-    requirements: &[LatticePackedValidityRequirement],
+    requirements: &[PackingValidityRequirement],
 ) -> Result<(), VerifierError> {
     if core_jolt_ra_family(family) {
         return Ok(());
@@ -89,18 +88,18 @@ fn validate_lattice_term_validity_coverage(
     Ok(())
 }
 
-fn core_jolt_ra_family(family: &LatticePackedFamilyId) -> bool {
+fn core_jolt_ra_family(family: &PackingFamilyId) -> bool {
     matches!(
         family,
-        LatticePackedFamilyId::InstructionRa { .. }
-            | LatticePackedFamilyId::BytecodeRa { .. }
-            | LatticePackedFamilyId::RamRa { .. }
+        PackingFamilyId::InstructionRa { .. }
+            | PackingFamilyId::BytecodeRa { .. }
+            | PackingFamilyId::RamRa { .. }
     )
 }
 
 fn requirement_covers_term(
-    requirement: &LatticePackedValidityRequirement,
-    family: &LatticePackedFamilyId,
+    requirement: &PackingValidityRequirement,
+    family: &PackingFamilyId,
     limb: usize,
     symbol: usize,
 ) -> bool {
@@ -108,28 +107,27 @@ fn requirement_covers_term(
         return false;
     }
     match requirement.kind {
-        LatticePackedValidityKind::ExactOneHot | LatticePackedValidityKind::OptionalOneHot => {
+        PackingValidityKind::ExactOneHot | PackingValidityKind::OptionalOneHot => {
             symbol < requirement.alphabet_size
         }
-        LatticePackedValidityKind::BooleanIndicator { symbol: indicator } => {
+        PackingValidityKind::BooleanIndicator { symbol: indicator } => {
             symbol == indicator && indicator < requirement.alphabet_size
         }
-        LatticePackedValidityKind::BytecodeStoreRdDisjoint
-        | LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => false,
+        PackingValidityKind::BytecodeStoreRdDisjoint
+        | PackingValidityKind::FieldElementCanonicalBytes { .. } => false,
     }
 }
 
-fn term_requires_canonical_bytes(family: &LatticePackedFamilyId) -> bool {
+fn term_requires_canonical_bytes(family: &PackingFamilyId) -> bool {
     matches!(
         family,
-        LatticePackedFamilyId::FieldRdIncByte { .. }
-            | LatticePackedFamilyId::BytecodeImmBytes { .. }
+        PackingFamilyId::FieldRdIncByte { .. } | PackingFamilyId::BytecodeImmBytes { .. }
     )
 }
 
 fn canonical_requirement_covers_term(
-    requirement: &LatticePackedValidityRequirement,
-    family: &LatticePackedFamilyId,
+    requirement: &PackingValidityRequirement,
+    family: &PackingFamilyId,
     limb: usize,
 ) -> bool {
     let Ok(byte_width) = canonical_field_byte_width(requirement) else {
@@ -137,35 +135,33 @@ fn canonical_requirement_covers_term(
     };
     match (&requirement.family, family) {
         (
-            LatticePackedFamilyId::FieldRdIncByte { index: 0 },
-            LatticePackedFamilyId::FieldRdIncByte { index },
+            PackingFamilyId::FieldRdIncByte { index: 0 },
+            PackingFamilyId::FieldRdIncByte { index },
         ) => *index < byte_width && limb == 0,
         (
-            LatticePackedFamilyId::BytecodeImmBytes { chunk: expected },
-            LatticePackedFamilyId::BytecodeImmBytes { chunk },
+            PackingFamilyId::BytecodeImmBytes { chunk: expected },
+            PackingFamilyId::BytecodeImmBytes { chunk },
         ) => expected == chunk && limb < byte_width,
         _ => false,
     }
 }
 
-fn term_requires_bytecode_store_rd_disjoint(family: &LatticePackedFamilyId) -> bool {
+fn term_requires_bytecode_store_rd_disjoint(family: &PackingFamilyId) -> bool {
     match family {
-        LatticePackedFamilyId::BytecodeCircuitFlag { flag, .. } => {
-            *flag == CircuitFlags::Store as usize
-        }
-        LatticePackedFamilyId::BytecodeRegisterSelector { selector, .. } => *selector == 2,
+        PackingFamilyId::BytecodeCircuitFlag { flag, .. } => *flag == CircuitFlags::Store as usize,
+        PackingFamilyId::BytecodeRegisterSelector { selector, .. } => *selector == 2,
         _ => false,
     }
 }
 
 fn bytecode_store_rd_disjoint_requirement_covers_term(
-    requirement: &LatticePackedValidityRequirement,
-    family: &LatticePackedFamilyId,
+    requirement: &PackingValidityRequirement,
+    family: &PackingFamilyId,
 ) -> bool {
-    let LatticePackedValidityKind::BytecodeStoreRdDisjoint = requirement.kind else {
+    let PackingValidityKind::BytecodeStoreRdDisjoint = requirement.kind else {
         return false;
     };
-    let LatticePackedFamilyId::BytecodeCircuitFlag {
+    let PackingFamilyId::BytecodeCircuitFlag {
         chunk: requirement_chunk,
         flag,
     } = &requirement.family
@@ -176,10 +172,10 @@ fn bytecode_store_rd_disjoint_requirement_covers_term(
         return false;
     }
     match family {
-        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
+        PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
             requirement_chunk == chunk && *flag == CircuitFlags::Store as usize
         }
-        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
+        PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
             requirement_chunk == chunk && *selector == 2
         }
         _ => false,

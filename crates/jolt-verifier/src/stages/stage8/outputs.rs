@@ -128,15 +128,8 @@ impl<F: Field> Stage8PhysicalManifest<F> {
     ) -> Result<Self, PackingViewError> {
         let entries = formulas
             .into_iter()
-            .map(|(id, formula, row_point)| {
-                Ok((
-                    id,
-                    id,
-                    super::lattice::lattice_packing_view_formula(&formula)?,
-                    row_point,
-                ))
-            })
-            .collect::<Result<Vec<_>, PackingViewError>>()?;
+            .map(|(id, formula, row_point)| (id, id, formula, row_point))
+            .collect::<Vec<_>>();
 
         let openings = logical
             .openings
@@ -489,9 +482,7 @@ mod tests {
                 &layout,
                 [(
                     Stage8OpeningId::from(jolt_id),
-                    LatticePackedViewFormula::<Fr>::masked_decoded(
-                        JoltRelationId::UnsignedIncClaimReduction,
-                    ),
+                    LatticePackedViewFormula::<Fr>::MaskedDecoded,
                     vec![Fr::from_u64(1)],
                 )],
             ),

@@ -8,10 +8,11 @@ use jolt_akita::{
 use jolt_crypto::Commitment;
 use jolt_openings::{
     has_packing_view, packing_witness_source_polynomial, prove_sparse_packing_reduction,
-    validate_packing_statement, BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement,
-    CommitmentScheme, OpeningsError, PackingBatch, PackingBatchProof, PackingProverSetup,
-    PackingSetupParams, PackingSource, PackingVerifierSetup, PackingWitnessLayout,
-    PackingWitnessSource, ZkBatchOpeningScheme, ZkOpeningScheme,
+    validate_packing_source_dimension, validate_packing_source_layout, validate_packing_statement,
+    BatchOpeningResult, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme, OpeningsError,
+    PackingBatch, PackingBatchProof, PackingProverSetup, PackingSetupParams, PackingSource,
+    PackingVerifierSetup, PackingWitnessLayout, PackingWitnessSource, ZkBatchOpeningScheme,
+    ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
@@ -30,7 +31,7 @@ impl AkitaPackingScheme {
     where
         S: PackingWitnessSource<AkitaField>,
     {
-        validate_source_fits_setup(setup.pcs.max_num_vars, source.layout())?;
+        validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
         if let Some(polynomial) = packed_source_sparse_polynomial(source)? {
             return AkitaScheme::commit_sparse_polynomial(
                 &setup.pcs,
@@ -53,7 +54,7 @@ impl AkitaPackingScheme {
         T: Transcript<Challenge = AkitaField>,
         S: PackingWitnessSource<AkitaField>,
     {
-        validate_source_fits_setup(setup.pcs.max_num_vars, source.layout())?;
+        validate_packing_source_dimension(setup.pcs.max_num_vars, source.layout())?;
         if let Some(sparse_polynomial) = packed_source_sparse_polynomial(source)? {
             if !has_packing_view(statement) {
                 let native = AkitaScheme::prove_sparse_batch(
@@ -360,14 +361,7 @@ where
     S: PackingWitnessSource<AkitaField>,
 {
     let shape = validate_packed_adapter_statement(&setup.pcs, &setup.layout, statement)?;
-    let source_layout = source.layout();
-    if source_layout.digest != shape.layout.digest
-        || source_layout.dimension != shape.layout.dimension
-    {
-        return Err(invalid_batch(
-            "Akita packing witness source layout does not match packed statement",
-        ));
-    }
+    validate_packing_source_layout(shape.layout, source)?;
     if !hint.matches_commitment(&shape.commitment) {
         return Err(invalid_batch(
             "Akita packing proof requires one hint matching the packed witness commitment",
@@ -504,19 +498,6 @@ where
     result?;
 
     AkitaSparsePolynomial::from_jolt_unit_indices(layout.dimension, ranks).map(Some)
-}
-
-fn validate_source_fits_setup(
-    max_num_vars: usize,
-    layout: &PackingWitnessLayout,
-) -> Result<(), OpeningsError> {
-    if layout.dimension > max_num_vars {
-        return Err(OpeningsError::PolynomialTooLarge {
-            poly_size: layout.dimension,
-            setup_max: max_num_vars,
-        });
-    }
-    Ok(())
 }
 
 fn singleton_statement(

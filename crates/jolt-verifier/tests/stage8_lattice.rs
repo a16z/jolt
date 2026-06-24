@@ -8,15 +8,14 @@ use jolt_claims::protocols::jolt::{
     formulas::dimensions::REGISTER_ADDRESS_BITS, formulas::ra::JoltRaPolynomialLayout,
     lattice_packed_validity_digest, program_image_validity_requirement, unsigned_inc_chunk_opening,
     unsigned_inc_lower_chunk_count, unsigned_inc_lower_value_lattice_view_formula,
-    unsigned_inc_msb_opening, unsigned_inc_validity_requirements, JoltAdviceKind,
-    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, LatticePackedFamilyId,
-    LatticePackedValidityRequirement, LatticePackedViewFormula, LatticePackedViewTerm,
-    TracePolynomialOrder,
+    unsigned_inc_msb_opening, unsigned_inc_validity_requirements, JoltCommittedPolynomial,
+    JoltOpeningId, JoltRelationId, LatticePackedFamilyId, LatticePackedValidityRequirement,
+    LatticePackedViewFormula, LatticePackedViewTerm, TracePolynomialOrder,
 };
 use jolt_field::{FixedByteSize, Fr, FromPrimitiveInt};
 use jolt_openings::{
     PackingAdviceKind, PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
-    PackingTerm, PackingViewError, PackingViewFormula, PackingWitnessLayout, PhysicalView,
+    PackingTerm, PackingWitnessLayout, PhysicalView,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial, Point};
 use jolt_riscv::CircuitFlags;
@@ -27,8 +26,7 @@ use jolt_verifier::{
             build_lattice_packed_validity_batch, derive_lattice_packed_validity_requirements,
             derive_lattice_packed_validity_statements, derive_lattice_packed_witness_layout,
             jolt_lattice_physical_manifest, jolt_lattice_view_formula, jolt_lattice_view_formulas,
-            lattice_packed_validity_opening_count, lattice_packing_family_id,
-            lattice_packing_view_formula, validate_lattice_packed_witness_layout_config,
+            lattice_packed_validity_opening_count, validate_lattice_packed_witness_layout_config,
             validate_lattice_packed_witness_validity_config,
             validate_lattice_view_validity_coverage, LatticePackedValidityStatement,
             LatticePackedValidityStatementKind, Stage8LogicalManifest, Stage8LogicalOpening,
@@ -120,7 +118,7 @@ fn bytecode_chunk_opening_point() -> (Vec<Fr>, Vec<Fr>) {
 
 fn linear_decoded_terms(formula: &LatticePackedViewFormula<Fr>) -> &[LatticePackedViewTerm<Fr>] {
     match formula {
-        LatticePackedViewFormula::LinearDecoded { terms } => terms,
+        LatticePackedViewFormula::LinearDecoded { terms, .. } => terms,
         _ => panic!("expected linear decoded formula"),
     }
 }
@@ -170,12 +168,7 @@ fn unsigned_increment_validity_layout(log_t: usize, log_k_chunk: usize) -> Packi
         .map(|index| {
             let alphabet = packed_alphabet_with_size(index.alphabet_size)
                 .unwrap_or_else(|error| panic!("packed alphabet should derive: {error}"));
-            PackingFamilySpec::direct(
-                lattice_packing_family_id(&index.family),
-                trace,
-                index.limbs,
-                alphabet,
-            )
+            PackingFamilySpec::direct(index.family, trace, index.limbs, alphabet)
         })
         .collect::<Vec<_>>();
     PackingWitnessLayout::new(specs)
@@ -392,7 +385,10 @@ fn derive_validity_statements_adds_unsigned_increment_chunk_and_msb_checks() {
 fn derive_validity_statements_adds_bytecode_store_rd_disjointness() {
     let chunk = 2;
     let layout = bytecode_source_validity_layout(chunk, 5);
-    let requirement = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk);
+    let requirement = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
+        chunk,
+        CircuitFlags::Store as usize,
+    );
 
     let statements =
         derive_lattice_packed_validity_statements(&layout, std::slice::from_ref(&requirement))
@@ -556,7 +552,10 @@ fn validity_batch_builder_lowers_bytecode_store_rd_disjointness_factors() {
     let chunk = 2;
     let layout = bytecode_source_validity_layout(chunk, 3);
     let statement = LatticePackedValidityStatement {
-        requirement: LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk),
+        requirement: LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
+            chunk,
+            CircuitFlags::Store as usize,
+        ),
         kind: LatticePackedValidityStatementKind::BytecodeStoreRdDisjoint,
         num_vars: 3,
         degree: 3,
@@ -915,7 +914,10 @@ fn validity_coverage_requires_bytecode_store_rd_disjointness() {
         2,
         1,
     );
-    let disjoint = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(0);
+    let disjoint = LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
+        0,
+        CircuitFlags::Store as usize,
+    );
 
     assert!(matches!(
         validate_lattice_view_validity_coverage(
@@ -1003,7 +1005,7 @@ fn derive_layout_uses_unsigned_increment_validity_requirements() {
     for requirement in unsigned_inc_validity_requirements(8)
         .unwrap_or_else(|| panic!("unsigned increment requirements should derive"))
     {
-        let family_id = lattice_packing_family_id(&requirement.family);
+        let family_id = requirement.family.clone();
         let family = layout
             .family(&family_id)
             .unwrap_or_else(|| panic!("validity family {family_id:?} should be present"));
@@ -1025,7 +1027,7 @@ fn derive_layout_excludes_committed_bytecode_source_requirements() {
             .unwrap_or_else(|error| panic!("validity requirements should derive: {error}"));
 
     for requirement in bytecode_validity_requirements(0, AkitaField::NUM_BYTES) {
-        let family_id = lattice_packing_family_id(&requirement.family);
+        let family_id = requirement.family.clone();
         assert!(layout.family(&family_id).is_none());
         assert!(!validity_requirements.contains(&requirement));
     }
@@ -1036,109 +1038,6 @@ fn derive_layout_excludes_committed_bytecode_source_requirements() {
             AKITA_FIELD_MODULUS,
         ))
     );
-}
-
-#[test]
-fn lattice_family_ids_convert_to_packing_family_ids() {
-    assert_eq!(
-        lattice_packing_family_id(&LatticePackedFamilyId::AdviceBytes {
-            kind: JoltAdviceKind::Trusted,
-            index: 3,
-        }),
-        PackingFamilyId::AdviceBytes {
-            kind: PackingAdviceKind::Trusted,
-            index: 3,
-        }
-    );
-    assert_eq!(
-        lattice_packing_family_id(&LatticePackedFamilyId::Custom {
-            namespace: 17,
-            index: 5,
-        }),
-        PackingFamilyId::Custom {
-            namespace: 17,
-            index: 5,
-        }
-    );
-    assert_eq!(
-        lattice_packing_family_id(&LatticePackedFamilyId::BytecodeRegisterSelector {
-            chunk: 2,
-            selector: 1,
-        }),
-        PackingFamilyId::BytecodeRegisterSelector {
-            chunk: 2,
-            selector: 1,
-        }
-    );
-    assert_eq!(
-        lattice_packing_family_id(&LatticePackedFamilyId::BytecodeImmBytes { chunk: 2 }),
-        PackingFamilyId::BytecodeImmBytes { chunk: 2 }
-    );
-}
-
-#[test]
-fn lattice_direct_view_converts_to_packing_view_formula() {
-    let formula =
-        LatticePackedViewFormula::<Fr>::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1);
-
-    assert_eq!(
-        lattice_packing_view_formula(&formula)
-            .unwrap_or_else(|error| panic!("direct view should convert: {error}")),
-        PackingViewFormula::direct(PackingFamilyId::UnsignedIncMsb, 0, 1)
-    );
-}
-
-#[test]
-fn lattice_linear_view_converts_terms_to_packing_view_formula() {
-    let formula = LatticePackedViewFormula::linear_decoded(byte_decode_terms::<Fr>(
-        LatticePackedFamilyId::BytecodeChunk { index: 2 },
-        4,
-    ));
-
-    let converted = lattice_packing_view_formula(&formula)
-        .unwrap_or_else(|error| panic!("linear view should convert: {error}"));
-
-    assert!(matches!(
-        converted,
-        PackingViewFormula::LinearDecoded { terms, .. }
-            if terms.len() == 256
-                && terms[7].coefficient == Fr::from_u64(7)
-                && terms[7].family == (PackingFamilyId::BytecodeChunk { index: 2 })
-                && terms[7].limb == 4
-                && terms[7].symbol == 7
-    ));
-}
-
-#[test]
-fn lattice_masked_views_require_prior_translation() {
-    assert!(matches!(
-        lattice_packing_view_formula::<Fr>(&LatticePackedViewFormula::masked_decoded(
-            JoltRelationId::UnsignedIncClaimReduction,
-        )),
-        Err(PackingViewError::MaskedViewRequiresTranslation)
-    ));
-}
-
-#[test]
-fn lattice_reduced_masked_view_converts_terms_to_packing_formula() {
-    let formula = LatticePackedViewFormula::reduced_masked(
-        JoltRelationId::UnsignedIncClaimReduction,
-        vec![jolt_claims::protocols::jolt::LatticePackedViewTerm::new(
-            Fr::from_u64(9),
-            LatticePackedFamilyId::UnsignedIncMsb,
-            0,
-            1,
-        )],
-    );
-    assert!(matches!(
-        lattice_packing_view_formula::<Fr>(&formula),
-        Ok(PackingViewFormula::ReducedMasked { terms })
-            if terms.len() == 1
-                && terms[0].coefficient == Fr::from_u64(9)
-                && terms[0].family == PackingFamilyId::UnsignedIncMsb
-                && terms[0].limb == 0
-                && terms[0].symbol == 1
-    ));
 }
 
 #[test]
@@ -1159,7 +1058,7 @@ fn jolt_lattice_resolver_weights_ra_symbols_by_address_point() {
     assert_eq!(formulas[0].0, Stage8OpeningId::from(id));
     assert!(matches!(
         &formulas[0].1,
-        LatticePackedViewFormula::LinearDecoded { terms }
+        LatticePackedViewFormula::LinearDecoded { terms, .. }
             if terms.len() == 4
                 && terms[2].coefficient == expected_weights[2]
                 && terms[2].family == LatticePackedFamilyId::InstructionRa { index: 1 }
@@ -1219,11 +1118,11 @@ fn jolt_lattice_resolver_keeps_precommitted_finals_out_of_w_pack() {
         .unwrap_or_else(|error| panic!("untrusted advice view should resolve: {error}"));
     assert!(matches!(
         untrusted_formula,
-        LatticePackedViewFormula::LinearDecoded { terms }
+        LatticePackedViewFormula::LinearDecoded { terms, .. }
             if terms.len() == 256
                 && terms[7].coefficient == Fr::from_u64(7)
                 && terms[7].family == (LatticePackedFamilyId::AdviceBytes {
-                    kind: JoltAdviceKind::Untrusted,
+                    kind: PackingAdviceKind::Untrusted,
                     index: 0,
                 })
                 && terms[7].limb == 0

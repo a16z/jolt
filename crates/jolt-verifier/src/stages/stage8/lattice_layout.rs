@@ -14,21 +14,17 @@ use jolt_akita::AKITA_FIELD_MODULUS;
 use jolt_claims::protocols::field_inline::formulas::lattice as field_lattice;
 use jolt_claims::protocols::jolt::{
     advice_bytes_validity_requirement, formulas::ra::JoltRaPolynomialLayout,
-    lattice_packed_validity_digest, unsigned_inc_validity_requirements, AdviceClaimReductionLayout,
-    JoltAdviceKind, LatticePackedFamilyId, LatticePackedValidityKind,
-    LatticePackedValidityRequirement,
+    unsigned_inc_validity_requirements, AdviceClaimReductionLayout, JoltAdviceKind,
 };
 use jolt_field::FixedByteSize;
 use jolt_openings::{
-    PackingAdviceKind, PackingAlphabet, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
+    packing_validity_digest, PackingAdviceKind, PackingAlphabet, PackingFactDomain,
+    PackingFamilyId, PackingFamilySpec, PackingValidityKind, PackingValidityRequirement,
     PackingWitnessLayout,
 };
 use jolt_riscv::CircuitFlags;
 
-use super::{
-    invalid_lattice_config, invalid_precommitted_schedule, lattice_packing_advice_kind,
-    lattice_packing_family_id,
-};
+use super::{invalid_lattice_config, invalid_precommitted_schedule};
 
 pub fn derive_lattice_packed_witness_layout(
     config: &JoltProtocolConfig,
@@ -99,7 +95,7 @@ pub fn derive_lattice_packed_validity_requirements(
     config: &JoltProtocolConfig,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
-) -> Result<Vec<LatticePackedValidityRequirement>, VerifierError> {
+) -> Result<Vec<PackingValidityRequirement>, VerifierError> {
     if validate_protocol_config(config)? != PcsFamily::Lattice {
         return Err(invalid_lattice_config(
             "lattice packed validity derivation requires lattice PCS mode",
@@ -145,7 +141,7 @@ pub fn lattice_protocol_config_for_packed_witness_layout(
         packed_witness: PackedWitnessConfig {
             layout_digest: Some(layout.digest),
             d_pack: Some(layout.dimension),
-            validity_digest: Some(lattice_packed_validity_digest(&validity_requirements)),
+            validity_digest: Some(packing_validity_digest(&validity_requirements)),
         },
         field_inline: FieldInlineLatticeConfig {
             enabled: layout_has_field_rd_inc(layout),
@@ -160,7 +156,7 @@ pub fn lattice_protocol_config_for_packed_witness_layout(
 
 pub fn lattice_validity_requirements_for_packed_witness_layout(
     layout: &PackingWitnessLayout,
-) -> Vec<LatticePackedValidityRequirement> {
+) -> Vec<PackingValidityRequirement> {
     let mut requirements = layout
         .families
         .iter()
@@ -169,92 +165,89 @@ pub fn lattice_validity_requirements_for_packed_witness_layout(
             let alphabet_size = family.alphabet.size();
             match family.id {
                 PackingFamilyId::UnsignedIncChunk { index } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::UnsignedIncChunk { index },
+                    Some(PackingValidityRequirement::exact_one_hot(
+                        PackingFamilyId::UnsignedIncChunk { index },
                         limbs,
                         alphabet_size,
                     ))
                 }
                 PackingFamilyId::UnsignedIncMsb => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::UnsignedIncMsb,
+                    Some(PackingValidityRequirement::boolean_indicator(
+                        PackingFamilyId::UnsignedIncMsb,
                         limbs,
                         alphabet_size,
                         1,
                     ))
                 }
                 PackingFamilyId::FieldRdIncByte { index } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::FieldRdIncByte { index },
+                    Some(PackingValidityRequirement::exact_one_hot(
+                        PackingFamilyId::FieldRdIncByte { index },
                         limbs,
                         alphabet_size,
                     ))
                 }
                 PackingFamilyId::AdviceBytes { kind, index } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::AdviceBytes {
-                            kind: jolt_advice_kind(kind),
-                            index,
-                        },
+                    Some(PackingValidityRequirement::exact_one_hot(
+                        PackingFamilyId::AdviceBytes { kind, index },
                         limbs,
                         alphabet_size,
                     ))
                 }
                 PackingFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-                    Some(LatticePackedValidityRequirement::optional_one_hot(
-                        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector },
+                    Some(PackingValidityRequirement::optional_one_hot(
+                        PackingFamilyId::BytecodeRegisterSelector { chunk, selector },
                         limbs,
                         alphabet_size,
                     ))
                 }
                 PackingFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag },
+                    Some(PackingValidityRequirement::boolean_indicator(
+                        PackingFamilyId::BytecodeCircuitFlag { chunk, flag },
                         limbs,
                         alphabet_size,
                         1,
                     ))
                 }
                 PackingFamilyId::BytecodeInstructionFlag { chunk, flag } => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag },
+                    Some(PackingValidityRequirement::boolean_indicator(
+                        PackingFamilyId::BytecodeInstructionFlag { chunk, flag },
                         limbs,
                         alphabet_size,
                         1,
                     ))
                 }
                 PackingFamilyId::BytecodeLookupSelector { chunk } => {
-                    Some(LatticePackedValidityRequirement::optional_one_hot(
-                        LatticePackedFamilyId::BytecodeLookupSelector { chunk },
+                    Some(PackingValidityRequirement::optional_one_hot(
+                        PackingFamilyId::BytecodeLookupSelector { chunk },
                         limbs,
                         alphabet_size,
                     ))
                 }
                 PackingFamilyId::BytecodeRafFlag { chunk } => {
-                    Some(LatticePackedValidityRequirement::boolean_indicator(
-                        LatticePackedFamilyId::BytecodeRafFlag { chunk },
+                    Some(PackingValidityRequirement::boolean_indicator(
+                        PackingFamilyId::BytecodeRafFlag { chunk },
                         limbs,
                         alphabet_size,
                         1,
                     ))
                 }
                 PackingFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk },
+                    Some(PackingValidityRequirement::exact_one_hot(
+                        PackingFamilyId::BytecodeUnexpandedPcBytes { chunk },
                         limbs,
                         alphabet_size,
                     ))
                 }
                 PackingFamilyId::BytecodeImmBytes { chunk } => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::BytecodeImmBytes { chunk },
+                    Some(PackingValidityRequirement::exact_one_hot(
+                        PackingFamilyId::BytecodeImmBytes { chunk },
                         limbs,
                         alphabet_size,
                     ))
                 }
                 PackingFamilyId::ProgramImageInit => {
-                    Some(LatticePackedValidityRequirement::exact_one_hot(
-                        LatticePackedFamilyId::ProgramImageInit,
+                    Some(PackingValidityRequirement::exact_one_hot(
+                        PackingFamilyId::ProgramImageInit,
                         limbs,
                         alphabet_size,
                     ))
@@ -278,7 +271,10 @@ pub fn lattice_validity_requirements_for_packed_witness_layout(
                 .family(&PackingFamilyId::BytecodeRegisterSelector { chunk, selector: 2 })
                 .is_some()
         {
-            requirements.push(LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk));
+            requirements.push(PackingValidityRequirement::bytecode_store_rd_disjoint(
+                chunk,
+                CircuitFlags::Store as usize,
+            ));
         }
     }
     requirements
@@ -291,7 +287,7 @@ pub fn validate_lattice_packed_witness_validity_config(
 ) -> Result<(), VerifierError> {
     let requirements =
         derive_lattice_packed_validity_requirements(config, log_k_chunk, precommitted)?;
-    let digest = lattice_packed_validity_digest(&requirements);
+    let digest = packing_validity_digest(&requirements);
     if config.lattice.packed_witness.validity_digest != Some(digest) {
         return Err(invalid_lattice_config(
             "configured lattice packed validity digest does not match derived requirements",
@@ -352,10 +348,10 @@ fn advice_family(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
 ) -> Result<PackingFamilySpec, VerifierError> {
-    let packed_kind = lattice_packing_advice_kind(kind);
+    let packed_kind = packing_advice_kind(kind);
     let requirement = advice_bytes_validity_requirement(kind);
     Ok(PackingFamilySpec::direct(
-        lattice_packing_family_id(&requirement.family),
+        requirement.family,
         PackingFactDomain::AdviceBytes {
             kind: packed_kind,
             log_bytes: layout.advice_shape().total_vars() + 3,
@@ -367,19 +363,19 @@ fn advice_family(
 
 fn extend_validity_requirement_families(
     specs: &mut Vec<PackingFamilySpec>,
-    requirements: &[LatticePackedValidityRequirement],
+    requirements: &[PackingValidityRequirement],
     domain: PackingFactDomain,
 ) -> Result<(), VerifierError> {
     for requirement in requirements {
         if matches!(
             requirement.kind,
-            LatticePackedValidityKind::BytecodeStoreRdDisjoint
-                | LatticePackedValidityKind::FieldElementCanonicalBytes { .. }
+            PackingValidityKind::BytecodeStoreRdDisjoint
+                | PackingValidityKind::FieldElementCanonicalBytes { .. }
         ) {
             continue;
         }
         specs.push(PackingFamilySpec::direct(
-            lattice_packing_family_id(&requirement.family),
+            requirement.family.clone(),
             domain,
             requirement.limbs,
             packed_alphabet_with_size(requirement.alphabet_size)?,
@@ -389,7 +385,7 @@ fn extend_validity_requirement_families(
 }
 
 #[cfg(feature = "field-inline")]
-fn field_rd_inc_validity_requirements() -> Vec<LatticePackedValidityRequirement> {
+fn field_rd_inc_validity_requirements() -> Vec<PackingValidityRequirement> {
     let mut requirements = field_lattice::field_rd_inc_validity_requirements(AkitaField::NUM_BYTES);
     requirements.push(field_lattice::field_rd_inc_canonical_bytes_requirement(
         AkitaField::NUM_BYTES,
@@ -399,11 +395,11 @@ fn field_rd_inc_validity_requirements() -> Vec<LatticePackedValidityRequirement>
 }
 
 #[cfg(not(feature = "field-inline"))]
-fn field_rd_inc_validity_requirements() -> Vec<LatticePackedValidityRequirement> {
+fn field_rd_inc_validity_requirements() -> Vec<PackingValidityRequirement> {
     (0..AkitaField::NUM_BYTES)
         .map(|index| {
-            LatticePackedValidityRequirement::exact_one_hot(
-                LatticePackedFamilyId::FieldRdIncByte { index },
+            PackingValidityRequirement::exact_one_hot(
+                PackingFamilyId::FieldRdIncByte { index },
                 1,
                 256,
             )
@@ -438,10 +434,10 @@ fn require_advice_layout(
     })
 }
 
-fn jolt_advice_kind(kind: PackingAdviceKind) -> JoltAdviceKind {
+fn packing_advice_kind(kind: JoltAdviceKind) -> PackingAdviceKind {
     match kind {
-        PackingAdviceKind::Trusted => JoltAdviceKind::Trusted,
-        PackingAdviceKind::Untrusted => JoltAdviceKind::Untrusted,
+        JoltAdviceKind::Trusted => PackingAdviceKind::Trusted,
+        JoltAdviceKind::Untrusted => PackingAdviceKind::Untrusted,
     }
 }
 

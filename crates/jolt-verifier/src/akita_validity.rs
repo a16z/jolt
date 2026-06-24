@@ -14,9 +14,9 @@ use crate::{
             build_lattice_packed_validity_batch, derive_lattice_packed_validity_requirements,
             derive_lattice_packed_validity_statements, field_element_canonical_factors,
             field_element_canonical_value_from_openings, lattice_packed_validity_claims,
-            lattice_packed_validity_opening_count, lattice_packing_family_id,
-            sample_lattice_packed_validity_eq_points, FieldCanonicalFactor,
-            LatticePackedValidityStatement, LatticePackedValidityStatementKind,
+            lattice_packed_validity_opening_count, sample_lattice_packed_validity_eq_points,
+            FieldCanonicalFactor, LatticePackedValidityStatement,
+            LatticePackedValidityStatementKind,
         },
         PrecommittedSchedule,
     },
@@ -24,10 +24,10 @@ use crate::{
 };
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaCommitment, AkitaField};
-use jolt_claims::protocols::jolt::{
-    LatticePackedFamilyId, LatticePackedValidityKind, LatticePackedValidityRequirement,
+use jolt_openings::{
+    PackingFamilyId, PackingValidityKind, PackingValidityRequirement, PackingWitnessLayout,
+    PackingWitnessSource,
 };
-use jolt_openings::{PackingFamilyId, PackingWitnessLayout, PackingWitnessSource};
 use jolt_poly::{try_eq_mle, EqPolynomial};
 use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{append_sumcheck_claim, ClearProof, SumcheckProof};
@@ -258,7 +258,7 @@ fn validity_opening_value<S>(
 where
     S: PackingWitnessSource<AkitaField>,
 {
-    let family_id = lattice_packing_family_id(&statement.requirement.family);
+    let family_id = statement.requirement.family.clone();
     let shape = validity_statement_shape(source.layout(), statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
     let row_weights = EqPolynomial::<AkitaField>::evals(point_parts.row, None);
@@ -283,7 +283,7 @@ where
             SymbolWeights::All,
         ),
         LatticePackedValidityStatementKind::BooleanIndicator => {
-            let LatticePackedValidityKind::BooleanIndicator { symbol } = statement.requirement.kind
+            let PackingValidityKind::BooleanIndicator { symbol } = statement.requirement.kind
             else {
                 return Err(VerifierError::InvalidProtocolConfig {
                     reason: "boolean-indicator validity statement has non-indicator requirement"
@@ -528,9 +528,9 @@ where
 }
 
 fn bytecode_store_rd_disjoint_chunk(
-    requirement: &LatticePackedValidityRequirement,
+    requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
-    let LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
+    let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
         return Err(VerifierError::InvalidProtocolConfig {
             reason: "bytecode Store/Rd disjointness must be anchored on the Store circuit flag"
                 .to_string(),
@@ -764,12 +764,12 @@ mod tests {
             dimensions::{TracePolynomialOrder, REGISTER_ADDRESS_BITS},
             ra::JoltRaPolynomialLayout,
         },
-        lattice_packed_validity_digest, JoltAdviceKind,
     };
     use jolt_field::FixedByteSize;
     use jolt_openings::{
-        CommitmentScheme, PackingAdviceKind, PackingAlphabet, PackingCellAddress,
-        PackingFactDomain, PackingFamilySpec, PackingSetupParams, SparsePackingWitness,
+        packing_validity_digest, CommitmentScheme, PackingAdviceKind, PackingAlphabet,
+        PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingFamilySpec,
+        PackingSetupParams, PackingValidityKind, PackingValidityRequirement, SparsePackingWitness,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
 
@@ -844,7 +844,7 @@ mod tests {
                 derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
                     .expect("validity requirements should derive");
             config.lattice.packed_witness.validity_digest =
-                Some(lattice_packed_validity_digest(&requirements));
+                Some(packing_validity_digest(&requirements));
             let source = validity_default_source(&layout, &requirements);
             let params = akita_packing_params(&layout, 1);
             let (prover_setup, verifier_setup) = AkitaPackingScheme::setup(params);
@@ -938,7 +938,7 @@ mod tests {
                 derive_lattice_packed_validity_requirements(&config, log_k_chunk, &precommitted)
                     .expect("validity requirements should derive");
             config.lattice.packed_witness.validity_digest =
-                Some(lattice_packed_validity_digest(&requirements));
+                Some(packing_validity_digest(&requirements));
 
             let modulus_bytes = jolt_akita::AKITA_FIELD_MODULUS.to_le_bytes();
             let source =
@@ -989,7 +989,7 @@ mod tests {
         );
         let mut config = lattice_protocol_config_for_packed_witness_layout(&layout);
         config.lattice.packed_witness.validity_digest =
-            Some(lattice_packed_validity_digest(&requirements));
+            Some(packing_validity_digest(&requirements));
         let params = akita_packing_params(&layout, 1);
         let (prover_setup, _) = AkitaPackingScheme::setup(params);
 
@@ -1053,7 +1053,7 @@ mod tests {
             .find(|statement| {
                 matches!(
                     statement.requirement.family,
-                    LatticePackedFamilyId::FieldRdIncByte { index: 0 }
+                    PackingFamilyId::FieldRdIncByte { index: 0 }
                 ) && statement.kind
                     == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
             })
@@ -1078,7 +1078,7 @@ mod tests {
             .find(|statement| {
                 matches!(
                     statement.requirement.family,
-                    LatticePackedFamilyId::BytecodeImmBytes { chunk: 0 }
+                    PackingFamilyId::BytecodeImmBytes { chunk: 0 }
                 ) && statement.kind
                     == LatticePackedValidityStatementKind::FieldElementCanonicalBytes
             })
@@ -1107,8 +1107,8 @@ mod tests {
         .expect("malformed advice source should build");
         let statement = validity_statement(
             &statements,
-            LatticePackedFamilyId::AdviceBytes {
-                kind: JoltAdviceKind::Untrusted,
+            PackingFamilyId::AdviceBytes {
+                kind: PackingAdviceKind::Untrusted,
                 index: 0,
             },
             LatticePackedValidityStatementKind::ExactOneHotRowSum,
@@ -1137,7 +1137,7 @@ mod tests {
         .expect("malformed bytecode selector source should build");
         let statement = validity_statement(
             &statements,
-            LatticePackedFamilyId::BytecodeRegisterSelector {
+            PackingFamilyId::BytecodeRegisterSelector {
                 chunk: 0,
                 selector: 0,
             },
@@ -1162,7 +1162,7 @@ mod tests {
         .expect("malformed bytecode flag source should build");
         let statement = validity_statement(
             &statements,
-            LatticePackedFamilyId::BytecodeCircuitFlag { chunk: 0, flag },
+            PackingFamilyId::BytecodeCircuitFlag { chunk: 0, flag },
             LatticePackedValidityStatementKind::BooleanIndicator,
         );
 
@@ -1220,7 +1220,7 @@ mod tests {
     fn small_bytecode_validity_context() -> (
         PackingWitnessLayout,
         Vec<LatticePackedValidityStatement>,
-        Vec<LatticePackedValidityRequirement>,
+        Vec<PackingValidityRequirement>,
     ) {
         let specs = vec![
             PackingFamilySpec::direct(
@@ -1289,7 +1289,7 @@ mod tests {
 
     fn validity_statement(
         statements: &[LatticePackedValidityStatement],
-        family: LatticePackedFamilyId,
+        family: PackingFamilyId,
         kind: LatticePackedValidityStatementKind,
     ) -> &LatticePackedValidityStatement {
         statements
@@ -1326,7 +1326,7 @@ mod tests {
 
     fn validity_default_source(
         layout: &PackingWitnessLayout,
-        requirements: &[LatticePackedValidityRequirement],
+        requirements: &[PackingValidityRequirement],
     ) -> SparsePackingWitness<AkitaField> {
         validity_source_with_symbols(layout, requirements, |_, _| 0)
     }
@@ -1334,39 +1334,39 @@ mod tests {
     #[cfg(feature = "field-inline")]
     fn validity_source_with_field_rd_inc_bytes(
         layout: &PackingWitnessLayout,
-        requirements: &[LatticePackedValidityRequirement],
+        requirements: &[PackingValidityRequirement],
         bytes: &[u8],
     ) -> SparsePackingWitness<AkitaField> {
         validity_source_with_symbols(layout, requirements, |family, _| match family {
-            LatticePackedFamilyId::FieldRdIncByte { index } => bytes[*index] as usize,
+            PackingFamilyId::FieldRdIncByte { index } => bytes[*index] as usize,
             _ => 0,
         })
     }
 
     fn validity_source_with_bytecode_imm_bytes(
         layout: &PackingWitnessLayout,
-        requirements: &[LatticePackedValidityRequirement],
+        requirements: &[PackingValidityRequirement],
         bytes: &[u8],
     ) -> SparsePackingWitness<AkitaField> {
         validity_source_with_symbols(layout, requirements, |family, limb| match family {
-            LatticePackedFamilyId::BytecodeImmBytes { .. } => bytes[limb] as usize,
+            PackingFamilyId::BytecodeImmBytes { .. } => bytes[limb] as usize,
             _ => 0,
         })
     }
 
     fn validity_source_with_symbols(
         layout: &PackingWitnessLayout,
-        requirements: &[LatticePackedValidityRequirement],
-        mut symbol_for: impl FnMut(&LatticePackedFamilyId, usize) -> usize,
+        requirements: &[PackingValidityRequirement],
+        mut symbol_for: impl FnMut(&PackingFamilyId, usize) -> usize,
     ) -> SparsePackingWitness<AkitaField> {
         let mut cells = Vec::new();
         for requirement in requirements {
-            let family_id = lattice_packing_family_id(&requirement.family);
+            let family_id = requirement.family.clone();
             let family = layout
                 .family(&family_id)
                 .expect("validity family should exist");
             let rows = family.domain.rows().expect("family rows should derive");
-            if !matches!(requirement.kind, LatticePackedValidityKind::ExactOneHot) {
+            if !matches!(requirement.kind, PackingValidityKind::ExactOneHot) {
                 continue;
             }
             for row in 0..rows {

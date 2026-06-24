@@ -13,10 +13,10 @@ default = []
 field-inline = []
 
 [dependencies]
-blake2.workspace = true
 derive_more.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
+jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 serde = { workspace = true, features = ["alloc", "derive"] }

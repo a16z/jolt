@@ -1,7 +1,6 @@
-use blake2::digest::consts::U32;
-use blake2::{Blake2b, Digest};
 use jolt_field::{Field, FromPrimitiveInt, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
+use jolt_openings::PackingAdviceKind;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 use serde::{Deserialize, Serialize};
@@ -23,313 +22,13 @@ use jolt_riscv::CircuitFlags;
 
 pub const UNSIGNED_INC_BITS: usize = 64;
 
-#[derive(Hash, PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum LatticePackedFamilyId {
-    InstructionRa { index: usize },
-    BytecodeRa { index: usize },
-    RamRa { index: usize },
-    UnsignedIncChunk { index: usize },
-    UnsignedIncMsb,
-    FieldRdIncByte { index: usize },
-    FieldRdIncSign,
-    AdviceBytes { kind: JoltAdviceKind, index: usize },
-    BytecodeChunk { index: usize },
-    BytecodeRegisterSelector { chunk: usize, selector: usize },
-    BytecodeCircuitFlag { chunk: usize, flag: usize },
-    BytecodeInstructionFlag { chunk: usize, flag: usize },
-    BytecodeLookupSelector { chunk: usize },
-    BytecodeRafFlag { chunk: usize },
-    BytecodeUnexpandedPcBytes { chunk: usize },
-    BytecodeImmBytes { chunk: usize },
-    ProgramImageInit,
-    Custom { namespace: u32, index: usize },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LatticePackedViewFormula<F> {
-    Direct {
-        family: LatticePackedFamilyId,
-        limb: usize,
-        symbol: usize,
-    },
-    LinearDecoded {
-        terms: Vec<LatticePackedViewTerm<F>>,
-    },
-    ReducedMasked {
-        relation: JoltRelationId,
-        terms: Vec<LatticePackedViewTerm<F>>,
-    },
-    MaskedDecoded {
-        relation: JoltRelationId,
-    },
-}
-
-impl<F> LatticePackedViewFormula<F> {
-    pub fn direct(family: LatticePackedFamilyId, limb: usize, symbol: usize) -> Self {
-        Self::Direct {
-            family,
-            limb,
-            symbol,
-        }
-    }
-
-    pub fn linear_decoded(terms: Vec<LatticePackedViewTerm<F>>) -> Self {
-        Self::LinearDecoded { terms }
-    }
-
-    pub fn reduced_masked(relation: JoltRelationId, terms: Vec<LatticePackedViewTerm<F>>) -> Self {
-        Self::ReducedMasked { relation, terms }
-    }
-
-    pub fn masked_decoded(relation: JoltRelationId) -> Self {
-        Self::MaskedDecoded { relation }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LatticePackedViewTerm<F> {
-    pub coefficient: F,
-    pub family: LatticePackedFamilyId,
-    pub limb: usize,
-    pub symbol: usize,
-}
-
-impl<F> LatticePackedViewTerm<F> {
-    pub fn new(coefficient: F, family: LatticePackedFamilyId, limb: usize, symbol: usize) -> Self {
-        Self {
-            coefficient,
-            family,
-            limb,
-            symbol,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LatticePackedValidityKind {
-    ExactOneHot,
-    OptionalOneHot,
-    BooleanIndicator { symbol: usize },
-    BytecodeStoreRdDisjoint,
-    FieldElementCanonicalBytes { byte_width: usize, modulus: u128 },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LatticePackedValidityRequirement {
-    pub family: LatticePackedFamilyId,
-    pub limbs: usize,
-    pub alphabet_size: usize,
-    pub kind: LatticePackedValidityKind,
-}
-
-impl LatticePackedValidityRequirement {
-    pub fn exact_one_hot(
-        family: LatticePackedFamilyId,
-        limbs: usize,
-        alphabet_size: usize,
-    ) -> Self {
-        Self {
-            family,
-            limbs,
-            alphabet_size,
-            kind: LatticePackedValidityKind::ExactOneHot,
-        }
-    }
-
-    pub fn optional_one_hot(
-        family: LatticePackedFamilyId,
-        limbs: usize,
-        alphabet_size: usize,
-    ) -> Self {
-        Self {
-            family,
-            limbs,
-            alphabet_size,
-            kind: LatticePackedValidityKind::OptionalOneHot,
-        }
-    }
-
-    pub fn boolean_indicator(
-        family: LatticePackedFamilyId,
-        limbs: usize,
-        alphabet_size: usize,
-        symbol: usize,
-    ) -> Self {
-        Self {
-            family,
-            limbs,
-            alphabet_size,
-            kind: LatticePackedValidityKind::BooleanIndicator { symbol },
-        }
-    }
-
-    pub fn bytecode_store_rd_disjoint(chunk: usize) -> Self {
-        Self {
-            family: LatticePackedFamilyId::BytecodeCircuitFlag {
-                chunk,
-                flag: CircuitFlags::Store as usize,
-            },
-            limbs: 1,
-            alphabet_size: 2,
-            kind: LatticePackedValidityKind::BytecodeStoreRdDisjoint,
-        }
-    }
-
-    pub fn field_element_canonical_bytes(
-        family: LatticePackedFamilyId,
-        byte_width: usize,
-        modulus: u128,
-    ) -> Self {
-        Self {
-            family,
-            limbs: 1,
-            alphabet_size: 256,
-            kind: LatticePackedValidityKind::FieldElementCanonicalBytes {
-                byte_width,
-                modulus,
-            },
-        }
-    }
-}
-
-pub type LatticePackedValidityDigest = [u8; 32];
-
-pub fn lattice_packed_validity_digest(
-    requirements: &[LatticePackedValidityRequirement],
-) -> LatticePackedValidityDigest {
-    let mut encoded_requirements = requirements
-        .iter()
-        .map(encode_validity_requirement)
-        .collect::<Vec<_>>();
-    encoded_requirements.sort();
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"jolt-claims/lattice-packed-validity/v1");
-    write_usize(&mut bytes, encoded_requirements.len());
-    for requirement in encoded_requirements {
-        bytes.extend_from_slice(&requirement);
-    }
-
-    let mut hasher = Blake2b::<U32>::new();
-    hasher.update(&bytes);
-    let result = hasher.finalize();
-    let mut digest = [0u8; 32];
-    digest.copy_from_slice(&result);
-    digest
-}
-
-fn encode_validity_requirement(requirement: &LatticePackedValidityRequirement) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    write_family_id(&mut bytes, &requirement.family);
-    write_usize(&mut bytes, requirement.limbs);
-    write_usize(&mut bytes, requirement.alphabet_size);
-    write_validity_kind(&mut bytes, &requirement.kind);
-    bytes
-}
-
-fn write_validity_kind(bytes: &mut Vec<u8>, kind: &LatticePackedValidityKind) {
-    match kind {
-        LatticePackedValidityKind::ExactOneHot => bytes.push(0),
-        LatticePackedValidityKind::OptionalOneHot => bytes.push(1),
-        LatticePackedValidityKind::BooleanIndicator { symbol } => {
-            bytes.push(2);
-            write_usize(bytes, *symbol);
-        }
-        LatticePackedValidityKind::BytecodeStoreRdDisjoint => bytes.push(3),
-        LatticePackedValidityKind::FieldElementCanonicalBytes {
-            byte_width,
-            modulus,
-        } => {
-            bytes.push(4);
-            write_usize(bytes, *byte_width);
-            bytes.extend_from_slice(&modulus.to_le_bytes());
-        }
-    }
-}
-
-fn write_family_id(bytes: &mut Vec<u8>, id: &LatticePackedFamilyId) {
-    match id {
-        LatticePackedFamilyId::InstructionRa { index } => {
-            bytes.push(0);
-            write_usize(bytes, *index);
-        }
-        LatticePackedFamilyId::BytecodeRa { index } => {
-            bytes.push(1);
-            write_usize(bytes, *index);
-        }
-        LatticePackedFamilyId::RamRa { index } => {
-            bytes.push(2);
-            write_usize(bytes, *index);
-        }
-        LatticePackedFamilyId::UnsignedIncChunk { index } => {
-            bytes.push(3);
-            write_usize(bytes, *index);
-        }
-        LatticePackedFamilyId::UnsignedIncMsb => bytes.push(4),
-        LatticePackedFamilyId::FieldRdIncByte { index } => {
-            bytes.push(9);
-            write_usize(bytes, *index);
-        }
-        LatticePackedFamilyId::FieldRdIncSign => bytes.push(10),
-        LatticePackedFamilyId::AdviceBytes { kind, index } => {
-            bytes.push(11);
-            bytes.push(advice_kind_tag(*kind));
-            write_usize(bytes, *index);
-        }
-        LatticePackedFamilyId::BytecodeChunk { index } => {
-            bytes.push(12);
-            write_usize(bytes, *index);
-        }
-        LatticePackedFamilyId::ProgramImageInit => bytes.push(13),
-        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-            bytes.push(15);
-            write_usize(bytes, *chunk);
-            write_usize(bytes, *selector);
-        }
-        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-            bytes.push(16);
-            write_usize(bytes, *chunk);
-            write_usize(bytes, *flag);
-        }
-        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
-            bytes.push(17);
-            write_usize(bytes, *chunk);
-            write_usize(bytes, *flag);
-        }
-        LatticePackedFamilyId::BytecodeLookupSelector { chunk } => {
-            bytes.push(18);
-            write_usize(bytes, *chunk);
-        }
-        LatticePackedFamilyId::BytecodeRafFlag { chunk } => {
-            bytes.push(19);
-            write_usize(bytes, *chunk);
-        }
-        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
-            bytes.push(20);
-            write_usize(bytes, *chunk);
-        }
-        LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
-            bytes.push(21);
-            write_usize(bytes, *chunk);
-        }
-        LatticePackedFamilyId::Custom { namespace, index } => {
-            bytes.push(14);
-            bytes.extend_from_slice(&namespace.to_le_bytes());
-            write_usize(bytes, *index);
-        }
-    }
-}
-
-fn write_usize(bytes: &mut Vec<u8>, value: usize) {
-    bytes.extend_from_slice(&(value as u64).to_le_bytes());
-}
-
-fn advice_kind_tag(kind: JoltAdviceKind) -> u8 {
-    match kind {
-        JoltAdviceKind::Trusted => 0,
-        JoltAdviceKind::Untrusted => 1,
-    }
-}
+pub use jolt_openings::{
+    packing_validity_digest as lattice_packed_validity_digest,
+    PackingFamilyId as LatticePackedFamilyId, PackingValidityDigest as LatticePackedValidityDigest,
+    PackingValidityKind as LatticePackedValidityKind,
+    PackingValidityRequirement as LatticePackedValidityRequirement,
+    PackingViewFormula as LatticePackedViewFormula, PackingViewTerm as LatticePackedViewTerm,
+};
 
 pub fn inc_virtualization_relation() -> JoltRelationId {
     JoltRelationId::IncVirtualization
@@ -548,7 +247,9 @@ where
     )
 }
 
-pub fn bytecode_store_flag_lattice_view_formula<F>(chunk: usize) -> LatticePackedViewFormula<F> {
+pub fn bytecode_store_flag_lattice_view_formula<F: Field>(
+    chunk: usize,
+) -> LatticePackedViewFormula<F> {
     LatticePackedViewFormula::direct(
         LatticePackedFamilyId::BytecodeCircuitFlag {
             chunk,
@@ -595,7 +296,7 @@ pub fn unsigned_inc_lower_value_terms<F: Field>(
     Some(terms)
 }
 
-pub fn unsigned_inc_msb_lattice_view_formula<F>() -> LatticePackedViewFormula<F> {
+pub fn unsigned_inc_msb_lattice_view_formula<F: Field>() -> LatticePackedViewFormula<F> {
     LatticePackedViewFormula::direct(LatticePackedFamilyId::UnsignedIncMsb, 0, 1)
 }
 
@@ -623,7 +324,13 @@ pub fn unsigned_inc_validity_requirements(
 }
 
 pub fn advice_bytes_validity_requirement(kind: JoltAdviceKind) -> LatticePackedValidityRequirement {
-    byte_validity_requirement(LatticePackedFamilyId::AdviceBytes { kind, index: 0 }, 1)
+    byte_validity_requirement(
+        LatticePackedFamilyId::AdviceBytes {
+            kind: packing_advice_kind(kind),
+            index: 0,
+        },
+        1,
+    )
 }
 
 pub fn program_image_validity_requirement() -> LatticePackedValidityRequirement {
@@ -678,7 +385,12 @@ pub fn bytecode_validity_requirements(
         LatticePackedFamilyId::BytecodeImmBytes { chunk },
         field_byte_width,
     ));
-    requirements.push(LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk));
+    requirements.push(
+        LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
+            chunk,
+            CircuitFlags::Store as usize,
+        ),
+    );
     requirements
 }
 
@@ -699,6 +411,13 @@ fn byte_validity_requirement(
     limbs: usize,
 ) -> LatticePackedValidityRequirement {
     LatticePackedValidityRequirement::exact_one_hot(family, limbs, 256)
+}
+
+fn packing_advice_kind(kind: JoltAdviceKind) -> PackingAdviceKind {
+    match kind {
+        JoltAdviceKind::Trusted => PackingAdviceKind::Trusted,
+        JoltAdviceKind::Untrusted => PackingAdviceKind::Untrusted,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -731,14 +450,14 @@ pub fn final_opening_lattice_requirement(
         ),
         JoltCommittedPolynomial::TrustedAdvice => packed_family_requirement(
             LatticePackedFamilyId::AdviceBytes {
-                kind: JoltAdviceKind::Trusted,
+                kind: PackingAdviceKind::Trusted,
                 index: 0,
             },
             JoltRelationId::AdviceClaimReduction,
         ),
         JoltCommittedPolynomial::UntrustedAdvice => packed_family_requirement(
             LatticePackedFamilyId::AdviceBytes {
-                kind: JoltAdviceKind::Untrusted,
+                kind: PackingAdviceKind::Untrusted,
                 index: 0,
             },
             JoltRelationId::AdviceClaimReduction,
@@ -1352,8 +1071,12 @@ mod tests {
                 256,
             ))
         );
-        assert!(requirements
-            .contains(&LatticePackedValidityRequirement::bytecode_store_rd_disjoint(chunk)));
+        assert!(requirements.contains(
+            &LatticePackedValidityRequirement::bytecode_store_rd_disjoint(
+                chunk,
+                CircuitFlags::Store as usize
+            )
+        ));
     }
 
     #[test]
@@ -1374,7 +1097,7 @@ mod tests {
             advice_bytes_validity_requirement(JoltAdviceKind::Trusted),
             LatticePackedValidityRequirement::exact_one_hot(
                 LatticePackedFamilyId::AdviceBytes {
-                    kind: JoltAdviceKind::Trusted,
+                    kind: PackingAdviceKind::Trusted,
                     index: 0,
                 },
                 1,
@@ -1640,7 +1363,7 @@ mod tests {
         formula: &LatticePackedViewFormula<Fr>,
     ) -> &[LatticePackedViewTerm<Fr>] {
         match formula {
-            LatticePackedViewFormula::LinearDecoded { terms } => terms,
+            LatticePackedViewFormula::LinearDecoded { terms, .. } => terms,
             _ => panic!("expected linear decoded formula"),
         }
     }
