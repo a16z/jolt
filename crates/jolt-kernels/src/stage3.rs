@@ -2686,7 +2686,7 @@ fn round_poly_from_registers<F: Field>(
     gruen_quadratic_poly(split_eq.current_target(), q_constant, previous_claim)
 }
 
-fn instruction_input_split_round_coefficients<F: Field>(
+pub(crate) fn instruction_input_split_round_coefficients<F: Field>(
     factors: &[Vec<F>],
     split_eq: &SplitEqState<F>,
     gamma: F,
@@ -2842,7 +2842,7 @@ fn accumulate_quadratic_coefficients<F: Field>(
     accumulators[1].fmadd(scaled_weight * left_delta, right_delta);
 }
 
-fn registers_split_round_constant<F: Field>(
+pub(crate) fn registers_split_round_constant<F: Field>(
     factors: &[Vec<F>],
     split_eq: &SplitEqState<F>,
     gamma: F,

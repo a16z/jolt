@@ -11,23 +11,27 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Label, LabelWithCount, Transcript};
 use rayon::prelude::*;
 
+use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
+
+#[cfg(feature = "cuda")]
+pub mod cuda;
 mod rv64_typed;
 pub use rv64_typed::{Stage1OuterRv64Data, Stage1Rv64Cycle};
 
-const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
-const OUTER_UNISKIP_DEGREE: usize = 9;
+pub(crate) const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
+pub(crate) const OUTER_UNISKIP_DEGREE: usize = 9;
 const OUTER_UNISKIP_EXTENDED_SIZE: usize = 19;
 const OUTER_UNISKIP_NUM_COEFFS: usize = 28;
 const OUTER_UNISKIP_DEGREE_BOUND: usize = OUTER_UNISKIP_NUM_COEFFS - 1;
 const OUTER_UNISKIP_EXTENDED_START: i64 = -(OUTER_UNISKIP_DEGREE as i64);
-const OUTER_UNISKIP_BASE_START: i64 = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
+pub(crate) const OUTER_UNISKIP_BASE_START: i64 = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
 const OUTER_REMAINING_DEGREE_BOUND: usize = 3;
-const DENSE_BIND_PAR_THRESHOLD: usize = 1024;
-const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
-const OUTER_EQ_CONSTRAINT_ROWS: usize =
+pub(crate) const OUTER_FIRST_GROUP_ROWS: [usize; 10] = [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+pub(crate) const OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
+pub(crate) const OUTER_EQ_CONSTRAINT_ROWS: usize =
     OUTER_FIRST_GROUP_ROWS.len() + OUTER_SECOND_GROUP_ROWS.len();
-const OUTER_UNISKIP_TARGET_COEFFS: [[i64; OUTER_UNISKIP_DOMAIN_SIZE]; OUTER_UNISKIP_DEGREE] = [
+pub(crate) const OUTER_UNISKIP_TARGET_COEFFS: [[i64; OUTER_UNISKIP_DOMAIN_SIZE];
+    OUTER_UNISKIP_DEGREE] = [
     [10, -45, 120, -210, 252, -210, 120, -45, 10, -1],
     [-1, 10, -45, 120, -210, 252, -210, 120, -45, 10],
     [55, -330, 990, -1848, 2310, -1980, 1155, -440, 99, -10],
@@ -266,6 +270,7 @@ pub struct Stage1OracleData<'a, F: Field> {
 pub struct Stage1OuterRemainingContext<'a, F: Field> {
     pub tau: &'a [F],
     pub r0: F,
+    pub backend: &'static str,
 }
 
 pub type Stage1RemainingRoundProof<F> = Result<(Vec<F>, Vec<UnivariatePoly<F>>), Stage1KernelError>;
@@ -275,6 +280,10 @@ pub trait Stage1OuterRemainingEvaluator<F: Field>: Sync {
 
     fn uniskip_extended_evals(&self, _tau: &[F]) -> Option<Vec<F>> {
         None
+    }
+
+    fn uniskip_extended_evals_backend(&self, _backend: &'static str, tau: &[F]) -> Option<Vec<F>> {
+        self.uniskip_extended_evals(tau)
     }
 
     fn evaluate_virtual_oracle(
@@ -362,7 +371,7 @@ impl<'a, F: Field> Stage1ProverInputs<'a, F> {
 pub struct Stage1OuterR1csData<'a, F: Field> {
     pub key: &'a R1csKey<F>,
     pub witness: &'a [F],
-    row_dots: R1csRowDotTable<F>,
+    pub(crate) row_dots: R1csRowDotTable<F>,
 }
 
 impl<'a, F: Field> Stage1OuterR1csData<'a, F> {
@@ -515,7 +524,7 @@ impl<'a, F: Field> Stage1OuterR1csData<'a, F> {
         (az, bz)
     }
 
-    fn group_matvecs_all_uniskip_targets(
+    pub(crate) fn group_matvecs_all_uniskip_targets(
         rows: &[usize],
         target_coeff_fields: &[[F; OUTER_UNISKIP_DOMAIN_SIZE]; OUTER_UNISKIP_DEGREE],
         dots: R1csRowDotSlice<'_, F>,
@@ -689,6 +698,17 @@ impl<F: Field> Stage1OuterRemainingEvaluator<F> for Stage1OuterR1csData<'_, F> {
         Some(extended_evals)
     }
 
+    fn uniskip_extended_evals_backend(&self, backend: &'static str, tau: &[F]) -> Option<Vec<F>> {
+        #[cfg(feature = "cuda")]
+        if backend == "cuda" {
+            if let Some(result) = crate::stage1::cuda::uniskip_extended_evals_cuda(self, tau) {
+                return Some(result);
+            }
+        }
+        let _ = backend;
+        self.uniskip_extended_evals(tau)
+    }
+
     fn evaluate_virtual_oracle(
         &self,
         _context: Stage1OuterRemainingContext<'_, F>,
@@ -724,6 +744,20 @@ impl<F: Field> Stage1OuterRemainingEvaluator<F> for Stage1OuterR1csData<'_, F> {
         initial_claim: F,
         observe_round: &mut dyn FnMut(&UnivariatePoly<F>) -> F,
     ) -> Option<Stage1RemainingRoundProof<F>> {
+        #[cfg(feature = "cuda")]
+        if context.backend == "cuda" {
+            if let Some(result) = crate::stage1::cuda::prove_remaining_rounds_cuda(
+                self,
+                context,
+                num_rounds,
+                batching_coeff,
+                initial_claim,
+                observe_round,
+            ) {
+                return Some(result);
+            }
+        }
+
         let mut state = self.dense_outer_state(context, num_rounds, batching_coeff);
         let mut running_sum = initial_claim * batching_coeff;
         let mut point = Vec::with_capacity(num_rounds);
@@ -1418,13 +1452,12 @@ where
                     kernel: context.kernel.abi,
                     input: "uniskip_extended_evals",
                 })?;
-        owned_extended_evals =
-            evaluator
-                .uniskip_extended_evals(tau)
-                .ok_or(Stage1KernelError::MissingKernelInput {
-                    kernel: context.kernel.abi,
-                    input: "uniskip_extended_evals",
-                })?;
+        owned_extended_evals = evaluator
+            .uniskip_extended_evals_backend(context.kernel.backend, tau)
+            .ok_or(Stage1KernelError::MissingKernelInput {
+                kernel: context.kernel.abi,
+                input: "uniskip_extended_evals",
+            })?;
         owned_extended_evals.as_slice()
     };
     let poly = build_outer_uniskip_poly(extended_evals, tau_high)?;
@@ -1473,7 +1506,11 @@ where
             input: "stage1.uniskip.eval",
         },
     )?;
-    let remaining_context = Stage1OuterRemainingContext { tau, r0 };
+    let remaining_context = Stage1OuterRemainingContext {
+        tau,
+        r0,
+        backend: context.kernel.backend,
+    };
     append_labeled_scalar(transcript, context.driver.claim_label, &input_claim);
     let batching_coeff = transcript.challenge();
     let fast_path = evaluator.prove_remaining_rounds(
@@ -1888,7 +1925,7 @@ where
     }
 }
 
-struct DenseOuterState<F: Field> {
+pub struct DenseOuterState<F: Field> {
     eq: Vec<F>,
     az: Vec<F>,
     bz: Vec<F>,
@@ -1898,8 +1935,35 @@ struct DenseOuterState<F: Field> {
 }
 
 impl<F: Field> DenseOuterState<F> {
+    #[cfg(feature = "cuda")]
+    pub fn from_raw(eq: Vec<F>, az: Vec<F>, bz: Vec<F>) -> Self {
+        Self {
+            eq,
+            az,
+            bz,
+            eq_scratch: Vec::new(),
+            az_scratch: Vec::new(),
+            bz_scratch: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn eq(&self) -> &[F] {
+        &self.eq
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn az(&self) -> &[F] {
+        &self.az
+    }
+
+    #[cfg(feature = "cuda")]
+    pub fn bz(&self) -> &[F] {
+        &self.bz
+    }
+
     #[tracing::instrument(skip_all, name = "DenseOuterState::round_poly")]
-    fn round_poly(&self) -> UnivariatePoly<F> {
+    pub fn round_poly(&self) -> UnivariatePoly<F> {
         let pair_count = self.eq.len() / 2;
         let accumulators = if pair_count >= DENSE_BIND_PAR_THRESHOLD {
             self.eq
@@ -1953,7 +2017,7 @@ impl<F: Field> DenseOuterState<F> {
     }
 
     #[tracing::instrument(skip_all, name = "DenseOuterState::bind")]
-    fn bind(&mut self, challenge: F) {
+    pub fn bind(&mut self, challenge: F) {
         rayon::join(
             || bind_dense_evals_reuse(&mut self.eq, &mut self.eq_scratch, challenge),
             || {
@@ -1989,29 +2053,6 @@ fn accumulate_cubic_product_coefficients<F: Field>(
     coefficients[2].fmadd(eq_delta, az0_bz_delta);
     coefficients[2].fmadd(eq0, az_delta_bz_delta);
     coefficients[3].fmadd(eq_delta, az_delta_bz_delta);
-}
-
-fn bind_dense_evals_reuse<F: Field>(values: &mut Vec<F>, scratch: &mut Vec<F>, challenge: F) {
-    let half = values.len() / 2;
-    scratch.resize(half, F::zero());
-    if half >= DENSE_BIND_PAR_THRESHOLD {
-        scratch
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, output)| {
-                let low = values[index << 1];
-                let high = values[(index << 1) + 1];
-                *output = low + (high - low) * challenge;
-            });
-    } else {
-        for (index, output) in scratch.iter_mut().enumerate() {
-            let low = values[index << 1];
-            let high = values[(index << 1) + 1];
-            *output = low + (high - low) * challenge;
-        }
-    }
-    std::mem::swap(values, scratch);
-    scratch.clear();
 }
 
 fn outer_remaining_round_poly<F: Field>(
@@ -2880,6 +2921,82 @@ mod tests {
             prover_artifacts.sumchecks[1].evals[0].value,
             verifier_artifacts.sumchecks[1].evals[0].value
         );
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn full_stage1_r1cs_data_cuda_matches_cpu() {
+        static CUDA_KERNELS: &[Stage1KernelPlan] = &[
+            Stage1KernelPlan {
+                symbol: "uniskip_kernel",
+                relation: "jolt.stage1.outer.uniskip",
+                kind: "sumcheck",
+                backend: "cpu",
+                abi: "jolt_stage1_outer_uniskip",
+            },
+            Stage1KernelPlan {
+                symbol: "remaining_kernel",
+                relation: "jolt.stage1.outer.remaining",
+                kind: "sumcheck",
+                backend: "cuda",
+                abi: "jolt_stage1_outer_remaining",
+            },
+        ];
+        static CUDA_PROGRAM: Stage1CpuProgramPlan = Stage1CpuProgramPlan {
+            params: Stage1Params {
+                field: "bn254_fr",
+                pcs: "dory",
+                transcript: "blake2b_transcript",
+            },
+            transcript_squeezes: REAL_SQUEEZES,
+            kernels: CUDA_KERNELS,
+            claims: FULL_CLAIMS,
+            batches: FULL_BATCHES,
+            drivers: FULL_DRIVERS,
+            instance_results: &[],
+            evals: REAL_EVALS,
+            opening_claims: &[],
+            opening_batches: &[],
+        };
+
+        let (key, witness) = noop_r1cs_key_and_witness(2);
+        let data = Stage1OuterR1csData::new(&key, &witness).expect("valid R1CS witness shape");
+        let inputs =
+            Stage1ProverInputs::empty(key.num_cycle_vars()).with_outer_remaining_evaluator(&data);
+
+        let mut cpu_executor = Stage1ProverKernelExecutor::new(inputs);
+        let mut cpu_transcript = MockTranscript::<Fr>::new(b"stage1");
+        let _ = execute_stage1_program(
+            &REAL_PROGRAM,
+            Stage1ExecutionMode::Prover,
+            &mut cpu_executor,
+            &mut cpu_transcript,
+        )
+        .expect("cpu stage1 prover succeeds");
+
+        let mut cuda_executor = Stage1ProverKernelExecutor::new(inputs);
+        let mut cuda_transcript = MockTranscript::<Fr>::new(b"stage1");
+        let cuda_artifacts = execute_stage1_program(
+            &CUDA_PROGRAM,
+            Stage1ExecutionMode::Prover,
+            &mut cuda_executor,
+            &mut cuda_transcript,
+        )
+        .expect("cuda stage1 prover succeeds");
+
+        assert_eq!(cpu_transcript.state(), cuda_transcript.state());
+
+        let proof = Stage1Proof::from(cuda_artifacts);
+        let mut verifier_executor = Stage1VerifierKernelExecutor::new(&proof);
+        let mut verifier_transcript = MockTranscript::<Fr>::new(b"stage1");
+        let _ = execute_stage1_program(
+            &REAL_PROGRAM,
+            Stage1ExecutionMode::Verifier,
+            &mut verifier_executor,
+            &mut verifier_transcript,
+        )
+        .expect("verifier accepts cuda-produced proof");
+        assert_eq!(cuda_transcript.state(), verifier_transcript.state());
     }
 
     #[test]

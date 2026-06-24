@@ -12,6 +12,9 @@ categories = ["cryptography"]
 [lints]
 workspace = true
 
+[features]
+cuda = ["dep:cudarc"]
+
 [dependencies]
 jolt-field = { path = "../jolt-field" }
 jolt-lookup-tables = { path = "../jolt-lookup-tables" }
@@ -21,5 +24,33 @@ jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript" }
 jolt-trace = { path = "../jolt-trace" }
 jolt-witness = { path = "../jolt-witness" }
+num-traits = { workspace = true }
 rayon = { workspace = true }
 tracing = { workspace = true }
+cudarc = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
+
+[[bench]]
+name = "bind_dense"
+harness = false
+required-features = ["cuda"]
+
+[[bench]]
+name = "cuda"
+harness = false
+required-features = ["cuda"]
+
+[[bench]]
+name = "split_eq"
+harness = false
+required-features = ["cuda"]
+
+[[bench]]
+name = "dense_outer"
+harness = false
+required-features = ["cuda"]
