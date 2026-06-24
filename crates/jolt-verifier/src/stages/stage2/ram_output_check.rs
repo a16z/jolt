@@ -13,8 +13,8 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::ReadWriteDimensions, ram},
-    JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamOutputCheckPublic,
+    formulas::dimensions::ReadWriteDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
+    RamOutputCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -67,7 +67,6 @@ impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<OpeningClaim<F>> {
 
 pub struct RamOutputCheck<F: Field> {
     symbolic: relations::ram::OutputCheck,
-    claims: JoltRelationClaims<F>,
     read_write_dimensions: ReadWriteDimensions,
     output_address_challenges: Vec<F>,
     public_memory: PublicIoMemory,
@@ -80,7 +79,6 @@ impl<F: Field> RamOutputCheck<F> {
         public_memory: PublicIoMemory,
     ) -> Self {
         Self {
-            claims: ram::output_check(read_write_dimensions),
             symbolic: relations::ram::OutputCheck::new(read_write_dimensions),
             read_write_dimensions,
             output_address_challenges,
@@ -142,10 +140,6 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

@@ -8,8 +8,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::TraceDimensions, spartan},
-    JoltChallengeId, JoltPublicId, JoltRelationClaims, SpartanShiftChallenge, SpartanShiftPublic,
+    formulas::dimensions::TraceDimensions, JoltChallengeId, JoltPublicId, SpartanShiftChallenge,
+    SpartanShiftPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -84,7 +84,6 @@ impl<F: Field> SpartanShiftInputClaims<OpeningClaim<F>> {
 
 pub struct SpartanShift<F: Field> {
     symbolic: relations::spartan::Shift,
-    claims: JoltRelationClaims<F>,
     gamma: F,
     product_uniskip_tau_low: Vec<F>,
     product_remainder_opening_point: Vec<F>,
@@ -98,7 +97,6 @@ impl<F: Field> SpartanShift<F> {
         product_remainder_opening_point: Vec<F>,
     ) -> Self {
         Self {
-            claims: spartan::shift(trace_dimensions),
             symbolic: relations::spartan::Shift::new(trace_dimensions),
             gamma,
             product_uniskip_tau_low,
@@ -114,10 +112,6 @@ impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

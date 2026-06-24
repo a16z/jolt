@@ -14,9 +14,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::TraceDimensions, instruction},
-    InstructionInputChallenge, InstructionInputPublic, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId,
+    formulas::dimensions::TraceDimensions, InstructionInputChallenge, InstructionInputPublic,
+    JoltChallengeId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -99,7 +98,6 @@ impl<F: Field> InstructionInputInputClaims<OpeningClaim<F>> {
 
 pub struct InstructionInput<F: Field> {
     symbolic: relations::instruction::InputVirtualization,
-    claims: JoltRelationClaims<F>,
     gamma: F,
     product_remainder_opening_point: Vec<F>,
 }
@@ -111,7 +109,6 @@ impl<F: Field> InstructionInput<F> {
         product_remainder_opening_point: Vec<F>,
     ) -> Self {
         Self {
-            claims: instruction::input_virtualization(trace_dimensions),
             symbolic: relations::instruction::InputVirtualization::new(trace_dimensions),
             gamma,
             product_remainder_opening_point,
@@ -126,10 +123,6 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

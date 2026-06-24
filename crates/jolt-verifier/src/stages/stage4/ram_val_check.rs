@@ -21,8 +21,8 @@ use jolt_claims::protocols::jolt::{
         ram::{self, RamValCheckInit, RamValCheckInitContribution},
     },
     relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
-    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    RamValCheckChallenge, RamValCheckPublic,
+    JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationId, RamValCheckChallenge,
+    RamValCheckPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;
@@ -119,7 +119,6 @@ impl<F: Field> RamValCheckInputClaims<OpeningClaim<F>> {
 
 pub struct RamValCheck<F: Field> {
     symbolic: RamValCheckSymbolic,
-    claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
     gamma: F,
@@ -161,7 +160,6 @@ impl<F: Field> RamValCheck<F> {
                 .collect(),
         });
         Self {
-            claims: ram::val_check(trace_dimensions, init),
             symbolic,
             trace_dimensions,
             ram_log_k,
@@ -186,10 +184,6 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

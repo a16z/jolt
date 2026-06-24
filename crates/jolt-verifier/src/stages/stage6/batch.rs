@@ -20,7 +20,7 @@ use jolt_claims::protocols::jolt::{
         dimensions::TraceDimensions, instruction::InstructionRaVirtualizationDimensions,
         ram::RamRaVirtualizationDimensions,
     },
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationClaims,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltSumcheckSpec,
     ProgramImageClaimReductionLayout,
 };
 use jolt_field::Field;
@@ -60,10 +60,10 @@ pub enum BytecodeReadRafCycle<'a, F: Field> {
 }
 
 impl<F: Field> BytecodeReadRafCycle<'_, F> {
-    pub fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
+    pub fn spec(&self) -> JoltSumcheckSpec {
         match self {
-            Self::Full(relation) => relation.sumcheck_relation(),
-            Self::Committed(relation) => relation.sumcheck_relation(),
+            Self::Full(relation) => relation.spec(),
+            Self::Committed(relation) => relation.spec(),
         }
     }
 
@@ -351,62 +351,52 @@ impl<'a, F: Field> Stage6Relations<'a, F> {
     /// untrusted advice, bytecode reduction, program-image reduction. The input
     /// claim of each instance is the claimed sum of its sumcheck.
     pub fn sumcheck_claims(&self) -> Result<Vec<SumcheckClaim<F>>, VerifierError> {
-        let claim = |relation: &JoltRelationClaims<F>, input: F| {
-            SumcheckClaim::new(relation.sumcheck.rounds, relation.sumcheck.degree, input)
-        };
+        let claim =
+            |spec: JoltSumcheckSpec, input: F| SumcheckClaim::new(spec.rounds, spec.degree, input);
         let mut claims = vec![
             claim(
-                self.bytecode_read_raf.sumcheck_relation(),
+                self.bytecode_read_raf.spec(),
                 self.bytecode_read_raf
                     .input_claim(&self.bytecode_read_raf_inputs)?,
             ),
             claim(
-                self.booleanity.sumcheck_relation(),
+                self.booleanity.spec(),
                 self.booleanity.input_claim(&self.booleanity_inputs)?,
             ),
             claim(
-                self.ram_hamming.sumcheck_relation(),
+                self.ram_hamming.spec(),
                 self.ram_hamming.input_claim(&self.ram_hamming_inputs)?,
             ),
             claim(
-                self.ram_ra.sumcheck_relation(),
+                self.ram_ra.spec(),
                 self.ram_ra.input_claim(&self.ram_ra_inputs)?,
             ),
             claim(
-                self.instruction_ra.sumcheck_relation(),
+                self.instruction_ra.spec(),
                 self.instruction_ra
                     .input_claim(&self.instruction_ra_inputs)?,
             ),
-            claim(
-                self.inc.sumcheck_relation(),
-                self.inc.input_claim(&self.inc_inputs)?,
-            ),
+            claim(self.inc.spec(), self.inc.input_claim(&self.inc_inputs)?),
         ];
         for relation in [&self.trusted_advice, &self.untrusted_advice]
             .into_iter()
             .flatten()
         {
             claims.push(claim(
-                relation.sumcheck_relation(),
+                relation.spec(),
                 relation.input_claim(&self.advice_inputs)?,
             ));
         }
         if let (Some(relation), Some(inputs)) =
             (&self.bytecode_reduction, &self.bytecode_reduction_inputs)
         {
-            claims.push(claim(
-                relation.sumcheck_relation(),
-                relation.input_claim(inputs)?,
-            ));
+            claims.push(claim(relation.spec(), relation.input_claim(inputs)?));
         }
         if let (Some(relation), Some(inputs)) = (
             &self.program_image_reduction,
             &self.program_image_reduction_inputs,
         ) {
-            claims.push(claim(
-                relation.sumcheck_relation(),
-                relation.input_claim(inputs)?,
-            ));
+            claims.push(claim(relation.spec(), relation.input_claim(inputs)?));
         }
         Ok(claims)
     }

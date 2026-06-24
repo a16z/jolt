@@ -9,9 +9,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::ReadWriteDimensions, ram},
-    JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamReadWriteChallenge,
-    RamReadWritePublic,
+    formulas::dimensions::ReadWriteDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
+    RamReadWriteChallenge, RamReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -68,7 +67,6 @@ impl<F: Field> RamReadWriteInputClaims<OpeningClaim<F>> {
 
 pub struct RamReadWriteChecking<F: Field> {
     symbolic: relations::ram::ReadWriteChecking,
-    claims: JoltRelationClaims<F>,
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     gamma: F,
@@ -83,7 +81,6 @@ impl<F: Field> RamReadWriteChecking<F> {
         product_tau_low: Vec<F>,
     ) -> Self {
         Self {
-            claims: ram::read_write_checking(dimensions),
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
@@ -107,10 +104,6 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

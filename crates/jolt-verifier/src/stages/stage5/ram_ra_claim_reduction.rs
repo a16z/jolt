@@ -10,8 +10,7 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::TraceDimensions, ram},
-    JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    formulas::dimensions::TraceDimensions, JoltChallengeId, JoltPublicId, JoltRelationId,
     RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -73,7 +72,6 @@ impl<F: Field> RamRaClaimReductionInputClaims<OpeningClaim<F>> {
 
 pub struct RamRaClaimReduction<F: Field> {
     symbolic: relations::ram::RaClaimReduction,
-    claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
     gamma: F,
@@ -82,7 +80,6 @@ pub struct RamRaClaimReduction<F: Field> {
 impl<F: Field> RamRaClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, ram_log_k: usize, gamma: F) -> Self {
         Self {
-            claims: ram::ra_claim_reduction(trace_dimensions),
             symbolic: relations::ram::RaClaimReduction::new(trace_dimensions),
             trace_dimensions,
             ram_log_k,
@@ -105,10 +102,6 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

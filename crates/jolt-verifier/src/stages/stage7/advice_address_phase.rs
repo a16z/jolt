@@ -14,8 +14,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::advice, AdviceClaimReductionLayout, AdviceClaimReductionPublic,
-    JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId, PrecommittedReductionLayout,
+    AdviceClaimReductionLayout, AdviceClaimReductionPublic, JoltAdviceKind, JoltPublicId,
+    JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -51,7 +51,6 @@ pub struct AdviceAddressPhaseInputClaims<C> {
 
 pub struct AdviceAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::advice::AddressPhase,
-    claims: JoltRelationClaims<F>,
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -69,7 +68,6 @@ impl<F: Field> AdviceAddressPhase<F> {
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
-            claims: advice::address_phase(kind, layout.dimensions()),
             symbolic: relations::claim_reductions::advice::AddressPhase::new((
                 kind,
                 layout.dimensions(),
@@ -114,10 +112,6 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

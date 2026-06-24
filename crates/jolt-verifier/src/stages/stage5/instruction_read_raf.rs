@@ -9,9 +9,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::instruction::{self, InstructionReadRafDimensions},
-    InstructionReadRafChallenge, InstructionReadRafPublic, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId,
+    formulas::instruction::InstructionReadRafDimensions, InstructionReadRafChallenge,
+    InstructionReadRafPublic, JoltChallengeId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -86,7 +85,6 @@ impl<F: Field> InstructionReadRafInputClaims<OpeningClaim<F>> {
 
 pub struct InstructionReadRaf<F: Field> {
     symbolic: relations::instruction::ReadRaf,
-    claims: JoltRelationClaims<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
 }
@@ -94,7 +92,6 @@ pub struct InstructionReadRaf<F: Field> {
 impl<F: Field> InstructionReadRaf<F> {
     pub fn new(dimensions: InstructionReadRafDimensions, gamma: F) -> Self {
         Self {
-            claims: instruction::read_raf(dimensions),
             symbolic: relations::instruction::ReadRaf::new(dimensions),
             dimensions,
             gamma,
@@ -133,10 +130,6 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

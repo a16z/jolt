@@ -8,11 +8,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
-        registers,
-    },
-    JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId, RegistersReadWriteChallenge,
+    formulas::dimensions::{ReadWriteDimensions, REGISTER_ADDRESS_BITS},
+    JoltChallengeId, JoltPublicId, JoltRelationId, RegistersReadWriteChallenge,
     RegistersReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
@@ -77,7 +74,6 @@ impl<F: Field> RegistersReadWriteInputClaims<OpeningClaim<F>> {
 
 pub struct RegistersReadWriteChecking<F: Field> {
     symbolic: relations::registers::ReadWriteChecking,
-    claims: JoltRelationClaims<F>,
     register_dimensions: ReadWriteDimensions,
     gamma: F,
 }
@@ -85,7 +81,6 @@ pub struct RegistersReadWriteChecking<F: Field> {
 impl<F: Field> RegistersReadWriteChecking<F> {
     pub fn new(register_dimensions: ReadWriteDimensions, gamma: F) -> Self {
         Self {
-            claims: registers::read_write_checking(register_dimensions),
             symbolic: relations::registers::ReadWriteChecking::new(register_dimensions),
             register_dimensions,
             gamma,
@@ -107,10 +102,6 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

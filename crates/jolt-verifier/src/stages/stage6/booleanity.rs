@@ -12,9 +12,8 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::booleanity::{self, BooleanityDimensions},
-    BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltOpeningId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId,
+    formulas::booleanity::BooleanityDimensions, BooleanityChallenge, BooleanityPublic,
+    JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -69,14 +68,14 @@ impl<F: Field> crate::stages::relations::InputClaims<F>
 
 pub struct BooleanityAddressPhase<F: Field> {
     symbolic: relations::booleanity::BooleanityAddressPhase,
-    claims: JoltRelationClaims<F>,
+    _field: PhantomData<F>,
 }
 
 impl<F: Field> BooleanityAddressPhase<F> {
     pub fn new(dimensions: BooleanityDimensions) -> Self {
         Self {
-            claims: booleanity::booleanity_address_phase(dimensions),
             symbolic: relations::booleanity::BooleanityAddressPhase::new(dimensions),
+            _field: PhantomData,
         }
     }
 }
@@ -88,10 +87,6 @@ impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -143,7 +138,6 @@ impl<F: Field> BooleanityInputClaims<OpeningClaim<F>> {
 
 pub struct Booleanity<F: Field> {
     symbolic: relations::booleanity::BooleanityCyclePhase,
-    claims: JoltRelationClaims<F>,
     dimensions: BooleanityDimensions,
     gamma: F,
     /// The address opening prefix from the stage-6a phase.
@@ -162,7 +156,6 @@ impl<F: Field> Booleanity<F> {
         reference_cycle: Vec<F>,
     ) -> Self {
         Self {
-            claims: booleanity::booleanity_cycle_phase(dimensions),
             symbolic: relations::booleanity::BooleanityCyclePhase::new(dimensions),
             dimensions,
             gamma,
@@ -187,10 +180,6 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

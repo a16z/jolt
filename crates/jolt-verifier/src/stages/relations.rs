@@ -182,11 +182,6 @@ where
         self.symbolic().spec()
     }
 
-    /// TRANSITION: the lowered `JoltRelationClaims` form, still consumed by the
-    /// stage-6 BlindFold batch bundle. Removed once BlindFold takes the symbolic
-    /// expressions directly (Phases 5-6/9).
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F>;
-
     /// Map this instance's sumcheck point and the upstream input points into the
     /// produced openings' points. Value-independent, so it runs in both the clear
     /// and ZK paths; any cross-input consistency required for a well-defined point

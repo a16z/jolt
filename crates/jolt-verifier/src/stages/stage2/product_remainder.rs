@@ -13,8 +13,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::spartan::{self, SpartanProductDimensions},
-    JoltPublicId, JoltRelationClaims, JoltRelationId, SpartanProductVirtualizationPublic,
+    formulas::spartan::SpartanProductDimensions, JoltPublicId, JoltRelationId,
+    SpartanProductVirtualizationPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -85,7 +85,6 @@ impl<F: Field> ProductRemainderInputClaims<OpeningClaim<F>> {
 
 pub struct ProductRemainder<F: Field> {
     symbolic: relations::spartan::ProductRemainder,
-    claims: JoltRelationClaims<F>,
     uniskip_challenge: F,
     tau_high: F,
     tau_low: Vec<F>,
@@ -99,7 +98,6 @@ impl<F: Field> ProductRemainder<F> {
         tau_low: Vec<F>,
     ) -> Self {
         Self {
-            claims: spartan::product_remainder(dimensions),
             symbolic: relations::spartan::ProductRemainder::new(dimensions),
             uniskip_challenge,
             tau_high,
@@ -122,10 +120,6 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

@@ -8,9 +8,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{claim_reductions::increments, dimensions::TraceDimensions},
-    IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId,
+    formulas::dimensions::TraceDimensions, IncClaimReductionChallenge, IncClaimReductionPublic,
+    JoltChallengeId, JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -68,7 +67,6 @@ impl<F: Field> IncClaimReductionInputClaims<OpeningClaim<F>> {
 
 pub struct IncClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::increments::ClaimReduction,
-    claims: JoltRelationClaims<F>,
     gamma: F,
     ram_read_write_cycle: Vec<F>,
     ram_val_check_cycle: Vec<F>,
@@ -86,7 +84,6 @@ impl<F: Field> IncClaimReduction<F> {
         registers_val_evaluation_cycle: Vec<F>,
     ) -> Self {
         Self {
-            claims: increments::claim_reduction(trace_dimensions),
             symbolic: relations::claim_reductions::increments::ClaimReduction::new(
                 trace_dimensions,
             ),
@@ -113,10 +110,6 @@ impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

@@ -18,12 +18,9 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::{
-        advice, bytecode as bytecode_reduction, bytecode::BytecodeOutputWeightInputs, program_image,
-    },
-    AdviceClaimReductionLayout, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
-    JoltAdviceKind, JoltChallengeId, JoltRelationClaims, JoltRelationId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    formulas::claim_reductions::bytecode::BytecodeOutputWeightInputs, AdviceClaimReductionLayout,
+    BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, JoltAdviceKind, JoltChallengeId,
+    JoltRelationId, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -85,7 +82,6 @@ impl<F: Field> AdviceCyclePhaseInputClaims<OpeningClaim<F>> {
 
 pub struct AdviceCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::advice::CyclePhase,
-    claims: JoltRelationClaims<F>,
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
     /// The RAM address point of the staged advice opening from RAM value-check;
@@ -100,7 +96,6 @@ impl<F: Field> AdviceCyclePhase<F> {
         reference_opening_point: Vec<F>,
     ) -> Self {
         Self {
-            claims: advice::cycle_phase(kind, layout.dimensions()),
             symbolic: relations::claim_reductions::advice::CyclePhase::new((
                 kind,
                 layout.dimensions(),
@@ -141,10 +136,6 @@ impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -229,7 +220,6 @@ impl<F: Field> ProgramImageReductionCyclePhaseInputClaims<OpeningClaim<F>> {
 
 pub struct ProgramImageReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::program_image::CyclePhase,
-    claims: JoltRelationClaims<F>,
     layout: ProgramImageClaimReductionLayout,
     /// The RAM address component of the `RamVal` opening from RAM read-write
     /// checking; the `FinalScale` public compares the produced opening point
@@ -240,7 +230,6 @@ pub struct ProgramImageReductionCyclePhase<F: Field> {
 impl<F: Field> ProgramImageReductionCyclePhase<F> {
     pub fn new(layout: &ProgramImageClaimReductionLayout, r_addr_rw: Vec<F>) -> Self {
         Self {
-            claims: program_image::cycle_phase(layout.dimensions()),
             symbolic: relations::claim_reductions::program_image::CyclePhase::new(
                 layout.dimensions(),
             ),
@@ -264,10 +253,6 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -337,7 +322,6 @@ impl<F: Field> BytecodeReductionCyclePhaseInputClaims<OpeningClaim<F>> {
 
 pub struct BytecodeReductionCyclePhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::CyclePhase,
-    claims: JoltRelationClaims<F>,
     layout: BytecodeClaimReductionLayout,
     eta: F,
     weights: BytecodeReductionWeights<F>,
@@ -351,7 +335,6 @@ impl<F: Field> BytecodeReductionCyclePhase<F> {
         weights: BytecodeReductionWeights<F>,
     ) -> Self {
         Self {
-            claims: bytecode_reduction::cycle_phase(layout.dimensions(), layout.chunk_count()),
             symbolic: relations::claim_reductions::bytecode::CyclePhase::new((
                 layout.dimensions(),
                 layout.chunk_count(),
@@ -386,10 +369,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

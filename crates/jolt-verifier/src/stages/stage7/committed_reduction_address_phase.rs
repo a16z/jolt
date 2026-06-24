@@ -15,13 +15,9 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::{
-        bytecode::{self as bytecode_reduction, BytecodeOutputWeightInputs},
-        program_image,
-    },
-    BytecodeClaimReductionLayout, BytecodeClaimReductionPublic, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-    ProgramImageClaimReductionPublic,
+    formulas::claim_reductions::bytecode::BytecodeOutputWeightInputs, BytecodeClaimReductionLayout,
+    BytecodeClaimReductionPublic, JoltPublicId, JoltRelationId, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -53,7 +49,6 @@ pub struct BytecodeReductionAddressPhaseInputClaims<C> {
 
 pub struct BytecodeReductionAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::bytecode::AddressPhase,
-    claims: JoltRelationClaims<F>,
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
     r_bc: Vec<F>,
@@ -71,7 +66,6 @@ impl<F: Field> BytecodeReductionAddressPhase<F> {
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
-            claims: bytecode_reduction::address_phase(layout.dimensions(), layout.chunk_count()),
             symbolic: relations::claim_reductions::bytecode::AddressPhase::new((
                 layout.dimensions(),
                 layout.chunk_count(),
@@ -107,10 +101,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -178,7 +168,6 @@ pub struct ProgramImageReductionAddressPhaseInputClaims<C> {
 
 pub struct ProgramImageReductionAddressPhase<F: Field> {
     symbolic: relations::claim_reductions::program_image::AddressPhase,
-    claims: JoltRelationClaims<F>,
     layout: ProgramImageClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
     reference_opening_point: Vec<F>,
@@ -194,7 +183,6 @@ impl<F: Field> ProgramImageReductionAddressPhase<F> {
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
-            claims: program_image::address_phase(layout.dimensions()),
             symbolic: relations::claim_reductions::program_image::AddressPhase::new(
                 layout.dimensions(),
             ),
@@ -219,10 +207,6 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

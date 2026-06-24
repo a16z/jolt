@@ -1,12 +1,11 @@
 //! The stage 5 `RegistersValEvaluation` sumcheck instance.
 
+use core::marker::PhantomData;
+
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
-        registers,
-    },
-    JoltPublicId, JoltRelationClaims, JoltRelationId, RegistersValEvaluationPublic,
+    formulas::dimensions::{TraceDimensions, REGISTER_ADDRESS_BITS},
+    JoltPublicId, JoltRelationId, RegistersValEvaluationPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -55,16 +54,16 @@ impl<F: Field> RegistersValEvaluationInputClaims<OpeningClaim<F>> {
 
 pub struct RegistersValEvaluation<F: Field> {
     symbolic: relations::registers::ValEvaluation,
-    claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
+    _field: PhantomData<F>,
 }
 
 impl<F: Field> RegistersValEvaluation<F> {
     pub fn new(trace_dimensions: TraceDimensions) -> Self {
         Self {
-            claims: registers::val_evaluation(trace_dimensions),
             symbolic: relations::registers::ValEvaluation::new(trace_dimensions),
             trace_dimensions,
+            _field: PhantomData,
         }
     }
 }
@@ -83,10 +82,6 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

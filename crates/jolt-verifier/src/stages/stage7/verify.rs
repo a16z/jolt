@@ -513,7 +513,7 @@ impl<F: Field> Stage7Relations<F> {
             .into_iter()
             .flatten()
         {
-            let spec = &relation.sumcheck_relation().sumcheck;
+            let spec = relation.spec();
             claims.push(SumcheckClaim::new(
                 spec.rounds,
                 spec.degree,
@@ -521,7 +521,7 @@ impl<F: Field> Stage7Relations<F> {
             ));
         }
         if let (Some(relation), Some(inputs)) = (&self.bytecode, &self.bytecode_inputs) {
-            let spec = &relation.sumcheck_relation().sumcheck;
+            let spec = relation.spec();
             claims.push(SumcheckClaim::new(
                 spec.rounds,
                 spec.degree,
@@ -529,7 +529,7 @@ impl<F: Field> Stage7Relations<F> {
             ));
         }
         if let (Some(relation), Some(inputs)) = (&self.program_image, &self.program_image_inputs) {
-            let spec = &relation.sumcheck_relation().sumcheck;
+            let spec = relation.spec();
             claims.push(SumcheckClaim::new(
                 spec.rounds,
                 spec.degree,
@@ -549,13 +549,7 @@ impl<F: Field> Stage7Relations<F> {
         let address = |relation: &Option<AdviceAddressPhase<F>>| {
             relation
                 .as_ref()
-                .map(|relation| {
-                    address_phase_point(
-                        batch,
-                        relation.sumcheck_relation().sumcheck.rounds,
-                        relation.id(),
-                    )
-                })
+                .map(|relation| address_phase_point(batch, relation.spec().rounds, relation.id()))
                 .transpose()
         };
         Ok(Stage7InstancePoints {
@@ -567,24 +561,12 @@ impl<F: Field> Stage7Relations<F> {
             bytecode: self
                 .bytecode
                 .as_ref()
-                .map(|relation| {
-                    address_phase_point(
-                        batch,
-                        relation.sumcheck_relation().sumcheck.rounds,
-                        relation.id(),
-                    )
-                })
+                .map(|relation| address_phase_point(batch, relation.spec().rounds, relation.id()))
                 .transpose()?,
             program_image: self
                 .program_image
                 .as_ref()
-                .map(|relation| {
-                    address_phase_point(
-                        batch,
-                        relation.sumcheck_relation().sumcheck.rounds,
-                        relation.id(),
-                    )
-                })
+                .map(|relation| address_phase_point(batch, relation.spec().rounds, relation.id()))
                 .transpose()?,
         })
     }

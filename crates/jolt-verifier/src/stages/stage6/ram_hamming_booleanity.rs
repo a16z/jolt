@@ -9,8 +9,8 @@ use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{dimensions::TraceDimensions, ram},
-    JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamHammingBooleanityPublic,
+    formulas::dimensions::TraceDimensions, JoltOpeningId, JoltPublicId, JoltRelationId,
+    RamHammingBooleanityPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -59,7 +59,6 @@ impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<OpeningClaim<F
 
 pub struct RamHammingBooleanity<F: Field> {
     symbolic: relations::ram::HammingBooleanity,
-    claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     /// The stage-1 Spartan-outer cycle binding that `EqCycle` compares the raw
     /// sumcheck point against.
@@ -69,7 +68,6 @@ pub struct RamHammingBooleanity<F: Field> {
 impl<F: Field> RamHammingBooleanity<F> {
     pub fn new(trace_dimensions: TraceDimensions, stage1_cycle_binding: Vec<F>) -> Self {
         Self {
-            claims: ram::hamming_booleanity(trace_dimensions),
             symbolic: relations::ram::HammingBooleanity::new(trace_dimensions),
             trace_dimensions,
             stage1_cycle_binding,
@@ -91,10 +89,6 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

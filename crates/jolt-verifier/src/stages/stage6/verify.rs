@@ -1886,8 +1886,8 @@ where
     let booleanity_inputs = BooleanityAddressPhaseInputClaims::from_upstream();
     let bytecode_read_raf_input = bytecode_relation.input_claim(bytecode_inputs)?;
     let booleanity_input = booleanity_relation.input_claim(&booleanity_inputs)?;
-    let bytecode_spec = &bytecode_relation.sumcheck_relation().sumcheck;
-    let booleanity_spec = &booleanity_relation.sumcheck_relation().sumcheck;
+    let bytecode_spec = bytecode_relation.spec();
+    let booleanity_spec = booleanity_relation.spec();
     let address_sumcheck_claims = vec![
         SumcheckClaim::new(
             bytecode_spec.rounds,

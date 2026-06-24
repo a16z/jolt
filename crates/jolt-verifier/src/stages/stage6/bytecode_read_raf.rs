@@ -28,8 +28,8 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::bytecode::bytecode_val_stage_opening,
         dimensions::committed_address_chunks,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, JoltVirtualPolynomial,
+    BytecodeReadRafChallenge, JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -199,7 +199,6 @@ impl<F: Field> BytecodeReadRafAddressPhaseInputClaims<OpeningClaim<F>> {
 
 pub struct BytecodeReadRafAddressPhase<F: Field> {
     symbolic: relations::bytecode::ReadRafAddressPhase,
-    claims: JoltRelationClaims<F>,
     /// The bytecode read-RAF gamma and the five per-stage folding gammas
     /// (`stageN_gammas[1]`) the input bind multiplies the stage sub-claims by; the
     /// generic `input_claim` resolves them through [`Self::resolve_challenge`].
@@ -217,7 +216,6 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
         num_val_stages: usize,
     ) -> Self {
         Self {
-            claims: bytecode::read_raf_address_phase(dimensions),
             symbolic: relations::bytecode::ReadRafAddressPhase::new(dimensions),
             gamma,
             stage_gammas,
@@ -233,10 +231,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn resolve_challenge(&self, id: &JoltChallengeId) -> Result<F, VerifierError> {
@@ -330,14 +324,12 @@ pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
 /// on the verifier's existing committed helper for now.
 pub struct BytecodeReadRaf<'a, F: Field> {
     symbolic: relations::bytecode::ReadRafCyclePhase,
-    claims: JoltRelationClaims<F>,
     inputs: BytecodeReadRafCycleInputs<'a, F>,
 }
 
 impl<'a, F: Field> BytecodeReadRaf<'a, F> {
     pub fn new(inputs: BytecodeReadRafCycleInputs<'a, F>) -> Self {
         Self {
-            claims: bytecode::read_raf_cycle_phase(inputs.dimensions),
             symbolic: relations::bytecode::ReadRafCyclePhase::new(inputs.dimensions),
             inputs,
         }
@@ -367,10 +359,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -465,7 +453,6 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 /// into the output, and the committed public values are evaluated once.
 pub struct BytecodeReadRafCommitted<F: Field> {
     symbolic: relations::bytecode::ReadRafCyclePhaseCommitted,
-    claims: JoltRelationClaims<F>,
     dimensions: BytecodeReadRafDimensions,
     gamma: F,
     r_address: Vec<F>,
@@ -478,7 +465,6 @@ pub struct BytecodeReadRafCommitted<F: Field> {
 impl<F: Field> BytecodeReadRafCommitted<F> {
     pub fn new(inputs: BytecodeReadRafCommittedCycleInputs<F>) -> Self {
         Self {
-            claims: bytecode::read_raf_cycle_phase_committed(inputs.dimensions),
             symbolic: relations::bytecode::ReadRafCyclePhaseCommitted::new(inputs.dimensions),
             dimensions: inputs.dimensions,
             gamma: inputs.gamma,
@@ -505,10 +491,6 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
@@ -557,7 +539,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
             },
         );
         let output_openings = bytecode::read_raf_output_openings(self.dimensions);
-        self.claims.output.expression().try_evaluate(
+        self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
                 for (stage, value) in self.val_stages.iter().enumerate() {
                     if *id == bytecode_val_stage_opening(stage) {

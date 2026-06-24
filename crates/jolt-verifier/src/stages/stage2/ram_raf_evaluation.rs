@@ -13,11 +13,8 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::{
-        dimensions::ReadWriteDimensions,
-        ram::{self, RamRafEvaluationDimensions},
-    },
-    JoltPublicId, JoltRelationClaims, JoltRelationId, RamRafEvaluationPublic,
+    formulas::{dimensions::ReadWriteDimensions, ram::RamRafEvaluationDimensions},
+    JoltPublicId, JoltRelationId, RamRafEvaluationPublic,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -65,7 +62,6 @@ impl<F: Field> RamRafEvaluationInputClaims<OpeningClaim<F>> {
 
 pub struct RamRafEvaluation<F: Field> {
     symbolic: relations::ram::RafEvaluation,
-    claims: JoltRelationClaims<F>,
     read_write_dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     lowest_address: u64,
@@ -81,7 +77,6 @@ impl<F: Field> RamRafEvaluation<F> {
         tau_low: Vec<F>,
     ) -> Self {
         Self {
-            claims: ram::raf_evaluation(raf_dimensions),
             symbolic: relations::ram::RafEvaluation::new(raf_dimensions),
             read_write_dimensions,
             ram_log_k,
@@ -105,10 +100,6 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

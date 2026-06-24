@@ -11,9 +11,9 @@
 
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
-    formulas::claim_reductions::hamming_weight::{self, HammingWeightClaimReductionDimensions},
+    formulas::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions,
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
-    JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -67,7 +67,6 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
 
 pub struct HammingWeightClaimReduction<F: Field> {
     symbolic: relations::claim_reductions::hamming_weight::ClaimReduction,
-    claims: JoltRelationClaims<F>,
     dimensions: HammingWeightClaimReductionDimensions,
     gamma: F,
     /// The shared cycle suffix appended to every produced opening point (the
@@ -89,7 +88,6 @@ impl<F: Field> HammingWeightClaimReduction<F> {
         virtualization_points: Vec<Vec<F>>,
     ) -> Self {
         Self {
-            claims: hamming_weight::claim_reduction(dimensions),
             symbolic: relations::claim_reductions::hamming_weight::ClaimReduction::new(dimensions),
             dimensions,
             gamma,
@@ -142,10 +140,6 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(

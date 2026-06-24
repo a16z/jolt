@@ -10,11 +10,10 @@
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::protocols::jolt::{
     formulas::{
-        dimensions::committed_address_chunks, instruction,
-        instruction::InstructionRaVirtualizationDimensions,
+        dimensions::committed_address_chunks, instruction::InstructionRaVirtualizationDimensions,
     },
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltChallengeId,
-    JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltPublicId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
@@ -59,7 +58,6 @@ impl<F: Field> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
 
 pub struct InstructionRaVirtualization<F: Field> {
     symbolic: relations::instruction::RaVirtualization,
-    claims: JoltRelationClaims<F>,
     dimensions: InstructionRaVirtualizationDimensions,
     gamma: F,
     /// The stage-5 instruction address point, chunked into the per-chunk committed
@@ -79,7 +77,6 @@ impl<F: Field> InstructionRaVirtualization<F> {
         committed_chunk_bits: usize,
     ) -> Self {
         Self {
-            claims: instruction::ra_virtualization(dimensions),
             symbolic: relations::instruction::RaVirtualization::new(dimensions),
             dimensions,
             gamma,
@@ -104,10 +101,6 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
-        &self.claims
     }
 
     fn derive_opening_points<C: GetPoint<F>>(
