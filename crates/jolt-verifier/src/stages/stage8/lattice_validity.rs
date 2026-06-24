@@ -1,12 +1,10 @@
 use crate::{config::JoltProtocolConfig, stages::PrecommittedSchedule, VerifierError};
-use jolt_claims::protocols::jolt::{
-    formulas::dimensions::REGISTER_ADDRESS_BITS, LatticePackedFamilyId, LatticePackedValidityKind,
-    LatticePackedValidityRequirement,
-};
+use jolt_claims::protocols::jolt::formulas::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::Field;
 use jolt_openings::{
     BatchOpeningClaim, BatchOpeningScheme, BatchOpeningStatement, CommitmentScheme,
-    PackingFamilyId, PackingTerm, PackingWitnessLayout, PhysicalView,
+    PackingFamilyId, PackingTerm, PackingValidityKind, PackingValidityRequirement,
+    PackingWitnessLayout, PhysicalView,
 };
 use jolt_poly::{try_eq_mle, EqPolynomial};
 use jolt_riscv::CircuitFlags;
@@ -16,15 +14,14 @@ use jolt_sumcheck::{
 use jolt_transcript::{Label, LabelWithCount, Transcript, U64Word};
 
 use super::{
-    derive_lattice_packed_validity_requirements, invalid_lattice_config, lattice_packing_family_id,
-    power_of_two_log,
+    derive_lattice_packed_validity_requirements, invalid_lattice_config, power_of_two_log,
 };
 
 pub type LatticePackedValidityBatchStatement<F, C> = BatchOpeningStatement<F, C, usize, usize, F>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LatticePackedValidityStatement {
-    pub requirement: LatticePackedValidityRequirement,
+    pub requirement: PackingValidityRequirement,
     pub kind: LatticePackedValidityStatementKind,
     pub num_vars: usize,
     pub degree: usize,
@@ -64,13 +61,13 @@ pub struct LatticePackedValidityBatch<F: Field, C> {
 
 pub fn derive_lattice_packed_validity_statements(
     layout: &PackingWitnessLayout,
-    requirements: &[LatticePackedValidityRequirement],
+    requirements: &[PackingValidityRequirement],
 ) -> Result<Vec<LatticePackedValidityStatement>, VerifierError> {
     let mut statements = Vec::new();
     for requirement in requirements {
         if matches!(
             requirement.kind,
-            LatticePackedValidityKind::FieldElementCanonicalBytes { .. }
+            PackingValidityKind::FieldElementCanonicalBytes { .. }
         ) {
             let row_vars = validate_field_element_canonical_bytes_layout(layout, requirement)?;
             statements.push(LatticePackedValidityStatement {
@@ -82,8 +79,8 @@ pub fn derive_lattice_packed_validity_statements(
             continue;
         }
 
-        let family_id = lattice_packing_family_id(&requirement.family);
-        let family = layout.family(&family_id).ok_or_else(|| {
+        let family_id = &requirement.family;
+        let family = layout.family(family_id).ok_or_else(|| {
             invalid_lattice_config(format!(
                 "packed validity requirement references missing family {family_id:?}"
             ))
@@ -113,7 +110,7 @@ pub fn derive_lattice_packed_validity_statements(
             power_of_two_log(requirement.alphabet_size, "packed validity alphabet size")?;
 
         match requirement.kind {
-            LatticePackedValidityKind::ExactOneHot => {
+            PackingValidityKind::ExactOneHot => {
                 statements.push(LatticePackedValidityStatement {
                     requirement: requirement.clone(),
                     kind: LatticePackedValidityStatementKind::CellBooleanity,
@@ -127,7 +124,7 @@ pub fn derive_lattice_packed_validity_statements(
                     degree: 3,
                 });
             }
-            LatticePackedValidityKind::OptionalOneHot => {
+            PackingValidityKind::OptionalOneHot => {
                 statements.push(LatticePackedValidityStatement {
                     requirement: requirement.clone(),
                     kind: LatticePackedValidityStatementKind::CellBooleanity,
@@ -141,7 +138,7 @@ pub fn derive_lattice_packed_validity_statements(
                     degree: 3,
                 });
             }
-            LatticePackedValidityKind::BooleanIndicator { symbol } => {
+            PackingValidityKind::BooleanIndicator { symbol } => {
                 if symbol >= requirement.alphabet_size {
                     return Err(invalid_lattice_config(format!(
                         "packed validity boolean indicator symbol {symbol} is outside alphabet size {}",
@@ -155,7 +152,7 @@ pub fn derive_lattice_packed_validity_statements(
                     degree: 3,
                 });
             }
-            LatticePackedValidityKind::BytecodeStoreRdDisjoint => {
+            PackingValidityKind::BytecodeStoreRdDisjoint => {
                 let row_vars = validate_bytecode_store_rd_disjoint_layout(layout, requirement)?;
                 statements.push(LatticePackedValidityStatement {
                     requirement: requirement.clone(),
@@ -164,7 +161,7 @@ pub fn derive_lattice_packed_validity_statements(
                     degree: 3,
                 });
             }
-            LatticePackedValidityKind::FieldElementCanonicalBytes { .. } => unreachable!(
+            PackingValidityKind::FieldElementCanonicalBytes { .. } => unreachable!(
                 "field canonical-byte validity is handled before family shape validation"
             ),
         }
@@ -174,7 +171,7 @@ pub fn derive_lattice_packed_validity_statements(
 
 fn validate_bytecode_store_rd_disjoint_layout(
     layout: &PackingWitnessLayout,
-    requirement: &LatticePackedValidityRequirement,
+    requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
     let chunk = bytecode_store_rd_disjoint_chunk(requirement)?;
     let store_id = PackingFamilyId::BytecodeCircuitFlag {
@@ -214,9 +211,9 @@ fn validate_bytecode_store_rd_disjoint_layout(
 }
 
 fn bytecode_store_rd_disjoint_chunk(
-    requirement: &LatticePackedValidityRequirement,
+    requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
-    let LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
+    let PackingFamilyId::BytecodeCircuitFlag { chunk, flag } = &requirement.family else {
         return Err(invalid_lattice_config(
             "bytecode Store/Rd disjointness must be anchored on the Store circuit flag",
         ));
@@ -234,7 +231,7 @@ fn bytecode_store_rd_disjoint_chunk(
 
 fn validate_field_element_canonical_bytes_layout(
     layout: &PackingWitnessLayout,
-    requirement: &LatticePackedValidityRequirement,
+    requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
     let byte_width = canonical_field_byte_width(requirement)?;
     if requirement.limbs != 1 || requirement.alphabet_size != 256 {
@@ -244,7 +241,7 @@ fn validate_field_element_canonical_bytes_layout(
     }
 
     match &requirement.family {
-        LatticePackedFamilyId::FieldRdIncByte { index: 0 } => {
+        PackingFamilyId::FieldRdIncByte { index: 0 } => {
             let first_id = PackingFamilyId::FieldRdIncByte { index: 0 };
             let first = layout.family(&first_id).ok_or_else(|| {
                 invalid_lattice_config(
@@ -280,7 +277,7 @@ fn validate_field_element_canonical_bytes_layout(
             }
             Ok(row_vars)
         }
-        LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
+        PackingFamilyId::BytecodeImmBytes { chunk } => {
             let family_id = PackingFamilyId::BytecodeImmBytes { chunk: *chunk };
             let family = layout.family(&family_id).ok_or_else(|| {
                 invalid_lattice_config(format!(
@@ -307,9 +304,9 @@ fn validate_field_element_canonical_bytes_layout(
 }
 
 pub(super) fn canonical_field_byte_width(
-    requirement: &LatticePackedValidityRequirement,
+    requirement: &PackingValidityRequirement,
 ) -> Result<usize, VerifierError> {
-    let LatticePackedValidityKind::FieldElementCanonicalBytes {
+    let PackingValidityKind::FieldElementCanonicalBytes {
         byte_width,
         modulus,
     } = requirement.kind
@@ -332,7 +329,7 @@ pub(super) fn canonical_field_byte_width(
 }
 
 fn canonical_field_byte_location(
-    requirement: &LatticePackedValidityRequirement,
+    requirement: &PackingValidityRequirement,
     byte_index: usize,
 ) -> Result<(PackingFamilyId, usize), VerifierError> {
     let byte_width = canonical_field_byte_width(requirement)?;
@@ -342,10 +339,10 @@ fn canonical_field_byte_location(
         )));
     }
     match &requirement.family {
-        LatticePackedFamilyId::FieldRdIncByte { index: 0 } => {
+        PackingFamilyId::FieldRdIncByte { index: 0 } => {
             Ok((PackingFamilyId::FieldRdIncByte { index: byte_index }, 0))
         }
-        LatticePackedFamilyId::BytecodeImmBytes { chunk } => Ok((
+        PackingFamilyId::BytecodeImmBytes { chunk } => Ok((
             PackingFamilyId::BytecodeImmBytes { chunk: *chunk },
             byte_index,
         )),
@@ -357,9 +354,9 @@ fn canonical_field_byte_location(
 }
 
 pub(crate) fn field_element_canonical_factors(
-    requirement: &LatticePackedValidityRequirement,
+    requirement: &PackingValidityRequirement,
 ) -> Result<Vec<FieldCanonicalFactor>, VerifierError> {
-    let LatticePackedValidityKind::FieldElementCanonicalBytes {
+    let PackingValidityKind::FieldElementCanonicalBytes {
         byte_width: _,
         modulus,
     } = requirement.kind
@@ -642,7 +639,7 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
         statements.len() as u64,
     ));
     for (index, statement) in statements.iter().enumerate() {
-        let family = lattice_packing_family_id(&statement.requirement.family).physical_ref();
+        let family = statement.requirement.family.physical_ref();
         transcript.append(&U64Word(index as u64));
         transcript.append(&U64Word(family.namespace));
         transcript.append(&U64Word(family.id));
@@ -653,23 +650,23 @@ fn absorb_lattice_packed_validity_metadata<F, T>(
         transcript.append(&U64Word(statement.degree as u64));
         transcript.append(&U64Word(validity_statement_kind_tag(statement.kind)));
         match statement.requirement.kind {
-            LatticePackedValidityKind::ExactOneHot => {
+            PackingValidityKind::ExactOneHot => {
                 transcript.append(&U64Word(0));
                 transcript.append(&U64Word(0));
             }
-            LatticePackedValidityKind::OptionalOneHot => {
+            PackingValidityKind::OptionalOneHot => {
                 transcript.append(&U64Word(1));
                 transcript.append(&U64Word(0));
             }
-            LatticePackedValidityKind::BooleanIndicator { symbol } => {
+            PackingValidityKind::BooleanIndicator { symbol } => {
                 transcript.append(&U64Word(2));
                 transcript.append(&U64Word(symbol as u64));
             }
-            LatticePackedValidityKind::BytecodeStoreRdDisjoint => {
+            PackingValidityKind::BytecodeStoreRdDisjoint => {
                 transcript.append(&U64Word(3));
                 transcript.append(&U64Word(0));
             }
-            LatticePackedValidityKind::FieldElementCanonicalBytes {
+            PackingValidityKind::FieldElementCanonicalBytes {
                 byte_width,
                 modulus,
             } => {
@@ -799,7 +796,7 @@ where
             statement.kind
         )));
     }
-    let family_id = lattice_packing_family_id(&statement.requirement.family);
+    let family_id = statement.requirement.family.clone();
     let shape = validity_statement_shape(layout, statement, &family_id)?;
     let point_parts = split_validity_point(statement.kind, point, shape)?;
     let limb_weights = EqPolynomial::<F>::evals(point_parts.limb, None);
@@ -832,7 +829,7 @@ where
             terms
         }
         LatticePackedValidityStatementKind::BooleanIndicator => {
-            let LatticePackedValidityKind::BooleanIndicator { symbol } = statement.requirement.kind
+            let PackingValidityKind::BooleanIndicator { symbol } = statement.requirement.kind
             else {
                 return Err(invalid_lattice_config(
                     "boolean-indicator validity statement has non-indicator requirement",

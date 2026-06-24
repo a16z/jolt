@@ -3109,10 +3109,8 @@ dependencies = [
  "akita-field",
  "akita-pcs",
  "akita-prover",
- "akita-serialization",
  "akita-transcript",
  "akita-types",
- "akita-verifier",
  "jolt-crypto",
  "jolt-field 0.1.0",
  "jolt-openings",
@@ -3120,7 +3118,6 @@ dependencies = [
  "jolt-transcript",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3144,10 +3141,10 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.6",
  "derive_more",
  "jolt-field 0.1.0",
  "jolt-lookup-tables",
+ "jolt-openings",
  "jolt-poly",
  "jolt-riscv",
  "serde",

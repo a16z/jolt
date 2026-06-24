@@ -9,15 +9,14 @@ use jolt_claims::protocols::field_inline::{
 use jolt_claims::protocols::jolt::{
     byte_decode_terms, unsigned_inc_msb_lattice_view_formula, unsigned_inc_msb_opening,
     weighted_symbol_terms, JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId,
-    JoltPolynomialId, JoltRelationId, LatticePackedFamilyId, LatticePackedValidityRequirement,
-    LatticePackedViewFormula,
+    JoltPolynomialId, JoltRelationId,
 };
 use jolt_field::Field;
 #[cfg(feature = "field-inline")]
 use jolt_field::FixedByteSize;
 use jolt_openings::{
-    PackingAdviceKind, PackingFamilyId, PackingViewError, PackingViewFormula, PackingViewTerm,
-    PackingWitnessLayout,
+    PackingAdviceKind, PackingFamilyId, PackingValidityRequirement, PackingViewError,
+    PackingViewFormula, PackingWitnessLayout,
 };
 use jolt_poly::EqPolynomial;
 
@@ -50,8 +49,7 @@ pub(crate) use validity::{
 mod validity_coverage;
 pub use validity_coverage::validate_lattice_view_validity_coverage;
 
-pub type JoltLatticeViewFormulaWithRowPoint<F> =
-    (Stage8OpeningId, LatticePackedViewFormula<F>, Vec<F>);
+pub type JoltLatticeViewFormulaWithRowPoint<F> = (Stage8OpeningId, PackingViewFormula<F>, Vec<F>);
 
 pub fn jolt_lattice_view_formulas<F>(
     logical: &Stage8LogicalManifest<F>,
@@ -77,7 +75,7 @@ fn stage8_lattice_view_formula<F>(
     point: &[F],
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
-) -> Result<(LatticePackedViewFormula<F>, Vec<F>), VerifierError>
+) -> Result<(PackingViewFormula<F>, Vec<F>), VerifierError>
 where
     F: Field,
 {
@@ -113,7 +111,7 @@ pub fn jolt_lattice_physical_manifest_with_validity<F>(
     layout: &PackingWitnessLayout,
     log_k_chunk: usize,
     precommitted: &PrecommittedSchedule,
-    validity_requirements: &[LatticePackedValidityRequirement],
+    validity_requirements: &[PackingValidityRequirement],
 ) -> Result<Stage8PhysicalManifest<F>, VerifierError>
 where
     F: Field,
@@ -232,7 +230,7 @@ where
 #[cfg(feature = "field-inline")]
 fn field_inline_lattice_view_formula<F>(
     id: FieldInlineOpeningId,
-) -> Result<LatticePackedViewFormula<F>, VerifierError>
+) -> Result<PackingViewFormula<F>, VerifierError>
 where
     F: Field,
 {
@@ -251,7 +249,7 @@ pub fn jolt_lattice_view_formula<F>(
     point: &[F],
     log_k_chunk: usize,
     _precommitted: &PrecommittedSchedule,
-) -> Result<LatticePackedViewFormula<F>, VerifierError>
+) -> Result<PackingViewFormula<F>, VerifierError>
 where
     F: Field,
 {
@@ -280,74 +278,12 @@ where
     }
 }
 
-pub fn lattice_packing_family_id(family: &LatticePackedFamilyId) -> PackingFamilyId {
-    match family {
-        LatticePackedFamilyId::InstructionRa { index } => {
-            PackingFamilyId::InstructionRa { index: *index }
-        }
-        LatticePackedFamilyId::BytecodeRa { index } => {
-            PackingFamilyId::BytecodeRa { index: *index }
-        }
-        LatticePackedFamilyId::RamRa { index } => PackingFamilyId::RamRa { index: *index },
-        LatticePackedFamilyId::UnsignedIncChunk { index } => {
-            PackingFamilyId::UnsignedIncChunk { index: *index }
-        }
-        LatticePackedFamilyId::UnsignedIncMsb => PackingFamilyId::UnsignedIncMsb,
-        LatticePackedFamilyId::FieldRdIncByte { index } => {
-            PackingFamilyId::FieldRdIncByte { index: *index }
-        }
-        LatticePackedFamilyId::FieldRdIncSign => PackingFamilyId::FieldRdIncSign,
-        LatticePackedFamilyId::AdviceBytes { kind, index } => PackingFamilyId::AdviceBytes {
-            kind: lattice_packing_advice_kind(*kind),
-            index: *index,
-        },
-        LatticePackedFamilyId::BytecodeChunk { index } => {
-            PackingFamilyId::BytecodeChunk { index: *index }
-        }
-        LatticePackedFamilyId::BytecodeRegisterSelector { chunk, selector } => {
-            PackingFamilyId::BytecodeRegisterSelector {
-                chunk: *chunk,
-                selector: *selector,
-            }
-        }
-        LatticePackedFamilyId::BytecodeCircuitFlag { chunk, flag } => {
-            PackingFamilyId::BytecodeCircuitFlag {
-                chunk: *chunk,
-                flag: *flag,
-            }
-        }
-        LatticePackedFamilyId::BytecodeInstructionFlag { chunk, flag } => {
-            PackingFamilyId::BytecodeInstructionFlag {
-                chunk: *chunk,
-                flag: *flag,
-            }
-        }
-        LatticePackedFamilyId::BytecodeLookupSelector { chunk } => {
-            PackingFamilyId::BytecodeLookupSelector { chunk: *chunk }
-        }
-        LatticePackedFamilyId::BytecodeRafFlag { chunk } => {
-            PackingFamilyId::BytecodeRafFlag { chunk: *chunk }
-        }
-        LatticePackedFamilyId::BytecodeUnexpandedPcBytes { chunk } => {
-            PackingFamilyId::BytecodeUnexpandedPcBytes { chunk: *chunk }
-        }
-        LatticePackedFamilyId::BytecodeImmBytes { chunk } => {
-            PackingFamilyId::BytecodeImmBytes { chunk: *chunk }
-        }
-        LatticePackedFamilyId::ProgramImageInit => PackingFamilyId::ProgramImageInit,
-        LatticePackedFamilyId::Custom { namespace, index } => PackingFamilyId::Custom {
-            namespace: *namespace,
-            index: *index,
-        },
-    }
-}
-
 fn committed_lattice_view_formula<F>(
     polynomial: JoltCommittedPolynomial,
     relation: JoltRelationId,
     point: &[F],
     log_k_chunk: usize,
-) -> Result<LatticePackedViewFormula<F>, VerifierError>
+) -> Result<PackingViewFormula<F>, VerifierError>
 where
     F: Field,
 {
@@ -356,7 +292,7 @@ where
             JoltCommittedPolynomial::InstructionRa(index),
             JoltRelationId::HammingWeightClaimReduction,
         ) => ra_lattice_view_formula(
-            LatticePackedFamilyId::InstructionRa { index },
+            PackingFamilyId::InstructionRa { index },
             point,
             log_k_chunk,
         ),
@@ -365,14 +301,14 @@ where
             JoltRelationId::HammingWeightClaimReduction,
         ) => {
             ra_lattice_view_formula(
-                LatticePackedFamilyId::BytecodeRa { index },
+                PackingFamilyId::BytecodeRa { index },
                 point,
                 log_k_chunk,
             )
         }
         (JoltCommittedPolynomial::RamRa(index), JoltRelationId::HammingWeightClaimReduction) => {
             ra_lattice_view_formula(
-                LatticePackedFamilyId::RamRa { index },
+                PackingFamilyId::RamRa { index },
                 point,
                 log_k_chunk,
             )
@@ -421,7 +357,7 @@ fn unsigned_inc_chunk_lattice_view_formula<F>(
     index: usize,
     point: &[F],
     log_k_chunk: usize,
-) -> Result<LatticePackedViewFormula<F>, VerifierError>
+) -> Result<PackingViewFormula<F>, VerifierError>
 where
     F: Field,
 {
@@ -437,17 +373,17 @@ where
         )));
     }
     ra_lattice_view_formula(
-        LatticePackedFamilyId::UnsignedIncChunk { index },
+        PackingFamilyId::UnsignedIncChunk { index },
         point,
         log_k_chunk,
     )
 }
 
 fn ra_lattice_view_formula<F>(
-    family: LatticePackedFamilyId,
+    family: PackingFamilyId,
     point: &[F],
     log_k_chunk: usize,
-) -> Result<LatticePackedViewFormula<F>, VerifierError>
+) -> Result<PackingViewFormula<F>, VerifierError>
 where
     F: Field,
 {
@@ -462,78 +398,27 @@ where
             point.len()
         )));
     }
-    Ok(LatticePackedViewFormula::linear_decoded(
-        weighted_symbol_terms(
-            family,
-            0,
-            EqPolynomial::<F>::evals(&point[..log_k_chunk], None),
-        ),
-    ))
+    Ok(PackingViewFormula::linear_decoded(weighted_symbol_terms(
+        family,
+        0,
+        EqPolynomial::<F>::evals(&point[..log_k_chunk], None),
+    )))
 }
 
-fn advice_lattice_view_formula<F>(kind: JoltAdviceKind) -> LatticePackedViewFormula<F>
+fn advice_lattice_view_formula<F>(kind: JoltAdviceKind) -> PackingViewFormula<F>
 where
     F: Field,
 {
-    LatticePackedViewFormula::linear_decoded(byte_decode_terms(
-        LatticePackedFamilyId::AdviceBytes { kind, index: 0 },
+    PackingViewFormula::linear_decoded(byte_decode_terms(
+        PackingFamilyId::AdviceBytes {
+            kind: packing_advice_kind(kind),
+            index: 0,
+        },
         0,
     ))
 }
 
-pub fn lattice_packing_view_formula<F>(
-    formula: &LatticePackedViewFormula<F>,
-) -> Result<PackingViewFormula<F>, PackingViewError>
-where
-    F: Field,
-{
-    match formula {
-        LatticePackedViewFormula::Direct {
-            family,
-            limb,
-            symbol,
-        } => Ok(PackingViewFormula::direct(
-            lattice_packing_family_id(family),
-            *limb,
-            *symbol,
-        )),
-        LatticePackedViewFormula::LinearDecoded { terms } => {
-            Ok(PackingViewFormula::linear_decoded(
-                terms
-                    .iter()
-                    .map(|term| {
-                        PackingViewTerm::new(
-                            term.coefficient,
-                            lattice_packing_family_id(&term.family),
-                            term.limb,
-                            term.symbol,
-                        )
-                    })
-                    .collect(),
-            ))
-        }
-        LatticePackedViewFormula::ReducedMasked { terms, .. } => {
-            Ok(PackingViewFormula::reduced_masked(
-                terms
-                    .iter()
-                    .map(|term| {
-                        PackingViewTerm::new(
-                            term.coefficient,
-                            lattice_packing_family_id(&term.family),
-                            term.limb,
-                            term.symbol,
-                        )
-                    })
-                    .collect(),
-            ))
-        }
-        LatticePackedViewFormula::MaskedDecoded { .. } => {
-            Err(PackingViewError::MaskedViewRequiresTranslation)
-        }
-    }
-}
-
-fn lattice_packing_advice_kind(kind: JoltAdviceKind) -> PackingAdviceKind {
+fn packing_advice_kind(kind: JoltAdviceKind) -> PackingAdviceKind {
     match kind {
         JoltAdviceKind::Trusted => PackingAdviceKind::Trusted,
         JoltAdviceKind::Untrusted => PackingAdviceKind::Untrusted,

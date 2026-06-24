@@ -6,15 +6,13 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaField, AkitaScheme, AkitaSetupParams};
-use jolt_claims::protocols::jolt::{
-    formulas::dimensions::REGISTER_ADDRESS_BITS, lattice_packed_validity_digest,
-};
+use jolt_claims::protocols::jolt::formulas::dimensions::REGISTER_ADDRESS_BITS;
 #[cfg(feature = "field-inline")]
 use jolt_field::FixedByteSize;
 use jolt_openings::{
-    CommitmentScheme, PackingAdviceKind, PackingAlphabet, PackingCellAddress, PackingFactDomain,
-    PackingFamilyId, PackingFamilySpec, PackingProverSetup, PackingVerifierSetup,
-    PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness,
+    packing_validity_digest, CommitmentScheme, PackingAdviceKind, PackingAlphabet,
+    PackingCellAddress, PackingFactDomain, PackingFamilyId, PackingFamilySpec, PackingProverSetup,
+    PackingVerifierSetup, PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness,
 };
 use jolt_riscv::{
     CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NonMemoryState,
@@ -143,7 +141,7 @@ fn protocol_config_binds_layout_digest_and_dimension() {
     assert_eq!(config.lattice.packed_witness.d_pack, Some(layout.dimension));
     assert_eq!(
         config.lattice.packed_witness.validity_digest,
-        Some(lattice_packed_validity_digest(
+        Some(packing_validity_digest(
             &lattice_validity_requirements_for_packed_witness_layout(&layout)
         ))
     );

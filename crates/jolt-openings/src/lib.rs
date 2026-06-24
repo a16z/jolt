@@ -48,10 +48,12 @@ pub use packing::{
     PackingVerifierSetup,
 };
 pub use packing_layout::{
-    packing_witness_source_polynomial, PackingAdviceKind, PackingAlphabet, PackingAlphabetCounts,
+    packing_validity_digest, packing_witness_source_polynomial, validate_packing_source_dimension,
+    validate_packing_source_layout, PackingAdviceKind, PackingAlphabet, PackingAlphabetCounts,
     PackingCellAddress, PackingDomainCellCounts, PackingFactDomain, PackingFamilyId,
     PackingFamilySpec, PackingLayoutAudit, PackingLayoutError, PackingLayoutFamily,
-    PackingViewKind, PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness,
+    PackingValidityDigest, PackingValidityKind, PackingValidityRequirement, PackingViewKind,
+    PackingWitnessLayout, PackingWitnessSource, SparsePackingWitness,
 };
 pub use packing_view::{
     PackingViewCatalog, PackingViewDigest, PackingViewEntry, PackingViewError, PackingViewFormula,

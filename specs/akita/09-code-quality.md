@@ -6,7 +6,7 @@ Here is a list of my full review comments that I want to resolve for the akita j
 - the packed semantics leak into jolt-akita. it should not know about packing, views (physical, virtual), layouts, whatever, jolt-akita is just a wrapper crate to conform to our jolt pcs interfaces to open polynomials. that's it. we need to rip out all these packing things and jolt-akita needs to align more with jolt-dory. we can keep zk impl as one that is unimplemented/panic so that runtime configs reflect this in future comments of this general review here I will discuss where these packed semantics and whatnot should live, they should def not live in jolt-akita though.
 
 other nits: the Akita dependencies in Cargo.toml should obviously stay pinned to a concrete upstream commit/rev, but that vendor/revision detail should not leak into Rust code or public adapter abstractions (such as LAYERZERO_AKITA_REV).
-- otherwise it's nice to have all the type aliases / newtypes so we can kind of of follow hte same pattern as how we bridge the other pcs impls.
+- otherwise it's nice to have all the type aliases / newtypes so we can kind of follow the same pattern as how we bridge the other pcs impls.
 - in general i just hope to simplify this crate greatly by avoiding so much over engineered packing/view stuff that doesn't belong there at all.
 
 ### packing architecture / ownership

@@ -1,22 +1,20 @@
 use jolt_field::Field;
-
-use crate::protocols::jolt::{
-    weighted_byte_decode_terms, LatticePackedFamilyId, LatticePackedValidityRequirement,
-    LatticePackedViewFormula, LatticePackedViewTerm,
+use jolt_openings::{
+    PackingFamilyId, PackingValidityRequirement, PackingViewFormula, PackingViewTerm,
 };
 
-pub fn field_rd_inc_lattice_view_formula<F: Field>(
-    byte_width: usize,
-) -> LatticePackedViewFormula<F> {
-    LatticePackedViewFormula::linear_decoded(field_rd_inc_byte_terms(byte_width))
+use crate::protocols::jolt::weighted_byte_decode_terms;
+
+pub fn field_rd_inc_lattice_view_formula<F: Field>(byte_width: usize) -> PackingViewFormula<F> {
+    PackingViewFormula::linear_decoded(field_rd_inc_byte_terms(byte_width))
 }
 
-pub fn field_rd_inc_byte_terms<F: Field>(byte_width: usize) -> Vec<LatticePackedViewTerm<F>> {
+pub fn field_rd_inc_byte_terms<F: Field>(byte_width: usize) -> Vec<PackingViewTerm<F>> {
     let mut terms = Vec::with_capacity(byte_width * 256);
     let mut place = F::one();
     for index in 0..byte_width {
         terms.extend(weighted_byte_decode_terms(
-            LatticePackedFamilyId::FieldRdIncByte { index },
+            PackingFamilyId::FieldRdIncByte { index },
             [(0, place)],
         ));
         place *= F::from_u64(256);
@@ -24,13 +22,11 @@ pub fn field_rd_inc_byte_terms<F: Field>(byte_width: usize) -> Vec<LatticePacked
     terms
 }
 
-pub fn field_rd_inc_validity_requirements(
-    byte_width: usize,
-) -> Vec<LatticePackedValidityRequirement> {
+pub fn field_rd_inc_validity_requirements(byte_width: usize) -> Vec<PackingValidityRequirement> {
     (0..byte_width)
         .map(|index| {
-            LatticePackedValidityRequirement::exact_one_hot(
-                LatticePackedFamilyId::FieldRdIncByte { index },
+            PackingValidityRequirement::exact_one_hot(
+                PackingFamilyId::FieldRdIncByte { index },
                 1,
                 256,
             )
@@ -41,9 +37,9 @@ pub fn field_rd_inc_validity_requirements(
 pub fn field_rd_inc_canonical_bytes_requirement(
     byte_width: usize,
     modulus: u128,
-) -> LatticePackedValidityRequirement {
-    LatticePackedValidityRequirement::field_element_canonical_bytes(
-        LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+) -> PackingValidityRequirement {
+    PackingValidityRequirement::field_element_canonical_bytes(
+        PackingFamilyId::FieldRdIncByte { index: 0 },
         byte_width,
         modulus,
     )
@@ -62,7 +58,7 @@ mod tests {
         assert_eq!(terms[7].coefficient, Fr::from_u64(7));
         assert_eq!(
             terms[7].family,
-            LatticePackedFamilyId::FieldRdIncByte { index: 0 }
+            PackingFamilyId::FieldRdIncByte { index: 0 }
         );
         assert_eq!(terms[7].limb, 0);
         assert_eq!(terms[7].symbol, 7);
@@ -71,7 +67,7 @@ mod tests {
         assert_eq!(second_byte.coefficient, Fr::from_u64(3 * 256));
         assert_eq!(
             second_byte.family,
-            LatticePackedFamilyId::FieldRdIncByte { index: 1 }
+            PackingFamilyId::FieldRdIncByte { index: 1 }
         );
         assert_eq!(second_byte.limb, 0);
         assert_eq!(second_byte.symbol, 3);
@@ -82,13 +78,13 @@ mod tests {
         assert_eq!(
             field_rd_inc_validity_requirements(2),
             vec![
-                LatticePackedValidityRequirement::exact_one_hot(
-                    LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+                PackingValidityRequirement::exact_one_hot(
+                    PackingFamilyId::FieldRdIncByte { index: 0 },
                     1,
                     256,
                 ),
-                LatticePackedValidityRequirement::exact_one_hot(
-                    LatticePackedFamilyId::FieldRdIncByte { index: 1 },
+                PackingValidityRequirement::exact_one_hot(
+                    PackingFamilyId::FieldRdIncByte { index: 1 },
                     1,
                     256,
                 ),
@@ -100,8 +96,8 @@ mod tests {
     fn field_rd_inc_canonical_bytes_requirement_anchors_byte_family() {
         assert_eq!(
             field_rd_inc_canonical_bytes_requirement(2, 257),
-            LatticePackedValidityRequirement::field_element_canonical_bytes(
-                LatticePackedFamilyId::FieldRdIncByte { index: 0 },
+            PackingValidityRequirement::field_element_canonical_bytes(
+                PackingFamilyId::FieldRdIncByte { index: 0 },
                 2,
                 257,
             )

@@ -565,10 +565,177 @@ pub struct PackingLayoutAudit {
     pub d_pack: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PackingValidityKind {
+    ExactOneHot,
+    OptionalOneHot,
+    BooleanIndicator { symbol: usize },
+    BytecodeStoreRdDisjoint,
+    FieldElementCanonicalBytes { byte_width: usize, modulus: u128 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackingValidityRequirement {
+    pub family: PackingFamilyId,
+    pub limbs: usize,
+    pub alphabet_size: usize,
+    pub kind: PackingValidityKind,
+}
+
+impl PackingValidityRequirement {
+    pub fn exact_one_hot(family: PackingFamilyId, limbs: usize, alphabet_size: usize) -> Self {
+        Self {
+            family,
+            limbs,
+            alphabet_size,
+            kind: PackingValidityKind::ExactOneHot,
+        }
+    }
+
+    pub fn optional_one_hot(family: PackingFamilyId, limbs: usize, alphabet_size: usize) -> Self {
+        Self {
+            family,
+            limbs,
+            alphabet_size,
+            kind: PackingValidityKind::OptionalOneHot,
+        }
+    }
+
+    pub fn boolean_indicator(
+        family: PackingFamilyId,
+        limbs: usize,
+        alphabet_size: usize,
+        symbol: usize,
+    ) -> Self {
+        Self {
+            family,
+            limbs,
+            alphabet_size,
+            kind: PackingValidityKind::BooleanIndicator { symbol },
+        }
+    }
+
+    pub fn bytecode_store_rd_disjoint(chunk: usize, store_flag: usize) -> Self {
+        Self {
+            family: PackingFamilyId::BytecodeCircuitFlag {
+                chunk,
+                flag: store_flag,
+            },
+            limbs: 1,
+            alphabet_size: 2,
+            kind: PackingValidityKind::BytecodeStoreRdDisjoint,
+        }
+    }
+
+    pub fn field_element_canonical_bytes(
+        family: PackingFamilyId,
+        byte_width: usize,
+        modulus: u128,
+    ) -> Self {
+        Self {
+            family,
+            limbs: 1,
+            alphabet_size: 256,
+            kind: PackingValidityKind::FieldElementCanonicalBytes {
+                byte_width,
+                modulus,
+            },
+        }
+    }
+}
+
+pub type PackingValidityDigest = [u8; 32];
+
+const PACKING_VALIDITY_DIGEST_DOMAIN: &[u8] = b"jolt-claims/lattice-packed-validity/v1";
+
+pub fn packing_validity_digest(
+    requirements: &[PackingValidityRequirement],
+) -> PackingValidityDigest {
+    let mut encoded_requirements = requirements
+        .iter()
+        .map(encode_validity_requirement)
+        .collect::<Vec<_>>();
+    encoded_requirements.sort();
+
+    let mut bytes = Vec::new();
+    // Preserve the pre-refactor domain separator so existing configs keep matching.
+    bytes.extend_from_slice(PACKING_VALIDITY_DIGEST_DOMAIN);
+    write_usize(&mut bytes, encoded_requirements.len());
+    for requirement in encoded_requirements {
+        bytes.extend_from_slice(&requirement);
+    }
+
+    let mut hasher = Blake2b::<U32>::new();
+    hasher.update(&bytes);
+    let result = hasher.finalize();
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&result);
+    digest
+}
+
+fn encode_validity_requirement(requirement: &PackingValidityRequirement) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    write_family_id(&mut bytes, &requirement.family);
+    write_usize(&mut bytes, requirement.limbs);
+    write_usize(&mut bytes, requirement.alphabet_size);
+    write_validity_kind(&mut bytes, &requirement.kind);
+    bytes
+}
+
+fn write_validity_kind(bytes: &mut Vec<u8>, kind: &PackingValidityKind) {
+    match kind {
+        PackingValidityKind::ExactOneHot => bytes.push(0),
+        PackingValidityKind::OptionalOneHot => bytes.push(1),
+        PackingValidityKind::BooleanIndicator { symbol } => {
+            bytes.push(2);
+            write_usize(bytes, *symbol);
+        }
+        PackingValidityKind::BytecodeStoreRdDisjoint => bytes.push(3),
+        PackingValidityKind::FieldElementCanonicalBytes {
+            byte_width,
+            modulus,
+        } => {
+            bytes.push(4);
+            write_usize(bytes, *byte_width);
+            bytes.extend_from_slice(&modulus.to_le_bytes());
+        }
+    }
+}
+
 pub trait PackingWitnessSource<F: Field> {
     fn layout(&self) -> &PackingWitnessLayout;
     fn for_each_nonzero(&self, f: impl FnMut(usize, F));
     fn eval_direct_fact(&self, address: &PackingCellAddress) -> Result<F, PackingLayoutError>;
+}
+
+pub fn validate_packing_source_layout<F, S>(
+    layout: &PackingWitnessLayout,
+    source: &S,
+) -> Result<(), OpeningsError>
+where
+    F: Field,
+    S: PackingWitnessSource<F>,
+{
+    let source_layout = source.layout();
+    if source_layout.digest != layout.digest || source_layout.dimension != layout.dimension {
+        return Err(invalid_packing_source(
+            "packed witness source layout does not match packed statement",
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_packing_source_dimension(
+    max_num_vars: usize,
+    layout: &PackingWitnessLayout,
+) -> Result<(), OpeningsError> {
+    if layout.dimension > max_num_vars {
+        return Err(OpeningsError::PolynomialTooLarge {
+            poly_size: layout.dimension,
+            setup_max: max_num_vars,
+        });
+    }
+    Ok(())
 }
 
 pub fn packing_witness_source_polynomial<F, S>(source: &S) -> Result<Polynomial<F>, OpeningsError>

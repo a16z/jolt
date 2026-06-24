@@ -10,10 +10,11 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use jolt_field::Field;
 use jolt_poly::EqPolynomial;
+use serde::{Deserialize, Serialize};
 
 pub type PackingViewDigest = [u8; 32];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackingViewCatalog<OpeningId, RelationId, F> {
     pub entries: Vec<PackingViewEntry<OpeningId, RelationId, F>>,
     pub digest: PackingViewDigest,
@@ -77,7 +78,7 @@ where
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackingViewEntry<OpeningId, RelationId, F> {
     pub id: OpeningId,
     pub relation: RelationId,
@@ -94,7 +95,7 @@ impl<OpeningId, RelationId, F> PackingViewEntry<OpeningId, RelationId, F> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackingViewFormula<F> {
     Direct {
         family: PackingFamilyId,
@@ -332,13 +333,13 @@ impl<F: Field> PackingViewFormula<F> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackingViewValidity {
     Proven,
     Unchecked,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackingViewTerm<F> {
     pub coefficient: F,
     pub family: PackingFamilyId,
