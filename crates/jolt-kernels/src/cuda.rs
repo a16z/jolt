@@ -78,6 +78,7 @@ pub struct CudaKernelContext {
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
     staging: PinnedStaging,
+    resident_witness: ResidentCache,
 }
 
 pub struct DeviceFrVec {
@@ -211,6 +212,42 @@ impl PinnedPool {
 
 type PinnedStaging = Arc<Mutex<PinnedPool>>;
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+struct WitnessKey {
+    len: usize,
+    hash: u64,
+}
+
+impl WitnessKey {
+    /// Full FNV-1a fold over every limb. A sparse sample could not distinguish two
+    /// witnesses differing only at unsampled positions, which would silently reuse a
+    /// stale buffer; the fold costs an O(n) pass over already-resident host memory and
+    /// runs once per stage prove, far cheaper than the GB-scale upload it guards.
+    fn of(witness: &[Fr]) -> Self {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for &value in witness {
+            for limb in fr_to_limbs(value) {
+                hash = (hash ^ limb).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        Self {
+            len: witness.len(),
+            hash,
+        }
+    }
+}
+
+struct ResidentWitness {
+    key: WitnessKey,
+    buf: Arc<DeviceFrVec>,
+}
+
+type ResidentCache = Arc<Mutex<Option<ResidentWitness>>>;
+
+fn lock_resident(cache: &ResidentCache) -> MutexGuard<'_, Option<ResidentWitness>> {
+    cache.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -272,6 +309,7 @@ impl CudaKernelContext {
             stream,
             one_dev,
             staging: Arc::new(Mutex::new(PinnedPool::default())),
+            resident_witness: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -295,6 +333,26 @@ impl CudaKernelContext {
             len: values.len(),
             staging: self.staging.clone(),
         })
+    }
+
+    /// Upload `witness` once and keep it device-resident across stages: on a key hit
+    /// the cached buffer is returned without re-uploading. The key fingerprints the
+    /// length plus eight sampled limbs, so distinct witnesses of equal length are not
+    /// confused while avoiding a full content hash on the hot path.
+    pub fn resident_witness(&self, witness: &[Fr]) -> Result<Arc<DeviceFrVec>, CudaError> {
+        let key = WitnessKey::of(witness);
+        let mut cache = lock_resident(&self.resident_witness);
+        if let Some(resident) = cache.as_ref() {
+            if resident.key == key {
+                return Ok(resident.buf.clone());
+            }
+        }
+        let buf = Arc::new(self.upload(witness)?);
+        *cache = Some(ResidentWitness {
+            key,
+            buf: buf.clone(),
+        });
+        Ok(buf)
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -382,7 +440,7 @@ impl CudaKernelContext {
         if cycles > 0 {
             let eq_evals = self.upload(inputs.eq_evals)?;
             let scale = self.upload(&[inputs.scale])?;
-            let witness = self.upload(inputs.witness)?;
+            let witness = self.resident_witness(inputs.witness)?;
             let a_coeffs = self.upload(inputs.a_coeffs)?;
             let b_coeffs = self.upload(inputs.b_coeffs)?;
             let a_offsets = self.stream.clone_htod(inputs.a_offsets)?;
@@ -1547,6 +1605,30 @@ mod tests {
             a.to_host().unwrap(),
             vec![zero, one, Fr::from_u64(42)]
         );
+    }
+
+    #[test]
+    fn resident_witness_caches_and_refreshes() {
+        let c = ctx();
+        let witness: Vec<Fr> = (0..512u64).map(Fr::from_u64).collect();
+
+        let first = c.resident_witness(&witness).unwrap();
+        let second = c.resident_witness(&witness).unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "same witness must hit the cache");
+        assert_eq!(first.to_host().unwrap(), witness);
+
+        let mut other = witness.clone();
+        other[300] += Fr::one();
+        let third = c.resident_witness(&other).unwrap();
+        assert!(!Arc::ptr_eq(&first, &third), "changed witness must re-upload");
+        assert_eq!(third.to_host().unwrap(), other);
+
+        let again = c.resident_witness(&witness).unwrap();
+        assert!(
+            !Arc::ptr_eq(&first, &again),
+            "cache holds one entry; a different witness evicts the prior one"
+        );
+        assert_eq!(again.to_host().unwrap(), witness);
     }
 
     #[test]
