@@ -12,12 +12,13 @@ where
 {
     let log_t = input.checked.trace_length.ilog2() as usize;
     let dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
-    let shift = spartan::shift::<PCS::Field>(dimensions);
-    let instruction_input = instruction::input_virtualization::<PCS::Field>(dimensions);
-    let registers_reduction =
-        jolt_claims::protocols::jolt::formulas::claim_reductions::registers::claim_reduction::<
-            PCS::Field,
-        >(dimensions);
+    let shift = StageExpr::<PCS::Field>::new(&relations::spartan::Shift::new(dimensions));
+    let instruction_input = StageExpr::<PCS::Field>::new(
+        &relations::instruction::InputVirtualization::new(dimensions),
+    );
+    let registers_reduction = StageExpr::<PCS::Field>::new(
+        &relations::claim_reductions::registers::ClaimReduction::new(dimensions),
+    );
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(SpartanShiftChallenge::Gamma)),
@@ -37,7 +38,7 @@ where
     let shift_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(shift.sumcheck.rounds)
+        .try_instance_point(shift.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
     let eq_plus_one_outer = EqPlusOnePolynomial::new(input.stage2.public.product_tau_low.clone())
@@ -68,7 +69,7 @@ where
     let instruction_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(instruction_input.sumcheck.rounds)
+        .try_instance_point(instruction_input.spec.rounds)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::InstructionInputVirtualization, error)
         })?;
@@ -82,7 +83,7 @@ where
     let registers_point = input
         .stage3
         .batch_consistency
-        .try_instance_point(registers_reduction.sumcheck.rounds)
+        .try_instance_point(registers_reduction.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersClaimReduction, error))?;
     let registers_opening_point = registers_point.iter().rev().copied().collect::<Vec<_>>();
     values.public(

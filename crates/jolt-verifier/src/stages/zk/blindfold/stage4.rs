@@ -17,7 +17,9 @@ where
         .proof
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
-    let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
+    let registers_claims = StageExpr::<PCS::Field>::new(
+        &relations::registers::ReadWriteChecking::new(register_dimensions),
+    );
     let ram_init = ram_val_check_init(input)?;
     // Supply the `Val_init` decomposition scalars as `Public` values (formerly
     // baked as `Term` constants in the expression); the advice / program-image
@@ -32,7 +34,19 @@ where
             contribution.neg_selector,
         )?;
     }
-    let ram_val_claims = ram::val_check::<PCS::Field>(trace_dimensions, ram_init);
+    let ram_val_claims = StageExpr::<PCS::Field>::new(&relations::ram::RamValCheck::new(
+        relations::ram::RamValCheckShape {
+            dimensions: trace_dimensions,
+            contributions: ram_init
+                .contributions
+                .iter()
+                .map(|contribution| relations::ram::RamValContribution {
+                    selector: contribution.selector,
+                    opening: contribution.opening,
+                })
+                .collect(),
+        },
+    ));
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RegistersReadWriteChallenge::Gamma)),
@@ -41,7 +55,7 @@ where
     let registers_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(registers_claims.sumcheck.rounds)
+        .try_instance_point(registers_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RegistersReadWriteChecking, error))?;
     let registers_opening = register_dimensions
         .read_write_opening_point(&registers_point)
@@ -73,7 +87,7 @@ where
     let ram_val_point = input
         .stage4
         .batch_consistency
-        .try_instance_point(ram_val_claims.sumcheck.rounds)
+        .try_instance_point(ram_val_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamValCheck, error))?;
     let ram_val_cycle = ram_val_point.iter().rev().copied().collect::<Vec<_>>();
     let r_cycle = input
@@ -115,14 +129,14 @@ where
     ));
 
     let mut batch_claims = vec![(
-        registers_claims.sumcheck.rounds,
-        map_jolt_expr(registers_claims.input.expression().clone()),
-        map_jolt_expr(registers_claims.output.expression().clone()),
+        registers_claims.spec.rounds,
+        map_jolt_expr(registers_claims.input.clone()),
+        map_jolt_expr(registers_claims.output.clone()),
     )];
     batch_claims.push((
-        ram_val_claims.sumcheck.rounds,
-        map_jolt_expr(ram_val_claims.input.expression().clone()),
-        map_jolt_expr(ram_val_claims.output.expression().clone()),
+        ram_val_claims.spec.rounds,
+        map_jolt_expr(ram_val_claims.input.clone()),
+        map_jolt_expr(ram_val_claims.output.clone()),
     ));
 
     let coefficients = &input.stage4.batch_consistency.batching_coefficients;
@@ -157,7 +171,7 @@ where
             input.stage4.batch_consistency.max_num_vars,
             input.stage4.batch_consistency.max_degree,
         ),
-        domain_spec(registers_claims.sumcheck),
+        domain_spec(registers_claims.spec),
         input.stage4.batch_consistency.consistency.clone(),
         &input.stage4.batch_output_claims,
         values,

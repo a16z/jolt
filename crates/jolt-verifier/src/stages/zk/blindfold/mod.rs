@@ -55,6 +55,7 @@
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
 use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
+use jolt_claims::protocols::jolt::relations;
 use jolt_claims::{
     opening,
     protocols::jolt::{
@@ -71,7 +72,7 @@ use jolt_claims::{
             dimensions::{JoltFormulaDimensions, JoltSumcheckSpec, REGISTER_ADDRESS_BITS},
             instruction, ram, registers,
             spartan::{
-                self, outer_opening, outer_uniskip_opening, product_outer_opening,
+                outer_opening, outer_uniskip_opening, product_outer_opening,
                 product_remainder_output_openings, product_should_branch_outer_opening,
                 product_should_jump_outer_opening, product_uniskip_opening, shift_output_openings,
                 SpartanOuterDimensions, SpartanProductDimensions,
@@ -86,7 +87,7 @@ use jolt_claims::{
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
         JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltPublicId,
-        JoltRelationClaims, JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
+        JoltRelationId, JoltSumcheckDomain, PrecommittedReductionLayout,
         ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
         RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
         RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
@@ -95,7 +96,7 @@ use jolt_claims::{
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanShiftChallenge, SpartanShiftPublic,
     },
-    public, Expr, Source, Term,
+    public, Expr, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, FromPrimitiveInt, RingCore};
@@ -212,6 +213,32 @@ where
     Ok(BlindFoldOutput { protocol })
 }
 
+/// A sumcheck relation's BlindFold ingredients — its spec plus its input/output
+/// expressions, built from the symbolic relation. Replaces the lowered
+/// `JoltRelationClaims` the formula bridges used to hand BlindFold.
+struct StageExpr<F: Field> {
+    spec: JoltSumcheckSpec,
+    input: JoltExpr<F>,
+    output: JoltExpr<F>,
+}
+
+impl<F: Field> StageExpr<F> {
+    fn new(
+        relation: &impl SymbolicSumcheck<
+            RelationId = JoltRelationId,
+            OpeningId = JoltOpeningId,
+            PublicId = JoltPublicId,
+            ChallengeId = JoltChallengeId,
+        >,
+    ) -> Self {
+        Self {
+            spec: relation.spec(),
+            input: relation.input_expression::<F>(),
+            output: relation.output_expression::<F>(),
+        }
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "BlindFold stages are deliberately explicit."
@@ -219,7 +246,7 @@ where
 fn add_batched_stage<F, C>(
     builder: Builder<F, C>,
     name: &'static str,
-    claims: &[JoltRelationClaims<F>],
+    claims: &[StageExpr<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
@@ -235,7 +262,7 @@ where
             reason: format!("{name}: empty batched claims"),
         });
     };
-    let domain = domain_spec(first.sumcheck);
+    let domain = domain_spec(first.spec);
     let input_claim = batched_input_expr(claims, consistency);
     let output_claim = batched_output_expr(claims, consistency);
     add_stage(
@@ -303,7 +330,7 @@ where
 }
 
 fn batched_input_expr<F, C>(
-    claims: &[JoltRelationClaims<F>],
+    claims: &[StageExpr<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
 ) -> VerifierExpr<F>
 where
@@ -312,14 +339,14 @@ where
     claims.iter().zip(&consistency.batching_coefficients).fold(
         VerifierExpr::zero(),
         |acc, (claim, coefficient)| {
-            let scale = *coefficient * F::pow2(consistency.max_num_vars - claim.sumcheck.rounds);
-            acc + scale_expr(map_jolt_expr(claim.input.expression().clone()), scale)
+            let scale = *coefficient * F::pow2(consistency.max_num_vars - claim.spec.rounds);
+            acc + scale_expr(map_jolt_expr(claim.input.clone()), scale)
         },
     )
 }
 
 fn batched_output_expr<F, C>(
-    claims: &[JoltRelationClaims<F>],
+    claims: &[StageExpr<F>],
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
 ) -> VerifierExpr<F>
 where
@@ -328,10 +355,7 @@ where
     claims.iter().zip(&consistency.batching_coefficients).fold(
         VerifierExpr::zero(),
         |acc, (claim, coefficient)| {
-            acc + scale_expr(
-                map_jolt_expr(claim.output.expression().clone()),
-                *coefficient,
-            )
+            acc + scale_expr(map_jolt_expr(claim.output.clone()), *coefficient)
         },
     )
 }
@@ -597,16 +621,19 @@ fn advice_cycle_claim<PCS, VC, ZkProof>(
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
-    Option<JoltRelationClaims<PCS::Field>>,
+    Option<StageExpr<PCS::Field>>,
 )
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let layout = advice_layout(input, kind);
-    let claim = layout
-        .as_ref()
-        .map(|layout| advice::cycle_phase::<PCS::Field>(kind, layout.dimensions()));
+    let claim = layout.as_ref().map(|layout| {
+        StageExpr::new(&relations::claim_reductions::advice::CyclePhase::new((
+            kind,
+            layout.dimensions(),
+        )))
+    });
     (layout, claim)
 }
 
@@ -615,7 +642,7 @@ fn advice_address_claim<PCS, VC, ZkProof>(
     kind: JoltAdviceKind,
 ) -> (
     Option<AdviceClaimReductionLayout>,
-    Option<JoltRelationClaims<PCS::Field>>,
+    Option<StageExpr<PCS::Field>>,
 )
 where
     PCS: CommitmentScheme,
@@ -623,10 +650,12 @@ where
 {
     let layout = advice_layout(input, kind);
     let claim = layout.as_ref().and_then(|layout| {
-        layout
-            .dimensions()
-            .has_address_phase()
-            .then(|| advice::address_phase::<PCS::Field>(kind, layout.dimensions()))
+        layout.dimensions().has_address_phase().then(|| {
+            StageExpr::new(&relations::claim_reductions::advice::AddressPhase::new((
+                kind,
+                layout.dimensions(),
+            )))
+        })
     });
     (layout, claim)
 }
@@ -649,14 +678,14 @@ where
 fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
-    bytecode_address_claims: &JoltRelationClaims<PCS::Field>,
-    bytecode_claims: &JoltRelationClaims<PCS::Field>,
-    booleanity_address_claims: &JoltRelationClaims<PCS::Field>,
-    booleanity_claims: &JoltRelationClaims<PCS::Field>,
-    ram_hamming_claims: &JoltRelationClaims<PCS::Field>,
-    ram_ra_claims: &JoltRelationClaims<PCS::Field>,
-    instruction_ra_claims: &JoltRelationClaims<PCS::Field>,
-    inc_claims: &JoltRelationClaims<PCS::Field>,
+    bytecode_address_claims: &StageExpr<PCS::Field>,
+    bytecode_claims: &StageExpr<PCS::Field>,
+    booleanity_address_claims: &StageExpr<PCS::Field>,
+    booleanity_claims: &StageExpr<PCS::Field>,
+    ram_hamming_claims: &StageExpr<PCS::Field>,
+    ram_ra_claims: &StageExpr<PCS::Field>,
+    instruction_ra_claims: &StageExpr<PCS::Field>,
+    inc_claims: &StageExpr<PCS::Field>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -714,7 +743,7 @@ where
     let bytecode_address_point = input
         .stage6
         .address_phase_consistency
-        .try_instance_point(bytecode_address_claims.sumcheck.rounds)
+        .try_instance_point(bytecode_address_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_address = bytecode_address_point
         .iter()
@@ -724,7 +753,7 @@ where
     let bytecode_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(bytecode_claims.sumcheck.rounds)
+        .try_instance_point(bytecode_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
     let stage1_cycle = input.stage1.public.remainder_challenges[1..]
@@ -859,12 +888,12 @@ where
     let booleanity_address_point = input
         .stage6
         .address_phase_consistency
-        .try_instance_point(booleanity_address_claims.sumcheck.rounds)
+        .try_instance_point(booleanity_address_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let booleanity_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(booleanity_claims.sumcheck.rounds)
+        .try_instance_point(booleanity_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let reference_eq_point = input
         .stage6
@@ -889,7 +918,7 @@ where
     let ram_hamming_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(ram_hamming_claims.sumcheck.rounds)
+        .try_instance_point(ram_hamming_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
     let stage1_cycle_binding = &input.stage1.public.remainder_challenges[1..];
     values.public(
@@ -901,7 +930,7 @@ where
     let ram_ra_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(ram_ra_claims.sumcheck.rounds)
+        .try_instance_point(ram_ra_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaVirtualization, error))?;
     let ram_ra_cycle = trace_dimensions
         .cycle_opening_point(&ram_ra_point)
@@ -916,7 +945,7 @@ where
     let instruction_ra_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(instruction_ra_claims.sumcheck.rounds)
+        .try_instance_point(instruction_ra_claims.spec.rounds)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::InstructionRaVirtualization, error)
         })?;
@@ -935,7 +964,7 @@ where
     let inc_point = input
         .stage6
         .batch_consistency
-        .try_instance_point(inc_claims.sumcheck.rounds)
+        .try_instance_point(inc_claims.spec.rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::IncClaimReduction, error))?;
     let inc_opening_point = trace_dimensions
         .cycle_opening_point(&inc_point)
