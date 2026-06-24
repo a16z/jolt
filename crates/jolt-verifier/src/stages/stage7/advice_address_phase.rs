@@ -20,7 +20,7 @@ use jolt_field::Field;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::VerifierError;
 
 /// Produced final advice openings, keyed by kind; present only when that kind's
@@ -100,7 +100,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for AdviceAddressPhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
     type Inputs<C> = AdviceAddressPhaseInputClaims<C>;
     type Outputs<C> = AdviceAddressPhaseOutputClaims<C>;
 

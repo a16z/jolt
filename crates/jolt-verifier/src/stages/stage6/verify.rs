@@ -58,7 +58,7 @@ use crate::{
     stages::{
         relations::{
             check_relation_boolean_hypercube, zip_openings, OpeningClaim, OutputClaims,
-            SumcheckInstance,
+            ConcreteSumcheck,
         },
         stage1::{Stage1ClearOutput, Stage1Output},
         stage2::{Stage2ClearOutput, Stage2Output},

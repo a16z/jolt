@@ -18,7 +18,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
@@ -94,7 +94,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamRaClaimReduction<F> {
+impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
     type Inputs<C> = RamRaClaimReductionInputClaims<C>;
     type Outputs<C> = RamRaClaimReductionOutputClaims<C>;
 

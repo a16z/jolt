@@ -11,7 +11,7 @@
 //! gamma-folded bind of the entire prior proof (every stage-1..5 opening plus the
 //! two PC claims); that 25-opening formula already lives in the single-sourced
 //! [`stage6_bytecode_read_raf_address_input`] helper, so this relation takes the
-//! precomputed value and overrides [`SumcheckInstance::input_claim`] rather than
+//! precomputed value and overrides [`ConcreteSumcheck::input_claim`] rather than
 //! restating the bind as a 25-field `InputClaims`. Its output is the staged
 //! `BytecodeReadRafAddrClaim` intermediate (consumed by the cycle phase) followed,
 //! in committed mode, by the `BytecodeValStage` openings.
@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use super::verify::{
     stage6_bytecode_read_raf_expected_output, Stage6BytecodeReadRafExpectedOutputInputs,
 };
-use crate::stages::relations::{GetPoint, GetValue, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, GetValue, OpeningClaim, ConcreteSumcheck};
 use crate::stages::{
     stage1::Stage1ClearOutput, stage2::Stage2ClearOutput, stage3::Stage3ClearOutput,
     stage4::Stage4ClearOutput, stage5::Stage5ClearOutput,
@@ -222,7 +222,7 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for BytecodeReadRafAddressPhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     type Inputs<C> = BytecodeReadRafAddressPhaseInputClaims<C>;
     type Outputs<C> = BytecodeReadRafAddressPhaseOutputClaims<C>;
 
@@ -312,7 +312,7 @@ pub struct BytecodeReadRafCycleInputs<'a, F: Field> {
 /// `(r_address, r_cycle)` folded against the committed `BytecodeRa` product — the
 /// same quantity `read_raf`'s output expression computes. Rather than resolve each
 /// public id individually (which would recompute the `O(2^log_k)` table fold once
-/// per public), it OVERRIDES [`SumcheckInstance::expected_output`] to evaluate the
+/// per public), it OVERRIDES [`ConcreteSumcheck::expected_output`] to evaluate the
 /// public values once and reuse the shared
 /// [`stage6_bytecode_read_raf_expected_output`] helper.
 ///
@@ -349,7 +349,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for BytecodeReadRaf<'_, F> {
+impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<'_, F> {
     type Inputs<C> = BytecodeReadRafInputClaims<C>;
     type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 
@@ -445,7 +445,7 @@ pub struct BytecodeReadRafCommittedCycleInputs<F: Field> {
 /// into the output expression and draws its publics from a committed bytecode
 /// evaluation (`read_raf_committed_public_values`) rather than the full bytecode
 /// table. Like the full-mode relation it OVERRIDES
-/// [`SumcheckInstance::expected_output`]: the staged Val openings are inputs mixed
+/// [`ConcreteSumcheck::expected_output`]: the staged Val openings are inputs mixed
 /// into the output, and the committed public values are evaluated once.
 pub struct BytecodeReadRafCommitted<F: Field> {
     claims: JoltRelationClaims<F>,
@@ -480,7 +480,7 @@ impl<F: Field> BytecodeReadRafCommitted<F> {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for BytecodeReadRafCommitted<F> {
+impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
     type Inputs<C> = BytecodeReadRafInputClaims<C>;
     type Outputs<C> = BytecodeReadRafOutputClaims<C>;
 

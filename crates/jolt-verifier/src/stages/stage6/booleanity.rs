@@ -20,7 +20,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::VerifierError;
 
 // ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ impl<F: Field> BooleanityAddressPhase<F> {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for BooleanityAddressPhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     type Inputs<C> = BooleanityAddressPhaseInputClaims<C>;
     type Outputs<C> = BooleanityAddressPhaseOutputClaims<C>;
 
@@ -169,7 +169,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for Booleanity<F> {
+impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
     type Inputs<C> = BooleanityInputClaims<C>;
     type Outputs<C> = BooleanityOutputClaims<C>;
 

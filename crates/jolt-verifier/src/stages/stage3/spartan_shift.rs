@@ -16,7 +16,7 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
@@ -103,7 +103,7 @@ impl<F: Field> SpartanShift<F> {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for SpartanShift<F> {
+impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
     type Inputs<C> = SpartanShiftInputClaims<C>;
     type Outputs<C> = SpartanShiftOutputClaims<C>;
 

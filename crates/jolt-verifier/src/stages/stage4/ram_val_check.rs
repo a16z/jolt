@@ -31,7 +31,7 @@ use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use crate::proof::JoltProof;
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage2::outputs::Stage2ClearOutput;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
@@ -148,7 +148,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamValCheck<F> {
+impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
     type Inputs<C> = RamValCheckInputClaims<C>;
     type Outputs<C> = RamValCheckOutputClaims<C>;
 

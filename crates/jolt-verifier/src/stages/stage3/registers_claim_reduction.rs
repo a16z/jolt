@@ -18,7 +18,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
@@ -90,7 +90,7 @@ impl<F: Field> RegistersClaimReduction<F> {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RegistersClaimReduction<F> {
+impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
     type Inputs<C> = RegistersClaimReductionInputClaims<C>;
     type Outputs<C> = RegistersClaimReductionOutputClaims<C>;
 

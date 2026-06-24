@@ -8,7 +8,7 @@
 //! the same `spartan::product_remainder` formula).
 //!
 //! The companion product *uni-skip* first round is a univariate skip rather than a
-//! [`SumcheckInstance`], so it stays hand-coded in the stage-2 verifier; this
+//! [`ConcreteSumcheck`], so it stays hand-coded in the stage-2 verifier; this
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
 use jolt_claims::protocols::jolt::{
@@ -25,7 +25,7 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::VerifierError;
 
 /// Produced product-remainder openings (the eight virtualized instruction-product
@@ -111,7 +111,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for ProductRemainder<F> {
+impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
     type Inputs<C> = ProductRemainderInputClaims<C>;
     type Outputs<C> = ProductRemainderOutputClaims<C>;
 

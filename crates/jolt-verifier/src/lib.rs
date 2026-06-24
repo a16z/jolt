@@ -14,7 +14,7 @@ pub use preprocessing::{
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 pub use stages::relations::{
-    GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, SumcheckInstance,
+    GetPoint, GetValue, InputClaims, OpeningClaim, OutputClaims, ConcreteSumcheck,
 };
 pub use stages::zk::committed::zk_vector_commitment_capacity_requirement;
 // Derive macros share the names of the traits they implement (distinct

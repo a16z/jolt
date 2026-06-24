@@ -19,7 +19,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::VerifierError;
 
 /// Produced one-hot `Ra` opening claims, grouped by family (instruction,
@@ -131,7 +131,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for HammingWeightClaimReduction<F> {
+impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     type Inputs<C> = HammingWeightClaimReductionInputClaims<C>;
     type Outputs<C> = HammingWeightClaimReductionOutputClaims<C>;
 

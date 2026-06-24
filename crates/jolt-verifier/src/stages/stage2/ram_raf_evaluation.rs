@@ -23,7 +23,7 @@ use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
@@ -94,7 +94,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamRafEvaluation<F> {
+impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
     type Inputs<C> = RamRafEvaluationInputClaims<C>;
     type Outputs<C> = RamRafEvaluationOutputClaims<C>;
 

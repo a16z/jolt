@@ -9,7 +9,7 @@
 //!
 //! Because the produced opening point is the (reverse-ordered) cycle opening
 //! point while the scale is evaluated at the Dory-permuted point, each relation
-//! OVERRIDES [`SumcheckInstance::expected_output`] to recover the scale from the
+//! OVERRIDES [`ConcreteSumcheck::expected_output`] to recover the scale from the
 //! produced opening point via the layout's `cycle_phase_*_at_opening_point`
 //! helpers — see [`PrecommittedClaimReduction::cycle_phase_permuted_from_opening_point`].
 //! The output expression is bypassed (not the `resolve_public` path) because the
@@ -29,7 +29,7 @@ use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
 use super::outputs::BytecodeReductionWeights;
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage4::Stage4ClearOutput;
 use crate::VerifierError;
 
@@ -127,7 +127,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for AdviceCyclePhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for AdviceCyclePhase<F> {
     type Inputs<C> = AdviceCyclePhaseInputClaims<C>;
     type Outputs<C> = AdviceCyclePhaseOutputClaims<C>;
 
@@ -241,7 +241,7 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for ProgramImageReductionCyclePhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
     type Inputs<C> = ProgramImageReductionCyclePhaseInputClaims<C>;
     type Outputs<C> = ProgramImageReductionCyclePhaseOutputClaims<C>;
 
@@ -353,7 +353,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for BytecodeReductionCyclePhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
     type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 

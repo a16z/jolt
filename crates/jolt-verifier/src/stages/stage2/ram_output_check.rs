@@ -21,7 +21,7 @@ use jolt_program::preprocess::PublicIoMemory;
 use jolt_verifier_derive::OutputClaims;
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, InputClaims, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, InputClaims, OpeningClaim, ConcreteSumcheck};
 use crate::VerifierError;
 
 /// The produced RAM `val_final` opening, sharing the single output-check opening
@@ -131,7 +131,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RamOutputCheck<F> {
+impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
     type Inputs<C> = RamOutputCheckInputClaims<C>;
     type Outputs<C> = RamOutputCheckOutputClaims<C>;
 

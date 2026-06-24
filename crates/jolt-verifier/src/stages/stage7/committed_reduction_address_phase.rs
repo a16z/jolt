@@ -26,7 +26,7 @@ use jolt_field::Field;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::VerifierError;
 
 /// Produced per-chunk `BytecodeChunk(i)` openings, all sharing the reduction's
@@ -93,7 +93,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for BytecodeReductionAddressPhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
     type Inputs<C> = BytecodeReductionAddressPhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionAddressPhaseOutputClaims<C>;
 
@@ -195,7 +195,7 @@ fn program_image_public_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for ProgramImageReductionAddressPhase<F> {
+impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
     type Inputs<C> = ProgramImageReductionAddressPhaseInputClaims<C>;
     type Outputs<C> = ProgramImageReductionAddressPhaseOutputClaims<C>;
 

@@ -148,7 +148,7 @@ pub fn zip_openings<F: Field, T: ZipOpenings<F>>(values: &T::Values, points: &T:
 /// generic over any [`GetPoint`] cell and run in both modes; methods that read
 /// values pin the `OpeningClaim<F>` cell and run only on the clear path. This
 /// makes "a ZK opening carries no value" a compile-time fact.
-pub trait SumcheckInstance<F: Field>
+pub trait ConcreteSumcheck<F: Field>
 where
     Self::Inputs<OpeningClaim<F>>: InputClaims<F>,
     Self::Outputs<OpeningClaim<F>>: OutputClaims<F>,

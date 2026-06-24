@@ -19,7 +19,7 @@ use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage3::outputs::Stage3ClearOutput;
 use crate::VerifierError;
 
@@ -96,7 +96,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for RegistersReadWriteChecking<F> {
+impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
     type Inputs<C> = RegistersReadWriteInputClaims<C>;
     type Outputs<C> = RegistersReadWriteOutputClaims<C>;
 

@@ -20,7 +20,7 @@ use jolt_poly::{
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
@@ -122,7 +122,7 @@ pub(crate) fn reconstruct_r_address<F: Field, C: GetPoint<F>>(
         .collect()
 }
 
-impl<F: Field> SumcheckInstance<F> for InstructionReadRaf<F> {
+impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
     type Inputs<C> = InstructionReadRafInputClaims<C>;
     type Outputs<C> = InstructionReadRafOutputClaims<C>;
 

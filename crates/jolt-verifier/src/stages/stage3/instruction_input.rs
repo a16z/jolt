@@ -23,7 +23,7 @@ use jolt_riscv::InstructionFlags;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
 
-use crate::stages::relations::{GetPoint, OpeningClaim, SumcheckInstance};
+use crate::stages::relations::{GetPoint, OpeningClaim, ConcreteSumcheck};
 use crate::stages::stage2::Stage2ClearOutput;
 use crate::VerifierError;
 
@@ -115,7 +115,7 @@ impl<F: Field> InstructionInput<F> {
     }
 }
 
-impl<F: Field> SumcheckInstance<F> for InstructionInput<F> {
+impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
     type Inputs<C> = InstructionInputInputClaims<C>;
     type Outputs<C> = InstructionInputOutputClaims<C>;
 
