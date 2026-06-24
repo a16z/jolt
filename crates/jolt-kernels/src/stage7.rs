@@ -4,6 +4,9 @@
 //! all RA one-hot polynomials. This module owns the prover-side runtime behind
 //! the generated `jolt.stage7.*` CPU ABI.
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -1067,8 +1070,14 @@ where
         }
         let relation = claim_relation(context.program, claim)?;
         let active_scale = F::one().mul_pow_2(max_rounds - offset - claim.num_rounds);
-        let state =
-            Stage7ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?;
+        let state = Stage7ProverInstanceState::new(
+            context.program,
+            claim,
+            inputs,
+            &store,
+            active_scale,
+            context.kernel.backend,
+        )?;
         instances.push(Stage7BatchedInstance {
             claim,
             relation,
@@ -1345,12 +1354,18 @@ impl<F: Field> Stage7ProverInstanceState<F> {
         inputs: &Stage7ProverInputs<'_, F>,
         store: &Stage7ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage7KernelError> {
         match claim_relation(program, claim)? {
-            Stage7Relation::HammingWeightClaimReduction => {
-                hamming_weight_claim_reduction_state(program, claim, inputs, store, active_scale)
-                    .map(Self::HammingWeightClaimReduction)
-            }
+            Stage7Relation::HammingWeightClaimReduction => hamming_weight_claim_reduction_state(
+                program,
+                claim,
+                inputs,
+                store,
+                active_scale,
+                backend,
+            )
+            .map(Self::HammingWeightClaimReduction),
             relation @ Stage7Relation::Batched => Err(Stage7KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
             }),
@@ -1396,6 +1411,7 @@ pub(crate) struct HammingWeightClaimReductionState<F: Field> {
     pub(crate) gamma_powers: Vec<F>,
     pub(crate) outputs: Vec<Stage7RaOutputPlan>,
     pub(crate) active_scale: F,
+    pub(crate) backend: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -1415,6 +1431,12 @@ impl<F: Field> HammingWeightClaimReductionState<F> {
                 driver: relation.symbol(),
                 reason: "wrong relation for hamming-weight claim-reduction state",
             });
+        }
+        #[cfg(feature = "cuda")]
+        if self.backend == "cuda" {
+            if let Some(evals) = cuda::hamming_round_poly(self) {
+                return Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals));
+            }
         }
         let half_len = self
             .g
@@ -1516,6 +1538,7 @@ fn hamming_weight_claim_reduction_state<F: Field>(
     inputs: &Stage7ProverInputs<'_, F>,
     store: &Stage7ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<HammingWeightClaimReductionState<F>, Stage7KernelError> {
     let log_k_chunk = claim.num_rounds;
     let booleanity_point = store.point("stage7.input.stage6.booleanity.InstructionRa_0")?;
@@ -1590,6 +1613,7 @@ fn hamming_weight_claim_reduction_state<F: Field>(
         gamma_powers,
         outputs,
         active_scale,
+        backend,
     })
 }
 

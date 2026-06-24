@@ -28,6 +28,7 @@ const KERNEL_SRC: &str = concat!(
     include_str!("cuda/gruen_round_poly.cu"),
     include_str!("cuda/uniskip.cu"),
     include_str!("cuda/gather8.cu"),
+    include_str!("cuda/hamming.cu"),
     include_str!("cuda/reduce.cu"),
 );
 
@@ -82,6 +83,7 @@ pub struct CudaKernelContext {
     gruen_round_poly_pairs: CudaFunction,
     uniskip_pairs: CudaFunction,
     gather8_materialize: CudaFunction,
+    hamming_pairs: CudaFunction,
     sum_reduce: CudaFunction,
     product_reduce: CudaFunction,
     one_dev: CudaSlice<u64>,
@@ -375,6 +377,7 @@ impl CudaKernelContext {
             gruen_round_poly_pairs: module.load_function("gruen_round_poly_pairs")?,
             uniskip_pairs: module.load_function("uniskip_pairs")?,
             gather8_materialize: module.load_function("gather8_materialize")?,
+            hamming_pairs: module.load_function("hamming_pairs")?,
             sum_reduce: module.load_function("sum_reduce")?,
             product_reduce: module.load_function("product_reduce")?,
             stream,
@@ -658,12 +661,100 @@ impl CudaKernelContext {
         Ok((a.to_host()?, b.to_host()?))
     }
 
-    #[expect(clippy::todo, unused_variables)]
     pub fn hamming_round_poly(
         &self,
         inputs: HammingRoundPolyInputs<'_>,
     ) -> Result<[Fr; 2], CudaError> {
-        todo!()
+        use jolt_field::Field;
+        use num_traits::Zero;
+        let num_ra = inputs.g.len();
+        assert!(num_ra > 0, "hamming round poly needs at least one RA poly");
+        assert_eq!(inputs.eq_virt.len(), num_ra);
+        assert_eq!(inputs.gamma_powers.len(), 3 * num_ra);
+        let len = inputs.g[0].len();
+        let pair_stride = len / 2;
+        for poly in inputs.g.iter().chain(inputs.eq_virt.iter()) {
+            assert_eq!(poly.len(), len, "hamming polys must have equal length");
+        }
+        assert_eq!(inputs.eq_bool.len(), len, "eq_bool length mismatch");
+        if pair_stride == 0 {
+            return Ok([Fr::zero(); 2]);
+        }
+
+        let pack = |polys: &[&DeviceFrVec]| -> Result<CudaSlice<u64>, CudaError> {
+            let mut packed: CudaSlice<u64> = self.stream.alloc_zeros(num_ra * len * LIMBS)?;
+            for (index, poly) in polys.iter().enumerate() {
+                let offset = index * len * LIMBS;
+                self.stream.memcpy_dtod(
+                    &poly.buf.slice(0..len * LIMBS),
+                    &mut packed.slice_mut(offset..offset + len * LIMBS),
+                )?;
+            }
+            Ok(packed)
+        };
+        let g_packed = pack(inputs.g)?;
+        let eq_virt_packed = pack(inputs.eq_virt)?;
+        let gammas_dev = self.upload(inputs.gamma_powers)?;
+        let two_dev = self.stream.clone_htod(&fr_to_limbs(Fr::from_u64(2)))?;
+
+        const WIDTH: usize = 2;
+        let tuple = WIDTH * LIMBS;
+        let block = BLOCK;
+        let shared = block * tuple as u32 * std::mem::size_of::<u64>() as u32;
+        let blocks = (pair_stride as u32).div_ceil(block);
+        let mut buf: CudaSlice<u64> = self.stream.alloc_zeros(blocks as usize * tuple)?;
+
+        let num_ra_arg = num_ra as u32;
+        let pair_stride_arg = pair_stride as u64;
+        let half_arg = pair_stride as u64;
+        let width_arg = WIDTH as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (block, 1, 1),
+            shared_mem_bytes: shared,
+        };
+        let f = self.hamming_pairs.clone();
+        let mut launch = self.stream.launch_builder(&f);
+        let _ = launch
+            .arg(&mut buf)
+            .arg(&g_packed)
+            .arg(&eq_virt_packed)
+            .arg(&inputs.eq_bool.buf)
+            .arg(&gammas_dev.buf)
+            .arg(&two_dev)
+            .arg(&num_ra_arg)
+            .arg(&pair_stride_arg)
+            .arg(&half_arg);
+        // SAFETY: one thread per row reads its pair from each of the num_ra packed g
+        // and eq_virt polys, the shared eq_bool pair, and the 3*num_ra gammas,
+        // writing one 2-lane tuple per block; shared memory holds `block` tuples.
+        let _ = unsafe { launch.launch(cfg) }?;
+
+        let mut len_reduce = blocks as usize;
+        while len_reduce > 1 {
+            let out_blocks = (len_reduce as u32).div_ceil(block);
+            let mut out: CudaSlice<u64> = self.stream.alloc_zeros(out_blocks as usize * tuple)?;
+            let len_arg = len_reduce as u64;
+            let cfg = LaunchConfig {
+                grid_dim: (out_blocks, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            };
+            let f = self.round_poly_reduce.clone();
+            let mut launch = self.stream.launch_builder(&f);
+            let _ = launch.arg(&mut out).arg(&buf).arg(&width_arg).arg(&len_arg);
+            // SAFETY: round_poly_reduce sums 2-lane tuples across up to `block`
+            // blocks; shared memory holds `block` tuples.
+            let _ = unsafe { launch.launch(cfg) }?;
+            buf = out;
+            len_reduce = out_blocks as usize;
+        }
+
+        let raw = self.stream.clone_dtoh(&buf.slice(0..tuple))?;
+        self.stream.synchronize()?;
+        let eval0 = limbs_to_fr([raw[0], raw[1], raw[2], raw[3]]) * inputs.scale;
+        let eval1 = limbs_to_fr([raw[4], raw[5], raw[6], raw[7]]) * inputs.scale;
+        Ok([eval0, eval1])
     }
 
     pub fn gather8_materialize(
@@ -2337,7 +2428,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "CudaKernelContext::hamming_round_poly is todo!()"]
         fn hamming_round_poly_matches_cpu(
             log_len in 1usize..10,
             num_ra in 1usize..5,
@@ -2367,6 +2457,7 @@ mod tests {
                 gamma_powers: gamma_powers.clone(),
                 outputs: Vec::new(),
                 active_scale: scale,
+                backend: "cpu",
             };
             let expected = state
                 .round_poly(previous_claim, Stage7Relation::HammingWeightClaimReduction)
