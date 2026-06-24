@@ -1,7 +1,7 @@
 use jolt_field::RingCore;
 
 use crate::util::extend_unique;
-use crate::Expr;
+use crate::{Expr, SumcheckSpec};
 
 /// Pure symbolic description of one sumcheck relation: its id, sumcheck spec, and
 /// input/output algebra over the relation's id types. The expression methods are
@@ -18,10 +18,6 @@ pub trait SymbolicSumcheck {
     /// expressions and sumcheck spec). Field-independent for every relation.
     type Shape;
 
-    /// Protocol-specific sumcheck spec (jolt carries a domain; field_inline does
-    /// not), so it is associated rather than a shared type.
-    type SumcheckSpec;
-
     fn new(shape: Self::Shape) -> Self;
 
     /// The relation this sumcheck belongs to. A type-level constant; NOT a unique
@@ -31,7 +27,7 @@ pub trait SymbolicSumcheck {
     fn id() -> Self::RelationId;
 
     /// The sumcheck spec, derived from [`Shape`](Self::Shape).
-    fn sumcheck(&self) -> Self::SumcheckSpec;
+    fn sumcheck(&self) -> SumcheckSpec;
 
     fn input_expression<F: RingCore>(
         &self,
@@ -79,7 +75,7 @@ pub trait SymbolicSumcheck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{challenge, opening, public, Expr};
+    use crate::{challenge, opening, public, Expr, SumcheckSpec};
     use jolt_field::Fr;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -103,15 +99,14 @@ mod tests {
         type PublicId = P;
         type ChallengeId = Ch;
         type Shape = ();
-        type SumcheckSpec = usize;
         fn new((): ()) -> Self {
             Self
         }
         fn id() -> u8 {
             7
         }
-        fn sumcheck(&self) -> usize {
-            3
+        fn sumcheck(&self) -> SumcheckSpec {
+            SumcheckSpec::boolean(3, 1)
         }
         fn input_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {
             opening(O::A) + challenge(Ch::G) * opening(O::B)

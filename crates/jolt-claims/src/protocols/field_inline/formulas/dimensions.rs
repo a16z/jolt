@@ -1,21 +1,12 @@
 use jolt_field::Field;
-use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::formulas::dimensions::JoltFormulaPointError;
 
 pub const FIELD_REGISTERS_ADDRESS_BITS: usize = super::super::FIELD_REGISTERS_LOG_K;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FieldInlineSumcheckSpec {
-    pub rounds: usize,
-    pub degree: usize,
-}
-
-impl FieldInlineSumcheckSpec {
-    pub const fn boolean(rounds: usize, degree: usize) -> Self {
-        Self { rounds, degree }
-    }
-}
+// field_inline shares the protocol-agnostic crate-root sumcheck spec; it gains a
+// `domain` field, always `BooleanHypercube` via `::boolean`.
+pub use crate::SumcheckSpec as FieldInlineSumcheckSpec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct FieldRegistersTraceDimensions {

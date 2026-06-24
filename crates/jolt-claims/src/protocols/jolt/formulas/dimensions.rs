@@ -16,36 +16,9 @@ pub const OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize = 27;
 pub const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = 3;
 pub const PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize = 6;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum JoltSumcheckDomain {
-    BooleanHypercube,
-    CenteredInteger { domain_size: usize },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JoltSumcheckSpec {
-    pub domain: JoltSumcheckDomain,
-    pub rounds: usize,
-    pub degree: usize,
-}
-
-impl JoltSumcheckSpec {
-    pub const fn boolean(rounds: usize, degree: usize) -> Self {
-        Self {
-            domain: JoltSumcheckDomain::BooleanHypercube,
-            rounds,
-            degree,
-        }
-    }
-
-    pub const fn centered_integer(domain_size: usize, rounds: usize, degree: usize) -> Self {
-        Self {
-            domain: JoltSumcheckDomain::CenteredInteger { domain_size },
-            rounds,
-            degree,
-        }
-    }
-}
+// The sumcheck spec/domain are now protocol-agnostic crate-root types; these
+// aliases keep the `Jolt*` spelling that the rest of the codebase uses.
+pub use crate::{SumcheckDomain as JoltSumcheckDomain, SumcheckSpec as JoltSumcheckSpec};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TracePolynomialOrder {
