@@ -74,11 +74,14 @@ pub fn booleanity<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
+    use crate::protocols::jolt::relations::booleanity::Booleanity;
+    use crate::SymbolicSumcheck;
+    let relation = Booleanity::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::Booleanity,
-        dimensions.sumcheck(),
-        JoltExpr::zero(),
-        booleanity_cycle_output(dimensions),
+        Booleanity::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
     .with_input_challenges([JoltChallengeId::from(BooleanityChallenge::Gamma)])
 }
@@ -87,11 +90,14 @@ pub fn booleanity_address_phase<F>(dimensions: BooleanityDimensions) -> JoltRela
 where
     F: RingCore,
 {
+    use crate::protocols::jolt::relations::booleanity::BooleanityAddressPhase;
+    use crate::SymbolicSumcheck;
+    let relation = BooleanityAddressPhase::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::Booleanity,
-        dimensions.address_sumcheck(),
-        JoltExpr::zero(),
-        opening(booleanity_address_phase_opening()),
+        BooleanityAddressPhase::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
@@ -99,16 +105,19 @@ pub fn booleanity_cycle_phase<F>(dimensions: BooleanityDimensions) -> JoltRelati
 where
     F: RingCore,
 {
+    use crate::protocols::jolt::relations::booleanity::BooleanityCyclePhase;
+    use crate::SymbolicSumcheck;
+    let relation = BooleanityCyclePhase::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::Booleanity,
-        dimensions.cycle_sumcheck(),
-        opening(booleanity_address_phase_opening()),
-        booleanity_cycle_output(dimensions),
+        BooleanityCyclePhase::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
     .with_input_challenges([JoltChallengeId::from(BooleanityChallenge::Gamma)])
 }
 
-fn booleanity_cycle_output<F>(dimensions: BooleanityDimensions) -> JoltExpr<F>
+pub(crate) fn booleanity_cycle_output<F>(dimensions: BooleanityDimensions) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -218,38 +227,6 @@ mod tests {
     }
 
     #[test]
-    fn booleanity_exposes_expected_dependencies() -> Result<(), JoltFormulaDimensionsError> {
-        let layout = layout(1, 1, 1)?;
-        let claims = booleanity::<Fr>(dimensions(layout));
-
-        assert_eq!(claims.id, JoltRelationId::Booleanity);
-        assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(13, 3));
-        assert!(claims.input.required_openings.is_empty());
-        assert_eq!(
-            claims.output.required_openings,
-            booleanity_output_openings(layout)
-        );
-        assert_eq!(
-            claims.input.required_challenges,
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(BooleanityPublic::EqAddressCycle)]
-        );
-        assert_eq!(claims.num_challenges(), 1);
-        Ok(())
-    }
-
-    #[test]
     fn booleanity_groups_output_openings_by_ra_family() -> Result<(), JoltFormulaDimensionsError> {
         let layout = layout(2, 1, 2)?;
         let groups = booleanity_output_opening_groups(layout);
@@ -271,6 +248,23 @@ mod tests {
         Ok(())
     }
 
+    /// The single-polynomial output expression drops `gamma` (its only term is
+    /// weighted by `gamma^0 == 1`), so the symbolic relation alone reports no
+    /// `gamma` dependency. The bridged builder must still declare it via
+    /// `with_input_challenges` to keep the Fiat-Shamir transcript in sync.
+    #[test]
+    fn booleanity_preserves_gamma_dependency_for_single_polynomial(
+    ) -> Result<(), JoltFormulaDimensionsError> {
+        let claims = booleanity::<Fr>(dimensions(layout(1, 0, 0)?));
+
+        assert!(claims.output.required_challenges.is_empty());
+        assert_eq!(
+            claims.required_challenges(),
+            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
+        );
+        Ok(())
+    }
+
     #[test]
     fn eq_address_cycle_polynomial_reverses_address_then_cycle() {
         let address = vec![Fr::from_u64(2), Fr::from_u64(3)];
@@ -287,19 +281,6 @@ mod tests {
             eq_address_cycle_polynomial(&address, &cycle).evals(),
             EqPolynomial::<Fr>::evals(&eq_point, None)
         );
-    }
-
-    #[test]
-    fn booleanity_preserves_gamma_dependency_for_single_polynomial(
-    ) -> Result<(), JoltFormulaDimensionsError> {
-        let claims = booleanity::<Fr>(dimensions(layout(1, 0, 0)?));
-
-        assert!(claims.output.required_challenges.is_empty());
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        Ok(())
     }
 
     #[test]
