@@ -136,8 +136,10 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         &self,
         id: &JoltPublicId,
         inputs: &RegistersReadWriteInputClaims<C>,
-        outputs: &RegistersReadWriteOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RegistersReadWriteOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RegistersReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

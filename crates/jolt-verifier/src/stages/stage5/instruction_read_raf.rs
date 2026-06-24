@@ -178,8 +178,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         &self,
         id: &JoltPublicId,
         inputs: &InstructionReadRafInputClaims<C>,
-        outputs: &InstructionReadRafOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&InstructionReadRafOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::InstructionReadRaf(public) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

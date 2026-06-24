@@ -155,8 +155,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &RamOutputCheckInputClaims<C>,
-        outputs: &RamOutputCheckOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RamOutputCheckOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamOutputCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

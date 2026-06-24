@@ -137,8 +137,10 @@ impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &SpartanShiftInputClaims<C>,
-        outputs: &SpartanShiftOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&SpartanShiftOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::SpartanShift(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

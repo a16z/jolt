@@ -120,23 +120,39 @@ pub struct RamValCheck<F: Field> {
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
     gamma: F,
+    /// `Val_init(r_address)`'s public portion — resolves the `InitEval` input public.
+    public_eval: F,
+    /// The negated block selector for each present `Val_init` contribution —
+    /// resolves the `InitSelector`/`InitSelectorProgramImage` input publics.
+    init_selectors: Vec<(RamValCheckPublic, F)>,
 }
 
 impl<F: Field> RamValCheck<F> {
     /// Build the relation from its per-proof init decomposition. `init` carries
     /// the public initial-RAM evaluation plus the present advice/program-image
-    /// contributions, baked into the formula's input `Expr`.
+    /// contributions; their *structure* feeds the symbolic input `Expr` and their
+    /// *values* are supplied as `Public` symbols via [`resolve_public`].
+    ///
+    /// [`resolve_public`]: ConcreteSumcheck::resolve_public
     pub fn new(
         trace_dimensions: TraceDimensions,
         ram_log_k: usize,
         gamma: F,
         init: RamValCheckInit<F>,
     ) -> Self {
+        let public_eval = init.public_eval;
+        let init_selectors = init
+            .contributions
+            .iter()
+            .map(|contribution| (contribution.selector, contribution.neg_selector))
+            .collect();
         Self {
             claims: ram::val_check(trace_dimensions, init),
             trace_dimensions,
             ram_log_k,
             gamma,
+            public_eval,
+            init_selectors,
         }
     }
 }
@@ -197,25 +213,28 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
         &self,
         id: &JoltPublicId,
         inputs: &RamValCheckInputClaims<C>,
-        outputs: &RamValCheckOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RamValCheckOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
         let JoltPublicId::RamValCheck(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };
         match public_id {
+            // The `Val_init` decomposition publics are input publics (resolved
+            // with `outputs == None`): the public initial-RAM evaluation and the
+            // negated committed-contribution selectors.
+            RamValCheckPublic::InitEval => Ok(self.public_eval),
+            RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => self
+                .init_selectors
+                .iter()
+                .find_map(|(selector, value)| (selector == public_id).then_some(*value))
+                .ok_or(VerifierError::MissingStageClaimPublic { id: *id }),
             // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation
             // of the produced cycle point against the fixed read-write cycle.
             RamValCheckPublic::LtCyclePlusGamma => {
+                let outputs = outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
                 let output_cycle = &outputs.ram_ra.point()[self.ram_log_k..];
                 let fixed_cycle = &inputs.ram_val.point()[self.ram_log_k..];
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + self.gamma)
-            }
-            // The `Val_init` decomposition publics are not yet referenced by the
-            // baked-constant `val_check` formula; resolved in the symbolic remodel.
-            RamValCheckPublic::InitEval
-            | RamValCheckPublic::InitSelector(_)
-            | RamValCheckPublic::InitSelectorProgramImage => {
-                Err(VerifierError::MissingStageClaimPublic { id: *id })
             }
         }
     }

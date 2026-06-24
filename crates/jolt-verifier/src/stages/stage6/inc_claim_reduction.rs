@@ -133,8 +133,10 @@ impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &IncClaimReductionInputClaims<C>,
-        outputs: &IncClaimReductionOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&IncClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::IncClaimReduction(public) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

@@ -132,8 +132,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &RamReadWriteInputClaims<C>,
-        outputs: &RamReadWriteOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RamReadWriteOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamReadWrite(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

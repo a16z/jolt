@@ -152,8 +152,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         &self,
         id: &JoltPublicId,
         inputs: &RamRaClaimReductionInputClaims<C>,
-        outputs: &RamRaClaimReductionOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RamRaClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamRaClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

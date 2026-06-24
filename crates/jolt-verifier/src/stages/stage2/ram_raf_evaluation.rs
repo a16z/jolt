@@ -128,8 +128,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &RamRafEvaluationInputClaims<C>,
-        outputs: &RamRafEvaluationOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RamRafEvaluationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamRafEvaluation(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

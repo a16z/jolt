@@ -110,8 +110,10 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
         &self,
         id: &JoltPublicId,
         inputs: &RegistersValEvaluationInputClaims<C>,
-        outputs: &RegistersValEvaluationOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RegistersValEvaluationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         match id {
             JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
                 let registers_cycle = &outputs.rd_inc.point()[REGISTER_ADDRESS_BITS..];

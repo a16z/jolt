@@ -8,7 +8,7 @@ use super::super::{
     JoltPublicId, JoltRelationClaims, JoltRelationId, JoltVirtualPolynomial,
     RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
     RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
-    RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+    RamReadWriteChallenge, RamReadWritePublic, RamValCheckPublic,
 };
 use super::dimensions::{JoltSumcheckSpec, ReadWriteDimensions, TraceDimensions};
 
@@ -72,8 +72,8 @@ impl RamRaVirtualizationDimensions {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInit<F> {
-    public_eval: F,
-    contributions: Vec<RamValCheckInitContribution<F>>,
+    pub public_eval: F,
+    pub contributions: Vec<RamValCheckInitContribution<F>>,
 }
 
 impl<F> RamValCheckInit<F> {
@@ -107,13 +107,17 @@ impl<F> From<F> for RamValCheckInit<F> {
 /// image contributes its staged scalar with weight one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RamValCheckInitContribution<F> {
+    /// The `Public` selector id this contribution is weighted by in the symbolic
+    /// `Val_init` decomposition (resolves to `neg_selector` on the verifier).
+    pub selector: RamValCheckPublic,
     pub neg_selector: F,
     pub opening: JoltOpeningId,
 }
 
 impl<F> RamValCheckInitContribution<F> {
-    pub fn new(neg_selector: F, opening: JoltOpeningId) -> Self {
+    pub fn new(selector: RamValCheckPublic, neg_selector: F, opening: JoltOpeningId) -> Self {
         Self {
+            selector,
             neg_selector,
             opening,
         }
@@ -121,6 +125,7 @@ impl<F> RamValCheckInitContribution<F> {
 
     pub fn untrusted(neg_selector: F) -> Self {
         Self::new(
+            RamValCheckPublic::InitSelector(JoltAdviceKind::Untrusted),
             neg_selector,
             JoltOpeningId::untrusted_advice(JoltRelationId::RamValCheck),
         )
@@ -128,6 +133,7 @@ impl<F> RamValCheckInitContribution<F> {
 
     pub fn trusted(neg_selector: F) -> Self {
         Self::new(
+            RamValCheckPublic::InitSelector(JoltAdviceKind::Trusted),
             neg_selector,
             JoltOpeningId::trusted_advice(JoltRelationId::RamValCheck),
         )
@@ -135,6 +141,7 @@ impl<F> RamValCheckInitContribution<F> {
 
     pub fn program_image(neg_selector: F) -> Self {
         Self::new(
+            RamValCheckPublic::InitSelectorProgramImage,
             neg_selector,
             super::claim_reductions::program_image::ram_val_check_contribution_opening(),
         )
@@ -164,21 +171,29 @@ pub fn val_check<F>(dimensions: TraceDimensions, init: RamValCheckInit<F>) -> Jo
 where
     F: RingCore,
 {
-    let gamma = val_check_challenge(RamValCheckChallenge::Gamma);
-    let init_eval = ram_val_init_eval(init);
+    use crate::protocols::jolt::relations::ram::{RamValCheck, RamValCheckShape, RamValContribution};
+    use crate::SymbolicSumcheck;
 
-    let input = opening(ram_val()) + gamma.clone() * opening(ram_val_final())
-        - (JoltExpr::one() + gamma) * init_eval;
-
-    let output = val_check_public(RamValCheckPublic::LtCyclePlusGamma)
-        * opening(ram_inc_val_check())
-        * opening(ram_ra_val_check());
-
+    // The init *values* (`public_eval`, `neg_selector`) are dropped here; they are
+    // supplied as `Public` symbols by the verifier (`resolve_public`) / BlindFold
+    // (`SourceValues`). Only the contribution *structure* feeds the symbolic shape.
+    let contributions = init
+        .contributions
+        .iter()
+        .map(|contribution| RamValContribution {
+            selector: contribution.selector,
+            opening: contribution.opening,
+        })
+        .collect();
+    let relation = RamValCheck::new(RamValCheckShape {
+        dimensions,
+        contributions,
+    });
     JoltRelationClaims::new(
-        JoltRelationId::RamValCheck,
-        val_check_sumcheck(dimensions),
-        input,
-        output,
+        RamValCheck::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
@@ -424,20 +439,6 @@ where
     public(JoltPublicId::from(id))
 }
 
-fn val_check_challenge<F>(id: RamValCheckChallenge) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    challenge(JoltChallengeId::from(id))
-}
-
-fn val_check_public<F>(id: RamValCheckPublic) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    public(JoltPublicId::from(id))
-}
-
 pub(crate) fn ra_claim_reduction_challenge<F>(id: RamRaClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
@@ -489,17 +490,6 @@ where
         product = product * opening(committed_ram_ra(index));
     }
     product
-}
-
-fn ram_val_init_eval<F>(init: RamValCheckInit<F>) -> JoltExpr<F>
-where
-    F: RingCore,
-{
-    let mut eval = JoltExpr::constant(init.public_eval);
-    for contribution in init.contributions {
-        eval = eval - JoltExpr::constant(contribution.neg_selector) * opening(contribution.opening);
-    }
-    eval
 }
 
 pub(crate) fn ram_read_value() -> JoltOpeningId {
@@ -591,6 +581,7 @@ pub(crate) fn ram_hamming_weight() -> JoltOpeningId {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
+    use crate::protocols::jolt::RamValCheckChallenge;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::EqPolynomial;
 
@@ -983,7 +974,10 @@ mod tests {
         );
         assert_eq!(
             claims.required_publics(),
-            vec![JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma)]
+            vec![
+                JoltPublicId::from(RamValCheckPublic::InitEval),
+                JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
+            ]
         );
         assert_eq!(claims.num_challenges(), 1);
     }
@@ -1057,7 +1051,10 @@ mod tests {
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltPublicId::RamValCheck(RamValCheckPublic::InitEval) => init_eval,
+                _ => zero,
+            },
         );
 
         let output = claims.output.expression().evaluate(
@@ -1149,7 +1146,16 @@ mod tests {
                 | JoltChallengeId::BytecodeClaimReduction(_)
                 | JoltChallengeId::SpartanShift(_) => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltPublicId::RamValCheck(RamValCheckPublic::InitEval) => public_eval,
+                JoltPublicId::RamValCheck(RamValCheckPublic::InitSelector(
+                    JoltAdviceKind::Untrusted,
+                )) => untrusted_neg_selector,
+                JoltPublicId::RamValCheck(RamValCheckPublic::InitSelector(
+                    JoltAdviceKind::Trusted,
+                )) => trusted_neg_selector,
+                _ => zero,
+            },
         );
 
         assert_eq!(

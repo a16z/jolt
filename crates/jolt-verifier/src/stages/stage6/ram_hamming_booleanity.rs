@@ -106,8 +106,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &RamHammingBooleanityInputClaims<C>,
-        outputs: &RamHammingBooleanityOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RamHammingBooleanityOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

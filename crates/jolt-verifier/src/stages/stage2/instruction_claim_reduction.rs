@@ -149,8 +149,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &InstructionClaimReductionInputClaims<C>,
-        outputs: &InstructionClaimReductionOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&InstructionClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::InstructionClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

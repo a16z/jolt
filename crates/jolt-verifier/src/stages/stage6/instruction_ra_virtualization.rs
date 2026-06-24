@@ -130,8 +130,10 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &InstructionRaVirtualizationInputClaims<C>,
-        outputs: &InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&InstructionRaVirtualizationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
             id
         else {

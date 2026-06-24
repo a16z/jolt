@@ -169,8 +169,10 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &HammingWeightClaimReductionInputClaims<C>,
-        outputs: &HammingWeightClaimReductionOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&HammingWeightClaimReductionOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::HammingWeightClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

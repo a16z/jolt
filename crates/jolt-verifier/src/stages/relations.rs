@@ -185,15 +185,18 @@ where
         Err(VerifierError::MissingStageClaimChallenge { id: *id })
     }
 
-    /// Compute a derived public value the relation's output `Expr` references
-    /// (e.g. `EqCycle`, `EqTableValue`, `LtCycle`), from the input points and the
-    /// produced openings' points. Defaults to "no publics"; overridden by
-    /// relations that have them.
+    /// Compute a public value the relation's input or output `Expr` references
+    /// (e.g. `EqCycle`, `LtCycle`, or `val_check`'s `InitEval`/`InitSelector`),
+    /// from the input points and — for output publics — the produced openings'
+    /// points. `outputs` is `None` while evaluating the input claim (the produced
+    /// openings aren't derived yet) and `Some` for the output claim, so a single
+    /// resolver serves both. Defaults to "no publics"; overridden by relations
+    /// that have them.
     fn resolve_public<C: GetPoint<F>>(
         &self,
         id: &JoltPublicId,
         _inputs: &Self::Inputs<C>,
-        _outputs: &Self::Outputs<OpeningClaim<F>>,
+        _outputs: Option<&Self::Outputs<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimPublic { id: *id })
     }
@@ -208,7 +211,7 @@ where
                     .ok_or(VerifierError::MissingOpeningClaim { id: *id })
             },
             |id| self.resolve_challenge(id),
-            |id| Err(VerifierError::MissingStageClaimPublic { id: *id }),
+            |id| self.resolve_public(id, inputs, None),
         )
     }
 
@@ -229,7 +232,7 @@ where
                     .ok_or(VerifierError::MissingOpeningClaim { id: *id })
             },
             |id| self.resolve_challenge(id),
-            |id| self.resolve_public(id, inputs, outputs),
+            |id| self.resolve_public(id, inputs, Some(outputs)),
         )
     }
 }

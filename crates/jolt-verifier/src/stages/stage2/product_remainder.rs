@@ -141,8 +141,10 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &ProductRemainderInputClaims<C>,
-        outputs: &ProductRemainderOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&ProductRemainderOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::SpartanProductVirtualization(public_id) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

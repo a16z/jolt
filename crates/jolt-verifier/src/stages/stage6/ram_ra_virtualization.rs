@@ -107,8 +107,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaVirtualization<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &RamRaVirtualizationInputClaims<C>,
-        outputs: &RamRaVirtualizationOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&RamRaVirtualizationOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

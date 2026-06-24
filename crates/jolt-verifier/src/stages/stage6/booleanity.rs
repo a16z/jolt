@@ -203,8 +203,10 @@ impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &BooleanityInputClaims<C>,
-        outputs: &BooleanityOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&BooleanityOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
             return Err(VerifierError::MissingStageClaimPublic { id: *id });
         };

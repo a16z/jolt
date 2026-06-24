@@ -119,8 +119,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &BytecodeReductionAddressPhaseInputClaims<C>,
-        outputs: &BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&BytecodeReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::BytecodeClaimReduction(BytecodeClaimReductionPublic::ChunkOutputWeight(
             chunk_idx,
         )) = id
@@ -221,8 +223,10 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> {
         &self,
         id: &JoltPublicId,
         _inputs: &ProgramImageReductionAddressPhaseInputClaims<C>,
-        outputs: &ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>,
+        outputs: Option<&ProgramImageReductionAddressPhaseOutputClaims<OpeningClaim<F>>>,
     ) -> Result<F, VerifierError> {
+        let outputs =
+            outputs.ok_or(VerifierError::MissingStageClaimPublic { id: *id })?;
         let JoltPublicId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
             id
         else {

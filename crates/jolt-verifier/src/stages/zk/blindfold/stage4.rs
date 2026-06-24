@@ -19,6 +19,19 @@ where
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
     let registers_claims = registers::read_write_checking::<PCS::Field>(register_dimensions);
     let ram_init = ram_val_check_init(input)?;
+    // Supply the `Val_init` decomposition scalars as `Public` values (formerly
+    // baked as `Term` constants in the expression); the advice / program-image
+    // openings they weight remain hidden witnesses.
+    values.public(
+        JoltPublicId::from(RamValCheckPublic::InitEval),
+        ram_init.public_eval,
+    )?;
+    for contribution in &ram_init.contributions {
+        values.public(
+            JoltPublicId::from(contribution.selector),
+            contribution.neg_selector,
+        )?;
+    }
     let ram_val_claims = ram::val_check::<PCS::Field>(trace_dimensions, ram_init);
 
     values.public(
