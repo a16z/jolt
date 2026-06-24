@@ -95,22 +95,14 @@ pub fn read_raf<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<
 where
     F: RingCore,
 {
-    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
-
-    let input = gamma.clone().pow(7)
-        + stage1_claim()
-        + gamma.clone() * stage2_claim()
-        + gamma.clone().pow(2) * stage3_claim()
-        + gamma.clone().pow(3) * stage4_claim()
-        + gamma.clone().pow(4) * stage5_claim::<F>()
-        + gamma.clone().pow(5) * opening(pc_spartan_outer())
-        + gamma.pow(6) * opening(pc_spartan_shift());
-
+    use crate::protocols::jolt::relations::bytecode::ReadRaf;
+    use crate::SymbolicSumcheck;
+    let relation = ReadRaf::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::BytecodeReadRaf,
-        dimensions.sumcheck(),
-        input,
-        read_raf_cycle_output(dimensions),
+        ReadRaf::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
     .with_input_challenges([
         JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
@@ -129,22 +121,14 @@ pub fn read_raf_address_phase<F>(dimensions: BytecodeReadRafDimensions) -> JoltR
 where
     F: RingCore,
 {
-    let gamma = bytecode_challenge(BytecodeReadRafChallenge::Gamma);
-
-    let input = gamma.clone().pow(7)
-        + stage1_claim()
-        + gamma.clone() * stage2_claim()
-        + gamma.clone().pow(2) * stage3_claim()
-        + gamma.clone().pow(3) * stage4_claim()
-        + gamma.clone().pow(4) * stage5_claim::<F>()
-        + gamma.clone().pow(5) * opening(pc_spartan_outer())
-        + gamma.pow(6) * opening(pc_spartan_shift());
-
+    use crate::protocols::jolt::relations::bytecode::ReadRafAddressPhase;
+    use crate::SymbolicSumcheck;
+    let relation = ReadRafAddressPhase::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::BytecodeReadRaf,
-        dimensions.address_sumcheck(),
-        input,
-        opening(bytecode_read_raf_address_phase_opening()),
+        ReadRafAddressPhase::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
     .with_input_challenges([
         JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
@@ -163,11 +147,14 @@ pub fn read_raf_cycle_phase<F>(dimensions: BytecodeReadRafDimensions) -> JoltRel
 where
     F: RingCore,
 {
+    use crate::protocols::jolt::relations::bytecode::ReadRafCyclePhase;
+    use crate::SymbolicSumcheck;
+    let relation = ReadRafCyclePhase::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::BytecodeReadRaf,
-        dimensions.cycle_sumcheck(),
-        opening(bytecode_read_raf_address_phase_opening()),
-        read_raf_cycle_output(dimensions),
+        ReadRafCyclePhase::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
@@ -180,15 +167,18 @@ pub fn read_raf_cycle_phase_committed<F>(
 where
     F: RingCore,
 {
+    use crate::protocols::jolt::relations::bytecode::ReadRafCyclePhaseCommitted;
+    use crate::SymbolicSumcheck;
+    let relation = ReadRafCyclePhaseCommitted::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::BytecodeReadRaf,
-        dimensions.cycle_sumcheck(),
-        opening(bytecode_read_raf_address_phase_opening()),
-        read_raf_cycle_output_committed(dimensions),
+        ReadRafCyclePhaseCommitted::id(),
+        relation.sumcheck(),
+        relation.input_expression::<F>(),
+        relation.output_expression::<F>(),
     )
 }
 
-fn read_raf_cycle_output<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
+pub(crate) fn read_raf_cycle_output<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -205,7 +195,9 @@ where
     output_coeff * bytecode_ra_product(dimensions)
 }
 
-fn read_raf_cycle_output_committed<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
+pub(crate) fn read_raf_cycle_output_committed<F>(
+    dimensions: BytecodeReadRafDimensions,
+) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -812,7 +804,7 @@ pub fn read_raf_consistency_openings() -> [(JoltOpeningId, JoltOpeningId); 1] {
     )]
 }
 
-fn stage1_claim<F>() -> JoltExpr<F>
+pub(crate) fn stage1_claim<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -827,7 +819,7 @@ where
     claim
 }
 
-fn stage2_claim<F>() -> JoltExpr<F>
+pub(crate) fn stage2_claim<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -839,7 +831,7 @@ where
         + beta.pow(3) * opening(op_flag_product(CircuitFlags::VirtualInstruction))
 }
 
-fn stage3_claim<F>() -> JoltExpr<F>
+pub(crate) fn stage3_claim<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -862,7 +854,7 @@ where
         + beta.pow(8) * opening(op_flag_shift(CircuitFlags::IsFirstInSequence))
 }
 
-fn stage4_claim<F>() -> JoltExpr<F>
+pub(crate) fn stage4_claim<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -873,7 +865,7 @@ where
         + beta.pow(2) * opening(rs2_ra_read_write())
 }
 
-fn stage5_claim<F>() -> JoltExpr<F>
+pub(crate) fn stage5_claim<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -888,7 +880,7 @@ where
     claim
 }
 
-fn bytecode_challenge<F>(id: BytecodeReadRafChallenge) -> JoltExpr<F>
+pub(crate) fn bytecode_challenge<F>(id: BytecodeReadRafChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -1029,11 +1021,11 @@ fn lookup_table_flag(table: LookupTableKind<XLEN>) -> JoltOpeningId {
     )
 }
 
-fn pc_spartan_outer() -> JoltOpeningId {
+pub(crate) fn pc_spartan_outer() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanOuter)
 }
 
-fn pc_spartan_shift() -> JoltOpeningId {
+pub(crate) fn pc_spartan_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
