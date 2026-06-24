@@ -10,20 +10,19 @@ workspace = true
 
 [dependencies]
 akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false, features = ["jolt-compat"] }
+akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false, features = [
+  "jolt-compat",
+] }
 akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
 akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
-akita-serialization = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
 akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
 akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
-akita-verifier = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "15cd0069873aaed12fa3e3cb69d2108cfb88e95c", default-features = false }
 jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
-thiserror.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }

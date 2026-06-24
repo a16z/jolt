@@ -336,6 +336,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "akita")]
 pub(crate) fn stage8_batch_statement_with_config_and_transcript<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -396,6 +397,7 @@ where
     Ok((checked, transcript))
 }
 
+#[cfg(feature = "akita")]
 type Stage7TranscriptContext<F, C, T> = (
     CheckedInputs,
     T,
@@ -403,6 +405,7 @@ type Stage7TranscriptContext<F, C, T> = (
     stage7::Stage7Output<F, C>,
 );
 
+#[cfg(feature = "akita")]
 fn stage7_transcript_with_config_impl<F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -1397,6 +1400,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "akita")]
     #[test]
     fn stage8_statement_with_config_uses_supplied_protocol_config() {
         let mut config =

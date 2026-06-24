@@ -3109,10 +3109,8 @@ dependencies = [
  "akita-field",
  "akita-pcs",
  "akita-prover",
- "akita-serialization",
  "akita-transcript",
  "akita-types",
- "akita-verifier",
  "jolt-crypto",
  "jolt-field 0.1.0",
  "jolt-openings",
@@ -3120,7 +3118,6 @@ dependencies = [
  "jolt-transcript",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
