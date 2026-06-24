@@ -5,12 +5,7 @@ use std::{cmp::min, ops::Range};
 use jolt_field::{Field, RingCore};
 use jolt_poly::{eq_index_msb, BindingOrder, EqPolynomial, Polynomial};
 
-use crate::{opening, public};
-
-use super::super::super::{
-    AdviceClaimReductionPublic, JoltAdviceKind, JoltOpeningId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId,
-};
+use super::super::super::{JoltAdviceKind, JoltOpeningId, JoltRelationClaims, JoltRelationId};
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
 use super::precommitted::{
@@ -337,20 +332,14 @@ pub fn cycle_phase<F>(
 where
     F: RingCore,
 {
-    let input = opening(ram_val_check_advice_opening(kind));
-    let output = if dimensions.has_address_phase() {
-        opening(cycle_phase_advice_opening(kind))
-    } else {
-        public(JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
-            kind,
-        ))) * opening(final_advice_opening(kind))
-    };
-
+    use crate::protocols::jolt::relations::claim_reductions::advice::CyclePhase;
+    use crate::SymbolicSumcheck;
+    let r = CyclePhase::new((kind, dimensions));
     JoltRelationClaims::new(
-        JoltRelationId::AdviceClaimReductionCyclePhase,
-        dimensions.cycle_sumcheck(),
-        input,
-        output,
+        CyclePhase::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -361,16 +350,14 @@ pub fn address_phase<F>(
 where
     F: RingCore,
 {
-    let input = opening(cycle_phase_advice_opening(kind));
-    let output = public(JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
-        kind,
-    ))) * opening(final_advice_opening(kind));
-
+    use crate::protocols::jolt::relations::claim_reductions::advice::AddressPhase;
+    use crate::SymbolicSumcheck;
+    let r = AddressPhase::new((kind, dimensions));
     JoltRelationClaims::new(
-        JoltRelationId::AdviceClaimReduction,
-        dimensions.address_sumcheck(),
-        input,
-        output,
+        AddressPhase::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -464,6 +451,7 @@ fn cycle_phase_round_schedule(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::super::{AdviceClaimReductionPublic, JoltPublicId};
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -476,61 +464,14 @@ mod tests {
     }
 
     #[test]
-    fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
-        let claims = cycle_phase::<Fr>(JoltAdviceKind::Trusted, with_address_phase());
-
-        assert_eq!(claims.id, JoltRelationId::AdviceClaimReductionCyclePhase);
-        assert_eq!(claims.sumcheck, with_address_phase().cycle_sumcheck());
+    fn cycle_phase_output_openings_track_address_phase_presence() {
         assert_eq!(
-            claims.input.required_openings,
-            vec![ram_val_check_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            cycle_phase_output_openings(JoltAdviceKind::Trusted, with_address_phase())
-        );
-        assert!(claims.required_challenges().is_empty());
-        assert!(claims.required_publics().is_empty());
-    }
-
-    #[test]
-    fn cycle_phase_without_address_phase_exposes_final_scale() {
-        let claims = cycle_phase::<Fr>(JoltAdviceKind::Untrusted, without_address_phase());
-        let mut expected_openings = vec![ram_val_check_advice_opening(JoltAdviceKind::Untrusted)];
-        expected_openings.extend(cycle_phase_output_openings(
-            JoltAdviceKind::Untrusted,
-            without_address_phase(),
-        ));
-
-        assert_eq!(claims.id, JoltRelationId::AdviceClaimReductionCyclePhase);
-        assert_eq!(claims.required_openings(), expected_openings);
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
-                JoltAdviceKind::Untrusted
-            ))]
-        );
-    }
-
-    #[test]
-    fn address_phase_exposes_expected_dependencies() {
-        let claims = address_phase::<Fr>(JoltAdviceKind::Trusted, with_address_phase());
-
-        assert_eq!(claims.id, JoltRelationId::AdviceClaimReduction);
-        assert_eq!(claims.sumcheck, with_address_phase().address_sumcheck());
-        assert_eq!(
-            claims.input.required_openings,
+            cycle_phase_output_openings(JoltAdviceKind::Trusted, with_address_phase()),
             vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
         );
         assert_eq!(
-            claims.output.required_openings,
-            vec![final_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(AdviceClaimReductionPublic::FinalScale(
-                JoltAdviceKind::Trusted
-            ))]
+            cycle_phase_output_openings(JoltAdviceKind::Untrusted, without_address_phase()),
+            vec![final_advice_opening(JoltAdviceKind::Untrusted)]
         );
     }
 

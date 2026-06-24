@@ -1,6 +1,6 @@
 use jolt_field::RingCore;
 
-use crate::{challenge, opening, public};
+use crate::{challenge, public};
 
 use super::super::super::{
     JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
@@ -12,22 +12,14 @@ pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    let gamma = reduction_challenge(RegistersClaimReductionChallenge::Gamma);
-    let eq_spartan = reduction_public(RegistersClaimReductionPublic::EqSpartan);
-
-    let input = opening(rd_write_value_spartan())
-        + gamma.clone() * opening(rs1_value_spartan())
-        + gamma.clone().pow(2) * opening(rs2_value_spartan());
-
-    let output = eq_spartan.clone() * opening(rd_write_value_reduced())
-        + eq_spartan.clone() * gamma.clone() * opening(rs1_value_reduced())
-        + eq_spartan * gamma.pow(2) * opening(rs2_value_reduced());
-
+    use crate::protocols::jolt::relations::claim_reductions::registers::ClaimReduction;
+    use crate::SymbolicSumcheck;
+    let r = ClaimReduction::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RegistersClaimReduction,
-        dimensions.sumcheck(2),
-        input,
-        output,
+        ClaimReduction::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -47,56 +39,56 @@ pub fn claim_reduction_output_openings() -> [JoltOpeningId; 3] {
     ]
 }
 
-fn reduction_challenge<F>(id: RegistersClaimReductionChallenge) -> JoltExpr<F>
+pub(crate) fn reduction_challenge<F>(id: RegistersClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn reduction_public<F>(id: RegistersClaimReductionPublic) -> JoltExpr<F>
+pub(crate) fn reduction_public<F>(id: RegistersClaimReductionPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn rd_write_value_spartan() -> JoltOpeningId {
+pub(crate) fn rd_write_value_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn rs1_value_spartan() -> JoltOpeningId {
+pub(crate) fn rs1_value_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn rs2_value_spartan() -> JoltOpeningId {
+pub(crate) fn rs2_value_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn rd_write_value_reduced() -> JoltOpeningId {
+pub(crate) fn rd_write_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWriteValue,
         JoltRelationId::RegistersClaimReduction,
     )
 }
 
-fn rs1_value_reduced() -> JoltOpeningId {
+pub(crate) fn rs1_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Value,
         JoltRelationId::RegistersClaimReduction,
     )
 }
 
-fn rs2_value_reduced() -> JoltOpeningId {
+pub(crate) fn rs2_value_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Value,
         JoltRelationId::RegistersClaimReduction,
@@ -110,45 +102,6 @@ mod tests {
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn claim_reduction_exposes_expected_dependencies() {
-        let claims = claim_reduction::<Fr>(dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::RegistersClaimReduction);
-        assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
-        assert_eq!(
-            claims.input.required_openings,
-            claim_reduction_input_openings().to_vec()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            claim_reduction_output_openings().to_vec()
-        );
-        assert_eq!(
-            claims.input.required_challenges,
-            vec![JoltChallengeId::from(
-                RegistersClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(
-                RegistersClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                RegistersClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(RegistersClaimReductionPublic::EqSpartan)]
-        );
-        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]

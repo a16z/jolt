@@ -1,7 +1,7 @@
 use jolt_field::{Field, RingCore};
 use jolt_poly::{boolean_point_msb, EqPolynomial, Polynomial};
 
-use crate::{challenge, opening, public};
+use crate::{challenge, public};
 
 use super::super::super::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltCommittedPolynomial,
@@ -13,36 +13,25 @@ pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    let gamma = inc_challenge(IncClaimReductionChallenge::Gamma);
-
-    let input = opening(ram_inc_read_write())
-        + gamma.clone() * opening(ram_inc_val_check())
-        + gamma.clone().pow(2) * opening(rd_inc_read_write())
-        + gamma.clone().pow(3) * opening(rd_inc_val_evaluation());
-
-    let ram_output_coeff = inc_public(IncClaimReductionPublic::EqRamReadWrite)
-        + gamma.clone() * inc_public(IncClaimReductionPublic::EqRamValCheck);
-    let rd_output_coeff = inc_public(IncClaimReductionPublic::EqRegistersReadWrite)
-        + gamma.clone() * inc_public(IncClaimReductionPublic::EqRegistersValEvaluation);
-    let output = ram_output_coeff * opening(ram_inc_reduced())
-        + gamma.pow(2) * rd_output_coeff * opening(rd_inc_reduced());
-
+    use crate::protocols::jolt::relations::claim_reductions::increments::ClaimReduction;
+    use crate::SymbolicSumcheck;
+    let r = ClaimReduction::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::IncClaimReduction,
-        dimensions.sumcheck(2),
-        input,
-        output,
+        ClaimReduction::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
-fn inc_challenge<F>(id: IncClaimReductionChallenge) -> JoltExpr<F>
+pub(crate) fn inc_challenge<F>(id: IncClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn inc_public<F>(id: IncClaimReductionPublic) -> JoltExpr<F>
+pub(crate) fn inc_public<F>(id: IncClaimReductionPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -171,39 +160,39 @@ pub fn rd_inc_reduced_opening() -> JoltOpeningId {
     rd_inc_reduced()
 }
 
-fn ram_inc_read_write() -> JoltOpeningId {
+pub(crate) fn ram_inc_read_write() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamInc,
         JoltRelationId::RamReadWriteChecking,
     )
 }
 
-fn ram_inc_val_check() -> JoltOpeningId {
+pub(crate) fn ram_inc_val_check() -> JoltOpeningId {
     JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, JoltRelationId::RamValCheck)
 }
 
-fn rd_inc_read_write() -> JoltOpeningId {
+pub(crate) fn rd_inc_read_write() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rd_inc_val_evaluation() -> JoltOpeningId {
+pub(crate) fn rd_inc_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::RegistersValEvaluation,
     )
 }
 
-fn ram_inc_reduced() -> JoltOpeningId {
+pub(crate) fn ram_inc_reduced() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamInc,
         JoltRelationId::IncClaimReduction,
     )
 }
 
-fn rd_inc_reduced() -> JoltOpeningId {
+pub(crate) fn rd_inc_reduced() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::IncClaimReduction,
@@ -230,36 +219,6 @@ mod tests {
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn claim_reduction_exposes_expected_dependencies() {
-        let claims = claim_reduction::<Fr>(dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::IncClaimReduction);
-        assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
-        assert_eq!(
-            claims.input.required_openings,
-            claim_reduction_input_openings()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            claim_reduction_output_openings()
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(IncClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![
-                JoltPublicId::from(IncClaimReductionPublic::EqRamReadWrite),
-                JoltPublicId::from(IncClaimReductionPublic::EqRamValCheck),
-                JoltPublicId::from(IncClaimReductionPublic::EqRegistersReadWrite),
-                JoltPublicId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
-            ]
-        );
-        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]

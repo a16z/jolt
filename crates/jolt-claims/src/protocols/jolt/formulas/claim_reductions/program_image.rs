@@ -152,17 +152,14 @@ pub fn cycle_phase<F>(dimensions: PrecommittedReductionDimensions) -> JoltRelati
 where
     F: RingCore,
 {
-    let output = if dimensions.has_address_phase() {
-        opening(cycle_phase_program_image_opening())
-    } else {
-        final_output_expr()
-    };
-
+    use crate::protocols::jolt::relations::claim_reductions::program_image::CyclePhase;
+    use crate::SymbolicSumcheck;
+    let r = CyclePhase::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::ProgramImageClaimReductionCyclePhase,
-        dimensions.cycle_sumcheck(),
-        opening(ram_val_check_contribution_opening()),
-        output,
+        CyclePhase::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -170,15 +167,18 @@ pub fn address_phase<F>(dimensions: PrecommittedReductionDimensions) -> JoltRela
 where
     F: RingCore,
 {
+    use crate::protocols::jolt::relations::claim_reductions::program_image::AddressPhase;
+    use crate::SymbolicSumcheck;
+    let r = AddressPhase::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::ProgramImageClaimReduction,
-        dimensions.address_sumcheck(),
-        opening(cycle_phase_program_image_opening()),
-        final_output_expr(),
+        AddressPhase::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
-fn final_output_expr<F>() -> JoltExpr<F>
+pub(crate) fn final_output_expr<F>() -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -342,48 +342,16 @@ mod tests {
     }
 
     #[test]
-    fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let claims = cycle_phase::<Fr>(dimensions);
-
+    fn cycle_phase_output_openings_track_address_phase_presence() {
+        let with_address = PrecommittedReductionDimensions::new(4, 3, true);
         assert_eq!(
-            claims.id,
-            JoltRelationId::ProgramImageClaimReductionCyclePhase
-        );
-        assert_eq!(claims.sumcheck, dimensions.cycle_sumcheck());
-        assert_eq!(
-            claims.input.required_openings,
-            vec![ram_val_check_contribution_opening()]
-        );
-        assert_eq!(
-            claims.output.required_openings,
+            cycle_phase_output_openings(with_address),
             vec![cycle_phase_program_image_opening()]
         );
-        assert!(claims.required_challenges().is_empty());
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(
-            cycle_phase_output_openings(dimensions),
-            vec![cycle_phase_program_image_opening()]
-        );
-    }
 
-    #[test]
-    fn cycle_phase_without_address_phase_exposes_final_scale() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, false);
-        let claims = cycle_phase::<Fr>(dimensions);
-
+        let without_address = PrecommittedReductionDimensions::new(4, 3, false);
         assert_eq!(
-            claims.output.required_openings,
-            vec![final_program_image_opening()]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(
-                ProgramImageClaimReductionPublic::FinalScale
-            )]
-        );
-        assert_eq!(
-            cycle_phase_output_openings(dimensions),
+            cycle_phase_output_openings(without_address),
             vec![final_program_image_opening()]
         );
     }

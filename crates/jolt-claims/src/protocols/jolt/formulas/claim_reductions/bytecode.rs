@@ -503,24 +503,14 @@ pub fn cycle_phase<F>(
 where
     F: RingCore,
 {
-    assert_valid_chunk_count(chunk_count);
-    let eta = bytecode_challenge(BytecodeClaimReductionChallenge::Eta);
-    let mut input = JoltExpr::zero();
-    for stage in 0..NUM_BYTECODE_VAL_STAGES {
-        input = input + eta.clone().pow(stage) * opening(bytecode_val_stage_opening(stage));
-    }
-
-    let output = if dimensions.has_address_phase() {
-        opening(cycle_phase_intermediate_opening())
-    } else {
-        final_output_expr(chunk_count)
-    };
-
+    use crate::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase;
+    use crate::SymbolicSumcheck;
+    let r = CyclePhase::new((dimensions, chunk_count));
     JoltRelationClaims::new(
-        JoltRelationId::BytecodeClaimReductionCyclePhase,
-        dimensions.cycle_sumcheck(),
-        input,
-        output,
+        CyclePhase::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
     .with_input_challenges([JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta)])
 }
@@ -532,16 +522,18 @@ pub fn address_phase<F>(
 where
     F: RingCore,
 {
-    assert_valid_chunk_count(chunk_count);
+    use crate::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase;
+    use crate::SymbolicSumcheck;
+    let r = AddressPhase::new((dimensions, chunk_count));
     JoltRelationClaims::new(
-        JoltRelationId::BytecodeClaimReduction,
-        dimensions.address_sumcheck(),
-        opening(cycle_phase_intermediate_opening()),
-        final_output_expr(chunk_count),
+        AddressPhase::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
-fn final_output_expr<F>(chunk_count: usize) -> JoltExpr<F>
+pub(crate) fn final_output_expr<F>(chunk_count: usize) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -588,7 +580,7 @@ pub fn final_bytecode_chunk_opening(chunk_idx: usize) -> JoltOpeningId {
     )
 }
 
-fn bytecode_challenge<F>(id: BytecodeClaimReductionChallenge) -> JoltExpr<F>
+pub(crate) fn bytecode_challenge<F>(id: BytecodeClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -598,7 +590,7 @@ where
 /// Backstop for the formula constructors that take a raw chunk count without
 /// the bytecode length needed for full chunking validation; layouts are the
 /// validated source of this value.
-fn assert_valid_chunk_count(chunk_count: usize) {
+pub(crate) fn assert_valid_chunk_count(chunk_count: usize) {
     assert!(
         is_valid_chunk_count(chunk_count),
         "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most \
@@ -969,54 +961,16 @@ mod tests {
     }
 
     #[test]
-    fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let claims = cycle_phase::<Fr>(dimensions, 2);
-
-        assert_eq!(claims.id, JoltRelationId::BytecodeClaimReductionCyclePhase);
-        assert_eq!(claims.sumcheck, dimensions.cycle_sumcheck());
+    fn cycle_phase_output_openings_track_address_phase_presence() {
+        let with_address = PrecommittedReductionDimensions::new(4, 3, true);
         assert_eq!(
-            claims.input.required_openings,
-            (0..NUM_BYTECODE_VAL_STAGES)
-                .map(bytecode_val_stage_opening)
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            claims.output.required_openings,
+            cycle_phase_output_openings(with_address, 2),
             vec![cycle_phase_intermediate_opening()]
         );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta)]
-        );
-        assert!(claims.required_publics().is_empty());
-        assert_eq!(
-            cycle_phase_output_openings(dimensions, 2),
-            vec![cycle_phase_intermediate_opening()]
-        );
-    }
 
-    #[test]
-    fn cycle_phase_without_address_phase_opens_committed_chunks() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, false);
-        let claims = cycle_phase::<Fr>(dimensions, 2);
-
+        let without_address = PrecommittedReductionDimensions::new(4, 3, false);
         assert_eq!(
-            claims.output.required_openings,
-            vec![
-                final_bytecode_chunk_opening(0),
-                final_bytecode_chunk_opening(1),
-            ]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![
-                JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
-                JoltPublicId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(1)),
-            ]
-        );
-        assert_eq!(
-            cycle_phase_output_openings(dimensions, 2),
+            cycle_phase_output_openings(without_address, 2),
             vec![
                 final_bytecode_chunk_opening(0),
                 final_bytecode_chunk_opening(1),

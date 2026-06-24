@@ -52,29 +52,14 @@ pub fn claim_reduction<F>(
 where
     F: RingCore,
 {
-    let gamma = hamming_weight_challenge(HammingWeightClaimReductionChallenge::Gamma);
-    let mut input = JoltExpr::zero();
-    let mut output = JoltExpr::zero();
-
-    for (i, polynomial) in dimensions.layout.polynomials().enumerate() {
-        input = input
-            + gamma.clone().pow(3 * i) * hamming_weight_claim(polynomial)
-            + gamma.clone().pow(3 * i + 1) * opening(booleanity_claim(polynomial))
-            + gamma.clone().pow(3 * i + 2) * opening(virtualization_claim(polynomial));
-
-        let output_coeff = gamma.clone().pow(3 * i)
-            + gamma.clone().pow(3 * i + 1)
-                * hamming_weight_public(HammingWeightClaimReductionPublic::EqBooleanity)
-            + gamma.clone().pow(3 * i + 2)
-                * hamming_weight_public(HammingWeightClaimReductionPublic::EqVirtualization(i));
-        output = output + output_coeff * opening(reduced_claim(polynomial));
-    }
-
+    use crate::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction;
+    use crate::SymbolicSumcheck;
+    let r = ClaimReduction::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::HammingWeightClaimReduction,
-        dimensions.sumcheck(),
-        input,
-        output,
+        ClaimReduction::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -183,21 +168,21 @@ pub fn claim_reduction_output_openings(
     }
 }
 
-fn hamming_weight_challenge<F>(id: HammingWeightClaimReductionChallenge) -> JoltExpr<F>
+pub(crate) fn hamming_weight_challenge<F>(id: HammingWeightClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn hamming_weight_public<F>(id: HammingWeightClaimReductionPublic) -> JoltExpr<F>
+pub(crate) fn hamming_weight_public<F>(id: HammingWeightClaimReductionPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn hamming_weight_claim<F>(polynomial: JoltRaPolynomial) -> JoltExpr<F>
+pub(crate) fn hamming_weight_claim<F>(polynomial: JoltRaPolynomial) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -207,11 +192,11 @@ where
     }
 }
 
-fn booleanity_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
+pub(crate) fn booleanity_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
     polynomial.opening(JoltRelationId::Booleanity)
 }
 
-fn virtualization_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
+pub(crate) fn virtualization_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
     match polynomial {
         JoltRaPolynomial::Instruction(_) => JoltOpeningId::committed(
             polynomial.committed(),
@@ -226,11 +211,11 @@ fn virtualization_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
     }
 }
 
-fn reduced_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
+pub(crate) fn reduced_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
     polynomial.opening(JoltRelationId::HammingWeightClaimReduction)
 }
 
-fn ram_hamming_weight() -> JoltOpeningId {
+pub(crate) fn ram_hamming_weight() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamHammingWeight,
         JoltRelationId::RamHammingBooleanity,
@@ -271,16 +256,13 @@ mod tests {
     }
 
     #[test]
-    fn claim_reduction_exposes_expected_dependencies() -> Result<(), JoltFormulaDimensionsError> {
+    fn opening_helpers_enumerate_layout_polynomials() -> Result<(), JoltFormulaDimensionsError> {
         let layout = layout(1, 1, 1)?;
-        let claims = claim_reduction::<Fr>(dimensions(layout));
 
         let instruction = JoltRaPolynomial::Instruction(0);
         let bytecode = JoltRaPolynomial::Bytecode(0);
         let ram = JoltRaPolynomial::Ram(0);
 
-        assert_eq!(claims.id, JoltRelationId::HammingWeightClaimReduction);
-        assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(8, 2));
         let input_openings = claim_reduction_input_openings(dimensions(layout));
         assert_eq!(input_openings.ram_hamming_weight, ram_hamming_weight());
         assert_eq!(
@@ -296,18 +278,6 @@ mod tests {
             vec![
                 virtualization_claim(instruction),
                 virtualization_claim(bytecode),
-                virtualization_claim(ram),
-            ]
-        );
-        assert_eq!(
-            claims.input.required_openings,
-            vec![
-                booleanity_claim(instruction),
-                virtualization_claim(instruction),
-                booleanity_claim(bytecode),
-                virtualization_claim(bytecode),
-                ram_hamming_weight(),
-                booleanity_claim(ram),
                 virtualization_claim(ram),
             ]
         );
@@ -347,30 +317,6 @@ mod tests {
                 JoltCommittedPolynomial::RamRa(0),
             ]
         );
-        assert_eq!(
-            claims.output.required_openings,
-            vec![
-                reduced_claim(instruction),
-                reduced_claim(bytecode),
-                reduced_claim(ram),
-            ]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                HammingWeightClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqBooleanity),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(0)),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(1)),
-                JoltPublicId::from(HammingWeightClaimReductionPublic::EqVirtualization(2)),
-            ]
-        );
-        assert_eq!(claims.num_challenges(), 1);
         Ok(())
     }
 

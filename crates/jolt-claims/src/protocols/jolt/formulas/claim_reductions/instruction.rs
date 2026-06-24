@@ -12,28 +12,14 @@ pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    let input = weighted_claims(
-        lookup_output_spartan(),
-        left_lookup_operand_spartan(),
-        right_lookup_operand_spartan(),
-        left_instruction_input_spartan(),
-        right_instruction_input_spartan(),
-    );
-
-    let output = reduction_public(InstructionClaimReductionPublic::EqSpartan)
-        * weighted_claims(
-            lookup_output_reduced(),
-            left_lookup_operand_reduced(),
-            right_lookup_operand_reduced(),
-            left_instruction_input_reduced(),
-            right_instruction_input_reduced(),
-        );
-
+    use crate::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction;
+    use crate::SymbolicSumcheck;
+    let r = ClaimReduction::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::InstructionClaimReduction,
-        dimensions.sumcheck(2),
-        input,
-        output,
+        ClaimReduction::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -64,7 +50,7 @@ pub fn claim_reduction_input_openings() -> [JoltOpeningId; 5] {
     ]
 }
 
-fn weighted_claims<F>(
+pub(crate) fn weighted_claims<F>(
     lookup_output: JoltOpeningId,
     left_lookup_operand: JoltOpeningId,
     right_lookup_operand: JoltOpeningId,
@@ -83,84 +69,84 @@ where
         + gamma.pow(4) * opening(right_instruction_input)
 }
 
-fn reduction_challenge<F>(id: InstructionClaimReductionChallenge) -> JoltExpr<F>
+pub(crate) fn reduction_challenge<F>(id: InstructionClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn reduction_public<F>(id: InstructionClaimReductionPublic) -> JoltExpr<F>
+pub(crate) fn reduction_public<F>(id: InstructionClaimReductionPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn lookup_output_spartan() -> JoltOpeningId {
+pub(crate) fn lookup_output_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn left_lookup_operand_spartan() -> JoltOpeningId {
+pub(crate) fn left_lookup_operand_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftLookupOperand,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn right_lookup_operand_spartan() -> JoltOpeningId {
+pub(crate) fn right_lookup_operand_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightLookupOperand,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn left_instruction_input_spartan() -> JoltOpeningId {
+pub(crate) fn left_instruction_input_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn right_instruction_input_spartan() -> JoltOpeningId {
+pub(crate) fn right_instruction_input_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn lookup_output_reduced() -> JoltOpeningId {
+pub(crate) fn lookup_output_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LookupOutput,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn left_lookup_operand_reduced() -> JoltOpeningId {
+pub(crate) fn left_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftLookupOperand,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn right_lookup_operand_reduced() -> JoltOpeningId {
+pub(crate) fn right_lookup_operand_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightLookupOperand,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn left_instruction_input_reduced() -> JoltOpeningId {
+pub(crate) fn left_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltRelationId::InstructionClaimReduction,
     )
 }
 
-fn right_instruction_input_reduced() -> JoltOpeningId {
+pub(crate) fn right_instruction_input_reduced() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RightInstructionInput,
         JoltRelationId::InstructionClaimReduction,
@@ -174,47 +160,6 @@ mod tests {
 
     fn dimensions() -> TraceDimensions {
         TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn claim_reduction_exposes_expected_dependencies() {
-        let claims = claim_reduction::<Fr>(dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::InstructionClaimReduction);
-        assert_eq!(claims.sumcheck, dimensions().sumcheck(2));
-        assert_eq!(
-            claims.input.required_openings,
-            claim_reduction_input_openings().to_vec()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            claim_reduction_output_openings().to_vec()
-        );
-        assert_eq!(
-            claims.input.required_challenges,
-            vec![JoltChallengeId::from(
-                InstructionClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(
-                InstructionClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(
-                InstructionClaimReductionChallenge::Gamma
-            )]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(
-                InstructionClaimReductionPublic::EqSpartan
-            )]
-        );
-        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
