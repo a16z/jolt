@@ -5,19 +5,20 @@ use jolt_field::RingCore;
 use crate::protocols::jolt::formulas::ram::{
     committed_ram_ra_product, hamming_booleanity_public, output_check_public,
     ra_claim_reduction_challenge, ra_claim_reduction_public, ra_virtualization_public,
-    raf_evaluation_public, ram_address_spartan, ram_hamming_weight, ram_inc, ram_ra,
-    ram_ra_claim_reduction, ram_ra_raf_evaluation, ram_ra_val_check, ram_read_value, ram_val,
-    ram_val_final, ram_write_value, read_write_challenge, read_write_public,
-    RamRaVirtualizationDimensions, RamRafEvaluationDimensions,
+    raf_evaluation_public, ram_address_spartan, ram_hamming_weight, ram_inc, ram_inc_val_check,
+    ram_ra, ram_ra_claim_reduction, ram_ra_raf_evaluation, ram_ra_val_check, ram_read_value,
+    ram_val, ram_val_final, ram_write_value, read_write_challenge, read_write_public,
+    val_check_sumcheck, RamRaVirtualizationDimensions, RamRafEvaluationDimensions,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, JoltSumcheckSpec, RamHammingBooleanityPublic, RamOutputCheckPublic,
-    RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-    RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, ReadWriteDimensions,
-    TraceDimensions,
+    JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltSumcheckSpec,
+    RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
+    RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
+    RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+    ReadWriteDimensions, TraceDimensions,
 };
 use crate::SymbolicSumcheck;
-use crate::{constant, opening};
+use crate::{challenge, constant, opening, public};
 
 /// The RAM read/write-checking sumcheck: folds the read and write values by
 /// `gamma` on the input side, and reconstructs them from `ra`, `val`, and `inc`
@@ -251,13 +252,82 @@ impl SymbolicSumcheck for HammingBooleanity {
     }
 }
 
+/// One committed contribution to the `Val_init(r_address)` decomposition: a
+/// `Public` selector weighting a committed advice / program-image `opening`. The
+/// selector *value* is supplied by the concrete side (`resolve_public`); the
+/// symbolic shape carries only the `(selector_id, opening_id)` structure, keeping
+/// the relation field-independent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RamValContribution {
+    pub selector: RamValCheckPublic,
+    pub opening: JoltOpeningId,
+}
+
+/// The RAM value-check shape: the trace dimensions plus the present `Val_init`
+/// contributions, in the canonical order the BlindFold constraint also uses
+/// (program image first, then advice). An empty `contributions` is the full-init
+/// form (`Val_init` is wholly public).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamValCheckShape {
+    pub dimensions: TraceDimensions,
+    pub contributions: Vec<RamValContribution>,
+}
+
+/// The RAM value-check sumcheck. The input reconstructs `Val_init(r_address)` as
+/// `public(InitEval) - Σ public(InitSelector)·opening(advice)` and folds it
+/// against the read-write `val` and output-check `val_final` by `gamma`; the
+/// output is the degree-two `LtCyclePlusGamma·inc·ra`. The `Val_init` scalars are
+/// `Public` symbols resolved by the verifier — value-preserving versus the prior
+/// baked coefficients (BlindFold bakes `Public` factors as matrix coefficients),
+/// so the relation stays field-independent. See `specs/symbolic-sumcheck.md` §4.1.
+pub struct RamValCheck {
+    shape: RamValCheckShape,
+}
+
+impl SymbolicSumcheck for RamValCheck {
+    type RelationId = JoltRelationId;
+    type OpeningId = JoltOpeningId;
+    type PublicId = JoltPublicId;
+    type ChallengeId = JoltChallengeId;
+    type Shape = RamValCheckShape;
+
+    fn new(shape: RamValCheckShape) -> Self {
+        Self { shape }
+    }
+
+    fn id() -> JoltRelationId {
+        JoltRelationId::RamValCheck
+    }
+
+    fn sumcheck(&self) -> JoltSumcheckSpec {
+        val_check_sumcheck(self.shape.dimensions)
+    }
+
+    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        let gamma = challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma));
+        let mut init = public(JoltPublicId::from(RamValCheckPublic::InitEval));
+        for contribution in &self.shape.contributions {
+            init = init
+                - public(JoltPublicId::from(contribution.selector)) * opening(contribution.opening);
+        }
+        opening(ram_val()) + gamma.clone() * opening(ram_val_final())
+            - (JoltExpr::one() + gamma) * init
+    }
+
+    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+        public(JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma))
+            * opening(ram_inc_val_check())
+            * opening(ram_ra_val_check())
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::protocols::jolt::formulas::ram::committed_ram_ra;
     use crate::protocols::jolt::{JoltChallengeId, JoltPublicId};
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)
@@ -427,5 +497,103 @@ mod tests {
             relation.required_publics::<Fr>(),
             vec![JoltPublicId::from(RamHammingBooleanityPublic::EqCycle)]
         );
+    }
+
+    #[test]
+    fn ram_val_check_symbolic_matches_dependencies() {
+        let relation = RamValCheck::new(RamValCheckShape {
+            dimensions: trace_dimensions(),
+            contributions: vec![],
+        });
+
+        assert_eq!(RamValCheck::id(), JoltRelationId::RamValCheck);
+        assert_eq!(relation.sumcheck(), val_check_sumcheck(trace_dimensions()));
+        // Full-init form (no committed contributions): only the read-write and
+        // output-check openings on the input side.
+        assert_eq!(
+            relation.required_openings::<Fr>(),
+            vec![
+                ram_val(),
+                ram_val_final(),
+                ram_inc_val_check(),
+                ram_ra_val_check(),
+            ]
+        );
+        assert_eq!(
+            relation.required_challenges::<Fr>(),
+            vec![JoltChallengeId::from(RamValCheckChallenge::Gamma)]
+        );
+        assert_eq!(
+            relation.required_publics::<Fr>(),
+            vec![
+                JoltPublicId::from(RamValCheckPublic::InitEval),
+                JoltPublicId::from(RamValCheckPublic::LtCyclePlusGamma),
+            ]
+        );
+    }
+
+    /// The remodel's soundness anchor: the `Public`-symbol input expression must
+    /// evaluate to the same value the pre-remodel baked-constant decomposition did
+    /// (proven equal to the full-init formula in `formulas::ram`'s tests). With
+    /// `InitEval = public_eval` and `InitSelector = neg_selector`, the
+    /// `public·opening` term equals the old `constant·opening` term.
+    #[test]
+    fn ram_val_check_symbolic_evaluates_like_decomposed_init() {
+        use crate::protocols::jolt::formulas::ram::val_check_advice_opening;
+        use crate::protocols::jolt::JoltAdviceKind;
+
+        let public_eval = Fr::from_u64(3);
+        let untrusted_neg_selector = -Fr::from_u64(5);
+        let trusted_neg_selector = -Fr::from_u64(7);
+
+        let relation = RamValCheck::new(RamValCheckShape {
+            dimensions: trace_dimensions(),
+            contributions: vec![
+                RamValContribution {
+                    selector: RamValCheckPublic::InitSelector(JoltAdviceKind::Untrusted),
+                    opening: val_check_advice_opening(JoltAdviceKind::Untrusted),
+                },
+                RamValContribution {
+                    selector: RamValCheckPublic::InitSelector(JoltAdviceKind::Trusted),
+                    opening: val_check_advice_opening(JoltAdviceKind::Trusted),
+                },
+            ],
+        });
+
+        let val_rw = Fr::from_u64(11);
+        let val_final = Fr::from_u64(13);
+        let gamma = Fr::from_u64(17);
+        let untrusted_advice = Fr::from_u64(19);
+        let trusted_advice = Fr::from_u64(23);
+        let zero = Fr::from_u64(0);
+        let init_eval = public_eval
+            - untrusted_neg_selector * untrusted_advice
+            - trusted_neg_selector * trusted_advice;
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_val() => val_rw,
+                id if id == ram_val_final() => val_final,
+                id if id == val_check_advice_opening(JoltAdviceKind::Untrusted) => untrusted_advice,
+                id if id == val_check_advice_opening(JoltAdviceKind::Trusted) => trusted_advice,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RamValCheck(RamValCheckChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltPublicId::RamValCheck(RamValCheckPublic::InitEval) => public_eval,
+                JoltPublicId::RamValCheck(RamValCheckPublic::InitSelector(
+                    JoltAdviceKind::Untrusted,
+                )) => untrusted_neg_selector,
+                JoltPublicId::RamValCheck(RamValCheckPublic::InitSelector(
+                    JoltAdviceKind::Trusted,
+                )) => trusted_neg_selector,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, (val_rw - init_eval) + gamma * (val_final - init_eval));
     }
 }

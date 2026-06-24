@@ -210,6 +210,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                 let fixed_cycle = &inputs.ram_val.point()[self.ram_log_k..];
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + self.gamma)
             }
+            // The `Val_init` decomposition publics are not yet referenced by the
+            // baked-constant `val_check` formula; resolved in the symbolic remodel.
+            RamValCheckPublic::InitEval
+            | RamValCheckPublic::InitSelector(_)
+            | RamValCheckPublic::InitSelectorProgramImage => {
+                Err(VerifierError::MissingStageClaimPublic { id: *id })
+            }
         }
     }
 }

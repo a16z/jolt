@@ -544,7 +544,7 @@ pub(crate) fn ram_inc() -> JoltOpeningId {
     )
 }
 
-fn ram_inc_val_check() -> JoltOpeningId {
+pub(crate) fn ram_inc_val_check() -> JoltOpeningId {
     JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, JoltRelationId::RamValCheck)
 }
 

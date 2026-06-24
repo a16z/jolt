@@ -51,6 +51,15 @@ pub enum RamValCheckChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamValCheckPublic {
     LtCyclePlusGamma,
+    /// `Val_init(r_address)`'s public portion — the part of the initial RAM
+    /// evaluation not carried by committed advice / program-image openings.
+    InitEval,
+    /// The negated block selector (`-selector`) weighting one committed advice
+    /// contribution (`untrusted`/`trusted`) in the `Val_init` decomposition.
+    InitSelector(JoltAdviceKind),
+    /// The negated selector (`-1`) weighting the committed program-image
+    /// contribution in the `Val_init` decomposition (committed program mode).
+    InitSelectorProgramImage,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
