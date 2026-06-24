@@ -16,6 +16,7 @@ use jolt_claims::protocols::jolt::{
     formulas::claim_reductions::advice, AdviceClaimReductionLayout, AdviceClaimReductionPublic,
     JoltAdviceKind, JoltPublicId, JoltRelationClaims, JoltRelationId, PrecommittedReductionLayout,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,7 @@ pub struct AdviceAddressPhaseInputClaims<C> {
 }
 
 pub struct AdviceAddressPhase<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::advice::AddressPhase,
     claims: JoltRelationClaims<F>,
     kind: JoltAdviceKind,
     layout: AdviceClaimReductionLayout,
@@ -67,6 +69,7 @@ impl<F: Field> AdviceAddressPhase<F> {
     ) -> Self {
         Self {
             claims: advice::address_phase(kind, layout.dimensions()),
+            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::advice::AddressPhase::new((kind, layout.dimensions())),
             kind,
             layout: layout.clone(),
             cycle_phase_variables,
@@ -101,8 +104,13 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for AdviceAddressPhase<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::advice::AddressPhase;
     type Inputs<C> = AdviceAddressPhaseInputClaims<C>;
     type Outputs<C> = AdviceAddressPhaseOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

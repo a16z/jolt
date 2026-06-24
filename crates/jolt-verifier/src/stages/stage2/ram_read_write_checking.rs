@@ -12,6 +12,7 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamReadWriteChallenge,
     RamReadWritePublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -65,6 +66,7 @@ impl<F: Field> RamReadWriteInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamReadWriteChecking<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::ram::ReadWriteChecking,
     claims: JoltRelationClaims<F>,
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
@@ -81,6 +83,7 @@ impl<F: Field> RamReadWriteChecking<F> {
     ) -> Self {
         Self {
             claims: ram::read_write_checking(dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::ram::ReadWriteChecking::new(dimensions),
             dimensions,
             ram_log_k,
             gamma,
@@ -97,8 +100,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::ram::ReadWriteChecking;
     type Inputs<C> = RamReadWriteInputClaims<C>;
     type Outputs<C> = RamReadWriteOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

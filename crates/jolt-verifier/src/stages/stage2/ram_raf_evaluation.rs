@@ -18,6 +18,7 @@ use jolt_claims::protocols::jolt::{
     },
     JoltPublicId, JoltRelationClaims, JoltRelationId, RamRafEvaluationPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -62,6 +63,7 @@ impl<F: Field> RamRafEvaluationInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamRafEvaluation<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::ram::RafEvaluation,
     claims: JoltRelationClaims<F>,
     read_write_dimensions: ReadWriteDimensions,
     ram_log_k: usize,
@@ -79,6 +81,7 @@ impl<F: Field> RamRafEvaluation<F> {
     ) -> Self {
         Self {
             claims: ram::raf_evaluation(raf_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::ram::RafEvaluation::new(raf_dimensions),
             read_write_dimensions,
             ram_log_k,
             lowest_address,
@@ -95,8 +98,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::ram::RafEvaluation;
     type Inputs<C> = RamRafEvaluationInputClaims<C>;
     type Outputs<C> = RamRafEvaluationOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

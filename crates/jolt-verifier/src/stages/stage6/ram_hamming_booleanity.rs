@@ -11,6 +11,7 @@ use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TraceDimensions, ram},
     JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamHammingBooleanityPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::OutputClaims;
@@ -56,6 +57,7 @@ impl<F: Field> InputClaims<F> for RamHammingBooleanityInputClaims<OpeningClaim<F
 }
 
 pub struct RamHammingBooleanity<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::ram::HammingBooleanity,
     claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     /// The stage-1 Spartan-outer cycle binding that `EqCycle` compares the raw
@@ -67,6 +69,7 @@ impl<F: Field> RamHammingBooleanity<F> {
     pub fn new(trace_dimensions: TraceDimensions, stage1_cycle_binding: Vec<F>) -> Self {
         Self {
             claims: ram::hamming_booleanity(trace_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::ram::HammingBooleanity::new(trace_dimensions),
             trace_dimensions,
             stage1_cycle_binding,
         }
@@ -81,8 +84,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::ram::HammingBooleanity;
     type Inputs<C> = RamHammingBooleanityInputClaims<C>;
     type Outputs<C> = RamHammingBooleanityOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

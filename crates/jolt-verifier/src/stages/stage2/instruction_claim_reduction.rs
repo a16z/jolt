@@ -22,6 +22,7 @@ use jolt_claims::protocols::jolt::{
     InstructionClaimReductionChallenge, InstructionClaimReductionPublic, JoltChallengeId,
     JoltPublicId, JoltRelationClaims, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -91,6 +92,7 @@ impl<F: Field> InstructionClaimReductionInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionClaimReduction<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction,
     claims: JoltRelationClaims<F>,
     gamma: F,
     tau_low: Vec<F>,
@@ -100,6 +102,7 @@ impl<F: Field> InstructionClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, gamma: F, tau_low: Vec<F>) -> Self {
         Self {
             claims: instruction_claim_reduction::claim_reduction(trace_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions),
             gamma,
             tau_low,
         }
@@ -114,8 +117,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::instruction::ClaimReduction;
     type Inputs<C> = InstructionClaimReductionInputClaims<C>;
     type Outputs<C> = InstructionClaimReductionOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

@@ -20,9 +20,11 @@ use jolt_claims::protocols::jolt::{
         dimensions::TraceDimensions,
         ram::{self, RamValCheckInit, RamValCheckInitContribution},
     },
+    relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
     JoltAdviceKind, JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
     RamValCheckChallenge, RamValCheckPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
@@ -116,6 +118,7 @@ impl<F: Field> RamValCheckInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamValCheck<F: Field> {
+    symbolic: RamValCheckSymbolic,
     claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
@@ -146,8 +149,20 @@ impl<F: Field> RamValCheck<F> {
             .iter()
             .map(|contribution| (contribution.selector, contribution.neg_selector))
             .collect();
+        let symbolic = RamValCheckSymbolic::new(RamValCheckShape {
+            dimensions: trace_dimensions,
+            contributions: init
+                .contributions
+                .iter()
+                .map(|contribution| RamValContribution {
+                    selector: contribution.selector,
+                    opening: contribution.opening,
+                })
+                .collect(),
+        });
         Self {
             claims: ram::val_check(trace_dimensions, init),
+            symbolic,
             trace_dimensions,
             ram_log_k,
             gamma,
@@ -165,8 +180,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
+    type Symbolic = RamValCheckSymbolic;
     type Inputs<C> = RamValCheckInputClaims<C>;
     type Outputs<C> = RamValCheckOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

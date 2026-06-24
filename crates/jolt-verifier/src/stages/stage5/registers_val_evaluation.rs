@@ -7,6 +7,7 @@ use jolt_claims::protocols::jolt::{
     },
     JoltPublicId, JoltRelationClaims, JoltRelationId, RegistersValEvaluationPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::LtPolynomial;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -52,6 +53,7 @@ impl<F: Field> RegistersValEvaluationInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RegistersValEvaluation<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::registers::ValEvaluation,
     claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
 }
@@ -60,6 +62,7 @@ impl<F: Field> RegistersValEvaluation<F> {
     pub fn new(trace_dimensions: TraceDimensions) -> Self {
         Self {
             claims: registers::val_evaluation(trace_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::registers::ValEvaluation::new(trace_dimensions),
             trace_dimensions,
         }
     }
@@ -73,8 +76,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::registers::ValEvaluation;
     type Inputs<C> = RegistersValEvaluationInputClaims<C>;
     type Outputs<C> = RegistersValEvaluationOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

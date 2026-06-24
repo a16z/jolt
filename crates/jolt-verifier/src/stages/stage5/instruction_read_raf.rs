@@ -12,6 +12,7 @@ use jolt_claims::protocols::jolt::{
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltChallengeId, JoltPublicId,
     JoltRelationClaims, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
@@ -83,6 +84,7 @@ impl<F: Field> InstructionReadRafInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionReadRaf<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::instruction::ReadRaf,
     claims: JoltRelationClaims<F>,
     dimensions: InstructionReadRafDimensions,
     gamma: F,
@@ -92,6 +94,7 @@ impl<F: Field> InstructionReadRaf<F> {
     pub fn new(dimensions: InstructionReadRafDimensions, gamma: F) -> Self {
         Self {
             claims: instruction::read_raf(dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::instruction::ReadRaf::new(dimensions),
             dimensions,
             gamma,
         }
@@ -123,8 +126,13 @@ pub(crate) fn reconstruct_r_address<F: Field, C: GetPoint<F>>(
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::instruction::ReadRaf;
     type Inputs<C> = InstructionReadRafInputClaims<C>;
     type Outputs<C> = InstructionReadRafOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

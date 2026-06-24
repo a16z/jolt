@@ -13,6 +13,7 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
     RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -70,6 +71,7 @@ impl<F: Field> RamRaClaimReductionInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamRaClaimReduction<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::ram::RaClaimReduction,
     claims: JoltRelationClaims<F>,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
@@ -80,6 +82,7 @@ impl<F: Field> RamRaClaimReduction<F> {
     pub fn new(trace_dimensions: TraceDimensions, ram_log_k: usize, gamma: F) -> Self {
         Self {
             claims: ram::ra_claim_reduction(trace_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::ram::RaClaimReduction::new(trace_dimensions),
             trace_dimensions,
             ram_log_k,
             gamma,
@@ -95,8 +98,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::ram::RaClaimReduction;
     type Inputs<C> = RamRaClaimReductionInputClaims<C>;
     type Outputs<C> = RamRaClaimReductionOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

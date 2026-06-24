@@ -17,6 +17,7 @@ use jolt_claims::protocols::jolt::{
     InstructionInputChallenge, InstructionInputPublic, JoltChallengeId, JoltPublicId,
     JoltRelationClaims, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_riscv::InstructionFlags;
@@ -96,6 +97,7 @@ impl<F: Field> InstructionInputInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionInput<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::instruction::InputVirtualization,
     claims: JoltRelationClaims<F>,
     gamma: F,
     product_remainder_opening_point: Vec<F>,
@@ -109,6 +111,7 @@ impl<F: Field> InstructionInput<F> {
     ) -> Self {
         Self {
             claims: instruction::input_virtualization(trace_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::instruction::InputVirtualization::new(trace_dimensions),
             gamma,
             product_remainder_opening_point,
         }
@@ -116,8 +119,13 @@ impl<F: Field> InstructionInput<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionInput<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::instruction::InputVirtualization;
     type Inputs<C> = InstructionInputInputClaims<C>;
     type Outputs<C> = InstructionInputOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

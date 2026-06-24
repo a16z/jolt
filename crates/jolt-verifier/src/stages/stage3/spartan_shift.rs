@@ -10,6 +10,7 @@ use jolt_claims::protocols::jolt::{
     formulas::{dimensions::TraceDimensions, spartan},
     JoltChallengeId, JoltPublicId, JoltRelationClaims, SpartanShiftChallenge, SpartanShiftPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::EqPlusOnePolynomial;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
@@ -81,6 +82,7 @@ impl<F: Field> SpartanShiftInputClaims<OpeningClaim<F>> {
 }
 
 pub struct SpartanShift<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::spartan::Shift,
     claims: JoltRelationClaims<F>,
     gamma: F,
     product_uniskip_tau_low: Vec<F>,
@@ -96,6 +98,7 @@ impl<F: Field> SpartanShift<F> {
     ) -> Self {
         Self {
             claims: spartan::shift(trace_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::spartan::Shift::new(trace_dimensions),
             gamma,
             product_uniskip_tau_low,
             product_remainder_opening_point,
@@ -104,8 +107,13 @@ impl<F: Field> SpartanShift<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::spartan::Shift;
     type Inputs<C> = SpartanShiftInputClaims<C>;
     type Outputs<C> = SpartanShiftOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

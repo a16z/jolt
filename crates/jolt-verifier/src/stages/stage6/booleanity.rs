@@ -15,6 +15,7 @@ use jolt_claims::protocols::jolt::{
     BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltOpeningId, JoltPublicId,
     JoltRelationClaims, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -66,6 +67,7 @@ impl<F: Field> crate::stages::relations::InputClaims<F>
 }
 
 pub struct BooleanityAddressPhase<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhase,
     claims: JoltRelationClaims<F>,
 }
 
@@ -73,13 +75,19 @@ impl<F: Field> BooleanityAddressPhase<F> {
     pub fn new(dimensions: BooleanityDimensions) -> Self {
         Self {
             claims: booleanity::booleanity_address_phase(dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhase::new(dimensions),
         }
     }
 }
 
 impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhase;
     type Inputs<C> = BooleanityAddressPhaseInputClaims<C>;
     type Outputs<C> = BooleanityAddressPhaseOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims
@@ -133,6 +141,7 @@ impl<F: Field> BooleanityInputClaims<OpeningClaim<F>> {
 }
 
 pub struct Booleanity<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhase,
     claims: JoltRelationClaims<F>,
     dimensions: BooleanityDimensions,
     gamma: F,
@@ -153,6 +162,7 @@ impl<F: Field> Booleanity<F> {
     ) -> Self {
         Self {
             claims: booleanity::booleanity_cycle_phase(dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhase::new(dimensions),
             dimensions,
             gamma,
             r_address,
@@ -170,8 +180,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for Booleanity<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhase;
     type Inputs<C> = BooleanityInputClaims<C>;
     type Outputs<C> = BooleanityOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

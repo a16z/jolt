@@ -15,6 +15,7 @@ use jolt_claims::protocols::jolt::{
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic, JoltChallengeId,
     JoltPublicId, JoltRelationClaims, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -56,6 +57,7 @@ impl<F: Field> InstructionRaVirtualizationInputClaims<OpeningClaim<F>> {
 }
 
 pub struct InstructionRaVirtualization<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::instruction::RaVirtualization,
     claims: JoltRelationClaims<F>,
     dimensions: InstructionRaVirtualizationDimensions,
     gamma: F,
@@ -77,6 +79,7 @@ impl<F: Field> InstructionRaVirtualization<F> {
     ) -> Self {
         Self {
             claims: instruction::ra_virtualization(dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::instruction::RaVirtualization::new(dimensions),
             dimensions,
             gamma,
             instruction_address,
@@ -94,8 +97,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::instruction::RaVirtualization;
     type Inputs<C> = InstructionRaVirtualizationInputClaims<C>;
     type Outputs<C> = InstructionRaVirtualizationOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

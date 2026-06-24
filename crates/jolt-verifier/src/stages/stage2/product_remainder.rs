@@ -15,6 +15,7 @@ use jolt_claims::protocols::jolt::{
     formulas::spartan::{self, SpartanProductDimensions},
     JoltPublicId, JoltRelationClaims, JoltRelationId, SpartanProductVirtualizationPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
@@ -82,6 +83,7 @@ impl<F: Field> ProductRemainderInputClaims<OpeningClaim<F>> {
 }
 
 pub struct ProductRemainder<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::spartan::ProductRemainder,
     claims: JoltRelationClaims<F>,
     uniskip_challenge: F,
     tau_high: F,
@@ -97,6 +99,7 @@ impl<F: Field> ProductRemainder<F> {
     ) -> Self {
         Self {
             claims: spartan::product_remainder(dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::spartan::ProductRemainder::new(dimensions),
             uniskip_challenge,
             tau_high,
             tau_low,
@@ -112,8 +115,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::spartan::ProductRemainder;
     type Inputs<C> = ProductRemainderInputClaims<C>;
     type Outputs<C> = ProductRemainderOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

@@ -9,8 +9,9 @@
 
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    JoltSumcheckDomain,
+    JoltSumcheckDomain, JoltSumcheckSpec,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_transcript::Transcript;
 
@@ -153,6 +154,15 @@ where
     Self::Inputs<OpeningClaim<F>>: InputClaims<F>,
     Self::Outputs<OpeningClaim<F>>: OutputClaims<F>,
 {
+    /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
+    /// input/output `Expr`s. The concrete instance holds its `Self::Symbolic` and
+    /// sources its claim expressions and spec from it.
+    type Symbolic: SymbolicSumcheck<
+        RelationId = JoltRelationId,
+        OpeningId = JoltOpeningId,
+        PublicId = JoltPublicId,
+        ChallengeId = JoltChallengeId,
+    >;
     /// The relation's consumed-claim struct (`#[derive(InputClaims)]`), generic
     /// over the cell.
     type Inputs<C>;
@@ -160,11 +170,21 @@ where
     /// over the cell.
     type Outputs<C>;
 
+    /// The symbolic relation backing this instance.
+    fn symbolic(&self) -> &Self::Symbolic;
+
     fn id(&self) -> JoltRelationId {
-        self.sumcheck_relation().id
+        Self::Symbolic::id()
     }
 
-    /// Algebra + sumcheck spec, from the `jolt-claims` formula builder.
+    /// The sumcheck spec (rounds, degree, domain), from the symbolic relation.
+    fn sumcheck(&self) -> JoltSumcheckSpec {
+        self.symbolic().sumcheck()
+    }
+
+    /// TRANSITION: the lowered `JoltRelationClaims` form, still consumed by the
+    /// stage-6 BlindFold batch bundle. Removed once BlindFold takes the symbolic
+    /// expressions directly (Phases 5-6/9).
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F>;
 
     /// Map this instance's sumcheck point and the upstream input points into the
@@ -204,7 +224,7 @@ where
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
     /// wired input opening values. Shared by prover and verifier; clear only.
     fn input_claim(&self, inputs: &Self::Inputs<OpeningClaim<F>>) -> Result<F, VerifierError> {
-        self.sumcheck_relation().input.expression().try_evaluate(
+        self.symbolic().input_expression::<F>().try_evaluate(
             |id| {
                 inputs
                     .resolve_input(id)
@@ -225,7 +245,7 @@ where
         inputs: &Self::Inputs<C>,
         outputs: &Self::Outputs<OpeningClaim<F>>,
     ) -> Result<F, VerifierError> {
-        self.sumcheck_relation().output.expression().try_evaluate(
+        self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
                 outputs
                     .resolve_output(id)

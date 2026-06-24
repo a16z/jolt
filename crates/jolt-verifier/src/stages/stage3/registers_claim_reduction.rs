@@ -13,6 +13,7 @@ use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltPublicId, JoltRelationClaims, JoltRelationId,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -71,6 +72,7 @@ impl<F: Field> RegistersClaimReductionInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RegistersClaimReduction<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::registers::ClaimReduction,
     claims: JoltRelationClaims<F>,
     gamma: F,
     product_uniskip_tau_low: Vec<F>,
@@ -84,6 +86,7 @@ impl<F: Field> RegistersClaimReduction<F> {
     ) -> Self {
         Self {
             claims: registers_claim_reduction::claim_reduction(trace_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::registers::ClaimReduction::new(trace_dimensions),
             gamma,
             product_uniskip_tau_low,
         }
@@ -91,8 +94,13 @@ impl<F: Field> RegistersClaimReduction<F> {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::registers::ClaimReduction;
     type Inputs<C> = RegistersClaimReductionInputClaims<C>;
     type Outputs<C> = RegistersClaimReductionOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

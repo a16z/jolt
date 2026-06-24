@@ -15,6 +15,7 @@ use jolt_claims::protocols::jolt::{
     formulas::{dimensions::ReadWriteDimensions, ram},
     JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId, RamOutputCheckPublic,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::{range_mask_mle_msb, sparse_segments_mle_msb, try_eq_mle};
 use jolt_program::preprocess::PublicIoMemory;
@@ -64,6 +65,7 @@ impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<OpeningClaim<F>> {
 }
 
 pub struct RamOutputCheck<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::ram::OutputCheck,
     claims: JoltRelationClaims<F>,
     read_write_dimensions: ReadWriteDimensions,
     output_address_challenges: Vec<F>,
@@ -78,6 +80,7 @@ impl<F: Field> RamOutputCheck<F> {
     ) -> Self {
         Self {
             claims: ram::output_check(read_write_dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::ram::OutputCheck::new(read_write_dimensions),
             read_write_dimensions,
             output_address_challenges,
             public_memory,
@@ -132,8 +135,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for RamOutputCheck<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::ram::OutputCheck;
     type Inputs<C> = RamOutputCheckInputClaims<C>;
     type Outputs<C> = RamOutputCheckOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims

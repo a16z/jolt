@@ -14,6 +14,7 @@ use jolt_claims::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
     JoltPublicId, JoltRelationClaims, JoltRelationId,
 };
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 use jolt_verifier_derive::{InputClaims, OutputClaims};
@@ -64,6 +65,7 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
 }
 
 pub struct HammingWeightClaimReduction<F: Field> {
+    symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction,
     claims: JoltRelationClaims<F>,
     dimensions: HammingWeightClaimReductionDimensions,
     gamma: F,
@@ -87,6 +89,7 @@ impl<F: Field> HammingWeightClaimReduction<F> {
     ) -> Self {
         Self {
             claims: hamming_weight::claim_reduction(dimensions),
+            symbolic: jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction::new(dimensions),
             dimensions,
             gamma,
             r_cycle,
@@ -132,8 +135,13 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
+    type Symbolic = jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction;
     type Inputs<C> = HammingWeightClaimReductionInputClaims<C>;
     type Outputs<C> = HammingWeightClaimReductionOutputClaims<C>;
+
+    fn symbolic(&self) -> &Self::Symbolic {
+        &self.symbolic
+    }
 
     fn sumcheck_relation(&self) -> &JoltRelationClaims<F> {
         &self.claims
