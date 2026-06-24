@@ -7,9 +7,6 @@ mod sumcheck;
 mod symbolic;
 mod util;
 
-pub use claims::{
-    challenge, constant, opening, public, ClaimExpression, ConsistencyClaim, Expr,
-    InputClaimExpression, OutputClaimExpression, Source, Term,
-};
+pub use claims::{challenge, constant, opening, public, Expr, Source, Term};
 pub use sumcheck::{SumcheckDomain, SumcheckSpec};
 pub use symbolic::SymbolicSumcheck;
