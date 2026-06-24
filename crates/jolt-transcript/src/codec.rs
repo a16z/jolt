@@ -44,7 +44,7 @@ use spongefish::{Encoding, NargDeserialize, VerificationError, VerificationResul
 /// targets an `as` cast truncates a > `usize::MAX` length, making the same
 /// NARG accepted on one platform and rejected on another — any overflow is a
 /// deserialization error instead.
-fn read_length_prefixed_body<'a>(buf: &mut &'a [u8]) -> VerificationResult<&'a [u8]> {
+pub fn read_length_prefixed_body<'a>(buf: &mut &'a [u8]) -> VerificationResult<&'a [u8]> {
     let (len_bytes, rest) = buf.split_first_chunk::<8>().ok_or(VerificationError)?;
     let len = usize::try_from(u64::from_le_bytes(*len_bytes)).map_err(|_| VerificationError)?;
     if rest.len() < len {

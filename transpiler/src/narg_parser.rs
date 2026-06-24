@@ -14,6 +14,8 @@
 
 use std::fmt;
 
+use jolt_transcript::read_length_prefixed_body;
+
 /// Width of the `BytesMsg` little-endian length prefix
 /// (`crates/jolt-transcript/src/codec.rs`).
 pub const FRAME_LEN_PREFIX_BYTES: usize = 8;
@@ -102,30 +104,23 @@ pub fn parse_narg(narg: &[u8], zk_mode: bool) -> Result<ParsedNarg, NargParseErr
         return Err(NargParseError::ZkProofUnsupported);
     }
     let mut frames = Vec::new();
-    let mut offset = 0usize;
-    while offset < narg.len() {
-        let remaining = narg.len() - offset;
+    let mut cursor = narg;
+    while !cursor.is_empty() {
+        let offset = narg.len() - cursor.len();
+        let remaining = cursor.len();
         if remaining < FRAME_LEN_PREFIX_BYTES {
             return Err(NargParseError::TruncatedLengthPrefix { offset, remaining });
         }
         #[expect(clippy::unwrap_used)] // 8-byte slice into [u8; 8] is infallible
-        let len = u64::from_le_bytes(
-            narg[offset..offset + FRAME_LEN_PREFIX_BYTES]
-                .try_into()
-                .unwrap(),
-        );
-        let body_start = offset + FRAME_LEN_PREFIX_BYTES;
-        let body_remaining = (narg.len() - body_start) as u64;
-        if len > body_remaining {
-            return Err(NargParseError::TruncatedFrameBody {
+        let declared_len = u64::from_le_bytes(cursor[..FRAME_LEN_PREFIX_BYTES].try_into().unwrap());
+        let frame = read_length_prefixed_body(&mut cursor).map_err(|_| {
+            NargParseError::TruncatedFrameBody {
                 offset,
-                expected: len,
-                remaining: body_remaining as usize,
-            });
-        }
-        let body_end = body_start + len as usize;
-        frames.push(narg[body_start..body_end].to_vec());
-        offset = body_end;
+                expected: declared_len,
+                remaining: remaining - FRAME_LEN_PREFIX_BYTES,
+            }
+        })?;
+        frames.push(frame.to_vec());
     }
     Ok(ParsedNarg { frames })
 }

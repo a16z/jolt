@@ -20,7 +20,7 @@ mod prover;
 mod setup;
 mod verifier;
 
-pub use codec::BytesMsg;
+pub use codec::{read_length_prefixed_body, BytesMsg};
 pub use messages::{serialize_slice, FsAbsorb, FsChallenge, FsTranscript};
 pub use setup::{
     prover_transcript, transcript_builder, verifier_transcript, TranscriptInit, PROTOCOL_ID,
