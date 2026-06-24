@@ -617,9 +617,12 @@ where
 }
 
 fn prover_dory_commitment_into_verifier(commitment: &ProverDoryCommitment) -> Bn254GT {
-    // SAFETY: `jolt-prover-legacy` Dory and modular `jolt-dory` use thin wrappers
-    // over the same arkworks `Fq12` target-group element.
-    unsafe { std::mem::transmute_copy(commitment) }
+    // `ArkGT` (prover Dory) and `Bn254GT` (modular `jolt-dory`) both wrap the same
+    // patched `ark_bn254::Fq12`, so convert through the shared inner element. This
+    // is equivalent to the previous `transmute_copy` but layout-independent: a
+    // future change to either wrapper becomes a type error here instead of silent
+    // memory corruption on the soundness-critical commitment path.
+    Bn254GT::from(commitment.0)
 }
 
 #[cfg(feature = "zk")]

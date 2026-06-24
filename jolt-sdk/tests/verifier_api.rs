@@ -11,10 +11,18 @@ mod tests {
         let preprocessing_path = format!("{fixtures}/jolt_verifier_preprocessing.dat");
         let proof_path = format!("{fixtures}/fib_proof.bin");
         let io_path = format!("{fixtures}/fib_io_device.bin");
-        if !std::path::Path::new(&preprocessing_path).exists()
-            || !std::path::Path::new(&proof_path).exists()
-            || !std::path::Path::new(&io_path).exists()
-        {
+        let fixtures_present = std::path::Path::new(&preprocessing_path).exists()
+            && std::path::Path::new(&proof_path).exists()
+            && std::path::Path::new(&io_path).exists();
+        if !fixtures_present {
+            // Locally the fixtures are optional, but under CI their absence means
+            // gen-fixtures.sh failed to produce them and this test would otherwise
+            // pass without verifying anything. Fail loudly in that case.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "verifier fixtures missing under CI; jolt-sdk/tests/gen-fixtures.sh must produce \
+                 {preprocessing_path}, {proof_path}, and {io_path} before this test runs",
+            );
             eprintln!("skipping verifier fixture test; run jolt-sdk/tests/gen-fixtures.sh first");
             return;
         }

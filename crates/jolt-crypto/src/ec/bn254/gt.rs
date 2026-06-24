@@ -44,6 +44,13 @@ impl From<Bn254GT> for Fq12 {
     }
 }
 
+impl From<Fq12> for Bn254GT {
+    #[inline(always)]
+    fn from(value: Fq12) -> Self {
+        Self(value)
+    }
+}
+
 impl Default for Bn254GT {
     #[inline(always)]
     fn default() -> Self {
