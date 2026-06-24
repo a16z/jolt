@@ -1,5 +1,8 @@
 //! Stage 6 coarse-kernel ABI used by Bolt-generated Jolt prover code.
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use std::fmt::{self, Display, Formatter};
 use std::{borrow::Cow, error::Error};
 
@@ -1344,9 +1347,23 @@ where
                 claim = claim.symbol
             )
             .entered();
-            Stage6ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage6ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         } else {
-            Stage6ProverInstanceState::new(context.program, claim, inputs, &store, active_scale)?
+            Stage6ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                active_scale,
+                context.kernel.backend,
+            )?
         };
         let init_nanos = init_start.map_or(0, |start| start.elapsed().as_nanos());
         instances.push(Stage6BatchedInstance {
@@ -1865,6 +1882,7 @@ impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
         inputs: &'a Stage6ProverInputs<'a, F>,
         store: &Stage6ValueStore<F>,
         active_scale: F,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         match claim_relation(program, claim)? {
             Stage6Relation::BytecodeReadRaf => {
@@ -1882,11 +1900,11 @@ impl<'a, F: Field> Stage6ProverInstanceState<'a, F> {
                     .map(Self::IncClaimReduction)
             }
             Stage6Relation::RamRaVirtual => {
-                ram_ra_virtual_state(program, claim, inputs, store, active_scale)
+                ram_ra_virtual_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::RamRaVirtual)
             }
             Stage6Relation::InstructionRaVirtual => {
-                instruction_ra_virtual_state(program, claim, inputs, store, active_scale)
+                instruction_ra_virtual_state(program, claim, inputs, store, active_scale, backend)
                     .map(Self::InstructionRaVirtual)
             }
             relation @ Stage6Relation::Batched => Err(Stage6KernelError::KernelNotImplemented {
@@ -4675,7 +4693,7 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
         }
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F, backend: &'static str) {
         let one_minus = F::one() - challenge;
         match std::mem::replace(
             self,
@@ -4749,7 +4767,16 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
                     &tables_011,
                     &tables_111,
                 ];
-                let chunks = materialize_gather8(&table_groups, indices);
+                let chunks = 'chunks: {
+                    #[cfg(feature = "cuda")]
+                    if backend == "cuda" {
+                        if let Some(chunks) = cuda::materialize_gather8(&table_groups, indices) {
+                            break 'chunks chunks;
+                        }
+                    }
+                    let _ = backend;
+                    materialize_gather8(&table_groups, indices)
+                };
                 let scratch = (0..chunks.len()).map(|_| Vec::new()).collect();
                 *self = Self::Bound { chunks, scratch };
             }
@@ -4969,10 +4996,10 @@ impl<F: Field> InstructionRaVirtualChunks<'_, F> {
         }
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F, backend: &'static str) {
         match self {
             Self::Dense(chunks) => chunks.bind(challenge),
-            Self::Sparse(chunks) => chunks.bind(challenge),
+            Self::Sparse(chunks) => chunks.bind(challenge, backend),
         }
     }
 }
@@ -4997,6 +5024,7 @@ struct InstructionRaVirtualStage6State<'a, F: Field> {
     output_factor_offset: usize,
     outputs: Vec<FactorOutput>,
     active_scale: F,
+    backend: &'static str,
 }
 
 impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
@@ -5013,6 +5041,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         outputs: Vec<FactorOutput>,
         active_scale: F,
         degree_bound: usize,
+        backend: &'static str,
     ) -> Result<Self, Stage6KernelError> {
         if chunks.len() == 0
             || chunks_per_virtual == 0
@@ -5071,6 +5100,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
             output_factor_offset,
             outputs,
             active_scale,
+            backend,
         })
     }
 
@@ -5352,7 +5382,7 @@ impl<'a, F: Field> InstructionRaVirtualStage6State<'a, F> {
         if self.split_eq.is_none() {
             bind_dense_evals_reuse(&mut self.eq_cycle, &mut self.eq_scratch, challenge);
         }
-        self.chunks.bind(challenge);
+        self.chunks.bind(challenge, self.backend);
         if let Some(split_eq) = &mut self.split_eq {
             split_eq.bind(challenge);
         }
@@ -5917,6 +5947,7 @@ fn ram_ra_virtual_state<'a, F: Field>(
     inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<InstructionRaVirtualStage6State<'a, F>, Stage6KernelError> {
     let witness = inputs
         .ram_ra_virtual
@@ -5970,6 +6001,7 @@ fn ram_ra_virtual_state<'a, F: Field>(
         outputs,
         active_scale,
         claim.degree,
+        backend,
     )
 }
 
@@ -5979,6 +6011,7 @@ fn instruction_ra_virtual_state<'a, F: Field>(
     inputs: &'a Stage6ProverInputs<'a, F>,
     store: &Stage6ValueStore<F>,
     active_scale: F,
+    backend: &'static str,
 ) -> Result<InstructionRaVirtualStage6State<'a, F>, Stage6KernelError> {
     let witness = inputs
         .instruction_ra_virtual
@@ -6058,6 +6091,7 @@ fn instruction_ra_virtual_state<'a, F: Field>(
             outputs,
             active_scale,
             claim.degree,
+            backend,
         );
     }
 
@@ -6075,6 +6109,7 @@ fn instruction_ra_virtual_state<'a, F: Field>(
         outputs,
         active_scale,
         claim.degree,
+        backend,
     )
 }
 
