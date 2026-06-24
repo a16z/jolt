@@ -109,6 +109,14 @@ impl<'a> CudaSplitEqState<'a> {
         self.e_out.to_host()
     }
 
+    pub fn e_in_device(&self) -> &DeviceFrVec {
+        &self.e_in
+    }
+
+    pub fn e_out_device(&self) -> &DeviceFrVec {
+        &self.e_out
+    }
+
     pub fn current_target(&self) -> Fr {
         debug_assert!(self.e_in.len() > 1 || self.e_out.len() > 1);
         if self.e_in.len() > 1 {

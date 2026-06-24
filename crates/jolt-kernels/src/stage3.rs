@@ -8,6 +8,11 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+#[cfg(feature = "cuda")]
+mod cuda;
+#[cfg(feature = "cuda")]
+use jolt_field::Fr;
+
 use crate::dense::DENSE_BIND_PAR_THRESHOLD;
 use crate::split_eq::SplitEqState;
 use jolt_field::{Field, FieldAccumulator};
@@ -1349,7 +1354,13 @@ where
             relation,
             offset: instance_round_offset(context.program, context.driver.symbol, claim.symbol)?,
             previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
-            state: Stage3ProverInstanceState::new(context.program, claim, inputs, &store)?,
+            state: Stage3ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                context.kernel.backend,
+            )?,
         });
     }
 
@@ -1542,8 +1553,8 @@ impl<F: Field> Stage3BatchedInstance<'_, F> {
 }
 
 enum Stage3ProverInstanceState<F: Field> {
-    SpartanShift(SpartanShiftState<F>),
-    SumOfProducts(SumOfProductsState<F>),
+    SpartanShift(Box<SpartanShiftState<F>>),
+    SumOfProducts(Box<SumOfProductsState<F>>),
 }
 
 impl<F: Field> Stage3ProverInstanceState<F> {
@@ -1552,18 +1563,24 @@ impl<F: Field> Stage3ProverInstanceState<F> {
         claim: &Stage3SumcheckClaimPlan,
         inputs: &Stage3ProverInputs<'_, F>,
         store: &Stage3ValueStore<F>,
+        backend: &'static str,
     ) -> Result<Self, Stage3KernelError> {
         match claim_relation(program, claim)? {
             Stage3Relation::SpartanShift => {
-                return spartan_shift_state(claim, inputs, store).map(Self::SpartanShift);
+                return spartan_shift_state(claim, inputs, store)
+                    .map(|state| Self::SpartanShift(Box::new(state)));
             }
-            Stage3Relation::InstructionInput => instruction_input_state(claim, inputs, store),
-            Stage3Relation::RegistersClaimReduction => registers_state(claim, inputs, store),
+            Stage3Relation::InstructionInput => {
+                instruction_input_state(claim, inputs, store, backend)
+            }
+            Stage3Relation::RegistersClaimReduction => {
+                registers_state(claim, inputs, store, backend)
+            }
             relation @ Stage3Relation::Batched => Err(Stage3KernelError::KernelNotImplemented {
                 abi: relation.symbol(),
             }),
         }
-        .map(Self::SumOfProducts)
+        .map(|state| Self::SumOfProducts(Box::new(state)))
     }
 
     fn round_poly(
@@ -1634,7 +1651,6 @@ struct SpartanShiftPhase2<F: Field> {
     scratch: Vec<Vec<F>>,
 }
 
-#[derive(Clone)]
 struct SumOfProductsState<F: Field> {
     kind: SumOfProductsKind,
     factors: Vec<Vec<F>>,
@@ -1644,6 +1660,8 @@ struct SumOfProductsState<F: Field> {
     outputs: Vec<FactorOutput>,
     deferred_outputs: Vec<DeferredOutput<F>>,
     point: Vec<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaSumOfProductsState>,
 }
 
 #[derive(Clone, Copy)]
@@ -1672,6 +1690,7 @@ struct DeferredOutput<F: Field> {
 }
 
 impl<F: Field> SumOfProductsState<F> {
+    #[cfg_attr(not(feature = "cuda"), expect(unused_variables))]
     fn new(
         kind: SumOfProductsKind,
         factors: Vec<Vec<F>>,
@@ -1679,8 +1698,16 @@ impl<F: Field> SumOfProductsState<F> {
         terms: Vec<ProductTerm<F>>,
         outputs: Vec<FactorOutput>,
         deferred_outputs: Vec<DeferredOutput<F>>,
+        backend: &'static str,
+        split_point: &[F],
     ) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            cuda_sum_of_products_state(kind, &factors, &terms, split_point)
+        } else {
+            None
+        };
         Self {
             kind,
             factors,
@@ -1690,10 +1717,18 @@ impl<F: Field> SumOfProductsState<F> {
             outputs,
             deferred_outputs,
             point: Vec::new(),
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     fn round_poly(&self, previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Some(poly) = cuda_round_poly::<F>(cuda, self.kind, previous_claim) {
+                return poly;
+            }
+        }
         let Some(split_eq) = self.split_eq.as_ref() else {
             std::process::abort();
         };
@@ -1711,6 +1746,15 @@ impl<F: Field> SumOfProductsState<F> {
     }
 
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.point.push(challenge);
+                    return;
+                }
+            }
+        }
         let half = self.factors.first().map_or(0, |factor| factor.len() / 2);
         if half >= DENSE_BIND_PAR_THRESHOLD {
             self.factors
@@ -1731,6 +1775,14 @@ impl<F: Field> SumOfProductsState<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage3Relation) -> Result<F, Stage3KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(value) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -1769,6 +1821,49 @@ impl<F: Field> SumOfProductsState<F> {
         }
         Ok(evals)
     }
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_sum_of_products_state<F: Field>(
+    kind: SumOfProductsKind,
+    factors: &[Vec<F>],
+    terms: &[ProductTerm<F>],
+    split_point: &[F],
+) -> Option<cuda::CudaSumOfProductsState> {
+    let fr_factors: Vec<Vec<Fr>> = factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .collect::<Option<Vec<_>>>()?;
+    let fr_point = crate::cuda::as_fr_slice(split_point)?.to_vec();
+    let cuda_kind = match kind {
+        SumOfProductsKind::InstructionInput => cuda::CudaGruenKind::InstructionInput {
+            gamma: crate::cuda::into_fr(terms[2].coefficient)?,
+        },
+        SumOfProductsKind::Registers => cuda::CudaGruenKind::Registers {
+            gamma: crate::cuda::into_fr(terms[1].coefficient)?,
+            gamma2: crate::cuda::into_fr(terms[2].coefficient)?,
+        },
+    };
+    cuda::CudaSumOfProductsState::new(cuda_kind, &fr_factors, &fr_point)
+}
+
+#[cfg(feature = "cuda")]
+fn cuda_round_poly<F: Field>(
+    cuda: &cuda::CudaSumOfProductsState,
+    kind: SumOfProductsKind,
+    previous_claim: F,
+) -> Option<UnivariatePoly<F>> {
+    let (q_constant, q_top) = cuda.q_coefficients().ok()?;
+    let target: F = crate::cuda::fr_into(cuda.current_target())?;
+    let q_constant: F = crate::cuda::fr_into(q_constant)?;
+    let poly = match kind {
+        SumOfProductsKind::InstructionInput => {
+            let q_quadratic: F = crate::cuda::fr_into(q_top)?;
+            gruen_cubic_poly(target, q_constant, q_quadratic, previous_claim)
+        }
+        SumOfProductsKind::Registers => gruen_quadratic_poly(target, q_constant, previous_claim),
+    };
+    Some(poly)
 }
 
 impl<F: Field> SpartanShiftState<F> {
@@ -2072,6 +2167,7 @@ fn instruction_input_state<F: Field>(
     claim: &Stage3SumcheckClaimPlan,
     inputs: &Stage3ProverInputs<'_, F>,
     store: &Stage3ValueStore<F>,
+    backend: &'static str,
 ) -> Result<SumOfProductsState<F>, Stage3KernelError> {
     let cycles = stage3_cycles(inputs, claim.num_rounds)?;
     let eq_point = store.point("stage3.input.stage2.product_virtual.LeftInstructionInput")?;
@@ -2153,6 +2249,8 @@ fn instruction_input_state<F: Field>(
             },
         ],
         Vec::new(),
+        backend,
+        eq_point,
     ))
 }
 
@@ -2160,6 +2258,7 @@ fn registers_state<F: Field>(
     claim: &Stage3SumcheckClaimPlan,
     inputs: &Stage3ProverInputs<'_, F>,
     store: &Stage3ValueStore<F>,
+    backend: &'static str,
 ) -> Result<SumOfProductsState<F>, Stage3KernelError> {
     let cycles = stage3_cycles(inputs, claim.num_rounds)?;
     let eq_point = store.point("stage3.input.stage1.RdWriteValue")?;
@@ -2198,6 +2297,8 @@ fn registers_state<F: Field>(
             },
         ],
         Vec::new(),
+        backend,
+        eq_point,
     ))
 }
 

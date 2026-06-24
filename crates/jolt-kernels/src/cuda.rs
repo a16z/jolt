@@ -147,6 +147,36 @@ fn unflatten(raw: &[u64]) -> Vec<Fr> {
         .collect()
 }
 
+pub(crate) fn shared_ctx() -> Option<&'static CudaKernelContext> {
+    use std::sync::OnceLock;
+    static CTX: OnceLock<Option<CudaKernelContext>> = OnceLock::new();
+    CTX.get_or_init(|| CudaKernelContext::new(0).ok()).as_ref()
+}
+
+pub(crate) fn as_fr_slice<F: jolt_field::Field>(values: &[F]) -> Option<&[Fr]> {
+    if std::any::TypeId::of::<F>() == std::any::TypeId::of::<Fr>() {
+        // SAFETY: F and Fr are the same type (checked above), so &[F] and &[Fr]
+        // have identical layout.
+        Some(unsafe { &*(std::ptr::from_ref::<[F]>(values) as *const [Fr]) })
+    } else {
+        None
+    }
+}
+
+pub(crate) fn into_fr<F: jolt_field::Field>(value: F) -> Option<Fr> {
+    (Box::new(value) as Box<dyn std::any::Any>)
+        .downcast::<Fr>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
+pub(crate) fn fr_into<F: jolt_field::Field>(value: Fr) -> Option<F> {
+    (Box::new(value) as Box<dyn std::any::Any>)
+        .downcast::<F>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
 struct PinnedBuf {
     ctx: Arc<CudaContext>,
     ptr: *mut u64,
@@ -225,10 +255,6 @@ struct WitnessKey {
 }
 
 impl WitnessKey {
-    /// Full FNV-1a fold over every limb. A sparse sample could not distinguish two
-    /// witnesses differing only at unsampled positions, which would silently reuse a
-    /// stale buffer; the fold costs an O(n) pass over already-resident host memory and
-    /// runs once per stage prove, far cheaper than the GB-scale upload it guards.
     fn of(witness: &[Fr]) -> Self {
         let mut hash = 0xcbf2_9ce4_8422_2325u64;
         for &value in witness {
@@ -258,11 +284,6 @@ fn lock_pool(pool: &PinnedStaging) -> MutexGuard<'_, PinnedPool> {
     pool.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Inputs to the fused dense-outer construction: builds `eq/az/bz` directly from
-/// the witness, so the large per-cycle row-dots never cross PCIe. `a`/`b` are
-/// weighted-CSR sparse matrices (the lagrange weights pre-folded into the coeffs)
-/// over both row groups concatenated; `split` is the CSR-row index where the
-/// second group begins.
 pub struct FusedOuterInputs<'a> {
     pub eq_evals: &'a [Fr],
     pub scale: Fr,
@@ -366,10 +387,6 @@ impl CudaKernelContext {
         })
     }
 
-    /// Upload `witness` once and keep it device-resident across stages: on a key hit
-    /// the cached buffer is returned without re-uploading. The key fingerprints the
-    /// length plus eight sampled limbs, so distinct witnesses of equal length are not
-    /// confused while avoiding a full content hash on the hot path.
     pub fn resident_witness(&self, witness: &[Fr]) -> Result<Arc<DeviceFrVec>, CudaError> {
         let key = WitnessKey::of(witness);
         let mut cache = lock_resident(&self.resident_witness);
@@ -959,7 +976,7 @@ impl CudaKernelContext {
         for (index, factor) in terms.factors.iter().enumerate() {
             let offset = index * pair_stride * 2 * LIMBS;
             self.stream.memcpy_dtod(
-                &factor.buf,
+                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
                 &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
             )?;
         }
@@ -1056,7 +1073,7 @@ impl CudaKernelContext {
         for (index, factor) in terms.factors.iter().enumerate() {
             let offset = index * pair_stride * 2 * LIMBS;
             self.stream.memcpy_dtod(
-                &factor.buf,
+                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
                 &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
             )?;
         }
@@ -1162,7 +1179,7 @@ impl CudaKernelContext {
         for (index, factor) in inputs.factors.iter().enumerate() {
             let offset = index * pair_stride * 2 * LIMBS;
             self.stream.memcpy_dtod(
-                &factor.buf,
+                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
                 &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
             )?;
         }
@@ -1271,7 +1288,7 @@ impl CudaKernelContext {
         for (index, factor) in terms.factors.iter().enumerate() {
             let offset = index * pair_stride * 2 * LIMBS;
             self.stream.memcpy_dtod(
-                &factor.buf,
+                &factor.buf.slice(0..pair_stride * 2 * LIMBS),
                 &mut packed.slice_mut(offset..offset + pair_stride * 2 * LIMBS),
             )?;
         }

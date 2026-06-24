@@ -1,5 +1,4 @@
 use std::any::Any;
-use std::sync::OnceLock;
 
 use jolt_field::{Field, Fr};
 use jolt_poly::lagrange::{lagrange_evals, lagrange_kernel_eval};
@@ -13,27 +12,7 @@ use crate::stage1::{
     OUTER_UNISKIP_DEGREE, OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_TARGET_COEFFS,
 };
 
-fn ctx() -> Option<&'static CudaKernelContext> {
-    static CTX: OnceLock<Option<CudaKernelContext>> = OnceLock::new();
-    CTX.get_or_init(|| CudaKernelContext::new(0).ok()).as_ref()
-}
-
-fn as_fr_slice<F: Field>(values: &[F]) -> Option<&[Fr]> {
-    if std::any::TypeId::of::<F>() == std::any::TypeId::of::<Fr>() {
-        // SAFETY: F and Fr are the same type (checked above), so &[F] and &[Fr]
-        // have identical layout.
-        Some(unsafe { &*(std::ptr::from_ref::<[F]>(values) as *const [Fr]) })
-    } else {
-        None
-    }
-}
-
-fn into_fr<F: Field>(value: F) -> Option<Fr> {
-    (Box::new(value) as Box<dyn Any>)
-        .downcast::<Fr>()
-        .ok()
-        .map(|boxed| *boxed)
-}
+use crate::cuda::{as_fr_slice, fr_into, into_fr, shared_ctx as ctx};
 
 fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
     (Box::new(poly) as Box<dyn Any>)
@@ -236,13 +215,6 @@ pub fn uniskip_extended_evals_cuda<F: Field>(
         out.push(fr_into::<F>(eval)?);
     }
     Some(out)
-}
-
-fn fr_into<F: Field>(value: Fr) -> Option<F> {
-    (Box::new(value) as Box<dyn Any>)
-        .downcast::<F>()
-        .ok()
-        .map(|boxed| *boxed)
 }
 
 fn cuda_error(error: CudaError) -> Stage1KernelError {

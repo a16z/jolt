@@ -4,6 +4,9 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::mem::MaybeUninit;
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 use crate::dense::{bind_dense_evals_reuse, DENSE_BIND_PAR_THRESHOLD};
 use crate::split_eq::SplitEqState;
 use jolt_field::signed::{S128, S256};
@@ -1661,7 +1664,13 @@ where
             relation: claim_relation(context.program, claim)?,
             offset: instance_round_offset(context.program, context.driver.symbol, claim.symbol)?,
             previous_claim: input_claims[index].mul_pow_2(max_rounds - claim.num_rounds),
-            state: Stage2ProverInstanceState::new(context.program, claim, inputs, &store)?,
+            state: Stage2ProverInstanceState::new(
+                context.program,
+                claim,
+                inputs,
+                &store,
+                context.kernel.backend,
+            )?,
         });
     }
 
@@ -1871,6 +1880,7 @@ impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
         claim: &Stage2SumcheckClaimPlan,
         inputs: &Stage2ProverInputs<'a, F>,
         store: &Stage2ValueStore<F>,
+        backend: &'static str,
     ) -> Result<Self, Stage2KernelError> {
         match claim_relation(program, claim)? {
             Stage2Relation::RamReadWrite => Ok(Self::RamReadWrite(RamReadWriteState::new(
@@ -1884,9 +1894,9 @@ impl<'a, F: Field> Stage2ProverInstanceState<'a, F> {
                     instruction_lookup_state(claim, inputs, store)?,
                 ))
             }
-            Stage2Relation::RamRafEvaluation => {
-                Ok(Self::RamRafEvaluation(ram_raf_state(claim, inputs, store)?))
-            }
+            Stage2Relation::RamRafEvaluation => Ok(Self::RamRafEvaluation(ram_raf_state(
+                claim, inputs, store, backend,
+            )?)),
             Stage2Relation::RamOutputCheck => Ok(Self::RamOutputCheck(ram_output_state(
                 claim, inputs, store,
             )?)),
@@ -2381,25 +2391,50 @@ fn combine_instruction_lookup_values<F: Field>(values: [F; 5], gamma_powers: [F;
         + gamma_powers[3] * values[4]
 }
 
-#[derive(Clone)]
 struct DenseInstanceState<F: Field> {
     factors: Vec<Vec<F>>,
     factor_scratch: Vec<Vec<F>>,
     point: Vec<F>,
+    #[cfg(feature = "cuda")]
+    cuda: Option<cuda::CudaDenseState>,
 }
 
 impl<F: Field> DenseInstanceState<F> {
     fn new(factors: Vec<Vec<F>>) -> Self {
+        Self::new_with_backend(factors, "cpu")
+    }
+
+    fn new_with_backend(factors: Vec<Vec<F>>, backend: &'static str) -> Self {
         let factor_scratch = (0..factors.len()).map(|_| Vec::new()).collect();
+        #[cfg(feature = "cuda")]
+        let cuda = if backend == "cuda" {
+            crate::cuda::as_fr_slice(&[F::zero()])
+                .and_then(|_| as_fr_factors(&factors))
+                .and_then(|fr_factors| cuda::CudaDenseState::new(&fr_factors))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "cuda"))]
+        let _ = backend;
         Self {
             factors,
             factor_scratch,
             point: Vec::new(),
+            #[cfg(feature = "cuda")]
+            cuda,
         }
     }
 
     #[tracing::instrument(skip_all, name = "Stage2DenseState::round_poly")]
     fn round_poly(&self, _previous_claim: F) -> UnivariatePoly<F> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(poly) = cuda.round_poly() {
+                if let Some(poly) = fr_poly_into::<F>(poly) {
+                    return poly;
+                }
+            }
+        }
         round_poly_from_factors(&self.factors, self.degree())
     }
 
@@ -2409,6 +2444,15 @@ impl<F: Field> DenseInstanceState<F> {
 
     #[tracing::instrument(skip_all, name = "Stage2DenseState::bind")]
     fn bind(&mut self, challenge: F) {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &mut self.cuda {
+            if let Some(challenge_fr) = crate::cuda::into_fr(challenge) {
+                if cuda.bind(challenge_fr).is_ok() {
+                    self.point.push(challenge);
+                    return;
+                }
+            }
+        }
         for (factor, scratch) in self.factors.iter_mut().zip(&mut self.factor_scratch) {
             bind_dense_evals_reuse(factor, scratch, challenge);
         }
@@ -2416,6 +2460,14 @@ impl<F: Field> DenseInstanceState<F> {
     }
 
     fn factor_eval(&self, index: usize, relation: Stage2Relation) -> Result<F, Stage2KernelError> {
+        #[cfg(feature = "cuda")]
+        if let Some(cuda) = &self.cuda {
+            if let Ok(value) = cuda.factor_eval(index) {
+                if let Some(value) = crate::cuda::fr_into::<F>(value) {
+                    return Ok(value);
+                }
+            }
+        }
         self.factors
             .get(index)
             .and_then(|values| values.first())
@@ -2427,7 +2479,22 @@ impl<F: Field> DenseInstanceState<F> {
     }
 }
 
-#[derive(Clone)]
+#[cfg(feature = "cuda")]
+fn as_fr_factors<F: Field>(factors: &[Vec<F>]) -> Option<Vec<Vec<Fr>>> {
+    factors
+        .iter()
+        .map(|factor| crate::cuda::as_fr_slice(factor).map(<[Fr]>::to_vec))
+        .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn fr_poly_into<F: Field>(poly: UnivariatePoly<Fr>) -> Option<UnivariatePoly<F>> {
+    (Box::new(poly) as Box<dyn std::any::Any>)
+        .downcast::<UnivariatePoly<F>>()
+        .ok()
+        .map(|boxed| *boxed)
+}
+
 struct RamOutputState<'a, F: Field> {
     dense: DenseInstanceState<F>,
     final_ram: &'a [u64],
@@ -2588,6 +2655,7 @@ fn ram_raf_state<F: Field>(
     claim: &Stage2SumcheckClaimPlan,
     inputs: &Stage2ProverInputs<'_, F>,
     store: &Stage2ValueStore<F>,
+    backend: &'static str,
 ) -> Result<DenseInstanceState<F>, Stage2KernelError> {
     let ram = inputs.ram.ok_or(Stage2KernelError::MissingKernelInput {
         kernel: "jolt_stage2_ram_raf_evaluation",
@@ -2617,7 +2685,10 @@ fn ram_raf_state<F: Field>(
         unmap.push(next_address);
         next_address += address_step;
     }
-    Ok(DenseInstanceState::new(vec![ra, unmap]))
+    Ok(DenseInstanceState::new_with_backend(
+        vec![ra, unmap],
+        backend,
+    ))
 }
 
 #[tracing::instrument(skip_all, name = "Stage2::ram_output_state")]
