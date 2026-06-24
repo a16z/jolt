@@ -99,7 +99,7 @@ impl SymbolicSumcheck for AddressPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
 
     fn with_address_phase() -> PrecommittedReductionDimensions {
         PrecommittedReductionDimensions::new(4, 3, true)
@@ -107,6 +107,76 @@ mod tests {
 
     fn without_address_phase() -> PrecommittedReductionDimensions {
         PrecommittedReductionDimensions::new(4, 3, false)
+    }
+
+    #[test]
+    fn cycle_phase_without_address_phase_evaluates_like_core_formula() {
+        let relation = CyclePhase::new((JoltAdviceKind::Trusted, without_address_phase()));
+
+        let input_advice = Fr::from_u64(3);
+        let final_advice_claim = Fr::from_u64(5);
+        let final_scale = Fr::from_u64(7);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_val_check_advice_opening(JoltAdviceKind::Trusted) => input_advice,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == final_advice_opening(JoltAdviceKind::Trusted) => final_advice_claim,
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
+                    JoltAdviceKind::Trusted,
+                )) => final_scale,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, input_advice);
+        assert_eq!(output, final_scale * final_advice_claim);
+    }
+
+    #[test]
+    fn address_phase_evaluates_like_core_formula() {
+        let relation = AddressPhase::new((JoltAdviceKind::Untrusted, with_address_phase()));
+
+        let cycle_claim = Fr::from_u64(11);
+        let final_advice_claim = Fr::from_u64(13);
+        let final_scale = Fr::from_u64(17);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == cycle_phase_advice_opening(JoltAdviceKind::Untrusted) => cycle_claim,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == final_advice_opening(JoltAdviceKind::Untrusted) => final_advice_claim,
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::AdviceClaimReduction(AdviceClaimReductionPublic::FinalScale(
+                    JoltAdviceKind::Untrusted,
+                )) => final_scale,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, cycle_claim);
+        assert_eq!(output, final_scale * final_advice_claim);
     }
 
     #[test]

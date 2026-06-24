@@ -2,6 +2,13 @@ use derive_more::From;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
+use crate::Expr;
+
+/// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
+/// families (openings, publics, challenges). Each relation's `input`/`output`
+/// expression is a `JoltExpr<F>`.
+pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltPublicId, JoltChallengeId>;
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum JoltRelationId {
     SpartanOuter,

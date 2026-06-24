@@ -325,7 +325,9 @@ impl SymbolicSumcheck for RamValCheck {
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::formulas::ram::committed_ram_ra;
+    use crate::protocols::jolt::formulas::ram::{
+        committed_ram_ra, RamRaClaimReductionPublicValues,
+    };
     use crate::protocols::jolt::{JoltChallengeId, JoltPublicId};
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -344,6 +346,293 @@ mod tests {
 
     fn ra_virtualization_dimensions(committed_ra_polys: usize) -> RamRaVirtualizationDimensions {
         RamRaVirtualizationDimensions::new(5, committed_ra_polys)
+    }
+
+    #[test]
+    fn read_write_claims_evaluate_like_core_formula() {
+        let relation = ReadWriteChecking::new(read_write_dimensions());
+
+        let read = Fr::from_u64(3);
+        let write = Fr::from_u64(5);
+        let ra = Fr::from_u64(7);
+        let val = Fr::from_u64(11);
+        let inc = Fr::from_u64(13);
+        let gamma = Fr::from_u64(17);
+        let eq = Fr::from_u64(19);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_read_value() => read,
+                id if id == ram_write_value() => write,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RamReadWrite(RamReadWriteChallenge::Gamma) => gamma,
+                JoltChallengeId::RamValCheck(_)
+                | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RegistersReadWrite(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::InstructionClaimReduction(_)
+                | JoltChallengeId::InstructionInput(_)
+                | JoltChallengeId::InstructionReadRaf(_)
+                | JoltChallengeId::InstructionRaVirtualization(_)
+                | JoltChallengeId::Booleanity(_)
+                | JoltChallengeId::IncClaimReduction(_)
+                | JoltChallengeId::HammingWeightClaimReduction(_)
+                | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
+                | JoltChallengeId::SpartanShift(_) => zero,
+            },
+            |_| zero,
+        );
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_ra() => ra,
+                id if id == ram_val() => val,
+                id if id == ram_inc() => inc,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RamReadWrite(RamReadWriteChallenge::Gamma) => gamma,
+                JoltChallengeId::RamValCheck(_)
+                | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RegistersReadWrite(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::InstructionClaimReduction(_)
+                | JoltChallengeId::InstructionInput(_)
+                | JoltChallengeId::InstructionReadRaf(_)
+                | JoltChallengeId::InstructionRaVirtualization(_)
+                | JoltChallengeId::Booleanity(_)
+                | JoltChallengeId::IncClaimReduction(_)
+                | JoltChallengeId::HammingWeightClaimReduction(_)
+                | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
+                | JoltChallengeId::SpartanShift(_) => zero,
+            },
+            |id| match *id {
+                JoltPublicId::RamReadWrite(RamReadWritePublic::EqCycle) => eq,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, read + gamma * write);
+        assert_eq!(output, eq * ra * (val + gamma * (val + inc)));
+    }
+
+    #[test]
+    fn raf_evaluation_evaluates_like_core_formula() {
+        let dimensions = raf_evaluation_dimensions();
+        let relation = RafEvaluation::new(dimensions);
+
+        let address = Fr::from_u64(7);
+        let ram_ra = Fr::from_u64(11);
+        let unmap = Fr::from_u64(13);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_address_spartan() => address,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_ra_raf_evaluation() => ram_ra,
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::RamRafEvaluation(RamRafEvaluationPublic::UnmapAddress) => unmap,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, address * Fr::from_u64(8));
+        assert_eq!(output, unmap * ram_ra);
+    }
+
+    #[test]
+    fn output_check_evaluates_like_core_formula() {
+        let relation = OutputCheck::new(read_write_dimensions());
+
+        let val_final = Fr::from_u64(7);
+        let eq_io_mask = Fr::from_u64(11);
+        let neg_eq_io_mask_val_io = -Fr::from_u64(13);
+        let zero = Fr::from_u64(0);
+
+        let input = relation
+            .input_expression::<Fr>()
+            .evaluate(|_| zero, |_| zero, |_| zero);
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_val_final() => val_final,
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::RamOutputCheck(RamOutputCheckPublic::EqIoMask) => eq_io_mask,
+                JoltPublicId::RamOutputCheck(RamOutputCheckPublic::NegEqIoMaskValIo) => {
+                    neg_eq_io_mask_val_io
+                }
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, zero);
+        assert_eq!(output, eq_io_mask * val_final + neg_eq_io_mask_val_io);
+    }
+
+    #[test]
+    fn ra_claim_reduction_evaluates_like_core_formula() {
+        let relation = RaClaimReduction::new(trace_dimensions());
+
+        let raf = Fr::from_u64(3);
+        let rw = Fr::from_u64(5);
+        let val = Fr::from_u64(7);
+        let gamma = Fr::from_u64(11);
+        let reduced = Fr::from_u64(13);
+        let eq_raf = Fr::from_u64(17);
+        let eq_rw = Fr::from_u64(19);
+        let eq_val = Fr::from_u64(23);
+        let public_values = RamRaClaimReductionPublicValues {
+            eq_cycle_raf: eq_raf,
+            eq_cycle_read_write: eq_rw,
+            eq_cycle_val_check: eq_val,
+        };
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_ra_raf_evaluation() => raf,
+                id if id == ram_ra() => rw,
+                id if id == ram_ra_val_check() => val,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => gamma,
+                JoltChallengeId::RamReadWrite(_)
+                | JoltChallengeId::RamValCheck(_)
+                | JoltChallengeId::RegistersReadWrite(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::InstructionClaimReduction(_)
+                | JoltChallengeId::InstructionInput(_)
+                | JoltChallengeId::InstructionReadRaf(_)
+                | JoltChallengeId::InstructionRaVirtualization(_)
+                | JoltChallengeId::Booleanity(_)
+                | JoltChallengeId::IncClaimReduction(_)
+                | JoltChallengeId::HammingWeightClaimReduction(_)
+                | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
+                | JoltChallengeId::SpartanShift(_) => zero,
+            },
+            |_| zero,
+        );
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_ra_claim_reduction() => reduced,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => gamma,
+                JoltChallengeId::RamReadWrite(_)
+                | JoltChallengeId::RamValCheck(_)
+                | JoltChallengeId::RegistersReadWrite(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::InstructionClaimReduction(_)
+                | JoltChallengeId::InstructionInput(_)
+                | JoltChallengeId::InstructionReadRaf(_)
+                | JoltChallengeId::InstructionRaVirtualization(_)
+                | JoltChallengeId::Booleanity(_)
+                | JoltChallengeId::IncClaimReduction(_)
+                | JoltChallengeId::HammingWeightClaimReduction(_)
+                | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
+                | JoltChallengeId::SpartanShift(_) => zero,
+            },
+            |id| match *id {
+                JoltPublicId::RamRaClaimReduction(id) => public_values.value(id),
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, raf + gamma * rw + gamma * gamma * val);
+        assert_eq!(
+            output,
+            (eq_raf + gamma * eq_rw + gamma * gamma * eq_val) * reduced
+        );
+    }
+
+    #[test]
+    fn ra_virtualization_evaluates_like_core_formula() {
+        let dimensions = ra_virtualization_dimensions(3);
+        let relation = RaVirtualization::new(dimensions);
+
+        let reduced = Fr::from_u64(3);
+        let committed = [Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(11)];
+        let eq_cycle = Fr::from_u64(13);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_ra_claim_reduction() => reduced,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == committed_ram_ra(0) => committed[0],
+                id if id == committed_ram_ra(1) => committed[1],
+                id if id == committed_ram_ra(2) => committed[2],
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) => eq_cycle,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, reduced);
+        assert_eq!(
+            output,
+            eq_cycle * committed[0] * committed[1] * committed[2]
+        );
+    }
+
+    #[test]
+    fn hamming_booleanity_evaluates_like_core_formula() {
+        let relation = HammingBooleanity::new(trace_dimensions());
+
+        let h = Fr::from_u64(7);
+        let eq_cycle = Fr::from_u64(11);
+        let zero = Fr::from_u64(0);
+
+        let input = relation
+            .input_expression::<Fr>()
+            .evaluate(|_| zero, |_| zero, |_| zero);
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == ram_hamming_weight() => h,
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => eq_cycle,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, zero);
+        assert_eq!(output, eq_cycle * (h * h - h));
     }
 
     #[test]

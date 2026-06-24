@@ -296,32 +296,6 @@ pub type InputClaimExpression<F, O, P = (), C = usize> = ClaimExpression<F, O, P
 pub type OutputClaimExpression<F, O, P = (), C = usize> = ClaimExpression<F, O, P, C>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SameEvaluation<O> {
-    pub left: O,
-    pub right: O,
-}
-
-impl<O> SameEvaluation<O> {
-    pub fn new(left: O, right: O) -> Self {
-        Self { left, right }
-    }
-}
-
-pub trait SameEvaluationAs<Rhs = Self> {
-    type Output;
-
-    fn same_evaluation_as(self, rhs: Rhs) -> Self::Output;
-}
-
-impl<O> SameEvaluationAs for O {
-    type Output = SameEvaluation<O>;
-
-    fn same_evaluation_as(self, rhs: Self) -> Self::Output {
-        SameEvaluation::new(self, rhs)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConsistencyClaim<F, O, P = (), C = usize> {
     EqualExpressions {
         left: Expr<F, O, P, C>,
@@ -339,12 +313,6 @@ impl<F: RingCore, O, P, C> ConsistencyClaim<F, O, P, C> {
 
     pub fn equal_expressions(left: Expr<F, O, P, C>, right: Expr<F, O, P, C>) -> Self {
         Self::EqualExpressions { left, right }
-    }
-}
-
-impl<F: RingCore, O, P, C> From<SameEvaluation<O>> for ConsistencyClaim<F, O, P, C> {
-    fn from(value: SameEvaluation<O>) -> Self {
-        Self::same_evaluation(value.left, value.right)
     }
 }
 
@@ -520,12 +488,8 @@ mod tests {
     #[test]
     fn same_evaluation_claim_requires_both_openings() {
         let consistency: ConsistencyClaim<Fr, Opening, Public, Challenge> =
-            Opening::A.same_evaluation_as(Opening::B).into();
+            ConsistencyClaim::same_evaluation(Opening::A, Opening::B);
 
-        assert_eq!(
-            consistency,
-            ConsistencyClaim::same_evaluation(Opening::A, Opening::B)
-        );
         assert_eq!(
             consistency.required_openings(),
             vec![Opening::A, Opening::B]

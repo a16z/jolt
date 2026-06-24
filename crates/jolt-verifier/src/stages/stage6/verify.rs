@@ -1651,8 +1651,8 @@ pub fn stage6_bytecode_read_raf_expected_output<F: Field>(
             ),
         });
     }
-    let claim = bytecode::read_raf::<F>(inputs.dimensions);
-    claim.output.expression().try_evaluate(
+    let relation = relations::bytecode::ReadRaf::new(inputs.dimensions);
+    relation.output_expression::<F>().try_evaluate(
         |id| {
             for (index, opening) in output_openings.bytecode_ra.iter().enumerate() {
                 if *id == *opening {

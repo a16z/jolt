@@ -12,8 +12,8 @@ use jolt_field::{Field, RingCore};
 use crate::{opening, public};
 
 use super::super::super::{
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
+    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
+    JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
 };
 use super::super::dimensions::{log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::JoltFormulaPointError;
@@ -148,36 +148,6 @@ impl PrecommittedReductionLayout for ProgramImageClaimReductionLayout {
     }
 }
 
-pub fn cycle_phase<F>(dimensions: PrecommittedReductionDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::claim_reductions::program_image::CyclePhase;
-    use crate::SymbolicSumcheck;
-    let r = CyclePhase::new(dimensions);
-    JoltRelationClaims::new(
-        CyclePhase::id(),
-        r.spec(),
-        r.input_expression::<F>(),
-        r.output_expression::<F>(),
-    )
-}
-
-pub fn address_phase<F>(dimensions: PrecommittedReductionDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::claim_reductions::program_image::AddressPhase;
-    use crate::SymbolicSumcheck;
-    let r = AddressPhase::new(dimensions);
-    JoltRelationClaims::new(
-        AddressPhase::id(),
-        r.spec(),
-        r.input_expression::<F>(),
-        r.output_expression::<F>(),
-    )
-}
-
 pub(crate) fn final_output_expr<F>() -> JoltExpr<F>
 where
     F: RingCore,
@@ -271,7 +241,6 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use crate::protocols::jolt::JoltPublicId;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::EqPolynomial;
 
@@ -354,51 +323,6 @@ mod tests {
             cycle_phase_output_openings(without_address),
             vec![final_program_image_opening()]
         );
-    }
-
-    #[test]
-    fn address_phase_evaluates_like_core_formula() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let claims = address_phase::<Fr>(dimensions);
-
-        let intermediate = fr(11);
-        let final_claim = fr(13);
-        let final_scale = fr(17);
-        let zero = fr(0);
-
-        assert_eq!(claims.id, JoltRelationId::ProgramImageClaimReduction);
-        assert_eq!(claims.sumcheck, dimensions.address_sumcheck());
-
-        let input = claims.input.expression().evaluate(
-            |id| {
-                if *id == cycle_phase_program_image_opening() {
-                    intermediate
-                } else {
-                    zero
-                }
-            },
-            |_| zero,
-            |_| zero,
-        );
-        let output = claims.output.expression().evaluate(
-            |id| {
-                if *id == final_program_image_opening() {
-                    final_claim
-                } else {
-                    zero
-                }
-            },
-            |_| zero,
-            |id| match *id {
-                JoltPublicId::ProgramImageClaimReduction(
-                    ProgramImageClaimReductionPublic::FinalScale,
-                ) => final_scale,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, intermediate);
-        assert_eq!(output, final_scale * final_claim);
     }
 
     #[test]

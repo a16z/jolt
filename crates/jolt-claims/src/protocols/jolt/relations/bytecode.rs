@@ -171,11 +171,27 @@ impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::BytecodeReadRafPublic;
-    use jolt_field::Fr;
+    use crate::protocols::jolt::formulas::bytecode::{
+        bytecode_ra, imm_instruction_input, imm_spartan_outer, instruction_flag_input,
+        instruction_flag_product, instruction_flag_shift, instruction_raf_flag, op_flag_product,
+        op_flag_shift, rd_wa_read_write, rd_wa_val_evaluation, rs1_ra_read_write,
+        rs2_ra_read_write, unexpanded_pc_spartan_outer, unexpanded_pc_spartan_shift,
+    };
+    use crate::protocols::jolt::{BytecodeReadRafPublic, JoltPolynomialId, JoltVirtualPolynomial};
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_lookup_tables::{LookupTableKind, XLEN};
+    use jolt_riscv::{CircuitFlags, InstructionFlags, CIRCUIT_FLAGS};
 
     fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
         BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
+    }
+
+    fn gamma_power(gamma: Fr, exponent: usize) -> Fr {
+        let mut value = Fr::from_u64(1);
+        for _ in 0..exponent {
+            value *= gamma;
+        }
+        value
     }
 
     fn stage_gammas() -> Vec<JoltChallengeId> {
@@ -187,6 +203,178 @@ mod tests {
             JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
             JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
         ]
+    }
+
+    #[test]
+    fn read_raf_evaluates_like_core_formula() {
+        let dimensions = dimensions(2);
+        let relation = ReadRaf::new(dimensions);
+
+        let gamma = Fr::from_u64(3);
+        let stage1_gamma = Fr::from_u64(5);
+        let stage2_gamma = Fr::from_u64(7);
+        let stage3_gamma = Fr::from_u64(11);
+        let stage4_gamma = Fr::from_u64(13);
+        let stage5_gamma = Fr::from_u64(17);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == unexpanded_pc_spartan_outer() => Fr::from_u64(19),
+                id if id == imm_spartan_outer() => Fr::from_u64(23),
+                id if id == op_flag_product(CircuitFlags::Jump) => Fr::from_u64(29),
+                id if id == instruction_flag_product(InstructionFlags::Branch) => Fr::from_u64(31),
+                id if id == op_flag_product(CircuitFlags::WriteLookupOutputToRD) => {
+                    Fr::from_u64(37)
+                }
+                id if id == op_flag_product(CircuitFlags::VirtualInstruction) => Fr::from_u64(41),
+                id if id == imm_instruction_input() => Fr::from_u64(43),
+                id if id == unexpanded_pc_spartan_shift() => Fr::from_u64(47),
+                id if id == instruction_flag_input(InstructionFlags::LeftOperandIsRs1Value) => {
+                    Fr::from_u64(53)
+                }
+                id if id == instruction_flag_input(InstructionFlags::LeftOperandIsPC) => {
+                    Fr::from_u64(59)
+                }
+                id if id == instruction_flag_input(InstructionFlags::RightOperandIsRs2Value) => {
+                    Fr::from_u64(61)
+                }
+                id if id == instruction_flag_input(InstructionFlags::RightOperandIsImm) => {
+                    Fr::from_u64(67)
+                }
+                id if id == instruction_flag_shift(InstructionFlags::IsNoop) => Fr::from_u64(71),
+                id if id == op_flag_shift(CircuitFlags::VirtualInstruction) => Fr::from_u64(73),
+                id if id == op_flag_shift(CircuitFlags::IsFirstInSequence) => Fr::from_u64(79),
+                id if id == rd_wa_read_write() => Fr::from_u64(83),
+                id if id == rs1_ra_read_write() => Fr::from_u64(89),
+                id if id == rs2_ra_read_write() => Fr::from_u64(97),
+                id if id == rd_wa_val_evaluation() => Fr::from_u64(101),
+                id if id == instruction_raf_flag() => Fr::from_u64(103),
+                id if id == pc_spartan_outer() => Fr::from_u64(107),
+                id if id == pc_spartan_shift() => Fr::from_u64(109),
+                JoltOpeningId::Polynomial {
+                    polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(flag)),
+                    relation: JoltRelationId::SpartanOuter,
+                } => Fr::from_u64(200 + u64::from(flag as u8)),
+                JoltOpeningId::Polynomial {
+                    polynomial:
+                        JoltPolynomialId::Virtual(JoltVirtualPolynomial::LookupTableFlag(index)),
+                    relation: JoltRelationId::InstructionReadRaf,
+                } => Fr::from_u64(300 + index as u64),
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => gamma,
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage1Gamma) => {
+                    stage1_gamma
+                }
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage2Gamma) => {
+                    stage2_gamma
+                }
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage3Gamma) => {
+                    stage3_gamma
+                }
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage4Gamma) => {
+                    stage4_gamma
+                }
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage5Gamma) => {
+                    stage5_gamma
+                }
+                _ => zero,
+            },
+            |_| zero,
+        );
+
+        let mut stage1 = Fr::from_u64(19) + stage1_gamma * Fr::from_u64(23);
+        for flag in CIRCUIT_FLAGS {
+            stage1 += gamma_power(stage1_gamma, usize::from(flag as u8) + 2)
+                * Fr::from_u64(200 + u64::from(flag as u8));
+        }
+        let stage2 = Fr::from_u64(29)
+            + stage2_gamma * Fr::from_u64(31)
+            + gamma_power(stage2_gamma, 2) * Fr::from_u64(37)
+            + gamma_power(stage2_gamma, 3) * Fr::from_u64(41);
+        let stage3 = Fr::from_u64(43)
+            + stage3_gamma * Fr::from_u64(47)
+            + gamma_power(stage3_gamma, 2) * Fr::from_u64(53)
+            + gamma_power(stage3_gamma, 3) * Fr::from_u64(59)
+            + gamma_power(stage3_gamma, 4) * Fr::from_u64(61)
+            + gamma_power(stage3_gamma, 5) * Fr::from_u64(67)
+            + gamma_power(stage3_gamma, 6) * Fr::from_u64(71)
+            + gamma_power(stage3_gamma, 7) * Fr::from_u64(73)
+            + gamma_power(stage3_gamma, 8) * Fr::from_u64(79);
+        let stage4 = Fr::from_u64(83)
+            + stage4_gamma * Fr::from_u64(89)
+            + gamma_power(stage4_gamma, 2) * Fr::from_u64(97);
+        let mut stage5 = Fr::from_u64(101) + stage5_gamma * Fr::from_u64(103);
+        for table in LookupTableKind::<XLEN>::iter() {
+            stage5 += gamma_power(stage5_gamma, table.index() + 2)
+                * Fr::from_u64(300 + table.index() as u64);
+        }
+
+        assert_eq!(
+            input,
+            gamma_power(gamma, 7)
+                + stage1
+                + gamma * stage2
+                + gamma_power(gamma, 2) * stage3
+                + gamma_power(gamma, 3) * stage4
+                + gamma_power(gamma, 4) * stage5
+                + gamma_power(gamma, 5) * Fr::from_u64(107)
+                + gamma_power(gamma, 6) * Fr::from_u64(109)
+        );
+
+        let stage_values = [
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+            Fr::from_u64(11),
+        ];
+        let spartan_outer_raf = Fr::from_u64(13);
+        let spartan_shift_raf = Fr::from_u64(17);
+        let entry = Fr::from_u64(19);
+        let bytecode_ra_0 = Fr::from_u64(23);
+        let bytecode_ra_1 = Fr::from_u64(29);
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == bytecode_ra(0) => bytecode_ra_0,
+                id if id == bytecode_ra(1) => bytecode_ra_1,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::StageValue(index)) => {
+                    stage_values[index]
+                }
+                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => {
+                    spartan_outer_raf
+                }
+                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => {
+                    spartan_shift_raf
+                }
+                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(
+            output,
+            (stage_values[0]
+                + gamma * stage_values[1]
+                + gamma_power(gamma, 2) * stage_values[2]
+                + gamma_power(gamma, 3) * stage_values[3]
+                + gamma_power(gamma, 4) * stage_values[4]
+                + gamma_power(gamma, 5) * spartan_outer_raf
+                + gamma_power(gamma, 6) * spartan_shift_raf
+                + gamma_power(gamma, 7) * entry)
+                * bytecode_ra_0
+                * bytecode_ra_1
+        );
     }
 
     #[test]

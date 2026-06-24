@@ -5,24 +5,9 @@ use crate::{challenge, public};
 
 use super::super::super::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltCommittedPolynomial,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
 };
 use super::super::{dimensions::TraceDimensions, error::JoltFormulaPointError};
-
-pub fn claim_reduction<F>(dimensions: TraceDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::claim_reductions::increments::ClaimReduction;
-    use crate::SymbolicSumcheck;
-    let r = ClaimReduction::new(dimensions);
-    JoltRelationClaims::new(
-        ClaimReduction::id(),
-        r.spec(),
-        r.input_expression::<F>(),
-        r.output_expression::<F>(),
-    )
-}
 
 pub(crate) fn inc_challenge<F>(id: IncClaimReductionChallenge) -> JoltExpr<F>
 where
@@ -216,81 +201,6 @@ fn eq_mle<F: Field>(
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
-
-    fn dimensions() -> TraceDimensions {
-        TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn claim_reduction_evaluates_like_core_formula() {
-        let claims = claim_reduction::<Fr>(dimensions());
-
-        let ram_rw = Fr::from_u64(3);
-        let ram_val = Fr::from_u64(5);
-        let rd_rw = Fr::from_u64(7);
-        let rd_val = Fr::from_u64(11);
-        let ram_reduced = Fr::from_u64(13);
-        let rd_reduced = Fr::from_u64(17);
-        let eq_ram_rw = Fr::from_u64(19);
-        let eq_ram_val = Fr::from_u64(23);
-        let eq_rd_rw = Fr::from_u64(29);
-        let eq_rd_val = Fr::from_u64(31);
-        let gamma = Fr::from_u64(37);
-        let zero = Fr::from_u64(0);
-
-        let input = claims.input.expression().evaluate(
-            |id| match *id {
-                id if id == ram_inc_read_write() => ram_rw,
-                id if id == ram_inc_val_check() => ram_val,
-                id if id == rd_inc_read_write() => rd_rw,
-                id if id == rd_inc_val_evaluation() => rd_val,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let output = claims.output.expression().evaluate(
-            |id| match *id {
-                id if id == ram_inc_reduced() => ram_reduced,
-                id if id == rd_inc_reduced() => rd_reduced,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::IncClaimReduction(IncClaimReductionChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamReadWrite) => {
-                    eq_ram_rw
-                }
-                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRamValCheck) => {
-                    eq_ram_val
-                }
-                JoltPublicId::IncClaimReduction(IncClaimReductionPublic::EqRegistersReadWrite) => {
-                    eq_rd_rw
-                }
-                JoltPublicId::IncClaimReduction(
-                    IncClaimReductionPublic::EqRegistersValEvaluation,
-                ) => eq_rd_val,
-                _ => zero,
-            },
-        );
-
-        let gamma_2 = gamma * gamma;
-        assert_eq!(
-            input,
-            ram_rw + gamma * ram_val + gamma_2 * rd_rw + gamma_2 * gamma * rd_val
-        );
-        assert_eq!(
-            output,
-            ram_reduced * (eq_ram_rw + gamma * eq_ram_val)
-                + gamma_2 * rd_reduced * (eq_rd_rw + gamma * eq_rd_val)
-        );
-    }
 
     #[test]
     fn output_coefficients_evaluate_eq_weighted_cycles() {

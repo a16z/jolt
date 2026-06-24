@@ -91,7 +91,53 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::formulas::claim_reductions::program_image::final_program_image_opening;
     use crate::protocols::jolt::ProgramImageClaimReductionPublic;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    #[test]
+    fn address_phase_evaluates_like_core_formula() {
+        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
+        let relation = AddressPhase::new(dimensions);
+
+        let intermediate = fr(11);
+        let final_claim = fr(13);
+        let final_scale = fr(17);
+        let zero = fr(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| {
+                if *id == cycle_phase_program_image_opening() {
+                    intermediate
+                } else {
+                    zero
+                }
+            },
+            |_| zero,
+            |_| zero,
+        );
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| {
+                if *id == final_program_image_opening() {
+                    final_claim
+                } else {
+                    zero
+                }
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::ProgramImageClaimReduction(
+                    ProgramImageClaimReductionPublic::FinalScale,
+                ) => final_scale,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, intermediate);
+        assert_eq!(output, final_scale * final_claim);
+    }
 
     #[test]
     fn cycle_phase_with_address_phase_exposes_expected_dependencies() {

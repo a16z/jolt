@@ -2,7 +2,6 @@ pub mod formulas;
 pub mod relations;
 
 mod ids;
-mod relation;
 
 pub use formulas::{
     claim_reductions::advice::AdviceClaimReductionLayout,
@@ -27,16 +26,12 @@ pub use ids::{
     InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
     InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-    JoltCommittedPolynomial, JoltOpeningId, JoltPolynomialId, JoltPublicId, JoltRelationId,
-    JoltVirtualPolynomial, ProgramImageClaimReductionPublic, RamHammingBooleanityPublic,
-    RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
-    RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic,
-    RamValCheckChallenge, RamValCheckPublic, RegistersClaimReductionChallenge,
-    RegistersClaimReductionPublic, RegistersReadWriteChallenge, RegistersReadWritePublic,
-    RegistersValEvaluationPublic, SpartanOuterPublic, SpartanProductVirtualizationPublic,
-    SpartanShiftChallenge, SpartanShiftPublic,
-};
-pub use relation::{
-    JoltConsistencyClaim, JoltExpr, JoltInputClaimExpression, JoltOutputClaimExpression,
-    JoltProtocolClaims, JoltRelationClaims,
+    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPolynomialId, JoltPublicId,
+    JoltRelationId, JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
+    RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
+    RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
+    RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+    RegistersClaimReductionChallenge, RegistersClaimReductionPublic, RegistersReadWriteChallenge,
+    RegistersReadWritePublic, RegistersValEvaluationPublic, SpartanOuterPublic,
+    SpartanProductVirtualizationPublic, SpartanShiftChallenge, SpartanShiftPublic,
 };

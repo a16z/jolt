@@ -121,13 +121,74 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::formulas::ra::JoltRaPolynomialLayout;
     use crate::protocols::jolt::{
-        BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltPublicId, JoltSumcheckSpec,
+        BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltCommittedPolynomial,
+        JoltOpeningId, JoltPublicId, JoltSumcheckSpec,
     };
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
 
     fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
         let layout = JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap();
         BooleanityDimensions::new(layout, 5, 8)
+    }
+
+    #[test]
+    fn booleanity_evaluates_like_core_formula() {
+        let relation = Booleanity::new(dimensions(1, 1, 1));
+
+        let instruction_ra = Fr::from_u64(3);
+        let bytecode_ra = Fr::from_u64(5);
+        let ram_ra = Fr::from_u64(7);
+        let gamma = Fr::from_u64(11);
+        let eq_address_cycle = Fr::from_u64(13);
+        let zero = Fr::from_u64(0);
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id
+                    == JoltOpeningId::committed(
+                        JoltCommittedPolynomial::InstructionRa(0),
+                        JoltRelationId::Booleanity,
+                    ) =>
+                {
+                    instruction_ra
+                }
+                id if id
+                    == JoltOpeningId::committed(
+                        JoltCommittedPolynomial::BytecodeRa(0),
+                        JoltRelationId::Booleanity,
+                    ) =>
+                {
+                    bytecode_ra
+                }
+                id if id
+                    == JoltOpeningId::committed(
+                        JoltCommittedPolynomial::RamRa(0),
+                        JoltRelationId::Booleanity,
+                    ) =>
+                {
+                    ram_ra
+                }
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::Booleanity(BooleanityChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) => eq_address_cycle,
+                _ => zero,
+            },
+        );
+
+        let gamma_2 = gamma * gamma;
+        let gamma_4 = gamma_2 * gamma_2;
+        assert_eq!(
+            output,
+            eq_address_cycle
+                * ((instruction_ra * instruction_ra - instruction_ra)
+                    + gamma_2 * (bytecode_ra * bytecode_ra - bytecode_ra)
+                    + gamma_4 * (ram_ra * ram_ra - ram_ra))
+        );
     }
 
     #[test]

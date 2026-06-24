@@ -8,12 +8,11 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
-use crate::{challenge, opening, public, SameEvaluationAs};
+use crate::{challenge, opening, public};
 
 use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltChallengeId, JoltCommittedPolynomial,
-    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims, JoltRelationId,
-    JoltVirtualPolynomial,
+    JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
@@ -89,93 +88,6 @@ pub struct BytecodeReadRafOpeningPoint<F: Field> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
-}
-
-pub fn read_raf<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::bytecode::ReadRaf;
-    use crate::SymbolicSumcheck;
-    let relation = ReadRaf::new(dimensions);
-    JoltRelationClaims::new(
-        ReadRaf::id(),
-        relation.spec(),
-        relation.input_expression::<F>(),
-        relation.output_expression::<F>(),
-    )
-    .with_input_challenges([
-        JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
-    ])
-    .with_consistency([
-        unexpanded_pc_spartan_shift().same_evaluation_as(unexpanded_pc_instruction_input())
-    ])
-}
-
-pub fn read_raf_address_phase<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::bytecode::ReadRafAddressPhase;
-    use crate::SymbolicSumcheck;
-    let relation = ReadRafAddressPhase::new(dimensions);
-    JoltRelationClaims::new(
-        ReadRafAddressPhase::id(),
-        relation.spec(),
-        relation.input_expression::<F>(),
-        relation.output_expression::<F>(),
-    )
-    .with_input_challenges([
-        JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
-        JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
-    ])
-    .with_consistency([
-        unexpanded_pc_spartan_shift().same_evaluation_as(unexpanded_pc_instruction_input())
-    ])
-}
-
-pub fn read_raf_cycle_phase<F>(dimensions: BytecodeReadRafDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::bytecode::ReadRafCyclePhase;
-    use crate::SymbolicSumcheck;
-    let relation = ReadRafCyclePhase::new(dimensions);
-    JoltRelationClaims::new(
-        ReadRafCyclePhase::id(),
-        relation.spec(),
-        relation.input_expression::<F>(),
-        relation.output_expression::<F>(),
-    )
-}
-
-/// Committed-program cycle phase: the per-stage Val factors come from the
-/// `BytecodeValStage(s)` openings staged at the end of the address phase
-/// instead of public bytecode-table evaluations.
-pub fn read_raf_cycle_phase_committed<F>(
-    dimensions: BytecodeReadRafDimensions,
-) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::bytecode::ReadRafCyclePhaseCommitted;
-    use crate::SymbolicSumcheck;
-    let relation = ReadRafCyclePhaseCommitted::new(dimensions);
-    JoltRelationClaims::new(
-        ReadRafCyclePhaseCommitted::id(),
-        relation.spec(),
-        relation.input_expression::<F>(),
-        relation.output_expression::<F>(),
-    )
 }
 
 pub(crate) fn read_raf_cycle_output<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
@@ -905,14 +817,14 @@ where
     product
 }
 
-fn unexpanded_pc_spartan_outer() -> JoltOpeningId {
+pub(crate) fn unexpanded_pc_spartan_outer() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn imm_spartan_outer() -> JoltOpeningId {
+pub(crate) fn imm_spartan_outer() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::Imm, JoltRelationId::SpartanOuter)
 }
 
@@ -923,21 +835,21 @@ fn op_flag_spartan_outer(flag: CircuitFlags) -> JoltOpeningId {
     )
 }
 
-fn op_flag_product(flag: CircuitFlags) -> JoltOpeningId {
+pub(crate) fn op_flag_product(flag: CircuitFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(flag),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn instruction_flag_product(flag: InstructionFlags) -> JoltOpeningId {
+pub(crate) fn instruction_flag_product(flag: InstructionFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(flag),
         JoltRelationId::SpartanProductVirtualization,
     )
 }
 
-fn imm_instruction_input() -> JoltOpeningId {
+pub(crate) fn imm_instruction_input() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Imm,
         JoltRelationId::InstructionInputVirtualization,
@@ -951,63 +863,63 @@ fn unexpanded_pc_instruction_input() -> JoltOpeningId {
     )
 }
 
-fn unexpanded_pc_spartan_shift() -> JoltOpeningId {
+pub(crate) fn unexpanded_pc_spartan_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::UnexpandedPC,
         JoltRelationId::SpartanShift,
     )
 }
 
-fn instruction_flag_input(flag: InstructionFlags) -> JoltOpeningId {
+pub(crate) fn instruction_flag_input(flag: InstructionFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(flag),
         JoltRelationId::InstructionInputVirtualization,
     )
 }
 
-fn instruction_flag_shift(flag: InstructionFlags) -> JoltOpeningId {
+pub(crate) fn instruction_flag_shift(flag: InstructionFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionFlags(flag),
         JoltRelationId::SpartanShift,
     )
 }
 
-fn op_flag_shift(flag: CircuitFlags) -> JoltOpeningId {
+pub(crate) fn op_flag_shift(flag: CircuitFlags) -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::OpFlags(flag),
         JoltRelationId::SpartanShift,
     )
 }
 
-fn rd_wa_read_write() -> JoltOpeningId {
+pub(crate) fn rd_wa_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rs1_ra_read_write() -> JoltOpeningId {
+pub(crate) fn rs1_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs1Ra,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rs2_ra_read_write() -> JoltOpeningId {
+pub(crate) fn rs2_ra_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::Rs2Ra,
         JoltRelationId::RegistersReadWriteChecking,
     )
 }
 
-fn rd_wa_val_evaluation() -> JoltOpeningId {
+pub(crate) fn rd_wa_val_evaluation() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RdWa,
         JoltRelationId::RegistersValEvaluation,
     )
 }
 
-fn instruction_raf_flag() -> JoltOpeningId {
+pub(crate) fn instruction_raf_flag() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::InstructionRafFlag,
         JoltRelationId::InstructionReadRaf,
@@ -1029,7 +941,7 @@ pub(crate) fn pc_spartan_shift() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::PC, JoltRelationId::SpartanShift)
 }
 
-fn bytecode_ra(index: usize) -> JoltOpeningId {
+pub(crate) fn bytecode_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::BytecodeRa(index),
         JoltRelationId::BytecodeReadRaf,
@@ -1040,33 +952,12 @@ fn bytecode_ra(index: usize) -> JoltOpeningId {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
-    use crate::protocols::jolt::{JoltCommittedPolynomial, JoltConsistencyClaim, JoltPolynomialId};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::EqPolynomial;
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 
     fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
         BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    fn gamma_power(gamma: Fr, exponent: usize) -> Fr {
-        let mut value = Fr::from_u64(1);
-        for _ in 0..exponent {
-            value *= gamma;
-        }
-        value
-    }
-
-    fn stage1_openings() -> Vec<JoltOpeningId> {
-        let mut openings = vec![unexpanded_pc_spartan_outer(), imm_spartan_outer()];
-        openings.extend(CIRCUIT_FLAGS.into_iter().map(op_flag_spartan_outer));
-        openings
-    }
-
-    fn stage5_lookup_flags() -> Vec<JoltOpeningId> {
-        LookupTableKind::<XLEN>::iter()
-            .map(lookup_table_flag)
-            .collect()
     }
 
     #[test]
@@ -1358,262 +1249,5 @@ mod tests {
             .unwrap_or_else(|error| panic!("boolean point helper should evaluate: {error}"));
 
         assert_eq!(direct, None);
-    }
-
-    #[test]
-    fn read_raf_supports_empty_ra_product() {
-        let claims = read_raf::<Fr>(dimensions(0));
-
-        assert!(!claims.output.required_openings.iter().any(|opening_id| {
-            matches!(
-                opening_id,
-                JoltOpeningId::Polynomial {
-                    polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(_)),
-                    ..
-                }
-            )
-        }));
-    }
-
-    #[test]
-    fn read_raf_exposes_expected_dependencies() {
-        let dimensions = dimensions(2);
-        let claims = read_raf::<Fr>(dimensions);
-
-        let mut expected_input = stage1_openings();
-        expected_input.extend([
-            op_flag_product(CircuitFlags::Jump),
-            instruction_flag_product(InstructionFlags::Branch),
-            op_flag_product(CircuitFlags::WriteLookupOutputToRD),
-            op_flag_product(CircuitFlags::VirtualInstruction),
-            imm_instruction_input(),
-            unexpanded_pc_spartan_shift(),
-            instruction_flag_input(InstructionFlags::LeftOperandIsRs1Value),
-            instruction_flag_input(InstructionFlags::LeftOperandIsPC),
-            instruction_flag_input(InstructionFlags::RightOperandIsRs2Value),
-            instruction_flag_input(InstructionFlags::RightOperandIsImm),
-            instruction_flag_shift(InstructionFlags::IsNoop),
-            op_flag_shift(CircuitFlags::VirtualInstruction),
-            op_flag_shift(CircuitFlags::IsFirstInSequence),
-            rd_wa_read_write(),
-            rs1_ra_read_write(),
-            rs2_ra_read_write(),
-            rd_wa_val_evaluation(),
-            instruction_raf_flag(),
-        ]);
-        expected_input.extend(stage5_lookup_flags());
-        expected_input.extend([pc_spartan_outer(), pc_spartan_shift()]);
-
-        assert_eq!(claims.id, JoltRelationId::BytecodeReadRaf);
-        assert_eq!(claims.sumcheck, JoltSumcheckSpec::boolean(15, 3));
-        assert_eq!(claims.input.required_openings, expected_input);
-        assert_eq!(
-            claims.output.required_openings,
-            vec![bytecode_ra(0), bytecode_ra(1)]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![
-                JoltChallengeId::from(BytecodeReadRafChallenge::Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage1Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage2Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage3Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage4Gamma),
-                JoltChallengeId::from(BytecodeReadRafChallenge::Stage5Gamma),
-            ]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(0)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(1)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(2)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(3)),
-                JoltPublicId::from(BytecodeReadRafPublic::StageValue(4)),
-                JoltPublicId::from(BytecodeReadRafPublic::SpartanOuterRaf),
-                JoltPublicId::from(BytecodeReadRafPublic::SpartanShiftRaf),
-                JoltPublicId::from(BytecodeReadRafPublic::Entry),
-            ]
-        );
-        assert_eq!(
-            claims.consistency,
-            vec![JoltConsistencyClaim::same_evaluation(
-                unexpanded_pc_spartan_shift(),
-                unexpanded_pc_instruction_input(),
-            )]
-        );
-        assert_eq!(claims.num_challenges(), 6);
-    }
-
-    #[test]
-    fn read_raf_evaluates_like_core_formula() {
-        let dimensions = dimensions(2);
-        let claims = read_raf::<Fr>(dimensions);
-
-        let gamma = Fr::from_u64(3);
-        let stage1_gamma = Fr::from_u64(5);
-        let stage2_gamma = Fr::from_u64(7);
-        let stage3_gamma = Fr::from_u64(11);
-        let stage4_gamma = Fr::from_u64(13);
-        let stage5_gamma = Fr::from_u64(17);
-        let zero = Fr::from_u64(0);
-
-        let input = claims.input.expression().evaluate(
-            |id| match *id {
-                id if id == unexpanded_pc_spartan_outer() => Fr::from_u64(19),
-                id if id == imm_spartan_outer() => Fr::from_u64(23),
-                id if id == op_flag_product(CircuitFlags::Jump) => Fr::from_u64(29),
-                id if id == instruction_flag_product(InstructionFlags::Branch) => Fr::from_u64(31),
-                id if id == op_flag_product(CircuitFlags::WriteLookupOutputToRD) => {
-                    Fr::from_u64(37)
-                }
-                id if id == op_flag_product(CircuitFlags::VirtualInstruction) => Fr::from_u64(41),
-                id if id == imm_instruction_input() => Fr::from_u64(43),
-                id if id == unexpanded_pc_spartan_shift() => Fr::from_u64(47),
-                id if id == instruction_flag_input(InstructionFlags::LeftOperandIsRs1Value) => {
-                    Fr::from_u64(53)
-                }
-                id if id == instruction_flag_input(InstructionFlags::LeftOperandIsPC) => {
-                    Fr::from_u64(59)
-                }
-                id if id == instruction_flag_input(InstructionFlags::RightOperandIsRs2Value) => {
-                    Fr::from_u64(61)
-                }
-                id if id == instruction_flag_input(InstructionFlags::RightOperandIsImm) => {
-                    Fr::from_u64(67)
-                }
-                id if id == instruction_flag_shift(InstructionFlags::IsNoop) => Fr::from_u64(71),
-                id if id == op_flag_shift(CircuitFlags::VirtualInstruction) => Fr::from_u64(73),
-                id if id == op_flag_shift(CircuitFlags::IsFirstInSequence) => Fr::from_u64(79),
-                id if id == rd_wa_read_write() => Fr::from_u64(83),
-                id if id == rs1_ra_read_write() => Fr::from_u64(89),
-                id if id == rs2_ra_read_write() => Fr::from_u64(97),
-                id if id == rd_wa_val_evaluation() => Fr::from_u64(101),
-                id if id == instruction_raf_flag() => Fr::from_u64(103),
-                id if id == pc_spartan_outer() => Fr::from_u64(107),
-                id if id == pc_spartan_shift() => Fr::from_u64(109),
-                JoltOpeningId::Polynomial {
-                    polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(flag)),
-                    relation: JoltRelationId::SpartanOuter,
-                } => Fr::from_u64(200 + u64::from(flag as u8)),
-                JoltOpeningId::Polynomial {
-                    polynomial:
-                        JoltPolynomialId::Virtual(JoltVirtualPolynomial::LookupTableFlag(index)),
-                    relation: JoltRelationId::InstructionReadRaf,
-                } => Fr::from_u64(300 + index as u64),
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => gamma,
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage1Gamma) => {
-                    stage1_gamma
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage2Gamma) => {
-                    stage2_gamma
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage3Gamma) => {
-                    stage3_gamma
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage4Gamma) => {
-                    stage4_gamma
-                }
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Stage5Gamma) => {
-                    stage5_gamma
-                }
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let mut stage1 = Fr::from_u64(19) + stage1_gamma * Fr::from_u64(23);
-        for flag in CIRCUIT_FLAGS {
-            stage1 += gamma_power(stage1_gamma, usize::from(flag as u8) + 2)
-                * Fr::from_u64(200 + u64::from(flag as u8));
-        }
-        let stage2 = Fr::from_u64(29)
-            + stage2_gamma * Fr::from_u64(31)
-            + gamma_power(stage2_gamma, 2) * Fr::from_u64(37)
-            + gamma_power(stage2_gamma, 3) * Fr::from_u64(41);
-        let stage3 = Fr::from_u64(43)
-            + stage3_gamma * Fr::from_u64(47)
-            + gamma_power(stage3_gamma, 2) * Fr::from_u64(53)
-            + gamma_power(stage3_gamma, 3) * Fr::from_u64(59)
-            + gamma_power(stage3_gamma, 4) * Fr::from_u64(61)
-            + gamma_power(stage3_gamma, 5) * Fr::from_u64(67)
-            + gamma_power(stage3_gamma, 6) * Fr::from_u64(71)
-            + gamma_power(stage3_gamma, 7) * Fr::from_u64(73)
-            + gamma_power(stage3_gamma, 8) * Fr::from_u64(79);
-        let stage4 = Fr::from_u64(83)
-            + stage4_gamma * Fr::from_u64(89)
-            + gamma_power(stage4_gamma, 2) * Fr::from_u64(97);
-        let mut stage5 = Fr::from_u64(101) + stage5_gamma * Fr::from_u64(103);
-        for table in LookupTableKind::<XLEN>::iter() {
-            stage5 += gamma_power(stage5_gamma, table.index() + 2)
-                * Fr::from_u64(300 + table.index() as u64);
-        }
-
-        assert_eq!(
-            input,
-            gamma_power(gamma, 7)
-                + stage1
-                + gamma * stage2
-                + gamma_power(gamma, 2) * stage3
-                + gamma_power(gamma, 3) * stage4
-                + gamma_power(gamma, 4) * stage5
-                + gamma_power(gamma, 5) * Fr::from_u64(107)
-                + gamma_power(gamma, 6) * Fr::from_u64(109)
-        );
-
-        let stage_values = [
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(7),
-            Fr::from_u64(11),
-        ];
-        let spartan_outer_raf = Fr::from_u64(13);
-        let spartan_shift_raf = Fr::from_u64(17);
-        let entry = Fr::from_u64(19);
-        let bytecode_ra_0 = Fr::from_u64(23);
-        let bytecode_ra_1 = Fr::from_u64(29);
-
-        let output = claims.output.expression().evaluate(
-            |id| match *id {
-                id if id == bytecode_ra(0) => bytecode_ra_0,
-                id if id == bytecode_ra(1) => bytecode_ra_1,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::StageValue(index)) => {
-                    stage_values[index]
-                }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => {
-                    spartan_outer_raf
-                }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => {
-                    spartan_shift_raf
-                }
-                JoltPublicId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(
-            output,
-            (stage_values[0]
-                + gamma * stage_values[1]
-                + gamma_power(gamma, 2) * stage_values[2]
-                + gamma_power(gamma, 3) * stage_values[3]
-                + gamma_power(gamma, 4) * stage_values[4]
-                + gamma_power(gamma, 5) * spartan_outer_raf
-                + gamma_power(gamma, 6) * spartan_shift_raf
-                + gamma_power(gamma, 7) * entry)
-                * bytecode_ra_0
-                * bytecode_ra_1
-        );
     }
 }

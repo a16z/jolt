@@ -104,7 +104,78 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::formulas::claim_reductions::bytecode::final_bytecode_chunk_opening;
     use crate::protocols::jolt::BytecodeClaimReductionPublic;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    #[test]
+    fn formulas_evaluate_like_core_claims() {
+        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
+        let eta = fr(31);
+        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13)];
+        let chunk_openings = [fr(17), fr(19)];
+        let chunk_weights = [fr(23), fr(29)];
+        let intermediate = fr(37);
+        let zero = fr(0);
+
+        let cycle = CyclePhase::new((dimensions, 2));
+        let input = cycle.input_expression::<Fr>().evaluate(
+            |id| {
+                (0..NUM_BYTECODE_VAL_STAGES)
+                    .find(|&stage| *id == bytecode_val_stage_opening(stage))
+                    .map_or(zero, |stage| stage_claims[stage])
+            },
+            |id| match *id {
+                JoltChallengeId::BytecodeClaimReduction(BytecodeClaimReductionChallenge::Eta) => {
+                    eta
+                }
+                _ => zero,
+            },
+            |_| zero,
+        );
+        let mut expected_input = zero;
+        let mut eta_power = fr(1);
+        for claim in stage_claims {
+            expected_input += eta_power * claim;
+            eta_power *= eta;
+        }
+        assert_eq!(input, expected_input);
+
+        let address = AddressPhase::new((dimensions, 2));
+        let address_input = address.input_expression::<Fr>().evaluate(
+            |id| {
+                if *id == cycle_phase_intermediate_opening() {
+                    intermediate
+                } else {
+                    zero
+                }
+            },
+            |_| zero,
+            |_| zero,
+        );
+        assert_eq!(address_input, intermediate);
+
+        let output = address.output_expression::<Fr>().evaluate(
+            |id| {
+                (0..2)
+                    .find(|&chunk| *id == final_bytecode_chunk_opening(chunk))
+                    .map_or(zero, |chunk| chunk_openings[chunk])
+            },
+            |_| zero,
+            |id| match *id {
+                JoltPublicId::BytecodeClaimReduction(
+                    BytecodeClaimReductionPublic::ChunkOutputWeight(chunk),
+                ) => chunk_weights[chunk],
+                _ => zero,
+            },
+        );
+        assert_eq!(
+            output,
+            chunk_weights[0] * chunk_openings[0] + chunk_weights[1] * chunk_openings[1]
+        );
+    }
 
     #[test]
     fn cycle_phase_with_address_phase_exposes_expected_dependencies() {

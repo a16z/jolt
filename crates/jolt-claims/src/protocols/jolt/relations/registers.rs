@@ -104,7 +104,7 @@ impl SymbolicSumcheck for ValEvaluation {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltPublicId};
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 7, 2, 1)
@@ -112,6 +112,145 @@ mod tests {
 
     fn trace_dimensions() -> TraceDimensions {
         TraceDimensions::new(5)
+    }
+
+    #[test]
+    fn read_write_claims_evaluate_like_core_formula() {
+        let relation = ReadWriteChecking::new(read_write_dimensions());
+
+        let rd_write_value = Fr::from_u64(3);
+        let rs1_value = Fr::from_u64(5);
+        let rs2_value = Fr::from_u64(7);
+        let val = Fr::from_u64(11);
+        let rs1_ra = Fr::from_u64(13);
+        let rs2_ra = Fr::from_u64(17);
+        let rd_wa = Fr::from_u64(19);
+        let inc = Fr::from_u64(23);
+        let gamma = Fr::from_u64(29);
+        let eq_cycle = Fr::from_u64(31);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == rd_write_value_claim() => rd_write_value,
+                id if id == rs1_value_claim() => rs1_value,
+                id if id == rs2_value_claim() => rs2_value,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => gamma,
+                JoltChallengeId::RamReadWrite(_)
+                | JoltChallengeId::RamValCheck(_)
+                | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::InstructionClaimReduction(_)
+                | JoltChallengeId::InstructionInput(_)
+                | JoltChallengeId::InstructionReadRaf(_)
+                | JoltChallengeId::InstructionRaVirtualization(_)
+                | JoltChallengeId::Booleanity(_)
+                | JoltChallengeId::IncClaimReduction(_)
+                | JoltChallengeId::HammingWeightClaimReduction(_)
+                | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
+                | JoltChallengeId::SpartanShift(_) => zero,
+            },
+            |_| zero,
+        );
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == registers_val_read_write() => val,
+                id if id == rs1_ra_read_write() => rs1_ra,
+                id if id == rs2_ra_read_write() => rs2_ra,
+                id if id == rd_wa_read_write() => rd_wa,
+                id if id == rd_inc_read_write() => inc,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => gamma,
+                JoltChallengeId::RamReadWrite(_)
+                | JoltChallengeId::RamValCheck(_)
+                | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::InstructionClaimReduction(_)
+                | JoltChallengeId::InstructionInput(_)
+                | JoltChallengeId::InstructionReadRaf(_)
+                | JoltChallengeId::InstructionRaVirtualization(_)
+                | JoltChallengeId::Booleanity(_)
+                | JoltChallengeId::IncClaimReduction(_)
+                | JoltChallengeId::HammingWeightClaimReduction(_)
+                | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
+                | JoltChallengeId::SpartanShift(_) => zero,
+            },
+            |id| match *id {
+                JoltPublicId::RegistersReadWrite(RegistersReadWritePublic::EqCycle) => eq_cycle,
+                _ => zero,
+            },
+        );
+
+        assert_eq!(
+            input,
+            rd_write_value + gamma * rs1_value + gamma * gamma * rs2_value
+        );
+        assert_eq!(
+            output,
+            eq_cycle * (rd_wa * (inc + val) + gamma * rs1_ra * val + gamma * gamma * rs2_ra * val)
+        );
+    }
+
+    #[test]
+    fn val_evaluation_claims_evaluate_like_core_formula() {
+        let relation = ValEvaluation::new(trace_dimensions());
+
+        let val = Fr::from_u64(3);
+        let inc = Fr::from_u64(5);
+        let wa = Fr::from_u64(7);
+        let lt_cycle = Fr::from_u64(11);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == registers_val_read_write() => val,
+                _ => zero,
+            },
+            |_| zero,
+            |_| zero,
+        );
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == rd_inc_val_evaluation() => inc,
+                id if id == rd_wa_val_evaluation() => wa,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::RamReadWrite(_)
+                | JoltChallengeId::RamValCheck(_)
+                | JoltChallengeId::RamRaClaimReduction(_)
+                | JoltChallengeId::RegistersReadWrite(_)
+                | JoltChallengeId::RegistersClaimReduction(_)
+                | JoltChallengeId::InstructionClaimReduction(_)
+                | JoltChallengeId::InstructionInput(_)
+                | JoltChallengeId::InstructionReadRaf(_)
+                | JoltChallengeId::InstructionRaVirtualization(_)
+                | JoltChallengeId::Booleanity(_)
+                | JoltChallengeId::IncClaimReduction(_)
+                | JoltChallengeId::HammingWeightClaimReduction(_)
+                | JoltChallengeId::BytecodeReadRaf(_)
+                | JoltChallengeId::BytecodeClaimReduction(_)
+                | JoltChallengeId::SpartanShift(_) => zero,
+            },
+            |id| match *id {
+                JoltPublicId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle) => {
+                    lt_cycle
+                }
+                _ => zero,
+            },
+        );
+
+        assert_eq!(input, val);
+        assert_eq!(output, lt_cycle * inc * wa);
     }
 
     #[test]

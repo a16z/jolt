@@ -18,8 +18,8 @@ use crate::{challenge, opening, public};
 
 use super::super::super::{
     BytecodeClaimReductionChallenge, BytecodeClaimReductionPublic, JoltChallengeId,
-    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationClaims,
-    JoltRelationId, JoltVirtualPolynomial,
+    JoltCommittedPolynomial, JoltExpr, JoltOpeningId, JoltPublicId, JoltRelationId,
+    JoltVirtualPolynomial,
 };
 use super::super::dimensions::{
     log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
@@ -496,43 +496,6 @@ pub fn lane_weights<F: Field>(
     Ok(weights)
 }
 
-pub fn cycle_phase<F>(
-    dimensions: PrecommittedReductionDimensions,
-    chunk_count: usize,
-) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase;
-    use crate::SymbolicSumcheck;
-    let r = CyclePhase::new((dimensions, chunk_count));
-    JoltRelationClaims::new(
-        CyclePhase::id(),
-        r.spec(),
-        r.input_expression::<F>(),
-        r.output_expression::<F>(),
-    )
-    .with_input_challenges([JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta)])
-}
-
-pub fn address_phase<F>(
-    dimensions: PrecommittedReductionDimensions,
-    chunk_count: usize,
-) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase;
-    use crate::SymbolicSumcheck;
-    let r = AddressPhase::new((dimensions, chunk_count));
-    JoltRelationClaims::new(
-        AddressPhase::id(),
-        r.spec(),
-        r.input_expression::<F>(),
-        r.output_expression::<F>(),
-    )
-}
-
 pub(crate) fn final_output_expr<F>(chunk_count: usize) -> JoltExpr<F>
 where
     F: RingCore,
@@ -983,73 +946,6 @@ mod tests {
                 relation: JoltRelationId::BytecodeClaimReduction,
             }
         ));
-    }
-
-    #[test]
-    fn formulas_evaluate_like_core_claims() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let eta = fr(31);
-        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13)];
-        let chunk_openings = [fr(17), fr(19)];
-        let chunk_weights = [fr(23), fr(29)];
-        let intermediate = fr(37);
-        let zero = fr(0);
-
-        let cycle = cycle_phase::<Fr>(dimensions, 2);
-        let input = cycle.input.expression().evaluate(
-            |id| {
-                (0..NUM_BYTECODE_VAL_STAGES)
-                    .find(|&stage| *id == bytecode_val_stage_opening(stage))
-                    .map_or(zero, |stage| stage_claims[stage])
-            },
-            |id| match *id {
-                JoltChallengeId::BytecodeClaimReduction(BytecodeClaimReductionChallenge::Eta) => {
-                    eta
-                }
-                _ => zero,
-            },
-            |_| zero,
-        );
-        let mut expected_input = zero;
-        let mut eta_power = fr(1);
-        for claim in stage_claims {
-            expected_input += eta_power * claim;
-            eta_power *= eta;
-        }
-        assert_eq!(input, expected_input);
-
-        let address = address_phase::<Fr>(dimensions, 2);
-        let address_input = address.input.expression().evaluate(
-            |id| {
-                if *id == cycle_phase_intermediate_opening() {
-                    intermediate
-                } else {
-                    zero
-                }
-            },
-            |_| zero,
-            |_| zero,
-        );
-        assert_eq!(address_input, intermediate);
-
-        let output = address.output.expression().evaluate(
-            |id| {
-                (0..2)
-                    .find(|&chunk| *id == final_bytecode_chunk_opening(chunk))
-                    .map_or(zero, |chunk| chunk_openings[chunk])
-            },
-            |_| zero,
-            |id| match *id {
-                JoltPublicId::BytecodeClaimReduction(
-                    BytecodeClaimReductionPublic::ChunkOutputWeight(chunk),
-                ) => chunk_weights[chunk],
-                _ => zero,
-            },
-        );
-        assert_eq!(
-            output,
-            chunk_weights[0] * chunk_openings[0] + chunk_weights[1] * chunk_openings[1]
-        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use crate::{challenge, opening, public};
 
 use super::super::{
     BooleanityChallenge, BooleanityPublic, JoltChallengeId, JoltExpr, JoltOpeningId, JoltPublicId,
-    JoltRelationClaims, JoltRelationId, JoltVirtualPolynomial,
+    JoltRelationId, JoltVirtualPolynomial,
 };
 use super::dimensions::{JoltFormulaPointError, JoltSumcheckSpec};
 use super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
@@ -68,53 +68,6 @@ pub struct BooleanityOpeningPoint<F: Field> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
-}
-
-pub fn booleanity<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::booleanity::Booleanity;
-    use crate::SymbolicSumcheck;
-    let relation = Booleanity::new(dimensions);
-    JoltRelationClaims::new(
-        Booleanity::id(),
-        relation.spec(),
-        relation.input_expression::<F>(),
-        relation.output_expression::<F>(),
-    )
-    .with_input_challenges([JoltChallengeId::from(BooleanityChallenge::Gamma)])
-}
-
-pub fn booleanity_address_phase<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::booleanity::BooleanityAddressPhase;
-    use crate::SymbolicSumcheck;
-    let relation = BooleanityAddressPhase::new(dimensions);
-    JoltRelationClaims::new(
-        BooleanityAddressPhase::id(),
-        relation.spec(),
-        relation.input_expression::<F>(),
-        relation.output_expression::<F>(),
-    )
-}
-
-pub fn booleanity_cycle_phase<F>(dimensions: BooleanityDimensions) -> JoltRelationClaims<F>
-where
-    F: RingCore,
-{
-    use crate::protocols::jolt::relations::booleanity::BooleanityCyclePhase;
-    use crate::SymbolicSumcheck;
-    let relation = BooleanityCyclePhase::new(dimensions);
-    JoltRelationClaims::new(
-        BooleanityCyclePhase::id(),
-        relation.spec(),
-        relation.input_expression::<F>(),
-        relation.output_expression::<F>(),
-    )
-    .with_input_challenges([JoltChallengeId::from(BooleanityChallenge::Gamma)])
 }
 
 pub(crate) fn booleanity_cycle_output<F>(dimensions: BooleanityDimensions) -> JoltExpr<F>
@@ -208,7 +161,6 @@ pub fn booleanity_output_opening_groups(
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::JoltCommittedPolynomial;
     use super::super::dimensions::JoltFormulaDimensionsError;
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};
@@ -220,10 +172,6 @@ mod tests {
         ram: usize,
     ) -> Result<JoltRaPolynomialLayout, JoltFormulaDimensionsError> {
         JoltRaPolynomialLayout::new(instruction, bytecode, ram)
-    }
-
-    fn dimensions(layout: JoltRaPolynomialLayout) -> BooleanityDimensions {
-        BooleanityDimensions::new(layout, 5, 8)
     }
 
     #[test]
@@ -248,23 +196,6 @@ mod tests {
         Ok(())
     }
 
-    /// The single-polynomial output expression drops `gamma` (its only term is
-    /// weighted by `gamma^0 == 1`), so the symbolic relation alone reports no
-    /// `gamma` dependency. The bridged builder must still declare it via
-    /// `with_input_challenges` to keep the Fiat-Shamir transcript in sync.
-    #[test]
-    fn booleanity_preserves_gamma_dependency_for_single_polynomial(
-    ) -> Result<(), JoltFormulaDimensionsError> {
-        let claims = booleanity::<Fr>(dimensions(layout(1, 0, 0)?));
-
-        assert!(claims.output.required_challenges.is_empty());
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(BooleanityChallenge::Gamma)]
-        );
-        Ok(())
-    }
-
     #[test]
     fn eq_address_cycle_polynomial_reverses_address_then_cycle() {
         let address = vec![Fr::from_u64(2), Fr::from_u64(3)];
@@ -281,67 +212,5 @@ mod tests {
             eq_address_cycle_polynomial(&address, &cycle).evals(),
             EqPolynomial::<Fr>::evals(&eq_point, None)
         );
-    }
-
-    #[test]
-    fn booleanity_evaluates_like_core_formula() -> Result<(), JoltFormulaDimensionsError> {
-        let layout = layout(1, 1, 1)?;
-        let claims = booleanity::<Fr>(dimensions(layout));
-
-        let instruction_ra = Fr::from_u64(3);
-        let bytecode_ra = Fr::from_u64(5);
-        let ram_ra = Fr::from_u64(7);
-        let gamma = Fr::from_u64(11);
-        let eq_address_cycle = Fr::from_u64(13);
-        let zero = Fr::from_u64(0);
-
-        let output = claims.output.expression().evaluate(
-            |id| match *id {
-                id if id
-                    == JoltOpeningId::committed(
-                        JoltCommittedPolynomial::InstructionRa(0),
-                        JoltRelationId::Booleanity,
-                    ) =>
-                {
-                    instruction_ra
-                }
-                id if id
-                    == JoltOpeningId::committed(
-                        JoltCommittedPolynomial::BytecodeRa(0),
-                        JoltRelationId::Booleanity,
-                    ) =>
-                {
-                    bytecode_ra
-                }
-                id if id
-                    == JoltOpeningId::committed(
-                        JoltCommittedPolynomial::RamRa(0),
-                        JoltRelationId::Booleanity,
-                    ) =>
-                {
-                    ram_ra
-                }
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::Booleanity(BooleanityChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltPublicId::Booleanity(BooleanityPublic::EqAddressCycle) => eq_address_cycle,
-                _ => zero,
-            },
-        );
-
-        let gamma_2 = gamma * gamma;
-        let gamma_4 = gamma_2 * gamma_2;
-        assert_eq!(
-            output,
-            eq_address_cycle
-                * ((instruction_ra * instruction_ra - instruction_ra)
-                    + gamma_2 * (bytecode_ra * bytecode_ra - bytecode_ra)
-                    + gamma_4 * (ram_ra * ram_ra - ram_ra))
-        );
-        Ok(())
     }
 }
