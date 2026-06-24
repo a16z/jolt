@@ -46,8 +46,8 @@ Key abstractions introduced or modified:
 - **`SymbolicSumcheck` (new trait, `jolt-claims` crate root).** Generic over a
   relation's four id types (`RelationId`/`OpeningId`/`PublicId`/`ChallengeId`), a
   `Shape` (the per-relation construction input — replaces each builder's dimensions
-  argument and subsumes the old `sumcheck: JoltSumcheckSpec` field), and an
-  associated `SumcheckSpec`. Provides `new(shape)`, `id()`, `sumcheck()`, and
+  argument and subsumes the old `sumcheck: JoltSumcheckSpec` field). Provides
+  `new(shape)`, `id()`, `sumcheck()` (returning the shared crate-root `SumcheckSpec`), and
   field-method-generic `input_expression<F>()` / `output_expression<F>()` returning
   `Expr<F, OpeningId, PublicId, ChallengeId>`, plus provided `required_{openings,
   publics,challenges}<F>()` computed from those expressions. Protocol-agnostic:
@@ -120,9 +120,6 @@ baked-coefficient input claim on a fixture.
 - **Not** generalizing the `jolt-verifier-derive` macros to other protocols (they
   are hardwired to `::jolt_claims::protocols::jolt::*`; only the jolt
   `ConcreteSumcheck` side uses them).
-- **Not** unifying the two protocols' sumcheck-spec types. `JoltSumcheckSpec` has a
-  `domain`; `FieldInlineSumcheckSpec` is `{rounds, degree}`. `SumcheckSpec` is an
-  associated type.
 - **Not** re-introducing a lowered/runtime `JoltRelationClaims` struct or a
   `Map<JoltOpeningId, _>` claim store. Dispatch stays static; the trait is the
   representation.
@@ -132,7 +129,7 @@ baked-coefficient input claim on a fixture.
 ### Acceptance Criteria
 
 - [ ] `SymbolicSumcheck` exists at the `jolt-claims` crate root, generic over the
-      four id types + `Shape` + `SumcheckSpec`, with method-generic
+      four id types + `Shape`, with method-generic
       `input_expression<F>`/`output_expression<F>` and provided `required_*<F>`.
 - [ ] All ~27 jolt and 4 field_inline former builders are per-relation types
       implementing `SymbolicSumcheck`; the free builder fns are removed.
@@ -220,11 +217,10 @@ pub trait SymbolicSumcheck {
     type PublicId;
     type ChallengeId;
     type Shape;
-    type SumcheckSpec;                       // jolt: {domain,rounds,degree}; field_inline: {rounds,degree}
 
     fn new(shape: Self::Shape) -> Self;
     fn id() -> Self::RelationId;             // type-level constant; NOT unique (phase/mode splits share one)
-    fn sumcheck(&self) -> Self::SumcheckSpec;  // derived from Shape
+    fn sumcheck(&self) -> SumcheckSpec;      // shared crate-root type, derived from Shape
 
     fn input_expression<F: RingCore>(&self)
         -> Expr<F, Self::OpeningId, Self::PublicId, Self::ChallengeId>;
@@ -262,7 +258,6 @@ where
     type Symbolic: SymbolicSumcheck<
         RelationId = JoltRelationId, OpeningId = JoltOpeningId,
         PublicId = JoltPublicId, ChallengeId = JoltChallengeId,
-        SumcheckSpec = JoltSumcheckSpec,
     >;
     type Inputs<C>;    // #[derive(InputClaims)]  — unchanged
     type Outputs<C>;   // #[derive(OutputClaims)] — unchanged
@@ -368,8 +363,11 @@ makes the pairing explicit.
   method.** Rejected: every challenge it declared is already in an expression, so
   the input/output union reproduces the set with no method and no overrides; it is
   deleted as dead code.
-- **Unify `JoltSumcheckSpec`/`FieldInlineSumcheckSpec`.** Rejected: they differ
-  structurally (domain). `SumcheckSpec` is associated.
+- **Unify `JoltSumcheckSpec`/`FieldInlineSumcheckSpec`.** Adopted: one crate-root
+  `SumcheckSpec` (with a `domain`) replaces both; `field_inline`'s spec gains a
+  `domain` (always `BooleanHypercube`), and the `Jolt*`/`FieldInline*` names become
+  aliases. `SymbolicSumcheck::sumcheck()` returns it directly, so the trait needs no
+  associated spec type. (Reverses the earlier "keep it associated" decision.)
 
 ## Documentation
 
@@ -430,7 +428,7 @@ Task-by-task implementation plan. **Strangler migration**: `JoltRelationClaims` 
 - Test: in `crates/jolt-claims/src/symbolic.rs` `#[cfg(test)]`
 
 **Interfaces:**
-- Produces: `pub trait SymbolicSumcheck` with associated `RelationId/OpeningId/PublicId/ChallengeId/Shape/SumcheckSpec`; `fn new(Shape)->Self`, `fn id()->RelationId`, `fn sumcheck(&self)->SumcheckSpec`, `fn input_expression<F:RingCore>(&self)->Expr<F,OpeningId,PublicId,ChallengeId>`, `fn output_expression<F:RingCore>(&self)->…`, and provided `fn required_openings<F:RingCore>(&self)->Vec<OpeningId> where OpeningId: Clone+Eq` (+ `required_publics`, `required_challenges`).
+- Produces: `pub trait SymbolicSumcheck` with associated `RelationId/OpeningId/PublicId/ChallengeId/Shape`; `fn new(Shape)->Self`, `fn id()->RelationId`, `fn sumcheck(&self)->SumcheckSpec` (the shared crate-root spec), `fn input_expression<F:RingCore>(&self)->Expr<F,OpeningId,PublicId,ChallengeId>`, `fn output_expression<F:RingCore>(&self)->…`, and provided `fn required_openings<F:RingCore>(&self)->Vec<OpeningId> where OpeningId: Clone+Eq` (+ `required_publics`, `required_challenges`).
 
 - [ ] **Step 1: Write the failing test** (a tiny in-module dummy relation exercising the union + provided methods)
 
@@ -452,10 +450,9 @@ mod tests {
         type PublicId = P;
         type ChallengeId = Ch;
         type Shape = ();
-        type SumcheckSpec = usize;
-        fn new(_: ()) -> Self { Self }
+        fn new((): ()) -> Self { Self }
         fn id() -> u8 { 7 }
-        fn sumcheck(&self) -> usize { 3 }
+        fn sumcheck(&self) -> SumcheckSpec { SumcheckSpec::boolean(3, 1) }
         fn input_expression<F: jolt_field::RingCore>(&self) -> Expr<F, O, P, Ch> {
             opening(O::A) + challenge(Ch::G) * opening(O::B)
         }
@@ -486,7 +483,7 @@ Expected: FAIL — `SymbolicSumcheck` not found.
 use jolt_field::RingCore;
 
 use crate::util::extend_unique;
-use crate::Expr;
+use crate::{Expr, SumcheckSpec};
 
 /// Pure symbolic description of one sumcheck relation: its id, sumcheck spec, and
 /// input/output algebra over the relation's id types. Field-method-generic, so the
@@ -498,11 +495,10 @@ pub trait SymbolicSumcheck {
     type PublicId;
     type ChallengeId;
     type Shape;
-    type SumcheckSpec;
 
     fn new(shape: Self::Shape) -> Self;
     fn id() -> Self::RelationId;
-    fn sumcheck(&self) -> Self::SumcheckSpec;
+    fn sumcheck(&self) -> SumcheckSpec;
 
     fn input_expression<F: RingCore>(
         &self,
@@ -605,7 +601,7 @@ This establishes the per-relation recipe used by Phase 3. Pilot relation: **`spa
 - Modify: `crates/jolt-claims/src/protocols/jolt/formulas/spartan.rs` (bridge `shift`)
 
 **Interfaces:**
-- Produces: `pub struct Shift { shape: TraceDimensions }` implementing `SymbolicSumcheck<RelationId=JoltRelationId, OpeningId=JoltOpeningId, PublicId=JoltPublicId, ChallengeId=JoltChallengeId, Shape=TraceDimensions, SumcheckSpec=JoltSumcheckSpec>`.
+- Produces: `pub struct Shift { shape: TraceDimensions }` implementing `SymbolicSumcheck<RelationId=JoltRelationId, OpeningId=JoltOpeningId, PublicId=JoltPublicId, ChallengeId=JoltChallengeId, Shape=TraceDimensions>`.
 
 - [ ] **Step 1: Add the symbolic type** (`relations/spartan.rs`)
 
@@ -625,7 +621,6 @@ impl SymbolicSumcheck for Shift {
     type PublicId = JoltPublicId;
     type ChallengeId = JoltChallengeId;
     type Shape = TraceDimensions;
-    type SumcheckSpec = JoltSumcheckSpec;
 
     fn new(shape: TraceDimensions) -> Self { Self { shape } }
     fn id() -> JoltRelationId { JoltRelationId::SpartanShift }
@@ -733,7 +728,7 @@ One task per module row above, each following the Recipe. Deliverable per task: 
 **Files:** `crates/jolt-verifier/src/stages/relations.rs`
 
 **Interfaces:**
-- Produces: `ConcreteSumcheck` gains `type Symbolic: SymbolicSumcheck<RelationId=JoltRelationId, OpeningId=JoltOpeningId, PublicId=JoltPublicId, ChallengeId=JoltChallengeId, SumcheckSpec=JoltSumcheckSpec>;` and `fn symbolic(&self) -> &Self::Symbolic;`. `sumcheck_relation()` becomes provided (built from `symbolic()`), so existing callers keep working while we migrate them.
+- Produces: `ConcreteSumcheck` gains `type Symbolic: SymbolicSumcheck<RelationId=JoltRelationId, OpeningId=JoltOpeningId, PublicId=JoltPublicId, ChallengeId=JoltChallengeId>;` and `fn symbolic(&self) -> &Self::Symbolic;`. `sumcheck_relation()` becomes provided (built from `symbolic()`), so existing callers keep working while we migrate them.
 
 - [ ] **Step 1: Edit the trait** — add the associated type + `symbolic()`, and rewrite `sumcheck_relation` as provided + add `id`/`sumcheck` helpers + `resolve_public` Option param:
 
@@ -746,7 +741,6 @@ where
     type Symbolic: SymbolicSumcheck<
         RelationId = JoltRelationId, OpeningId = JoltOpeningId,
         PublicId = JoltPublicId, ChallengeId = JoltChallengeId,
-        SumcheckSpec = JoltSumcheckSpec,
     >;
     type Inputs<C>;
     type Outputs<C>;
