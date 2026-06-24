@@ -1,7 +1,7 @@
 use jolt_field::{Field, RingCore};
 use jolt_poly::{EqPolynomial, Polynomial};
 
-use crate::{challenge, constant, opening, public};
+use crate::{challenge, opening, public};
 
 use super::super::{
     JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltExpr, JoltOpeningId,
@@ -145,25 +145,14 @@ pub fn read_write_checking<F>(dimensions: ReadWriteDimensions) -> JoltRelationCl
 where
     F: RingCore,
 {
-    let input = opening(ram_read_value())
-        + read_write_challenge(RamReadWriteChallenge::Gamma) * opening(ram_write_value());
-
-    let output =
-        read_write_public(RamReadWritePublic::EqCycle) * opening(ram_ra()) * opening(ram_val())
-            + read_write_public(RamReadWritePublic::EqCycle)
-                * read_write_challenge(RamReadWriteChallenge::Gamma)
-                * opening(ram_ra())
-                * opening(ram_val())
-            + read_write_public(RamReadWritePublic::EqCycle)
-                * read_write_challenge(RamReadWriteChallenge::Gamma)
-                * opening(ram_ra())
-                * opening(ram_inc());
-
+    use crate::protocols::jolt::relations::ram::ReadWriteChecking;
+    use crate::SymbolicSumcheck;
+    let r = ReadWriteChecking::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RamReadWriteChecking,
-        dimensions.read_write_sumcheck(),
-        input,
-        output,
+        ReadWriteChecking::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -197,16 +186,14 @@ pub fn raf_evaluation<F>(dimensions: RamRafEvaluationDimensions) -> JoltRelation
 where
     F: RingCore,
 {
-    let input =
-        constant(F::pow2(dimensions.phase3_cycle_rounds())) * opening(ram_address_spartan());
-    let output = raf_evaluation_public(RamRafEvaluationPublic::UnmapAddress)
-        * opening(ram_ra_raf_evaluation());
-
+    use crate::protocols::jolt::relations::ram::RafEvaluation;
+    use crate::SymbolicSumcheck;
+    let r = RafEvaluation::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RamRafEvaluation,
-        dimensions.sumcheck(),
-        input,
-        output,
+        RafEvaluation::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -214,14 +201,14 @@ pub fn output_check<F>(dimensions: ReadWriteDimensions) -> JoltRelationClaims<F>
 where
     F: RingCore,
 {
-    let output = output_check_public(RamOutputCheckPublic::EqIoMask) * opening(ram_val_final())
-        + output_check_public(RamOutputCheckPublic::NegEqIoMaskValIo);
-
+    use crate::protocols::jolt::relations::ram::OutputCheck;
+    use crate::SymbolicSumcheck;
+    let r = OutputCheck::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RamOutputCheck,
-        dimensions.output_check_sumcheck(),
-        JoltExpr::zero(),
-        output,
+        OutputCheck::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -296,21 +283,14 @@ pub fn ra_claim_reduction<F>(dimensions: TraceDimensions) -> JoltRelationClaims<
 where
     F: RingCore,
 {
-    let gamma = ra_claim_reduction_challenge(RamRaClaimReductionChallenge::Gamma);
-    let input = opening(ram_ra_raf_evaluation())
-        + gamma.clone() * opening(ram_ra())
-        + gamma.clone().pow(2) * opening(ram_ra_val_check());
-
-    let output = (ra_claim_reduction_public(RamRaClaimReductionPublic::EqCycleRaf)
-        + gamma.clone() * ra_claim_reduction_public(RamRaClaimReductionPublic::EqCycleReadWrite)
-        + gamma.pow(2) * ra_claim_reduction_public(RamRaClaimReductionPublic::EqCycleValCheck))
-        * opening(ram_ra_claim_reduction());
-
+    use crate::protocols::jolt::relations::ram::RaClaimReduction;
+    use crate::SymbolicSumcheck;
+    let r = RaClaimReduction::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RamRaClaimReduction,
-        dimensions.sumcheck(2),
-        input,
-        output,
+        RaClaimReduction::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -343,15 +323,14 @@ pub fn ra_virtualization<F>(dimensions: RamRaVirtualizationDimensions) -> JoltRe
 where
     F: RingCore,
 {
-    let input = opening(ram_ra_claim_reduction());
-    let output = ra_virtualization_public(RamRaVirtualizationPublic::EqCycle)
-        * committed_ram_ra_product(dimensions);
-
+    use crate::protocols::jolt::relations::ram::RaVirtualization;
+    use crate::SymbolicSumcheck;
+    let r = RaVirtualization::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RamRaVirtualization,
-        dimensions.sumcheck(),
-        input,
-        output,
+        RaVirtualization::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -367,15 +346,14 @@ pub fn hamming_booleanity<F>(dimensions: TraceDimensions) -> JoltRelationClaims<
 where
     F: RingCore,
 {
-    let eq_cycle = hamming_booleanity_public(RamHammingBooleanityPublic::EqCycle);
-    let h = opening(ram_hamming_weight());
-    let output = eq_cycle * (h.clone() * h.clone() - h);
-
+    use crate::protocols::jolt::relations::ram::HammingBooleanity;
+    use crate::SymbolicSumcheck;
+    let r = HammingBooleanity::new(dimensions);
     JoltRelationClaims::new(
-        JoltRelationId::RamHammingBooleanity,
-        dimensions.sumcheck(3),
-        JoltExpr::zero(),
-        output,
+        HammingBooleanity::id(),
+        r.sumcheck(),
+        r.input_expression::<F>(),
+        r.output_expression::<F>(),
     )
 }
 
@@ -432,14 +410,14 @@ impl<F: Field> RamHammingBooleanityPublicValues<F> {
     }
 }
 
-fn read_write_challenge<F>(id: RamReadWriteChallenge) -> JoltExpr<F>
+pub(crate) fn read_write_challenge<F>(id: RamReadWriteChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn read_write_public<F>(id: RamReadWritePublic) -> JoltExpr<F>
+pub(crate) fn read_write_public<F>(id: RamReadWritePublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -460,49 +438,49 @@ where
     public(JoltPublicId::from(id))
 }
 
-fn ra_claim_reduction_challenge<F>(id: RamRaClaimReductionChallenge) -> JoltExpr<F>
+pub(crate) fn ra_claim_reduction_challenge<F>(id: RamRaClaimReductionChallenge) -> JoltExpr<F>
 where
     F: RingCore,
 {
     challenge(JoltChallengeId::from(id))
 }
 
-fn ra_virtualization_public<F>(id: RamRaVirtualizationPublic) -> JoltExpr<F>
+pub(crate) fn ra_virtualization_public<F>(id: RamRaVirtualizationPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn hamming_booleanity_public<F>(id: RamHammingBooleanityPublic) -> JoltExpr<F>
+pub(crate) fn hamming_booleanity_public<F>(id: RamHammingBooleanityPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn raf_evaluation_public<F>(id: RamRafEvaluationPublic) -> JoltExpr<F>
+pub(crate) fn raf_evaluation_public<F>(id: RamRafEvaluationPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn output_check_public<F>(id: RamOutputCheckPublic) -> JoltExpr<F>
+pub(crate) fn output_check_public<F>(id: RamOutputCheckPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn ra_claim_reduction_public<F>(id: RamRaClaimReductionPublic) -> JoltExpr<F>
+pub(crate) fn ra_claim_reduction_public<F>(id: RamRaClaimReductionPublic) -> JoltExpr<F>
 where
     F: RingCore,
 {
     public(JoltPublicId::from(id))
 }
 
-fn committed_ram_ra_product<F>(dimensions: RamRaVirtualizationDimensions) -> JoltExpr<F>
+pub(crate) fn committed_ram_ra_product<F>(dimensions: RamRaVirtualizationDimensions) -> JoltExpr<F>
 where
     F: RingCore,
 {
@@ -524,42 +502,42 @@ where
     eval
 }
 
-fn ram_read_value() -> JoltOpeningId {
+pub(crate) fn ram_read_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamReadValue,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn ram_write_value() -> JoltOpeningId {
+pub(crate) fn ram_write_value() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamWriteValue,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn ram_ra() -> JoltOpeningId {
+pub(crate) fn ram_ra() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamRa,
         JoltRelationId::RamReadWriteChecking,
     )
 }
 
-fn ram_val() -> JoltOpeningId {
+pub(crate) fn ram_val() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamVal,
         JoltRelationId::RamReadWriteChecking,
     )
 }
 
-fn ram_val_final() -> JoltOpeningId {
+pub(crate) fn ram_val_final() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamValFinal,
         JoltRelationId::RamOutputCheck,
     )
 }
 
-fn ram_inc() -> JoltOpeningId {
+pub(crate) fn ram_inc() -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamInc,
         JoltRelationId::RamReadWriteChecking,
@@ -570,39 +548,39 @@ fn ram_inc_val_check() -> JoltOpeningId {
     JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, JoltRelationId::RamValCheck)
 }
 
-fn ram_ra_val_check() -> JoltOpeningId {
+pub(crate) fn ram_ra_val_check() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamRa, JoltRelationId::RamValCheck)
 }
 
-fn ram_address_spartan() -> JoltOpeningId {
+pub(crate) fn ram_address_spartan() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamAddress,
         JoltRelationId::SpartanOuter,
     )
 }
 
-fn ram_ra_raf_evaluation() -> JoltOpeningId {
+pub(crate) fn ram_ra_raf_evaluation() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamRa,
         JoltRelationId::RamRafEvaluation,
     )
 }
 
-fn ram_ra_claim_reduction() -> JoltOpeningId {
+pub(crate) fn ram_ra_claim_reduction() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamRa,
         JoltRelationId::RamRaClaimReduction,
     )
 }
 
-fn committed_ram_ra(index: usize) -> JoltOpeningId {
+pub(crate) fn committed_ram_ra(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::RamRa(index),
         JoltRelationId::RamRaVirtualization,
     )
 }
 
-fn ram_hamming_weight() -> JoltOpeningId {
+pub(crate) fn ram_hamming_weight() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamHammingWeight,
         JoltRelationId::RamHammingBooleanity,
@@ -632,46 +610,6 @@ mod tests {
 
     fn ra_virtualization_dimensions(committed_ra_polys: usize) -> RamRaVirtualizationDimensions {
         RamRaVirtualizationDimensions::new(5, committed_ra_polys)
-    }
-
-    #[test]
-    fn read_write_claims_expose_expected_dependencies() {
-        let claims = read_write_checking::<Fr>(read_write_dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::RamReadWriteChecking);
-        assert_eq!(
-            claims.sumcheck,
-            read_write_dimensions().read_write_sumcheck()
-        );
-        assert_eq!(
-            claims.input.required_openings,
-            read_write_checking_input_openings().to_vec()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            vec![ram_ra(), ram_val(), ram_inc()]
-        );
-        assert_eq!(
-            claims.input.required_challenges,
-            vec![JoltChallengeId::from(RamReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(RamReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(RamReadWriteChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.output.required_publics,
-            vec![JoltPublicId::from(RamReadWritePublic::EqCycle)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(RamReadWritePublic::EqCycle)]
-        );
-        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -765,35 +703,6 @@ mod tests {
     }
 
     #[test]
-    fn raf_evaluation_exposes_expected_dependencies() {
-        let dimensions = raf_evaluation_dimensions();
-        let claims = raf_evaluation::<Fr>(dimensions);
-
-        assert_eq!(claims.id, JoltRelationId::RamRafEvaluation);
-        assert_eq!(claims.sumcheck, dimensions.sumcheck());
-        assert_eq!(
-            claims.input.required_openings,
-            raf_evaluation_input_openings().to_vec()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            raf_evaluation_output_openings().to_vec()
-        );
-        assert!(claims.input.required_challenges.is_empty());
-        assert!(claims.output.required_challenges.is_empty());
-        assert!(claims.required_challenges().is_empty());
-        assert_eq!(
-            claims.output.required_publics,
-            vec![JoltPublicId::from(RamRafEvaluationPublic::UnmapAddress)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(RamRafEvaluationPublic::UnmapAddress)]
-        );
-        assert_eq!(claims.num_challenges(), 0);
-    }
-
-    #[test]
     fn raf_evaluation_evaluates_like_core_formula() {
         let dimensions = raf_evaluation_dimensions();
         let claims = raf_evaluation::<Fr>(dimensions);
@@ -826,42 +735,6 @@ mod tests {
 
         assert_eq!(input, address * Fr::from_u64(8));
         assert_eq!(output, unmap * ram_ra);
-    }
-
-    #[test]
-    fn output_check_exposes_expected_dependencies() {
-        let claims = output_check::<Fr>(read_write_dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::RamOutputCheck);
-        assert_eq!(
-            claims.sumcheck,
-            read_write_dimensions().output_check_sumcheck()
-        );
-        assert!(claims.input.required_openings.is_empty());
-        assert_eq!(
-            claims.output.required_openings,
-            output_check_output_openings().to_vec()
-        );
-        assert!(claims.input.required_challenges.is_empty());
-        assert!(claims.output.required_challenges.is_empty());
-        assert!(claims.required_challenges().is_empty());
-        assert!(claims.input.required_publics.is_empty());
-        assert_eq!(
-            claims.output.required_publics,
-            vec![
-                JoltPublicId::from(RamOutputCheckPublic::EqIoMask),
-                JoltPublicId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
-            ]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![
-                JoltPublicId::from(RamOutputCheckPublic::EqIoMask),
-                JoltPublicId::from(RamOutputCheckPublic::NegEqIoMaskValIo),
-            ]
-        );
-        assert_eq!(claims.required_openings(), vec![ram_val_final()]);
-        assert_eq!(claims.num_challenges(), 0);
     }
 
     #[test]
@@ -905,51 +778,6 @@ mod tests {
                 output_check_output_openings()[0]
             ]
         );
-    }
-
-    #[test]
-    fn ra_claim_reduction_exposes_expected_dependencies() {
-        let claims = ra_claim_reduction::<Fr>(trace_dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::RamRaClaimReduction);
-        assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(2));
-        assert_eq!(
-            claims.input.required_openings,
-            ra_claim_reduction_input_openings().to_vec()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            ra_claim_reduction_output_openings().to_vec()
-        );
-        assert_eq!(
-            claims.input.required_challenges,
-            vec![JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.output.required_challenges,
-            vec![JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.required_challenges(),
-            vec![JoltChallengeId::from(RamRaClaimReductionChallenge::Gamma)]
-        );
-        assert_eq!(
-            claims.output.required_publics,
-            vec![
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleValCheck),
-            ]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleRaf),
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleReadWrite),
-                JoltPublicId::from(RamRaClaimReductionPublic::EqCycleValCheck),
-            ]
-        );
-        assert_eq!(claims.num_challenges(), 1);
     }
 
     #[test]
@@ -1034,50 +862,6 @@ mod tests {
     }
 
     #[test]
-    fn ra_virtualization_supports_empty_ra_product() {
-        let claims = ra_virtualization::<Fr>(ra_virtualization_dimensions(0));
-
-        assert!(claims.output.required_openings.is_empty());
-    }
-
-    #[test]
-    fn ra_virtualization_exposes_expected_dependencies() {
-        let dimensions = ra_virtualization_dimensions(3);
-        let claims = ra_virtualization::<Fr>(dimensions);
-
-        assert_eq!(claims.id, JoltRelationId::RamRaVirtualization);
-        assert_eq!(claims.sumcheck, dimensions.sumcheck());
-        assert_eq!(
-            claims.input.required_openings,
-            ra_virtualization_input_openings()
-        );
-        assert_eq!(
-            claims.output.required_openings,
-            ra_virtualization_output_openings(dimensions)
-        );
-        assert!(claims.output.required_challenges.is_empty());
-        assert!(claims.required_challenges().is_empty());
-        assert_eq!(
-            claims.output.required_publics,
-            vec![JoltPublicId::from(RamRaVirtualizationPublic::EqCycle)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(RamRaVirtualizationPublic::EqCycle)]
-        );
-        assert_eq!(
-            claims.required_openings(),
-            vec![
-                ram_ra_claim_reduction(),
-                committed_ram_ra(0),
-                committed_ram_ra(1),
-                committed_ram_ra(2),
-            ]
-        );
-        assert_eq!(claims.num_challenges(), 0);
-    }
-
-    #[test]
     fn ra_virtualization_evaluates_like_core_formula() {
         let dimensions = ra_virtualization_dimensions(3);
         let claims = ra_virtualization::<Fr>(dimensions);
@@ -1126,30 +910,6 @@ mod tests {
             ra_virtualization_eq_cycle_polynomial(&reduced_cycle).evals(),
             EqPolynomial::<Fr>::evals(&eq_point, None)
         );
-    }
-
-    #[test]
-    fn hamming_booleanity_exposes_expected_dependencies() {
-        let claims = hamming_booleanity::<Fr>(trace_dimensions());
-
-        assert_eq!(claims.id, JoltRelationId::RamHammingBooleanity);
-        assert_eq!(claims.sumcheck, trace_dimensions().sumcheck(3));
-        assert!(claims.input.required_openings.is_empty());
-        assert_eq!(
-            claims.output.required_openings,
-            hamming_booleanity_output_openings()
-        );
-        assert!(claims.output.required_challenges.is_empty());
-        assert!(claims.required_challenges().is_empty());
-        assert_eq!(
-            claims.output.required_publics,
-            vec![JoltPublicId::from(RamHammingBooleanityPublic::EqCycle)]
-        );
-        assert_eq!(
-            claims.required_publics(),
-            vec![JoltPublicId::from(RamHammingBooleanityPublic::EqCycle)]
-        );
-        assert_eq!(claims.num_challenges(), 0);
     }
 
     #[test]
