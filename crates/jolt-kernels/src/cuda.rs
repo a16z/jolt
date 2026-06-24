@@ -316,6 +316,14 @@ pub struct GruenRoundPolyInputs<'a> {
     pub degree: usize,
 }
 
+pub struct Gather8Inputs<'a> {
+    pub table_groups: [&'a [Fr]; 8],
+    pub indices: &'a [i16],
+    pub num_chunks: usize,
+    pub table_len: usize,
+    pub new_len: usize,
+}
+
 pub struct UniskipInputs<'a> {
     pub row_dots_a: &'a DeviceFrVec,
     pub row_dots_b: &'a DeviceFrVec,
@@ -637,6 +645,14 @@ impl CudaKernelContext {
             num_cycles,
         )?;
         Ok((a.to_host()?, b.to_host()?))
+    }
+
+    #[expect(clippy::todo, unused_variables)]
+    pub fn gather8_materialize(
+        &self,
+        inputs: Gather8Inputs<'_>,
+    ) -> Result<Vec<Vec<Fr>>, CudaError> {
+        todo!()
     }
 
     pub fn uniskip_extended_evals(&self, inputs: UniskipInputs<'_>) -> Result<Vec<Fr>, CudaError> {
@@ -2182,6 +2198,68 @@ mod tests {
                     second_coeffs: &second_coeffs,
                     row_count: ROW_COUNT,
                     degree: OUTER_UNISKIP_DEGREE,
+                })
+                .unwrap();
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        #[ignore = "CudaKernelContext::gather8_materialize is todo!()"]
+        fn gather8_materialize_matches_cpu(
+            num_chunks in 1usize..5,
+            log_new_len in 0usize..8,
+            table_len in 1usize..=8,
+            seed in fr_strategy(),
+        ) {
+            let new_len = 1usize << log_new_len;
+            let groups: Vec<Vec<Vec<Fr>>> = (0..8)
+                .map(|g| {
+                    (0..num_chunks)
+                        .map(|chunk| {
+                            (0..table_len)
+                                .map(|e| seed + Fr::from_u64((g * 131 + chunk * 17 + e + 1) as u64))
+                                .collect()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let indices: Vec<Vec<Option<u8>>> = (0..num_chunks)
+                .map(|chunk| {
+                    (0..new_len * 8)
+                        .map(|i| {
+                            let h = (chunk * 7 + i * 13) % (table_len + 1);
+                            if h == table_len {
+                                None
+                            } else {
+                                Some(h as u8)
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let group_refs: [&Vec<Vec<Fr>>; 8] = std::array::from_fn(|g| &groups[g]);
+            let expected = crate::stage6::materialize_gather8(&group_refs, &indices);
+
+            let flat_groups: Vec<Vec<Fr>> = groups
+                .iter()
+                .map(|group| group.iter().flatten().copied().collect())
+                .collect();
+            let table_refs: [&[Fr]; 8] = std::array::from_fn(|g| flat_groups[g].as_slice());
+            let flat_indices: Vec<i16> = indices
+                .iter()
+                .flat_map(|chunk| chunk.iter().map(|i| i.map_or(-1, i16::from)))
+                .collect();
+
+            let c = ctx();
+            let got = c
+                .gather8_materialize(Gather8Inputs {
+                    table_groups: table_refs,
+                    indices: &flat_indices,
+                    num_chunks,
+                    table_len,
+                    new_len,
                 })
                 .unwrap();
             prop_assert_eq!(got, expected);

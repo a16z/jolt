@@ -4749,24 +4749,7 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
                     &tables_011,
                     &tables_111,
                 ];
-                let new_len = indices.first().map_or(0, |chunk| chunk.len() / 8);
-                let chunks = (0..indices.len())
-                    .into_par_iter()
-                    .map(|chunk| {
-                        (0..new_len)
-                            .map(|index| {
-                                (0..8)
-                                    .map(|offset| {
-                                        indices[chunk][8 * index + offset]
-                                            .map_or(F::zero(), |value| {
-                                                table_groups[offset][chunk][usize::from(value)]
-                                            })
-                                    })
-                                    .sum()
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
+                let chunks = materialize_gather8(&table_groups, indices);
                 let scratch = (0..chunks.len()).map(|_| Vec::new()).collect();
                 *self = Self::Bound { chunks, scratch };
             }
@@ -4789,6 +4772,30 @@ impl<'a, F: Field> InstructionRaVirtualSparseChunks<'a, F> {
             }
         }
     }
+}
+
+pub(crate) fn materialize_gather8<F: Field, R: AsRef<[Option<u8>]> + Sync>(
+    table_groups: &[&Vec<Vec<F>>; 8],
+    indices: &[R],
+) -> Vec<Vec<F>> {
+    let new_len = indices.first().map_or(0, |chunk| chunk.as_ref().len() / 8);
+    (0..indices.len())
+        .into_par_iter()
+        .map(|chunk| {
+            let row = indices[chunk].as_ref();
+            (0..new_len)
+                .map(|index| {
+                    (0..8)
+                        .map(|offset| {
+                            row[8 * index + offset].map_or(F::zero(), |value| {
+                                table_groups[offset][chunk][usize::from(value)]
+                            })
+                        })
+                        .sum()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
 }
 
 #[inline(always)]
